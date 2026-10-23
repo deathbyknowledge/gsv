@@ -2,17 +2,18 @@ import type {
   ApproachContent, ApproachCreateArgs, ApproachDecideArgs, ApproachEnvelope, ApproachGetArgs,
   ApproachListArgs, ApproachListResult, ApproachReceipt, ApproachResult, ApproachRetryArgs, PublicProfile,
 } from "@humansandmachines/gsv/protocol";
-import { actorRefSchema, approachContentSchema, jsonValueSchema } from "@humansandmachines/gsv/protocol";
+import { actorRefSchema, approachContentSchema, jsonObjectSchema, jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod/mini";
 import type { KernelContext } from "../context";
 import { APPROACH_LIFETIME_MS } from "../approach-store";
-import { contactHandlingChoice, requireContactHuman } from "../federation/authority";
+import { contactHandlingChoice, requireContactCaller, requireContactHuman } from "../federation/authority";
 import { handleProfileResolve, profileOwnerActive } from "../profiles";
 import { canonicalJson, randomBase64Url, sha256Base64Url } from "../federation-crypto";
 import { localShipDocumentV2 } from "../federation/protocol";
 import { consumeLocalRateLimits, consumePublicRateLimits } from "../federation/limits";
 import { MAX_PUBLIC_JSON_BYTES } from "../federation/http";
 import { PublicFederationError } from "../federation/errors";
+import { authorizeNestedOperation, nestedToolOwner } from "../tool-approval";
 import { getConversationById } from "../../shared/utils";
 import { stableOpaqueId } from "../../shared/stable-id";
 import { approachFingerprint, approachLock, authenticateApproachPeer, sameActor, signApproachValue } from "./shared";
@@ -26,13 +27,21 @@ const createSchema = z.strictObject({
   shipHandlesMessages: z.optional(z.boolean()),
 });
 
+/** The owner's canonical Ship sees only the requests it may send; incoming requests are the human's to read and decide. */
+function requireOutgoingForProcess(direction: "incoming" | "outgoing", ctx: KernelContext): void {
+  if (ctx.processId && direction !== "outgoing") throw new Error("Incoming message requests require the signed-in human");
+}
+
 export function handleApproachGet(args: ApproachGetArgs, ctx: KernelContext): ApproachResult {
-  return { approach: ctx.approaches.owned(idSchema.parse(args.approachId), requireContactHuman(ctx)).summary };
+  const record = ctx.approaches.owned(idSchema.parse(args.approachId), requireContactCaller(ctx, true));
+  requireOutgoingForProcess(record.summary.direction, ctx);
+  return { approach: record.summary };
 }
 
 export function handleApproachList(args: ApproachListArgs, ctx: KernelContext): ApproachListResult {
-  const ownerUid = requireContactHuman(ctx);
+  const ownerUid = requireContactCaller(ctx, true);
   const direction = z.enum(["incoming", "outgoing"]).parse(args.direction);
+  requireOutgoingForProcess(direction, ctx);
   const status = z.optional(z.enum(["active", "history"])).parse(args.status);
   const limit = args.limit ?? 30;
   const before = args.before ? z.strictObject({ createdAtMs: z.int().check(z.positive()), id: idSchema }).parse(args.before) : undefined;
@@ -42,9 +51,16 @@ export function handleApproachList(args: ApproachListArgs, ctx: KernelContext): 
 }
 
 export async function handleApproachCreate(input: ApproachCreateArgs, ctx: KernelContext): Promise<ApproachResult> {
-  const ownerUid = requireContactHuman(ctx);
+  const ownerUid = requireContactCaller(ctx, true);
   const args = createSchema.parse(input);
   contactHandlingChoice(args.shipHandlesMessages, ctx);
+  // A message request reaches someone who is not a contact yet, so the Ship asks first
+  // unless the owner's approval policy says otherwise. A replay of a request already sent does not ask again.
+  if (!ctx.approaches.byIdempotencyKey(ownerUid, args.idempotencyKey)) {
+    // A direct process syscall carries no tool owner yet; derive it, as scheduling does, so the
+    // Ship's run policy applies however the request arrives. A signed-in human has none and is not asked.
+    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "approach.create", jsonObjectSchema.parse(args), "ask");
+  }
   return await ctx.coordinateFederationContact(`approach-send:${ownerUid}:${args.idempotencyKey}`, () => createApproach(args, ownerUid, ctx));
 }
 
@@ -80,7 +96,7 @@ async function createApproach(args: ApproachCreateArgs, ownerUid: number, ctx: K
   if (new TextEncoder().encode(JSON.stringify({ document, content, setup: { token } })).length + 1024 > MAX_PUBLIC_JSON_BYTES) {
     throw new Error("This message exceeds the encoded request limit");
   }
-  requireContactHuman(ctx);
+  requireContactCaller(ctx, true);
   const prepared = ctx.federation.transaction(() => {
     const peerContact = ctx.federation.getByRemote(ownerUid, profile.actor.shipId, profile.actor.subjectId);
     if (peerContact?.state === "active") throw new Error("You already have a conversation with this person");
@@ -127,8 +143,10 @@ export async function handleApproachDecide(args: ApproachDecideArgs, ctx: Kernel
 }
 
 export async function handleApproachRetry(args: ApproachRetryArgs, ctx: KernelContext): Promise<ApproachResult> {
-  const ownerUid = requireContactHuman(ctx);
-  const record = ctx.approaches.retry(idSchema.parse(args.approachId), ownerUid, revisionSchema.parse(args.expectedRevision));
+  const ownerUid = requireContactCaller(ctx, true);
+  const id = idSchema.parse(args.approachId);
+  requireOutgoingForProcess(ctx.approaches.owned(id, ownerUid).summary.direction, ctx);
+  const record = ctx.approaches.retry(id, ownerUid, revisionSchema.parse(args.expectedRevision));
   await ctx.scheduleApproachMaintenance();
   ctx.broadcastToUserUid(ownerUid, "approach.changed");
   return { approach: record.summary };

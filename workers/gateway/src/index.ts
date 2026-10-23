@@ -71,7 +71,7 @@ export default {
     }
 
     const publicAssetMatch = matchPublicAssetPath(url.pathname);
-    const gitMatch = matchGitPath(url);
+    const gitMatch = matchGitPath(request);
     const websocketRequest = url.pathname === "/ws" && isWebSocketRequest(request);
     const federationPath = isFederationPublicPath(url.pathname);
     const profilePath = matchPublicProfilePath(url.pathname);
@@ -127,8 +127,9 @@ export default {
     }
 
     if (profilePath) {
+      const { primaryDomain } = deploymentPresentation(env.GSV_PUBLIC_CONFIG);
       return servePublicProfileRequest(request, profilePath,
-        (locator) => kernelDO.getPublicProfileProjection(locator));
+        (locator) => kernelDO.getPublicProfileProjection(locator), primaryDomain ? `https://${primaryDomain}` : undefined);
     }
 
     if (federationPath) {
@@ -144,11 +145,15 @@ export default {
     }
 
     if (gitMatch) {
+      // Internal and unknown method/path combinations have no public caller.
+      if (gitMatch.access === "refuse") {
+        return new Response("Not Found", { status: 404 });
+      }
       const basicAuth = getBasicAuth(request);
       const authorized = await kernelDO.authorizeGitHttp({
         owner: gitMatch.owner,
         repo: gitMatch.repo,
-        write: gitMatch.write,
+        write: gitMatch.access === "write",
         username: basicAuth?.username,
         credential: basicAuth?.credential,
       });

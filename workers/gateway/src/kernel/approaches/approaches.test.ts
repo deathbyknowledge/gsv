@@ -6,7 +6,9 @@ import type { Kernel } from "../do";
 import { testPeer } from "../../test-support/peers";
 import { createInstallationStorage } from "../../installation/storage";
 import { getConversationById } from "../../shared/utils";
+import * as transport from "../../shared/utils";
 import type { KernelContext } from "../context";
+import type { ProcessRecord } from "../processes";
 import { ApproachStore } from "../approach-store";
 import { FederationStore } from "../federation-store";
 import { FederationIdentity } from "../federation-crypto";
@@ -17,8 +19,8 @@ import { handleProfilePublish, handleProfileUpdate } from "../profiles";
 import { handleFederationHttpRequest } from "../federation";
 import { handleContactBlockList, handleContactBlockSet } from "../federation/preferences";
 import { localShipDocumentV2 } from "../federation/protocol";
-import { handleApproachCreate, handleApproachDecide, handleApproachRetry } from "./admission";
-import { processApproachMaintenance } from "./runtime";
+import { handleApproachCreate, handleApproachDecide, handleApproachGet, handleApproachList, handleApproachRetry } from "./admission";
+import { expireOverdueApproach, processApproachMaintenance } from "./runtime";
 import { claimApproach } from "./pairing";
 import { APPROACH_CLAIM_PATH, APPROACH_PATH, signApproachValue } from "./shared";
 
@@ -98,10 +100,64 @@ describe("authenticated first contact", () => {
     });
   });
 
-  it("requires direct human creation and key possession for the exact recipient, then fences a block", async () => {
+  it("lets the owner's canonical Ship send a request and reads it back, but rejects other processes", async () => {
     await withSpaces(async (sender, recipient, profile) => {
       installTransport(sender, recipient, profile);
-      await expect(sender.run((ctx) => handleApproachCreate(sendIntent(profile), { ...ctx, processId: "proc:ship" }))).rejects.toThrow("signed-in human");
+      const procs = { get: (pid: string): Pick<ProcessRecord, "isPersonalController" | "ownerUid"> | null => ({ isPersonalController: pid === "proc:ship", ownerUid: OWNER.uid }) };
+      // SAFETY: the authority check reads only the calling process's controller flag and owner from the registry.
+      const asProcess = (ctx: KernelContext, processId: string) => ({ ...ctx, processId, procs } as KernelContext);
+      await expect(sender.run((ctx) => handleApproachCreate(sendIntent(profile), asProcess(ctx, "proc:crew")))).rejects.toThrow("signed-in human or their Ship");
+      const sent = (await sender.run((ctx) => handleApproachCreate({ ...sendIntent(profile), shipHandlesMessages: false }, asProcess(ctx, "proc:ship")))).approach;
+      expect((await sender.run((ctx) => handleApproachGet({ approachId: sent.id }, asProcess(ctx, "proc:ship")))).approach.id).toBe(sent.id);
+      expect((await sender.run((ctx) => handleApproachList({ direction: "outgoing" }, asProcess(ctx, "proc:ship")))).approaches.map((entry) => entry.id)).toEqual([sent.id]);
+      await expect(sender.run((ctx) => handleApproachList({ direction: "incoming" }, asProcess(ctx, "proc:ship")))).rejects.toThrow("signed-in human");
+      await sender.run(processApproachMaintenance);
+      const received = (await recipient.run((ctx) => handleApproachList({ direction: "incoming" }, ctx))).approaches[0];
+      await expect(recipient.run((ctx) => handleApproachGet({ approachId: received.id }, asProcess(ctx, "proc:ship")))).rejects.toThrow("signed-in human");
+      await expect(recipient.run((ctx) => handleApproachRetry({ approachId: received.id, expectedRevision: received.revision }, asProcess(ctx, "proc:ship")))).rejects.toThrow("signed-in human");
+      await expect(sender.run((ctx) => handleApproachDecide({ approachId: sent.id, expectedRevision: sent.revision, decision: "withdraw" }, asProcess(ctx, "proc:ship")))).rejects.toThrow("signed-in human");
+      await sender.run((ctx) => handleApproachDecide({ approachId: sent.id, expectedRevision: sent.revision, decision: "withdraw" }, ctx));
+    });
+  });
+
+  it("asks the owner before their Ship sends a message request and sends nothing when refused", async () => {
+    await withSpaces(async (sender, recipient, profile) => {
+      installTransport(sender, recipient, profile);
+      const procs = { get: (pid: string): Pick<ProcessRecord, "isPersonalController" | "ownerUid"> | null => ({ isPersonalController: pid === "proc:ship", ownerUid: OWNER.uid }) };
+      // SAFETY: the authority check reads only the calling process's controller flag and owner; the tool owner names the Ship's run.
+      const asShipTool = (ctx: KernelContext) => ({ ...ctx, processId: "proc:ship", procs, toolOwner: { runId: "run", requestId: "shell" } } as KernelContext);
+      const authorize = vi.spyOn(transport, "sendFrameToProcess").mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: false } });
+      await expect(sender.run((ctx) => handleApproachCreate({ ...sendIntent(profile), shipHandlesMessages: false }, asShipTool(ctx)))).rejects.toThrow("not approved");
+      expect(authorize).toHaveBeenCalledWith(sender.installationId, "proc:ship", expect.objectContaining({
+        call: "proc.tool.authorize",
+        args: expect.objectContaining({ syscall: "approach.create", defaultAction: "ask", args: expect.objectContaining({ profileUrl: profile.url }) }),
+      }));
+      expect(await sender.run((ctx) => ctx.approaches.list(OWNER.uid, { direction: "outgoing", limit: 10 }))).toEqual([]);
+      authorize.mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: true } });
+      const sent = (await sender.run((ctx) => handleApproachCreate({ ...sendIntent(profile), shipHandlesMessages: false }, asShipTool(ctx)))).approach;
+      expect((await sender.run((ctx) => ctx.approaches.list(OWNER.uid, { direction: "outgoing", limit: 10 }))).map((entry) => entry.id)).toEqual([sent.id]);
+    });
+  });
+
+  it("asks before a direct Ship syscall sends a message request, deriving the run that owns it", async () => {
+    await withSpaces(async (sender, recipient, profile) => {
+      installTransport(sender, recipient, profile);
+      const procs = { get: (pid: string): Pick<ProcessRecord, "isPersonalController" | "ownerUid"> | null => ({ isPersonalController: pid === "proc:ship", ownerUid: OWNER.uid }) };
+      // SAFETY: a direct process syscall carries the process, run and request ids but no tool owner.
+      const asShipSyscall = (ctx: KernelContext) => ({ ...ctx, processId: "proc:ship", processRunId: "run:direct", requestId: "req:direct", procs } as KernelContext);
+      const authorize = vi.spyOn(transport, "sendFrameToProcess").mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: false } });
+      await expect(sender.run((ctx) => handleApproachCreate({ ...sendIntent(profile), shipHandlesMessages: false }, asShipSyscall(ctx)))).rejects.toThrow("not approved");
+      expect(authorize).toHaveBeenCalledWith(sender.installationId, "proc:ship", expect.objectContaining({
+        call: "proc.tool.authorize",
+        args: expect.objectContaining({ runId: "run:direct", requestId: "req:direct", syscall: "approach.create", defaultAction: "ask" }),
+      }));
+      expect(await sender.run((ctx) => ctx.approaches.list(OWNER.uid, { direction: "outgoing", limit: 10 }))).toEqual([]);
+    });
+  });
+
+  it("requires key possession for the exact recipient, then fences a block", async () => {
+    await withSpaces(async (sender, recipient, profile) => {
+      installTransport(sender, recipient, profile);
       const created = (await sender.run((ctx) => handleApproachCreate(sendIntent(profile), ctx))).approach;
       await sender.run(processApproachMaintenance);
       const incoming = (await recipient.run((ctx) => ctx.approaches.list(OWNER.uid, { direction: "incoming", limit: 10 })))[0];
@@ -118,6 +174,21 @@ describe("authenticated first contact", () => {
       await expect(sender.run((ctx) => claimApproach(signed, ctx))).rejects.toThrow("no longer available");
       expect(await sender.run((ctx) => ctx.federation.contactCount())).toBe(0);
       expect((await sender.run((ctx) => ctx.approaches.get(created.id)))?.summary.state).toBe("blocked");
+    });
+  });
+
+  it("expires one overdue request directly, so a replacement is not blocked by its pending row", async () => {
+    await withSpaces(async (sender, recipient, profile) => {
+      installTransport(sender, recipient, profile);
+      const created = (await sender.run((ctx) => handleApproachCreate(sendIntent(profile), ctx))).approach;
+      const record = (await sender.run((ctx) => ctx.approaches.get(created.id)))!;
+      await sender.run((ctx) => expireOverdueApproach(record, ctx));
+      expect((await sender.run((ctx) => ctx.approaches.get(created.id)))?.summary.state).not.toBe("expired");
+      const clock = vi.spyOn(Date, "now").mockReturnValue(created.expiresAtMs + 1);
+      await sender.run((ctx) => expireOverdueApproach(record, ctx));
+      expect((await sender.run((ctx) => ctx.approaches.get(created.id)))?.summary.state).toBe("expired");
+      expect(await sender.run((ctx) => ctx.approaches.unresolved(OWNER.uid, profile.actor))).toBeNull();
+      clock.mockRestore();
     });
   });
 

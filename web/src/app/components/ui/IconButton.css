@@ -20,14 +20,14 @@
 .gsv-ibtn-floating {
   background: transparent;
   border: 0;
-  color: #7d78b8;
+  color: var(--text-dim);
   transition: color 0.12s;
 }
 .gsv-ibtn-floating:hover {
-  color: #b6b1ff;
+  color: var(--accent);
 }
 .gsv-ibtn-floating:active {
-  color: #e6e4ff;
+  color: var(--text-title);
 }
 .gsv-ibtn-floating:focus-visible {
   outline: 2px solid var(--accent);
@@ -35,7 +35,7 @@
   border-radius: 8px;
 }
 .gsv-ibtn-floating.is-disabled {
-  color: #565178;
+  color: var(--faint);
   pointer-events: none;
   cursor: not-allowed;
 }
@@ -57,14 +57,14 @@
   border-radius: 50%;
 }
 .gsv-ibtn-ghost.is-disabled {
-  color: #565199;
+  color: var(--placeholder);
   pointer-events: none;
   cursor: not-allowed;
 }
 .gsv-ibtn {
-  background: #0a0820;
-  border: 1px solid #322e74;
-  color: #9089d4;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 .gsv-ibtn:focus-visible {
@@ -72,19 +72,19 @@
   outline-offset: 2px;
 }
 .gsv-ibtn:hover {
-  background: #171441;
-  border-color: #b3aeff;
-  color: #cbc7ff;
+  background: var(--hover);
+  border-color: var(--accent);
+  color: var(--accent-bright);
 }
 .gsv-ibtn:active {
-  background: #201c4d;
-  border-color: #7a72d4;
-  color: #fff;
+  background: var(--active);
+  border-color: var(--primary-hi);
+  color: var(--text-hi);
 }
 .gsv-ibtn-disabled {
-  background: #0a0820;
-  border: 1px solid #25224d;
-  color: #565199;
+  background: var(--panel);
+  border: 1px solid var(--rule-inner);
+  color: var(--placeholder);
   pointer-events: none;
   cursor: not-allowed;
 }

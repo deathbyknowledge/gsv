@@ -180,7 +180,8 @@ describe("Kernel personal controller connect lifecycle", () => {
         auth: { isPersonalAgentUid: () => false, getPasswdByUsername: () => PROCESS_IDENTITY,
           credentialEpoch: () => 0, isAccountDisabled: () => false },
         conversations: { ensureShip: () => ({ id: "conv:ship", ownerUid: 1000, kind: "ship" }) },
-        config: { get: vi.fn(() => dismissed ? "1" : null) },
+        // The default profile was already applied; this test covers onboarding recovery only.
+        config: { get: vi.fn(() => dismissed ? "1" : null), getExplicit: () => "1" },
         responsibilities, welcome: onboarding, reconcileResponsibilityWake: vi.fn(() => wake),
         defer: (promise: Promise<unknown>) => deferred.push(promise),
       };
