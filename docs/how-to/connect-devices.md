@@ -37,9 +37,10 @@ until you choose **send**.
 
 ## Connect a browser
 
-Ship can also create a browser invitation and direct you to
-[ship.space/browser](https://ship.space/browser) for the extension and installation
-instructions.
+Ship can also create a browser invitation and give you a download link at
+`https://ship.space/browser?release=RELEASE` matched to your Ship’s release. To get
+the current public release yourself,
+[download the extension](https://ship.space/browser).
 
 Choose **Browser** in the same flow. Download and unzip the extension, called
 **Your Ship**, enable developer mode at `chrome://extensions`, and load its folder.

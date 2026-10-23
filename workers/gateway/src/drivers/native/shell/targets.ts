@@ -1,7 +1,7 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import { createPairingSecret, encodeDevicePairingCode, pairingGatewayUrl } from "@humansandmachines/gsv/protocol";
-import { buildCliInstallCommand, machineDeviceIdFromName } from "@humansandmachines/gsv/device-setup";
+import { buildCliInstallCommand, browserExtensionDownloadUrl, machineDeviceIdFromName } from "@humansandmachines/gsv/device-setup";
 import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
 import type { KernelContext } from "../../../kernel/context";
 import { handleSysPairCreate, handleSysPairList, handleSysPairCancel } from "../../../kernel/sys/pair";
@@ -126,8 +126,8 @@ async function pairTarget(args: string[], ctx: KernelContext): Promise<ExecResul
   }, ctx);
   const code = encodeDevicePairingCode(gatewayUrl, pairing, secret);
   const instructions = platform === "browser" ? {
-    extensionUrl: "https://ship.space/browser", code,
-    instructions: "Visit https://ship.space/browser for installation instructions, then paste the invitation code into the extension panel.",
+    extensionUrl: browserExtensionDownloadUrl(SERVER_RELEASE), code,
+    instructions: "Download and unzip Your Ship from the extensionUrl link. Enable developer mode in chrome://extensions and load the folder. Click the Your Ship icon in the toolbar, or find it under the Extensions button, then paste the invitation code into the extension panel.",
   } : {
     installCommand: buildCliInstallCommand(platform === "windows" ? "windows" : "unix", SERVER_RELEASE, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).installUrl),
     pairCommand: `${platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`,
