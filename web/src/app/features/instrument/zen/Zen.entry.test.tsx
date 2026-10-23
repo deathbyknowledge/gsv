@@ -797,7 +797,7 @@ describe("Zen conversation entry", () => {
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
       const prompt = () => zen.props<ComponentProps<typeof PromptLine>>(PromptLine);
       await act(() => { expect(prompt().onSubmit("Help me plan my week")).toBe(true); });
-      expect(zen.props(ZenText).text).toBe("Help me plan my week");
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Help me plan my week"));
       expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(true);
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
       expect(send).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "canonical-ship",
