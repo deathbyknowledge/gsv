@@ -42,3 +42,46 @@ it("lets a fresh device pin Light directly instead of presenting it as already s
     expect(signInTheme!).toBe("light");
   } finally { await root.unmount(); }
 });
+
+it.each([false, true])("hides stars across the app and sign-in with blocked storage: %s", async (blocked) => {
+  vi.resetModules();
+  const stored = new Map<string, string>();
+  vi.stubGlobal("document", {});
+  vi.stubGlobal("window", Object.assign(new EventTarget(), {
+    localStorage: {
+      getItem: (key: string) => { if (blocked) throw new Error("storage blocked"); return stored.get(key) ?? null; },
+      setItem: (key: string, value: string) => { if (blocked) throw new Error("storage blocked"); stored.set(key, value); },
+    },
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+  }));
+  const { ThemePreference } = await import("./ThemePreference");
+  const { InstrumentBackdrop } = await import("../shared/InstrumentBackdrop");
+  const { GlyphStars } = await import("../../session/backgrounds/GlyphStars");
+  let controls: ComponentChildren;
+  let background: ComponentChildren;
+  function Appearance() { controls = ThemePreference(); return null; }
+  function Backdrop() { background = InstrumentBackdrop(); return null; }
+  // SAFETY: Appearance's checkbox handler reads only currentTarget.checked.
+  const checkbox = () => collectNodes(controls).find((node) => node.type === "input") as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
+  const stars = () => collectNodes(background).filter((node) => node.type === GlyphStars);
+  const root = createTestRoot("Stars preference");
+  try {
+    await root.render(<><Appearance /><Backdrop /></>);
+    expect(checkbox().props.checked).toBe(true);
+    expect(stars()).toHaveLength(1);
+    await act(() => checkbox().props.onChange?.({ currentTarget: { checked: false } } as JSX.TargetedEvent<HTMLInputElement>));
+    expect(checkbox().props.checked).toBe(false);
+    expect(stars()).toHaveLength(0);
+    if (!blocked) expect(stored.get("gsv.instrument.stars")).toBe("false");
+
+    // Leaving the signed-in view mounts a fresh background without the settings controls.
+    await root.render(null);
+    await root.render(<Backdrop />);
+    expect(stars()).toHaveLength(0);
+    await root.render(<><Appearance /><Backdrop /></>);
+    expect(checkbox().props.checked).toBe(false);
+    await act(() => checkbox().props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>));
+    expect(stars()).toHaveLength(1);
+    if (!blocked) expect(stored.get("gsv.instrument.stars")).toBe("true");
+  } finally { await root.unmount(); }
+});

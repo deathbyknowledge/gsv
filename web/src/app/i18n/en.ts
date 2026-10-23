@@ -162,6 +162,7 @@ export const en = {
   "settings.appearance.system": "Match system",
   "settings.appearance.light": "Light",
   "settings.appearance.dark": "Dark",
+  "settings.appearance.showStars": "Show stars",
   "settings.appearance.hint": "Saved on this device only, not to your account. Press l outside a text field to switch between light and dark.",
 
   // Settings: standing responsibilities

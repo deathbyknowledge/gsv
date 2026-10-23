@@ -128,6 +128,11 @@ Under **Appearance**, choose **Match system** to follow this device's light or
 dark appearance. An explicit theme choice applies to both sign-in and the app.
 Before you choose, **Default** keeps sign-in dark and the app light.
 
+Outside a text field, press **x** to cycle through 85%, 100%, 150% and 200%
+sizes. Choose 85% to fit more messages on screen. Under **Settings → Preferences
+→ Appearance**, turn off **Show stars** for a plain background. Both choices are remembered on this
+device; the star preference also applies to sign-in.
+
 The Desktop app also includes **Settings → Voice** for its microphone, shortcuts,
 and spoken replies. Enable **Handsfree mode** to talk to your Ship from any page
 or another app while Desktop stays running and signed in. Its voice draft stays

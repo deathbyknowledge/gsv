@@ -2,6 +2,10 @@
 
 One Settings surface uses the web app header and existing gateway services. It edits the signed-in account’s defaults; it never chooses another account when identity is unavailable.
 
+Preferences → Appearance also offers **Show stars**. This device-local choice
+applies immediately to the shared background across views and sign-in, and
+survives reloads. Turning stars off stops their renderer and animation.
+
 The section rail fits its widest label, including an unsaved-change marker, and
 its buttons keep their natural height at every zoom level. A short
 viewport scrolls the rail instead of compressing its buttons. On narrow layouts,

@@ -163,6 +163,7 @@ export const es = {
   "settings.appearance.system": "Igual que el sistema",
   "settings.appearance.light": "Claro",
   "settings.appearance.dark": "Oscuro",
+  "settings.appearance.showStars": "Mostrar estrellas",
   "settings.appearance.hint": "Se guarda solo en este dispositivo, no en tu cuenta. Pulsa la tecla l fuera de un campo de texto para cambiar entre claro y oscuro.",
 
   // Settings: standing responsibilities

@@ -168,6 +168,7 @@ export const ptBR = {
   "settings.appearance.system": "Igual ao sistema",
   "settings.appearance.light": "Claro",
   "settings.appearance.dark": "Escuro",
+  "settings.appearance.showStars": "Mostrar estrelas",
   "settings.appearance.hint": "Salvo apenas neste dispositivo, não na sua conta. Pressione a tecla l fora de um campo de texto para alternar entre claro e escuro.",
 
   // Settings: standing responsibilities
