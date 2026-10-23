@@ -124,6 +124,26 @@ describe("explicit profile publication", () => {
     });
   });
 
+  it("retries publishing its own default draft after a failed sign-in, but never an owner's draft", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      const sign = vi.spyOn(ctx.federationIdentity, "sign").mockRejectedValueOnce(new Error("signing unavailable"));
+      await expect(ensureDefaultProfile(OWNER.uid, ctx)).rejects.toThrow("signing unavailable");
+      expect(ctx.profiles.published({ space: true })).toBeNull();
+      sign.mockRestore();
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })!.profile).toMatchObject({ displayName: "local", contactPolicy: "requests", revision: 1 });
+    });
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      vi.spyOn(ctx.federationIdentity, "sign").mockRejectedValueOnce(new Error("signing unavailable"));
+      await expect(ensureDefaultProfile(OWNER.uid, ctx)).rejects.toThrow("signing unavailable");
+      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, contactPolicy: "invitation" } }, ctx);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })).toBeNull();
+    });
+  });
+
   it("offers the Ship handle as the default draft name", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       expect(handleProfileGet(profileContext(storage)).profile.draft).toMatchObject({ displayName: "local", contactPolicy: "requests" });

@@ -44,13 +44,21 @@ export function ownerDisplayName(ownerUid: number, ctx: KernelContext): string |
  */
 export async function ensureDefaultProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
   const key = `users/${ownerUid}/profile/default_published`;
-  if (ctx.config.getExplicit(key) === "1" || !profileOwnerActive(ownerUid, ctx)) return;
+  const applied = ctx.config.getExplicit(key);
+  if (applied === "1" || !profileOwnerActive(ownerUid, ctx)) return;
   const origin = ctx.installationIdentity?.canonicalOrigin;
   if (!origin) return;
-  if (!ctx.profiles.get(ownerUid, origin)) {
-    const account = ctx.auth.getPasswdByUid(ownerUid)!;
-    const subject = ctx.federation.ensureSubject(ownerUid, account.gecos || account.username);
-    ctx.profiles.update(ownerUid, subject.id, 0, defaultProfileDraft(ownerUid, ctx));
+  const existing = ctx.profiles.get(ownerUid, origin);
+  // "pending" marks a default draft this hook wrote but has not published yet: a failure between the
+  // two retries on the next sign-in, while a draft the owner saved themselves is left alone.
+  const retry = applied === "pending" && existing && !existing.published && existing.revision === 1;
+  if (!existing || retry) {
+    if (!existing) {
+      ctx.config.set(key, "pending");
+      const account = ctx.auth.getPasswdByUid(ownerUid)!;
+      const subject = ctx.federation.ensureSubject(ownerUid, account.gecos || account.username);
+      ctx.profiles.update(ownerUid, subject.id, 0, defaultProfileDraft(ownerUid, ctx));
+    }
     await publishProfileRevision(ownerUid, 1, ctx);
     ctx.broadcastToUserUid(ownerUid, "profile.changed");
   }

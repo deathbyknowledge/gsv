@@ -12,6 +12,8 @@ import { contactDisplayName, jsonObjectSchema } from "@humansandmachines/gsv/pro
 import type { KernelContext } from "../../../kernel/context";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import { handleApproachCreate } from "../../../kernel/approaches/admission";
+import { processApproachMaintenance } from "../../../kernel/approaches/runtime";
+import { requireContactCaller } from "../../../kernel/federation/authority";
 import { sha256Base64Url } from "../../../kernel/federation-crypto";
 import {
   handleContactAliasSet,
@@ -184,6 +186,8 @@ async function connectToPerson(args: string[], ctx: KernelContext): Promise<Appr
   }
   if (!text?.trim()) throw new Error("connect requires --message TEXT");
   if (shipHandlesMessages === undefined) throw new Error("Ask the owner who should handle new messages, then use --handling manual|ship");
+  // Only the signed-in human or their canonical Ship may send, or replay, a message request.
+  requireContactCaller(ctx, true);
   const { profile } = await handleProfileResolve({ url: profileAddress(address, ctx) }, ctx);
   const ownerUid = resolveCallerOwnerUid(ctx);
   const name = displayName ?? ownerDisplayName(ownerUid, ctx);
@@ -202,6 +206,11 @@ async function connectToPerson(args: string[], ctx: KernelContext): Promise<Appr
       return { approach: previous.summary };
     }
     idempotencyKey = `connect:${await sha256Base64Url(`${base}\n${previous.summary.id}`)}`;
+  }
+  if ((ctx.approaches.unresolved(ownerUid, profile.actor)?.summary.expiresAtMs ?? Infinity) <= Date.now()) {
+    // A request past its deadline may still read as pending until maintenance runs; run it now so
+    // the replacement is not refused as a duplicate.
+    await processApproachMaintenance(ctx);
   }
   return await handleApproachCreate({
     profileUrl: profile.url, recipient: profile.actor, profileRevision: profile.revision, displayName: name, text, shipHandlesMessages, idempotencyKey,

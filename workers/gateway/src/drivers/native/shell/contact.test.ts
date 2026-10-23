@@ -4,15 +4,26 @@ import type { ApproachState, PublicProfile } from "@humansandmachines/gsv/protoc
 import type { ApproachRecord } from "../../../kernel/approach-store";
 import type { KernelContext } from "../../../kernel/context";
 import * as admission from "../../../kernel/approaches/admission";
+import * as runtime from "../../../kernel/approaches/runtime";
 import * as federation from "../../../kernel/federation";
 import * as profiles from "../../../kernel/profiles";
 import { testPeer } from "../../../test-support/peers";
 import { buildContactCommand } from "./contact";
 
-function shell(installationIdentity: KernelContext["installationIdentity"] = null, primaryDomain?: string, approaches: Pick<KernelContext["approaches"], "byIdempotencyKey"> = { byIdempotencyKey: () => null }) {
+type ShellApproaches = Pick<KernelContext["approaches"], "byIdempotencyKey" | "unresolved">;
+const OWNER_ACCOUNT = { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/home/owner" };
+
+function shell(installationIdentity: KernelContext["installationIdentity"] = null, primaryDomain?: string,
+  approaches: Partial<ShellApproaches> = {}, caller: { processId?: string } = {}) {
   const env = { GSV_PUBLIC_CONFIG: primaryDomain ? JSON.stringify({ primaryDomain }) : undefined };
-  // SAFETY: handlers are mocked here; command parsing only reads the caller grant, installation address and public deployment config.
-  const ctx = { installationIdentity, env, peer: testPeer({ account: { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/home/owner" }, calls: ["contact.*", "profile.resolve", "approach.create"] }), approaches } as KernelContext;
+  const store: ShellApproaches = { byIdempotencyKey: () => null, unresolved: () => null, ...approaches };
+  // SAFETY: handlers are mocked here; command parsing reads the caller grant and identity, installation address and public deployment config.
+  const ctx = {
+    installationIdentity, env, approaches: store, connection: caller.processId ? undefined : {}, ...caller,
+    peer: testPeer({ account: OWNER_ACCOUNT, calls: ["contact.*", "profile.resolve", "approach.create"] }),
+    procs: { get: () => ({ isPersonalController: false, ownerUid: OWNER_ACCOUNT.uid }), getOwnerUid: () => OWNER_ACCOUNT.uid },
+    auth: { getPasswdByUid: () => OWNER_ACCOUNT, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false },
+  } as KernelContext;
   return new Bash({ customCommands: [buildContactCommand(ctx)] });
 }
 
@@ -94,6 +105,36 @@ describe("contact connect", () => {
       expect(changed.stderr).toContain("already waiting for an answer");
     }
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a delegated process before reading or replaying a stored request", async () => {
+    const resolve = vi.spyOn(profiles, "handleProfileResolve").mockResolvedValue({ profile });
+    const create = vi.spyOn(admission, "handleApproachCreate");
+    const lookup = vi.fn(() => approachRecord({ id: "approach:pending", state: "pending" }));
+    const result = await shell(esteve, undefined, { byIdempotencyKey: lookup }, { processId: "proc:crew" }).exec("contact connect @ada --message 'Hi Ada' --handling manual");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("signed-in human or their Ship");
+    expect(result.stdout).not.toContain("approach:pending");
+    expect(lookup).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("runs maintenance before replacing a request that passed its deadline but still reads as pending", async () => {
+    vi.spyOn(profiles, "handleProfileResolve").mockResolvedValue({ profile });
+    vi.spyOn(profiles, "ownerDisplayName").mockReturnValue("Owner Person");
+    const maintenance = vi.spyOn(runtime, "processApproachMaintenance").mockResolvedValue();
+    const create = vi.spyOn(admission, "handleApproachCreate").mockImplementation(async () => { throw new Error("reached create"); });
+    const overdue = approachRecord({ id: "approach:overdue", state: "pending" });
+    overdue.summary.expiresAtMs = Date.now() - 1;
+    const keys: string[] = [];
+    const bash = shell(esteve, undefined, {
+      byIdempotencyKey: (_uid, key) => { keys.push(key); return keys.length === 1 ? overdue : null; },
+      unresolved: () => overdue,
+    });
+    expect((await bash.exec("contact connect @ada --message 'Hi Ada' --handling manual")).stderr).toContain("reached create");
+    expect(maintenance).toHaveBeenCalledOnce();
+    expect(maintenance.mock.invocationCallOrder[0]).toBeLessThan(create.mock.invocationCallOrder[0]);
   });
 
   it("sends nothing without a message or a handling choice", async () => {
