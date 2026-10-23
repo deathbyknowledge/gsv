@@ -2,11 +2,11 @@ import type { PublicProfile } from "@humansandmachines/gsv/protocol";
 
 /** `homeOrigin` is the operator's own site (their primary domain); without one the wordmark stays plain. */
 export function renderPublicProfile(profile: PublicProfile, homeOrigin?: string, recordedHandle?: string): string {
-  const documentUrl = `${profile.origin}/_gsv/federation/v2/subjects/${encodeURIComponent(profile.actor.subjectId)}`;
+  const documentUrl = profile.url;
   // Handles in the request form resolve only on the operator's own domain.
   const handleDomain = homeOrigin ? new URL(homeOrigin).host : undefined;
   // The recorded handle names the profile; without one, a retained alias or the profile's own name.
-  const handle = recordedHandle ? `@${recordedHandle}` : profile.version === 2 ? `@${profile.alias}` : profile.displayName;
+  const handle = `@${recordedHandle || profile.handle}`;
   // An open profile offers the request form; a restricted one says so in the same place.
   const restricted = profile.contactPolicy === "requests"
     ? `<details class="connect" id="connect"><summary>Message from your Ship <span aria-hidden="true">↗</span></summary>

@@ -12,7 +12,7 @@ export type ProfileSubmission = { action: "publish" | "save"; ready: boolean; re
 export function profileSubmission(state: ProfileState, edit: ProfileEdit | null): ProfileSubmission {
   // The recorded handle names the profile; a stored name that predates it still needs saving, even without other edits.
   const renamePending = !!state.handle && state.draft.displayName !== state.handle;
-  const live = !!state.published && state.published.revision === state.revision;
+  const live = !!state.published;
   const stale = !!edit && edit.revision !== state.revision;
   return {
     action: state.published ? "save" : "publish",

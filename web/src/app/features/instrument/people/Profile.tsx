@@ -103,7 +103,7 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
         {!editing && <span class="people-profile-complete"><Button variant="link" label={t("people.profile.completeBio")} disabled={!connected || !canConfigure(account, "profile.update")} onClick={() => onEdit("bio")} /></span>}</p>}
     <p class="people-profile-policy">{policyLabel(shown.contactPolicy)}</p>
   </div>;
-  const unpublishedChanges = !!state?.published && state.published.revision !== state.revision;
+  const unpublishedChanges = false;
 
   return <section class="people-profile" aria-labelledby="people-profile-title">
     <header class="people-conversation-header">

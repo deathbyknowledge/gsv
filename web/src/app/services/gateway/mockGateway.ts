@@ -126,7 +126,7 @@ const SHIP = { pid: "p-ship", uid: 1001, username: "ship", home: "/home/ship" };
 const PROFILE_URL = `https://${OWNER.username}.ship.space/profile`;
 /** The owner's own profile, public by default with an empty bio, editable in memory. */
 let ownProfile: ProfileState = {
-  revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests", representation: "human" }, published: { url: PROFILE_URL, revision: 1, contactPolicy: "requests" }, handle: OWNER.username,
+  revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests" }, published: { url: PROFILE_URL, cid: "bafyreimockprofile", contactPolicy: "requests" }, handle: OWNER.username,
 };
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
@@ -964,13 +964,13 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "profile.get": return respond(id, { profile: ownProfile });
     case "profile.update": {
       const { draft } = z.object({ expectedRevision: z.number(), draft: z.object({
-        displayName: z.string(), about: z.string(), contactPolicy: z.enum(["requests", "invitation", "closed"]), representation: z.enum(["human", "human-and-ship"]),
+        displayName: z.string(), about: z.string(), contactPolicy: z.enum(["requests", "invitation", "closed"]),
       }) }).parse(args);
       ownProfile = { ...ownProfile, revision: ownProfile.revision + 1, draft };
       return respond(id, { profile: ownProfile });
     }
     case "profile.publish": {
-      ownProfile = { ...ownProfile, published: { url: PROFILE_URL, revision: ownProfile.revision, contactPolicy: ownProfile.draft.contactPolicy } };
+      ownProfile = { ...ownProfile, published: { url: PROFILE_URL, cid: `bafyreimockprofile${ownProfile.revision}`, contactPolicy: ownProfile.draft.contactPolicy } };
       return respond(id, { profile: ownProfile });
     }
     case "profile.unpublish": {
