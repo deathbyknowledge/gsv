@@ -550,9 +550,8 @@
   overflow-y: auto;
 }
 .instrument.is-light .instrument-help { box-shadow: 0 14px 40px rgba(20, 17, 43, 0.15); }
-.instrument-help-content { position: relative; }
 .instrument-help-content > h2 { padding-right: 36px; }
-.instrument-help-close { position: absolute; top: -8px; right: -8px; display: grid; place-items: center; width: 44px; height: 44px; color: var(--label); font-size: 18px; line-height: 1; }
+.instrument-help-close { position: absolute; top: 0; right: 0; display: grid; place-items: center; width: 44px; height: 44px; color: var(--label); font-size: 18px; line-height: 1; }
 .instrument-help-close:hover { color: var(--accent); }
 .instrument-help-search { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 0 0 10px; margin-bottom: 12px; border-bottom: 1px solid var(--border-raised); color: var(--text-hi); text-align: left; }
 .instrument-help-search:hover { color: var(--accent); }
