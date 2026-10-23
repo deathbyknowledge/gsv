@@ -1299,9 +1299,11 @@ export const ptBR = {
   "shell.approval.alwaysAllowHint": "Permite que esta conversa execute qualquer comando de terminal em {place} sem perguntar de novo. As outras conversas continuam perguntando.",
   "shell.approval.alwaysAllow": "Sempre permitir",
   "shell.approval.waiting": "nada é executado até você responder",
-  "shell.approval.toastLabel": "Aprovação do Ship",
-  "shell.approval.toastTitle": "Seu Ship precisa da sua aprovação",
-  "shell.approval.openChat": "Abrir o Chat",
+  "shell.approval.toastLabel": "Aprovações pendentes",
+  "shell.approval.waitingFor": "{work} aguarda sua aprovação",
+  "shell.approval.ship": "Ship",
+  "shell.approval.open": "Abrir",
+  "shell.approval.more": { one: "mais {count} aguardando", other: "mais {count} aguardando" },
 
   // Shell: welcome
   "shell.retryButton": "Tentar de novo",

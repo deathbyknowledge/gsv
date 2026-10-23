@@ -1,7 +1,9 @@
 /* the Ship's approval away from Chat: handsfree's corner card, in the approval card's colour */
 .approval-toast { flex-shrink: 0; padding: 14px 16px; border: 1px solid var(--update); background: var(--panel); color: var(--text); box-shadow: 0 8px 28px #0003, 0 0 18px rgba(255, 210, 77, 0.12); font: 12px/1.5 var(--gsv-font-mono); }
-.approval-toast header { color: var(--update); letter-spacing: 0.14em; text-transform: uppercase; font-size: 11px; }
-.approval-toast-title { margin-left: 10px; color: var(--text-hi); letter-spacing: normal; text-transform: none; font-size: 12px; }
+.approval-toast header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.approval-toast-title { color: var(--update); }
+.approval-toast-more { color: var(--text-dim); }
+.approval-toast-live { position: absolute; width: 1px; height: 1px; padding: 0; margin: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .approval-toast-sentence { margin: 8px 0 0; font: 13px/1.45 var(--gsv-font-prose); overflow-wrap: anywhere; }
 .approval-toast-line { display: block; margin-top: 6px; overflow: hidden; color: var(--text-dim); text-overflow: ellipsis; white-space: nowrap; }
 .approval-toast-actions { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; }

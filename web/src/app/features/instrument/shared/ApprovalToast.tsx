@@ -1,59 +1,91 @@
-import { useCallback } from "preact/hooks";
-import { useQuery, useQueryClient } from "@tanstack/preact-query";
-import { findConsolePersonalProcess } from "../../../domain/system/consoleProcesses";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/preact-query";
+import type { ProcHilArgs, ProcHilRequest } from "@humansandmachines/gsv/protocol";
+import type { ConsoleProcess } from "../../../domain/system/consoleModels";
 import { useT } from "../../../i18n/locale";
-import { getProcessHistorySync } from "../../../services/chat/backend/historySync";
+import { decideChatHil, getChatHistory } from "../../../services/chat/backend/chatService";
 import { canAlwaysAllow, hilRequestLine, hilRequestSentence } from "../../../services/chat/domain/hil";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleProcesses, loadConsoleTargets } from "../../../services/system/consoleService";
 import { INSTRUMENT_LEDGER_KEY, INSTRUMENT_PROCESSES_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import { placeLabel } from "../zen/zenModel";
-import { useShipApproval, type ShipApproval } from "./useShipApproval";
+import { useVisibleApprovals } from "./visibleApprovals";
 import "./approvalToast.css";
 
-/**
- * The Ship's pending approval while Chat is not showing it: a corner toast beside
- * handsfree's that answers through the same request as Chat's card. It announces
- * itself but never takes focus; Chat keeps the full card.
- */
-export function ApprovalToast({ approval, hidden, place = (target) => placeLabel(target, []), onOpenChat }: {
-  approval: ShipApproval;
-  hidden: boolean;
-  place?: (target: string) => string;
-  onOpenChat: () => void;
-}) {
-  const t = useT();
-  const { request, deciding, error, decide } = approval;
-  if (hidden || !request) return null;
-  const line = hilRequestLine(request);
-  return <aside class="approval-toast" aria-label={t("shell.approval.toastLabel")} data-instrument-dialog onKeyDown={(event) => event.stopPropagation()}>
-    <header><span>{t("shell.approval.label")} <span class="approval-toast-title" role="status">{t("shell.approval.toastTitle")}</span></span></header>
-    <p class="approval-toast-sentence">{hilRequestSentence(request, place(request.target))}</p>
-    {line?.lead === "prompt" && <code class="approval-toast-line">$ {line.text}</code>}
-    <div class="approval-toast-actions">
-      <button type="button" class="primary" disabled={deciding} onClick={() => decide("approve")}>{t("shell.approval.run")}</button>
-      {canAlwaysAllow(request) && <button type="button" disabled={deciding} title={t("shell.approval.alwaysAllowHint", { place: place(request.target) })} onClick={() => decide("approve", true)}>{t("shell.approval.alwaysAllow")}</button>}
-      <button type="button" disabled={deciding} onClick={() => decide("deny")}>{t("shell.approval.deny")}</button>
-      <button type="button" class="approval-toast-open" onClick={onOpenChat}>{t("shell.approval.openChat")}</button>
-    </div>
-    {error && <p class="approval-toast-error" role="alert">{error}</p>}
-  </aside>;
-}
+export type PendingApproval = { process: ConsoleProcess; request: ProcHilRequest };
+type Decision = { approval: PendingApproval; decision: ProcHilArgs["decision"]; remember: boolean };
 
-/** The app-wide prompt: follows the current Ship pid and shares Chat's history sync and place names. */
-export function ShipApprovalPrompt({ hidden, onOpenChat }: { hidden: boolean; onOpenChat: () => void }) {
+const PENDING_KEY = ["approvals", "pending"] as const;
+
+/**
+ * Every approval waiting for this person, from any of their processes, in a corner
+ * card beside handsfree's. The process registry, which WireSync keeps current from
+ * the wire, says who is waiting; each one's history supplies the exact request, so a
+ * request answered anywhere, or a run that ends, leaves as soon as the registry moves.
+ * A request whose own card is on screen stays with that card. The newest shows, with
+ * a count of the rest; it announces itself through a live region and never takes focus.
+ */
+export function ApprovalPrompt({ onOpen }: { onOpen: (approval: PendingApproval) => void }) {
+  const t = useT();
   const { client, connected } = useGateway();
   const queries = useQueryClient();
   const processes = useQuery({ queryKey: INSTRUMENT_PROCESSES_KEY, queryFn: () => loadConsoleProcesses(client), enabled: connected });
   const targets = useQuery({ queryKey: INSTRUMENT_TARGETS_KEY, queryFn: () => loadConsoleTargets(client), enabled: connected });
-  const shipPid = findConsolePersonalProcess(processes.data ?? [])?.pid ?? null;
-  const observe = useCallback((pid: string) => getProcessHistorySync(client, queries).watch(pid), [client, queries]);
-  const approval = useShipApproval({ client, connected, shipPid, observe });
+  const waiting = (processes.data ?? []).filter((process) => process.state === "waiting_hil" && process.activeRunId);
+  const requests = useQueries({
+    queries: waiting.map((process) => ({
+      queryKey: [...PENDING_KEY, process.pid, process.activeRunId],
+      queryFn: async () => (await getChatHistory(client, { pid: process.pid, includeMessages: false })).pendingHil,
+      enabled: connected,
+    })),
+  });
+  const visible = useVisibleApprovals();
+  const decide = useMutation({
+    mutationFn: ({ approval: { request }, decision, remember }: Decision) => {
+      const args: ProcHilArgs = { pid: request.pid, requestId: request.requestId, decision };
+      if (remember) args.remember = true;
+      return decideChatHil(client, args);
+    },
+    onSettled: () => {
+      void queries.invalidateQueries({ queryKey: PENDING_KEY });
+      void queries.invalidateQueries({ queryKey: INSTRUMENT_PROCESSES_KEY });
+      void queries.invalidateQueries({ queryKey: INSTRUMENT_LEDGER_KEY });
+    },
+  });
+  const decided = decide.isSuccess ? decide.variables.approval.request.requestId : null;
+  const approvals = waiting.flatMap((process, index): PendingApproval[] => {
+    const request = requests[index]?.data;
+    return request && request.pid === process.pid && request.runId === process.activeRunId
+      && request.requestId !== decided && !visible.has(request.requestId) ? [{ process, request }] : [];
+  }).sort((a, b) => b.request.createdAt - a.request.createdAt);
+
+  const shown = approvals[0];
+  const work = shown ? shown.process.personal ? t("shell.approval.ship") : shown.process.label || shown.process.pid : "";
+  const title = shown ? t("shell.approval.waitingFor", { work }) : "";
   const places = (targets.data ?? []).map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online }));
-  const decide: ShipApproval["decide"] = async (decision, remember) => {
-    await approval.decide(decision, remember);
-    void queries.invalidateQueries({ queryKey: INSTRUMENT_PROCESSES_KEY });
-    void queries.invalidateQueries({ queryKey: INSTRUMENT_LEDGER_KEY });
+  const place = shown ? placeLabel(shown.request.target, places) : "";
+  const line = shown ? hilRequestLine(shown.request) : null;
+  const deciding = decide.isPending || !connected;
+  const answer = (decision: ProcHilArgs["decision"], remember = false) => {
+    if (shown && !deciding) decide.mutate({ approval: shown, decision, remember });
   };
-  return <ApprovalToast approval={{ ...approval, decide }} hidden={hidden} place={(target) => placeLabel(target, places)} onOpenChat={onOpenChat} />;
+  const failed = decide.error && decide.variables?.approval.request.requestId === shown?.request.requestId ? decide.error.message : null;
+
+  return <>
+    <p class="approval-toast-live" role="status">{title}</p>
+    {shown && <aside class="approval-toast" aria-label={t("shell.approval.toastLabel")} data-instrument-dialog onKeyDown={(event) => event.stopPropagation()}>
+      <header>
+        <span class="approval-toast-title">{title}</span>
+        {approvals.length > 1 && <span class="approval-toast-more">{t("shell.approval.more", { count: approvals.length - 1 })}</span>}
+      </header>
+      <p class="approval-toast-sentence">{hilRequestSentence(shown.request, place)}</p>
+      {line?.lead === "prompt" && <code class="approval-toast-line">$ {line.text}</code>}
+      <div class="approval-toast-actions">
+        <button type="button" class="primary" disabled={deciding} onClick={() => answer("approve")}>{t("shell.approval.run")}</button>
+        {canAlwaysAllow(shown.request) && <button type="button" disabled={deciding} title={t("shell.approval.alwaysAllowHint", { place })} onClick={() => answer("approve", true)}>{t("shell.approval.alwaysAllow")}</button>}
+        <button type="button" disabled={deciding} onClick={() => answer("deny")}>{t("shell.approval.deny")}</button>
+        <button type="button" class="approval-toast-open" onClick={() => onOpen(shown)}>{t("shell.approval.open")}</button>
+      </div>
+      {failed && <p class="approval-toast-error" role="alert">{failed}</p>}
+    </aside>}
+  </>;
 }

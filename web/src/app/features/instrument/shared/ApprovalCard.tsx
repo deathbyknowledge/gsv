@@ -1,9 +1,12 @@
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import type { Ref } from "preact";
+import { useEffect } from "preact/hooks";
 import { Hint } from "../../../components/ui/Tooltip";
 import { useT } from "../../../i18n/locale";
+import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { canAlwaysAllow, hilDetailLabel, hilRequestLine, hilRequestSentence } from "../../../services/chat/domain/hil";
 import { commandLine } from "./commandLine";
+import { showApprovalCard } from "./visibleApprovals";
 import "./approvalCard.css";
 
 export type ApprovalCardProps = {
@@ -23,6 +26,8 @@ export type ApprovalCardProps = {
 /** Ship's pending approval: what it wants to do in the person's words, the raw request folded beneath. */
 export function ApprovalCard({ request, who, place, label, disabled = false, shortcuts = true, approveRef, onInspect, onDecide }: ApprovalCardProps) {
   const t = useT();
+  const active = useViewActive();
+  useEffect(() => active ? showApprovalCard(request.requestId) : undefined, [active, request.requestId]);
   const line = hilRequestLine(request);
   const heading = <>{label ?? t("shell.approval.label")} · {place}</>;
   const exactDetails = <pre class="approval-exact">{JSON.stringify({ syscall: request.syscall, target: request.target, args: request.args }, null, 2)}</pre>;

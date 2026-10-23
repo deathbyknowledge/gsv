@@ -68,9 +68,9 @@ With the computer connected, ask Ship things like:
 
 ## Permissions
 
-When Ship asks to run a command, Chat and Work show the same approval card. On any
-other page, a card in the corner names the request and offers the same choices,
-plus **Open Chat**. Expand
+When Ship asks to run a command, Chat and Work show the same approval card. Anywhere
+that card is not on screen, a card in the corner names the work that asks and
+offers the same choices, plus **Open** to go to the full card. Expand
 **show the command** to inspect it, then **full request** for all execution
 arguments. Choose **Allow once** to approve it once or **Block** to decline.
 Typing **yes** or **no** in the prompt answers too; anything else you write

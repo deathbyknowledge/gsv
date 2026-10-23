@@ -33,7 +33,7 @@ import { useGateway } from "../../services/gateway/GatewayProvider";
 import { trackClientActivity } from "../../services/gateway/clientActivity";
 import { NativeVoiceSession } from "../../services/platform/NativeVoiceSession";
 import { HandsfreeStatus } from "../../services/platform/HandsfreeStatus";
-import { ShipApprovalPrompt } from "./shared/ApprovalToast";
+import { ApprovalPrompt } from "./shared/ApprovalToast";
 import { useT } from "../../i18n/locale";
 import "./instrument.css";
 
@@ -294,7 +294,8 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       <div class="instrument-scaled">
       <div class="instrument-corner">
         <HandsfreeStatus />
-        <ShipApprovalPrompt hidden={distance === "zen" && zenPid === null} onOpenChat={() => {
+        <ApprovalPrompt onOpen={({ process, request }) => {
+          if (!process.personal) { move("fleet", { kind: "approval", pid: process.pid, requestId: request.requestId }); return; }
           if (zenPid && zenDirty && !window.confirm(t("shell.confirm.returnToShip"))) return;
           if (!move("zen")) return;
           setZenPid(null);
