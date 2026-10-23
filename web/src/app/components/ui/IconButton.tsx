@@ -200,7 +200,7 @@ const VARIANT_BASE = {
 /** IconButton — ported from IconButton.dc.html. Square icon button with inline
  *  SVG glyphs, named or numeric size, disabled + title + onClick. `variant`
  *  selects the visual treatment (default filled / floating borderless). */
-export function IconButton({ glyph = "back", size = "medium", disabled = false, variant = "default", ghost = false, className, title = "", ariaLabel, ariaDescribedBy, onClick }: IconButtonProps) {
+export function IconButton({ glyph = "back", size = "medium", disabled = false, variant = "default", ghost = false, className, title = "", ariaLabel, ariaDescribedBy, "aria-describedby": injectedDescribedBy, onClick }: IconButtonProps) {
   const numericSize = Number(size);
   const px = Number.isFinite(numericSize) && numericSize > 0
     ? numericSize
@@ -210,7 +210,7 @@ export function IconButton({ glyph = "back", size = "medium", disabled = false, 
   // default variant which has its own dedicated disabled class.
   const disabledCls = ghost || variant === "floating" ? `${base} is-disabled` : "gsv-ibtn-disabled";
   const cls = [disabled ? disabledCls : base, className].filter(Boolean).join(" ");
-  const describedBy = ariaDescribedBy;
+  const describedBy = ariaDescribedBy ?? injectedDescribedBy;
   return (
     <button
       type="button"
