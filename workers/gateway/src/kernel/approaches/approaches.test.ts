@@ -130,7 +130,7 @@ describe("authenticated first contact", () => {
       await expect(sender.run((ctx) => handleApproachCreate({ ...sendIntent(profile), shipHandlesMessages: false }, asShipTool(ctx)))).rejects.toThrow("not approved");
       expect(authorize).toHaveBeenCalledWith(sender.installationId, "proc:ship", expect.objectContaining({
         call: "proc.tool.authorize",
-        args: expect.objectContaining({ syscall: "approach.create", defaultAction: "ask", args: expect.objectContaining({ profileUrl: profile.url }) }),
+        args: expect.objectContaining({ syscall: "approach.create", args: expect.objectContaining({ profileUrl: profile.url }) }),
       }));
       expect(await sender.run((ctx) => ctx.approaches.list(OWNER.uid, { direction: "outgoing", limit: 10 }))).toEqual([]);
       authorize.mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: true } });
@@ -149,7 +149,7 @@ describe("authenticated first contact", () => {
       await expect(sender.run((ctx) => handleApproachCreate({ ...sendIntent(profile), shipHandlesMessages: false }, asShipSyscall(ctx)))).rejects.toThrow("not approved");
       expect(authorize).toHaveBeenCalledWith(sender.installationId, "proc:ship", expect.objectContaining({
         call: "proc.tool.authorize",
-        args: expect.objectContaining({ runId: "run:direct", requestId: "req:direct", syscall: "approach.create", defaultAction: "ask" }),
+        args: expect.objectContaining({ runId: "run:direct", requestId: "req:direct", syscall: "approach.create" }),
       }));
       expect(await sender.run((ctx) => ctx.approaches.list(OWNER.uid, { direction: "outgoing", limit: 10 }))).toEqual([]);
     });

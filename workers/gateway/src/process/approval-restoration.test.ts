@@ -40,6 +40,7 @@ describe("approval target persistence", () => {
         ] },
       });
       vi.spyOn(process.kernel, "resolveApprovalTarget").mockResolvedValue(target);
+      vi.spyOn(process.kernel, "readApprovalPolicy").mockResolvedValue(JSON.stringify(process.runs.active.approvalPolicy));
       vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
       process.store.tools.register("shell", "call", "run", "shell.exec", { target: "browser", input: "page snapshot" });
       expect(await process.tools.processToolCalls("run")).toMatchObject({ approvedTarget: target });

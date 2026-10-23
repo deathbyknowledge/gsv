@@ -587,7 +587,7 @@ export async function handleSchedulerAdd(
   const target = normalizeShipScheduleTarget(normalizeScheduleTarget(args.target), ctx);
   validateScheduleTargetAccess(target, ctx);
   if (target.kind === "command.exec") {
-    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "sched.add", { ...args, target }, "ask");
+    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "sched.add", { ...args, target });
     assertSchedulableAtExpression(expression, args.enabled !== false, Date.now());
   }
 
@@ -638,7 +638,7 @@ export async function handleSchedulerUpdate(
   if (nextTarget.kind === "command.exec" && (nextEnabled || args.patch.target !== undefined)) {
     await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "sched.update", {
       ...args, patch: { ...args.patch, target: nextTarget },
-    }, "ask");
+    });
     if (store.getStored(existing.id)?.updatedAtMs !== existing.updatedAtMs) {
       throw new Error("Schedule changed while waiting for approval; read it again before updating");
     }

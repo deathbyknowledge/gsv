@@ -4,7 +4,6 @@ import { z } from "zod";
 import { DEFAULT_TOOL_APPROVAL_POLICY, toolApprovalTargetSchema, type ToolApprovalTarget } from "@humansandmachines/gsv/protocol";
 import {
   approvalTargetFromValue,
-  protectManagedMailApproval,
   type ApprovalPolicyAction,
   type ApprovalPolicyRule,
   type ApprovalPolicyValue,
@@ -223,10 +222,10 @@ export function parseApprovalPolicy(raw: string): ApprovalPolicy {
           })
           .filter((rule): rule is ApprovalRule => rule !== null)
       : [];
-    return protectManagedMailApproval({
+    return {
       default: parsed.default === undefined ? DEFAULT_APPROVAL_POLICY.default : approvalActionFromValue(parsed.default),
       rules: parsed.rules === undefined ? DEFAULT_APPROVAL_POLICY.rules : rules,
-    });
+    };
   } catch {
     return DEFAULT_APPROVAL_POLICY;
   }

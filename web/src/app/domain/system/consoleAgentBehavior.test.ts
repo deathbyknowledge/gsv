@@ -160,19 +160,22 @@ describe("console agent behavior", () => {
       "web.search",
       "sys.mcp.call",
       "mail.send",
+      "sched.add",
+      "sched.update",
+      "approach.create",
     ]);
     for (const match of ["fs.*", "shell.exec", "net.fetch"]) {
       expect(policy.rules).toContainEqual({ match, target: { route: "instance", platform: "linux" }, action: "auto" });
     }
   });
 
-  it("makes outbound mail ask-only when loading an older allow-by-default policy", () => {
+  it("shows a saved policy's mail rules exactly as stored", () => {
     const policy = parseApprovalPolicy(JSON.stringify({
       default: "auto",
       rules: [{ match: "fs.delete", action: "ask" }],
     }));
 
-    expect(policy.rules).toContainEqual({ match: "mail.send", action: "ask" });
+    expect(policy.rules).toEqual([{ match: "fs.delete", action: "ask" }]);
   });
 
   it("preserves an explicit wildcard mail policy", () => {
@@ -202,10 +205,9 @@ describe("console agent behavior", () => {
       { match: "shell.exec", target: "gsv", action: "ask" },
       { match: "shell.exec", target: "targets/*", action: "deny" },
       { match: "fs.read", target: "macbook", action: "auto" },
-      { match: "mail.send", action: "ask" },
     ]);
     expect(serializeApprovalPolicy(policy)).toBe(
-      '{"default":"auto","rules":[{"match":"shell.exec","target":"gsv","action":"ask"},{"match":"shell.exec","target":"targets/*","action":"deny"},{"match":"fs.read","target":"macbook","action":"auto"},{"match":"mail.send","action":"ask"}]}',
+      '{"default":"auto","rules":[{"match":"shell.exec","target":"gsv","action":"ask"},{"match":"shell.exec","target":"targets/*","action":"deny"},{"match":"fs.read","target":"macbook","action":"auto"}]}',
     );
   });
 });

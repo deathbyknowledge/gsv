@@ -86,7 +86,6 @@ export type CreateConsoleAgentInput = {
   description: string;
   model?: string;
   reasoning?: string;
-  approval?: string;
   /** Fixed portrait assigned at creation (see agentPresentation.pickAgentImage). */
   avatarSrc?: string;
   files: readonly ConsoleAgentContextFileDraft[];
@@ -113,7 +112,6 @@ export type SaveConsoleAgentBehaviorInput = {
   uid: number;
   model?: string;
   reasoning: string;
-  approval?: string;
 };
 
 export type SaveConsoleAgentBehaviorResult = {
@@ -937,7 +935,6 @@ async function loadOptionalPayload(load: () => Promise<GatewayPayload>): Promise
 type AgentBehaviorConfigDraft = {
   model?: string;
   reasoning?: string;
-  approval?: string;
 };
 
 async function saveAgentBehaviorConfig(
@@ -948,7 +945,6 @@ async function saveAgentBehaviorConfig(
 ): Promise<void> {
   const model = input.model?.trim() ?? "";
   const reasoning = input.reasoning?.trim() ?? "";
-  const approval = input.approval?.trim() ?? "";
   const writes: Promise<unknown>[] = [];
 
   if (input.model !== undefined && (options.includeEmpty || model)) {
@@ -959,12 +955,6 @@ async function saveAgentBehaviorConfig(
     writes.push(client.sys.config.set({
       key: `users/${uid}/ai/preferred_model`,
       value: modelId ?? "",
-    }));
-  }
-  if (input.approval !== undefined && (options.includeEmpty || approval)) {
-    writes.push(client.sys.config.set({
-      key: `users/${uid}/ai/tools/approval`,
-      value: approval,
     }));
   }
   if (input.reasoning !== undefined && (options.includeEmpty || reasoning)) {

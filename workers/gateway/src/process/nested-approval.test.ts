@@ -19,6 +19,16 @@ function prepareShell(process: Process): void {
   process.store.tools.markDispatched("shell");
   vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
   vi.spyOn(process.run, "scheduleTick").mockResolvedValue(undefined);
+  vi.spyOn(process.kernel, "readApprovalPolicy").mockImplementation(async () => JSON.stringify(process.runs.active?.approvalPolicy));
+}
+
+/** Asking reads the owner's current policy first, so the prompt appears a moment later. */
+function pendingApproval(process: Process) {
+  return vi.waitFor(() => {
+    const pending = process.store.tools.getPendingHil();
+    if (!pending) throw new Error("No approval is pending yet");
+    return pending;
+  });
 }
 
 describe("approval beneath a native command", () => {
@@ -58,7 +68,7 @@ describe("approval beneath a native command", () => {
       };
       expect(await process.tools.authorizeNestedTool(request, signal)).toBe(true);
       const waiting = process.tools.authorizeNestedTool({ ...request, args: { target: "personal-search", query: "news" } }, signal);
-      const pending = process.store.tools.getPendingHil()!;
+      const pending = await pendingApproval(process);
       expect(pending).toMatchObject({ ownerDispatchId: "shell", syscall: "web.search" });
       process.tools.resolveCodeModeApproval(pending.requestId, false);
       expect(await waiting).toBe(false);
@@ -74,7 +84,7 @@ describe("approval beneath a native command", () => {
         runId: "run", requestId: "shell", syscall: "fs.transfer.receive",
         args: { target: "laptop", path: "/tmp/a" },
       }, new AbortController().signal);
-      const pending = process.store.tools.getPendingHil()!;
+      const pending = await pendingApproval(process);
       expect(pending).toMatchObject({ ownerDispatchId: "shell", syscall: "fs.transfer.receive", purpose: "Copy the report" });
       expect(await process.controller.handleProcHil({ requestId: pending.requestId, decision: "approve" })).toMatchObject({ ok: true });
       expect(await waiting).toBe(true);
@@ -90,7 +100,7 @@ describe("approval beneath a native command", () => {
       const waiting = process.tools.authorizeNestedTool({
         runId: "run", requestId: "shell", syscall: "mail.send", args: { to: "example@example.invalid", text: "Hello" },
       }, controller.signal);
-      const pending = process.store.tools.getPendingHil()!;
+      const pending = await pendingApproval(process);
       const rejection = expect(waiting).rejects.toThrow("cancelled");
       controller.abort(new Error("cancelled"));
       await rejection;
@@ -112,14 +122,44 @@ describe("approval beneath a native command", () => {
     });
   });
 
-  it("asks for future executable work without changing ordinary reminder defaults", async () => {
+  it("asks before scheduling a command, as a default rule", async () => {
     const stub = await initProcess("nested-shell-schedule", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       prepareShell(process);
       const signal = new AbortController().signal;
+      const waiting = process.tools.authorizeNestedTool({ runId: "run", requestId: "shell", syscall: "sched.add", args: {} }, signal);
+      const pending = await pendingApproval(process);
+      expect(pending.syscall).toBe("sched.add");
+      process.tools.resolveCodeModeApproval(pending.requestId, false);
+      expect(await waiting).toBe(false);
+      process.runs.active = null;
+    });
+  });
+
+  it("reads the owner's current policy before asking, so an allow from another process applies", async () => {
+    const stub = await initProcess("nested-shell-fresh-allow", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      prepareShell(process);
+      vi.spyOn(process.kernel, "readApprovalPolicy").mockResolvedValue(JSON.stringify({
+        default: "auto",
+        rules: [{ match: "sched.add", target: "gsv", action: "auto" }, ...DEFAULT_TOOL_APPROVAL_POLICY.rules],
+      }));
+      const signal = new AbortController().signal;
       expect(await process.tools.authorizeNestedTool({ runId: "run", requestId: "shell", syscall: "sched.add", args: {} }, signal)).toBe(true);
-      const waiting = process.tools.authorizeNestedTool({ runId: "run", requestId: "shell", syscall: "sched.add", args: {}, defaultAction: "ask" }, signal);
-      const pending = process.store.tools.getPendingHil()!;
+      expect(process.store.tools.getPendingHil()).toBeNull();
+      expect(process.runs.active?.approvalPolicy?.rules[0]).toEqual({ match: "sched.add", target: "gsv", action: "auto" });
+      process.runs.active = null;
+    });
+  });
+
+  it("still asks when the owner's current policy cannot be read", async () => {
+    const stub = await initProcess("nested-shell-unread-policy", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      prepareShell(process);
+      vi.spyOn(process.kernel, "readApprovalPolicy").mockRejectedValue(new Error("Kernel unavailable"));
+      const signal = new AbortController().signal;
+      const waiting = process.tools.authorizeNestedTool({ runId: "run", requestId: "shell", syscall: "sched.add", args: {} }, signal);
+      const pending = await pendingApproval(process);
       expect(pending.syscall).toBe("sched.add");
       process.tools.resolveCodeModeApproval(pending.requestId, false);
       expect(await waiting).toBe(false);

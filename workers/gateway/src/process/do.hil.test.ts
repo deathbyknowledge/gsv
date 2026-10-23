@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import { runInDurableObject } from "cloudflare:test";
+import type { Kernel } from "../kernel/do";
+import { getKernelPtr } from "../shared/utils";
 import {
   approvedRun, okProcessResponse, runInProcess, ROOT_IDENTITY, initProcess, makeReq, offeredTools,
-  registerToolBlock,
+  registerToolBlock, followRunApprovalPolicy,
 } from "./do-test-harness";
 
 describe("proc.hil", () => {
@@ -162,6 +165,7 @@ describe("proc.hil", () => {
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     await runInProcess(stub, async (process) => {
+      followRunApprovalPolicy(process);
       process.runs.active = {
         runId: "run-hil-1",
         approvalPolicy: {
@@ -206,6 +210,7 @@ describe("proc.hil", () => {
 
     await runInProcess(stub, async (process) => {
       process.store.state.setValue("interactive", "0");
+      followRunApprovalPolicy(process);
       process.runs.active = {
         runId: "run-hil-background",
         approvalPolicy: {
@@ -241,6 +246,7 @@ describe("proc.hil", () => {
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     await runInProcess(stub, async (process) => {
+      followRunApprovalPolicy(process);
       process.runs.active = {
         runId: "run-hil-normalized-target",
         approvalPolicy: {
@@ -278,6 +284,7 @@ describe("proc.hil", () => {
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     await runInProcess(stub, async (process) => {
+      followRunApprovalPolicy(process);
       process.runs.active = {
         runId: "run-hil-purpose",
         approvalPolicy: {
@@ -326,6 +333,7 @@ describe("proc.hil", () => {
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     const requestId = await runInProcess(stub, async (process) => {
+      followRunApprovalPolicy(process);
       process.runs.active = {
         runId: "run-hil-2",
         approvalPolicy: {
@@ -395,6 +403,7 @@ describe("proc.hil", () => {
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     const requestId = await runInProcess(stub, async (process) => {
+      followRunApprovalPolicy(process);
       process.runs.active = {
         runId: "run-hil-exact-request",
         approvalPolicy: {
@@ -617,11 +626,12 @@ describe("proc.hil", () => {
     });
   });
 
-  it("remembers approved tool confirmations for the process", async () => {
+  it("remembers Always allow in the owner's policy for every process", async () => {
     const pid = "mech-hil-remember";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     const requestId = await runInProcess(stub, async (process) => {
+      followRunApprovalPolicy(process);
       process.runs.active = {
         runId: "run-hil-remember",
         approvalPolicy: {
@@ -664,14 +674,45 @@ describe("proc.hil", () => {
 
     await runInProcess(stub, (process) => {
       expect(process.store.tools.getPendingHil()).toBeNull();
-      expect(JSON.parse(process.store.state.getValue("toolApprovalOverrides"))).toEqual([
-        {
-          match: "fs.read",
-          target: "gsv",
-          action: "auto",
-        },
-      ]);
+      expect(process.store.state.getValue("toolApprovalOverrides")).toBeNull();
+      expect(process.runs.active?.approvalPolicy?.rules[0]).toEqual({ match: "fs.read", target: "gsv", action: "auto" });
     });
+    // The allow belongs to the owner, so their other processes, Crew included, stop asking too.
+    const kernel = await getKernelPtr("inst_test");
+    const ownerPolicy = await runInDurableObject(kernel as unknown as DurableObjectStub<Kernel>, (instance: Kernel) =>
+      instance.readProcessApprovalPolicy(pid));
+    expect(JSON.parse(ownerPolicy!).rules[0]).toEqual({ match: "fs.read", target: "gsv", action: "auto" });
+  });
+
+  it("lets an Always allow on one process cover the owner's other processes", async () => {
+    const asksForReads = { default: "auto" as const, rules: [{ match: "fs.read", action: "ask" as const }] };
+    const kernel = await getKernelPtr("inst_test");
+    await runInDurableObject(kernel as unknown as DurableObjectStub<Kernel>, (instance: Kernel) => {
+      instance.config.set("users/0/ai/tools/approval", JSON.stringify(asksForReads));
+    });
+    const readOnce = async (pid: string) => {
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const pending = await runInProcess(stub, async (process) => {
+        process.sendSignal = vi.fn(async () => {});
+        vi.spyOn(process.run, "schedule").mockResolvedValue(undefined);
+        vi.spyOn(process.tools, "launchToolDispatch").mockImplementation(() => {});
+        process.runs.active = { runId: `run-${pid}`, approvalPolicy: structuredClone(asksForReads) };
+        registerToolBlock(process, `run-${pid}`, [
+          { type: "toolCall", id: `call-${pid}`, name: "Read", arguments: { path: "/root/notes.txt" } },
+        ]);
+        return process.tools.processToolCalls(`run-${pid}`);
+      });
+      return { stub, pending };
+    };
+
+    const ship = await readOnce("mech-hil-allow-ship");
+    expect(ship.pending).toMatchObject({ syscall: "fs.read" });
+    expect(await okProcessResponse(ship.stub, makeReq("proc.hil", {
+      requestId: ship.pending!.requestId, decision: "approve", remember: true,
+    }))).toMatchObject({ ok: true, data: { remembered: true } });
+
+    const crew = await readOnce("mech-hil-allow-crew");
+    expect(crew.pending).toBeNull();
   });
 
   it("keeps one execution identity from approved HIL start through finish", async () => {
@@ -680,6 +721,7 @@ describe("proc.hil", () => {
 
     await runInProcess(stub, async (process) => {
       const runId = "run-hil-approved-execution";
+      followRunApprovalPolicy(process);
       process.runs.active = {
         runId,
         approvalPolicy: {
