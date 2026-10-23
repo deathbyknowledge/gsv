@@ -775,11 +775,11 @@ async function recordFederationOutboxFailure(
   ) {
     return;
   }
-  const contact = ctx.federation.get(record.contactId);
-  const contactActive = contact?.state === "active"
-    && contact.generation === record.contactGeneration;
+  // A removal stays owed to the contact it ended, so it retries like any delivery.
+  const contact = currentFederationDeliveryContact(record, ctx);
+  const contactActive = contact?.state === "active";
   const attempt = latest.attemptCount + 1;
-  const terminal = !contactActive
+  const terminal = !contact
     || attempt >= MAX_DELIVERY_ATTEMPTS
     || Date.now() - record.createdAtMs >= MAX_DELIVERY_AGE_MS
     || isTerminalFederationError(error);
