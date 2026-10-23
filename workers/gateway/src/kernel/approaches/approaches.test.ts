@@ -20,7 +20,7 @@ import { handleFederationHttpRequest } from "../federation";
 import { handleContactBlockList, handleContactBlockSet } from "../federation/preferences";
 import { localShipDocumentV2 } from "../federation/protocol";
 import { handleApproachCreate, handleApproachDecide, handleApproachGet, handleApproachList, handleApproachRetry } from "./admission";
-import { processApproachMaintenance } from "./runtime";
+import { expireOverdueApproach, processApproachMaintenance } from "./runtime";
 import { claimApproach } from "./pairing";
 import { APPROACH_CLAIM_PATH, APPROACH_PATH, signApproachValue } from "./shared";
 
@@ -158,6 +158,21 @@ describe("authenticated first contact", () => {
       await expect(sender.run((ctx) => claimApproach(signed, ctx))).rejects.toThrow("no longer available");
       expect(await sender.run((ctx) => ctx.federation.contactCount())).toBe(0);
       expect((await sender.run((ctx) => ctx.approaches.get(created.id)))?.summary.state).toBe("blocked");
+    });
+  });
+
+  it("expires one overdue request directly, so a replacement is not blocked by its pending row", async () => {
+    await withSpaces(async (sender, recipient, profile) => {
+      installTransport(sender, recipient, profile);
+      const created = (await sender.run((ctx) => handleApproachCreate(sendIntent(profile), ctx))).approach;
+      const record = (await sender.run((ctx) => ctx.approaches.get(created.id)))!;
+      await sender.run((ctx) => expireOverdueApproach(record, ctx));
+      expect((await sender.run((ctx) => ctx.approaches.get(created.id)))?.summary.state).not.toBe("expired");
+      const clock = vi.spyOn(Date, "now").mockReturnValue(created.expiresAtMs + 1);
+      await sender.run((ctx) => expireOverdueApproach(record, ctx));
+      expect((await sender.run((ctx) => ctx.approaches.get(created.id)))?.summary.state).toBe("expired");
+      expect(await sender.run((ctx) => ctx.approaches.unresolved(OWNER.uid, profile.actor))).toBeNull();
+      clock.mockRestore();
     });
   });
 

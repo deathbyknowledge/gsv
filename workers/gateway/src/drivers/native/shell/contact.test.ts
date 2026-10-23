@@ -120,10 +120,10 @@ describe("contact connect", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("runs maintenance before replacing a request that passed its deadline but still reads as pending", async () => {
+  it("expires the exact overdue request before replacing it while it still reads as pending", async () => {
     vi.spyOn(profiles, "handleProfileResolve").mockResolvedValue({ profile });
     vi.spyOn(profiles, "ownerDisplayName").mockReturnValue("Owner Person");
-    const maintenance = vi.spyOn(runtime, "processApproachMaintenance").mockResolvedValue();
+    const expire = vi.spyOn(runtime, "expireOverdueApproach").mockResolvedValue();
     const create = vi.spyOn(admission, "handleApproachCreate").mockImplementation(async () => { throw new Error("reached create"); });
     const overdue = approachRecord({ id: "approach:overdue", state: "pending" });
     overdue.summary.expiresAtMs = Date.now() - 1;
@@ -133,8 +133,8 @@ describe("contact connect", () => {
       unresolved: () => overdue,
     });
     expect((await bash.exec("contact connect @ada --message 'Hi Ada' --handling manual")).stderr).toContain("reached create");
-    expect(maintenance).toHaveBeenCalledOnce();
-    expect(maintenance.mock.invocationCallOrder[0]).toBeLessThan(create.mock.invocationCallOrder[0]);
+    expect(expire).toHaveBeenCalledWith(overdue, expect.anything());
+    expect(expire.mock.invocationCallOrder[0]).toBeLessThan(create.mock.invocationCallOrder[0]);
   });
 
   it("sends nothing without a message or a handling choice", async () => {

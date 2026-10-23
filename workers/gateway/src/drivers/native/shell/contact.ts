@@ -12,7 +12,7 @@ import { contactDisplayName, jsonObjectSchema } from "@humansandmachines/gsv/pro
 import type { KernelContext } from "../../../kernel/context";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import { handleApproachCreate } from "../../../kernel/approaches/admission";
-import { processApproachMaintenance } from "../../../kernel/approaches/runtime";
+import { expireOverdueApproach } from "../../../kernel/approaches/runtime";
 import { requireContactCaller } from "../../../kernel/federation/authority";
 import { sha256Base64Url } from "../../../kernel/federation-crypto";
 import {
@@ -207,11 +207,10 @@ async function connectToPerson(args: string[], ctx: KernelContext): Promise<Appr
     }
     idempotencyKey = `connect:${await sha256Base64Url(`${base}\n${previous.summary.id}`)}`;
   }
-  if ((ctx.approaches.unresolved(ownerUid, profile.actor)?.summary.expiresAtMs ?? Infinity) <= Date.now()) {
-    // A request past its deadline may still read as pending until maintenance runs; run it now so
-    // the replacement is not refused as a duplicate.
-    await processApproachMaintenance(ctx);
-  }
+  const open = ctx.approaches.unresolved(ownerUid, profile.actor);
+  // A request past its deadline may still read as pending until maintenance reaches it; expire that
+  // exact request now so the replacement is not refused as a duplicate.
+  if (open) await expireOverdueApproach(open, ctx);
   return await handleApproachCreate({
     profileUrl: profile.url, recipient: profile.actor, profileRevision: profile.revision, displayName: name, text, shipHandlesMessages, idempotencyKey,
   }, ctx);
