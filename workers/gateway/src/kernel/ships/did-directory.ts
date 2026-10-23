@@ -5,6 +5,7 @@ import {
   getAtprotoHandle,
   getAtprotoServiceEndpoint,
   getAtprotoVerificationMaterial,
+  getPdsEndpoint,
   isAtprotoWebDid,
   isPlcDid,
   webDidToDocumentUrl,
@@ -24,6 +25,8 @@ export type ResolvedDid = {
   signingKey: { type: string; publicKeyMultibase: string };
   /** Where the account takes Ship-to-Ship calls, from its `#ship` service; absent when it isn't a Ship. */
   shipEndpoint: string | null;
+  /** Where the account's public repository is read, from its `#atproto_pds` service. */
+  pdsEndpoint: string | null;
 };
 
 /** A DID that does not exist, was deactivated, or whose history or document doesn't verify. */
@@ -218,6 +221,7 @@ function resolvedDid(did: string, document: DidDocument): ResolvedDid {
     handle: getAtprotoHandle(document)?.toLowerCase() ?? null,
     signingKey: { type: signingKey.type, publicKeyMultibase: signingKey.publicKeyMultibase },
     shipEndpoint: getAtprotoServiceEndpoint(document, SHIP_SERVICE) ?? null,
+    pdsEndpoint: getPdsEndpoint(document) ?? null,
   };
 }
 

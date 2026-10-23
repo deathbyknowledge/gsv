@@ -36,6 +36,7 @@ export type * from "./syscalls/atproto";
 export * from "./syscalls/approach";
 export * from "./social";
 export * from "./approaches";
+export * from "./ship-methods";
 export type * from "./syscalls/map";
 export * from "./adapters";
 export * from "./adapter-media-body";

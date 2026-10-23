@@ -8,6 +8,8 @@ import * as z from "zod/mini";
 
 /** The directory Ship tests register DIDs with; tests set `PLC_URL` to it. */
 export const TEST_PLC_URL = "https://plc.test";
+/** Where test accounts keep their repositories. */
+export const TEST_PDS_URL = "https://pds.ship.test";
 
 /** A did:plc account a test controls: its rotation key and its current signing key. */
 export type TestDidAccount = { did: string; handle: string; rotation: Secp256k1PrivateKeyExportable; signingHex: string; services: Record<string, Service> };
@@ -42,11 +44,14 @@ export class TestShipNetwork {
     return this;
   }
 
-  /** Registers a did:plc for a handle, offering a Ship service at it unless told otherwise. */
+  /** Registers a did:plc for a handle, with its repository on TEST_PDS_URL and a Ship service at the handle, unless told otherwise. */
   async account(handle: string, services?: Record<string, Service>, register = true): Promise<TestDidAccount> {
     const rotation = await Secp256k1PrivateKeyExportable.createKeypair();
     const signing = await Secp256k1PrivateKeyExportable.createKeypair();
-    const offered = services ?? { ship: { type: "ShipService", endpoint: `https://${handle}` } };
+    const offered = services ?? {
+      atproto_pds: { type: "AtprotoPersonalDataServer", endpoint: TEST_PDS_URL },
+      ship: { type: "ShipService", endpoint: `https://${handle}` },
+    };
     const genesis = await signOperation({
       type: "plc_operation",
       prev: null,

@@ -1,44 +1,37 @@
 import { z } from "zod/mini";
-import { actorRefSchema, type ActorRef } from "../social";
-import { federationPublicKeySchema, type FederationPublicKey } from "./contact";
+
+/** What visitors may do: send a message request, ask for an invitation, or nothing. */
+export type ProfileContactPolicy = "requests" | "invitation" | "closed";
 
 export type ProfileFields = {
   displayName: string;
   about: string;
-  contactPolicy: "requests" | "invitation" | "closed";
-  representation: "human" | "human-and-ship";
+  contactPolicy: ProfileContactPolicy;
 };
 
 export type ProfileState = {
   revision: number;
   url: string;
   draft: ProfileFields;
-  /** The live page; `contactPolicy` is what visitors can do now, which unpublished changes may differ from. */
-  published?: { url: string; revision: number; contactPolicy: ProfileFields["contactPolicy"] };
+  /** The live record; `contactPolicy` is what visitors can do now, which unpublished changes may differ from. */
+  published?: { url: string; cid: string; contactPolicy: ProfileContactPolicy };
   /** The space's recorded handle, which names the profile; absent when the installation has none. */
   handle?: string;
 };
 
-type ProfilePublication = ProfileFields & {
-  actor: ActorRef;
-  publicKey: FederationPublicKey;
-  origin: string;
+/** Another Ship's public profile, read from its `space.ship.profile` record. */
+export type PublicProfile = {
+  did: string;
+  /** Its handle, checked both ways against the DID. */
+  handle: string;
+  /** The record's CID; a message request names the version its sender read. */
+  cid: string;
+  displayName: string;
+  about: string;
+  /** A value this Ship doesn't know reads as closed. */
+  contactPolicy: ProfileContactPolicy;
+  /** The profile page people share. */
   url: string;
-  revision: number;
-  publishedAtMs: number;
-  signature: string;
-};
-
-export type SpacePublicProfile = ProfilePublication & {
-  version: 3;
-  domain: "gsv-federation/3/profile";
-};
-
-/** Published v2 snapshots remain verifiable while other spaces upgrade. */
-export type PublicProfile = SpacePublicProfile | ProfilePublication & {
-  version: 2;
-  domain: "gsv-federation/2/profile";
-  alias: string;
 };
 
 export type ProfileGetArgs = Record<string, never>;
@@ -49,25 +42,12 @@ export type ProfilePublishArgs = { expectedRevision: number };
 export type ProfilePublishResult = ProfileGetResult;
 export type ProfileUnpublishArgs = { expectedRevision: number };
 export type ProfileUnpublishResult = ProfileGetResult;
-export type ProfileResolveArgs = { url: string };
+/** A handle, with or without its @, or a link to a profile page. */
+export type ProfileResolveArgs = { address: string };
 export type ProfileResolveResult = { profile: PublicProfile };
 
-export const publicProfileAliasSchema = z.string().check(z.regex(/^[a-z][a-z0-9_-]{1,31}$/));
-const profileFields = {
+export const profileFieldsSchema = z.strictObject({
   displayName: z.string().check(z.minLength(1), z.maxLength(80)),
   about: z.string().check(z.maxLength(2_048)),
   contactPolicy: z.enum(["requests", "invitation", "closed"]),
-  representation: z.enum(["human", "human-and-ship"]),
-};
-export const profileFieldsSchema = z.strictObject(profileFields) satisfies z.ZodMiniType<ProfileFields>;
-const publicationFields = {
-  ...profileFields,
-  actor: actorRefSchema, publicKey: federationPublicKeySchema,
-  origin: z.string().check(z.maxLength(2_048)), url: z.string().check(z.maxLength(2_048)),
-  revision: z.int().check(z.positive()), publishedAtMs: z.int().check(z.positive()),
-  signature: z.string().check(z.minLength(1), z.maxLength(512)),
-};
-export const publicProfileSchema = z.discriminatedUnion("version", [
-  z.strictObject({ ...publicationFields, version: z.literal(3), domain: z.literal("gsv-federation/3/profile") }),
-  z.strictObject({ ...publicationFields, version: z.literal(2), domain: z.literal("gsv-federation/2/profile"), alias: publicProfileAliasSchema }),
-]) satisfies z.ZodMiniType<PublicProfile>;
+}) satisfies z.ZodMiniType<ProfileFields>;

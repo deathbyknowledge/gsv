@@ -9,6 +9,7 @@ import {
   randomPlcDid,
   serviceAuthToken,
   signedJwt,
+  TEST_PDS_URL,
   TEST_PLC_URL,
   TestShipNetwork,
   tokenClaims,
@@ -43,6 +44,7 @@ describe("resolving DIDs", () => {
         handle: "alice.ship.test",
         signingKey: { type: "Multikey", publicKeyMultibase: expect.stringMatching(/^zQ3s/) },
         shipEndpoint: "https://alice.ship.test",
+        pdsEndpoint: TEST_PDS_URL,
       });
       const lookups = vi.mocked(fetch).mock.calls.length;
       expect(await resolveDid(alice.did, ctx)).toMatchObject({ did: alice.did });
@@ -107,6 +109,7 @@ describe("resolving DIDs", () => {
         handle: "web.example",
         signingKey: { type: "Multikey", publicKeyMultibase: expect.stringMatching(/^zDn/) },
         shipEndpoint: "https://web.example",
+        pdsEndpoint: null,
       });
       await expect(resolveDid("did:web:localhost", ctx)).rejects.toThrow(DidNotResolvedError);
     });

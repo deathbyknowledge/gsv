@@ -292,8 +292,6 @@ import type {
 import type {
   ContactAliasSetArgs,
   ContactAliasSetResult,
-  ContactIdentityArgs,
-  ContactIdentityResult,
   ContactInviteAcceptArgs,
   ContactInviteAcceptResult,
   ContactInviteCancelArgs,
@@ -387,7 +385,6 @@ export type SyscallDomains = {
   "approach.decide": { args: ApproachDecideArgs; result: ApproachResult };
   "approach.retry": { args: ApproachRetryArgs; result: ApproachResult };
 
-  "contact.identity": { args: ContactIdentityArgs; result: ContactIdentityResult };
   "contact.invite.create": { args: ContactInviteCreateArgs; result: ContactInviteCreateResult };
   "contact.invite.accept": { args: ContactInviteAcceptArgs; result: ContactInviteAcceptResult };
   "contact.invite.list": { args: ContactInviteListArgs; result: ContactInviteListResult };
