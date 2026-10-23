@@ -225,6 +225,8 @@
 .instrument-helper { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .instrument-helper button { color: var(--accent); }
 .instrument-header .keys { display: flex; align-items: center; gap: 14px; justify-self: end; margin-right: -8px; }
+.instrument-header .keys > .gsv-hint { justify-content: stretch; }
+.instrument-header .keys > .gsv-hint > button { width: 100%; }
 .instrument-header .keys [aria-current="page"] { color: var(--text-hi); }
 .instrument-header .keys [aria-current="page"] .view-label { text-decoration: underline; text-underline-offset: 4px; }
 .instrument-menu-toggle, .instrument-current-view { display: none; }

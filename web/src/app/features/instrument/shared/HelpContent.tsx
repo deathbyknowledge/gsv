@@ -67,7 +67,7 @@ export function HelpContent({ distance, connected, onSearch, onNavigate }: HelpC
           <p>{t("shell.help.viewsHint")}</p>
           <dl>
             <dt>c</dt><dd>Chat</dd>
-            <dt>f</dt><dd>{t("shell.help.work")}</dd>
+            <dt>w</dt><dd>{t("shell.help.work")}</dd>
             <dt>m</dt><dd>{t("shell.help.memory")}</dd>
             <dt>p</dt><dd>{t("shell.help.people")}</dd>
             <dt>s</dt><dd>{t("settings.title")}</dd>

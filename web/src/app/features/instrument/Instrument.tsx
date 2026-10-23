@@ -252,7 +252,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
         event.preventDefault();
         move("zen");
       }
-      if (event.key === "f") {
+      if (event.key === "w") {
         event.preventDefault();
         move("fleet");
       }
