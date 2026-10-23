@@ -95,6 +95,8 @@ Each responsibility shows a short status and its next check; tap it to read the
 full waiting explanation, inspect details or ask Ship about it. Your draft stays
 intact while you look. Event-driven policies live in **Settings → Standing responsibilities**.
 
+The message input uses a thin purple caret to show where you are typing.
+
 The **+** menu attaches files, finds people and files, and prepares requests to
 create a routine, connect a computer or start a browser. These requests and
 **ask Ship** controls add ordinary editable text to your draft. Review or change

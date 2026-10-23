@@ -311,7 +311,7 @@ transcript text temporarily restores older messages to full opacity so their
 selection stays legible.
 The prompt keeps selected letters light on a stronger purple highlight. Its native
 caret tint returns while a range is selected so iOS can draw the selection and
-drag handles; the block cursor returns when the selection collapses.
+drag handles; the thin purple insertion caret returns when the selection collapses.
 
 People opens the conversation list. A counted Requests entry opens incoming first-message decisions, with sent and past requests secondary; Contacts in the heading opens the private address book. Both offer a direct return to conversations. New conversation filters saved people locally or opens a public profile address. These are separate jobs rather than equal tabs. Conversation selection, scroll and drafts stay mounted while visiting Requests or Contacts, with hidden queries paused.
 

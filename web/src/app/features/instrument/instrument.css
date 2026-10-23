@@ -374,8 +374,9 @@
   left: 0;
   top: 0;
   font-size: var(--prompt-font-size, 1em);
-  width: calc(1ch + 0.02em);
+  width: 2px;
   height: 1em;
+  box-shadow: none;
   pointer-events: none;
 }
 .prompt-line textarea:focus ~ .block-caret { animation-play-state: running; }
