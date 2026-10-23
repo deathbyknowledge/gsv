@@ -191,6 +191,8 @@ const maraThread: ConversationMessage[] = [{ id: "mara-1", conversationId: MARA_
   social: { threadId: "mara-thread", reference: { actor: MARA_ACTOR, messageId: "mara-1" }, provenance: { kind: "human" } },
   origin: { kind: "federation", contactId: MARA_CONTACT_ID, deliveryId: "mara-delivery-1" }, createdAt: at(0, 8, 12) }];
 const maraView = { readThroughSequence: 0, archived: false, revision: 1 };
+/* a retry with the same idempotency key replays the first answer, as the Kernel replays its outbox record */
+const maraSends = new Map<string, string>();
 function maraConversation(): ConversationSummary {
   return { id: MARA_CONVERSATION, kind: "contact", ownerUid: OWNER.uid, title: "Mara", latestSequence: maraThread.length, createdAt: at(3, 9, 0), updatedAt: maraThread.at(-1)!.createdAt };
 }
@@ -903,6 +905,8 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "contact.send": {
       const { contactId, text, idempotencyKey = crypto.randomUUID() } = z.object({ contactId: z.string(), text: z.string(), idempotencyKey: z.string().optional() }).parse(args);
       if (contactId !== MARA_CONTACT_ID) throw new Error(`Unexpected contact ${contactId}`);
+      const replay = maraSends.get(idempotencyKey);
+      if (replay) return respond(id, JSON.parse(replay));
       /* the same id the client predicts for its pending bubble, so history replaces it instead of doubling it */
       return contactSendMessageId(contactId, maraContact.generation, idempotencyKey).then((messageId) => {
         const sequence = maraThread.length + 1;
@@ -910,7 +914,9 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
           social: { threadId: "mara-thread", reference: { actor: { shipId: "mock-ship", subjectId: "owner" }, messageId }, provenance: { kind: "human" } },
           origin: { kind: "client", clientId: "web" }, createdAt: Date.now() });
         broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, latestSequence: sequence });
-        return respond(id, { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" });
+        const result = { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" as const };
+        maraSends.set(idempotencyKey, JSON.stringify(result));
+        return respond(id, result);
       });
     }
     /* a message request sent from People: kept in this tab so the requests view can list it */
