@@ -303,14 +303,18 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     } catch (error) { await cancelBinaryBody(body, error); throw error; }
   }
 
-  /** WhatsApp shows typing only as a companion to a read receipt for the person's last message. */
-  async setTyping(
+  /**
+   * Ship is working on `messageId`, the message that started run `runId`: mark it read and put 👀
+   * on it. A stop removes the 👀 only while that run still owns it.
+   */
+  async setWorking(
     installationId: string,
     surface: AdapterSurface,
     actorId: string,
     routeGeneration: string,
     active: boolean,
-    runId?: string,
+    runId: string,
+    messageId?: string,
   ): Promise<{ accepted: boolean }> {
     const state = await this.requireState();
     this.assertPeerDestination(state, surface, actorId);
@@ -324,26 +328,58 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     const owner = { installationId, generation: routeGeneration };
     const release = this.retirement.start(owner);
     try {
-      if (active && state.lastInboundMessageId) {
+      if (active && messageId) {
         try {
-          await markWhatsAppMessageRead(
-            this.accessToken(),
-            this.phoneNumberId(),
-            state.lastInboundMessageId,
-            this.whatsAppFetch(owner),
-            { typing: true },
-          );
+          await markWhatsAppMessageRead(this.accessToken(), this.phoneNumberId(), messageId, this.whatsAppFetch(owner));
         } catch {
           console.warn(JSON.stringify({
             component: "managed_whatsapp",
-            event: "typing_delivery_failed",
+            event: "read_receipt_failed",
           }));
         }
       }
-      // The typing indicator fades after about 25 seconds, so 👀 marks longer work.
-      const working = active && whatsAppWindowOpen(state, Date.now()) ? state.lastInboundMessageId : undefined;
+      const working = active && messageId && whatsAppWindowOpen(state, Date.now()) ? messageId : undefined;
       await this.moveWorkingReaction(working, runId, owner);
     } finally { release(); }
+    return { accepted: true };
+  }
+
+  /**
+   * WhatsApp shows typing only as a companion to a read receipt, so it rides the person's latest
+   * message, which was already marked read when it arrived. Delivering the reply ends it.
+   */
+  async setTyping(
+    installationId: string,
+    surface: AdapterSurface,
+    actorId: string,
+    routeGeneration: string,
+  ): Promise<{ accepted: boolean }> {
+    const state = await this.requireState();
+    this.assertPeerDestination(state, surface, actorId);
+    if (
+      state.activeRoute?.installationId !== installationId
+      || state.activeRoute.generation !== routeGeneration
+    ) {
+      return { accepted: false };
+    }
+    const owner = { installationId, generation: routeGeneration };
+    if (state.lastInboundMessageId && whatsAppWindowOpen(state, Date.now())) {
+      const release = this.retirement.start(owner);
+      try {
+        await markWhatsAppMessageRead(
+          this.accessToken(),
+          this.phoneNumberId(),
+          state.lastInboundMessageId,
+          this.whatsAppFetch(owner),
+          { typing: true },
+        );
+      } catch {
+        console.warn(JSON.stringify({
+          component: "managed_whatsapp",
+          event: "typing_delivery_failed",
+        }));
+      } finally { release(); }
+    }
     return { accepted: true };
   }
 

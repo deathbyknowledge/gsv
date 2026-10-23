@@ -115,11 +115,29 @@ export type UserProcessSignalFrame = z.infer<typeof userProcessSignalFrameSchema
 export type AdapterDeliveryRoute = Omit<AdapterRunRoute, "createdAt" | "expiresAt">;
 
 
-export function adapterTypingActivity(route: AdapterDeliveryRoute, active: boolean): AdapterActivity {
+/** Typing announces a delivery that is about to arrive; it never acknowledges a message. */
+export function adapterTypingActivity(route: AdapterDeliveryRoute): AdapterActivity {
   return {
     kind: "typing",
+    active: true,
+    runId: route.runId,
+    ...(route.routeGeneration === undefined
+      ? undefined
+      : { routeGeneration: route.routeGeneration }),
+  };
+}
+
+/**
+ * Acknowledges the inbound message that started this run. A route carries `replyToId` only when a
+ * message from that surface admitted the run; a fallback or scheduled route has nothing to start or stop.
+ */
+export function adapterWorkingActivity(route: AdapterDeliveryRoute, active: boolean): AdapterActivity | null {
+  if (!route.replyToId) return null;
+  return {
+    kind: "working",
     active,
     runId: route.runId,
+    ...(active ? { messageId: route.replyToId } : undefined),
     ...(route.routeGeneration === undefined
       ? undefined
       : { routeGeneration: route.routeGeneration }),

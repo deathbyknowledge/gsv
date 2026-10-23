@@ -203,8 +203,14 @@ export const adapterLinkedPeerContextSchema = z.strictObject({
 });
 
 export type AdapterActivity =
-  /** `runId` names the run that started or stopped, so an adapter can ignore a late stop from a superseded run. */
+  /** Ship is about to deliver on this surface; providers end typing when the message arrives. */
   | { kind: "typing"; active: boolean; routeGeneration?: string; runId?: string }
+  /**
+   * Ship is working on `messageId`, the inbound message that started run `runId`. Only a run started
+   * by a message from this surface sends it. `runId` lets an adapter ignore a late stop from a run a
+   * newer message superseded.
+   */
+  | { kind: "working"; active: boolean; runId: string; messageId?: string; routeGeneration?: string }
   | { kind: "recording"; active: boolean; routeGeneration?: string }
   | { kind: "uploading"; active: boolean; routeGeneration?: string };
 
@@ -214,6 +220,13 @@ export const adapterActivitySchema = z.discriminatedUnion("kind", [
     active: z.boolean(),
     routeGeneration: z.optional(z.string()),
     runId: z.optional(z.string()),
+  }),
+  z.strictObject({
+    kind: z.literal("working"),
+    active: z.boolean(),
+    runId: z.string(),
+    messageId: z.optional(z.string()),
+    routeGeneration: z.optional(z.string()),
   }),
   z.strictObject({
     kind: z.literal("recording"),

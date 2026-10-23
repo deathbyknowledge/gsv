@@ -2132,9 +2132,11 @@ Gateway-to-adapter service bindings implement `AdapterService` from
 `@humansandmachines/gsv/services/adapters`. Its descriptor makes discovery
 independent of any fixed messenger list; optional operations include
 `adapterFrame`, `adapterConnect`, `adapterDisconnect`, `adapterSetActivity`,
-and `adapterStatus`. A typing activity carries the `runId` that started or
-stopped, so an adapter can ignore a late stop from a run a newer message
-superseded. Adapters call the Gateway's single
+and `adapterStatus`. A `working` activity names the inbound `messageId` that
+started a run and is sent only for a run a message from that surface started;
+its `runId` lets an adapter ignore a late stop from a run a newer message
+superseded. A `typing` activity is sent just before a reply or approval request
+is delivered, never at run start. Adapters call the Gateway's single
 `serviceFrame` entrypoint for `adapter.inbound` and
 `adapter.state.update`. The Gateway calls `adapterFrame` with canonical frames:
 every explicit or routed delivery is a correlated `adapter.send` request sent

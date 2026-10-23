@@ -372,7 +372,7 @@ Outcomes that may already have reached a provider are reported as
 ambiguous and are not replayed; Discord can additionally reuse an
 enforced deterministic nonce, while Telegram conservatively uses at-most-once
 delivery for ambiguous outcomes. The Kernel retains retry-safe delivery as scheduled work,
-stops typing after each attempt, and removes the reply route after success or
+shows typing before each attempt and ends the run's acknowledgement after it, and removes the reply route after success or
 after a terminal delivery notice is accepted by the Process. The canonical
 Message remains in conversation history and its delivery outcome remains
 inspectable in Process activity. Approval attempt one is durably scheduled

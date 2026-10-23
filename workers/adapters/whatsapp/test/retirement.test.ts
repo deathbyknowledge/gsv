@@ -86,7 +86,7 @@ describe("WhatsApp installation retirement", () => {
     const reactions = async () => ((await (await bindings.WHATSAPP_API!.fetch("https://fixture/records")).json()) as Array<GraphRecord & { body: { type?: string; reaction?: unknown } }>)
       .filter((record) => record.kind === "message" && record.body.to === surfaceId && record.body.type === "reaction")
       .map((record) => record.body.reaction);
-    expect(await peer.setTyping(space, { kind: "dm", id: surfaceId }, surfaceId, route.generation, true, "run-working")).toEqual({ accepted: true });
+    expect(await peer.setWorking(space, { kind: "dm", id: surfaceId }, surfaceId, route.generation, true, "run-working", `wamid.first.${surfaceId}`)).toEqual({ accepted: true });
     expect(await reactions()).toEqual([{ message_id: `wamid.first.${surfaceId}`, emoji: "👀" }]);
 
     // The run's own stop is refused once its route is gone, so quiescence removes 👀.
@@ -96,7 +96,7 @@ describe("WhatsApp installation retirement", () => {
       { message_id: `wamid.first.${surfaceId}`, emoji: "👀" },
       { message_id: `wamid.first.${surfaceId}`, emoji: "" },
     ]);
-    expect(await peer.setTyping(space, { kind: "dm", id: surfaceId }, surfaceId, route.generation, false, "run-working")).toEqual({ accepted: true });
+    expect(await peer.setWorking(space, { kind: "dm", id: surfaceId }, surfaceId, route.generation, false, "run-working")).toEqual({ accepted: true });
   });
 
   it("clears a retired space's retained 👀 on quiesce while another space's route is active, and keeps that route's own 👀", async () => {
@@ -107,7 +107,7 @@ describe("WhatsApp installation retirement", () => {
     const reactions = async () => ((await (await bindings.WHATSAPP_API!.fetch("https://fixture/records")).json()) as Array<GraphRecord & { body: { type?: string; reaction?: unknown } }>)
       .filter((record) => record.kind === "message" && record.body.to === surfaceId && record.body.type === "reaction")
       .map((record) => record.body.reaction);
-    expect(await peer.setTyping(space, { kind: "dm", id: surfaceId }, surfaceId, route.generation, true, "run-retained")).toEqual({ accepted: true });
+    expect(await peer.setWorking(space, { kind: "dm", id: surfaceId }, surfaceId, route.generation, true, "run-retained", `wamid.first.${surfaceId}`)).toEqual({ accepted: true });
     // The number relinked to another space while the old route's removal had an unknown outcome:
     // its 👀 stays recorded under the old route.
     const successor = { installationId: "successor-reaction-fixture", generation: "successor-route" };

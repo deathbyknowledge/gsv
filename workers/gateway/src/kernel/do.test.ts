@@ -1867,7 +1867,8 @@ describe("Kernel process signal routing", () => {
     };
   }
 
-  it("sends the exact HIL request to the routed adapter", async () => {
+  it("sends the exact HIL request to the routed adapter, typing only while it is delivered", async () => {
+    const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     const adapterFrame = vi.fn<NonNullable<AdapterService["adapterFrame"]>>(
       async (_installation, context, frame) => ({
         type: "res",
@@ -1918,6 +1919,7 @@ describe("Kernel process signal routing", () => {
           },
         })),
         adapterFrame,
+        adapterSetActivity,
       },
     };
     kernel.procs.get.mockReturnValue({
@@ -1977,6 +1979,13 @@ describe("Kernel process signal routing", () => {
         }),
       }),
     );
+    expect(adapterSetActivity.mock.calls.map((call) => call[3])).toEqual([
+      { kind: "typing", active: true, routeGeneration: "generation-1", runId: "run-frame" },
+      { kind: "working", active: false, routeGeneration: "generation-1", runId: "run-frame" },
+    ]);
+    const [typingOrder, stopOrder] = adapterSetActivity.mock.invocationCallOrder;
+    expect(typingOrder).toBeLessThan(adapterFrame.mock.invocationCallOrder[0]!);
+    expect(stopOrder).toBeGreaterThan(adapterFrame.mock.invocationCallOrder[0]!);
   });
 
   function historyResponse(pendingHil: ReturnType<typeof hilPayload> | null) {
@@ -2957,7 +2966,7 @@ describe("Kernel adapter route replies", () => {
     expiresAt: 2,
   };
 
-  it("starts adapter typing from the process lifecycle signal", async () => {
+  it("acknowledges the message that started the run, without typing", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -2971,18 +2980,37 @@ describe("Kernel adapter route replies", () => {
       payload: { runId: route.runId },
     })).resolves.toEqual({ state: "delivered" });
 
-    expect(adapterSetActivity).toHaveBeenCalledTimes(1);
-    expect(adapterSetActivity).toHaveBeenCalledWith(
+    expect(adapterSetActivity).toHaveBeenCalledExactlyOnceWith(
       { installationId: TEST_INSTALLATION_ID },
       route.destination.accountId,
       route.destination.surface,
       {
-        kind: "typing",
+        kind: "working",
         active: true,
+        messageId: "incoming-42",
         routeGeneration: "generation-42",
         runId: route.runId,
       },
     );
+  });
+
+  it("shows nothing on a messenger when no message from that chat started the run", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const kernel = bareKernel();
+    kernel.env = { CHANNEL_TELEGRAM: { adapterSetActivity } };
+    kernel.installationId = TEST_INSTALLATION_ID;
+    // A contact message, schedule or client input reaches this chat only as Ship's fallback route.
+    const { replyToId: _replyToId, ...fallback } = route;
+
+    await expect(kernel.adapterDelivery.deliverAdapterRouteEvent(fallback, {
+      type: "sig",
+      signal: "proc.run.started",
+      payload: { runId: route.runId },
+    })).resolves.toEqual({ state: "delivered" });
+
+    expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
   it("streams a retained resource after its originating Process is gone", async () => {
