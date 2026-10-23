@@ -1,5 +1,5 @@
 import type {
-  ProfileGetResult, ProfilePublishArgs, ProfileResolveArgs, ProfileResolveResult,
+  ProfileFields, ProfileGetResult, ProfilePublishArgs, ProfileResolveArgs, ProfileResolveResult,
   ProfileUnpublishArgs, ProfileUpdateArgs, PublicProfile, SpacePublicProfile,
 } from "@humansandmachines/gsv/protocol";
 import { jsonValueSchema, profileFieldsSchema, publicProfileSchema } from "@humansandmachines/gsv/protocol";
@@ -17,12 +17,53 @@ const revisionSchema = z.int().check(z.nonnegative());
 export function handleProfileGet(ctx: KernelContext): ProfileGetResult {
   const ownerUid = requireContactHuman(ctx);
   const origin = profileOrigin(ctx);
+  const handle = ctx.installationIdentity?.handle;
   const existing = ctx.profiles.get(ownerUid, origin);
-  if (existing) return { profile: existing };
+  if (existing) return { profile: { ...existing, ...(handle ? { handle } : undefined) } };
+  return { profile: { revision: 0, url: `${origin}/profile`, draft: defaultProfileDraft(ownerUid, ctx), ...(handle ? { handle } : undefined) } };
+}
+
+/** A profile is named by the Ship's handle, public and open to message requests unless its owner chooses otherwise. */
+function defaultProfileDraft(ownerUid: number, ctx: KernelContext): ProfileFields {
   const account = ctx.auth.getPasswdByUid(ownerUid)!;
-  return { profile: { revision: 0, url: `${origin}/profile`, draft: {
-    displayName: account.gecos || account.username, about: "", contactPolicy: "closed", representation: "human",
-  } } };
+  const displayName = ctx.installationIdentity?.handle || account.gecos || account.username;
+  return { displayName, about: "", contactPolicy: "requests", representation: "human" };
+}
+
+/** The name the owner shows to other people: their profile's display name, else their account name. */
+export function ownerDisplayName(ownerUid: number, ctx: KernelContext): string | undefined {
+  const origin = ctx.installationIdentity?.canonicalOrigin;
+  const account = ctx.auth.getPasswdByUid(ownerUid);
+  return (origin ? ctx.profiles.get(ownerUid, origin)?.draft.displayName : undefined) ?? account?.gecos ?? account?.username;
+}
+
+/**
+ * Publish the owner's profile once by default. Runs on every human sign-in but
+ * acts only until the default has been applied, so a later unpublish stays
+ * private. Any saved profile is the owner's own choice: a draft, a published
+ * profile and one they unpublished before this default existed are left alone.
+ */
+export async function ensureDefaultProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
+  const key = `users/${ownerUid}/profile/default_published`;
+  const applied = ctx.config.getExplicit(key);
+  if (applied === "1" || !profileOwnerActive(ownerUid, ctx)) return;
+  const origin = ctx.installationIdentity?.canonicalOrigin;
+  if (!origin) return;
+  const existing = ctx.profiles.get(ownerUid, origin);
+  // "pending" marks a default draft this hook wrote but has not published yet: a failure between the
+  // two retries on the next sign-in, while a draft the owner saved themselves is left alone.
+  const retry = applied === "pending" && existing && !existing.published && existing.revision === 1;
+  if (!existing || retry) {
+    if (!existing) {
+      ctx.config.set(key, "pending");
+      const account = ctx.auth.getPasswdByUid(ownerUid)!;
+      const subject = ctx.federation.ensureSubject(ownerUid, account.gecos || account.username);
+      ctx.profiles.update(ownerUid, subject.id, 0, defaultProfileDraft(ownerUid, ctx));
+    }
+    await publishProfileRevision(ownerUid, 1, ctx);
+    ctx.broadcastToUserUid(ownerUid, "profile.changed");
+  }
+  ctx.config.set(key, "1");
 }
 
 export function handleProfileUpdate(args: ProfileUpdateArgs, ctx: KernelContext): ProfileGetResult {
@@ -39,7 +80,13 @@ export function handleProfileUpdate(args: ProfileUpdateArgs, ctx: KernelContext)
 
 export async function handleProfilePublish(args: ProfilePublishArgs, ctx: KernelContext): Promise<ProfileGetResult> {
   const ownerUid = requireContactHuman(ctx);
-  const revision = revisionSchema.parse(args.expectedRevision);
+  await publishProfileRevision(ownerUid, revisionSchema.parse(args.expectedRevision), ctx);
+  ctx.broadcastToUserUid(ownerUid, "profile.changed");
+  return handleProfileGet(ctx);
+}
+
+/** Sign and publish the owner's saved draft at exactly `revision`. */
+async function publishProfileRevision(ownerUid: number, revision: number, ctx: KernelContext): Promise<void> {
   const state = ctx.profiles.get(ownerUid, profileOrigin(ctx));
   if (!state || state.revision !== revision) throw new Error("Profile changed; reload before publishing");
   const identity = await ctx.federationIdentity.ensure(profileOrigin(ctx));
@@ -52,10 +99,8 @@ export async function handleProfilePublish(args: ProfilePublishArgs, ctx: Kernel
     revision, publishedAtMs: Date.now(),
   };
   const profile: PublicProfile = { ...unsigned, signature: await ctx.federationIdentity.sign(jsonValueSchema.parse(unsigned)) };
-  requireContactHuman(ctx);
+  if (!profileOwnerActive(ownerUid, ctx)) throw new Error("Profile owner is unavailable");
   ctx.profiles.publish(ownerUid, revision, profile);
-  ctx.broadcastToUserUid(ownerUid, "profile.changed");
-  return handleProfileGet(ctx);
 }
 
 export async function handleProfileUnpublish(args: ProfileUnpublishArgs, ctx: KernelContext): Promise<ProfileGetResult> {

@@ -64,27 +64,26 @@ describe("cross-GSV federation integration", () => {
     ]);
   });
 
-  it("publishes one approved profile and resolves it from an independently routed space", async () => {
-    expect((await first.profile.get({})).profile.published).toBeUndefined();
-    const draft = { displayName: "First person", about: "Published biography", contactPolicy: "requests" as const, representation: "human" as const };
-    await first.profile.update({ expectedRevision: 0, draft });
+  it("publishes a request-open profile at sign-in, then only the approved snapshot, resolved from an independently routed space", async () => {
     const url = new URL("/profile", firstOrigin).href;
-    const privatePage = await fetch(url);
-    expect(privatePage.status).toBe(404);
-    await privatePage.arrayBuffer();
-    await first.profile.publish({ expectedRevision: 1 });
-    await expect.poll(async () => (await first.profile.get({})).profile.published?.revision).toBe(1);
+    expect((await first.profile.get({})).profile).toMatchObject({ revision: 1, published: { revision: 1 }, draft: { contactPolicy: "requests" } });
+    expect((await second.profile.resolve({ url })).profile).toMatchObject({ contactPolicy: "requests", revision: 1 });
+    const draft = { displayName: "First person", about: "Published biography", contactPolicy: "requests" as const, representation: "human" as const };
+    await first.profile.update({ expectedRevision: 1, draft });
+    expect((await second.profile.resolve({ url })).profile.revision).toBe(1);
+    await first.profile.publish({ expectedRevision: 2 });
+    await expect.poll(async () => (await first.profile.get({})).profile.published?.revision).toBe(2);
     const remote = await second.profile.resolve({ url });
-    expect(remote.profile).toMatchObject({ about: draft.about, origin: firstOrigin.origin, revision: 1 });
+    expect(remote.profile).toMatchObject({ about: draft.about, origin: firstOrigin.origin, revision: 2 });
     expect(remote.profile).not.toHaveProperty("ownerUid");
     expect(remote.profile).not.toHaveProperty("username");
-    expect((await second.profile.get({})).profile.published).toBeUndefined();
+    expect((await second.profile.get({})).profile.published).toEqual({ url: new URL("/profile", secondOrigin).href, revision: 1, contactPolicy: "requests" });
     const subjectUrl = new URL(`/_gsv/federation/v2/subjects/${encodeURIComponent(remote.profile.actor.subjectId)}`, firstOrigin);
     const document = await fetch(subjectUrl);
     expect(await document.json()).toEqual(remote.profile);
-    await first.profile.update({ expectedRevision: 1, draft: { ...draft, about: "Unpublished revision" } });
+    await first.profile.update({ expectedRevision: 2, draft: { ...draft, about: "Unpublished revision" } });
     expect((await second.profile.resolve({ url })).profile.about).toBe(draft.about);
-    await first.profile.unpublish({ expectedRevision: 2 });
+    await first.profile.unpublish({ expectedRevision: 3 });
     await expect(second.profile.resolve({ url })).rejects.toThrow("No public profile is available at this address");
     const unavailableSubject = await fetch(subjectUrl);
     expect(unavailableSubject.status).toBe(404);

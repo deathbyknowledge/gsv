@@ -13,8 +13,8 @@
   cursor: default;
   font-size: 0.8125rem; /* 13px — value from .gsv-label (kept inline so the bare-trigger inherit override still wins) */
   letter-spacing: 0.06em;
-  color: #b3aeff;
-  border-bottom: 1px dashed #6b62c4;
+  color: var(--accent);
+  border-bottom: 1px dashed var(--primary-hi);
   cursor: help;
 }
 .gsv-tt-trigger:focus-visible {
@@ -89,13 +89,22 @@
   z-index: 75;
   background: var(--panel);
   border-color: var(--border);
-  color: var(--text);
+  /* Hint text reads like form help text: lighter, in the prose face. */
+  color: var(--text-dim);
+  font-family: var(--gsv-font-prose);
+  font-size: 14px;
   font-weight: 400;
   letter-spacing: 0;
   line-height: 1.6;
   padding: 10px 12px;
   max-width: min(300px, calc(100vw - 40px));
   box-shadow: 0 4px 12px color-mix(in srgb, var(--void) 45%, transparent);
+}
+.gsv-tt-portal .gsv-tt-title {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+  font-weight: 600;
 }
 .gsv-tt-portal .gsv-tt-arrow {
   background: var(--panel);

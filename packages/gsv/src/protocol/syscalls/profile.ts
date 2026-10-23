@@ -13,7 +13,10 @@ export type ProfileState = {
   revision: number;
   url: string;
   draft: ProfileFields;
-  published?: { url: string; revision: number };
+  /** The live page; `contactPolicy` is what visitors can do now, which unpublished changes may differ from. */
+  published?: { url: string; revision: number; contactPolicy: ProfileFields["contactPolicy"] };
+  /** The space's recorded handle, which names the profile; absent when the installation has none. */
+  handle?: string;
 };
 
 type ProfilePublication = ProfileFields & {

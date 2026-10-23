@@ -34,27 +34,27 @@
   font-size: 11.5px;
   letter-spacing: 0.16em;
   padding: 11px 30px;
-  background: #5a52a8;
-  border-color: #6b62c4;
-  color: #fff;
-  box-shadow: 0 0 18px rgba(120, 110, 230, 0.4);
+  background: var(--dashed);
+  border-color: var(--primary-hi);
+  color: var(--text-hi);
+  box-shadow: var(--gsv-btn-glow-off, 0 0 18px rgba(120, 110, 230, 0.4));
   transition: background 0.12s, box-shadow 0.12s, border-color 0.12s;
 }
 .gsv-btn-primary:not(.is-disabled):hover,
 .gsv-btn-primary:not(.is-disabled):focus-visible {
-  background: #6b62c4;
-  box-shadow: 0 0 28px rgba(120, 110, 230, 0.7);
+  background: var(--primary-hi);
+  box-shadow: var(--gsv-btn-glow-off, 0 0 28px rgba(120, 110, 230, 0.7));
   outline: none;
 }
 .gsv-btn-primary:not(.is-disabled):active {
-  background: #4a43a0;
-  border-color: #5a52a8;
-  box-shadow: 0 0 8px rgba(120, 110, 230, 0.2);
+  background: var(--border-raised);
+  border-color: var(--dashed);
+  box-shadow: var(--gsv-btn-glow-off, 0 0 8px rgba(120, 110, 230, 0.2));
 }
 .gsv-btn-primary.is-disabled {
-  border-color: #4a4494; /* was #3a3676 (1.9:1 vs void); boundary now 2.4:1 */
-  background: #1e1b45;
-  color: #8781cf; /* was #565199 (2.3:1); label now 4.7:1 on the disabled fill */
+  border-color: var(--border-raised); /* was #3a3676 (1.9:1 vs void); boundary now 2.4:1 */
+  background: var(--active);
+  color: var(--text-muted); /* was #565199 (2.3:1); label now 4.7:1 on the disabled fill */
   box-shadow: none;
 }
 
@@ -64,26 +64,26 @@
   letter-spacing: 0.14em;
   padding: 10px 22px;
   background: transparent;
-  border-color: #4a449e;
-  color: #b3aeff;
+  border-color: var(--border-raised);
+  color: var(--accent);
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 .gsv-btn-secondary:not(.is-disabled):hover,
 .gsv-btn-secondary:not(.is-disabled):focus-visible {
-  background: #171441;
-  color: #e6e4ff;
-  border-color: #6b62c4;
+  background: var(--hover);
+  color: var(--text-title);
+  border-color: var(--primary-hi);
   outline: none;
 }
 .gsv-btn-secondary:not(.is-disabled):active {
-  background: #201c4d;
-  color: #cbc7ff;
-  border-color: #7a72d4;
+  background: var(--active);
+  color: var(--accent-bright);
+  border-color: var(--glyph);
 }
 .gsv-btn-secondary.is-disabled {
-  border-color: #403a7d; /* was #25224d (1.4:1 vs void); boundary now 2.0:1 */
+  border-color: var(--rule-section); /* was #25224d (1.4:1 vs void); boundary now 2.0:1 */
   background: transparent;
-  color: #8781cf; /* was #565199 (2.9:1); label now 5.8:1 on void */
+  color: var(--text-muted); /* was #565199 (2.9:1); label now 5.8:1 on void */
 }
 
 /* — success — */
@@ -93,21 +93,21 @@
   padding: 11px 30px;
   background: #1c7d4c; /* darkened from #238a58 for AA: white label now 5.0:1 */
   border-color: #37b875;
-  color: #f3fff8;
-  box-shadow: 0 0 18px rgba(94, 242, 160, 0.28);
+  color: var(--text-hi);
+  box-shadow: var(--gsv-btn-glow-off, 0 0 18px color-mix(in srgb, var(--online) 28%, transparent));
   transition: background 0.12s, box-shadow 0.12s, border-color 0.12s;
 }
 .gsv-btn-success:not(.is-disabled):hover,
 .gsv-btn-success:not(.is-disabled):focus-visible {
   background: #1e8352; /* was #2fa66c (3.0:1); now white label 4.6:1 */
-  border-color: #5ef2a0;
-  box-shadow: 0 0 28px rgba(94, 242, 160, 0.52);
+  border-color: var(--online);
+  box-shadow: var(--gsv-btn-glow-off, 0 0 28px color-mix(in srgb, var(--online) 52%, transparent));
   outline: none;
 }
 .gsv-btn-success:not(.is-disabled):active {
   background: #1b7047;
   border-color: #37b875;
-  box-shadow: 0 0 8px rgba(94, 242, 160, 0.2);
+  box-shadow: var(--gsv-btn-glow-off, 0 0 8px color-mix(in srgb, var(--online) 20%, transparent));
 }
 .gsv-btn-success.is-disabled {
   border-color: #266043; /* was #1c4a32 (2.0:1 vs void); boundary now 2.7:1 */
@@ -121,27 +121,27 @@
   font-size: 11px;
   letter-spacing: 0.14em;
   padding: 10px 28px;
-  background: #a8324a;
-  border-color: #c4445f;
-  color: #fff;
-  box-shadow: 0 0 16px rgba(200, 60, 90, 0.35);
+  background: var(--danger);
+  border-color: var(--danger-hi);
+  color: var(--text-hi);
+  box-shadow: var(--gsv-btn-glow-off, 0 0 16px rgba(200, 60, 90, 0.35));
   transition: background 0.12s, box-shadow 0.12s, border-color 0.12s;
 }
 .gsv-btn-danger:not(.is-disabled):hover,
 .gsv-btn-danger:not(.is-disabled):focus-visible {
-  background: #c4445f;
-  box-shadow: 0 0 26px rgba(200, 60, 90, 0.6);
+  background: var(--danger-hi);
+  box-shadow: var(--gsv-btn-glow-off, 0 0 26px rgba(200, 60, 90, 0.6));
   outline: none;
 }
 .gsv-btn-danger:not(.is-disabled):active {
-  background: #8c2840;
-  border-color: #a8324a;
-  box-shadow: 0 0 8px rgba(200, 60, 90, 0.2);
+  background: color-mix(in srgb, var(--danger) 80%, var(--void));
+  border-color: var(--danger);
+  box-shadow: var(--gsv-btn-glow-off, 0 0 8px rgba(200, 60, 90, 0.2));
 }
 .gsv-btn-danger.is-disabled {
   border-color: #6b3a52; /* was #3a2030 (1.4:1 vs void); boundary now 2.2:1 */
   background: #1e1018;
-  color: #8781cf; /* was #565199 (2.7:1); label now 5.3:1 on the disabled fill */
+  color: var(--text-muted); /* was #565199 (2.7:1); label now 5.3:1 on the disabled fill */
   box-shadow: none;
 }
 
@@ -151,27 +151,27 @@
   letter-spacing: 0.14em;
   padding: 9px 20px;
   background: transparent;
-  border-color: #5a2b3a;
-  color: #ff8fa3;
+  border-color: color-mix(in srgb, var(--error) 33%, var(--void));
+  color: color-mix(in srgb, var(--error) 78%, var(--text-hi));
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 .gsv-btn-dghost:not(.is-disabled):hover,
 .gsv-btn-dghost:not(.is-disabled):focus-visible {
-  background: #2a1420;
-  color: #ffb3c2;
-  border-color: #7a3050;
+  background: color-mix(in srgb, var(--error) 12%, var(--void));
+  color: color-mix(in srgb, var(--error) 50%, var(--text-hi));
+  border-color: color-mix(in srgb, var(--error) 45%, var(--void));
   outline: none;
 }
 .gsv-btn-dghost:not(.is-disabled):active {
-  background: #3a1a2a;
-  color: #ffd0dc;
-  border-color: #9a4060;
+  background: color-mix(in srgb, var(--error) 19%, var(--void));
+  color: color-mix(in srgb, var(--error) 28%, var(--text-hi));
+  border-color: color-mix(in srgb, var(--error) 59%, var(--void));
 }
 .gsv-btn-dghost.is-disabled {
-  border-color: #4a2438; /* was #2a1420 (1.2:1 vs void); 1.5:1 — kept below the
+  border-color: color-mix(in srgb, var(--error) 27%, var(--void)); /* was #2a1420 (1.2:1 vs void); 1.5:1 — kept below the
                             enabled ghost border (#5a2b3a) so the hierarchy holds */
   background: transparent;
-  color: #8781cf; /* was #565199 (2.9:1); label now 5.8:1 on void */
+  color: var(--text-muted); /* was #565199 (2.9:1); label now 5.8:1 on void */
 }
 
 /* — link — */
@@ -181,26 +181,26 @@
   padding: 0 0 1px;
   background: transparent;
   border: none;
-  border-bottom: 1px solid #b3aeff;
-  color: #b3aeff;
+  border-bottom: 1px solid var(--accent);
+  color: var(--accent);
   transition: color 0.12s, border-color 0.12s, opacity 0.12s;
 }
 .gsv-btn-link:not(.is-disabled):hover,
 .gsv-btn-link:not(.is-disabled):focus-visible {
-  color: #cbc7ff;
-  border-color: #cbc7ff;
+  color: var(--accent-bright);
+  border-color: var(--accent-bright);
   outline: none;
 }
 .gsv-btn-link:not(.is-disabled):active {
   opacity: 0.65;
 }
 .gsv-btn-link.is-disabled {
-  color: #8781cf; /* was #565199 (2.9:1); label now 5.8:1 on void */
-  border-color: #403a7d; /* was #25224d (1.4:1 vs void); underline now 2.0:1 */
+  color: var(--text-muted); /* was #565199 (2.9:1); label now 5.8:1 on void */
+  border-color: var(--rule-section); /* was #25224d (1.4:1 vs void); underline now 2.0:1 */
 }
 .gsv-btn-link svg {
   display: block;
-  filter: drop-shadow(0 0 3px rgba(150, 140, 255, 0.5));
+  filter: var(--gsv-btn-glow-off, drop-shadow(0 0 3px rgba(150, 140, 255, 0.5)));
 }
 .gsv-btn-link.is-disabled svg {
   filter: none;
@@ -213,11 +213,11 @@
 }
 .gsv-btn-link.is-tone-error:not(.is-disabled):hover,
 .gsv-btn-link.is-tone-error:not(.is-disabled):focus-visible {
-  color: #ffa0b4;
-  border-color: #ffa0b4;
+  color: color-mix(in srgb, var(--error) 64%, var(--text-hi));
+  border-color: color-mix(in srgb, var(--error) 64%, var(--text-hi));
 }
 .gsv-btn-link.is-tone-error:not(.is-disabled) svg {
-  filter: drop-shadow(0 0 3px rgba(255, 111, 140, 0.5));
+  filter: var(--gsv-btn-glow-off, drop-shadow(0 0 3px color-mix(in srgb, var(--error) 50%, transparent)));
 }
 .gsv-btn-link.is-tone-neutral:not(.is-disabled) {
   color: var(--label);
@@ -225,11 +225,11 @@
 }
 .gsv-btn-link.is-tone-neutral:not(.is-disabled):hover,
 .gsv-btn-link.is-tone-neutral:not(.is-disabled):focus-visible {
-  color: #d6d2f5;
-  border-color: #8a84c9;
+  color: color-mix(in srgb, var(--label) 45%, var(--text-hi));
+  border-color: var(--text-muted);
 }
 .gsv-btn-link.is-tone-neutral:not(.is-disabled) svg {
-  filter: drop-shadow(0 0 3px rgba(154, 149, 207, 0.45));
+  filter: var(--gsv-btn-glow-off, drop-shadow(0 0 3px rgba(154, 149, 207, 0.45)));
 }
 .gsv-btn-link.is-tone-success:not(.is-disabled) {
   color: var(--online);
@@ -237,11 +237,11 @@
 }
 .gsv-btn-link.is-tone-success:not(.is-disabled):hover,
 .gsv-btn-link.is-tone-success:not(.is-disabled):focus-visible {
-  color: #8df5bd;
-  border-color: #8df5bd;
+  color: color-mix(in srgb, var(--online) 69%, var(--text-hi));
+  border-color: color-mix(in srgb, var(--online) 69%, var(--text-hi));
 }
 .gsv-btn-link.is-tone-success:not(.is-disabled) svg {
-  filter: drop-shadow(0 0 3px rgba(94, 242, 160, 0.5));
+  filter: var(--gsv-btn-glow-off, drop-shadow(0 0 3px color-mix(in srgb, var(--online) 50%, transparent)));
 }
 .gsv-btn-link.is-tone-attention:not(.is-disabled) {
   color: var(--update);
@@ -249,11 +249,11 @@
 }
 .gsv-btn-link.is-tone-attention:not(.is-disabled):hover,
 .gsv-btn-link.is-tone-attention:not(.is-disabled):focus-visible {
-  color: #ffe08a;
-  border-color: #ffe08a;
+  color: color-mix(in srgb, var(--update) 62%, var(--text-hi));
+  border-color: color-mix(in srgb, var(--update) 62%, var(--text-hi));
 }
 .gsv-btn-link.is-tone-attention:not(.is-disabled) svg {
-  filter: drop-shadow(0 0 3px rgba(255, 210, 77, 0.5));
+  filter: var(--gsv-btn-glow-off, drop-shadow(0 0 3px color-mix(in srgb, var(--update) 50%, transparent)));
 }
 
 .gsv-btn.is-disabled {
@@ -264,4 +264,45 @@
 .gsv-btn:not(.is-disabled):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* — light theme —
+   The phosphor glows switch off, and fills that stay saturated on paper keep a
+   white label. Prefixes are :where() so each rule carries the same specificity
+   as the dark rule it follows and never outranks the session screen overrides. */
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-btn {
+  --gsv-btn-glow-off: none;
+}
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-btn-primary {
+  background: var(--accent);
+  color: var(--panel);
+}
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-btn-primary:not(.is-disabled):active {
+  background: var(--accent-bright);
+  border-color: var(--accent);
+}
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-btn-success {
+  background: var(--online);
+  border-color: var(--online);
+  color: var(--panel);
+}
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-btn-success:not(.is-disabled):hover,
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-btn-success:not(.is-disabled):focus-visible {
+  background: color-mix(in srgb, var(--online) 85%, var(--text-hi));
+  border-color: color-mix(in srgb, var(--online) 85%, var(--text-hi));
+}
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-btn-success:not(.is-disabled):active {
+  background: color-mix(in srgb, var(--online) 70%, var(--text-hi));
+  border-color: var(--online);
+}
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-btn-danger {
+  color: var(--panel);
+}
+:where(.instrument.is-light, .gsv-auth-theme.is-light) .gsv-btn-danger:not(.is-disabled):active {
+  background: color-mix(in srgb, var(--danger) 80%, var(--text-hi));
+}
+:where(.instrument.is-light, .gsv-auth-theme.is-light) :is(.gsv-btn-success, .gsv-btn-danger).is-disabled {
+  border-color: var(--border-raised);
+  background: var(--active);
+  color: var(--text-muted);
 }

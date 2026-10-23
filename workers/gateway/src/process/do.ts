@@ -13,6 +13,7 @@
  * DurableTaskScheduler.
  */
 
+import { processOperatorSummary, type ProcessOperatorSummary } from "./operator-summary";
 import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
 import { InstallationRetirement, durableResourceName, stateWithRetirementStorage, RESOURCE_IDENTITY_KEY, inspectResourceStorage, attachDurableResourceIdentity } from "../installation/retirement";
 import { DurableObject } from "cloudflare:workers";
@@ -145,6 +146,14 @@ export class Process extends DurableObject<GatewayEnv> {
     const tombstone = this.ctx.storage.kv.get<ProcessKilledTombstone | true>(PROCESS_KILLED_TOMBSTONE_KEY);
     return inspectResourceStorage(this.installationRuntime?.retirement.raw ?? this.ctx.storage,
       tombstone && tombstone !== true ? tombstone.pid : undefined, tombstone === true ? [PROCESS_KILLED_TOMBSTONE_KEY] : []);
+  }
+
+  /** Metadata about recent runs for the operator Ship page; never message text or tool data. */
+  async operatorRunSummary(runLimit: number): Promise<ProcessOperatorSummary | null> {
+    if (!this.installationRuntime || this.retirement.state || this.killed) return null;
+    await this.startup;
+    if (!Number.isInteger(runLimit) || runLimit < 1 || runLimit > 50) throw new Error("runLimit must be between 1 and 50");
+    return processOperatorSummary(this.store, runLimit);
   }
 
   private namedRuntime(): ProcessInstallationRuntime {

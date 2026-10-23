@@ -1,6 +1,7 @@
 import { exceptionDiagnostics } from "../../../../packages/gsv/src/diagnostics.js";
 import {
   AdapterRetirement,
+  sameAdapterDataOwner,
   type AdapterDataOwner,
   type AdapterDataScope,
 } from "../../shared/src/retirement";
@@ -81,6 +82,7 @@ import {
   lookupWhatsAppMedia,
   ManagedWhatsAppDeliveryError,
   markWhatsAppMessageRead,
+  reactToWhatsAppMessage,
   sendWhatsAppMessage,
   uploadWhatsAppMedia,
   WHATSAPP_WINDOW_CLOSED_ERROR,
@@ -166,9 +168,9 @@ const INBOUND_MAX_RECORDS = 4_096;
 const PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const PAIRING_CHARACTERS = 12;
 const UNSUPPORTED_TEXT =
-  "GSV WhatsApp could not receive that message type. Please send text, a photo, a document, a voice note or a location.";
+  "Ship could not receive that message type. Please send text, a photo, a document, a voice note or a location.";
 const MEDIA_UNAVAILABLE_TEXT =
-  "GSV WhatsApp could not receive that attachment. Please send a smaller file or try again.";
+  "Ship could not receive that attachment. Please send a smaller file or try again.";
 
 export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   private readonly retirement = new AdapterRetirement(this.ctx.storage);
@@ -176,6 +178,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<InboundPayload, ResponseContext>;
   private drainPromise?: Promise<void>;
+  private workingReaction: Promise<void> = Promise.resolve();
 
   constructor(ctx: DurableObjectState, env: ManagedWhatsAppPeerEnv) {
     super(ctx, env);
@@ -199,7 +202,13 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   }
 
   async inspectInstallationResource(installationId: string) { return await this.lifecycle.inspect(installationId); }
-  async quiesceInstallation(input: InstallationDeletionRequest) { return await this.lifecycle.quiesce(input); }
+  async quiesceInstallation(input: InstallationDeletionRequest) {
+    const receipt = await this.lifecycle.quiesce(input);
+    // A retired route can no longer stop its run's 👀, so quiescence clears it like a relink.
+    // The cleanup keeps a 👀 owned by whichever route is still active.
+    await this.clearWorkingReactionAfterRouteChange();
+    return receipt;
+  }
   async eraseInstallation(input: InstallationDeletionRequest) { return await this.lifecycle.erase(input); }
   async installationDeletionStatus(input: InstallationDeletionRequest) { return await this.lifecycle.status(input); }
 
@@ -294,15 +303,57 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     } catch (error) { await cancelBinaryBody(body, error); throw error; }
   }
 
-  /** WhatsApp shows typing only as a companion to a read receipt for the person's last message. */
-  async setTyping(
+  /**
+   * Ship is working on `messageId`, the message that started run `runId`: mark it read and put 👀
+   * on it. A stop removes the 👀 only while that run still owns it.
+   */
+  async setWorking(
     installationId: string,
     surface: AdapterSurface,
     actorId: string,
     routeGeneration: string,
     active: boolean,
+    runId: string,
+    messageId?: string,
   ): Promise<{ accepted: boolean }> {
-    if (!active) return { accepted: true };
+    const state = await this.requireState();
+    this.assertPeerDestination(state, surface, actorId);
+    if (
+      state.activeRoute?.installationId !== installationId
+      || state.activeRoute.generation !== routeGeneration
+    ) {
+      // Stopping never fails: a stale route has nothing of this run left to clear.
+      return { accepted: !active };
+    }
+    const owner = { installationId, generation: routeGeneration };
+    const release = this.retirement.start(owner);
+    try {
+      if (active && messageId) {
+        try {
+          await markWhatsAppMessageRead(this.accessToken(), this.phoneNumberId(), messageId, this.whatsAppFetch(owner));
+        } catch {
+          console.warn(JSON.stringify({
+            component: "managed_whatsapp",
+            event: "read_receipt_failed",
+          }));
+        }
+      }
+      const working = active && messageId && whatsAppWindowOpen(state, Date.now()) ? messageId : undefined;
+      await this.moveWorkingReaction(working, runId, owner);
+    } finally { release(); }
+    return { accepted: true };
+  }
+
+  /**
+   * WhatsApp shows typing only as a companion to a read receipt, so it rides the person's latest
+   * message, which was already marked read when it arrived. Delivering the reply ends it.
+   */
+  async setTyping(
+    installationId: string,
+    surface: AdapterSurface,
+    actorId: string,
+    routeGeneration: string,
+  ): Promise<{ accepted: boolean }> {
     const state = await this.requireState();
     this.assertPeerDestination(state, surface, actorId);
     if (
@@ -311,25 +362,110 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     ) {
       return { accepted: false };
     }
-    if (!state.lastInboundMessageId) return { accepted: true };
     const owner = { installationId, generation: routeGeneration };
-    const release = this.retirement.start(owner);
-    try {
-      await markWhatsAppMessageRead(
-        this.accessToken(),
-        this.phoneNumberId(),
-        state.lastInboundMessageId,
-        this.whatsAppFetch(owner),
-        { typing: true },
-      );
-    } catch {
+    if (state.lastInboundMessageId && whatsAppWindowOpen(state, Date.now())) {
+      const release = this.retirement.start(owner);
+      try {
+        await markWhatsAppMessageRead(
+          this.accessToken(),
+          this.phoneNumberId(),
+          state.lastInboundMessageId,
+          this.whatsAppFetch(owner),
+          { typing: true },
+        );
+      } catch {
+        console.warn(JSON.stringify({
+          component: "managed_whatsapp",
+          event: "typing_delivery_failed",
+        }));
+      } finally { release(); }
+    }
+    return { accepted: true };
+  }
+
+  /**
+   * Keeps 👀 on at most one message. Moves run one at a time, so a stop never
+   * overtakes the start it clears. Reactions are best effort and never block delivery.
+   */
+  private moveWorkingReaction(
+    target: string | undefined,
+    runId: string | undefined,
+    owner: AdapterDataScope,
+  ): Promise<void> {
+    const move = this.workingReaction.then(async () => {
+      const state = await this.requireState();
+      // A run's move applies only while its route is still active: a relink or disconnect may
+      // have cleared 👀 while this move waited. The platform-scope cleanup after a route change
+      // clears only a 👀 placed under another route; the new route's run may already own it.
+      if (owner ? !sameAdapterDataOwner(owner, state.activeRoute)
+        : state.activeRoute && sameAdapterDataOwner(state.workingReactionRoute, state.activeRoute)) return;
+      const current = state.workingReactionMessageId;
+      // A superseded run's stop can arrive after its successor started; it must not clear the successor's 👀.
+      if (!target && runId && state.workingReactionRunId && state.workingReactionRunId !== runId) return;
+      const react = async (messageId: string, emoji: string): Promise<"applied" | "ambiguous" | "throttled" | "failed"> => {
+        try {
+          await reactToWhatsAppMessage(
+            this.accessToken(), this.phoneNumberId(), state.actorId, messageId, emoji, this.whatsAppFetch(owner),
+          );
+          return "applied";
+        } catch (error) {
+          const outcome = !(error instanceof ManagedWhatsAppDeliveryError) ? "failed"
+            : error.kind === "ambiguous" ? "ambiguous"
+              : error.rateLimited ? "throttled" : "failed";
+          console.warn(JSON.stringify({
+            component: "managed_whatsapp",
+            event: "reaction_delivery_failed",
+            action: emoji ? "add" : "remove",
+            outcome,
+            diagnostics: exceptionDiagnostics(error),
+          }));
+          return outcome;
+        }
+      };
+      let next = current;
+      if (target && current === target && runId !== state.workingReactionRunId) {
+        // A new run on the message still recorded: an earlier removal with an unknown outcome
+        // may have taken its 👀 off. Sending the same reaction again is harmless.
+        await react(target, "👀");
+      } else if (current !== target) {
+        // A removal with an unknown outcome or a rate limit keeps its message recorded, so the next
+        // start or stop retries it. One Meta refused is forgotten: retrying it would block every later 👀.
+        const removal = current ? await react(current, "") : "applied";
+        const cleared = removal === "applied" || removal === "failed";
+        // Meta may have applied an addition whose outcome is unknown; removing an absent 👀 is harmless.
+        if (cleared) {
+          const addition = target ? await react(target, "👀") : "failed";
+          next = addition === "applied" || addition === "ambiguous" ? target : undefined;
+        }
+      }
+      const nextRunId = target ? runId : undefined;
+      const nextRoute = target && owner
+        ? { installationId: owner.installationId, generation: owner.generation }
+        : next ? state.workingReactionRoute : undefined;
+      try {
+        await this.ctx.storage.transaction(async (txn) => {
+          const latest = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
+          if (latest) {
+            await txn.put(STATE_KEY, {
+              ...latest, workingReactionMessageId: next, workingReactionRunId: nextRunId, workingReactionRoute: nextRoute,
+            });
+          }
+        });
+      } catch (error) {
+        // Without its record no stop could find a 👀 just added, so take it back off.
+        // A removal that went unrecorded is retried later, which is harmless.
+        if (next && next !== current) await react(next, "");
+        throw error;
+      }
+    });
+    this.workingReaction = move.catch((error) => {
       console.warn(JSON.stringify({
         component: "managed_whatsapp",
-        event: "typing_delivery_failed",
+        event: "reaction_record_failed",
+        diagnostics: exceptionDiagnostics(error),
       }));
-    }
-    finally { release(); }
-    return { accepted: true };
+    });
+    return this.workingReaction;
   }
 
   async inspectPairing(claimId: string, expiresAt: number): Promise<AdapterPairingCandidate> {
@@ -407,19 +543,21 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     input: AdapterPairingActivateInput,
   ): Promise<AdapterPairingPreparation> {
     const route = routeWithOrigin(input.route, input.canonicalOrigin);
-    return await this.ctx.storage.transaction(async (txn) => {
+    const finalized = await this.ctx.storage.transaction(async (txn) => {
       this.retirement.requireLive(route);
       const state = await txn.get<ManagedWhatsAppPeerState>(STATE_KEY);
       if (!state) throw new Error("Managed WhatsApp peer is not initialized");
-      const finalized = finalizeManagedWhatsAppPairing(state, {
+      const result = finalizeManagedWhatsAppPairing(state, {
         claimId,
         expiresAt,
         operationId: requireOpaque(input.operationId, "operationId"),
         route,
       });
-      if (finalized.changed) await txn.put(STATE_KEY, finalized.state);
-      return finalized.preparation;
+      if (result.changed) await txn.put(STATE_KEY, result.state);
+      return result;
     });
+    if (finalized.changed) await this.clearWorkingReactionAfterRouteChange();
+    return finalized.preparation;
   }
 
   async sendPairingConfirmation(operationId: string, canonicalOrigin: string): Promise<void> {
@@ -453,7 +591,18 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       });
       if (result.state !== state) await txn.put(STATE_KEY, result.state);
       return { disconnected: result.disconnected };
+    }).then(async (result) => {
+      if (result.disconnected) await this.clearWorkingReactionAfterRouteChange();
+      return result;
     });
+  }
+
+  /**
+   * A run on the previous route can no longer stop its 👀: its stop is refused as stale.
+   * The platform clears the reaction itself when the route changes.
+   */
+  private async clearWorkingReactionAfterRouteChange(): Promise<void> {
+    await this.moveWorkingReaction(undefined, undefined, null);
   }
 
   async alarm(): Promise<void> {

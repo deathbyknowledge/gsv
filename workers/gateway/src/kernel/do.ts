@@ -1,3 +1,6 @@
+import type { OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
+import { buildOperatorShipSnapshot } from "./operator-snapshot";
+import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
 import { InitialOnboarding } from "./onboarding-responsibility";
 import {
@@ -752,9 +755,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const gate = await this.onboarding.managedWorkGate();
     if (!gate.allowed) return null;
     this.retirement.assertActive();
-    const projection = await resolveSpacePublicProfile(locator, this.buildKernelContext({}));
+    const ctx = this.buildKernelContext({});
+    const projection = await resolveSpacePublicProfile(locator, ctx);
     this.retirement.assertActive();
-    return projection;
+    const handle = ctx.installationIdentity?.handle;
+    return projection && handle ? { ...projection, handle } : projection;
   }
 
   async scheduleApproachMaintenance(runningTaskId?: string): Promise<void> {
@@ -765,6 +770,21 @@ export class Kernel extends DurableObject<GatewayEnv> {
       if (existing.time * 1000 <= due + 1000) return;
       await this.cancelSchedule(existing.id);
       await this.schedule(new Date(due), "onApproachMaintenance", "intake", { idempotent: true, excludeTaskId: runningTaskId });
+    });
+  }
+
+  /** Operator Ship page: metadata only, reached through the Accounts-bound operator entrypoint. */
+  async operatorShipSnapshot(runLimit: number): Promise<OperatorShipSnapshot> {
+    this.retirement.assertActive();
+    return await buildOperatorShipSnapshot({
+      installationId: this.installationId,
+      procs: this.procs,
+      identityLinks: this.adapters.identityLinks,
+      targets: this.targets,
+      responsibilities: this.responsibilities,
+      shipEvents: this.shipEvents,
+      shipSummary: async (pid) => await (await getProcessByPid(pid, this.installationId)).operatorRunSummary(runLimit),
+      now: () => Date.now(),
     });
   }
 

@@ -77,6 +77,11 @@ again to finish and send. Wait for the listening sound before speaking.
 stops speech and cancels recording, retaining displayed draft
 text. Starting a recording also stops the current spoken reply.
 
+To choose other keys, select **change** and press the combination. Option and
+AltGr combinations record by their physical keys. Mouse buttons cannot be
+voice shortcuts yet; pressing one while choosing keys explains this instead of
+navigating.
+
 The shortcut records into a separate voice draft and sends an ordinary message
 to your Ship. Chat's typed text, attachments and selected connection stay
 untouched, including when you are viewing a helper or a People conversation.

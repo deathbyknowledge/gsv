@@ -29,6 +29,8 @@
  *   anything else is committed as your message and answered briefly a second later
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
+import type { ProfileState } from "@humansandmachines/gsv/protocol";
+import { contactSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import {
   wireFrameSchemas,
   buildBinaryFrame,
@@ -36,6 +38,10 @@ import {
   BINARY_FRAME_END,
   type AccountSummary,
   type AiTextContent,
+  type ApproachSummary,
+  type ContactSendResult,
+  type ContactSummary,
+  type ConversationInboxEntry,
   type AiThinkingContent,
   type AiToolCall,
   type ConnectResult,
@@ -116,6 +122,11 @@ function forgetSeededSession(): void {
 
 const OWNER = { uid: 1000, username: "esteve", home: "/home/esteve" };
 const SHIP = { pid: "p-ship", uid: 1001, username: "ship", home: "/home/ship" };
+const PROFILE_URL = `https://${OWNER.username}.ship.space/profile`;
+/** The owner's own profile, public by default with an empty bio, editable in memory. */
+let ownProfile: ProfileState = {
+  revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests", representation: "human" }, published: { url: PROFILE_URL, revision: 1, contactPolicy: "requests" }, handle: OWNER.username,
+};
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
 /** The config this browser keeps for the mock, with its storage key: the welcome card's dismissal and the owner's language. */
@@ -158,7 +169,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "contact.list", "sys.pair.create", "fs.read", "sys.config.set"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -167,11 +178,39 @@ const responsibilityBase = {
   assignee: { kind: "ship" as const }, priority: "normal" as const, revision: 1,
   createdAtMs: at(1, 9, 0), updatedAtMs: at(0, 8, 0),
 };
+const approaches: ApproachSummary[] = [];
+/* one contact with an unread message, so the chat shows a contact notice with its reply box */
+const MARA_CONTACT_ID = "mock-contact-mara";
+const MARA_CONVERSATION = "c-mara";
+const MARA_ACTOR = { shipId: "mock-mara", subjectId: "owner" };
+const maraContact: ContactSummary = { id: MARA_CONTACT_ID, ownerUid: OWNER.uid, state: "active", generation: "1", remoteShipId: MARA_ACTOR.shipId,
+  remoteSubject: { id: MARA_ACTOR.subjectId, displayName: "Mara" }, remoteOrigin: "https://mara.ship.space", conversationId: MARA_CONVERSATION,
+  createdAtMs: at(3, 9, 0), updatedAtMs: at(0, 8, 12), lastReceivedAtMs: at(0, 8, 12) };
+const maraThread: ConversationMessage[] = [{ id: "mara-1", conversationId: MARA_CONVERSATION, sequence: 1,
+  author: { kind: "contact", contactId: MARA_CONTACT_ID, shipId: MARA_ACTOR.shipId, subjectId: MARA_ACTOR.subjectId, displayName: "Mara" },
+  text: "Are we still on for the studio visit on Thursday? I can bring the revised quote.",
+  social: { threadId: "mara-thread", reference: { actor: MARA_ACTOR, messageId: "mara-1" }, provenance: { kind: "human" } },
+  origin: { kind: "federation", contactId: MARA_CONTACT_ID, deliveryId: "mara-delivery-1" }, createdAt: at(0, 8, 12) }];
+const maraView = { readThroughSequence: 0, archived: false, revision: 1 };
+/* a retry with the same idempotency key replays the first answer, as the Kernel replays its outbox record; the
+   in-flight promise is stored before the hash resolves so two overlapping retries cannot both append */
+const maraSends = new Map<string, Promise<ContactSendResult>>();
+function maraConversation(): ConversationSummary {
+  return { id: MARA_CONVERSATION, kind: "contact", ownerUid: OWNER.uid, title: "Mara", latestSequence: maraThread.length, createdAt: at(3, 9, 0), updatedAt: maraThread.at(-1)!.createdAt };
+}
+function maraInboxEntry(): ConversationInboxEntry {
+  const latest = maraThread.at(-1)!;
+  const latestIncoming = [...maraThread].reverse().find((message) => message.author.kind === "contact")?.sequence ?? 0;
+  return { conversation: maraConversation(), contactId: MARA_CONTACT_ID, view: { ...maraView }, unread: latestIncoming > maraView.readThroughSequence,
+    latestIncomingSequence: latestIncoming, preview: { id: latest.id, sequence: latest.sequence, author: latest.author, createdAt: latest.createdAt, text: latest.text, attachmentCount: 0 } };
+}
 const responsibilities: ResponsibilityRecord[] = [
   { ...responsibilityBase, id: "mock-notes", title: "Organise the notes from this week", state: "active", assignee: { kind: "process", processId: HELPER.pid }, details: { outcome: "Keep the action items together and archive the older notes." } },
   { ...responsibilityBase, id: "mock-pricing", title: "Follow up on pricing with Mara", state: "waiting", blocker: "Waiting for Mara’s reply", details: { outcome: "Confirm the revised quote before Thursday." } },
   { ...responsibilityBase, id: "mock-backup", title: "Check that the studio backup finishes", state: "open", nextCheckAtMs: Date.now() + 2 * 3_600_000 },
   { ...responsibilityBase, id: "mock-intro", title: "Introduce Lena to Mara", state: "resolved", resolvedAtMs: at(0, 8, 6), resolution: { result: "Lena accepted the introduction." } },
+  /* a Kernel-made title with an unbreakable id, the shape that overflowed the inspector on phones */
+  { ...responsibilityBase, id: "mock-contact-message", title: "New contact message afc54bf9a9f7d2cd8b046e57f20096b1 for the owner", state: "resolved", resolvedAtMs: at(0, 7, 40), source: { kind: "event" as const, eventType: "federation.message.received", eventId: "contact:613d63df-f6a6-433a-9d18-c0dc189f628a" }, details: { outcome: "Notified twice about Esteve's Meta account requests; awaiting a decision on whether to reply." }, resolution: { result: "Replied on the owner's behalf." } },
 ];
 const scheduleBase = {
   ownerUid: OWNER.uid, creator: { kind: "user" as const, uid: OWNER.uid, username: OWNER.username },
@@ -761,7 +800,8 @@ function refuse(id: string, code: number, message: string): string {
   return JSON.stringify({ type: "res", id, ok: false, error: { code, message } });
 }
 
-function route(socket: MockSocket, id: string, call: string, args: JsonValue): string {
+/* a case may answer later, as the real Kernel does for work that hashes or waits; the socket delivers either */
+function route(socket: MockSocket, id: string, call: string, args: JsonValue): string | Promise<string> {
   switch (call) {
     case "sys.connect":
       world.sockets.add(socket);
@@ -825,6 +865,10 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "conversation.forProcess": return respond(id, { conversation: conversation(pidArgs.parse(args).pid) });
     case "conversation.history": {
       const { conversationId, beforeSequence = Infinity, afterSequence, limit = 100 } = conversationArgs.parse(args);
+      if (conversationId === MARA_CONVERSATION) {
+        const messages = maraThread.filter((message) => message.sequence < beforeSequence && message.sequence > (afterSequence ?? 0)).slice(-limit);
+        return respond(id, { conversation: maraConversation(), messages, hasMore: false });
+      }
       const ship = conversationId === SHIP_CONVERSATION;
       const all = ship ? world.messages : [];
       const eligible = all.filter((message) => message.sequence < beforeSequence && message.sequence > (afterSequence ?? 0));
@@ -847,7 +891,71 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       const sent = receive(input.text);
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
     }
-    case "contact.list": return respond(id, { contacts: [] });
+    case "contact.list": return respond(id, { contacts: fresh ? [] : [maraContact] });
+    case "conversation.inbox": {
+      const { attentionOnly, archived = false } = z.object({ attentionOnly: z.boolean().optional(), archived: z.boolean().optional() }).parse(args);
+      const entry = maraInboxEntry();
+      const listed = !fresh && entry.view.archived === archived && (!attentionOnly || entry.unread);
+      return respond(id, { entries: listed ? [entry] : [] });
+    }
+    case "conversation.view.update": {
+      const { conversationId, readThroughSequence } = z.object({ conversationId: z.string(), readThroughSequence: z.number().optional() }).parse(args);
+      if (conversationId !== MARA_CONVERSATION) throw new Error(`Unexpected conversation ${conversationId}`);
+      if (readThroughSequence !== undefined) maraView.readThroughSequence = Math.max(maraView.readThroughSequence, readThroughSequence);
+      maraView.revision += 1;
+      broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, viewOnly: true });
+      return respond(id, { entry: maraInboxEntry() });
+    }
+    case "contact.send": {
+      const { contactId, text, idempotencyKey = crypto.randomUUID() } = z.object({ contactId: z.string(), text: z.string(), idempotencyKey: z.string().optional() }).parse(args);
+      if (contactId !== MARA_CONTACT_ID) throw new Error(`Unexpected contact ${contactId}`);
+      let send = maraSends.get(idempotencyKey);
+      /* the same id the client predicts for its pending bubble, so history replaces it instead of doubling it */
+      if (!send) {
+        send = contactSendMessageId(contactId, maraContact.generation, idempotencyKey).then((messageId): ContactSendResult => {
+          const sequence = maraThread.length + 1;
+          maraThread.push({ id: messageId, conversationId: MARA_CONVERSATION, sequence, author: { kind: "user", uid: OWNER.uid }, text,
+            social: { threadId: "mara-thread", reference: { actor: { shipId: "mock-ship", subjectId: "owner" }, messageId }, provenance: { kind: "human" } },
+            origin: { kind: "client", clientId: "web" }, createdAt: Date.now() });
+          broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, latestSequence: sequence });
+          return { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" };
+        });
+        maraSends.set(idempotencyKey, send);
+      }
+      return send.then((result) => respond(id, result));
+    }
+    /* a message request sent from People: kept in this tab so the requests view can list it */
+    case "approach.create": {
+      const { displayName, recipient } = z.object({ displayName: z.string(), recipient: z.object({ shipId: z.string(), subjectId: z.string() }) }).parse(args);
+      const now = Date.now();
+      const approach: ApproachSummary = { id: `mock-approach-${approaches.length + 1}`, direction: "outgoing",
+        reference: { actor: recipient, approachId: `mock-approach-${approaches.length + 1}` }, peer: recipient, displayName,
+        conversationId: `approach:${approaches.length + 1}`, state: "pending", revision: 1, delivery: "received",
+        createdAtMs: now, updatedAtMs: now, expiresAtMs: now + 7 * 24 * 3_600_000 };
+      approaches.push(approach);
+      return respond(id, { approach });
+    }
+    case "approach.list": {
+      const { direction, status = "active" } = z.object({ direction: z.enum(["incoming", "outgoing"]), status: z.enum(["active", "history"]).optional() }).parse(args);
+      const pending = (approach: ApproachSummary) => ["preparing", "pending", "accepting"].includes(approach.state);
+      return respond(id, { approaches: direction === "outgoing" ? approaches.filter((approach) => pending(approach) === (status === "active")) : [] });
+    }
+    case "profile.get": return respond(id, { profile: ownProfile });
+    case "profile.update": {
+      const { draft } = z.object({ expectedRevision: z.number(), draft: z.object({
+        displayName: z.string(), about: z.string(), contactPolicy: z.enum(["requests", "invitation", "closed"]), representation: z.enum(["human", "human-and-ship"]),
+      }) }).parse(args);
+      ownProfile = { ...ownProfile, revision: ownProfile.revision + 1, draft };
+      return respond(id, { profile: ownProfile });
+    }
+    case "profile.publish": {
+      ownProfile = { ...ownProfile, published: { url: PROFILE_URL, revision: ownProfile.revision, contactPolicy: ownProfile.draft.contactPolicy } };
+      return respond(id, { profile: ownProfile });
+    }
+    case "profile.unpublish": {
+      ownProfile = { revision: ownProfile.revision + 1, url: ownProfile.url, draft: ownProfile.draft, handle: ownProfile.handle };
+      return respond(id, { profile: ownProfile });
+    }
     case "profile.resolve": {
       const { url } = z.object({ url: z.string().url() }).parse(args);
       const origin = new URL(url).origin;
@@ -957,13 +1065,14 @@ class MockSocket extends EventTarget implements WebSocket {
     const frame = wireFrameSchemas.request.safeParse(JSON.parse(text.data));
     if (!frame.success) return; // cancels and other signals need no answer
     const { id, call, args } = frame.data;
-    let reply: string;
-    try {
-      reply = route(this, id, call, args);
-    } catch (error) {
-      reply = refuse(id, 400, error instanceof Error ? error.message : "Bad request");
-    }
-    queueMicrotask(() => this.deliverText(reply));
+    const deliver = async () => {
+      try {
+        this.deliverText(await route(this, id, call, args));
+      } catch (error) {
+        this.deliverText(refuse(id, 400, error instanceof Error ? error.message : "Bad request"));
+      }
+    };
+    queueMicrotask(() => { void deliver(); });
   }
 
   close(code = 1000, reason = ""): void {

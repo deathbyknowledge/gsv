@@ -68,6 +68,9 @@ Create a Ship, reserve its handle, and give the person the resulting one-time
 activation link. They use that link to create their personal account and root
 password. Further Ships use this same administration flow.
 
+Administration timestamps use your device's timezone, including audit entries and
+run times. With JavaScript disabled, they use the labelled UTC fallback.
+
 To let people sign up themselves, enable `GSV_SIGNUP_ENABLED` and configure
 owner email delivery. They choose a handle and verify their email at
 `<admin-origin>/owner/signup/`, the configured public signup alias, or in
@@ -87,6 +90,47 @@ verified before codes can be delivered. The public deployment creates and
 preserves the owner-authentication secret. Keep the deployment state on
 redeploy so existing verification and session records remain usable. Owner
 verification mail is independent of a Ship's messaging adapters.
+
+## Check on a Ship {#check-on-a-ship}
+
+Each Ship's administration page shows its handle, mail address, hostnames and
+lifecycle state. It also shows the owner's full email, as a `mailto:` link,
+and their sign-in methods. Set `GSV_MAIL_DOMAIN` to show the Ship's mail
+address.
+
+When Accounts has the `OPERATOR_GATEWAY` binding, the page adds health from the
+Ship itself: the personal process state, queued input, pending approvals, open
+responsibilities, queued Ship events, linked messengers and connected devices.
+Administration reads this through a deployment-owned binding to the Gateway
+that only Accounts holds, and only for a Ship the directory lists as active or
+suspended. Devices appear as `Device 1`, `Device 2` and so on, numbered by first
+connection, because their own names often include a person's name.
+
+A timeline lists the most recent runs. Each run shows its origin, input length,
+duration and outcome, and its steps flag anything that failed or took longer
+than a minute. If the Ship's own process cannot be read, the timeline says "Run
+history unavailable" rather than showing no runs.
+
+Health and the timeline are metadata only: counts, times, tool and model names,
+and outcomes. They never include message text, tool arguments or output,
+prompts, file contents, or the identifiers of people a Ship talks to on a
+messenger. The health read gives up after three seconds. If the binding is
+missing or the read fails, the page names the reason and the rest of it still
+works.
+
+Accounts records every operator change in an audit log: creating a Ship,
+reissuing its setup link, suspending, reactivating, resetting, and each
+deletion step. Each entry names the operator and the action, plus any reason
+the operator gave. Suspend and reset forms take an optional reason. A Ship's
+page lists its recent entries, and `<admin-origin>/admin/audit` lists every
+entry. Entries outlive the Ship they describe. They name it only by Ship ID and
+hold no owner data.
+
+Accounts writes the entry before the change runs. If it cannot, the change does
+not happen and the operator gets a retryable error. A change that returned an
+error is marked "Returned an error". If the outcome could not be written after
+the change ran, the change is still reported as done and its entry reads
+"Outcome not recorded"; check the Ship's current state.
 
 ## Connect services and verify cleanup
 

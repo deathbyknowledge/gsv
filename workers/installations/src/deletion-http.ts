@@ -1,22 +1,44 @@
 import { installationDeletionManifestSchema, installationDeletionEvidenceSchema } from "./deletion-inventory";
 import { z } from "zod";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { installationDeletionInventoryImportSchema } from "@humansandmachines/gsv/services/lifecycle-discovery";
 import { accountsDeletionInspectionSchema } from "./deletion-inspections";
 import { operatorResourceAttestationSchema } from "./operator-resource-contracts";
 import type { AccountsDeletionRuntime } from "./deletion-runtime";
-import type { InstallationAdminAccess } from "./admin/access";
+import { AdminForbiddenError, type InstallationAdminAccess } from "./admin/access";
+import type { AdminAuditRecorder } from "./admin/insight";
 import { hasExpectedOrigin, noStoreHeaders, readJsonObject, readRequestBody, requireString, type JsonValue } from "./http";
 
 /** Deletion control uses the existing operator authentication and mutation origin. */
 export class InstallationDeletionHttp {
-  constructor(private readonly runtime: AccountsDeletionRuntime, private readonly access: InstallationAdminAccess, private readonly origin: string) {}
+  constructor(
+    private readonly runtime: AccountsDeletionRuntime,
+    private readonly access: InstallationAdminAccess,
+    private readonly origin: string,
+    private readonly audited: AdminAuditRecorder = async (_request, _action, mutation) => await mutation(),
+  ) {}
 
   async handle(request: Request): Promise<Response | null> {
     const route = /^\/admin\/api\/installations\/([^/]+)\/deletion(?:\/(retire|inventory|retry|inspect|inspection|import|operator-resources))?$/.exec(new URL(request.url).pathname);
     if (!route) return null;
-    const json = (value: JsonValue, status = 200) => Response.json(value, { status, headers: noStoreHeaders() });
     if (!await this.access.allows(request)) return json({ error: "Forbidden" }, 403);
-    if (request.method === "POST" && !hasExpectedOrigin(request, this.origin)) return json({ error: "Forbidden" }, 403);
+    if (request.method !== "POST") return await this.route(request, route);
+    if (!hasExpectedOrigin(request, this.origin)) return json({ error: "Forbidden" }, 403);
+    let installationId: string;
+    try { installationId = decodeURIComponent(route[1]!); }
+    catch { return await this.route(request, route); }
+    try {
+      return await this.audited(request, { name: `ship.deletion.${route[2] ?? "begin"}`, installationId },
+        () => this.route(request, route), (response) => ({ refused: !response.ok }));
+    } catch (error) {
+      if (error instanceof AdminForbiddenError) return json({ error: "Forbidden" }, 403);
+      // route() answers its own failures, so this is the audit record itself failing.
+      console.warn("[Operator] Admin request failed:", new URL(request.url).pathname, exceptionDiagnostics(error));
+      return json({ error: "The operator request could not be completed." }, 503);
+    }
+  }
+
+  private async route(request: Request, route: RegExpExecArray): Promise<Response> {
     try {
       const installationId = decodeURIComponent(route[1]);
       const action = route[2];
@@ -67,4 +89,8 @@ export class InstallationDeletionHttp {
       return json({ error: "The deletion request could not be completed." }, 503);
     }
   }
+}
+
+function json(value: JsonValue, status = 200): Response {
+  return Response.json(value, { status, headers: noStoreHeaders() });
 }

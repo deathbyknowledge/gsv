@@ -123,6 +123,21 @@ export class ProcessTraceRepository {
     };
   }
 
+  /** Every span of the most recent runs, oldest run first. */
+  listRecentRunSpans(runLimit: number): ProcessTraceSpanRow[] {
+    return this.store.sql.exec<ProcessTraceSpanRow>(
+      `SELECT * FROM process_trace_spans
+       WHERE run_id IN (
+         SELECT run_id FROM process_trace_spans
+         WHERE kind = 'run'
+         ORDER BY started_at DESC, run_id DESC
+         LIMIT ?
+       )
+       ORDER BY started_at ASC, span_id ASC`,
+      runLimit,
+    ).toArray();
+  }
+
   clearTraceSpans(): void {
     this.store.sql.exec("DELETE FROM process_trace_spans");
   }

@@ -1,4 +1,5 @@
 import { canLinkAdapter } from "./adapter-pairing-policy";
+import type { AdapterDeliveryRoute } from "./do-shared";
 import type {
   AdapterActivity,
   AdapterAccountStatus,
@@ -450,6 +451,18 @@ export async function setAdapterActivityForKernel(
   } catch {
     logAdapterBoundaryFailure("warn", "activity_worker_failed");
   }
+}
+
+/** Sends a route's activity to its adapter; `null` means this route has nothing to show. */
+export async function setAdapterRouteActivity(
+  env: GatewayEnv,
+  installationId: KernelContext["installationId"],
+  route: AdapterDeliveryRoute,
+  activity: AdapterActivity | null,
+): Promise<void> {
+  if (!activity) return;
+  const { adapter, accountId, surface } = route.destination;
+  await setAdapterActivityForKernel(env, installationId, adapter, accountId, surface, activity);
 }
 
 export async function refreshAdapterStatus(

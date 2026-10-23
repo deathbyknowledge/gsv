@@ -18,6 +18,9 @@ const STYLE = `
 .gsv-glyph-stars {
   overflow: hidden;
   contain: layout paint;
+  /* The stars are real glyphs: keep a drag or select-all from sweeping them into the selection. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 .gsv-glyph-stars pre {
   position: absolute;

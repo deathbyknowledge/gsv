@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shortcutDefaults, shortcutFromKey, shortcutLabel } from "./shortcutKeys";
+import { shortcutDefaults, shortcutFromKey, shortcutFromMouse, shortcutLabel } from "./shortcutKeys";
 
 const key = (code: string, options = {}) => ({ code, key: code, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, repeat: false, isComposing: false, getModifierState: () => false, ...options });
 
@@ -19,7 +19,23 @@ describe("voice shortcut keys", () => {
     expect(shortcutFromKey(key("ControlLeft", { ctrlKey: true }))).toEqual({});
     expect(shortcutFromKey(key("Space", { ctrlKey: true, repeat: true }))).toEqual({});
     expect(shortcutFromKey(key("KeyE", { isComposing: true }))).toEqual({});
-    expect(shortcutFromKey(key("KeyE", { altKey: true, getModifierState: () => true })).error).toBeTruthy();
+  });
+
+  it("records the physical key when Option or AltGr changes the character", () => {
+    const altGraph = (name: string) => name === "AltGraph";
+    // macOS reports Option as AltGraph, and Option+letter types an accent or a symbol.
+    expect(shortcutFromKey(key("Space", { key: " ", altKey: true, getModifierState: altGraph })).shortcut).toBe("Alt+Space");
+    expect(shortcutFromKey(key("KeyE", { key: "Dead", altKey: true, getModifierState: altGraph })).shortcut).toBe("Alt+KeyE");
+    expect(shortcutFromKey(key("KeyV", { key: "√", altKey: true, getModifierState: altGraph })).shortcut).toBe("Alt+KeyV");
+    // Windows layouts with AltGr, such as Spanish, report Ctrl+Alt as AltGraph.
+    expect(shortcutFromKey(key("Escape", { ctrlKey: true, altKey: true, getModifierState: altGraph })).shortcut).toBe("Ctrl+Alt+Escape");
+  });
+
+  it("refuses the mouse back and forward buttons with an explanation instead of navigating", () => {
+    expect(shortcutFromMouse({ button: 3 })).toEqual({ error: "desktop.shortcut.errors.mouse" });
+    expect(shortcutFromMouse({ button: 4 })).toEqual({ error: "desktop.shortcut.errors.mouse" });
+    expect(shortcutFromMouse({ button: 0 })).toBeNull();
+    expect(shortcutFromMouse({ button: 2 })).toBeNull();
   });
 
   it("offers platform defaults and readable labels for existing and captured shortcuts", () => {

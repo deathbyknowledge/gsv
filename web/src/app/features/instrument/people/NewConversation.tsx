@@ -8,6 +8,7 @@ import { canConfigure } from "../settings/settingsModel";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { approachSendIntent, profileAddress as resolveProfileAddress, profileAddressLabel, type ApproachDraft } from "./peopleModel";
 import { ContactHandlingChoice } from "./ContactHandlingChoice";
+import { submitOnEnter } from "../shared/enterToSend";
 import { useT } from "../../../i18n/locale";
 
 export function NewConversation({ account, draft, onChange, onSent, onBusy, contacts, onOpen, onInvitation }: {
@@ -73,7 +74,6 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
       <div class="people-profile-preview">
         <span class="people-kicker">{profileAddressLabel(profile.origin)}</span>
         <h2>{profile.displayName}</h2>{profile.about && <p>{profile.about}</p>}
-        {profile.representation === "human-and-ship" && <p class="people-note">{t("people.compose.mayReply")}</p>}
       </div>
       {existing ? <button class="ibtn is-primary" onClick={() => onOpen(existing.id)}>{t("people.compose.openExisting")}</button>
         : profile.contactPolicy !== "requests" ? <p class="people-note">{t(profile.contactPolicy === "invitation" ? "people.compose.byInvitation" : "people.compose.closed")}</p>
@@ -84,7 +84,8 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
           onChange({ ...draft, intent }); send.mutate(intent);
         }}>
           <label>{t("people.compose.displayName")}<input value={displayName} maxLength={80} autoComplete="off" disabled={busy} onInput={(event) => onChange({ ...draft, displayName: event.currentTarget.value })} /></label>
-          <label>{t("people.compose.message")}<textarea value={draft.text} rows={5} maxLength={32_768} disabled={busy} onInput={(event) => onChange({ ...draft, text: event.currentTarget.value })} /></label>
+          <label>{t("people.compose.message")}<textarea value={draft.text} rows={5} maxLength={32_768} disabled={busy} onInput={(event) => onChange({ ...draft, text: event.currentTarget.value })}
+            onKeyDown={submitOnEnter} /></label>
           {bytes > 32_768 && <p class="people-error" role="alert">{t("people.composer.tooLong")}</p>}
           <p class="people-note">{t("people.compose.afterAccept")}</p>
           <ContactHandlingChoice value={draft.shipHandlesMessages} disabled={busy || !account || !canConfigure(account, "contact.preferences.update")} onChange={(shipHandlesMessages) => onChange({ ...draft, shipHandlesMessages })} />

@@ -2,6 +2,7 @@ import {
   activateAdapterPairing, disconnectAdapterPeer, finalizeAdapterPairing, prepareAdapterPairing,
   type AdapterPeerPairing, type AdapterPeerRoute, type AdapterPairingTransition,
 } from "../../shared/src/pairing-route";
+import type { AdapterDataOwner } from "../../shared/src/retirement";
 import type {
   AdapterPairingCandidate,
   AdapterPairingPreparation,
@@ -26,6 +27,12 @@ export type ManagedWhatsAppPeerState = {
   lastInboundAt?: number;
   /** The most recent inbound message id, used for read receipts and the typing indicator. */
   lastInboundMessageId?: string;
+  /** The inbound message carrying the 👀 reaction while Ship works on it. */
+  workingReactionMessageId?: string;
+  /** The Ship run that owns the 👀; a stop from any other run leaves it in place. */
+  workingReactionRunId?: string;
+  /** The route whose run placed the 👀; a route change clears only another route's. */
+  workingReactionRoute?: AdapterDataOwner;
   activeRoute?: ManagedWhatsAppPeerRoute;
   pairing?: ManagedWhatsAppPairingState;
   lastDisconnect?: {
@@ -61,6 +68,9 @@ export function bindManagedWhatsAppPeerIdentity(
     actorHandle: inbound.actorHandle ?? state?.actorHandle,
     lastInboundAt: latest ? receivedAt : state?.lastInboundAt,
     lastInboundMessageId: latest ? inbound.messageId : state?.lastInboundMessageId,
+    workingReactionMessageId: state?.workingReactionMessageId,
+    workingReactionRunId: state?.workingReactionRunId,
+    workingReactionRoute: state?.workingReactionRoute,
     activeRoute: state?.activeRoute,
     pairing: state?.pairing,
     lastDisconnect: state?.lastDisconnect,

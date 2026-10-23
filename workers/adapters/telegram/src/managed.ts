@@ -154,7 +154,9 @@ export class ManagedTelegramChannel extends WorkerEntrypoint<Env> implements Ada
         throw new Error("Managed Telegram account ID is invalid");
       }
       if (surface.kind !== "dm") throw new Error("Managed Telegram supports direct messages only");
-      if (activity.kind !== "typing" || !activity.active) return { ok: true };
+      // Telegram's chat action lasts a few seconds, so Ship starting on a message and Ship
+      // about to reply both show it; stops end on their own.
+      if ((activity.kind !== "typing" && activity.kind !== "working") || !activity.active) return { ok: true };
       const routeGeneration = activity.routeGeneration?.trim();
       if (!routeGeneration) {
         throw new Error("Managed Telegram route generation is required");

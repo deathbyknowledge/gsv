@@ -1,6 +1,6 @@
 import "./IconButton.css";
 
-export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab" | "attach" | "transcribe" | "mic" | "send" | "stop" | "sidepanel" | "edit";
+export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab" | "attach" | "transcribe" | "mic" | "send" | "stop" | "sidepanel" | "edit" | "copy";
 export type IconButtonSize = "small" | "medium" | "large" | number;
 /** Visual treatment. "default" = filled box with border; "floating" = borderless
  *  and transparent, glyph-only, with a color-shift on hover (for use inside bars
@@ -184,6 +184,12 @@ const GLYPHS = {
       <path d="M9.7 4.3 L11.7 6.3" />
     </svg>
   ),
+  copy: (
+    <svg width="50%" height="50%" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="5" width="8" height="9" rx="1" />
+      <path d="M10 3V2H2v9h1" />
+    </svg>
+  ),
 };
 
 const VARIANT_BASE = {
@@ -194,7 +200,7 @@ const VARIANT_BASE = {
 /** IconButton — ported from IconButton.dc.html. Square icon button with inline
  *  SVG glyphs, named or numeric size, disabled + title + onClick. `variant`
  *  selects the visual treatment (default filled / floating borderless). */
-export function IconButton({ glyph = "back", size = "medium", disabled = false, variant = "default", ghost = false, className, title = "", ariaLabel, ariaDescribedBy, onClick }: IconButtonProps) {
+export function IconButton({ glyph = "back", size = "medium", disabled = false, variant = "default", ghost = false, className, title = "", ariaLabel, ariaDescribedBy, "aria-describedby": injectedDescribedBy, onClick }: IconButtonProps) {
   const numericSize = Number(size);
   const px = Number.isFinite(numericSize) && numericSize > 0
     ? numericSize
@@ -204,7 +210,7 @@ export function IconButton({ glyph = "back", size = "medium", disabled = false, 
   // default variant which has its own dedicated disabled class.
   const disabledCls = ghost || variant === "floating" ? `${base} is-disabled` : "gsv-ibtn-disabled";
   const cls = [disabled ? disabledCls : base, className].filter(Boolean).join(" ");
-  const describedBy = ariaDescribedBy;
+  const describedBy = ariaDescribedBy ?? injectedDescribedBy;
   return (
     <button
       type="button"
