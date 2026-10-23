@@ -38,8 +38,7 @@ function save(blocked: string, requestOrigin: string | null = origin, reserved =
 
 it("edits signup policy through administration and completes a fresh signup after unblocking", async () => {
   const { http, insight } = admin();
-  expect(initial.reserved).toEqual(expect.arrayContaining(["admin", "root", "support", "ship"]));
-  expect(initial.blocked).toEqual(expect.arrayContaining(["hitler", "killyourself", "pedofilo"]));
+  expect(initial).toEqual({ reserved: [], blocked: [] });
   expect(await (await http.handle(new Request(`${origin}/admin/signup`)))!.text()).toContain("Username policy");
   expect((await http.handle(save(" Newsletter, NEWSLETTER\npress ")))?.status).toBe(303);
   expect(await policy.list()).toEqual({ reserved: [], blocked: ["Newsletter", "press"] });
@@ -98,29 +97,16 @@ it("rejects unauthorized saves, preserves invalid input safely, and never partia
 
 it("normalizes policy entries and candidates without changing identity or blocking substrings", async () => {
   expect(normalizeUsernamePolicy(" Shíp_Suppórt.Test ")).toBe("shipsupporttest");
-  expect(normalizeUsernamePolicy("voce deveriase matar")).toBe("vocedeveriasematar");
+  expect(normalizeUsernamePolicy("example user name")).toBe("exampleusername");
   await policy.replace({ reserved: "Shíp_Support", blocked: "Bád.Name, bad-name" });
   expect(await policy.list()).toEqual({ reserved: ["Shíp_Support"], blocked: ["Bád.Name"] });
   for (const name of ["shipsupport", "ship-support", "badname", "bad-name"]) expect(await signup.available(name)).toBe(false);
-  for (const name of ["my-bad-name", "alicesmith", "alice-smith", "gay", "negro", "kike", "rape", "88"]) {
+  for (const name of ["my-bad-name", "alicesmith", "alice-smith"]) {
     expect(await signup.available(name)).toBe(true);
   }
   const principalId = await owner();
   for (const handle of ["alicesmith", "alice-smith"]) {
     expect((await accounts.reserveInstallation({ principalId, operationId: crypto.randomUUID(), handle })).handle).toBe(handle);
-  }
-});
-
-it("seeds the supplied multilingual policy while leaving contextual and ordinary identities available", async () => {
-  for (const name of ["ship-space", "shipsupport", "pt-br", "suporte", "maric-on", "white-power", "vocedeveriasematar", "sexocomcriancas"]) {
-    expect(await signup.available(name)).toBe(false);
-  }
-  for (const name of ["kike", "coon", "dyke", "marica", "bicha", "rape", "groomer", "kys", "gay", "queer", "trans", "travesti",
-    "negro", "preto", "moro", "judeu", "judio", "isis", "adolf", "aryan", "loli", "shota", "ss", "88", "cp", "csa"]) {
-    expect(await signup.available(name)).toBe(true);
-  }
-  for (const entries of [initial.reserved, initial.blocked]) {
-    expect(new Set(entries.map(normalizeUsernamePolicy)).size).toBe(entries.length);
   }
 });
 

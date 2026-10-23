@@ -169,17 +169,10 @@ Policy matching compares the **entire** name after lowercasing, Unicode NFKD acc
 removal, and removal of hyphens, underscores, dots and whitespace. Both candidates
 and list entries use this comparison. It never changes stored usernames, syntax
 rules or uniqueness: an ordinary `alice-smith` remains distinct from `alicesmith`.
-The migration supplies the maintained English, Spanish and Portuguese starter lists;
-equivalent spellings share one policy entry. Add targeted evasions as encountered.
-
-Context-dependent terms are assessed when reported, not automatically blocked:
-`kike`, `kikes`, `coon`, `coons`, `gook`, `gooks`, `chink`, `chinks`, `paki`, `pakis`,
-`dyke`, `dykes`, `fag`, `fags`, `marica`, `maricas`, `bicha`, `bichas`, `tortillera`,
-`tortilleras`, `bollera`, `bolleras`, `pedo`, `puto`, `putos`, `rape`, `groomer`,
-`grooming`, and `kys`. Ordinary identities, names, colors and ambiguous abbreviations
-also stay outside automatic blocking, including `gay`, `queer`, `trans`, `travesti`,
-`negro`, `preto`, `moro`, `judeu`, `judio`, `isis`, `adolf`, `aryan`, `loli`, `shota`,
-`ss`, `88`, `cp`, and `csa`.
+Both lists start empty. Operators add their own entries in administration and
+can add targeted spelling evasions as encountered. Context-dependent terms should
+be assessed when reported rather than automatically blocked solely for an
+ambiguous meaning.
 
 Availability reports both categories as unavailable to signup. Accounts checks
 policy atomically when reserving a new installation, preventing direct creation
