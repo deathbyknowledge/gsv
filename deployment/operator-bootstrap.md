@@ -69,6 +69,11 @@ secret for verifying codes. Redeploy with the same Alchemy state so that the
 secret remains unchanged. The runtime does not need a Cloudflare API token to
 send codes.
 
+Set `GSV_OWNER_EMAIL_REPLY_TO` to a support inbox if replies should go somewhere
+other than the sender. Custom compositions pass the same setting as
+`installations.ownerEmail.replyTo`; the Accounts Worker receives it as
+`GSV_OWNER_EMAIL_REPLY_TO`.
+
 `GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS` optionally restricts recipients to a
 comma-separated list of real test mailboxes. Use this on staging; omit it when
 opening email sign-in to your users. No email credential becomes usable until

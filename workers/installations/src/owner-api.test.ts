@@ -22,10 +22,10 @@ async function fixture() {
   let code = "";
   const send = vi.fn(async (message: EmailMessage | EmailMessageBuilder): Promise<EmailSendResult> => {
     if (!("subject" in message)) throw new Error("Expected composed mail");
-    code = message.text?.match(/code is ([0-9]{6})\./)?.[1] ?? "";
+    code = message.text?.match(/^([0-9]{6})$/m)?.[1] ?? "";
     return { messageId: crypto.randomUUID() };
   });
-  const makeApi = () => new InstallationOwnerApi(auth, owners, signup, { send }, "accounts@example.com", ORIGIN, "example.com");
+  const makeApi = () => new InstallationOwnerApi(auth, owners, signup, { send }, { from: "accounts@example.com" }, ORIGIN, "example.com");
   let api = makeApi();
   const request = async (path: string, token?: string, body?: JsonObject, headers: Record<string, string> = {}) => {
     const requestHeaders = new Headers({ "content-type": "application/json", "cf-connecting-ip": registry, ...headers });
@@ -58,6 +58,8 @@ describe("desktop owner API", () => {
     const verify = await f.signIn();
     f.restart();
     expect(f.send).toHaveBeenCalledTimes(1);
+    expect(f.send.mock.calls[0][0]).toMatchObject({ from: { email: "accounts@example.com", name: "Ship" } });
+    expect(f.send.mock.calls[0][0]).not.toHaveProperty("replyTo");
     expect((await f.request("/verify", undefined, verify)).status).toBe(200);
     const initialSession = await (await f.request("/session", f.sessionSecret)).json<{ spaceDomain: string; spaces: unknown[] }>();
     expect(initialSession.spaceDomain).toBe("example.com");
