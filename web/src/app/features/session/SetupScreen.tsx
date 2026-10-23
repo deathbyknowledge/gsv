@@ -88,7 +88,9 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
           {step === "consent" ? <button type="button" class="ibtn" disabled={busy} onClick={onBack}>{t("session.back")}</button> : null}
           <button type="submit" class="ibtn is-primary" data-setup-submit disabled={busy}
             onPointerDown={(event) => { if (event.button === 0) onSubmitPointerDown(); }}>
-            {t(busy ? "session.setup.opening" : credentials && consentRequired ? "session.continue" : "session.setup.activate")}
+            {busy ? <span role="status" aria-label={t("session.setup.opening")}>
+              <span aria-hidden="true">{t("session.setup.opening")}<span class="gsv-setup-loading-dots"><span>.</span><span>.</span><span>.</span></span></span>
+            </span> : t(credentials && consentRequired ? "session.continue" : "session.setup.activate")}
           </button>
         </div>
       </form>

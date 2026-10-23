@@ -60,6 +60,12 @@ lavender highlight with contrasting text in both themes.
 Inside the prompt, selected text stays light on a stronger purple highlight. Selecting a range
 restores the native selection tint and handles on iOS; a collapsed selection uses the block cursor.
 
+After the first welcome card is dismissed, the empty Ship chat shows centered,
+muted privacy copy behind the transcript. It clears when the owner writes or
+Ship starts replying. The notice is not a conversation message and is not sent
+to the model. It does not appear in helpers, over existing messages, or while
+history is loading or unavailable, and does not intercept pointer input.
+
 ## Conversation kinds
 
 The Kernel owns the conversation directory and membership:

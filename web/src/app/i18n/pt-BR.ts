@@ -1072,7 +1072,7 @@ export const ptBR = {
   "session.setup.aboutShip": "O Ship é um assistente de IA que pode usar seu computador e seus serviços conectados para resolver as coisas por você.",
   "session.setup.aboutAccess": "Dependendo do que você permitir, ele pode trabalhar com arquivos, executar comandos, usar sites e serviços em que você já fez login e enviar comunicações em seu nome.",
   "session.setup.aboutRisk": "O Ship está em acesso antecipado e pode cometer erros. Algumas ações podem ser difíceis de desfazer, então mantenha cópias de segurança dos dados importantes e revise com atenção as ações de maior impacto.",
-  "session.setup.opening": "Abrindo o Ship…",
+  "session.setup.opening": "Abrindo o Ship",
   "session.setup.activate": "Ativar o Ship",
 
   // Session: unfinished setup
@@ -1804,6 +1804,7 @@ export const ptBR = {
   "chat.message.dismiss": "descartar",
   "chat.history.failed": "Não foi possível carregar sua conversa: {error}",
   "chat.history.helperEmpty": "Este ajudante ainda não tem mensagens.",
+  "chat.firstOpenPrivacy": "Não usamos seus dados para treinar IA.\nSuas conversas são privadas.\nSuas informações pertencem a você!",
   "chat.history.waking": "O Ship está acordando",
   "chat.history.loadingOlder": "carregando mensagens anteriores",
   "chat.history.loadFailed": "Não foi possível carregar o histórico.",
