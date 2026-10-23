@@ -23,11 +23,15 @@ const EMAIL_CONFIG_PATH = resolve(
 );
 type ServiceBinding = NonNullable<Unstable_RawConfig["services"]>[number];
 
+/** The open network a federation test serves from its own process: a DID directory, and each Ship under its own domain. */
+export type TestNetworkOptions = { domain: string };
+
 export function integrationGatewayConfig(options: {
   name?: string;
   workersAi?: boolean;
   instances?: boolean;
   pds?: boolean;
+  network?: TestNetworkOptions;
   managed?: boolean;
   managedServices?: {
     accounts: string;
@@ -55,7 +59,12 @@ export function integrationGatewayConfig(options: {
     main: config.main,
     compatibility_date: config.compatibility_date,
     compatibility_flags: config.compatibility_flags,
-    vars: { GSV_FEDERATION_LOCAL_DEVELOPMENT: "1", GSV_OWNER_SIGNUP_URL: "https://accounts.example/owner/signup/?resume=1" },
+    vars: {
+      GSV_OWNER_SIGNUP_URL: "https://accounts.example/owner/signup/?resume=1",
+      ...(options.network
+        ? { PLC_URL: "https://plc.test", GSV_PUBLIC_CONFIG: JSON.stringify({ primaryDomain: options.network.domain }) }
+        : undefined),
+    },
     define: config.define,
     rules: config.rules,
     migrations: lifecycleConfig.migrations,
@@ -92,7 +101,9 @@ export function integrationGatewayConfig(options: {
     services: [
       executionBinding,
       ...(options.instances ? [{ binding: "INSTANCES", service: DEPENDENCY_WORKER, entrypoint: "IntegrationInstances" }] : []),
-      ...(options.pds ? [{ binding: "PDS", service: DEPENDENCY_WORKER, entrypoint: "IntegrationPds" }] : []),
+      ...(options.pds || options.network
+        ? [{ binding: "PDS", service: DEPENDENCY_WORKER, entrypoint: options.network ? "NetworkPds" : "IntegrationPds" }]
+        : []),
       {
         binding: "CHANNEL_DISCORD",
         service: DEPENDENCY_WORKER,
@@ -270,6 +281,7 @@ export function createGatewayTestHarness(options: {
   workersAi?: boolean;
   instances?: boolean;
   pds?: boolean;
+  network?: TestNetworkOptions;
   managedMailQueue?: string;
 } = {}): TestHarness {
   return createTestHarness({
