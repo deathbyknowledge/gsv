@@ -24,8 +24,8 @@ import type { KernelContext } from "../context";
 import { ensureContactConversation } from "../federation";
 import { randomBase64Url, sha256Base64Url } from "../federation-crypto";
 import type { FederationContactRecord, FederationInviteRecord } from "../federation-store";
-import { ownerDisplayName } from "../profiles";
-import { DidDirectoryUnavailableError, DidNotResolvedError, resolveDid, resolveHandle } from "../ships/did-directory";
+import { personName } from "../profiles";
+import { resolveHandle, verifiedHandle } from "../ships/did-directory";
 import { ShipCallError, ShipXrpcError } from "../ships/errors";
 import { callShipProcedure, type ShipCall } from "../ships/xrpc";
 import { contactHandlingChoice, contactSummary, requireContactCaller, requireOwnedActiveContactGeneration } from "./authority";
@@ -50,8 +50,6 @@ const DEFAULT_INVITE_LIFETIME_MS = 60 * 60_000;
 const MAX_INVITE_LIFETIME_MS = 7 * 24 * 60 * 60_000;
 const MAX_OUTSTANDING_INVITES_PER_OWNER = 20;
 const MAX_INVITES_CREATED_PER_HOUR = 20;
-/** Invitation codes and acceptances carry names of at most this many characters. */
-const MAX_PERSON_NAME_LENGTH = 256;
 
 /** What the person accepting an invitation reads when the inviting Ship refuses, by the error it names. */
 const REFUSALS = new Map([
@@ -318,26 +316,6 @@ function assertAcceptable(
   if (invite.state === "accepted" && (invite.acceptedRemoteDid !== caller || invite.acceptedAtMs <= now - RECEIPT_RETENTION_MS)) {
     throw new ShipXrpcError(409, "InvitationUsed", "This invitation was already used");
   }
-}
-
-/** The caller's handle, kept only when it names the caller's DID back. */
-async function verifiedHandle(did: string, ctx: KernelContext): Promise<string | undefined> {
-  const { handle } = await resolveDid(did, ctx);
-  if (!handle) return undefined;
-  try {
-    return (await resolveHandle(handle, ctx)).did === did ? handle : undefined;
-  } catch (error) {
-    if (error instanceof DidNotResolvedError || error instanceof DidDirectoryUnavailableError) return undefined;
-    throw error;
-  }
-}
-
-/** The name this Ship's person goes by with someone new: their profile name, else their account's. */
-function personName(ownerUid: number, ctx: KernelContext): string {
-  const account = ctx.auth.getPasswdByUid(ownerUid);
-  if (!account) throw new Error("Contact owner account is unavailable");
-  const name = ownerDisplayName(ownerUid, ctx)?.trim() || account.username;
-  return name.length <= MAX_PERSON_NAME_LENGTH ? name : account.username;
 }
 
 function contactInviteSummary(

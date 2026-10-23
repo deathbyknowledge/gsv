@@ -31,8 +31,6 @@ import {
 } from "../../../kernel/federation/invitations";
 import { handleContactPreferencesUpdate } from "../../../kernel/federation/preferences";
 import { handleProfileResolve, ownerDisplayName } from "../../../kernel/profiles";
-import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
-import { shipAddress } from "../../../installation/identity";
 import {
   parseDurationMs,
   requireCommandCapability,
@@ -72,7 +70,7 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
     case "find":
       requireCommandCapability(ctx, "profile.resolve");
       requireArgumentCount(rest, 1, "find requires: contact find @HANDLE|ADDRESS");
-      return json(await handleProfileResolve({ url: profileAddress(rest[0], ctx) }, ctx));
+      return json(await handleProfileResolve({ address: rest[0] }, ctx));
     case "connect":
       requireCommandCapability(ctx, "approach.create");
       return json(await connectToPerson(rest, ctx));
@@ -186,13 +184,13 @@ async function connectToPerson(args: string[], ctx: KernelContext): Promise<Appr
   if (shipHandlesMessages === undefined) throw new Error("Ask the owner who should handle new messages, then use --handling manual|ship");
   // Only the signed-in human or their canonical Ship may send, or replay, a message request.
   requireContactCaller(ctx, true);
-  const { profile } = await handleProfileResolve({ url: profileAddress(address, ctx) }, ctx);
+  const { profile } = await handleProfileResolve({ address }, ctx);
   const ownerUid = resolveCallerOwnerUid(ctx);
   const name = displayName ?? ownerDisplayName(ownerUid, ctx);
   if (!name?.trim()) throw new Error("connect requires --name DISPLAY_NAME");
   // The same message to the same person is one request while it is still open; once it has
   // ended, sending it again is a new request.
-  const base = `${profile.actor.shipId}\n${profile.actor.subjectId}\n${text}`;
+  const base = `${profile.did}\n${text}`;
   let idempotencyKey = `connect:${await sha256Base64Url(base)}`;
   for (let previous = ctx.approaches.byIdempotencyKey(ownerUid, idempotencyKey); previous;
     previous = ctx.approaches.byIdempotencyKey(ownerUid, idempotencyKey)) {
@@ -205,12 +203,12 @@ async function connectToPerson(args: string[], ctx: KernelContext): Promise<Appr
     }
     idempotencyKey = `connect:${await sha256Base64Url(`${base}\n${previous.summary.id}`)}`;
   }
-  const open = ctx.approaches.unresolved(ownerUid, profile.actor);
+  const open = ctx.approaches.unresolved(ownerUid, profile.did);
   // A request past its deadline may still read as pending until maintenance reaches it; expire that
   // exact request now so the replacement is not refused as a duplicate.
   if (open) await expireOverdueApproach(open, ctx);
   return await handleApproachCreate({
-    profileUrl: profile.url, recipient: profile.actor, profileRevision: profile.revision, displayName: name, text, shipHandlesMessages, idempotencyKey,
+    did: profile.did, profileCid: profile.cid, displayName: name, text, shipHandlesMessages, idempotencyKey,
   }, ctx);
 }
 
@@ -355,17 +353,6 @@ function parseOnlyFlags(args: string[], allowed: Set<string>): Set<string> {
     flags.add(argument);
   }
   return flags;
-}
-
-/** A bare or @-prefixed handle names a Ship on this deployment's domain; anything else is a Ship's address. */
-function profileAddress(value: string, ctx: KernelContext): string {
-  const handle = value.replace(/^@/, "").toLowerCase();
-  if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle)) {
-    const domain = shipAddress(ctx.installationIdentity, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).primaryDomain)?.domain;
-    if (!domain) throw new Error("This Ship has no domain for handles; give the Ship's full address");
-    return `https://${handle}.${domain}/profile`;
-  }
-  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
 }
 
 function requireArgumentCount(args: string[], count: number, message: string): void {

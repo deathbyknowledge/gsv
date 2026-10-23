@@ -743,8 +743,8 @@ never supplied by the remote person, and activation admits no Ship work itself.
 | `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
 | `contact.preferences.update` | Owner or canonical Ship, revision-checked changes to saved, muted and standing Ship handling preferences. |
-| `contact.block.set` | Human-only block or unblock of one remote actor; blocking also ends its active connection and pending first-contact requests. |
-| `contact.block.list` | Reads private blocks, optionally filtered by `actor`, with cursor paging. |
+| `contact.block.set` | Human-only block or unblock of one person, named by their DID; blocking also ends their active connection and pending message requests. |
+| `contact.block.list` | Reads private blocks, optionally filtered by `did`, with cursor paging. |
 | `contact.notice.dismiss` | Dismisses the one-time notice that global contact auto-wake has been retired. |
 | `contact.revoke` | Revokes the local relationship immediately, withdraws its resource grants, terminates pending deliveries, and durably notifies the other Ship. |
 | `contact.send` | Commits one local Contact message and queues an authenticated delivery. Reusing an `idempotencyKey` with the same input returns the same logical delivery; changed input is rejected. |
@@ -933,12 +933,12 @@ type ContactSyscalls = {
     result: { contact: ContactSummary };
   };
   "contact.block.set": {
-    args: { actor: ActorRef; blocked: boolean };
+    args: { did: string; blocked: boolean };
     result: { block: ContactBlock | null };
   };
   "contact.block.list": {
-    args: { actor?: ActorRef; cursor?: ActorRef; limit?: number };
-    result: { blocks: ContactBlock[]; nextCursor?: ActorRef };
+    args: { did?: string; cursor?: string; limit?: number };
+    result: { blocks: ContactBlock[]; nextCursor?: string };
   };
   "contact.notice.dismiss": {
     args: Record<string, never>;
@@ -1025,12 +1025,12 @@ type ProfileAndApproachSyscalls = {
   };
   "approach.create": {
     args: {
-      profileUrl: string;
-      recipient: ActorRef;
-      profileRevision: number;
+      did: string;
+      profileCid: string;
       displayName: string;
       text: string;
       idempotencyKey: string;
+      shipHandlesMessages?: boolean;
     };
     result: { approach: ApproachSummary };
   };
@@ -1048,7 +1048,7 @@ type ProfileAndApproachSyscalls = {
     result: { approach: ApproachSummary };
   };
   "approach.decide": {
-    args: { approachId: string; expectedRevision: number; decision: "accept" | "decline" | "withdraw" };
+    args: { approachId: string; expectedRevision: number; decision: "accept" | "decline" | "withdraw"; shipHandlesMessages?: boolean };
     result: { approach: ApproachSummary };
   };
   "approach.retry": {
@@ -1096,12 +1096,19 @@ and reads the record from the repository the document names. `PublicProfile` ret
 profile is available at that address; it does not establish whether the Ship exists or prevent a
 private invitation. A profile published as a signed document before profiles were records keeps its
 published fields and is written as a record at its owner's next sign-in.
-Creating a first message binds it to the exact recipient and profile revision the sender reviewed.
+A message request names the recipient's `did` and the `profileCid` of the record its sender read.
+The sender's Ship refuses to send it if that record has changed or no longer takes requests, and the
+recipient's Ship refuses it on arrival for the same reasons, so a person never receives a request
+against a profile they have since changed. The approval a Ship asks for names the recipient's handle.
 
-First-contact messages expire after 30 days and accept text only, up to 32 KiB. Acceptance promotes
-the same conversation and first message through a durable, peer-bound pairing operation. Neither
-arrival nor acceptance starts Ship. Declining is private. Blocking denies future requests from that
-actor independently of whether a contact was ever accepted. Unblocking does not revive an old request.
+Message requests expire after 30 days and accept text only, up to 32 KiB. Ships exchange them
+with Ship-to-Ship calls signed by each Ship's DID: only the DID a request went to can accept it, and
+only its sender can withdraw it. Acceptance makes the contact on the sender's Ship, then on the
+recipient's, and promotes the same conversation and first message; the recipient's Ship asks again
+until both hold the same connection. Neither arrival nor acceptance starts Ship. Declining is private.
+Blocking denies future requests from that DID whether or not a contact was ever accepted, and a
+blocked sender hears the same refusal as a profile closed to requests. Unblocking does not revive an
+old request.
 
 ### Private conversation inbox
 

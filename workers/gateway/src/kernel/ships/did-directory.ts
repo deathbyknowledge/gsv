@@ -138,6 +138,18 @@ export async function resolveHandle(handleValue: string, ctx: KernelContext): Pr
   return current;
 }
 
+/** A DID's handle, kept only when it names the DID back. */
+export async function verifiedHandle(did: string, ctx: KernelContext): Promise<string | undefined> {
+  const { handle } = await resolveDid(did, ctx);
+  if (!handle) return undefined;
+  try {
+    return (await resolveHandle(handle, ctx)).did === did ? handle : undefined;
+  } catch (error) {
+    if (error instanceof DidNotResolvedError || error instanceof DidDirectoryUnavailableError) return undefined;
+    throw error;
+  }
+}
+
 /** The public key a resolved account signs with. */
 export function signingKeyOf(resolved: ResolvedDid): FoundPublicKey {
   return getPublicKeyFromDidController(resolved.signingKey);

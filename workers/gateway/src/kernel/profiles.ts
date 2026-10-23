@@ -40,6 +40,8 @@ const PROFILE_PATH = /^\/(?:profile|@[a-z][a-z0-9_-]{1,31})?$/;
 const NO_PUBLIC_PROFILE = "No public profile is available at this address. A private invitation does not require a public profile.";
 const UNREADABLE_ADDRESS = "Enter a handle, such as @alice, or a profile address";
 const RECORD_LOOKUP_TIMEOUT_MS = 10_000;
+/** Invitation codes, acceptances and message requests carry names of at most this many characters. */
+const MAX_PERSON_NAME_LENGTH = 256;
 /** Sign-in publishes in the background; this bounds how long it waits on the open-network host. */
 const BACKGROUND_PUBLISH_TIMEOUT_MS = 60_000;
 
@@ -62,6 +64,14 @@ function defaultProfileDraft(ownerUid: number, ctx: KernelContext): ProfileField
 export function ownerDisplayName(ownerUid: number, ctx: KernelContext): string | undefined {
   const account = ctx.auth.getPasswdByUid(ownerUid);
   return ctx.profiles.draft(ownerUid)?.fields.displayName ?? account?.gecos ?? account?.username;
+}
+
+/** The name this Ship's person goes by with someone new: their profile name, else their account's. */
+export function personName(ownerUid: number, ctx: KernelContext): string {
+  const account = ctx.auth.getPasswdByUid(ownerUid);
+  if (!account) throw new Error("Contact owner account is unavailable");
+  const name = ownerDisplayName(ownerUid, ctx)?.trim() || account.username;
+  return name.length <= MAX_PERSON_NAME_LENGTH ? name : account.username;
 }
 
 /**

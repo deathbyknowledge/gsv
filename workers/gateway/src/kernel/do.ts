@@ -127,15 +127,12 @@ import { ApproachStore } from "./approach-store";
 import { publicProfileAvatar, publicProfileProjection, type PublicProfileProjection } from "./profiles";
 import { processApproachMaintenance } from "./approaches/runtime";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
-import { FederationIdentity } from "./federation-crypto";
 import { DidDocumentStore } from "./ships/did-directory";
 import { ShipCallNonces } from "./ships/auth";
 import { ShipIdentity } from "./ships/identity";
 import { SHIP_METHODS } from "./ships/methods";
 import { handleShipXrpc, isShipXrpcPath } from "./ships/xrpc";
 import {
-  handleFederationHttpRequest,
-  isFederationPublicPath,
   MAX_FEDERATION_RECOVERABLE_INBOX,
   MAX_FEDERATION_RECOVERABLE_OUTBOX,
 } from "./federation";
@@ -455,7 +452,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly federation: FederationStore;
   readonly profiles: ProfileStore;
   readonly approaches: ApproachStore;
-  readonly federationIdentity: FederationIdentity;
   readonly shipIdentity: ShipIdentity;
   readonly didDocuments: DidDocumentStore;
   readonly shipCallNonces: ShipCallNonces;
@@ -559,7 +555,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);
-    this.federationIdentity = new FederationIdentity(ctx.storage);
     this.shipIdentity = new ShipIdentity(ctx.storage);
     this.didDocuments = new DidDocumentStore(sql);
     this.shipCallNonces = new ShipCallNonces(sql);
@@ -830,9 +825,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
   async onRequest(request: Request): Promise<Response> {
     this.retirement.assertActive();
     const url = new URL(request.url);
-    if (isFederationPublicPath(url.pathname)) {
-      return await handleFederationHttpRequest(request, this.buildKernelContext({}));
-    }
     if (isShipXrpcPath(url.pathname)) {
       return await handleShipXrpc(request, this.buildKernelContext({}), SHIP_METHODS);
     }
@@ -1626,7 +1618,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       welcome: this.welcome,
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
-      federationIdentity: this.federationIdentity,
       shipIdentity: this.shipIdentity,
       didDocuments: this.didDocuments,
       shipCallNonces: this.shipCallNonces,

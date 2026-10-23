@@ -386,8 +386,10 @@ exists: the address may be mistyped, the Ship elsewhere, or the profile private.
 Private invitations work without a published profile or an existing contact.
 `contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]`
 sends that profile a first message request, which the person accepts or declines
-in People. The signed-in human or their canonical Ship may send it; repeating the
-same request returns the existing one.
+in People. The request names the version of the profile it read, so their Ship
+refuses it if they change their profile or stop taking requests before it arrives.
+The signed-in human or their canonical Ship may send it; repeating the same request
+returns the existing one.
 `contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
 the other person accepts either while signed in to their own Ship. The default
 lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may

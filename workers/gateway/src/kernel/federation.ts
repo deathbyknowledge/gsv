@@ -53,10 +53,6 @@ import {
   MAX_FEDERATION_REQUEST_DETAILS_BYTES,
   MAX_FEDERATION_REQUEST_TITLE_BYTES,
   MAX_FEDERATION_RESOURCE_BYTES,
-  approachEnvelopeSchema,
-  approachClaimSchema,
-  approachConfirmationSchema,
-  approachWithdrawalSchema,
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod";
 import type { FrameBody, ResponseOkFrame } from "../protocol/frames";
@@ -70,10 +66,6 @@ import {
 } from "../drivers/native/fs";
 import { ensureShipDid } from "./atproto";
 import type { KernelContext } from "./context";
-import { ApproachAdmissionError } from "./approach-store";
-import { receiveApproach } from "./approaches/admission";
-import { claimApproach, confirmApproach, withdrawApproach } from "./approaches/pairing";
-import { APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH } from "./approaches/shared";
 import { kernelPeerContext } from "./peer";
 import { ensurePersonalController } from "./personal-controller";
 import {
@@ -81,7 +73,6 @@ import {
   retainConversationResources,
 } from "./conversation-handlers";
 import {
-  FederationActorBlockedError,
   FederationRequestIdentityConflictError,
   type FederationContactRecord,
   type FederationInboxRecord,
@@ -97,8 +88,6 @@ import { revokeFederationContact } from "./federation/pairing";
 import { contactSummary, requireContactCaller, requireContactHuman, requireOwnedContact, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
 import { bindContactReply, admitContactMessage } from "./federation/attention";
 import { PublicFederationError } from "./federation/errors";
-import { MAX_PUBLIC_JSON_BYTES, readFederationBody } from "./federation/http";
-import { SHIP_DOCUMENT_V2_PATH, localShipDocumentV2 } from "./federation/protocol";
 import { callShip, callShipProcedure, type ShipCall } from "./ships/xrpc";
 import {
   assertDeliveryReplay,
@@ -153,14 +142,6 @@ const MAX_DELIVERY_ATTEMPTS = 12;
 /** What a contact's Ship hears once its delivery is received; a repeated delivery hears it again. */
 const RECEIVED: DeliverOutput = { state: "received" };
 const encoder = new TextEncoder();
-const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
-
-type PublicFederationFailure = { status: number; message: string; retryAfterMs?: number };
-
-export function isFederationPublicPath(pathname: string): boolean {
-  return pathname === SHIP_DOCUMENT_V2_PATH
-    || [APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH].includes(pathname);
-}
 
 export function handleContactList(
   args: ContactListArgs,
@@ -652,11 +633,6 @@ export async function processFederationDelivery(
     return;
   }
 
-  if (ctx.approaches.pendingConnection(contact.id, contact.generation)) {
-    await ctx.scheduleFederationDelivery(deliveryId, Date.now() + 30_000);
-    return;
-  }
-
   try {
     await commitLocalOutboxMessage(record, contact, ctx);
     if (!currentFederationDeliveryContact(record, ctx)) return;
@@ -840,44 +816,6 @@ function syncRequestDeliveryOutcome(
     now: Date.now(),
   }, ctx);
   return true;
-}
-
-export async function handleFederationHttpRequest(
-  request: Request,
-  ctx: KernelContext,
-): Promise<Response> {
-  const url = new URL(request.url);
-  try {
-    if ([APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH].includes(url.pathname) && request.method === "POST") {
-      consumePublicRateLimits(ctx, [{ scope: "installation", operation: "approach.ingress", maximum: 120, windowMs: 60_000 }], Date.now(), "Message request limit reached");
-      const input = await readBoundedJson(request);
-      const publicContext = { ...ctx, requestSignal: request.signal };
-      if (url.pathname === APPROACH_PATH) return jsonResponse(jsonValue(await receiveApproach(approachEnvelopeSchema.parse(input), publicContext)));
-      if (url.pathname === APPROACH_CLAIM_PATH) return jsonResponse(jsonValue(await claimApproach(approachClaimSchema.parse(input), publicContext)));
-      if (url.pathname === APPROACH_CONFIRM_PATH) return jsonResponse(jsonValue(await confirmApproach(approachConfirmationSchema.parse(input), publicContext)));
-      return jsonResponse(jsonValue(await withdrawApproach(approachWithdrawalSchema.parse(input), publicContext)));
-    }
-    if (url.pathname === SHIP_DOCUMENT_V2_PATH && (request.method === "GET" || request.method === "POST")) {
-      if (request.body) {
-        try {
-          await readFederationBody({ stream: request.body }, 0, request.signal, 5_000);
-        } catch {
-          throw new PublicFederationError(400, "Ship discovery accepts no request body");
-        }
-      }
-      return jsonResponse(jsonValue(await localShipDocumentV2(ctx)));
-    }
-    return new Response("Not Found", { status: 404 });
-  } catch (error) {
-    const failure = publicFederationFailure(error);
-    return jsonResponse(
-      { error: failure.message },
-      failure.status,
-      failure.retryAfterMs === undefined
-        ? undefined
-        : { "retry-after": String(Math.max(1, Math.ceil(failure.retryAfterMs / 1_000))) },
-    );
-  }
 }
 
 export async function handleContactResourceSend(
@@ -1738,31 +1676,6 @@ function boundedDetails(value: JsonObject): JsonObject {
   return value;
 }
 
-async function readBoundedJson(request: Request): Promise<JsonValue> {
-  const contentLength = request.headers.get("content-length");
-  if (contentLength && Number(contentLength) > MAX_PUBLIC_JSON_BYTES) {
-    throw new PublicFederationError(413, "Federation request body is too large");
-  }
-  if (!request.body) throw new PublicFederationError(400, "Federation request body is missing");
-  const bytes = await readFederationBody(
-    { stream: request.body, length: contentLength ? Number(contentLength) : undefined },
-    MAX_PUBLIC_JSON_BYTES,
-    request.signal,
-  );
-  try {
-    return jsonValueSchema.parse(JSON.parse(decoder.decode(bytes)));
-  } catch {
-    throw new PublicFederationError(400, "Federation request body is invalid JSON");
-  }
-}
-
-function jsonResponse(value: JsonValue, status = 200, extraHeaders?: HeadersInit): Response {
-  return Response.json(value, {
-    status,
-    headers: { "cache-control": "no-store", ...Object.fromEntries(new Headers(extraHeaders)) },
-  });
-}
-
 function decodeLocalResourcePath(pathValue: string): string {
   const prefix = "/resources/";
   if (!pathValue.startsWith(prefix)) throw new Error("Contact resource path is invalid");
@@ -1777,32 +1690,6 @@ function parseResourceSize(value: string | null): number {
     throw new Error("Remote resource size is invalid");
   }
   return size;
-}
-
-function publicFederationFailure(cause: unknown): PublicFederationFailure {
-  if (cause instanceof FederationActorBlockedError) return { status: 404, message: "Contact pairing is unavailable" };
-  if (cause instanceof ApproachAdmissionError) {
-    if (cause.reason === "collision") return { status: 409, message: "A message request is already pending for these participants", retryAfterMs: 60_000 };
-    if (cause.reason === "capacity") return { status: 429, message: "Message requests are temporarily unavailable", retryAfterMs: 3_600_000 };
-    return { status: 404, message: "Message requests are unavailable" };
-  }
-  if (cause instanceof PublicFederationError) {
-    return {
-      status: cause.status,
-      message: cause.message,
-      ...(cause.retryAfterMs === undefined ? undefined : { retryAfterMs: cause.retryAfterMs }),
-    };
-  }
-  // The federation schemas come from the SDK's zod/mini build, whose errors
-  // share the core trait with classic zod errors but not the classic class.
-  if (cause instanceof z.core.$ZodError) {
-    return { status: 400, message: "Federation request is invalid" };
-  }
-  console.warn(
-    "[Kernel] Federation request failed:",
-    cause instanceof Error ? cause.message : String(cause),
-  );
-  return { status: 500, message: "Federation request failed" };
 }
 
 function jsonValue<Value>(value: Value): JsonValue {

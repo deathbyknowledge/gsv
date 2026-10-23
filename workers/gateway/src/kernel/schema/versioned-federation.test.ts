@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runSqlMigrations } from "../../schema/runner";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
+import { APPROACH_LIFETIME_MS, ApproachStore } from "../approach-store";
 import { FederationStore } from "../federation-store";
 import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT, runKernelSqlMigrations } from "./migrations";
 
@@ -57,6 +58,50 @@ describe("contacts move to DIDs", () => {
       await storage.deleteAll();
       runKernelSqlMigrations(storage);
       expect(new FederationStore(storage).awaitingMove()).toBe(false);
+    });
+  });
+});
+
+describe("message requests move to DIDs", () => {
+  it("parks each request that named a Ship address until the move names its DID, and takes new requests by DID", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      await storage.deleteAll();
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 75));
+      sql.exec(`INSERT INTO social_approaches (
+        approach_id, owner_uid, direction, origin_ship_id, origin_subject_id, origin_id, remote_ship_id, remote_subject_id,
+        remote_origin, remote_public_key_json, remote_display_name, local_display_name, conversation_id, contact_id, thread_id,
+        state, fingerprint, metadata_json, pending_text, pending_text_bytes, setup_token_hash, delivery_state,
+        next_attempt_at, created_at, updated_at, expires_at
+      ) VALUES ('approach:old', 1000, 'outgoing', 'ship:local', 'subject:local', 'approach:origin', 'ship:remote', 'subject:remote',
+        'https://remote.example', '{}', 'Remote', 'Local', 'conv:old', 'contact:old', 'thread:old',
+        'pending', 'hash:old', '{}', 'Before the move', 15, 'token:old', 'queued', 1, 1, 2, 9999999999999)`);
+
+      runKernelSqlMigrations(storage);
+      runKernelSqlMigrations(storage);
+      expect(sql.exec("SELECT approach_id, remote_ship_id, pending_text FROM social_approaches_legacy").toArray())
+        .toEqual([{ approach_id: "approach:old", remote_ship_id: "ship:remote", pending_text: "Before the move" }]);
+      const requests = new ApproachStore(storage);
+      expect(requests.get("approach:old")).toBeNull();
+      expect(requests.due()).toEqual([]);
+      expect(new FederationStore(storage).awaitingMove()).toBe(true);
+      expect(sql.exec<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'social_approaches'
+        AND name NOT LIKE 'sqlite_%' ORDER BY name`).toArray().map((row) => row.name)).toEqual([
+        "social_approaches_cleanup", "social_approaches_conversation", "social_approaches_expiry", "social_approaches_generation",
+        "social_approaches_inbox", "social_approaches_recovery", "social_approaches_unresolved_peer",
+      ]);
+
+      const did = "did:plc:ewvi7nxzyoun6zhxrhs64oiz";
+      const now = Date.now();
+      const received = requests.prepare({
+        ownerUid: 1000, direction: "incoming", remoteDid: did, remoteDisplayName: "Visitor", localDisplayName: "Local",
+        conversationId: "conv:new", contactId: "contact:new", threadId: "thread:new",
+        content: {
+          requestId: "request:new", profileCid: "bafyprofile", name: "Visitor", messageId: "msg:new",
+          text: "After the move", createdAtMs: now, expiresAtMs: now + APPROACH_LIFETIME_MS,
+        },
+        fingerprint: "hash:new",
+      }, () => {});
+      expect(requests.unresolved(1000, did)?.summary.id).toBe(received.summary.id);
     });
   });
 });

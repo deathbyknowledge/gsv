@@ -46,11 +46,6 @@ export async function fetchFederation(url: string, init: RequestInit, ctx: Kerne
   return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
-export async function fetchFederationJson(url: string, init: RequestInit, ctx: KernelContext): Promise<JsonValue> {
-  const response = await fetchFederation(url, init, ctx);
-  return readFederationJson(response, init.signal ?? undefined);
-}
-
 export async function readFederationJson(response: Response, signal?: AbortSignal): Promise<JsonValue> {
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});

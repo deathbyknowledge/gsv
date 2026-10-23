@@ -3,6 +3,7 @@ import { deriveDidFromGenesisOp, signOperation, signTombstone, type CompatibleOp
 import { toBase64Url } from "@atcute/multibase";
 import { signServiceAuth } from "@humansandmachines/gsv-pds/src/host/service-auth";
 import { FakePlcDirectory } from "@humansandmachines/gsv-pds/test/plc";
+import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import { vi } from "vitest";
 import * as z from "zod/mini";
 
@@ -27,6 +28,8 @@ type Host = (request: Request) => Response | Promise<Response>;
 export class TestShipNetwork {
   readonly plc = new FakePlcDirectory();
   readonly hosts = new Map<string, Host>();
+  /** Records test spaces publish, by AT URI; their repository host serves them. */
+  readonly records = new Map<string, { cid: string; value: JsonObject }>();
   plcReachable = true;
 
   install(): this {

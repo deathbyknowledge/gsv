@@ -1,6 +1,7 @@
 import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
+import { ApproachAdmissionError } from "../approach-store";
 import { signShipCall } from "../atproto";
 import type { KernelContext } from "../context";
 import { FederationActorBlockedError } from "../federation-store";
@@ -154,12 +155,21 @@ function failure(cause: unknown): Response {
   }
   // A blocked caller learns nothing it couldn't learn from a missing record.
   if (cause instanceof FederationActorBlockedError) return errorResponse(new ShipXrpcError(404, "NotFound", "Not found"));
+  if (cause instanceof ApproachAdmissionError) return errorResponse(approachRefusal(cause));
   // Method input schemas come from the SDK's zod/mini build, which shares the core error trait.
   if (cause instanceof z.core.$ZodError) {
     return Response.json({ error: "InvalidRequest", message: z.prettifyError(cause) }, { status: 400 });
   }
   console.warn("[Kernel] Ship method failed:", cause instanceof Error ? cause.message : String(cause));
   return Response.json({ error: "InternalServerError", message: "This Ship couldn't handle the call" }, { status: 500 });
+}
+
+/** Why this Ship can't take a message request in now; a blocked sender hears what a closed profile would say. */
+function approachRefusal(cause: ApproachAdmissionError): ShipXrpcError {
+  if (cause.reason === "collision") return new ShipXrpcError(409, "Conflict", "A message request is already pending for these people", 60_000);
+  if (cause.reason === "capacity") return new ShipXrpcError(429, "RateLimitExceeded", "Message requests are temporarily unavailable", 3_600_000);
+  if (cause.reason === "replay") return new ShipXrpcError(400, "InvalidRequest", "This request ID already names a different request");
+  return new ShipXrpcError(404, "NotFound", "Message requests are unavailable");
 }
 
 function errorResponse(error: ShipXrpcError): Response {

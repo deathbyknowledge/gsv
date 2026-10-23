@@ -520,7 +520,6 @@ function focusedContext(overrides: Partial<KernelContext>): KernelContext {
     procs: {},
     coordinateFederationContact: async <T>(_id: string, operation: () => T | Promise<T>) => operation(),
     broadcastToUserUid: vi.fn(),
-    approaches: focusedFixture({ pendingConnection: () => false }),
     shipIdentity: focusedFixture({ current: () => LOCAL_DID }),
     ...overrides,
   };

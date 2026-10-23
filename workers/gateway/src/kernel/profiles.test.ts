@@ -492,6 +492,14 @@ describe("reading another Ship's profile", () => {
     });
   });
 
+  it("asks for the full handle when this Ship has no domain for handles", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx } = profileContext(storage);
+      await expect(handleProfileResolve({ address: "@alice" }, { ...ctx, installationIdentity: null })).rejects.toThrow("enter the full handle");
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+  });
+
   it("lets the person and their Ship look up profiles, but no one else", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx } = profileContext(storage);

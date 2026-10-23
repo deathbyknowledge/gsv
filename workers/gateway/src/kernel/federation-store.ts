@@ -386,7 +386,8 @@ export class FederationStore {
       EXISTS (SELECT 1 FROM federation_contacts_legacy)
       OR EXISTS (SELECT 1 FROM federation_actor_blocks_legacy)
       OR EXISTS (SELECT 1 FROM federation_outbox_legacy)
-      OR EXISTS (SELECT 1 FROM federation_inbox_legacy) AS waiting`).one().waiting === 1;
+      OR EXISTS (SELECT 1 FROM federation_inbox_legacy)
+      OR EXISTS (SELECT 1 FROM social_approaches_legacy) AS waiting`).one().waiting === 1;
   }
 
   prune(input: {

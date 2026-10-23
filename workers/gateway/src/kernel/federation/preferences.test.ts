@@ -29,45 +29,41 @@ describe("contact policy authority", () => {
     });
   });
 
-  it("blocks the actor, pending transport, pairing and resource grants in one owner transition", async () => {
+  it("blocks the DID, pending transport, pairing and resource grants in one owner transition", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const store = new FederationStore(storage);
-      const contact = store.activateContact({
-        ownerUid: OWNER.uid, remoteShipId: "ship:remote", remoteSubject: { id: "subject:remote", displayName: "Remote" },
-        remoteOrigin: "https://remote.example", remotePublicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" },
-        sharedSecret: "secret", generation: "generation:one", threadId: "thread:one",
-      });
-      const actor = { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id };
-      const payload = { kind: "message" as const, messageId: "message:queued", threadId: contact.threadId, text: "Queued" };
+      const did = "did:plc:remoteaaaaaaaaaaaaaaaaaa";
+      const contact = store.activateContact({ ownerUid: OWNER.uid, remoteDid: did, remoteName: "Remote", generation: "generation:one", threadId: "thread:one" });
+      const payload = {
+        kind: "message" as const, messageId: "message:queued", threadId: contact.threadId, text: "Queued",
+        social: { threadId: contact.threadId, reference: { did, messageId: "message:queued" }, provenance: { kind: "human" as const } },
+      };
       store.enqueue({
         deliveryId: "delivery:queued", ownerUid: OWNER.uid, contactId: contact.id, contactGeneration: contact.generation,
         idempotencyKey: "key:queued", fingerprint: "hash:queued", payload,
       });
       store.receive({ contactId: contact.id, contactGeneration: contact.generation, deliveryId: "delivery:pending", payload, payloadHash: "hash:pending" });
-      store.beginPairingAttempt({
-        tokenHash: "token:pending", ownerUid: OWNER.uid, remoteShipId: actor.shipId, remoteSubjectId: actor.subjectId,
-        remoteOrigin: contact.remoteOrigin, remotePublicKey: contact.remotePublicKey, expiresAtMs: Date.now() + 60_000,
-      });
+      store.beginPairingAttempt({ tokenHash: "token:pending", ownerUid: OWNER.uid, remoteDid: did, expiresAtMs: Date.now() + 60_000 });
       const grant = store.createGrant({
         contactId: contact.id, contactGeneration: contact.generation, sourceUid: OWNER.uid,
         source: { type: "resource", ref: { type: "file", target: "gsv", path: "/file.txt", revision: "revision:one", size: 4, contentType: "text/plain" } },
         descriptor: { revision: "revision:one", size: 4, contentType: "text/plain" },
       });
       const ctx = policyContext(storage, store);
-      await expect(handleContactBlockSet({ actor, blocked: true }, { ...ctx, processId: "proc:ship" })).rejects.toThrow("signed-in human");
+      await expect(handleContactBlockSet({ did, blocked: true }, { ...ctx, processId: "proc:ship" })).rejects.toThrow("signed-in human");
       await expect(handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { muted: true } }, { ...ctx, processId: "proc:helper" })).rejects.toThrow("signed-in human");
       expect(store.get(contact.id)?.state).toBe("active");
 
-      await handleContactBlockSet({ actor, blocked: true }, ctx);
-      expect(store.listActorBlocks(OWNER.uid, 50, undefined, actor).blocks).toHaveLength(1);
-      expect(store.listActorBlocks(OWNER.uid + 1, 50, undefined, actor).blocks).toEqual([]);
-      expect(store.listActorBlocks(OWNER.uid, 50, undefined, { ...actor, subjectId: "subject:another" }).blocks).toEqual([]);
+      await handleContactBlockSet({ did, blocked: true }, ctx);
+      expect(store.listBlocks(OWNER.uid, 50, undefined, did).blocks).toEqual([expect.objectContaining({ did, displayName: "Remote" })]);
+      expect(store.listBlocks(OWNER.uid + 1, 50, undefined, did).blocks).toEqual([]);
+      expect(store.listBlocks(OWNER.uid, 50, undefined, "did:plc:anotheraaaaaaaaaaaaaaaaa").blocks).toEqual([]);
       expect(store.get(contact.id)).toMatchObject({ state: "revoked", blocked: true });
       expect(store.outbox("delivery:queued")?.state).toBe("terminal");
       expect(store.inbox(contact.id, contact.generation, "delivery:pending")?.state).toBe("rejected");
       expect(store.grant(grant.id)).toBeNull();
       expect(store.pairingAttempt("token:pending")).toMatchObject({ state: "terminal", terminalReason: "actor-blocked" });
-      await handleContactBlockSet({ actor, blocked: false }, ctx);
+      await handleContactBlockSet({ did, blocked: false }, ctx);
       expect(store.get(contact.id)).toMatchObject({ state: "revoked", blocked: false });
       expect(store.outbox("delivery:queued")?.state).toBe("terminal");
       expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "contact.changed");

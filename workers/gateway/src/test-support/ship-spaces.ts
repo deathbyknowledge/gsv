@@ -1,11 +1,13 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { signServiceAuth } from "@humansandmachines/gsv-pds/src/host/service-auth";
+import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import type { PdsService, PublicRepository, PublicRepositoryAccount } from "@humansandmachines/gsv/services/pds";
 import { hashPassword, makeShadowEntry } from "../auth/shadow";
 import { getKernelByInstallationId } from "../installation/routing";
 import type { KernelContext } from "../kernel/context";
 import type { Kernel } from "../kernel/do";
+import { sha256Base64Url } from "../kernel/federation-crypto";
 import type { ShipIdentity } from "../kernel/ships/identity";
 import { SHIP_METHODS } from "../kernel/ships/methods";
 import { handleShipXrpc } from "../kernel/ships/xrpc";
@@ -72,7 +74,7 @@ export async function testSpace(network: TestShipNetwork, name: string): Promise
           ...base,
           // SAFETY: contact handlers only check that a direct human connection exists.
           connection: {} as KernelContext["connection"],
-          env: { ...base.env, PDS: testPds(space, base.shipIdentity) },
+          env: { ...base.env, PDS: testPds(network, space, base.shipIdentity) },
         };
         try {
           return { ok: true as const, value: await work(ctx, state.storage) };
@@ -95,23 +97,50 @@ export async function testSpace(network: TestShipNetwork, name: string): Promise
     });
     return new Response(answer.body, { status: answer.status, headers: answer.headers });
   });
+  network.hosts.set(new URL(TEST_PDS_URL).host, (request) => serveRecord(network, request));
   return space;
 }
 
-/** The space's repository host: its account appears with its first outward act, and it signs as the space's DID. */
-function testPds(space: TestSpace, identity: ShipIdentity): PdsService {
+/** The space's repository host: its account appears with its first outward act, it signs as the space's DID, and it keeps the records the space publishes. */
+function testPds(network: TestShipNetwork, space: TestSpace, identity: ShipIdentity): PdsService {
   const account: PublicRepositoryAccount = { did: space.account.did, handle: space.hostname, host: TEST_PDS_URL };
   const repository: PublicRepository = {
     ensureAccount: async () => account,
     account: async () => identity.current() ? account : null,
     serviceAuth: async (request) => await signServiceAuth(space.account.did, space.account.signingHex, request),
-    applyWrites: async () => {
-      throw new Error("This test space publishes no records");
+    applyWrites: async (writes) => {
+      const results = await Promise.all(writes.map(async (write) => {
+        if (write.action === "create") throw new Error("This test space writes records by key");
+        const uri = `at://${space.account.did}/${write.collection}/${write.rkey}`;
+        if (write.action === "delete") {
+          network.records.delete(uri);
+          return { uri, cid: null };
+        }
+        const cid = await recordCid(write.record);
+        network.records.set(uri, { cid, value: write.record });
+        return { uri, cid };
+      }));
+      return { commit: { cid: await recordCid(results), rev: String(Date.now()) }, results };
     },
     uploadBlob: async () => {
-      throw new Error("This test space publishes no records");
+      throw new Error("This test space uploads no blobs");
     },
     readBlob: async () => null,
   };
   return { getInstallation: async () => repository };
+}
+
+/** Stands in for a record's CID: a different record has a different one. */
+async function recordCid(value: JsonValue): Promise<string> {
+  return `bafy${(await sha256Base64Url(JSON.stringify(value))).toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+}
+
+/** Answers `com.atproto.repo.getRecord` as a repository host does, with a 400 for a record it doesn't hold. */
+function serveRecord(network: TestShipNetwork, request: Request): Response {
+  const url = new URL(request.url);
+  const params = url.searchParams;
+  const uri = `at://${params.get("repo")}/${params.get("collection")}/${params.get("rkey")}`;
+  const record = url.pathname === "/xrpc/com.atproto.repo.getRecord" ? network.records.get(uri) : undefined;
+  if (!record) return Response.json({ error: "RecordNotFound", message: "Could not locate record" }, { status: 400 });
+  return Response.json({ uri, cid: record.cid, value: record.value });
 }
