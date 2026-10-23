@@ -18,7 +18,7 @@ import {
   CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS,
 } from "../internal/lifecycle";
 import {
-  approvalNeedsTargetMetadata, parseToolApprovalPolicy, resolveToolApproval, resolveToolApprovalTarget, takePurpose,
+  KERNEL_AUTHORIZED_SYSCALLS, approvalNeedsTargetMetadata, parseToolApprovalPolicy, resolveToolApproval, resolveToolApprovalTarget, takePurpose,
   type ToolApprovalPolicy, type ToolApprovalResolution, type ToolApprovalRule,
 } from "../approval";
 import { normalizeOptionalString, parseOptionalJsonObject, cancelResponseBody } from "../internal/messages";
@@ -896,7 +896,7 @@ export class ProcessTools {
       if (approval.action === "deny") {
         throw new Error(`Tool execution denied by policy: ${call}`);
       }
-      if (approval.action === "ask") {
+      if (approval.action === "ask" && !KERNEL_AUTHORIZED_SYSCALLS.has(call)) {
         if (!hasCapability(context.capabilities, call)) {
           throw new Error(`Permission denied: ${call}`);
         }

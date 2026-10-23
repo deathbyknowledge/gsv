@@ -167,3 +167,41 @@ describe("approval beneath a native command", () => {
     });
   });
 });
+
+describe("approval the Kernel decides itself", () => {
+  function prepareCodeMode(process: Process) {
+    process.runs.active = approvedRun("run", { config: terminalTestConfig(process.pid) });
+    vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
+    vi.spyOn(process.kernel, "readApprovalPolicy").mockResolvedValue(JSON.stringify(DEFAULT_TOOL_APPROVAL_POLICY));
+    return vi.spyOn(process.tools, "dispatchCodeModeSyscall").mockResolvedValue({ type: "res", id: "sched", ok: true, data: { id: "s1" } });
+  }
+
+  it("lets CodeMode set a message reminder without asking, leaving commands to the Kernel's check", async () => {
+    const stub = await initProcess("codemode-reminder", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const dispatch = prepareCodeMode(process);
+      const reminder = { expression: { kind: "at", at: "2030-01-01T09:00:00Z" }, target: { kind: "message", text: "Stretch" } };
+      await process.tools.executeCodeModeSyscall(
+        { runId: "run", dispatchId: "codemode", approvalPolicy: DEFAULT_TOOL_APPROVAL_POLICY, capabilities: ["*"] },
+        "sched.add", reminder, new AbortController().signal,
+      );
+      expect(process.store.tools.getPendingHil()).toBeNull();
+      expect(dispatch).toHaveBeenCalledOnce();
+      process.runs.active = null;
+    });
+  });
+
+  it("still refuses a call the owner blocked", async () => {
+    const stub = await initProcess("codemode-reminder-blocked", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const dispatch = prepareCodeMode(process);
+      const blocked = { default: "auto" as const, rules: [{ match: "sched.add", action: "deny" as const }] };
+      await expect(process.tools.executeCodeModeSyscall(
+        { runId: "run", dispatchId: "codemode", approvalPolicy: blocked, capabilities: ["*"] },
+        "sched.add", {}, new AbortController().signal,
+      )).rejects.toThrow("denied by policy");
+      expect(dispatch).not.toHaveBeenCalled();
+      process.runs.active = null;
+    });
+  });
+});
