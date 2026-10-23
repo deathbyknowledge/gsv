@@ -16,7 +16,7 @@ import worker from "../src/index";
 import { FakePlcDirectory } from "./plc";
 import { deliver, errorOf, installFakePlc, read, rejection, upload } from "./support";
 
-const NOTE = "space.gsv.note";
+const NOTE = "space.ship.note";
 
 /** Accounts as the host sees it: each installation's state, canonical hostname and preferred-domain alias. */
 class FakeAccounts implements InstallationDirectoryService {
