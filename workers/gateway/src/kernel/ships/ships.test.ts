@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { signServiceAuth } from "@humansandmachines/gsv-pds/src/host/service-auth";
 import type { PublicRepository } from "@humansandmachines/gsv/services/pds";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -113,6 +113,15 @@ describe("resolving DIDs", () => {
       });
       await expect(resolveDid("did:web:localhost", ctx)).rejects.toThrow(DidNotResolvedError);
     });
+  });
+
+  it("leaves no timer running once a lookup ends", async () => {
+    const alice = await network.account("alice.ship.test");
+    const name = `ships-${crypto.randomUUID()}`;
+    await withShip(async ({ ctx }) => void await resolveDid(alice.did, ctx), undefined, name);
+    // A Kernel with a timer pending isn't idle, so one the lookup left behind holds it awake.
+    const stopping = evictDurableObject(await getDurableObjectByName<Env, Kernel>(env.KERNEL, name)).then(() => "stopped");
+    expect(await Promise.race([stopping, new Promise((resolve) => setTimeout(resolve, 2_000, "held"))])).toBe("stopped");
   });
 
   it("accepts a handle only when it and its DID name each other", async () => {
@@ -296,8 +305,8 @@ describe("calling another Ship", () => {
 });
 
 /** A Ship's Kernel storage and the context its Ship code reads; `as` gives it a DID, as a first outward act would. */
-async function withShip<T>(use: (ship: TestShip) => Promise<T>, as?: TestDidAccount): Promise<T> {
-  const kernel = await getDurableObjectByName<Env, Kernel>(env.KERNEL, `ships-${crypto.randomUUID()}`);
+async function withShip<T>(use: (ship: TestShip) => Promise<T>, as?: TestDidAccount, name = `ships-${crypto.randomUUID()}`): Promise<T> {
+  const kernel = await getDurableObjectByName<Env, Kernel>(env.KERNEL, name);
   return await runInDurableObject(kernel, async (_instance: Kernel, state) => {
     const deferred: Promise<unknown>[] = [];
     const shipIdentity = new ShipIdentity(state.storage);

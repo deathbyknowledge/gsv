@@ -158,18 +158,26 @@ async function lookUpDid(did: string, ctx: KernelContext): Promise<ResolvedDid> 
 
 async function plcDocument(did: `did:plc:${string}`, ctx: KernelContext): Promise<DidDocument> {
   const directory = new URL(ctx.env.PLC_URL ?? DEFAULT_PLC_URL);
-  const timeout = AbortSignal.timeout(LOOKUP_TIMEOUT_MS);
-  const response = await lookUp(() => fetch(new URL(`/${did}/log/audit`, directory), {
-    headers: { accept: "application/json" },
-    // The directory answers directly; a redirect is a failed lookup.
-    redirect: "manual",
-    signal: ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, timeout]) : timeout,
-  }), did, ctx);
-  if (response.status === 404 || response.status === 410) {
-    await response.body?.cancel().catch(() => {});
-    throw new DidNotResolvedError(`${did} isn't registered`);
+  // The timer ends with the lookup; one left pending would hold the Kernel awake.
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(new Error("The directory took too long to answer")), LOOKUP_TIMEOUT_MS);
+  let entries: Uint8Array;
+  try {
+    const response = await lookUp(() => fetch(new URL(`/${did}/log/audit`, directory), {
+      headers: { accept: "application/json" },
+      // The directory answers directly; a redirect is a failed lookup.
+      redirect: "manual",
+      signal: ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, timeout.signal]) : timeout.signal,
+    }), did, ctx);
+    if (response.status === 404 || response.status === 410) {
+      await response.body?.cancel().catch(() => {});
+      throw new DidNotResolvedError(`${did} isn't registered`);
+    }
+    entries = await readOk(response, MAX_AUDIT_LOG_BYTES, did, ctx);
+  } finally {
+    clearTimeout(timer);
   }
-  const log = parsed(plcDefs.indexedEntryLog, await readOk(response, MAX_AUDIT_LOG_BYTES, did, ctx), did);
+  const log = parsed(plcDefs.indexedEntryLog, entries, did);
   let canonical: Awaited<ReturnType<typeof processIndexedEntryLog>>["canonical"];
   try {
     ({ canonical } = await processIndexedEntryLog(did, log));
