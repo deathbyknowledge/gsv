@@ -1,10 +1,10 @@
 import { reset } from "cloudflare:test";
-import { ATTACHMENT_REVISION_HEADER, ATTACHMENT_SIZE_HEADER, type ContactSendArgs } from "@humansandmachines/gsv/protocol";
+import { ACCEPT_INVITATION, ATTACHMENT_REVISION_HEADER, ATTACHMENT_SIZE_HEADER, type ContactSendArgs } from "@humansandmachines/gsv/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as nativeFs from "../../drivers/native/fs";
 import * as utils from "../../shared/utils";
 import { TestShipNetwork } from "../../test-support/ship-network";
-import { SPACE_OWNER_UID, testSpace, type TestSpace } from "../../test-support/ship-spaces";
+import { loseNextAnswer, SPACE_OWNER_UID, testSpace, type TestSpace } from "../../test-support/ship-spaces";
 import type { KernelContext } from "../context";
 import type { FederationContactRecord } from "../federation-store";
 import {
@@ -50,6 +50,18 @@ describe("deliveries between Ships", () => {
       author: { kind: "contact", displayName: "Bob" },
       social: { reference: { did: bob.account.did }, replyTo: asked?.social?.reference },
     });
+  });
+
+  it("keeps a message for later when it reaches a Ship still accepting the connection", async () => {
+    // Alice's Ship records Mallory's acceptance before Mallory's does, and its answer is lost.
+    const { code } = await alice.run((ctx) => handleContactInviteCreate({}, ctx));
+    loseNextAnswer(network, alice, ACCEPT_INVITATION);
+    await expect(mallory.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx))).rejects.toThrow("Network connection lost");
+    expect(await send(alice, mallory, { text: "Welcome aboard" })).toBe("pending");
+    // Mallory's Ship accepts again and hears of the same connection, and the message arrives when Alice's Ship tries again.
+    await mallory.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx));
+    await deliverPending(alice);
+    expect((await conversation(mallory, alice)).map((message) => message.text)).toEqual(["Welcome aboard"]);
   });
 
   it("ends the connection on both sides when one person removes the other", async () => {

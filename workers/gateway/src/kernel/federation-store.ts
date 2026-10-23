@@ -544,6 +544,11 @@ export class FederationStore {
     return row ? inviteFromRow(row) : null;
   }
 
+  /** Whether this Ship is still accepting an invitation from the DID, which the inviting Ship may already count as a contact. */
+  pairingPending(remoteDid: string): boolean {
+    return this.sql.exec("SELECT 1 FROM federation_pairing_attempts WHERE remote_did = ? AND state = 'pending' LIMIT 1", remoteDid).toArray().length > 0;
+  }
+
   pairingAttempt(tokenHash: string): FederationPairingAttemptRecord | null {
     const row = this.sql.exec<PairingAttemptRow>(
       `SELECT * FROM federation_pairing_attempts

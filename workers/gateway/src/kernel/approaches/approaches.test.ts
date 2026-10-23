@@ -7,9 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as transport from "../../shared/utils";
 import { getConversationById } from "../../shared/utils";
 import { serviceAuthToken, TestShipNetwork, type TestDidAccount } from "../../test-support/ship-network";
-import { SPACE_OWNER_UID, testSpace, type TestSpace } from "../../test-support/ship-spaces";
+import { loseNextAnswer, SPACE_OWNER_UID, testSpace, type TestSpace } from "../../test-support/ship-spaces";
 import type { KernelContext } from "../context";
 import type { ProcessRecord } from "../processes";
+import { handleContactSend, processFederationDelivery } from "../federation";
 import { handleContactBlockList, handleContactBlockSet } from "../federation/preferences";
 import { handleProfileGet, handleProfilePublish, handleProfileUnpublish, handleProfileUpdate, readPublicProfile } from "../profiles";
 import { handleApproachCreate, handleApproachDecide, handleApproachGet, handleApproachList, handleApproachRetry } from "./admission";
@@ -43,7 +44,7 @@ describe("message requests", () => {
     await expect(alice.run((ctx) => handleApproachCreate({ ...input, shipHandlesMessages: !shipHandlesMessages }, held(ctx)))).rejects.toThrow("different content");
 
     // Bob's Ship takes the request in, but its answer never reaches Alice's.
-    loseNextAnswer(bob, SEND_MESSAGE_REQUEST);
+    loseNextAnswer(network, bob, SEND_MESSAGE_REQUEST);
     await alice.run((ctx) => processApproachMaintenance(held(ctx)));
     const [received] = await incomingRequests(bob);
     expect(received).toMatchObject({
@@ -63,7 +64,7 @@ describe("message requests", () => {
       approachId: received.id, expectedRevision: received.revision, decision: "accept", shipHandlesMessages: !shipHandlesMessages,
     }, held(ctx)))).approach;
     expect(accepting).toMatchObject({ state: "accepting", connection: "connecting" });
-    loseNextAnswer(alice, ACCEPT_MESSAGE_REQUEST);
+    loseNextAnswer(network, alice, ACCEPT_MESSAGE_REQUEST);
     await bob.run((ctx) => processApproachMaintenance(held(ctx)));
     const sent = (await alice.run((ctx) => ctx.approaches.get(created.id)))!;
     expect(sent.summary).toMatchObject({ state: "accepted", connection: "connected" });
@@ -93,6 +94,29 @@ describe("message requests", () => {
         social: { reference: { did: alice.account.did, messageId: sent.messageId }, threadId: sent.threadId, provenance: { kind: "human" } },
       }]);
     }
+  });
+
+  it("keeps a message for later when it reaches a Ship still accepting the request", async () => {
+    await sendRequest();
+    const [received] = await incomingRequests(bob);
+    const accepting = (await bob.run((ctx) => handleApproachDecide({
+      approachId: received.id, expectedRevision: received.revision, decision: "accept", shipHandlesMessages: false,
+    }, held(ctx)))).approach;
+    // Alice's Ship makes the connection before Bob's does, and its answer is lost.
+    loseNextAnswer(network, alice, ACCEPT_MESSAGE_REQUEST);
+    await bob.run((ctx) => processApproachMaintenance(held(ctx)));
+    const deliveryId = await alice.run(async (ctx) => {
+      const contact = ctx.federation.getByRemote(SPACE_OWNER_UID, bob.account.did)!;
+      const { deliveryId } = await handleContactSend({ contactId: contact.id, idempotencyKey: "thanks", text: "Thanks for accepting" }, held(ctx));
+      await processFederationDelivery(deliveryId, held(ctx));
+      return deliveryId;
+    });
+    expect((await alice.run((ctx) => ctx.federation.outbox(deliveryId)))?.state).toBe("pending");
+    // Bob's Ship asks again and hears of the same connection, and the message arrives when Alice's Ship tries again.
+    await bob.run((ctx) => handleApproachRetry({ approachId: received.id, expectedRevision: accepting.revision }, held(ctx)));
+    await bob.run((ctx) => processApproachMaintenance(held(ctx)));
+    await alice.run((ctx) => processFederationDelivery(deliveryId, held(ctx)));
+    expect((await alice.run((ctx) => ctx.federation.outbox(deliveryId)))?.state).toBe("delivered");
   });
 
   it("lets the owner's canonical Ship send a request and read it back, but not other processes", async () => {
@@ -268,22 +292,9 @@ async function incomingRequests(space: TestSpace): Promise<ApproachSummary[]> {
   return (await space.run((ctx) => handleApproachList({ direction: "incoming" }, ctx))).approaches;
 }
 
-/** The space's context with its maintenance alarm held, so the test runs maintenance when it chooses. */
+/** The space's context with its alarms held, so the test runs maintenance and deliveries when it chooses. */
 function held(ctx: KernelContext): KernelContext {
-  return { ...ctx, scheduleApproachMaintenance: async () => {} };
-}
-
-/** The space's Ship handles the next call to the method, but its answer is lost on the way back. */
-function loseNextAnswer(space: TestSpace, nsid: string): void {
-  const serve = network.hosts.get(space.hostname);
-  if (!serve) throw new Error(`${space.name}'s Ship has no host`);
-  network.hosts.set(space.hostname, async (call) => {
-    const response = await serve(call);
-    if (new URL(call.url).pathname !== `/xrpc/${nsid}`) return response;
-    network.hosts.set(space.hostname, serve);
-    await response.body?.cancel();
-    throw new TypeError("Network connection lost.");
-  });
+  return { ...ctx, scheduleApproachMaintenance: async () => {}, scheduleFederationDelivery: async () => {} };
 }
 
 /** Calls a Ship method on a space as `caller`, the way another Ship would. */

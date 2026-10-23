@@ -88,6 +88,7 @@ import { revokeFederationContact } from "./federation/pairing";
 import { contactSummary, requireContactCaller, requireContactHuman, requireOwnedContact, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
 import { bindContactReply, admitContactMessage } from "./federation/attention";
 import { PublicFederationError } from "./federation/errors";
+import { ShipXrpcError } from "./ships/errors";
 import { callShip, callShipProcedure, type ShipCall } from "./ships/xrpc";
 import {
   assertDeliveryReplay,
@@ -135,6 +136,8 @@ const RESOURCE_READ_LEASE_MS = 15 * 60_000;
 /** How long reading a contact's attachment may take, body included. */
 const ATTACHMENT_READ_TIMEOUT_MS = 120_000;
 const RATE_WINDOW_MS = 60_000;
+/** When a Ship still accepting a connection asks the other Ship to deliver again. */
+const ACCEPTING_RETRY_MS = 30_000;
 export const MAX_FEDERATION_RECOVERABLE_OUTBOX = 1_500;
 export const MAX_FEDERATION_RECOVERABLE_INBOX = 250;
 export const FEDERATION_INBOX_RECOVERY_RETRY_MS = 30_000;
@@ -927,6 +930,10 @@ export async function deliver(call: ShipCall, ctx: KernelContext): Promise<Deliv
     || contact.generation !== generation
     || (contact.state !== "active" && payload.kind !== "contact.revoked")
   ) {
+    // The other Ship records a connection before this one does, so a delivery can arrive while this Ship is still accepting it.
+    if (ctx.federation.pairingPending(call.caller) || ctx.approaches.accepting(call.caller)) {
+      throw new ShipXrpcError(503, "TemporarilyUnavailable", "This Ship is still accepting the connection", ACCEPTING_RETRY_MS);
+    }
     throw new PublicFederationError(404, "Contact not found");
   }
   const payloadHash = await sha256Base64Url(canonicalJson(jsonValue(payload)));

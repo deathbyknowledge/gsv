@@ -101,6 +101,19 @@ export async function testSpace(network: TestShipNetwork, name: string): Promise
   return space;
 }
 
+/** The space's Ship handles the next call to the method, but its answer is lost on the way back. */
+export function loseNextAnswer(network: TestShipNetwork, space: TestSpace, nsid: string): void {
+  const serve = network.hosts.get(space.hostname);
+  if (!serve) throw new Error(`${space.name}'s Ship has no host`);
+  network.hosts.set(space.hostname, async (call) => {
+    const response = await serve(call);
+    if (new URL(call.url).pathname !== `/xrpc/${nsid}`) return response;
+    network.hosts.set(space.hostname, serve);
+    await response.body?.cancel();
+    throw new TypeError("Network connection lost.");
+  });
+}
+
 /** The space's repository host: its account appears with its first outward act, it signs as the space's DID, and it keeps the records the space publishes. */
 function testPds(network: TestShipNetwork, space: TestSpace, identity: ShipIdentity): PdsService {
   const account: PublicRepositoryAccount = { did: space.account.did, handle: space.hostname, host: TEST_PDS_URL };

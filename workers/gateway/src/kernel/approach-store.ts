@@ -133,6 +133,12 @@ export class ApproachStore {
       WHERE owner_uid = ? AND remote_did = ? ORDER BY created_at DESC LIMIT 1`, ownerUid, did).toArray()[0]?.remote_display_name;
   }
 
+  /** Whether this Ship is still accepting a request from the DID, whose sender's Ship may already count it as a contact. */
+  accepting(did: string): boolean {
+    return this.sql.exec(`SELECT 1 FROM social_approaches WHERE remote_did = ?
+      AND direction = 'incoming' AND state = 'accepting' LIMIT 1`, did).toArray().length > 0;
+  }
+
   forConversation(conversationId: string): ApproachRecord | null {
     const row = this.sql.exec<ApproachRow>("SELECT * FROM social_approaches WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1", conversationId).toArray()[0];
     return row ? record(row) : null;
