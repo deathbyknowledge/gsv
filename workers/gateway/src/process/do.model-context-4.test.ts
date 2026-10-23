@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   captureSignals, mockGeneration, processTestConfig, generationRun, assistantResponse, runInProcess,
   ROOT_IDENTITY, initProcess, messageAction, offeredTools, setHistoryPolicy, testUsage,
+  followRunApprovalPolicy,
 } from "./do-test-harness";
 
 describe("model context", () => {
@@ -500,6 +501,7 @@ describe("model context", () => {
       };
 
       process.store.messages.appendMessage("user", "run pwd");
+      followRunApprovalPolicy(process);
       process.runs.active = generationRun("run-chat-tool-markup-text", processTestConfig(pid, {
         provider: "openai",
         model: "gpt-test",

@@ -254,7 +254,7 @@ export async function submitAdapterHilApproval(
   const resolution: AdapterHilResolution = result.ok
     ? selection.decision === "deny"
       ? "deny"
-      : selection.remember
+      : selection.remember && result.remembered
         ? "approve_always"
         : "approve"
     : "stale";

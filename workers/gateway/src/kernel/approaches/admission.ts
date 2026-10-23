@@ -59,7 +59,7 @@ export async function handleApproachCreate(input: ApproachCreateArgs, ctx: Kerne
   if (!ctx.approaches.byIdempotencyKey(ownerUid, args.idempotencyKey)) {
     // A direct process syscall carries no tool owner yet; derive it, as scheduling does, so the
     // Ship's run policy applies however the request arrives. A signed-in human has none and is not asked.
-    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "approach.create", jsonObjectSchema.parse(args), "ask");
+    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "approach.create", jsonObjectSchema.parse(args));
   }
   return await ctx.coordinateFederationContact(`approach-send:${ownerUid}:${args.idempotencyKey}`, () => createApproach(args, ownerUid, ctx));
 }

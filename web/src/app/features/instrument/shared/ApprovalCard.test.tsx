@@ -32,7 +32,7 @@ describe("approval card", () => {
     const tree = await approvalCardTree({ ...props, request, onDecide });
     const nodes = collectNodes(tree);
     const hint = nodes.find((node) => node.type === Hint);
-    expect(hint?.props.text).toBe("Allow Ship or this helper to run any shell command on my mac without asking again. Others still ask.");
+    expect(hint?.props.text).toBe("Stop asking before “Run shell commands” on my mac, for Ship and every helper. Change this in Settings → Permissions.");
     nodes.find((node) => node.type === "button" && collectText(node) === "Always allow")?.props.onClick?.();
     expect(onDecide).toHaveBeenLastCalledWith("approve", true);
     nodes.find((node) => node.type === "button" && collectText(node).includes("Allow once"))?.props.onClick?.();
@@ -47,11 +47,14 @@ describe("approval card", () => {
     expect(onDecide).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { ...request, target: "targets/*" },
-    { ...request, syscall: "mail.send" },
-  ])("does not offer shell permission for $syscall on $target", async (pending) => {
-    expect(collectText(await approvalCardTree({ ...props, request: pending }))).not.toContain("Always allow");
+  it("does not offer Always allow for a request that names no single place", async () => {
+    expect(collectText(await approvalCardTree({ ...props, request: { ...request, target: "targets/*" } }))).not.toContain("Always allow");
+  });
+
+  it("offers Always allow for any kind of request on one place", async () => {
+    const tree = await approvalCardTree({ ...props, request: { ...request, toolName: "CodeMode", syscall: "mail.send", target: "gsv", args: {} } });
+    expect(collectText(tree)).toContain("Always allow");
+    expect(collectNodes(tree).find((node) => node.type === Hint)?.props.text).toContain("“Send mail”");
   });
 
   it("leads with the model's purpose and folds the command away", async () => {

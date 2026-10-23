@@ -2007,7 +2007,7 @@ describe("handleAiConfig", () => {
     }))).rejects.toThrow("Invalid AI model stack at /sys/users/1000/ai/models");
   });
 
-  it("uses the owner's complete stack for an agent process", async () => {
+  it("uses the owner's complete stack and approval policy for an agent process", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext({
       "users/1000/ai/models": JSON.stringify({
         version: 1,
@@ -2030,7 +2030,7 @@ describe("handleAiConfig", () => {
     expect(result.provider).toBe("owner-provider");
     expect(result.model).toBe("owner-model");
     expect(result.apiKey).toBe("owner-key");
-    expect(result.accountApprovalPolicy).toBe('{"default":"auto","rules":[]}');
+    expect(result.accountApprovalPolicy).toBe('{"default":"deny","rules":[]}');
   });
 
   it("applies the owner's preferred model to the agents the owner runs", async () => {

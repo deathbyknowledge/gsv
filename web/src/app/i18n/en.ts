@@ -173,8 +173,7 @@ export const en = {
 
   // Settings: permissions
   "settings.permissions.title": "Permissions",
-  "settings.permissions.intro": "Choose when work on this account asks before using a capability. More specific targets win, then more specific capabilities; list order breaks ties. Account capability grants still set the outer limit.",
-  "settings.permissions.mailHint": "Mail needs an explicit Allow rule to send without asking, even when the default is Allow.",
+  "settings.permissions.intro": "Choose when Ship and its helpers ask before using a capability. “Always allow” on a request adds a rule here. More specific targets win, then more specific capabilities; list order breaks ties. Account capability grants still set the outer limit.",
   "settings.permissions.loading": "Loading permissions…",
   "settings.permissions.targetsUnavailable": "Target names could not be loaded. Stored target IDs remain available.",
   "settings.permissions.unsupported": "This saved policy contains fields this editor cannot safely change. It has been kept unchanged.",
@@ -1294,7 +1293,7 @@ export const en = {
   "shell.approval.fullRequest": "full request",
   "shell.approval.run": "Allow once",
   "shell.approval.deny": "Block",
-  "shell.approval.alwaysAllowHint": "Allow Ship or this helper to run any shell command on {place} without asking again. Others still ask.",
+  "shell.approval.alwaysAllowHint": "Stop asking before “{capability}” on {place}, for Ship and every helper. Change this in Settings → Permissions.",
   "shell.approval.alwaysAllow": "Always allow",
   "shell.approval.waiting": "nothing runs until you answer",
 

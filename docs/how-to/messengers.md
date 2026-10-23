@@ -126,7 +126,8 @@ replies with text and attachments, and a long reply arrives as several
 messages, one per prose paragraph. Headings stay with the following block;
 code blocks, lists, tables and quotations stay together. Approval
 prompts arrive with **Allow once**, **Always allow** and **Block** buttons; the
-decision comes back as a reply quoting the prompt.
+decision comes back as a reply quoting the prompt. **Always allow** adds the
+same rule as in the app, shown in **Settings → Permissions**.
 
 While Ship works on a message you sent from WhatsApp, it reacts to that message
 with 👀 and removes the reaction when it replies, asks for approval or stops.

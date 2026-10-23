@@ -112,7 +112,6 @@ describe("tool approval policy", () => {
       default: "auto",
       rules: [
         { match: "shell.exec", target: "targets/*", action: "ask" },
-        { match: "mail.send", action: "ask" },
       ],
     });
   });
@@ -126,6 +125,9 @@ describe("tool approval policy", () => {
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.delete").action).toBe("auto");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "sys.mcp.call").action).toBe("ask");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "mail.send").action).toBe("ask");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "sched.add").action).toBe("ask");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "sched.update").action).toBe("ask");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "approach.create").action).toBe("ask");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "adapter.pair.confirm").action).toBe("auto");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.read").action).toBe("auto");
     expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "web.search")).toMatchObject({ action: "auto", matchedRule: "web.search" });
@@ -161,7 +163,7 @@ describe("tool approval policy", () => {
 
 // SAFETY: test fixture is constructed with the asserted domain shape.
 
-  it("asks for mail added after a stored allow-by-default policy was created", () => {
+  it("decides mail by the stored rules like any other call", () => {
     const storedPolicy = {
       // SAFETY: test fixture is constructed with the asserted domain shape.
       default: "auto" as const,
@@ -169,11 +171,8 @@ describe("tool approval policy", () => {
       rules: [{ match: "fs.delete", action: "ask" as const }],
     };
 
-    expect(resolveToolApproval(storedPolicy, "mail.send").action).toBe("ask");
-    expect(parseToolApprovalPolicy(JSON.stringify(storedPolicy)).rules).toContainEqual({
-      match: "mail.send",
-      action: "ask",
-    });
+    expect(resolveToolApproval(storedPolicy, "mail.send").action).toBe("auto");
+    expect(parseToolApprovalPolicy(JSON.stringify(storedPolicy))).toEqual(storedPolicy);
   });
 
   it("preserves explicit exact and wildcard mail approval choices", () => {
