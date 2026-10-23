@@ -1,4 +1,4 @@
-import type { ComponentChildren, JSX, RefObject, VNode } from "preact";
+import { cloneElement, type ComponentChildren, type JSX, type VNode } from "preact";
 import { useLayoutEffect } from "preact/hooks";
 import { act } from "preact/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
@@ -14,17 +14,23 @@ let previewTree: ComponentChildren;
 const dialogElement = { showModal: vi.fn(), close: vi.fn() };
 
 // Keep the real viewer hooks and URL ownership; only replace DOM insertion.
-vi.mock("./AttachmentPreview", async (importOriginal) => {
-  const { AttachmentPreview } = await importOriginal<typeof import("./AttachmentPreview")>();
-  return { AttachmentPreview: (props: Parameters<typeof AttachmentPreview>[0]) => {
-    previewTree = AttachmentPreview(props);
-    // SAFETY: The viewer returns a dialog with this ref. The lifecycle uses only showModal/close.
-    const dialog = previewTree as VNode<JSX.DialogHTMLAttributes<HTMLDialogElement>>;
-    (dialog.ref as RefObject<HTMLDialogElement>).current = dialogElement as unknown as HTMLDialogElement;
-    useLayoutEffect(() => () => { previewTree = null; }, []);
-    return null;
-  } };
-});
+function PreviewHarness(props: Parameters<typeof AttachmentPreview>[0]) {
+  previewTree = AttachmentPreview(props);
+  // SAFETY: AttachmentPreview returns the dialog VNode with dialog-specific attributes.
+  const dialog = previewTree as VNode<JSX.DialogHTMLAttributes<HTMLDialogElement>>;
+  if (!dialog.ref || !("current" in dialog.ref)) throw new Error("Expected the dialog's object ref");
+  // SAFETY: The viewer lifecycle only calls showModal and close, both implemented by this fixture.
+  dialog.ref.current = dialogElement as HTMLDialogElement;
+  useLayoutEffect(() => () => { previewTree = null; }, []);
+  return null;
+}
+
+function PreviewsHarness({ children }: { children: ComponentChildren }) {
+  const provider = AttachmentPreviews({ children });
+  // SAFETY: The node is selected by the exact component whose props are passed to the viewer harness.
+  const preview = collectNodes(provider).find((node) => node.type === AttachmentPreview) as VNode<Parameters<typeof AttachmentPreview>[0]> | undefined;
+  return cloneElement(provider, {}, children, preview ? <PreviewHarness key={preview.key} {...preview.props} /> : null);
+}
 
 let root: ReturnType<typeof createTestRoot> | undefined;
 afterEach(async () => {
@@ -49,11 +55,11 @@ async function open() {
   function Row() {
     rowTree = ZenMedia({ media: { type: "document", mimeType: blob.type, key: "source", filename: "main.go" }, processId: "proc:test" });
     useLayoutEffect(() => () => { rowTree = null; trigger.isConnected = false; }, []);
-    return collectNodes(rowTree).filter((node) => node.type === AttachmentPreview);
+    return null;
   }
   function Shell({ showRow }: { showRow: boolean }) {
     return <GatewayProvider><QueryClientProvider client={cache}>
-      <AttachmentPreviews>{showRow && <Row />}</AttachmentPreviews>
+      <PreviewsHarness>{showRow && <Row />}</PreviewsHarness>
     </QueryClientProvider></GatewayProvider>;
   }
   root = createTestRoot("Shell-owned attachment preview");
@@ -97,6 +103,7 @@ describe("shell-owned attachment previews", () => {
         else {
           // SAFETY: This is the dialog VNode, and cancel only reads preventDefault.
           const dialog = previewTree as VNode<JSX.DialogHTMLAttributes<HTMLDialogElement>>;
+          // SAFETY: The cancel handler reads only preventDefault, supplied by this real cancelable event.
           const event = new Event("cancel", { cancelable: true }) as JSX.TargetedEvent<HTMLDialogElement>;
           dialog.props.onCancel?.(event);
           expect(event.defaultPrevented).toBe(true);
