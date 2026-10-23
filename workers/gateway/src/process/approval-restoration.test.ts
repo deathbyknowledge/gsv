@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { evictDurableObject } from "cloudflare:test";
 import type { Process } from "./do";
+import { DEFAULT_TOOL_APPROVAL_POLICY } from "./approval";
 import { approvedRun, initProcess, offeredTools, ROOT_IDENTITY, runInProcess, terminalTestConfig } from "./do-test-harness";
 import type { ProcessApprovalTarget } from "../protocol/process-frames";
 import { ProcessStore } from "./store";
@@ -103,6 +104,40 @@ describe("stored CodeMode approval", () => {
       process.store.sql.exec("UPDATE pending_hil SET syscall = ?", "invented.execute");
       expect(() => process.store.tools.getPendingHil()).toThrow("unsupported syscall");
       process.store.tools.clearPendingHil();
+    });
+  });
+
+  it("makes a run from before owner policies read the owner's policy before deciding", async () => {
+    const stub = await initProcess("approval-policy-upgrade", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process, state: DurableObjectState) => {
+      await state.storage.deleteAll();
+      runSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT, PROCESS_MIGRATIONS.filter(({ id }) => id <= 17));
+      const codeAsks = ["sched.add", "sched.update", "approach.create"];
+      const before = { default: "auto" as const, rules: DEFAULT_TOOL_APPROVAL_POLICY.rules.filter(({ match }) => !codeAsks.includes(match)) };
+      new ProcessStore(state.storage.sql).state.setValue("currentRun", JSON.stringify(approvedRun("run", {
+        config: { ...terminalTestConfig(process.pid), capabilities: ["*"] },
+        approvalPolicy: before, tools: offeredTools("Shell"), offeredToolNames: ["Shell"],
+      })));
+      runSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT, PROCESS_MIGRATIONS);
+      runSqlMigrations(state.storage, PROCESS_SCHEMA_COMPONENT, PROCESS_MIGRATIONS);
+
+      expect(process.runs.active?.runId).toBe("run");
+      process.store.tools.register("shell", "call", "run", "shell.exec", { input: "sched add" });
+      process.store.tools.markDispatched("shell");
+      vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
+      vi.spyOn(process.run, "scheduleTick").mockResolvedValue(undefined);
+      const read = vi.spyOn(process.kernel, "readApprovalPolicy").mockResolvedValue(JSON.stringify(DEFAULT_TOOL_APPROVAL_POLICY));
+      const waiting = process.tools.authorizeNestedTool({ runId: "run", requestId: "shell", syscall: "sched.add", args: {} }, new AbortController().signal);
+      const pending = await vi.waitFor(() => {
+        const hil = process.store.tools.getPendingHil();
+        if (!hil) throw new Error("No approval is pending yet");
+        return hil;
+      });
+      expect(read).toHaveBeenCalledOnce();
+      expect(pending.syscall).toBe("sched.add");
+      process.tools.resolveCodeModeApproval(pending.requestId, false);
+      expect(await waiting).toBe(false);
+      process.runs.active = null;
     });
   });
 });

@@ -62,10 +62,14 @@ a prompt, so Always allow never overrides it.
 - **Kernel v072.** Saved policies that allowed by default and had no rule for
   `mail.send`, `sched.add`, `sched.update` or `approach.create` gain an `ask`
   rule for it. That is exactly what the removed code did, so every saved policy
-  decides those calls as before. Rows that are not valid JSON are left alone.
+  decides those calls as before. It reads rules as the runtime does, including
+  a legacy `when.target` and dropping unreadable rules. Rows that are not valid
+  JSON are left alone.
 - **Process v018.** Deletes the old per-process `toolApprovalOverrides` key.
   Those rules only ever applied to one pid, so people click once more and the
-  new rule covers every process.
+  new rule covers every process. A run under way during the upgrade carries a
+  policy copied before these rules existed; v018 replaces it with one that
+  asks, so the run reads the owner's current policy before its next decision.
 - **Agent account policies** stop being read. None of the UI wrote them (the
   console writer had no callers and is removed).
 
@@ -76,6 +80,10 @@ a prompt, so Always allow never overrides it.
   discarding the draft loads the new rule.
 - A child already waiting on a prompt keeps waiting. Its next request runs
   without asking.
+- Schedules and message requests ask only when they need to. The Kernel checks
+  them itself once it knows whether a schedule runs a command or a message
+  request is new. A direct CodeMode call honours Block but leaves asking to that
+  check, so a reminder never asks and a command asks once.
 
 ## Open questions
 
