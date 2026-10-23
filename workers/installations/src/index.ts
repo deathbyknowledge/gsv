@@ -22,11 +22,16 @@ import { InstallationBootstrapService, parseOperatorAccessMode } from "./bootstr
 import { InstallationOperatorHttp, OperatorInstallationAdminAccess } from "./operator-http";
 import { createAccountsDeletionRuntime } from "./deletion-runtime";
 import { configuredDeletionEnvironment, type DeletionResourceEnvironment } from "./deletion-verifier";
+import { handleProductEmailPublic, runProductEmailJobs } from "./product-email-http";
+import { handleServiceNotices, ServiceNotices } from "./service-notices";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
 
 export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment & OperatorEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
   async scheduled(): Promise<void> {
+    await runProductEmailJobs(this.env.INSTALLATIONS_DB, this.env);
+    if (this.env.GSV_SERVICE_NOTICES_ENABLED === "true" && this.env.OWNER_EMAIL && this.env.GSV_OWNER_EMAIL_FROM)
+      await new ServiceNotices(this.env.INSTALLATIONS_DB).deliver(this.env.OWNER_EMAIL, this.env.GSV_OWNER_EMAIL_FROM);
     await cleanExpiredOwnerAuthentication(this.env);
     await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)).resumePending();
   }
@@ -35,6 +40,8 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     if (request.method === "GET" && new URL(request.url).pathname === "/health") {
       return Response.json({ status: "healthy" });
     }
+    const productEmails = await handleProductEmailPublic(request, this.env.INSTALLATIONS_DB, this.env, this.env.GSV_ADMIN_ORIGIN);
+    if (productEmails) return productEmails;
     const signup = new InstallationSignup(this.env.INSTALLATIONS_DB, this.accounts(), this.onboarding(), this.env.GSV_SIGNUP_ENABLED === "true", undefined, this.env);
     const ownerResponse = await handleInstallationOwnerRequest(request, this.env, OPERATOR_REGISTRY_PRINCIPAL_ID, signup);
     if (ownerResponse) return ownerResponse;
@@ -51,6 +58,8 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
       environment: this.env.ENVIRONMENT, origin: this.env.GSV_ADMIN_ORIGIN,
       teamDomain: this.env.GSV_ADMIN_ACCESS_TEAM_DOMAIN, audience: this.env.GSV_ADMIN_ACCESS_AUD,
     }));
+    const notices = await handleServiceNotices(request, this.env.INSTALLATIONS_DB, access, this.env.GSV_ADMIN_ORIGIN, this.env.GSV_SERVICE_NOTICES_ENABLED === "true");
+    if (notices) return notices;
     const api = new InstallationAdminHttp(administration, access, this.env.GSV_ADMIN_ORIGIN,
       {},
       createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)),

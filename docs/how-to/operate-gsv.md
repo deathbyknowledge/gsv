@@ -178,3 +178,10 @@ another disposable directory. Model calls still require an available provider.
 This composition and the migration tooling have local D1 and configuration tests.
 Local success is not evidence that a cloud deployment has completed; verify a
 fresh deployment end to end before giving anyone a Ship on it.
+
+## Product emails and service notices
+
+[Configure product emails](product-email.md) for optional signup/account
+preferences, the shared website consent backend and Buttondown synchronization.
+Essential service notices use verified-owner mail and an admin-only dry run;
+they never use the marketing audience.

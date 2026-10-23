@@ -241,3 +241,11 @@ Kernel `sys.config` and personal preferences. `GSV_PUBLIC_CONFIG` supplies the
 operator name, handle domain, account origin, documentation, installer and legal
 links. The operator composition derives the primary and legacy domains from its
 Accounts routing configuration. See [public domains and release briefs](../how-to/deploy-with-alchemy.md#public-domains-and-operator-links).
+
+### Product-update email preferences
+
+**Settings → Preferences → Product email preferences** opens the verified
+Accounts preference page. This permission is stored by Accounts, not in a
+Kernel configuration key or local browser flag. It is optional and separate
+from essential account/service notices. See [product email configuration](../how-to/product-email.md)
+for the operator's consent backend, provider configuration and delivery runbook.

@@ -16,11 +16,15 @@ export type WelcomeStorage = { save(revision: string, value: WelcomeState | null
 type OwnerFetch = (url: string, init: {
   method: "GET" | "POST"; headers: Record<string, string>; credentials: "omit"; cache: "no-store"; body?: string; signal: AbortSignal;
 }) => Promise<Pick<Response, "ok" | "status" | "text">>;
-type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
+export const PRODUCT_EMAIL_WORDING_VERSION = "ship-product-updates-2026-10-23";
+export type ProductEmailChoice = { optedIn: boolean; locale: "en" | "es" | "pt-BR"; wordingVersion: string };
+const emailPreferenceSchema = z.object({ revision: z.number(), optedIn: z.boolean(), status: z.string(), suppressed: z.boolean() });
+type OwnerCodeRequest = { productEmails?: ProductEmailChoice; challengeId: string; email: string; browserSecret: string; resend: boolean };
+type OwnerRequest = OwnerCodeRequest
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
-  | { operationId: string; handle: string } | Record<string, never>;
+  | { operationId: string; handle: string } | (ProductEmailChoice & { revision: number }) | Record<string, never>;
 type OwnerHeaders = { "content-type": string; authorization?: string };
-const deliverySchema = z.object({ deliveryStatus: z.enum(["sent", "sending", "failed"]) });
+const deliverySchema = z.object({ deliveryStatus: z.enum(["sent", "sending", "failed"]), productEmailSaved: z.boolean().optional() });
 const verifiedSchema = z.object({ email: z.string(), expiresAt: z.number() });
 const availableSchema = z.object({ available: z.boolean() });
 const loggedOutSchema = z.object({ ok: z.literal(true) });
@@ -57,16 +61,24 @@ export class OwnerWelcome {
     catch (error) { if (error instanceof OwnerApiError && error.code === "signed_out") return null; throw error; }
   }
 
-  async sendCode(email: string, resend = false): Promise<void> {
+  async sendCode(email: string, resend = false, productEmails?: ProductEmailChoice): Promise<boolean | undefined> {
     const current = this.state.challenge;
     if (!current || current.email !== email) {
       await this.save({ challenge: { id: crypto.randomUUID(), email, browserSecret: randomSecret() }, sessionSecret: randomSecret() });
     }
     const pending = this.state.challenge!;
-    const result = await this.request("/code", deliverySchema, {
+    const body: OwnerCodeRequest = {
       challengeId: pending.id, email: pending.email, browserSecret: pending.browserSecret, resend,
-    }, false);
+    };
+    if (productEmails) body.productEmails = productEmails;
+    const result = await this.request("/code", deliverySchema, body, false);
     if (result.deliveryStatus !== "sent") throw new OwnerApiError(t("session.owner.emailSending"));
+    return result.productEmailSaved;
+  }
+
+  async productEmailPreference() { return this.request("/product-email", emailPreferenceSchema); }
+  async saveProductEmailPreference(choice: ProductEmailChoice, revision: number) {
+    return this.request("/product-email", emailPreferenceSchema, { ...choice, revision });
   }
 
   async verify(code: string): Promise<void> {

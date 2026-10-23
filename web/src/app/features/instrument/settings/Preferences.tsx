@@ -1,3 +1,4 @@
+import { ProductEmailPreferences } from "./ProductEmailPreferences";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { ModelEditor } from "./ModelEditor";
@@ -180,5 +181,6 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     {!modelEditor && config.data && <Language uid={account.uid} original={config.data.find((entry) => entry.key === `users/${account.uid}/locale/language`)?.value ?? ""} editable={editable} onDirty={setLanguageDirty} />}
     {!modelEditor && config.data && <Timezone uid={account.uid} original={config.data.find((entry) => entry.key === `users/${account.uid}/locale/timezone`)?.value ?? ""} fallback={config.data.find((entry) => entry.key === "config/server/timezone")?.value ?? "UTC"} editable={editable} onDirty={setTimezoneDirty} />}
     {!modelEditor && <ThemePreference />}
+    {!modelEditor && <ProductEmailPreferences />}
   </section>;
 }
