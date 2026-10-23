@@ -193,9 +193,12 @@ const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
 const inviteAcceptSchema = z.strictObject({
   version: z.literal(1),
+  domain: z.literal("gsv-federation/1/invite-accept"),
+  inviterShipId: z.string().min(1).max(128),
   token: z.string().min(1).max(128),
   document: federationShipDocumentSchema,
   subject: federationSubjectSchema,
+  signature: z.string().min(1).max(512),
 });
 
 const inviteAcceptResponseSchema = z.strictObject({
@@ -219,6 +222,7 @@ const resourceRequestHeadersSchema = z.strictObject({
   signature: z.string().min(1).max(512),
 });
 
+type InviteAccept = z.infer<typeof inviteAcceptSchema>;
 type InviteAcceptResponse = z.infer<typeof inviteAcceptResponseSchema>;
 type InviteAcceptResponseUnsigned = Omit<InviteAcceptResponse, "signature">;
 type PublicFederationFailure = { status: number; message: string; retryAfterMs?: number };
@@ -397,6 +401,14 @@ export async function handleContactInviteAccept(
     return { contact: contactSummary(committed) };
   }
   ctx.requestSignal?.throwIfAborted();
+  const acceptance: Omit<InviteAccept, "signature"> = {
+    version: 1,
+    domain: "gsv-federation/1/invite-accept",
+    inviterShipId: remoteDocument.shipId,
+    token: invite.token,
+    document: localDocument,
+    subject: localSubject,
+  };
   let accepted: InviteAcceptResponse;
   try {
     accepted = inviteAcceptResponseSchema.parse(await fetchJson(
@@ -405,11 +417,9 @@ export async function handleContactInviteAccept(
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({
-          version: 1,
-          token: invite.token,
-          document: localDocument,
-          subject: localSubject,
-        }),
+          ...acceptance,
+          signature: await ctx.federationIdentity.sign(jsonValue(acceptance)),
+        } satisfies InviteAccept),
         signal: ctx.requestSignal,
       },
       ctx,
@@ -1444,7 +1454,7 @@ export async function openContactResourceSource(
 }
 
 async function acceptRemoteInvite(
-  input: z.infer<typeof inviteAcceptSchema>,
+  input: InviteAccept,
   ctx: KernelContext,
 ): Promise<InviteAcceptResponse> {
   const now = Date.now();
@@ -1473,6 +1483,7 @@ async function acceptRemoteInvite(
   if (input.document.origin === localDocument.origin) {
     throw new PublicFederationError(400, "A Ship cannot pair with itself");
   }
+  await authenticateInviteAcceptance(input, localDocument, ctx);
   const localSubject = ctx.federation.subject(invite.ownerUid);
   if (!localSubject) throw new PublicFederationError(409, "Contact invite owner is unavailable");
 
@@ -1607,6 +1618,34 @@ async function acceptRemoteInvite(
     throw new PublicFederationError(409, "Contact pairing changed during acceptance");
   }
   return acceptance.response;
+}
+
+/** Proves the accepting Ship holds its document's key, accepted this Ship's invite and is the Ship its origin serves. */
+async function authenticateInviteAcceptance(
+  input: InviteAccept,
+  localDocument: FederationShipDocument,
+  ctx: KernelContext,
+): Promise<void> {
+  const { signature, ...unsigned } = input;
+  if (
+    input.inviterShipId !== localDocument.shipId
+    || !await verifySignedValue(input.document.publicKey, jsonValue(unsigned), signature)
+  ) {
+    throw new PublicFederationError(403, "Contact acceptance authentication failed");
+  }
+  const served = federationShipDocumentSchema.parse(await fetchJson(
+    `${input.document.origin}${SHIP_DOCUMENT_PATH}`,
+    {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal: ctx.requestSignal,
+    },
+    ctx,
+  ));
+  await verifyShipDocument(served);
+  if (served.shipId !== input.document.shipId || served.origin !== input.document.origin) {
+    throw new PublicFederationError(403, "Contact acceptance authentication failed");
+  }
 }
 
 async function receiveRemoteDelivery(

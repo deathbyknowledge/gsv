@@ -8,6 +8,8 @@ import {
   type FederationDeliveryPayload,
   type FederationMessageDeliveryV2,
   type FederationDeliveryEnvelopeV2,
+  type FederationShipDocument,
+  type FederationSubject,
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type {
@@ -283,12 +285,15 @@ describe("federation inbound boundary", () => {
     const document = await runInDurableObject(remote, (instance: Kernel) => instance.federationIdentity.ensure("https://remote-invite.example"));
     const token = randomBase64Url(32);
     const tokenHash = await sha256Base64Url(token);
-    await runInDurableObject(kernel, async (instance: Kernel) => {
+    const inviterShipId = await runInDurableObject(kernel, async (instance: Kernel) => {
       const local = await instance.federationIdentity.ensure("https://local.example");
       instance.federation.createInvite({ ownerUid: OWNER.uid, tokenHash, issuingShipId: local.shipId,
         issuingOrigin: local.origin, expiresAtMs: Date.now() + 60_000 });
+      return local.shipId;
     });
-    const accept = () => new Request("https://local.example/_gsv/federation/v1/invites/accept", { method: "POST", body: JSON.stringify({ version: 1, token, document, subject: { id: "subject:invite", displayName: "Remote invite" } }) });
+    const acceptance = await signedAcceptance(remote, { inviterShipId, token, document, subject: { id: "subject:invite", displayName: "Remote invite" } });
+    serveShipDocument(document);
+    const accept = () => new Request("https://local.example/_gsv/federation/v1/invites/accept", { method: "POST", body: JSON.stringify(acceptance) });
     const receipt = acceptedBeforeRemoval ? await (await kernel.fetch(accept())).json() : null;
     const result = await runInDurableObject(kernel, async (instance: Kernel) => {
       const sign = instance.federationIdentity.sign.bind(instance.federationIdentity);
@@ -305,6 +310,55 @@ describe("federation inbound boundary", () => {
     expect(result.status).toBe(acceptedBeforeRemoval ? 200 : 410);
     expect(result.invite).toBe(acceptedBeforeRemoval ? "accepted" : "issued");
     if (acceptedBeforeRemoval) expect(result.body).toEqual(receipt);
+  });
+
+  it.each([false, true])("refuses an acceptance that only presents another Ship's document, leaving its contact unchanged=%s", async (existingContact) => {
+    const other = await runInDurableObject(env.KERNEL.getByName(`inst_federation_other_${crypto.randomUUID()}`), (instance: Kernel) => instance.federationIdentity.ensure("https://other.example"));
+    const subject = { id: "subject:other", displayName: "Other" };
+    const token = randomBase64Url(32);
+    const tokenHash = await sha256Base64Url(token);
+    const before = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const local = await instance.federationIdentity.ensure("https://local.example");
+      instance.federation.createInvite({ ownerUid: OWNER.uid, tokenHash, issuingShipId: local.shipId,
+        issuingOrigin: local.origin, expiresAtMs: Date.now() + 60_000 });
+      return existingContact ? instance.federation.activateContact({ ownerUid: OWNER.uid, remoteShipId: other.shipId, remoteSubject: subject,
+        remoteOrigin: other.origin, remotePublicKey: other.publicKey, sharedSecret: randomBase64Url(32),
+        generation: "generation:other", threadId: "thread:other", now: 1_000 }) : null;
+    });
+    const response = await kernel.fetch(new Request("https://local.example/_gsv/federation/v1/invites/accept", { method: "POST", body: JSON.stringify({ version: 1, token, document: other, subject }) }));
+    await response.arrayBuffer();
+    expect(await runInDurableObject(kernel, (instance: Kernel) => ({
+      contact: instance.federation.getByRemote(OWNER.uid, other.shipId, subject.id),
+      invite: instance.federation.inviteByTokenHash(tokenHash)?.state,
+    }))).toEqual({ contact: before, invite: "issued" });
+    expect(response.status).toBe(400);
+  });
+
+  it.each(["another Ship's document", "another Ship's origin", "another inviter"])("refuses a signed acceptance bound to %s", async (binding) => {
+    const otherShip = env.KERNEL.getByName(`inst_federation_other_${crypto.randomUUID()}`);
+    const intruder = env.KERNEL.getByName(`inst_federation_intruder_${crypto.randomUUID()}`);
+    const other = await runInDurableObject(otherShip, (instance: Kernel) => instance.federationIdentity.ensure("https://other.example"));
+    const own = await runInDurableObject(intruder, (instance: Kernel) => instance.federationIdentity.ensure(other.origin));
+    const subject = { id: "subject:other", displayName: "Other" };
+    const token = randomBase64Url(32);
+    const tokenHash = await sha256Base64Url(token);
+    const inviterShipId = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const local = await instance.federationIdentity.ensure("https://local.example");
+      instance.federation.createInvite({ ownerUid: OWNER.uid, tokenHash, issuingShipId: local.shipId,
+        issuingOrigin: local.origin, expiresAtMs: Date.now() + 60_000 });
+      return local.shipId;
+    });
+    const acceptance = binding === "another inviter"
+      ? await signedAcceptance(otherShip, { inviterShipId: "ship:elsewhere", token, document: other, subject })
+      : await signedAcceptance(intruder, { inviterShipId, token, document: binding === "another Ship's document" ? other : own, subject });
+    serveShipDocument(other);
+    const response = await kernel.fetch(new Request("https://local.example/_gsv/federation/v1/invites/accept", { method: "POST", body: JSON.stringify(acceptance) }));
+    await response.arrayBuffer();
+    expect(await runInDurableObject(kernel, (instance: Kernel) => ({
+      contacts: [other.shipId, own.shipId].map((shipId) => instance.federation.getByRemote(OWNER.uid, shipId, subject.id)),
+      invite: instance.federation.inviteByTokenHash(tokenHash)?.state,
+    }))).toEqual({ contacts: [null, null], invite: "issued" });
+    expect(response.status).toBe(403);
   });
 
   it("rejects a new resource lease after removal during signature verification", async () => {
@@ -1369,6 +1423,25 @@ function fakeConversation(
 function kernelInternals(instance: Kernel): KernelInternals {
   // SAFETY: this test intentionally exercises Kernel-owned stores through the asserted private fixture shape.
   return instance as Kernel & KernelInternals;
+}
+
+/** An invitation acceptance signed by the Ship `signer` runs, as its Kernel sends it. */
+async function signedAcceptance(
+  signer: DurableObjectStub<Kernel>,
+  fields: { inviterShipId: string; token: string; document: FederationShipDocument; subject: FederationSubject },
+) {
+  const acceptance = { version: 1, domain: "gsv-federation/1/invite-accept", ...fields };
+  const signature = await runInDurableObject(signer, (instance: Kernel) => instance.federationIdentity.sign(jsonValueSchema.parse(acceptance)));
+  return { ...acceptance, signature };
+}
+
+/** Serves `document` at its origin, as that Ship's Gateway does. */
+function serveShipDocument(document: FederationShipDocument) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => (
+    new Request(input, init).url === `${document.origin}/.well-known/gsv/federation/v1/ship`
+      ? Response.json(document)
+      : new Response(null, { status: 404 })
+  ));
 }
 
 async function removeOwner(instance: Kernel): Promise<void> {
