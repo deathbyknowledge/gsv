@@ -428,13 +428,12 @@ describe("Zen conversation entry", () => {
       const trigger = () => zen.nodes().find((node) => node.type === "button" && node.props.class === "zen-place-trigger")!;
       const menu = () => zen.nodes().find((node) => node.type === "div" && node.props.id === "zen-places")!;
       /* the harness mounts no DOM: Node is stubbed for the instanceof check, the trigger ref stays null,
-         and "outside" stands in for focus landing anywhere else */
-      class FakeNode {}
+         the menu itself is "inside", and "outside" stands in for focus landing anywhere else */
+      class FakeNode extends EventTarget { contains(node: EventTarget): boolean { return node === this; } }
       vi.stubGlobal("Node", FakeNode);
       const inside = new FakeNode();
       const outside = new FakeNode();
-      // SAFETY: the handler reads only relatedTarget and currentTarget.contains.
-      const blur = (relatedTarget: object | null) => menu().props.onfocusout!({ relatedTarget, currentTarget: { contains: (node: unknown) => node === inside } } as unknown as FocusEvent);
+      const blur = (relatedTarget: FakeNode | null) => menu().props.onfocusout!({ relatedTarget, currentTarget: inside });
       await act(() => { trigger().props.onClick!(); });
       expect(menu().props.hidden).toBe(false);
 

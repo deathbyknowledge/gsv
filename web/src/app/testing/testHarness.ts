@@ -17,7 +17,7 @@ export type TestNodeProps = {
   label?: string;
   message?: string;
   onChange?: (value: string) => void;
-  onfocusout?: (event: FocusEvent) => void;
+  onfocusout?: (event: { relatedTarget: EventTarget | null; currentTarget: { contains(node: EventTarget): boolean } }) => void;
   onClick?: () => void | Promise<void>;
   onPointerDown?: () => void;
   role?: string;
