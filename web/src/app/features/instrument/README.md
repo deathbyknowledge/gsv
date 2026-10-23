@@ -54,7 +54,7 @@ offline warnings and reconnecting. Its keyboard return hint is Send; iOS's nativ
 field-navigation accessory bar remains controlled by the browser.
 
 On narrow screens, the header uses one row with a menu button. The same view
-actions open in a vertical menu with touch-sized rows; the Help button is hidden.
+actions and Help open in a vertical menu with touch-sized rows.
 Choosing a view, tapping outside or pressing Escape closes the menu.
 The menu button retains the unread People indicator while navigation is closed.
 
@@ -254,7 +254,7 @@ scale. Resizing reveals or crops the same sky around its centre. Projection is
 cached; only visible glyphs are mounted, and resize retains their elements and
 twinkle phase. The sphere is not recomputed during animation.
 
-Chat opens in browse mode at the latest message. Typing any printable key that no shortcut claims focuses the prompt and lands in it, as does pasting text or files; clicking the prompt works too. Escape leaves input and stays in browse when already there. Keys held with a modifier, the shell's and Chat's shortcut letters, and the keys of a pending approval do not start typing. An explicit command or message prefill, target picker, or attachment action focuses the prompt. Mode changes install their keyboard handlers before paint, and reconnecting preserves an existing browse position. Help lists navigation and appearance controls plus shortcuts for the current view, separating Chat browse and input behavior. Chat browse uses j/k for messages and activity, gg for the start of loaded history and G for the latest messages. App shortcuts must work on a compact keyboard without a number pad or extended navigation keys. Ctrl+u/d still scroll half a page and Shift+Enter still inserts a new line, but neither is listed in Help. A sent message keeps the line breaks a person typed; runs of blank lines fold to one.
+Chat opens in browse mode at the latest message. Typing any printable key that no shortcut claims focuses the prompt and lands in it, as does pasting text or files; clicking the prompt works too. Escape leaves input and stays in browse when already there. Keys held with a modifier, the shell's and Chat's shortcut letters, and the keys of a pending approval do not start typing. An explicit command or message prefill, target picker, or attachment action focuses the prompt. Mode changes install their keyboard handlers before paint, and reconnecting preserves an existing browse position. Help puts getting-started guidance first and keeps the complete navigation, appearance and view shortcut reference in a collapsed native disclosure, separating Chat browse and input behavior. Chat browse uses j/k for messages and activity, gg for the start of loaded history and G for the latest messages. App shortcuts must work on a compact keyboard without a number pad or extended navigation keys. Ctrl+u/d still scroll half a page and Shift+Enter still inserts a new line, but neither is listed in Help. A sent message keeps the line breaks a person typed; runs of blank lines fold to one.
 
 Chat follows the bottom until the reader scrolls away. A small latest button appears above the composer while the transcript is away from the bottom and returns to the newest message. Focusing the prompt does not resume following; sending a message, running a command, pressing G or scrolling back to the bottom does. Reading retains the visible message and its offset through new replies, growing content, composer and viewport resizing, detail expansion, older-page insertion and reconnects. Keyboard navigation to a long message aligns its beginning below the header. Reaching the top loads earlier conversation and process history; loaded pages remain available across reconnects. Scroll ownership belongs to Chat, while the shared conversation hook owns page retention.
 
@@ -395,3 +395,5 @@ left sidebar. It uses the same retained view and draft protection as conversatio
 The sidebar list scrolls independently of this link. Save and publish remain
 separate; `/profile` is the public address without an alias choice. Existing
 published aliases continue to resolve. Profile queries share the signal-updated cache.
+
+Help introduces Ship, expands example requests inline, and links to the existing Messenger connections, Memory, Permissions and operator privacy policy. Missing operator privacy configuration is shown as unavailable without inventing a destination. Search Chat remains a separate action above the content. The support footer opens the manual inside Memory, email support and the community Discord. Native disclosures and links retain keyboard access, and modifier labels follow the platform without changing the shortcuts.

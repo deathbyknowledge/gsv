@@ -20,6 +20,7 @@ import { usePeopleActivity } from "./people/usePeopleActivity";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
 import { replaceLegacyChatPath, type MemoryPageRef } from "./shared/navigation";
+import { HelpContent, HELP_MANUAL_PAGE } from "./shared/HelpContent";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
 import { WelcomeCard } from "./shared/WelcomeCard";
 import { SHELL_KEYS } from "./shared/shellKeys";
@@ -52,7 +53,6 @@ const DISTANCE_TO_PATH = {
 } satisfies Record<Distance, string>;
 
 const DISTANCES: readonly Distance[] = ["zen", "fleet", "memory", "settings", "people"];
-const MANUAL_PAGE = { db: "gsv-manual", path: "gsv-manual/index.md", fragment: "" };
 
 function distanceForPath(path: string): Distance {
   if (path === "/zen/settings") return "settings";
@@ -311,91 +311,18 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       <WelcomeCard onOpenChange={setWelcomeOpen} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label={t("shell.help.label")} ref={helpRef}>
-          <button type="button" class="instrument-help-search" disabled={status.state !== "connected"} aria-keyshortcuts="Control+K" onClick={openSearch}>
-            <span>{t("shell.help.search")}</span><kbd>Ctrl+K</kbd>
-          </button>
-          <h4>{t("shell.help.views")}</h4>
-          <p>{t("shell.help.viewsHint")}</p>
-          <dl>
-            <dt>c</dt><dd>Chat</dd>
-            <dt>f</dt><dd>{t("shell.help.work")}</dd>
-            <dt>m</dt><dd>{t("shell.help.memory")}</dd>
-            <dt>p</dt><dd>{t("shell.help.people")}</dd>
-            <dt>s</dt><dd>{t("settings.title")}</dd>
-            <dt>l</dt><dd>{t("shell.help.theme")}</dd>
-            <dt>x</dt><dd>{t("shell.help.textSize")}</dd>
-            <dt>?</dt><dd>{t("shell.help.toggle")}</dd>
-            <dt>Esc</dt><dd>{t("shell.help.closePanel")}</dd>
-          </dl>
-          {distance === "zen" && <>
-            <h4>{t("shell.help.chatBrowse")}</h4>
-            <dl>
-              <dt>j / k</dt><dd>{t("shell.help.nextPrevious")}</dd>
-              <dt>gg / G</dt><dd>{t("shell.help.history")}</dd>
-              <dt>o</dt><dd>{t("shell.help.activity")}</dd>
-              <dt>/</dt><dd>{t("shell.help.browseSearch")}</dd>
-              <dt>y / n</dt><dd>{t("shell.help.approve")}</dd>
-              <dt>{t("shell.help.otherKeys")}</dt><dd>{t("shell.help.startWriting")}</dd>
-            </dl>
-            <h4>{t("shell.help.chatInput")}</h4>
-            <dl>
-              <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.send")}</dd>
-              <dt>Esc</dt><dd>{t("shell.help.returnToBrowse")}</dd>
-              <dt>↑</dt><dd>{t("shell.help.recall")}</dd>
-              <dt>{t("shell.help.placeSyntax")}</dt><dd>{t("shell.help.chooseTarget")}</dd>
-              <dt>{t("shell.help.commandSyntax")}</dt><dd>{t("shell.help.runCommand")}</dd>
-            </dl>
-          </>}
-          {distance === "memory" && <>
-            <h4>{t("shell.help.memory")}</h4>
-            <dl>
-              <dt>j / ↓</dt><dd>{t("shell.help.nextItem")}</dd>
-              <dt>k / ↑</dt><dd>{t("shell.help.previousItem")}</dd>
-              <dt>{t("shell.keys.spaceOrEnter")}</dt><dd>{t("shell.help.openPage")}</dd>
-              <dt>/</dt><dd>{t("shell.help.pageSearch")}</dd>
-              <dt>e</dt><dd>{t("shell.help.editPage")}</dd>
-              <dt>{t("shell.keys.save")}</dt><dd>{t("shell.help.savePage")}</dd>
-              <dt>Esc</dt><dd>{t("shell.help.leaveSearch")}</dd>
-            </dl>
-          </>}
-          {distance === "fleet" && <>
-            <h4>{t("shell.help.work")}</h4>
-            <dl>
-              <dt>j / ↓</dt><dd>{t("shell.help.nextRow")}</dd>
-              <dt>k / ↑</dt><dd>{t("shell.help.previousRow")}</dd>
-              <dt>{t("shell.keys.spaceOrEnter")}</dt><dd>{t("shell.help.openItem")}</dd>
-              <dt>Esc</dt><dd>{t("shell.help.closeInspector")}</dd>
-              <dt>/</dt><dd>{t("shell.help.commandPrompt")}</dd>
-            </dl>
-            <h4>{t("shell.help.expandedFile")}</h4>
-            <dl>
-              <dt>{t("shell.keys.save")}</dt><dd>{t("shell.help.saveFile")}</dd>
-              <dt>Esc</dt><dd>{t("shell.help.returnToFleet")}</dd>
-            </dl>
-            <h4>{t("shell.help.contactMessages")}</h4>
-            <dl>
-              <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.sendMessage")}</dd>
-            </dl>
-          </>}
-          {distance === "settings" && <>
-            <h4>{t("settings.title")}</h4>
-            <dl>
-              <dt>{t("shell.keys.tab")}</dt><dd>{t("shell.help.moveControls")}</dd>
-              <dt>{t("shell.keys.enterOrSpace")}</dt><dd>{t("shell.help.activate")}</dd>
-            </dl>
-          </>}
-          <footer class="instrument-help-footer">
-            <a href={memoryLinkHref(MANUAL_PAGE)} onClick={(event) => {
-              if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-              event.preventDefault();
-              if (memoryDirty && !window.confirm(t("shell.confirm.discardPage"))) return;
-              if (!navigateApp(memoryLinkHref(MANUAL_PAGE))) return;
-              setSelectedMemoryPage({ ...MANUAL_PAGE });
-              setHelp(false);
-            }}>{t("shell.help.manual")}</a>
-            <p class="instrument-help-discord"><a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">{t("shell.help.discord")}</a></p>
-            <p>{t("shell.help.ownership")}</p>
-          </footer>
+          <HelpContent connected={status.state === "connected"} onSearch={openSearch} onNavigate={(href) => {
+            if (href === "/memory") {
+              if (move("memory")) setHelp(false);
+              return;
+            }
+            const manual = href === memoryLinkHref(HELP_MANUAL_PAGE);
+            if (manual && memoryDirty && !window.confirm(t("shell.confirm.discardPage"))) return;
+            if (distance === "fleet" && fleetDirty && !window.confirm(t("shell.confirm.discardFleetEdits"))) return;
+            if (!navigateApp(href)) return;
+            if (manual) setSelectedMemoryPage({ ...HELP_MANUAL_PAGE });
+            setHelp(false);
+          }} />
         </aside>
       ) : null}
       <div class="distance" data-view={distance} ref={scrollEdgesRef}>

@@ -258,7 +258,6 @@
   }
   .instrument-header .keys[data-open="true"] { display: flex; }
   .instrument-header .keys button { min-height: 44px; text-align: left; }
-  .instrument-header .keys button[aria-controls="instrument-help"] { display: none; }
 }
 .instrument kbd {
   font: inherit;
@@ -558,16 +557,35 @@
 .instrument-help h4 { margin: 0 0 6px; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--faint); font-weight: 400; }
 .instrument-help h4:not(:first-child) { margin-top: 14px; }
 .instrument-help p { margin: 0 0 10px; color: var(--faint); font-size: 11px; line-height: 1.5; }
+.instrument-help h2 { margin: 16px 0 8px; color: var(--text-hi); font-size: 14px; font-weight: 500; }
+.instrument-help h3 { margin: 18px 0 8px; color: var(--text); font-size: 12px; font-weight: 500; }
+.instrument-help .instrument-help-introduction { color: var(--label); font-size: 12px; line-height: 1.7; }
+.instrument-help-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; color: var(--text); text-decoration: none; cursor: pointer; list-style: none; }
+.instrument-help-row::-webkit-details-marker { display: none; }
+.instrument-help-topics > * + * { border-top: 1px solid var(--border); }
+.instrument-help-row-copy { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.instrument-help-row-copy strong { font-weight: 400; color: var(--text-hi); }
+.instrument-help-row-copy small { font-size: 11px; line-height: 1.5; color: var(--label); }
+.instrument-help-icon { flex-shrink: 0; color: var(--faint); }
+.instrument-help-chevron { color: var(--faint); }
+.instrument-help-row:hover .instrument-help-row-copy strong { color: var(--accent); }
+.instrument-help-row[aria-disabled="true"] { cursor: default; opacity: .65; }
+.instrument-help-talking[open] > summary .instrument-help-chevron { transform: rotate(90deg); }
+.instrument-help-examples { padding: 0 0 12px 30px; }
+.instrument-help-examples ul { margin: 0; padding-left: 16px; color: var(--label); font-size: 11px; }
+.instrument-help-examples li + li { margin-top: 6px; }
+.instrument-help-shortcuts { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.instrument-help-shortcuts > summary { cursor: pointer; color: var(--text); }
+.instrument-help-shortcuts[open] > summary { margin-bottom: 14px; }
+.instrument-help :is(summary, a, button):focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
 .instrument-help dl { display: grid; grid-template-columns: auto 1fr; gap: 0 14px; margin: 0 0 10px; }
 .instrument-help dt { color: var(--text-hi); white-space: nowrap; }
 .instrument-help dd { margin: 0; }
 .instrument-help-footer { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 .instrument-help-footer a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
-.instrument-help-footer .instrument-help-discord { margin-top: 10px; }
-.instrument-help-footer .instrument-help-discord a { color: inherit; }
 .instrument-help-footer a:hover { color: var(--accent); }
 .instrument-help-footer a:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
-.instrument-help-footer p:last-child { margin-bottom: 0; }
+.instrument-help-footer > a { display: block; width: fit-content; margin-top: 8px; }
 @container instrument (max-width: 350px) {
   .instrument-help dl { grid-template-columns: minmax(0, 1fr); }
   .instrument-help dd { margin-bottom: 8px; }
