@@ -12,7 +12,7 @@ export interface BlobRef {
 }
 
 /**
- * R2 key layout for blobs:
+ * R2 key layout for blobs, after the store's optional key prefix:
  *
  *   `${did}/staged/${cid}` – uploaded, not yet referenced by any record.
  *     Served by nothing; expired by an R2 lifecycle rule after seven days.
@@ -25,12 +25,12 @@ export interface BlobRef {
  * 404. Keys never move back: promotion is idempotent and `staged/` copies
  * are left for the lifecycle rule to reap.
  */
-function stagedBlobKey(did: string, cid: string): string {
-	return `${did}/staged/${cid}`;
+function stagedBlobKey(prefix: string, did: string, cid: string): string {
+	return `${prefix}${did}/staged/${cid}`;
 }
 
-function publicBlobKey(did: string, cid: string): string {
-	return `${did}/${cid}`;
+function publicBlobKey(prefix: string, did: string, cid: string): string {
+	return `${prefix}${did}/${cid}`;
 }
 
 /**
@@ -87,6 +87,8 @@ export class BlobStore {
 	constructor(
 		private r2: R2Bucket,
 		private did: string,
+		/** Prepended verbatim to every key, e.g. to scope a shared bucket per tenant. */
+		private keyPrefix = "",
 	) {}
 
 	/**
@@ -100,7 +102,7 @@ export class BlobStore {
 		const cidObj = await createCid(CODEC_RAW, bytes);
 		const cidStr = cidToString(cidObj);
 
-		await this.r2.put(stagedBlobKey(this.did, cidStr), bytes, {
+		await this.r2.put(stagedBlobKey(this.keyPrefix, this.did, cidStr), bytes, {
 			httpMetadata: { contentType: mimeType },
 		});
 
@@ -124,7 +126,7 @@ export class BlobStore {
 	private async promoteTo(cid: string, destKey: string): Promise<void> {
 		if (await this.r2.head(destKey)) return;
 
-		const staged = await this.r2.get(stagedBlobKey(this.did, cid));
+		const staged = await this.r2.get(stagedBlobKey(this.keyPrefix, this.did, cid));
 		if (!staged) return;
 
 		await this.r2.put(destKey, staged.body, {
@@ -136,7 +138,7 @@ export class BlobStore {
 	 * Promote a staged blob to the public serving key.
 	 */
 	async promoteBlob(cid: string): Promise<void> {
-		await this.promoteTo(cid, publicBlobKey(this.did, cid));
+		await this.promoteTo(cid, publicBlobKey(this.keyPrefix, this.did, cid));
 	}
 
 	/**
@@ -150,14 +152,14 @@ export class BlobStore {
 	 * Retrieve a public blob from R2 by CID string.
 	 */
 	async getBlob(cid: string): Promise<R2ObjectBody | null> {
-		return this.r2.get(publicBlobKey(this.did, cid));
+		return this.r2.get(publicBlobKey(this.keyPrefix, this.did, cid));
 	}
 
 	/**
 	 * Check if a blob exists at the public serving key.
 	 */
 	async hasBlob(cid: string): Promise<boolean> {
-		const head = await this.r2.head(publicBlobKey(this.did, cid));
+		const head = await this.r2.head(publicBlobKey(this.keyPrefix, this.did, cid));
 		return head !== null;
 	}
 }

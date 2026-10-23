@@ -150,6 +150,7 @@ describe("vendored Cirrus repo engine", () => {
   it("stages uploaded blobs until a record references them", async () => {
     const blobs = new BlobStore(env.BLOBS, DID);
     const blob = await blobs.putBlob(new TextEncoder().encode("hello"), "text/plain");
+    expect(await env.BLOBS.head(`${DID}/staged/${blob.ref.$link}`)).not.toBeNull();
     expect(await blobs.hasBlob(blob.ref.$link)).toBe(false);
 
     const referenced = extractJsonBlobCids({ $type: NOTE, text: "with a file", attachments: [{ file: blob }] });
@@ -158,5 +159,15 @@ describe("vendored Cirrus repo engine", () => {
     const served = await blobs.getBlob(blob.ref.$link);
     expect(served?.httpMetadata?.contentType).toBe("text/plain");
     expect(await served?.text()).toBe("hello");
+  });
+
+  it("keeps blobs under the store's key prefix", async () => {
+    const scoped = new BlobStore(env.BLOBS, DID, "installations/one/");
+    const blob = await scoped.putBlob(new TextEncoder().encode("scoped"), "text/plain");
+    await scoped.promoteBlob(blob.ref.$link);
+
+    const keys = (await env.BLOBS.list({ prefix: "installations/" })).objects.map((object) => object.key);
+    expect(keys.sort()).toEqual([`installations/one/${DID}/${blob.ref.$link}`, `installations/one/${DID}/staged/${blob.ref.$link}`]);
+    expect(await new BlobStore(env.BLOBS, DID, "installations/two/").hasBlob(blob.ref.$link)).toBe(false);
   });
 });
