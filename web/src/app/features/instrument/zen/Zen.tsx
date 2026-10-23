@@ -63,6 +63,7 @@ import {
   answerAttribution,
   answerHistorySnapshot,
   awaitingFirstMessage,
+  brightMessageIndices,
   defaultPlace,
   momentsFromConversation,
   momentTime,
@@ -1057,8 +1058,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   /* the cloud is always listed; once places are known and it is alone, it is not a choice, so it reads as plain text and offers to connect a place */
   const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
 
-  const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
-    moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
+  const brightMessages = useMemo(() => brightMessageIndices(moments), [moments]);
+  const latestMessageIndex = brightMessages[0] ?? -1;
   const historyFailure = conversation.historyError ? (
     <div class="zen-history-status is-err" role="alert">
       <span>{t("chat.history.failed", { error: conversation.historyError.message })}</span>
@@ -1120,7 +1121,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                   );
                 }
                 return (
-                  <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${selection === index ? " is-focus" : ""}`}>
+                  <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${brightMessages.includes(index) ? " is-recent" : ""}${selection === index ? " is-focus" : ""}`}>
                     {messageBodies[index]}
                   </div>
                 );

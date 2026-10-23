@@ -128,6 +128,10 @@ Under **Appearance**, choose **Match system** to follow this device's light or
 dark appearance. An explicit theme choice applies to both sign-in and the app.
 Before you choose, **Default** keeps sign-in dark and the app light.
 
+Outside a text field, press **x** to cycle through 75%, 85%, 100%, 150% and 200%
+sizes. The smallest size uses compact message text and tighter spacing to fit
+more conversation on screen. The choice is remembered on this device.
+
 The Desktop app also includes **Settings → Voice** for its microphone, shortcuts,
 and spoken replies. Enable **Handsfree mode** to talk to your Ship from any page
 or another app while Desktop stays running and signed in. Its voice draft stays
@@ -162,6 +166,9 @@ While reconnecting, you can keep editing your draft and adding attachments.
 Sending becomes available when the connection returns; your draft is not sent automatically.
 The header stays above the scrolling content. Tap a message once to select it
 and show its timestamp and copy action.
+With a mouse, hovering over an older message brightens it immediately.
+Consecutive messages from the latest sender stay bright together when they are
+no more than five minutes apart.
 Scrolling selects the message nearest the center, switching to the first or latest message
 at either end. On phones, the down arrow on the right returns to the latest message.
 Text actions have a subtle underline. The **+** menu groups file and person references under
