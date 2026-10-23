@@ -156,7 +156,8 @@ help with. **Talking to Ship** expands example requests; the other getting-start
 rows open WhatsApp connections, Memory, Permissions and
 [Ship’s privacy policy](https://ship.space/privacy). **Keyboard shortcuts** replaces
 Help with Search Chat, general shortcuts and shortcuts for the current screen;
-**← Help** returns to getting started. **Need more help?** opens the existing
+**← Help** returns to getting started. Use **×** in the top-right corner to close
+either panel. **Need more help?** opens the existing
 Feedback form through **Feedback**, when feedback is available, and links to the
 Ship manual inside Memory, email support and the community Discord.
 

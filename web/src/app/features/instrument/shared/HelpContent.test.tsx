@@ -16,7 +16,7 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts rele
   const onFeedback = vi.fn();
   let tree: ComponentChildren;
   function Harness({ distance = "zen" }: { distance?: Distance }) {
-    tree = HelpContent({ distance, connected: true, onNavigate, onSearch, onFeedback });
+    tree = HelpContent({ distance, connected: true, onClose: vi.fn(), onNavigate, onSearch, onFeedback });
     return null;
   }
   try {

@@ -10,6 +10,7 @@ export const HELP_MANUAL_PAGE = { db: "gsv-manual", path: "gsv-manual/index.md",
 type HelpContentProps = {
   distance: Distance;
   connected: boolean;
+  onClose: () => void;
   onSearch: () => void;
   onFeedback?: () => void;
   onNavigate: (href: string) => void;
@@ -26,7 +27,7 @@ function HelpIcon({ kind }: { kind: "talk" | "phone" | "memory" | "permissions" 
   return <svg class="instrument-help-icon" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d={paths[kind]} /></svg>;
 }
 
-export function HelpContent({ distance, connected, onSearch, onFeedback, onNavigate }: HelpContentProps) {
+export function HelpContent({ distance, connected, onClose, onSearch, onFeedback, onNavigate }: HelpContentProps) {
   const t = useT();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const shortcutsButton = useRef<HTMLButtonElement>(null);
@@ -58,6 +59,7 @@ export function HelpContent({ distance, connected, onSearch, onFeedback, onNavig
   return <div class="instrument-help-content" onKeyDown={(event) => {
     if (event.key === " " || event.key === "Enter") event.stopPropagation();
   }}>
+    <button type="button" class="instrument-help-close" aria-label={t("shell.help.closePanel")} onClick={onClose}><span aria-hidden="true">×</span></button>
     {shortcutsOpen ? <>
       <button type="button" class="instrument-help-back" ref={backButton} onClick={() => showShortcuts(false)}><span aria-hidden="true">← </span>{t("shell.help.label")}</button>
       <h2>{t("shell.help.shortcuts")}</h2>

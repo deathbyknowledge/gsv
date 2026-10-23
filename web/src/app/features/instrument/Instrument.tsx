@@ -208,17 +208,23 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
     setSearchRequested(true);
   }, [move, status.state]);
 
+  const closeHelp = useCallback(() => {
+    setHelp(false);
+    const button = helpButtonRef.current;
+    (button?.getClientRects().length ? button : navigationButtonRef.current)?.focus();
+  }, []);
+
   useLayoutEffect(() => {
     if (!help) return;
     const dismissHelp = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      setHelp(false);
+      closeHelp();
     };
     window.addEventListener("keydown", dismissHelp, true);
     return () => window.removeEventListener("keydown", dismissHelp, true);
-  }, [help]);
+  }, [help, closeHelp]);
   /* a press anywhere else closes the keys; the panel and its button do not */
   useDismissOnOutsideClick(help, () => [helpRef.current, helpButtonRef.current], () => setHelp(false));
 
@@ -315,7 +321,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       <WelcomeCard onOpenChange={setWelcomeOpen} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label={t("shell.help.label")} ref={helpRef}>
-          <HelpContent distance={distance} connected={status.state === "connected"} onSearch={openSearch} onFeedback={feedbackAvailable ? () => {
+          <HelpContent distance={distance} connected={status.state === "connected"} onClose={closeHelp} onSearch={openSearch} onFeedback={feedbackAvailable ? () => {
             setHelp(false);
             setFeedbackRequest((request) => request + 1);
           } : undefined} onNavigate={(href) => {
