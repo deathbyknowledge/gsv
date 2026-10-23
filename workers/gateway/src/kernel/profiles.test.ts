@@ -106,12 +106,12 @@ describe("explicit profile publication", () => {
     });
   });
 
-  it("publishes a public, request-open profile by default once, so an unpublish stays private", async () => {
+  it("publishes a public, request-open profile named by the Ship handle by default once, so an unpublish stays private", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const ctx = profileContext(storage, sql);
       await ensureDefaultProfile(OWNER.uid, ctx);
       const published = ctx.profiles.published({ space: true })!;
-      expect(published.profile).toMatchObject({ displayName: OWNER.gecos, about: "", contactPolicy: "requests", representation: "human", revision: 1 });
+      expect(published.profile).toMatchObject({ displayName: "local", about: "", contactPolicy: "requests", representation: "human", revision: 1 });
       await verifyPublicProfile(published.profile, "https://local.example/profile");
       expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 1, published: { revision: 1 } });
       expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
@@ -124,12 +124,31 @@ describe("explicit profile publication", () => {
     });
   });
 
-  it("publishes a draft saved before the default, opened to message requests, and leaves an owner-published profile alone", async () => {
+  it("offers the Ship handle as the default draft name", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      expect(handleProfileGet(profileContext(storage)).profile.draft).toMatchObject({ displayName: "local", contactPolicy: "requests" });
+    });
+  });
+
+  it("leaves a profile its owner unpublished before the default existed private", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "invitation" } }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })).toBeNull();
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 2, draft: { contactPolicy: "invitation" } });
+    });
+  });
+
+  it("keeps a draft saved before the default private and leaves an owner-published profile alone", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const ctx = profileContext(storage, sql);
       handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "closed" } }, ctx);
       await ensureDefaultProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published({ space: true })!.profile).toMatchObject({ displayName: DRAFT.displayName, about: DRAFT.about, contactPolicy: "requests", revision: 2 });
+      expect(ctx.profiles.published({ space: true })).toBeNull();
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 1, draft: { about: DRAFT.about, contactPolicy: "closed" } });
     });
     await runWithRealKernelSql(async (sql, storage) => {
       const ctx = profileContext(storage, sql);
