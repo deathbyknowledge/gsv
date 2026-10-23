@@ -11,11 +11,15 @@ export type TestNodeProps = {
   children?: ComponentChildren;
   class?: string;
   disabled?: boolean;
+  hidden?: boolean;
   href?: string;
+  id?: string;
   label?: string;
   message?: string;
   onChange?: (value: string) => void;
+  onfocusout?: (event: FocusEvent) => void;
   onClick?: () => void | Promise<void>;
+  onPointerDown?: () => void;
   role?: string;
   status?: string;
   sub?: string;
