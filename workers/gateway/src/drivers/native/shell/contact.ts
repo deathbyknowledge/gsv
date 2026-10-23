@@ -17,17 +17,18 @@ import { requireContactCaller } from "../../../kernel/federation/authority";
 import { sha256Base64Url } from "../../../kernel/federation-crypto";
 import {
   handleContactAliasSet,
-  handleContactIdentity,
-  handleContactInviteAccept,
-  handleContactInviteCancel,
-  handleContactInviteCreate,
-  handleContactInviteList,
   handleContactList,
   handleContactRequestCreate,
   handleContactRequestList,
   handleContactRequestUpdate,
   handleContactRevoke,
 } from "../../../kernel/federation";
+import {
+  handleContactInviteAccept,
+  handleContactInviteCancel,
+  handleContactInviteCreate,
+  handleContactInviteList,
+} from "../../../kernel/federation/invitations";
 import { handleContactPreferencesUpdate } from "../../../kernel/federation/preferences";
 import { handleProfileResolve, ownerDisplayName } from "../../../kernel/profiles";
 import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
@@ -68,10 +69,6 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
     case "--help":
     case "-h":
       return completed(contactUsage());
-    case "identity":
-      requireCommandCapability(ctx, "contact.identity");
-      requireArgumentCount(rest, 0, "identity accepts no arguments");
-      return json(await handleContactIdentity(ctx));
     case "find":
       requireCommandCapability(ctx, "profile.resolve");
       requireArgumentCount(rest, 1, "find requires: contact find @HANDLE|ADDRESS");
@@ -118,13 +115,14 @@ function listContacts(args: string[], ctx: KernelContext): ExecResult {
   const flags = parseOnlyFlags(args, new Set(["--all", "--json"]));
   const result = handleContactList({ includeRevoked: flags.has("--all") }, ctx);
   if (flags.has("--json")) return json(result);
-  const lines = ["CONTACT\tSTATE\tNAME\tSHIP"];
+  const lines = ["CONTACT\tSTATE\tNAME\tADDRESS"];
   for (const contact of result.contacts) {
     lines.push([
       contact.id,
       contact.state,
       contactDisplayName(contact),
-      contact.remoteShipId,
+      // A contact names no DID only while the Ship moves its contacts to DIDs.
+      contact.remoteHandle ? `@${contact.remoteHandle}` : contact.remoteDid ?? "(moving)",
     ].join("\t"));
   }
   if (result.contacts.length === 0) lines.push("(none)");
@@ -385,7 +383,6 @@ function completed(stdout: string): ExecResult {
 function contactUsage(): string {
   return [
     "Usage:",
-    "  contact identity",
     "  contact find @HANDLE|ADDRESS",
     "  contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]",
     "  contact list [--all] [--json]",

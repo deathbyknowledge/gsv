@@ -12,7 +12,6 @@ import { testPeer } from "../test-support/peers";
 import * as conversationHandlers from "./conversation-handlers";
 import type { KernelContext } from "./context";
 import {
-  base64UrlEncode,
   canonicalJson,
   randomBase64Url,
   sha256Base64Url,
@@ -25,9 +24,6 @@ import type {
 } from "./federation-store";
 import {
   handleContactAliasSet,
-  handleContactInviteCancel,
-  handleContactInviteCreate,
-  handleContactInviteAccept,
   handleContactNoticeDismiss,
   handleContactRequestCreate,
   handleContactRequestUpdate,
@@ -38,6 +34,7 @@ import {
 } from "./federation";
 import * as personalController from "./personal-controller";
 import { contactHandlingChoice } from "./federation/authority";
+import { handleContactInviteAccept, handleContactInviteCancel, handleContactInviteCreate } from "./federation/invitations";
 
 const OWNER: ProcessIdentity = {
   uid: 1000,
@@ -150,44 +147,6 @@ describe("federation outbound boundary", () => {
     handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
     handleContactInviteCancel({ inviteId: "invite:test" }, ctx);
     expect(broadcastToUserUid).toHaveBeenCalledExactlyOnceWith(OWNER.uid, "contact.invite.changed");
-  });
-
-  it("aborts invite discovery without contacting the acceptance endpoint", async () => {
-    const controller = new AbortController();
-    const remoteOrigin = "https://remote.example";
-    const code = inviteCode(remoteOrigin);
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-      async (_input, init) => await new Promise<Response>((_resolve, reject) => {
-        const signal = init?.signal;
-        if (!signal) {
-          reject(new Error("Federation fetch has no cancellation signal"));
-          return;
-        }
-        if (signal.aborted) {
-          reject(signal.reason);
-          return;
-        }
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-      }),
-    );
-    const ctx = focusedContext({
-      requestSignal: controller.signal,
-      federation: focusedFixture({
-        prune: vi.fn(),
-        pairingAttempt: vi.fn(() => null),
-      }),
-    });
-
-    const acceptance = handleContactInviteAccept({ code }, ctx);
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    controller.abort(new Error("Pairing cancelled"));
-
-    await expect(acceptance).rejects.toThrow("Pairing cancelled");
-    expect(fetchMock).toHaveBeenCalledWith(
-      `${remoteOrigin}/.well-known/gsv/federation/v1/ship`,
-      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("uses local delivery completion time", async () => {
@@ -740,18 +699,6 @@ function pendingDelivery(contact: FederationContactRecord): FederationOutboxReco
     createdAtMs: 1_000,
     updatedAtMs: 1_000,
   };
-}
-
-function inviteCode(origin: string): string {
-  const value = {
-    version: 1,
-    origin,
-    shipId: "ship:remote",
-    subject: { id: "subject:remote", displayName: "Remote" },
-    token: randomBase64Url(32),
-    expiresAtMs: Date.now() + 60_000,
-  };
-  return `gsv-contact-v1:${base64UrlEncode(new TextEncoder().encode(JSON.stringify(value)))}`;
 }
 
 function focusedContext(overrides: Partial<KernelContext>): KernelContext {

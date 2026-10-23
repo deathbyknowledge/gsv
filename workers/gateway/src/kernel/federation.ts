@@ -1,16 +1,6 @@
 import type {
   ContactAliasSetArgs,
   ContactAliasSetResult,
-  ContactIdentityResult,
-  ContactInviteAcceptArgs,
-  ContactInviteAcceptResult,
-  ContactInviteCancelArgs,
-  ContactInviteCancelResult,
-  ContactInviteCreateArgs,
-  ContactInviteCreateResult,
-  ContactInviteListArgs,
-  ContactInviteListResult,
-  ContactInviteSummary,
   ContactDeliveryListArgs,
   ContactDeliveryListResult,
   ContactDeliveryRetryArgs,
@@ -49,9 +39,6 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   contactDisplayName,
-  contactInvitationUrl,
-  encodeContactInvitation,
-  parseContactInvitation,
   federationDeliveryEnvelopeSchema,
   federationDeliveryReceiptSchema,
   federationDeliveryPayloadSchema,
@@ -98,7 +85,6 @@ import {
   FederationRequestIdentityConflictError,
   type FederationContactRecord,
   type FederationInboxRecord,
-  type FederationInviteRecord,
   type FederationOutboxLocalMessage,
   type FederationOutboxRecord,
   type FederationPreparingOutboxRecord,
@@ -170,14 +156,9 @@ import {
 } from "./federation/resources";
 
 const SHIP_DOCUMENT_PATH = "/.well-known/gsv/federation/v1/ship";
-const INVITE_ACCEPT_PATH = "/_gsv/federation/v1/invites/accept";
 const DELIVERY_PATH = "/_gsv/federation/v1/deliver";
 const RESOURCE_PATH_PREFIX = "/_gsv/federation/v1/resources/";
-const DEFAULT_INVITE_LIFETIME_MS = 60 * 60_000;
-const MAX_INVITE_LIFETIME_MS = 7 * 24 * 60 * 60_000;
 const MAX_CONTACT_DISPLAY_NAME_BYTES = 256;
-const MAX_OUTSTANDING_INVITES_PER_OWNER = 20;
-const MAX_INVITES_CREATED_PER_HOUR = 20;
 const MAX_RESOURCE_READS_PER_CONTACT_PER_MINUTE = 240;
 const MAX_RESOURCE_READS_PER_INSTALLATION_PER_MINUTE = 1_000;
 const MAX_CONCURRENT_RESOURCE_READS_PER_CONTACT = 8;
@@ -191,24 +172,6 @@ const MAX_DELIVERY_ATTEMPTS = 12;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
-const inviteAcceptSchema = z.strictObject({
-  version: z.literal(1),
-  token: z.string().min(1).max(128),
-  document: federationShipDocumentSchema,
-  subject: federationSubjectSchema,
-});
-
-const inviteAcceptResponseSchema = z.strictObject({
-  version: z.literal(1),
-  recipientShipId: z.string().min(1).max(128),
-  recipientSubjectId: z.string().min(1).max(128),
-  generation: z.string().min(1).max(128),
-  threadId: z.string().min(1).max(128),
-  document: federationShipDocumentSchema,
-  subject: federationSubjectSchema,
-  signature: z.string().min(1).max(512),
-});
-
 const resourceRequestHeadersSchema = z.strictObject({
   senderShipId: z.string().min(1).max(128),
   senderSubjectId: z.string().min(1).max(128),
@@ -219,8 +182,6 @@ const resourceRequestHeadersSchema = z.strictObject({
   signature: z.string().min(1).max(512),
 });
 
-type InviteAcceptResponse = z.infer<typeof inviteAcceptResponseSchema>;
-type InviteAcceptResponseUnsigned = Omit<InviteAcceptResponse, "signature">;
 type PublicFederationFailure = { status: number; message: string; retryAfterMs?: number };
 
 export function isFederationPublicPath(pathname: string): boolean {
@@ -228,280 +189,8 @@ export function isFederationPublicPath(pathname: string): boolean {
     || pathname === SHIP_DOCUMENT_V2_PATH
     || pathname === DELIVERY_V2_PATH
     || [APPROACH_PATH, APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, APPROACH_WITHDRAW_PATH].includes(pathname)
-    || pathname === INVITE_ACCEPT_PATH
     || pathname === DELIVERY_PATH
     || pathname.startsWith(RESOURCE_PATH_PREFIX);
-}
-
-export async function handleContactIdentity(
-  ctx: KernelContext,
-): Promise<ContactIdentityResult> {
-  const ownerUid = requireContactCaller(ctx, false);
-  return {
-    document: await localShipDocument(ctx),
-    subject: ensureLocalSubject(ownerUid, ctx),
-  };
-}
-
-export async function handleContactInviteCreate(
-  args: ContactInviteCreateArgs,
-  ctx: KernelContext,
-): Promise<ContactInviteCreateResult> {
-  const ownerUid = requireContactCaller(ctx, true);
-  const shipHandlesMessages = contactHandlingChoice(args.shipHandlesMessages, ctx);
-  const now = Date.now();
-  pruneFederationState(ctx, now);
-  const document = await localShipDocument(ctx);
-  const subject = ensureLocalSubject(ownerUid, ctx);
-  const expiresInSeconds = args.expiresInSeconds ?? DEFAULT_INVITE_LIFETIME_MS / 1_000;
-  if (!Number.isSafeInteger(expiresInSeconds) || expiresInSeconds <= 0) {
-    throw new Error("Invite lifetime must be a positive whole number of seconds");
-  }
-  const lifetimeMs = expiresInSeconds * 1_000;
-  if (lifetimeMs > MAX_INVITE_LIFETIME_MS) {
-    throw new Error("Invite lifetime exceeds seven days");
-  }
-  const token = randomBase64Url(32);
-  const tokenHash = await sha256Base64Url(token);
-  const expiresAtMs = now + lifetimeMs;
-  const invite = ctx.federation.transaction(() => {
-    if (ctx.federation.outstandingInviteCount(ownerUid, now) >= MAX_OUTSTANDING_INVITES_PER_OWNER) {
-      throw new Error("Outstanding contact invite limit reached");
-    }
-    consumeLocalRateLimits(ctx, [{
-      scope: `owner:${ownerUid}`,
-      operation: "invite.create",
-      maximum: MAX_INVITES_CREATED_PER_HOUR,
-      windowMs: 60 * 60_000,
-    }], now, "Contact invite rate limit reached");
-    return ctx.federation.createInvite({
-      ownerUid,
-      shipHandlesMessages,
-      tokenHash,
-      issuingShipId: document.shipId,
-      issuingOrigin: document.origin,
-      expiresAtMs,
-      now,
-    });
-  });
-  const code = encodeContactInvitation({
-    version: 1,
-    origin: document.origin,
-    shipId: document.shipId,
-    subject,
-    token,
-    expiresAtMs,
-  });
-  ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
-  const url = contactInvitationUrl(code, ctx.env.GSV_OWNER_SIGNUP_URL ?? `${document.origin}/connect`);
-  return { inviteId: invite.inviteId, code, url, expiresAtMs };
-}
-
-export function handleContactInviteList(
-  args: ContactInviteListArgs,
-  ctx: KernelContext,
-): ContactInviteListResult {
-  const ownerUid = requireContactCaller(ctx, false);
-  const now = Date.now();
-  pruneFederationState(ctx, now);
-  return {
-    invites: ctx.federation
-      .listInvites(ownerUid, args.includeTerminal ?? false, now)
-      .map((invite) => contactInviteSummary(invite, now)),
-  };
-}
-
-export function handleContactInviteCancel(
-  args: ContactInviteCancelArgs,
-  ctx: KernelContext,
-): ContactInviteCancelResult {
-  const ownerUid = requireContactCaller(ctx, true);
-  const now = Date.now();
-  const inviteId = args.inviteId.trim();
-  if (!inviteId.startsWith("invite:")) throw new Error("Contact invite id is invalid");
-  const previous = ctx.federation.invite(inviteId);
-  if (previous?.purpose === "approach") throw new Error("Use the message request decision to withdraw this invitation");
-  const invite = ctx.federation.cancelInvite(inviteId, ownerUid, now);
-  if (previous?.state !== invite.state) ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
-  return { invite: contactInviteSummary(invite, now) };
-}
-
-export async function handleContactInviteAccept(
-  args: ContactInviteAcceptArgs,
-  ctx: KernelContext,
-): Promise<ContactInviteAcceptResult> {
-  ctx.requestSignal?.throwIfAborted();
-  const ownerUid = requireContactCaller(ctx, true);
-  contactHandlingChoice(args.shipHandlesMessages, ctx);
-  const now = Date.now();
-  pruneFederationState(ctx, now);
-  const { invitation: invite } = parseContactInvitation(args.code);
-  const tokenHash = await sha256Base64Url(invite.token);
-  const remoteOrigin = normalizeFederationOrigin(invite.origin);
-  const recordedAttempt = ctx.federation.pairingAttempt(tokenHash);
-  if (recordedAttempt) {
-    assertPairingAttemptIdentity(recordedAttempt, {
-      ownerUid,
-      expiresAtMs: invite.expiresAtMs,
-      remoteShipId: invite.shipId,
-      remoteSubjectId: invite.subject.id,
-      remoteOrigin,
-    });
-    assertPairingAttemptCanContinue(recordedAttempt);
-    if (recordedAttempt.state === "committed") {
-      const committed = requireCommittedPairingContact(recordedAttempt, ctx);
-      await ensureContactConversation(committed, ctx);
-      return { contact: contactSummary(committed) };
-    }
-  }
-  if (!recordedAttempt && invite.expiresAtMs <= now) {
-    throw new Error("Contact invite has expired");
-  }
-  const remoteDocument = federationShipDocumentSchema.parse(await fetchJson(
-    `${remoteOrigin}${SHIP_DOCUMENT_PATH}`,
-    {
-      method: "GET",
-      headers: { accept: "application/json" },
-      signal: ctx.requestSignal,
-    },
-    ctx,
-  ));
-  await verifyShipDocument(remoteDocument);
-  if (remoteDocument.shipId !== invite.shipId || remoteDocument.origin !== remoteOrigin) {
-    throw new Error("Contact invite does not match the remote Ship");
-  }
-  assertContactCapacity(
-    ownerUid,
-    remoteDocument.shipId,
-    invite.subject.id,
-    ctx,
-  );
-
-  const localDocument = await localShipDocument(ctx);
-  const localSubject = ensureLocalSubject(ownerUid, ctx);
-  const attempt = ctx.federation.transaction(() => ctx.federation.beginPairingAttempt({
-    tokenHash,
-    ownerUid,
-    shipHandlesMessages: args.shipHandlesMessages,
-    expiresAtMs: invite.expiresAtMs,
-    remoteShipId: remoteDocument.shipId,
-    remoteSubjectId: invite.subject.id,
-    remoteOrigin: remoteDocument.origin,
-    remotePublicKey: remoteDocument.publicKey,
-    now: Date.now(),
-  }));
-  assertPairingAttemptCanContinue(attempt);
-  if (attempt.state === "committed") {
-    const committed = requireCommittedPairingContact(attempt, ctx);
-    await ensureContactConversation(committed, ctx);
-    return { contact: contactSummary(committed) };
-  }
-  ctx.requestSignal?.throwIfAborted();
-  let accepted: InviteAcceptResponse;
-  try {
-    accepted = inviteAcceptResponseSchema.parse(await fetchJson(
-      `${remoteOrigin}${INVITE_ACCEPT_PATH}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify({
-          version: 1,
-          token: invite.token,
-          document: localDocument,
-          subject: localSubject,
-        }),
-        signal: ctx.requestSignal,
-      },
-      ctx,
-    ));
-  } catch (error) {
-    if (error instanceof FederationHttpError && isTerminalFederationError(error)) {
-      ctx.federation.terminatePairingAttempt(
-        tokenHash,
-        `remote-rejected:${error.status}`,
-      );
-    }
-    throw error;
-  }
-  await verifyShipDocument(accepted.document);
-  if (
-    accepted.document.shipId !== remoteDocument.shipId
-    || accepted.document.origin !== remoteDocument.origin
-    || accepted.subject.id !== invite.subject.id
-    || accepted.recipientShipId !== localDocument.shipId
-    || accepted.recipientSubjectId !== localSubject.id
-  ) {
-    throw new Error("Contact acceptance identity does not match the invite");
-  }
-  const unsigned = inviteAcceptResponseUnsigned(accepted);
-  if (!await verifySignedValue(accepted.document.publicKey, jsonValue(unsigned), accepted.signature)) {
-    throw new Error("Contact acceptance signature is invalid");
-  }
-  const secret = await deriveContactSecret(
-    invite.token,
-    localDocument.shipId,
-    remoteDocument.shipId,
-  );
-  let contactChanged = false;
-  const activate = () => ctx.federation.transaction(() => {
-    const currentAttempt = ctx.federation.pairingAttempt(tokenHash);
-    if (!currentAttempt) throw new Error("Contact pairing attempt not found");
-    assertPairingAttemptIdentity(currentAttempt, {
-      ownerUid,
-      expiresAtMs: invite.expiresAtMs,
-      remoteShipId: accepted.document.shipId,
-      remoteSubjectId: accepted.subject.id,
-      remoteOrigin: accepted.document.origin,
-      remotePublicKey: accepted.document.publicKey,
-    });
-    assertPairingAttemptCanContinue(currentAttempt);
-    if (currentAttempt.state === "committed") {
-      if (
-        currentAttempt.generation !== accepted.generation
-        || currentAttempt.threadId !== accepted.threadId
-      ) {
-        throw new Error("Contact acceptance changed after it was committed");
-      }
-      return requireCommittedPairingContact(currentAttempt, ctx);
-    }
-    assertContactCapacity(
-      ownerUid,
-      accepted.document.shipId,
-      accepted.subject.id,
-      ctx,
-    );
-    const activated = activateFederationContact({
-      ownerUid,
-      generation: accepted.generation,
-      remoteShipId: accepted.document.shipId,
-      remoteSubject: accepted.subject,
-      remoteOrigin: accepted.document.origin,
-      remotePublicKey: accepted.document.publicKey,
-      sharedSecret: secret,
-      threadId: accepted.threadId,
-      pairingAttemptTokenHash: tokenHash,
-      shipHandlesMessages: currentAttempt.shipHandlesMessages,
-      now: Date.now(),
-    }, ctx);
-    ctx.federation.commitPairingAttempt({
-      tokenHash,
-      contactId: activated.id,
-      generation: accepted.generation,
-      threadId: accepted.threadId,
-    });
-    contactChanged = true;
-    return activated;
-  });
-  const contact = await ctx.coordinateFederationContact(
-    `pairing:${ownerUid}:${accepted.document.shipId}:${accepted.subject.id}`,
-    activate,
-  );
-  if (contactChanged) ctx.broadcastToUserUid(ownerUid, "contact.changed");
-  await ensureContactConversation(contact, ctx);
-  await ctx.reconcileResponsibilityWake(ownerUid);
-  return {
-    contact: contactSummary(requireOwnedActiveContactGeneration(contact, ownerUid, ctx)),
-  };
 }
 
 export function handleContactList(
@@ -1269,12 +958,6 @@ export async function handleFederationHttpRequest(
     if (url.pathname === SHIP_DOCUMENT_PATH && request.method === "GET") {
       return jsonResponse(await localShipDocument(ctx));
     }
-    if (url.pathname === INVITE_ACCEPT_PATH && request.method === "POST") {
-      return jsonResponse(await acceptRemoteInvite(
-        inviteAcceptSchema.parse(await readBoundedJson(request)),
-        ctx,
-      ));
-    }
     if (url.pathname === DELIVERY_PATH && request.method === "POST") {
       return jsonResponse(await receiveRemoteDelivery(
         federationDeliveryEnvelopeSchema.parse(await readBoundedJson(request)),
@@ -1441,172 +1124,6 @@ export async function openContactResourceSource(
     size: result.size,
     contentType: result.contentType,
   };
-}
-
-async function acceptRemoteInvite(
-  input: z.infer<typeof inviteAcceptSchema>,
-  ctx: KernelContext,
-): Promise<InviteAcceptResponse> {
-  const now = Date.now();
-  const tokenHash = await sha256Base64Url(input.token);
-  const invite = ctx.federation.inviteByTokenHash(tokenHash);
-  if (!invite) throw new PublicFederationError(404, "Contact invite not found");
-  if (invite.purpose === "approach") throw new PublicFederationError(404, "Contact invite not found");
-  if (invite.state === "cancelled") {
-    throw new PublicFederationError(410, "Contact invite was cancelled");
-  }
-  if (invite.state === "issued" && invite.expiresAtMs <= now) {
-    throw new PublicFederationError(410, "Contact invite has expired");
-  }
-  if (invite.state === "accepted" && invite.acceptedAtMs <= now - RECEIPT_RETENTION_MS) {
-    throw new PublicFederationError(410, "Contact invite replay window has expired");
-  }
-  pruneFederationState(ctx, now);
-  await verifyShipDocument(input.document);
-  const localDocument = await localShipDocument(ctx);
-  if (
-    localDocument.shipId !== invite.issuingShipId
-    || localDocument.origin !== invite.issuingOrigin
-  ) {
-    throw new PublicFederationError(410, "Contact invite issuer identity changed");
-  }
-  if (input.document.origin === localDocument.origin) {
-    throw new PublicFederationError(400, "A Ship cannot pair with itself");
-  }
-  const localSubject = ctx.federation.subject(invite.ownerUid);
-  if (!localSubject) throw new PublicFederationError(409, "Contact invite owner is unavailable");
-
-  const sharedSecret = await deriveContactSecret(
-    input.token,
-    localDocument.shipId,
-    input.document.shipId,
-  );
-  const generation = `generation:${randomBase64Url(24)}`;
-  const threadId = `thread:${await sha256Base64Url(`federation-thread\n${input.token}`)}`;
-  const remoteSubject = normalizeSubject(input.subject);
-  const proposedUnsigned: InviteAcceptResponseUnsigned = {
-    version: 1,
-    recipientShipId: input.document.shipId,
-    recipientSubjectId: remoteSubject.id,
-    generation,
-    threadId,
-    document: localDocument,
-    subject: localSubject,
-  };
-  const proposedResponse: InviteAcceptResponse = {
-    ...proposedUnsigned,
-    signature: await ctx.federationIdentity.sign(jsonValue(proposedUnsigned)),
-  };
-  let contactChanged = false;
-  const claim = () => ctx.federation.transaction(() => {
-    const currentInvite = ctx.federation.inviteByTokenHash(tokenHash);
-    if (!currentInvite) throw new PublicFederationError(404, "Contact invite not found");
-    const claimNow = Date.now();
-    if (currentInvite.state === "accepted") {
-      if (currentInvite.acceptedAtMs <= claimNow - RECEIPT_RETENTION_MS) {
-        throw new PublicFederationError(410, "Contact invite replay window has expired");
-      }
-      if (
-        currentInvite.acceptedRemoteShipId !== input.document.shipId
-        || currentInvite.acceptedRemoteSubjectId !== remoteSubject.id
-      ) {
-        throw new PublicFederationError(409, "Contact invite was already accepted");
-      }
-      const acceptedContact = ctx.federation.get(currentInvite.acceptedContactId);
-      if (!acceptedContact) {
-        throw new PublicFederationError(500, "Accepted contact is unavailable");
-      }
-      if (acceptedContact.state !== "active") {
-        throw new PublicFederationError(410, "Accepted contact is no longer active");
-      }
-      if (
-        acceptedContact.generation !== currentInvite.acceptedGeneration
-        || acceptedContact.threadId !== currentInvite.acceptedThreadId
-        || acceptedContact.remoteOrigin !== input.document.origin
-        || acceptedContact.sharedSecret !== sharedSecret
-        || canonicalJson(jsonValue(acceptedContact.remotePublicKey))
-          !== canonicalJson(jsonValue(input.document.publicKey))
-      ) {
-        throw new PublicFederationError(410, "Accepted contact was superseded");
-      }
-      const response = inviteAcceptResponseSchema.parse(currentInvite.acceptedResponse);
-      if (
-        response.generation !== currentInvite.acceptedGeneration
-        || response.threadId !== currentInvite.acceptedThreadId
-        || response.recipientShipId !== input.document.shipId
-        || response.recipientSubjectId !== remoteSubject.id
-      ) {
-        throw new PublicFederationError(500, "Accepted invite response is inconsistent");
-      }
-      return {
-        contact: acceptedContact,
-        response,
-      };
-    }
-    if (currentInvite.state === "cancelled") {
-      throw new PublicFederationError(410, "Contact invite was cancelled");
-    }
-    if (currentInvite.expiresAtMs <= claimNow) {
-      throw new PublicFederationError(410, "Contact invite has expired");
-    }
-    if (ctx.auth.isAccountDisabled(currentInvite.ownerUid)) {
-      throw new PublicFederationError(410, "Contact invite owner is unavailable");
-    }
-    assertContactCapacity(
-      currentInvite.ownerUid,
-      input.document.shipId,
-      remoteSubject.id,
-      ctx,
-      true,
-    );
-    const activated = activateFederationContact({
-      ownerUid: currentInvite.ownerUid,
-      shipHandlesMessages: currentInvite.shipHandlesMessages,
-      generation,
-      remoteShipId: input.document.shipId,
-      remoteSubject,
-      remoteOrigin: input.document.origin,
-      remotePublicKey: input.document.publicKey,
-      sharedSecret,
-      threadId,
-      now: claimNow,
-    }, ctx);
-    if (!ctx.federation.acceptInvite({
-      tokenHash,
-      remoteShipId: input.document.shipId,
-      remoteSubjectId: remoteSubject.id,
-      contactId: activated.id,
-      generation: activated.generation,
-      threadId: activated.threadId,
-      response: jsonObject(proposedResponse),
-      now: claimNow,
-    })) {
-      throw new PublicFederationError(409, "Contact invite was already consumed");
-    }
-    contactChanged = true;
-    return {
-      contact: activated,
-      response: proposedResponse,
-    };
-  });
-  const acceptance = await ctx.coordinateFederationContact(
-    `pairing:${invite.ownerUid}:${input.document.shipId}:${remoteSubject.id}`,
-    claim,
-  );
-  if (contactChanged) {
-    ctx.broadcastToUserUid(invite.ownerUid, "contact.changed");
-    ctx.broadcastToUserUid(invite.ownerUid, "contact.invite.changed");
-  }
-  await ensureContactConversation(acceptance.contact, ctx);
-  await ctx.reconcileResponsibilityWake(acceptance.contact.ownerUid);
-  if (!isCurrentFederationContact(
-    acceptance.contact.id,
-    acceptance.contact.generation,
-    ctx,
-  )) {
-    throw new PublicFederationError(409, "Contact pairing changed during acceptance");
-  }
-  return acceptance.response;
 }
 
 async function receiveRemoteDelivery(
@@ -2289,7 +1806,7 @@ async function commitLocalOutboxMessage(
   if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
 }
 
-async function ensureContactConversation(
+export async function ensureContactConversation(
   contact: FederationContactRecord,
   ctx: KernelContext,
 ) {
@@ -2468,43 +1985,6 @@ function ensureLocalSubject(ownerUid: number, ctx: KernelContext): FederationSub
   );
 }
 
-function contactInviteSummary(
-  invite: FederationInviteRecord,
-  now: number,
-): ContactInviteSummary {
-  const base = {
-    inviteId: invite.inviteId,
-    expiresAtMs: invite.expiresAtMs,
-    createdAtMs: invite.createdAtMs,
-  };
-  if (invite.state === "accepted") {
-    return {
-      ...base,
-      state: "accepted",
-      acceptedAtMs: invite.acceptedAtMs,
-      contactId: invite.acceptedContactId,
-      remoteShipId: invite.acceptedRemoteShipId,
-      remoteSubjectId: invite.acceptedRemoteSubjectId,
-    };
-  }
-  if (invite.state === "cancelled") {
-    return { ...base, state: "cancelled", cancelledAtMs: invite.cancelledAtMs };
-  }
-  return { ...base, state: invite.expiresAtMs <= now ? "expired" : "pending" };
-}
-
-function normalizeSubject(subject: FederationSubject): FederationSubject {
-  return {
-    id: subject.id,
-    displayName: boundedText(
-      subject.displayName,
-      "Contact display name",
-      MAX_CONTACT_DISPLAY_NAME_BYTES,
-      false,
-    ),
-  };
-}
-
 function normalizeIdempotencyKey(value: string | undefined): string {
   const key = value?.trim() || crypto.randomUUID();
   if (key.length > 256) throw new Error("Contact idempotency key is too long");
@@ -2538,18 +2018,6 @@ function boundedDetails(value: JsonObject): JsonObject {
     throw new Error(`Request details exceed ${MAX_FEDERATION_REQUEST_DETAILS_BYTES} bytes`);
   }
   return value;
-}
-
-function inviteAcceptResponseUnsigned(value: InviteAcceptResponse): InviteAcceptResponseUnsigned {
-  return {
-    version: value.version,
-    recipientShipId: value.recipientShipId,
-    recipientSubjectId: value.recipientSubjectId,
-    generation: value.generation,
-    threadId: value.threadId,
-    document: value.document,
-    subject: value.subject,
-  };
 }
 
 async function readBoundedJson(request: Request): Promise<JsonValue> {

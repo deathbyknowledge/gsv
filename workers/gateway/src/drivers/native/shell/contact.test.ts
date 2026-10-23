@@ -5,7 +5,7 @@ import type { ApproachRecord } from "../../../kernel/approach-store";
 import type { KernelContext } from "../../../kernel/context";
 import * as admission from "../../../kernel/approaches/admission";
 import * as runtime from "../../../kernel/approaches/runtime";
-import * as federation from "../../../kernel/federation";
+import * as invitations from "../../../kernel/federation/invitations";
 import * as profiles from "../../../kernel/profiles";
 import { testPeer } from "../../../test-support/peers";
 import { buildContactCommand } from "./contact";
@@ -31,8 +31,8 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("contact invitation handling", () => {
   it("passes each owner's explicit choice through create and accept", async () => {
-    const create = vi.spyOn(federation, "handleContactInviteCreate").mockResolvedValue({ inviteId: "invite:test", code: "code", url: "https://example.com/connect#contact=code", expiresAtMs: 1 });
-    const accept = vi.spyOn(federation, "handleContactInviteAccept").mockImplementation(async () => { throw new Error("reached acceptance"); });
+    const create = vi.spyOn(invitations, "handleContactInviteCreate").mockResolvedValue({ inviteId: "invite:test", code: "code", url: "https://example.com/connect#contact=code", expiresAtMs: 1 });
+    const accept = vi.spyOn(invitations, "handleContactInviteAccept").mockImplementation(async () => { throw new Error("reached acceptance"); });
     const bash = shell();
     expect((await bash.exec("contact invite create --handling ship --expires 7d")).exitCode).toBe(0);
     expect(create).toHaveBeenCalledWith({ shipHandlesMessages: true, expiresInSeconds: 604800 }, expect.anything());
@@ -41,8 +41,8 @@ describe("contact invitation handling", () => {
   });
 
   it("makes no invitation mutation when the handling choice is missing or invalid", async () => {
-    const create = vi.spyOn(federation, "handleContactInviteCreate");
-    const accept = vi.spyOn(federation, "handleContactInviteAccept");
+    const create = vi.spyOn(invitations, "handleContactInviteCreate");
+    const accept = vi.spyOn(invitations, "handleContactInviteAccept");
     const bash = shell();
     for (const command of ["contact invite create", "contact invite accept code", "contact invite create --handling auto", "contact invite create --handling manual --handling ship"]) {
       expect((await bash.exec(command)).exitCode).toBe(1);

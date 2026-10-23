@@ -1,5 +1,4 @@
 import type {
-  ActorRef,
   ContactBlock,
   ContactBlockListResult,
   ContactPreferences,
@@ -12,21 +11,15 @@ import type {
   ContactSummary,
   ConversationMessageAuthor,
   ConversationMessageOrigin,
-  FederationTransportPayload,
-  FederationFeature,
+  FederationDeliveryPayload,
   SocialMessageMetadata,
-  FederationPublicKey,
   FederationResourceDescriptor,
-  FederationSubject,
   JsonObject,
   ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import {
   federationDeliveryPayloadSchema,
-  federationDeliveryPayloadV2Schema,
-  federationFeatureSchema,
   socialMessageMetadataSchema,
-  federationPublicKeySchema,
   jsonObjectSchema,
   resourceBlockSchema,
 } from "@humansandmachines/gsv/protocol";
@@ -35,8 +28,6 @@ import { z } from "zod";
 export type FederationContactRecord = ContactSummary & {
   preferences: ContactPreferences;
   blocked: boolean;
-  remotePublicKey: FederationPublicKey;
-  sharedSecret: string;
   threadId: string;
 };
 
@@ -51,12 +42,9 @@ export class FederationActorBlockedError extends Error {
 
 type FederationInviteBase = {
   inviteId: string;
-  purpose: "private" | "approach";
   ownerUid: number;
   shipHandlesMessages: boolean;
   tokenHash: string;
-  issuingShipId: string;
-  issuingOrigin: string;
   expiresAtMs: number;
   createdAtMs: number;
 };
@@ -67,11 +55,9 @@ export type FederationInviteRecord = FederationInviteBase & (
   | {
       state: "accepted";
       acceptedContactId: string;
-      acceptedRemoteShipId: string;
-      acceptedRemoteSubjectId: string;
+      acceptedRemoteDid: string;
       acceptedGeneration: string;
       acceptedThreadId: string;
-      acceptedResponse: JsonObject;
       acceptedAtMs: number;
     }
 );
@@ -81,10 +67,8 @@ type FederationPairingAttemptBase = {
   ownerUid: number;
   shipHandlesMessages: boolean;
   expiresAtMs: number;
-  remoteShipId: string;
-  remoteSubjectId: string;
-  remoteOrigin: string;
-  remotePublicKey: FederationPublicKey;
+  /** The inviting Ship, from the invitation code. */
+  remoteDid: string;
   createdAtMs: number;
   updatedAtMs: number;
 };
@@ -130,7 +114,6 @@ type FederationOutboxBase = {
   contactGeneration: string;
   idempotencyKey: string;
   fingerprint: string;
-  wireVersion: 1 | 2;
   attemptCount: number;
   nextAttemptAtMs?: number;
   lastError?: string;
@@ -145,7 +128,7 @@ export type FederationPreparingOutboxRecord = FederationOutboxBase & {
 
 export type FederationReadyOutboxRecord = FederationOutboxBase & {
   state: "pending" | "delivered" | "terminal";
-  payload: FederationTransportPayload;
+  payload: FederationDeliveryPayload;
   localMessage?: FederationOutboxLocalMessage;
   localSequence?: number;
   deliveredAtMs?: number;
@@ -168,8 +151,7 @@ export type FederationInboxRecord = {
   contactGeneration: string;
   deliveryId: string;
   payloadHash: string;
-  payload: FederationTransportPayload;
-  wireVersion: 1 | 2;
+  payload: FederationDeliveryPayload;
   state: "received" | "committed" | "rejected";
   response?: JsonObject;
   lastError?: string;
@@ -219,13 +201,7 @@ export type FederationRateLimit = {
 const conversationMessageAuthorSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("user"), uid: z.number().int() }),
   z.strictObject({ kind: z.literal("process"), pid: z.string(), uid: z.number().int() }),
-  z.strictObject({
-    kind: z.literal("contact"),
-    contactId: z.string(),
-    shipId: z.string(),
-    subjectId: z.string(),
-    displayName: z.string(),
-  }),
+  z.strictObject({ kind: z.literal("contact"), contactId: z.string(), displayName: z.string() }),
 ]) satisfies z.ZodType<ConversationMessageAuthor>;
 
 const conversationMessageOriginSchema = z.discriminatedUnion("kind", [
@@ -283,13 +259,10 @@ type ContactRow = {
   owner_uid: number;
   state: ContactState;
   generation: string;
-  remote_ship_id: string;
-  remote_subject_id: string;
-  remote_display_name: string;
+  remote_did: string | null;
+  remote_name: string;
+  remote_handle: string | null;
   local_alias: string | null;
-  remote_origin: string;
-  remote_public_key_json: string;
-  shared_secret: string;
   conversation_id: string;
   thread_id: string;
   created_at: number;
@@ -297,9 +270,6 @@ type ContactRow = {
   revoked_at: number | null;
   last_received_at: number | null;
   last_delivered_at: number | null;
-  protocol_version: 1 | 2;
-  protocol_features_json: string;
-  protocol_checked_at: number | null;
   saved: number;
   muted: number;
   ship_handles_messages: number;
@@ -308,27 +278,21 @@ type ContactRow = {
 };
 
 const CONTACT_SELECT = `SELECT c.*, EXISTS (
-  SELECT 1 FROM federation_actor_blocks b
-  WHERE b.owner_uid = c.owner_uid AND b.ship_id = c.remote_ship_id AND b.subject_id = c.remote_subject_id
+  SELECT 1 FROM federation_actor_blocks b WHERE b.owner_uid = c.owner_uid AND b.did = c.remote_did
 ) AS actor_blocked FROM federation_contacts c`;
 
 type InviteRow = {
   ship_handles_messages: number;
-  purpose: "private" | "approach";
   invite_id: string;
   owner_uid: number;
   token_hash: string;
-  issuing_ship_id: string;
-  issuing_origin: string;
   state: FederationInviteRecord["state"];
   expires_at: number;
   cancelled_at: number | null;
   accepted_contact_id: string | null;
-  accepted_remote_ship_id: string | null;
-  accepted_remote_subject_id: string | null;
+  accepted_remote_did: string | null;
   accepted_generation: string | null;
   accepted_thread_id: string | null;
-  accepted_response_json: string | null;
   accepted_at: number | null;
   created_at: number;
 };
@@ -338,10 +302,7 @@ type PairingAttemptRow = {
   token_hash: string;
   owner_uid: number;
   expires_at: number;
-  remote_ship_id: string;
-  remote_subject_id: string;
-  remote_origin: string;
-  remote_public_key_json: string;
+  remote_did: string;
   state: FederationPairingAttemptRecord["state"];
   contact_id: string | null;
   generation: string | null;
@@ -355,7 +316,6 @@ type OutboxRow = {
   retryable: number;
   retry_epoch: number;
   delivery_id: string;
-  wire_version: 1 | 2;
   owner_uid: number;
   contact_id: string;
   contact_generation: string;
@@ -379,7 +339,6 @@ type InboxRow = {
   contact_id: string;
   contact_generation: string;
   delivery_id: string;
-  wire_version: 1 | 2;
   payload_hash: string;
   payload_json: string;
   state: FederationInboxRecord["state"];
@@ -420,40 +379,13 @@ export class FederationStore {
     return this.storage.transactionSync(callback);
   }
 
-  ensureSubject(ownerUid: number, displayName: string, now = Date.now()): FederationSubject {
-    const existing = this.subject(ownerUid);
-    if (existing) return existing;
-    const subject: FederationSubject = {
-      id: `subject:${crypto.randomUUID()}`,
-      displayName,
-    };
-    this.sql.exec(
-      `INSERT INTO federation_subjects
-       (owner_uid, subject_id, display_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      ownerUid,
-      subject.id,
-      subject.displayName,
-      now,
-      now,
-    );
-    return subject;
-  }
-
-  subject(ownerUid: number): FederationSubject | null {
-    const row = this.sql.exec<{ subject_id: string; display_name: string }>(
-      `SELECT subject_id, display_name
-       FROM federation_subjects WHERE owner_uid = ? LIMIT 1`,
-      ownerUid,
-    ).toArray()[0];
-    return row ? { id: row.subject_id, displayName: row.display_name } : null;
-  }
-
-  subjectOwner(subjectId: string): number | null {
-    return this.sql.exec<{ owner_uid: number }>(
-      "SELECT owner_uid FROM federation_subjects WHERE subject_id = ? LIMIT 1",
-      subjectId,
-    ).toArray()[0]?.owner_uid ?? null;
+  /** Whether rows that named Ships by shipId still wait for the operator's move to name their DIDs. */
+  awaitingMove(): boolean {
+    return this.sql.exec<{ waiting: number }>(`SELECT
+      EXISTS (SELECT 1 FROM federation_contacts_legacy)
+      OR EXISTS (SELECT 1 FROM federation_actor_blocks_legacy)
+      OR EXISTS (SELECT 1 FROM federation_outbox_legacy)
+      OR EXISTS (SELECT 1 FROM federation_inbox_legacy) AS waiting`).one().waiting === 1;
   }
 
   prune(input: {
@@ -561,7 +493,7 @@ export class FederationStore {
   outstandingInviteCount(ownerUid: number, now = Date.now()): number {
     return this.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM federation_invites
-       WHERE owner_uid = ? AND state = 'issued' AND purpose = 'private' AND expires_at > ?`,
+       WHERE owner_uid = ? AND state = 'issued' AND expires_at > ?`,
       ownerUid,
       now,
     ).one().count;
@@ -580,12 +512,9 @@ export class FederationStore {
   }
 
   createInvite(input: {
-    purpose?: "private" | "approach";
     shipHandlesMessages?: boolean;
     ownerUid: number;
     tokenHash: string;
-    issuingShipId: string;
-    issuingOrigin: string;
     expiresAtMs: number;
     now?: number;
   }): FederationInviteRecord {
@@ -593,17 +522,13 @@ export class FederationStore {
     const inviteId = `invite:${crypto.randomUUID()}`;
     this.sql.exec(
       `INSERT INTO federation_invites
-       (invite_id, owner_uid, token_hash, issuing_ship_id, issuing_origin,
-        state, expires_at, created_at, purpose, ship_handles_messages)
-       VALUES (?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?)`,
+       (invite_id, owner_uid, token_hash, state, expires_at, created_at, ship_handles_messages)
+       VALUES (?, ?, ?, 'issued', ?, ?, ?)`,
       inviteId,
       input.ownerUid,
       input.tokenHash,
-      input.issuingShipId,
-      input.issuingOrigin,
       input.expiresAtMs,
       now,
-      input.purpose ?? "private",
       input.shipHandlesMessages ? 1 : 0,
     );
     return this.inviteByTokenHash(input.tokenHash)!;
@@ -631,24 +556,16 @@ export class FederationStore {
     tokenHash: string;
     ownerUid: number;
     expiresAtMs: number;
-    remoteShipId: string;
-    remoteSubjectId: string;
-    remoteOrigin: string;
-    remotePublicKey: FederationPublicKey;
+    remoteDid: string;
     now?: number;
   }): FederationPairingAttemptRecord {
-    if (this.isActorBlocked(input.ownerUid, { shipId: input.remoteShipId, subjectId: input.remoteSubjectId })) {
-      throw new FederationActorBlockedError();
-    }
+    if (this.isBlocked(input.ownerUid, input.remoteDid)) throw new FederationActorBlockedError();
     const existing = this.pairingAttempt(input.tokenHash);
     if (existing) {
       if (
         existing.ownerUid !== input.ownerUid
         || existing.expiresAtMs !== input.expiresAtMs
-        || existing.remoteShipId !== input.remoteShipId
-        || existing.remoteSubjectId !== input.remoteSubjectId
-        || existing.remoteOrigin !== input.remoteOrigin
-        || JSON.stringify(existing.remotePublicKey) !== JSON.stringify(input.remotePublicKey)
+        || existing.remoteDid !== input.remoteDid
       ) {
         throw new Error("Contact pairing attempt identity changed");
       }
@@ -662,25 +579,19 @@ export class FederationStore {
     this.sql.exec(
       `UPDATE federation_pairing_attempts SET
          state = 'terminal', terminal_reason = 'superseded', updated_at = ?
-       WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ?
-         AND state = 'pending'`,
+       WHERE owner_uid = ? AND remote_did = ? AND state = 'pending'`,
       now,
       input.ownerUid,
-      input.remoteShipId,
-      input.remoteSubjectId,
+      input.remoteDid,
     );
     this.sql.exec(
       `INSERT INTO federation_pairing_attempts (
-         token_hash, owner_uid, expires_at, remote_ship_id, remote_subject_id,
-         remote_origin, remote_public_key_json, state, created_at, updated_at, ship_handles_messages
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+         token_hash, owner_uid, expires_at, remote_did, state, created_at, updated_at, ship_handles_messages
+       ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
       input.tokenHash,
       input.ownerUid,
       input.expiresAtMs,
-      input.remoteShipId,
-      input.remoteSubjectId,
-      input.remoteOrigin,
-      JSON.stringify(input.remotePublicKey),
+      input.remoteDid,
       now,
       now,
       input.shipHandlesMessages ? 1 : 0,
@@ -753,7 +664,7 @@ export class FederationStore {
     const values = includeTerminal ? [ownerUid] : [ownerUid, now];
     return this.sql.exec<InviteRow>(
       `SELECT * FROM federation_invites
-       WHERE owner_uid = ? AND purpose = 'private' ${terminal}
+       WHERE owner_uid = ? ${terminal}
        ORDER BY created_at DESC`,
       ...values,
     ).toArray().map(inviteFromRow);
@@ -784,11 +695,10 @@ export class FederationStore {
 
   activateContact(input: {
     ownerUid: number;
-    remoteShipId: string;
-    remoteSubject: FederationSubject;
-    remoteOrigin: string;
-    remotePublicKey: FederationPublicKey;
-    sharedSecret: string;
+    remoteDid: string;
+    remoteName: string;
+    /** Set only once the handle and the DID name each other. */
+    remoteHandle?: string;
     generation: string;
     threadId: string;
     pairingAttemptTokenHash?: string;
@@ -798,32 +708,19 @@ export class FederationStore {
     shipHandlesMessages?: boolean;
     now?: number;
   }): FederationContactRecord {
-    if (this.isActorBlocked(input.ownerUid, { shipId: input.remoteShipId, subjectId: input.remoteSubject.id })) {
-      throw new FederationActorBlockedError();
-    }
+    if (this.isBlocked(input.ownerUid, input.remoteDid)) throw new FederationActorBlockedError();
     const now = input.now ?? Date.now();
-    const existing = this.getByRemote(
-      input.ownerUid,
-      input.remoteShipId,
-      input.remoteSubject.id,
-    );
+    const existing = this.getByRemote(input.ownerUid, input.remoteDid);
     const preservedAttempt = input.pairingAttemptTokenHash
       ? "AND token_hash <> ?"
       : "";
     this.sql.exec(
       `UPDATE federation_pairing_attempts SET
          state = 'terminal', terminal_reason = 'superseded', updated_at = ?
-       WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ?
-         AND state = 'pending' ${preservedAttempt}`,
+       WHERE owner_uid = ? AND remote_did = ? AND state = 'pending' ${preservedAttempt}`,
       ...(input.pairingAttemptTokenHash
-        ? [
-            now,
-            input.ownerUid,
-            input.remoteShipId,
-            input.remoteSubject.id,
-            input.pairingAttemptTokenHash,
-          ]
-        : [now, input.ownerUid, input.remoteShipId, input.remoteSubject.id]),
+        ? [now, input.ownerUid, input.remoteDid, input.pairingAttemptTokenHash]
+        : [now, input.ownerUid, input.remoteDid]),
     );
     if (existing) {
       if (existing.generation !== input.generation) {
@@ -880,15 +777,12 @@ export class FederationStore {
       );
       this.sql.exec(
         `UPDATE federation_contacts SET
-           state = 'active', generation = ?, remote_display_name = ?, remote_origin = ?,
-           remote_public_key_json = ?, shared_secret = ?, thread_id = ?, updated_at = ?,
-           revoked_at = NULL, protocol_checked_at = NULL, protocol_version = 1, protocol_features_json = '[]'
+           state = 'active', generation = ?, remote_name = ?, remote_handle = ?, thread_id = ?,
+           updated_at = ?, revoked_at = NULL
          WHERE contact_id = ?`,
         input.generation,
-        input.remoteSubject.displayName,
-        input.remoteOrigin,
-        JSON.stringify(input.remotePublicKey),
-        input.sharedSecret,
+        input.remoteName,
+        input.remoteHandle ?? null,
         input.threadId,
         now,
         existing.id,
@@ -899,20 +793,15 @@ export class FederationStore {
     const conversationId = input.preferredConversationId ?? `conv:${crypto.randomUUID()}`;
     this.sql.exec(
       `INSERT INTO federation_contacts (
-         contact_id, owner_uid, state, generation, remote_ship_id,
-         remote_subject_id, remote_display_name, remote_origin,
-         remote_public_key_json, shared_secret, conversation_id, thread_id,
-         created_at, updated_at, saved, ship_handles_messages
-       ) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         contact_id, owner_uid, state, generation, remote_did, remote_name, remote_handle,
+         conversation_id, thread_id, created_at, updated_at, saved, ship_handles_messages
+       ) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       contactId,
       input.ownerUid,
       input.generation,
-      input.remoteShipId,
-      input.remoteSubject.id,
-      input.remoteSubject.displayName,
-      input.remoteOrigin,
-      JSON.stringify(input.remotePublicKey),
-      input.sharedSecret,
+      input.remoteDid,
+      input.remoteName,
+      input.remoteHandle ?? null,
       conversationId,
       input.threadId,
       now,
@@ -925,28 +814,22 @@ export class FederationStore {
 
   acceptInvite(input: {
     tokenHash: string;
-    remoteShipId: string;
-    remoteSubjectId: string;
+    remoteDid: string;
     contactId: string;
     generation: string;
     threadId: string;
-    response: JsonObject;
     now?: number;
   }): boolean {
     const now = input.now ?? Date.now();
     const cursor = this.sql.exec(
       `UPDATE federation_invites SET
-         state = 'accepted',
-         accepted_contact_id = ?, accepted_remote_ship_id = ?,
-         accepted_remote_subject_id = ?, accepted_generation = ?,
-         accepted_thread_id = ?, accepted_response_json = ?, accepted_at = ?
+         state = 'accepted', accepted_contact_id = ?, accepted_remote_did = ?,
+         accepted_generation = ?, accepted_thread_id = ?, accepted_at = ?
        WHERE token_hash = ? AND state = 'issued' AND expires_at > ?`,
       input.contactId,
-      input.remoteShipId,
-      input.remoteSubjectId,
+      input.remoteDid,
       input.generation,
       input.threadId,
-      JSON.stringify(input.response),
       now,
       input.tokenHash,
       now,
@@ -962,35 +845,20 @@ export class FederationStore {
     return row ? contactFromRow(row) : null;
   }
 
-  getByRemote(
-    ownerUid: number,
-    remoteShipId: string,
-    remoteSubjectId: string,
-  ): FederationContactRecord | null {
+  getByRemote(ownerUid: number, remoteDid: string): FederationContactRecord | null {
     const row = this.sql.exec<ContactRow>(
-      `${CONTACT_SELECT}
-       WHERE c.owner_uid = ? AND c.remote_ship_id = ? AND c.remote_subject_id = ?
-       LIMIT 1`,
+      `${CONTACT_SELECT} WHERE c.owner_uid = ? AND c.remote_did = ? LIMIT 1`,
       ownerUid,
-      remoteShipId,
-      remoteSubjectId,
+      remoteDid,
     ).toArray()[0];
     return row ? contactFromRow(row) : null;
   }
 
-  getForInbound(
-    remoteShipId: string,
-    remoteSubjectId: string,
-    localSubjectId: string,
-  ): FederationContactRecord | null {
+  /** The contact a calling Ship is, whichever of this space's people it belongs to. */
+  getByCaller(remoteDid: string): FederationContactRecord | null {
     const row = this.sql.exec<ContactRow>(
-      `${CONTACT_SELECT}
-       JOIN federation_subjects s ON s.owner_uid = c.owner_uid
-       WHERE c.remote_ship_id = ? AND c.remote_subject_id = ? AND s.subject_id = ?
-       LIMIT 1`,
-      remoteShipId,
-      remoteSubjectId,
-      localSubjectId,
+      `${CONTACT_SELECT} WHERE c.remote_did = ? ORDER BY c.state = 'active' DESC, c.updated_at DESC LIMIT 1`,
+      remoteDid,
     ).toArray()[0];
     return row ? contactFromRow(row) : null;
   }
@@ -1029,23 +897,25 @@ export class FederationStore {
     )`);
   }
 
-  bindReplyWait(contact: FederationContactRecord, messageId: string, actor: ActorRef | undefined, responsibilityId: string): void {
+  /** Waits for a reply to one of this Ship's own messages. */
+  bindReplyWait(contact: FederationContactRecord, messageId: string, responsibilityId: string): void {
     this.pruneReplyWaits();
     const count = this.sql.exec<{ total: number; contact_count: number }>(`SELECT COUNT(*) AS total, COALESCE(SUM(w.contact_id = ?), 0) AS contact_count
       FROM federation_reply_waits w JOIN federation_contacts c ON c.contact_id = w.contact_id WHERE c.owner_uid = ?`, contact.id, contact.ownerUid).one();
     if (count.total >= 2000 || count.contact_count >= 250) throw new Error("Too many active contact reply waits; finish existing work before starting more");
-    this.sql.exec(`INSERT INTO federation_reply_waits (contact_id, contact_generation, message_id, ship_id, subject_id, responsibility_id)
-      VALUES (?, ?, ?, ?, ?, ?)`, contact.id, contact.generation, messageId, actor?.shipId ?? null, actor?.subjectId ?? null, responsibilityId);
+    this.sql.exec(`INSERT INTO federation_reply_waits (contact_id, contact_generation, message_id, responsibility_id)
+      VALUES (?, ?, ?, ?)`, contact.id, contact.generation, messageId, responsibilityId);
   }
 
+  /** The work waiting on a contact's replies; `replyTo` narrows it to one of this Ship's messages. */
   replyResponsibilities(contact: FederationContactRecord, replyTo?: OriginMessageRef): string[] {
     return this.sql.exec<{ responsibility_id: string }>(`SELECT DISTINCT w.responsibility_id FROM federation_reply_waits w
       JOIN responsibilities r ON r.responsibility_id = w.responsibility_id
       WHERE w.contact_id = ? AND w.contact_generation = ? AND r.owner_uid = ?
         AND r.assignee_kind = 'ship' AND r.state NOT IN ('resolved', 'cancelled')
-        ${replyTo ? "AND w.message_id = ? AND w.ship_id = ? AND w.subject_id = ?" : ""}`,
+        ${replyTo ? "AND w.message_id = ?" : ""}`,
       contact.id, contact.generation, contact.ownerUid,
-      ...(replyTo ? [replyTo.messageId, replyTo.actor.shipId, replyTo.actor.subjectId] : []),
+      ...(replyTo ? [replyTo.messageId] : []),
     ).toArray().map((row) => row.responsibility_id);
   }
 
@@ -1059,40 +929,38 @@ export class FederationStore {
       inbox.contactId, inbox.contactGeneration, inbox.deliveryId).rowsWritten > 0;
   }
 
-  isActorBlocked(ownerUid: number, actor: ActorRef): boolean {
-    return this.sql.exec("SELECT 1 FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId).toArray().length > 0;
+  isBlocked(ownerUid: number, did: string): boolean {
+    return this.sql.exec("SELECT 1 FROM federation_actor_blocks WHERE owner_uid = ? AND did = ?", ownerUid, did).toArray().length > 0;
   }
 
-  setActorBlock(ownerUid: number, actor: ActorRef, blocked: boolean, now = Date.now(), displayName?: string): ActorBlockChange {
+  setBlock(ownerUid: number, did: string, blocked: boolean, now = Date.now(), displayName?: string): ActorBlockChange {
     const existing = this.sql.exec<{ created_at: number; display_name: string | null }>(
-      "SELECT created_at, display_name FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId,
+      "SELECT created_at, display_name FROM federation_actor_blocks WHERE owner_uid = ? AND did = ?", ownerUid, did,
     ).toArray()[0];
-    if (blocked === Boolean(existing)) return { block: existing ? { actor, displayName: existing.display_name ?? undefined, createdAtMs: existing.created_at } : null, changed: false };
+    if (blocked === Boolean(existing)) return { block: existing ? { did, displayName: existing.display_name ?? undefined, createdAtMs: existing.created_at } : null, changed: false };
     if (blocked) {
       const counts = this.sql.exec<{ owner_count: number; installation_count: number }>(
         "SELECT COUNT(*) AS installation_count, COALESCE(SUM(owner_uid = ?), 0) AS owner_count FROM federation_actor_blocks", ownerUid,
       ).one();
       if (counts.owner_count >= 10_000 || counts.installation_count >= 20_000) throw new Error("Blocked actor capacity reached");
-      this.sql.exec("INSERT INTO federation_actor_blocks (owner_uid, ship_id, subject_id, display_name, created_at) VALUES (?, ?, ?, ?, ?)", ownerUid, actor.shipId, actor.subjectId, displayName ?? null, now);
+      this.sql.exec("INSERT INTO federation_actor_blocks (owner_uid, did, display_name, created_at) VALUES (?, ?, ?, ?)", ownerUid, did, displayName ?? null, now);
       this.sql.exec(`UPDATE federation_pairing_attempts SET state = 'terminal', terminal_reason = 'actor-blocked', updated_at = ?
-        WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ? AND state = 'pending'`, now, ownerUid, actor.shipId, actor.subjectId);
+        WHERE owner_uid = ? AND remote_did = ? AND state = 'pending'`, now, ownerUid, did);
     } else {
-      this.sql.exec("DELETE FROM federation_actor_blocks WHERE owner_uid = ? AND ship_id = ? AND subject_id = ?", ownerUid, actor.shipId, actor.subjectId);
+      this.sql.exec("DELETE FROM federation_actor_blocks WHERE owner_uid = ? AND did = ?", ownerUid, did);
     }
-    this.sql.exec(`UPDATE federation_contacts SET policy_revision = policy_revision + 1
-      WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ?`, ownerUid, actor.shipId, actor.subjectId);
-    return { block: blocked ? { actor, displayName, createdAtMs: now } : null, changed: true };
+    this.sql.exec("UPDATE federation_contacts SET policy_revision = policy_revision + 1 WHERE owner_uid = ? AND remote_did = ?", ownerUid, did);
+    return { block: blocked ? { did, displayName, createdAtMs: now } : null, changed: true };
   }
 
-  listActorBlocks(ownerUid: number, limit: number, cursor?: ActorRef, actor?: ActorRef): ContactBlockListResult {
-    const rows = this.sql.exec<{ ship_id: string; subject_id: string; display_name: string | null; created_at: number }>(
-      `SELECT ship_id, subject_id, display_name, created_at FROM federation_actor_blocks WHERE owner_uid = ?
-       ${actor ? "AND ship_id = ? AND subject_id = ?" : ""}
-       ${cursor ? "AND (ship_id, subject_id) > (?, ?)" : ""} ORDER BY ship_id, subject_id LIMIT ?`,
-      ownerUid, ...(actor ? [actor.shipId, actor.subjectId] : []), ...(cursor ? [cursor.shipId, cursor.subjectId] : []), limit + 1,
+  listBlocks(ownerUid: number, limit: number, cursor?: string, did?: string): ContactBlockListResult {
+    const rows = this.sql.exec<{ did: string; display_name: string | null; created_at: number }>(
+      `SELECT did, display_name, created_at FROM federation_actor_blocks WHERE owner_uid = ?
+       ${did ? "AND did = ?" : ""} ${cursor ? "AND did > ?" : ""} ORDER BY did LIMIT ?`,
+      ownerUid, ...(did ? [did] : []), ...(cursor ? [cursor] : []), limit + 1,
     ).toArray();
-    const blocks = rows.slice(0, limit).map((row) => ({ actor: { shipId: row.ship_id, subjectId: row.subject_id }, displayName: row.display_name ?? undefined, createdAtMs: row.created_at }));
-    return { blocks, ...(rows.length > limit ? { nextCursor: blocks[blocks.length - 1].actor } : undefined) };
+    const blocks = rows.slice(0, limit).map((row) => ({ did: row.did, displayName: row.display_name ?? undefined, createdAtMs: row.created_at }));
+    return { blocks, ...(rows.length > limit ? { nextCursor: blocks[blocks.length - 1].did } : undefined) };
   }
 
   attentionNotice(ownerUid: number): { previousContactAdded: boolean; previousReceived: boolean } | undefined {
@@ -1138,16 +1006,16 @@ export class FederationStore {
     );
     const contact = this.get(contactId);
     if (!contact || contact.ownerUid !== ownerUid) throw new Error(`Contact not found: ${contactId}`);
-    this.sql.exec(
-      `UPDATE federation_pairing_attempts SET
-         state = 'terminal', terminal_reason = 'contact-revoked', updated_at = ?
-       WHERE owner_uid = ? AND remote_ship_id = ? AND remote_subject_id = ?
-         AND state = 'pending'`,
-      now,
-      ownerUid,
-      contact.remoteShipId,
-      contact.remoteSubject.id,
-    );
+    if (contact.remoteDid) {
+      this.sql.exec(
+        `UPDATE federation_pairing_attempts SET
+           state = 'terminal', terminal_reason = 'contact-revoked', updated_at = ?
+         WHERE owner_uid = ? AND remote_did = ? AND state = 'pending'`,
+        now,
+        ownerUid,
+        contact.remoteDid,
+      );
+    }
     this.sql.exec("DELETE FROM federation_resource_grants WHERE contact_id = ?", contactId);
     this.sql.exec(
       `UPDATE federation_requests SET
@@ -1201,17 +1069,6 @@ export class FederationStore {
     return cursor.rowsWritten > 0;
   }
 
-  setProtocol(contactId: string, generation: string, protocol: {
-    version: 1 | 2; features: FederationFeature[]; checkedAtMs: number;
-  }): FederationContactRecord {
-    const updated = this.sql.exec(`UPDATE federation_contacts
-      SET protocol_version = ?, protocol_features_json = ?, protocol_checked_at = ?
-      WHERE contact_id = ? AND generation = ? AND state = 'active'`,
-    protocol.version, JSON.stringify(protocol.features), protocol.checkedAtMs, contactId, generation);
-    if (updated.rowsWritten === 0) throw new Error("Contact generation changed during protocol negotiation");
-    return this.get(contactId)!;
-  }
-
   enqueue(input: {
     deliveryId: string;
     ownerUid: number;
@@ -1219,8 +1076,7 @@ export class FederationStore {
     contactGeneration: string;
     idempotencyKey: string;
     fingerprint: string;
-    payload: FederationTransportPayload;
-    wireVersion?: 1 | 2;
+    payload: FederationDeliveryPayload;
     localMessage?: FederationOutboxLocalMessage;
     now?: number;
   }): FederationEnqueueResult {
@@ -1243,8 +1099,8 @@ export class FederationStore {
       `INSERT INTO federation_outbox (
          delivery_id, owner_uid, contact_id, contact_generation, idempotency_key,
          fingerprint, payload_json, local_message_json, state, next_attempt_at,
-         created_at, updated_at, wire_version
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       input.deliveryId,
       input.ownerUid,
       input.contactId,
@@ -1256,7 +1112,6 @@ export class FederationStore {
       now,
       now,
       now,
-      input.wireVersion ?? 1,
     );
     const record = this.outbox(input.deliveryId);
     if (!record || !isReadyFederationOutbox(record)) {
@@ -1273,7 +1128,6 @@ export class FederationStore {
     idempotencyKey: string;
     fingerprint: string;
     preparation: FederationMessagePreparation;
-    wireVersion?: 1 | 2;
     now?: number;
   }): FederationPrepareResult {
     const now = input.now ?? Date.now();
@@ -1295,8 +1149,8 @@ export class FederationStore {
       `INSERT INTO federation_outbox (
          delivery_id, owner_uid, contact_id, contact_generation, idempotency_key,
          fingerprint, preparation_json, resource_count, state, next_attempt_at,
-         created_at, updated_at, wire_version
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ?, ?, ?)`,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'preparing', ?, ?, ?)`,
       input.deliveryId,
       input.ownerUid,
       input.contactId,
@@ -1308,7 +1162,6 @@ export class FederationStore {
       now,
       now,
       now,
-      input.wireVersion ?? 1,
     );
     const record = this.outbox(input.deliveryId);
     if (!record || record.state !== "preparing") {
@@ -1320,7 +1173,7 @@ export class FederationStore {
   completeMessagePreparation(input: {
     deliveryId: string;
     contactGeneration: string;
-    payload: Extract<FederationTransportPayload, { kind: "message" }>;
+    payload: Extract<FederationDeliveryPayload, { kind: "message" }>;
     localMessage: FederationOutboxLocalMessage;
     now?: number;
   }): FederationReadyOutboxRecord {
@@ -1540,13 +1393,12 @@ export class FederationStore {
     contactGeneration: string;
     deliveryId: string;
     payloadHash: string;
-    payload: FederationTransportPayload;
-    wireVersion?: 1 | 2;
+    payload: FederationDeliveryPayload;
     now?: number;
   }): FederationReceiveResult {
     const existing = this.inbox(input.contactId, input.contactGeneration, input.deliveryId);
     if (existing) {
-      if (existing.payloadHash !== input.payloadHash || existing.wireVersion !== (input.wireVersion ?? 1)) {
+      if (existing.payloadHash !== input.payloadHash) {
         throw new Error("Federation delivery id was reused with a different payload");
       }
       return { record: existing, created: false };
@@ -1555,8 +1407,8 @@ export class FederationStore {
     this.sql.exec(
       `INSERT INTO federation_inbox (
          contact_id, contact_generation, delivery_id, payload_hash, payload_json,
-         state, received_at, updated_at, wire_version
-       ) VALUES (?, ?, ?, ?, ?, 'received', ?, ?, ?)`,
+         state, received_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, 'received', ?, ?)`,
       input.contactId,
       input.contactGeneration,
       input.deliveryId,
@@ -1564,7 +1416,6 @@ export class FederationStore {
       JSON.stringify(input.payload),
       now,
       now,
-      input.wireVersion ?? 1,
     );
     return {
       record: this.inbox(input.contactId, input.contactGeneration, input.deliveryId)!,
@@ -1955,26 +1806,14 @@ function contactFromRow(row: ContactRow): FederationContactRecord {
     ownerUid: row.owner_uid,
     state: row.state,
     generation: row.generation,
-    remoteShipId: row.remote_ship_id,
-    remoteSubject: {
-      id: row.remote_subject_id,
-      displayName: row.remote_display_name,
-    },
-    remoteOrigin: row.remote_origin,
+    ...(row.remote_did !== null ? { remoteDid: row.remote_did } : undefined),
+    remoteName: row.remote_name,
+    ...(row.remote_handle !== null ? { remoteHandle: row.remote_handle } : undefined),
     preferences: { saved: row.saved === 1, muted: row.muted === 1, shipHandlesMessages: row.ship_handles_messages === 1, revision: row.policy_revision },
     blocked: row.actor_blocked === 1,
     ...(row.local_alias !== null ? { localAlias: row.local_alias } : undefined),
-    remotePublicKey: federationPublicKeySchema.parse(JSON.parse(row.remote_public_key_json)),
-    sharedSecret: row.shared_secret,
     conversationId: row.conversation_id,
     threadId: row.thread_id,
-    ...(row.protocol_checked_at !== null ? {
-      protocol: {
-        version: row.protocol_version,
-        features: z.array(federationFeatureSchema).parse(JSON.parse(row.protocol_features_json)),
-        checkedAtMs: row.protocol_checked_at,
-      },
-    } : undefined),
     createdAtMs: row.created_at,
     updatedAtMs: row.updated_at,
     ...(row.revoked_at !== null ? { revokedAtMs: row.revoked_at } : undefined),
@@ -1987,11 +1826,8 @@ function inviteFromRow(row: InviteRow): FederationInviteRecord {
   const base: FederationInviteBase = {
     shipHandlesMessages: row.ship_handles_messages === 1,
     inviteId: row.invite_id,
-    purpose: row.purpose,
     ownerUid: row.owner_uid,
     tokenHash: row.token_hash,
-    issuingShipId: row.issuing_ship_id,
-    issuingOrigin: row.issuing_origin,
     expiresAtMs: row.expires_at,
     createdAtMs: row.created_at,
   };
@@ -2002,11 +1838,9 @@ function inviteFromRow(row: InviteRow): FederationInviteRecord {
   }
   if (
     !row.accepted_contact_id
-    || !row.accepted_remote_ship_id
-    || !row.accepted_remote_subject_id
+    || !row.accepted_remote_did
     || !row.accepted_generation
     || !row.accepted_thread_id
-    || !row.accepted_response_json
     || row.accepted_at === null
   ) {
     throw new Error("Accepted invite has an incomplete contact snapshot");
@@ -2015,11 +1849,9 @@ function inviteFromRow(row: InviteRow): FederationInviteRecord {
     ...base,
     state: "accepted",
     acceptedContactId: row.accepted_contact_id,
-    acceptedRemoteShipId: row.accepted_remote_ship_id,
-    acceptedRemoteSubjectId: row.accepted_remote_subject_id,
+    acceptedRemoteDid: row.accepted_remote_did,
     acceptedGeneration: row.accepted_generation,
     acceptedThreadId: row.accepted_thread_id,
-    acceptedResponse: jsonObjectSchema.parse(JSON.parse(row.accepted_response_json)),
     acceptedAtMs: row.accepted_at,
   };
 }
@@ -2030,10 +1862,7 @@ function pairingAttemptFromRow(row: PairingAttemptRow): FederationPairingAttempt
     tokenHash: row.token_hash,
     ownerUid: row.owner_uid,
     expiresAtMs: row.expires_at,
-    remoteShipId: row.remote_ship_id,
-    remoteSubjectId: row.remote_subject_id,
-    remoteOrigin: row.remote_origin,
-    remotePublicKey: federationPublicKeySchema.parse(JSON.parse(row.remote_public_key_json)),
+    remoteDid: row.remote_did,
     createdAtMs: row.created_at,
     updatedAtMs: row.updated_at,
   };
@@ -2059,7 +1888,6 @@ function outboxFromRow(row: OutboxRow): FederationOutboxRecord {
     retryable: row.retryable === 1,
     retryEpoch: row.retry_epoch,
     deliveryId: row.delivery_id,
-    wireVersion: row.wire_version,
     ownerUid: row.owner_uid,
     contactId: row.contact_id,
     contactGeneration: row.contact_generation,
@@ -2087,7 +1915,7 @@ function outboxFromRow(row: OutboxRow): FederationOutboxRecord {
   return {
     ...base,
     state: row.state,
-    payload: (row.wire_version === 2 ? federationDeliveryPayloadV2Schema : federationDeliveryPayloadSchema).parse(JSON.parse(row.payload_json)),
+    payload: federationDeliveryPayloadSchema.parse(JSON.parse(row.payload_json)),
     ...(row.local_message_json
       ? { localMessage: federationOutboxLocalMessageSchema.parse(JSON.parse(row.local_message_json)) }
       : undefined),
@@ -2101,9 +1929,8 @@ function inboxFromRow(row: InboxRow): FederationInboxRecord {
     contactId: row.contact_id,
     contactGeneration: row.contact_generation,
     deliveryId: row.delivery_id,
-    wireVersion: row.wire_version,
     payloadHash: row.payload_hash,
-    payload: (row.wire_version === 2 ? federationDeliveryPayloadV2Schema : federationDeliveryPayloadSchema).parse(JSON.parse(row.payload_json)),
+    payload: federationDeliveryPayloadSchema.parse(JSON.parse(row.payload_json)),
     state: row.state,
     ...(row.response_json
       ? { response: jsonObjectSchema.parse(JSON.parse(row.response_json)) }

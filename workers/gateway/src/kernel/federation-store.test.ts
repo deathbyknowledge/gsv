@@ -1,20 +1,13 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import type {
-  ContactRequestRecord,
-  FederationPublicKey,
-} from "@humansandmachines/gsv/protocol";
+import type { ContactRequestRecord, FederationMessageDelivery } from "@humansandmachines/gsv/protocol";
 import { getDurableObjectByName } from "../shared/durable-object";
 import type { Kernel } from "./do";
 import { FederationStore } from "./federation-store";
 
-const PUBLIC_KEY: FederationPublicKey = {
-  kty: "EC",
-  crv: "P-256",
-  x: "remote-x",
-  y: "remote-y",
-};
+const REMOTE_DID = "did:plc:remoteaaaaaaaaaaaaaaaaaa";
+const LOCAL_DID = "did:plc:localaaaaaaaaaaaaaaaaaaa";
 
 async function withStore<Result>(
   callback: (store: FederationStore, sql: SqlStorage) => Result | Promise<Result>,
@@ -29,18 +22,23 @@ async function withStore<Result>(
 }
 
 function activateContact(store: FederationStore) {
-  store.ensureSubject(1000, "Local person", 1_000);
   return store.activateContact({
     ownerUid: 1000,
-    remoteShipId: "ship:remote",
-    remoteSubject: { id: "subject:remote", displayName: "Remote person" },
-    remoteOrigin: "https://remote.example",
-    remotePublicKey: PUBLIC_KEY,
-    sharedSecret: "secret",
+    remoteDid: REMOTE_DID,
+    remoteName: "Remote person",
+    remoteHandle: "remote.ship.test",
     generation: "generation:first",
     threadId: "thread:first",
     now: 1_000,
   });
+}
+
+/** A message this Ship's person wrote, as a delivery carries it. */
+function message(messageId: string, threadId: string, text: string): FederationMessageDelivery {
+  return {
+    kind: "message", messageId, threadId, text,
+    social: { threadId, reference: { did: LOCAL_DID, messageId }, provenance: { kind: "human" } },
+  };
 }
 
 describe("FederationStore", () => {
@@ -55,8 +53,7 @@ describe("FederationStore", () => {
       });
       if (operation === "revoke") store.revoke(contact.id, contact.ownerUid, 3_000);
       else store.activateContact({
-        ownerUid: contact.ownerUid, remoteShipId: contact.remoteShipId, remoteSubject: contact.remoteSubject,
-        remoteOrigin: contact.remoteOrigin, remotePublicKey: PUBLIC_KEY, sharedSecret: "new-secret",
+        ownerUid: contact.ownerUid, remoteDid: REMOTE_DID, remoteName: contact.remoteName,
         generation: "generation:replacement", threadId: "thread:replacement", now: 3_000,
       });
       expect(store.request("request:completed")).toMatchObject({
@@ -79,8 +76,7 @@ describe("FederationStore", () => {
       expect(() => store.updatePreferences(contact.ownerUid, { contactId: contact.id, expectedRevision: 1, patch: { saved: true } })).toThrow("preferences changed");
       expect(() => store.updatePreferences(2000, { contactId: contact.id, expectedRevision: 2, patch: { muted: false } })).toThrow("Contact not found");
       const replacement = store.activateContact({
-        ownerUid: contact.ownerUid, remoteShipId: contact.remoteShipId, remoteSubject: contact.remoteSubject,
-        remoteOrigin: contact.remoteOrigin, remotePublicKey: contact.remotePublicKey, sharedSecret: "new-secret",
+        ownerUid: contact.ownerUid, remoteDid: REMOTE_DID, remoteName: contact.remoteName,
         generation: "generation:replacement", threadId: "thread:replacement",
       });
       expect(replacement.preferences).toEqual({ saved: false, muted: true, shipHandlesMessages: false, revision: 3 });
@@ -88,68 +84,28 @@ describe("FederationStore", () => {
     });
   });
 
-  it("keeps actor blocks independent of generations and paginates them within one owner", async () => {
+  it("keeps blocks independent of generations and paginates them within one owner", async () => {
     await withStore((store) => {
       const contact = activateContact(store);
-      const actor = { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id };
       store.transaction(() => {
-        store.setActorBlock(contact.ownerUid, actor, true, 10);
+        store.setBlock(contact.ownerUid, REMOTE_DID, true, 10);
         store.revoke(contact.id, contact.ownerUid, 10);
       });
-      expect(store.setActorBlock(contact.ownerUid, actor, true, 20)).toMatchObject({ changed: false, block: { createdAtMs: 10 } });
+      expect(store.setBlock(contact.ownerUid, REMOTE_DID, true, 20)).toMatchObject({ changed: false, block: { createdAtMs: 10 } });
       expect(() => store.activateContact({
-        ownerUid: contact.ownerUid, remoteShipId: contact.remoteShipId, remoteSubject: contact.remoteSubject,
-        remoteOrigin: "https://another-origin.example", remotePublicKey: contact.remotePublicKey,
-        sharedSecret: "new-secret", generation: "generation:new", threadId: "thread:new",
+        ownerUid: contact.ownerUid, remoteDid: REMOTE_DID, remoteName: "Remote person, again",
+        generation: "generation:new", threadId: "thread:new",
       })).toThrow("pairing is unavailable");
       expect(store.get(contact.id)).toMatchObject({ state: "revoked", blocked: true });
-      const another = { shipId: "ship:z", subjectId: "subject:z" };
-      store.setActorBlock(contact.ownerUid, another, true, 30);
-      store.setActorBlock(2000, actor, true, 40);
-      const page = store.listActorBlocks(contact.ownerUid, 1);
-      expect(page.blocks).toEqual([{ actor, createdAtMs: 10 }]);
-      expect(store.listActorBlocks(contact.ownerUid, 1, page.nextCursor)).toEqual({ blocks: [{ actor: another, createdAtMs: 30 }] });
-      store.setActorBlock(contact.ownerUid, actor, false);
+      const another = "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz";
+      store.setBlock(contact.ownerUid, another, true, 30);
+      store.setBlock(2000, REMOTE_DID, true, 40);
+      const page = store.listBlocks(contact.ownerUid, 1);
+      expect(page.blocks).toEqual([{ did: REMOTE_DID, createdAtMs: 10 }]);
+      expect(store.listBlocks(contact.ownerUid, 1, page.nextCursor)).toEqual({ blocks: [{ did: another, createdAtMs: 30 }] });
+      store.setBlock(contact.ownerUid, REMOTE_DID, false);
       expect(store.get(contact.id)).toMatchObject({ state: "revoked", blocked: false });
-      expect(store.isActorBlocked(2000, actor)).toBe(true);
-    });
-  });
-
-  it("keeps delivery versions immutable across protocol refresh and contact replacement", async () => {
-    await withStore((store) => {
-      const contact = activateContact(store);
-      store.setProtocol(contact.id, contact.generation, { version: 2, features: ["messages"], checkedAtMs: 2_000 });
-      const social = {
-        threadId: contact.threadId,
-        reference: { actor: { shipId: "ship:local", subjectId: "subject:local" }, messageId: "message:v2" },
-        provenance: { kind: "human" as const },
-      };
-      const payload = { kind: "message" as const, messageId: "message:v2", threadId: contact.threadId, text: "Hello", social };
-      const record = store.enqueue({
-        deliveryId: "delivery:v2", ownerUid: contact.ownerUid, contactId: contact.id, contactGeneration: contact.generation,
-        idempotencyKey: "key:v2", fingerprint: "fingerprint:v2", wireVersion: 2, payload,
-      }).record;
-      expect(record).toMatchObject({ wireVersion: 2, payload });
-      store.setProtocol(contact.id, contact.generation, { version: 1, features: [], checkedAtMs: 3_000 });
-      expect(store.outbox(record.deliveryId)).toEqual(record);
-
-      const inbound = {
-        contactId: contact.id, contactGeneration: contact.generation, deliveryId: "delivery:received", payloadHash: "hash:received",
-        payload: { kind: "contact.revoked" as const, generation: contact.generation }, wireVersion: 2 as const,
-      };
-      store.receive(inbound);
-      expect(() => store.receive({ ...inbound, wireVersion: 1 })).toThrow("delivery id was reused");
-
-      const replacement = store.activateContact({
-        ownerUid: contact.ownerUid, remoteShipId: contact.remoteShipId, remoteSubject: contact.remoteSubject,
-        remoteOrigin: contact.remoteOrigin, remotePublicKey: contact.remotePublicKey,
-        sharedSecret: "new-secret", generation: "generation:replacement", threadId: "thread:replacement",
-      });
-      expect(replacement.protocol).toBeUndefined();
-      expect(() => store.setProtocol(contact.id, contact.generation, { version: 2, features: ["messages"], checkedAtMs: 4_000 }))
-        .toThrow("Contact generation changed");
-      expect(store.get(contact.id)?.protocol).toBeUndefined();
-      expect(store.outbox(record.deliveryId)).toMatchObject({ wireVersion: 2, payload, contactGeneration: contact.generation });
+      expect(store.isBlocked(2000, REMOTE_DID)).toBe(true);
     });
   });
 
@@ -195,23 +151,20 @@ describe("FederationStore", () => {
       const contact = activateContact(store);
       expect(store.setAlias(contact.id, 1000, "Flynn", 1_100)).toMatchObject({
         localAlias: "Flynn",
-        remoteSubject: { displayName: "Remote person" },
+        remoteName: "Remote person",
       });
 
-      expect(store.activateContact({
+      const reconnected = store.activateContact({
         ownerUid: 1000,
-        remoteShipId: contact.remoteShipId,
-        remoteSubject: { ...contact.remoteSubject, displayName: "Remote person renamed" },
-        remoteOrigin: contact.remoteOrigin,
-        remotePublicKey: PUBLIC_KEY,
-        sharedSecret: "new-secret",
+        remoteDid: REMOTE_DID,
+        remoteName: "Remote person renamed",
         generation: "generation:second",
         threadId: "thread:second",
         now: 1_200,
-      })).toMatchObject({
-        localAlias: "Flynn",
-        remoteSubject: { displayName: "Remote person renamed" },
       });
+      expect(reconnected).toMatchObject({ localAlias: "Flynn", remoteName: "Remote person renamed" });
+      // A handle shows only while it names the DID back; reconnecting without one clears the old.
+      expect(reconnected.remoteHandle).toBeUndefined();
       expect(store.setAlias(contact.id, 1000, null, 1_300).localAlias).toBeUndefined();
     });
   });
@@ -221,16 +174,12 @@ describe("FederationStore", () => {
       const pending = store.createInvite({
         ownerUid: 1000,
         tokenHash: "pending-token",
-        issuingShipId: "ship:local",
-        issuingOrigin: "https://local.example",
         expiresAtMs: 20_000,
         now: 1_000,
       });
       store.createInvite({
         ownerUid: 2000,
         tokenHash: "other-owner-token",
-        issuingShipId: "ship:local",
-        issuingOrigin: "https://local.example",
         expiresAtMs: 20_000,
         now: 2_000,
       });
@@ -246,35 +195,29 @@ describe("FederationStore", () => {
       const consumable = store.createInvite({
         ownerUid: 1000,
         tokenHash: "consumable-token",
-        issuingShipId: "ship:local",
-        issuingOrigin: "https://local.example",
         expiresAtMs: 20_000,
         now: 1_000,
       });
       expect(store.acceptInvite({
         tokenHash: consumable.tokenHash,
-        remoteShipId: "ship:remote",
-        remoteSubjectId: "subject:remote",
+        remoteDid: REMOTE_DID,
         contactId: "contact:accepted",
         generation: "generation:accepted",
         threadId: "thread:accepted",
-        response: { version: 1, status: "accepted" },
         now: 2_000,
       })).toBe(true);
       expect(store.acceptInvite({
         tokenHash: consumable.tokenHash,
-        remoteShipId: "ship:other",
-        remoteSubjectId: "subject:other",
+        remoteDid: "did:plc:otheraaaaaaaaaaaaaaaaaaa",
         contactId: "contact:other",
         generation: "generation:other",
         threadId: "thread:other",
-        response: { version: 1, status: "accepted" },
         now: 3_000,
       })).toBe(false);
       expect(store.invite(consumable.inviteId)).toMatchObject({
         state: "accepted",
         acceptedContactId: "contact:accepted",
-        acceptedRemoteShipId: "ship:remote",
+        acceptedRemoteDid: REMOTE_DID,
         acceptedGeneration: "generation:accepted",
         acceptedThreadId: "thread:accepted",
       });
@@ -288,23 +231,20 @@ describe("FederationStore", () => {
         tokenHash: "pairing:first",
         ownerUid: 1000,
         expiresAtMs: 20_000,
-        remoteShipId: "ship:remote",
-        remoteSubjectId: "subject:remote",
-        remoteOrigin: "https://remote.example",
-        remotePublicKey: PUBLIC_KEY,
+        remoteDid: REMOTE_DID,
         now: 1_000,
       };
       expect(store.beginPairingAttempt(firstInput)).toMatchObject({
         shipHandlesMessages: true,
         state: "pending",
         tokenHash: firstInput.tokenHash,
-        remoteShipId: firstInput.remoteShipId,
+        remoteDid: REMOTE_DID,
       });
       expect(() => store.beginPairingAttempt({ ...firstInput, shipHandlesMessages: false })).toThrow("different handling choice");
       expect(store.beginPairingAttempt({ ...firstInput, shipHandlesMessages: undefined }).shipHandlesMessages).toBe(true);
       expect(() => store.beginPairingAttempt({
         ...firstInput,
-        remoteOrigin: "https://changed.example",
+        remoteDid: "did:plc:changedaaaaaaaaaaaaaaaaa",
       })).toThrow("identity changed");
       expect(store.beginPairingAttempt({
         ...firstInput,
@@ -425,12 +365,7 @@ describe("FederationStore", () => {
         contactGeneration: contact.generation,
         deliveryId: "delivery:pending-before-revoke",
         payloadHash: "hash:pending-before-revoke",
-        payload: {
-          kind: "message",
-          messageId: "message:pending-before-revoke",
-          threadId: contact.threadId,
-          text: "Pending before revocation",
-        },
+        payload: message("message:pending-before-revoke", contact.threadId, "Pending before revocation"),
         now: 1_100,
       }).record;
       const revocation = store.receive({
@@ -438,10 +373,7 @@ describe("FederationStore", () => {
         contactGeneration: contact.generation,
         deliveryId: "delivery:revoke",
         payloadHash: "hash:revoke",
-        payload: {
-          kind: "contact.revoked",
-          generation: contact.generation,
-        },
+        payload: { kind: "contact.revoked" },
         now: 1_200,
       }).record;
 
@@ -495,12 +427,7 @@ describe("FederationStore", () => {
         contactGeneration: contact.generation,
         idempotencyKey: "old-generation",
         fingerprint: "old-generation-fingerprint",
-        payload: {
-          kind: "message",
-          messageId: "message:old-generation",
-          threadId: contact.threadId,
-          text: "Pending before re-pairing",
-        },
+        payload: message("message:old-generation", contact.threadId, "Pending before re-pairing"),
         now: 1_100,
       }).record;
       store.createRequest({
@@ -520,22 +447,14 @@ describe("FederationStore", () => {
         contactGeneration: contact.generation,
         deliveryId: "delivery:received-old-generation",
         payloadHash: "hash:received-old-generation",
-        payload: {
-          kind: "message",
-          messageId: "message:received-old-generation",
-          threadId: contact.threadId,
-          text: "Admitted before re-pairing",
-        },
+        payload: message("message:received-old-generation", contact.threadId, "Admitted before re-pairing"),
         now: 1_100,
       }).record;
 
       const replacement = store.transaction(() => store.activateContact({
         ownerUid: contact.ownerUid,
-        remoteShipId: contact.remoteShipId,
-        remoteSubject: contact.remoteSubject,
-        remoteOrigin: contact.remoteOrigin,
-        remotePublicKey: contact.remotePublicKey,
-        sharedSecret: "replacement-secret",
+        remoteDid: REMOTE_DID,
+        remoteName: contact.remoteName,
         generation: "generation:second",
         threadId: "thread:second",
         now: 2_000,
@@ -590,12 +509,7 @@ describe("FederationStore", () => {
         contactGeneration: contact.generation,
         idempotencyKey: "send:first",
         fingerprint: "fingerprint:first",
-        payload: {
-          kind: "message" as const,
-          messageId: "message:first",
-          threadId: contact.threadId,
-          text: "Hello",
-        },
+        payload: message("message:first", contact.threadId, "Hello"),
         now: 2_000,
       };
       const first = store.enqueue(delivery);
@@ -661,21 +575,13 @@ describe("FederationStore", () => {
         contactGeneration: first.generation,
         deliveryId,
         payloadHash: "hash:first-generation",
-        payload: {
-          kind: "message",
-          messageId: "message:first-generation",
-          threadId: first.threadId,
-          text: "First generation",
-        },
+        payload: message("message:first-generation", first.threadId, "First generation"),
         now: 1_100,
       });
       const second = store.activateContact({
         ownerUid: first.ownerUid,
-        remoteShipId: first.remoteShipId,
-        remoteSubject: first.remoteSubject,
-        remoteOrigin: first.remoteOrigin,
-        remotePublicKey: first.remotePublicKey,
-        sharedSecret: "second-secret",
+        remoteDid: REMOTE_DID,
+        remoteName: first.remoteName,
         generation: "generation:second",
         threadId: "thread:second",
         now: 2_000,
@@ -685,12 +591,7 @@ describe("FederationStore", () => {
         contactGeneration: second.generation,
         deliveryId,
         payloadHash: "hash:second-generation",
-        payload: {
-          kind: "message",
-          messageId: "message:second-generation",
-          threadId: second.threadId,
-          text: "Second generation",
-        },
+        payload: message("message:second-generation", second.threadId, "Second generation"),
         now: 2_100,
       });
 
@@ -805,12 +706,7 @@ describe("FederationStore", () => {
         contactGeneration: contact.generation,
         idempotencyKey: "send:pending",
         fingerprint: "fingerprint:pending",
-        payload: {
-          kind: "message",
-          messageId: "message:pending",
-          threadId: contact.threadId,
-          text: "Pending",
-        },
+        payload: message("message:pending", contact.threadId, "Pending"),
         now: 1_000,
       }).record;
       store.markOutboxFailed(
@@ -864,20 +760,13 @@ describe("FederationStore", () => {
         contactGeneration: contact.generation,
         idempotencyKey: "send:settled",
         fingerprint: "fingerprint:settled",
-        payload: {
-          kind: "message",
-          messageId: "message:settled",
-          threadId: contact.threadId,
-          text: "Settled",
-        },
+        payload: message("message:settled", contact.threadId, "Settled"),
         now: 1_000,
       }).record;
       store.markDeliverySucceeded(settled.deliveryId, settled.contactGeneration, 2_000);
       store.createInvite({
         ownerUid: 1000,
         tokenHash: "expired-token",
-        issuingShipId: "ship:local",
-        issuingOrigin: "https://local.example",
         expiresAtMs: 2_000,
         now: 1_000,
       });
@@ -906,6 +795,7 @@ describe("FederationStore", () => {
           threadId: preparing.preparation.threadId,
           text: preparing.preparation.text,
           resources: [descriptor],
+          social: { threadId: preparing.preparation.threadId, reference: { did: LOCAL_DID, messageId: preparing.preparation.messageId }, provenance: { kind: "human" } },
         },
         localMessage: {
           ...preparing.preparation.localMessage,

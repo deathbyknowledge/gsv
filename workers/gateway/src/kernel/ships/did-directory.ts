@@ -123,7 +123,7 @@ export async function resolveHandle(handleValue: string, ctx: KernelContext): Pr
   const response = await lookUp(() => fetchFederation(url, {
     headers: { accept: "text/plain" },
     signal: ctx.requestSignal,
-  }, ctx, LOOKUP_TIMEOUT_MS), `@${handle}`);
+  }, ctx, LOOKUP_TIMEOUT_MS), `@${handle}`, ctx);
   if (response.status === 404) {
     await response.body?.cancel().catch(() => {});
     throw new DidNotResolvedError(`@${handle} names no account`);
@@ -164,7 +164,7 @@ async function plcDocument(did: `did:plc:${string}`, ctx: KernelContext): Promis
     // The directory answers directly; a redirect is a failed lookup.
     redirect: "manual",
     signal: ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, timeout]) : timeout,
-  }), did);
+  }), did, ctx);
   if (response.status === 404 || response.status === 410) {
     await response.body?.cancel().catch(() => {});
     throw new DidNotResolvedError(`${did} isn't registered`);
@@ -198,7 +198,7 @@ async function webDocument(did: string, ctx: KernelContext): Promise<DidDocument
   const response = await lookUp(() => fetchFederation(url, {
     headers: { accept: "application/json" },
     signal: ctx.requestSignal,
-  }, ctx, LOOKUP_TIMEOUT_MS), did);
+  }, ctx, LOOKUP_TIMEOUT_MS), did, ctx);
   if (response.status === 404 || response.status === 410) {
     await response.body?.cancel().catch(() => {});
     throw new DidNotResolvedError(`${did} has no document`);
@@ -235,11 +235,12 @@ function reachable(url: string, subject: string, ctx: KernelContext): string {
   return url;
 }
 
-/** Network failures and directory errors are transient; the caller retries or keeps its cached copy. */
-async function lookUp(request: () => Promise<Response>, subject: string): Promise<Response> {
+/** Network failures and directory errors are transient; the caller retries or keeps its cached copy. A cancelled caller gets its own reason back. */
+async function lookUp(request: () => Promise<Response>, subject: string, ctx: KernelContext): Promise<Response> {
   try {
     return await request();
   } catch (error) {
+    ctx.requestSignal?.throwIfAborted();
     throw new DidDirectoryUnavailableError(`Couldn't look up ${subject}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

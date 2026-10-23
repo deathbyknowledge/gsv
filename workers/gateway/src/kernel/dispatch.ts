@@ -125,6 +125,12 @@ import {
 } from "./adapter-send";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
+import {
+  handleContactInviteAccept,
+  handleContactInviteCancel,
+  handleContactInviteCreate,
+  handleContactInviteList,
+} from "./federation/invitations";
 import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve } from "./profiles";
 import { handleConversationInbox, handleConversationViewGet, handleConversationViewUpdate } from "./conversation-views";
 import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachRetry } from "./approaches/admission";
@@ -166,11 +172,6 @@ import {
 } from "./conversation-handlers";
 import {
   handleContactAliasSet,
-  handleContactIdentity,
-  handleContactInviteAccept,
-  handleContactInviteCancel,
-  handleContactInviteCreate,
-  handleContactInviteList,
   handleContactDeliveryGet,
   handleContactDeliveryList,
   handleContactDeliveryRetry,
@@ -821,9 +822,6 @@ async function dispatchKernel(
         data = await handleProfileResolve(frame.args, ctx);
         break;
       // --- contact.* ---
-      case "contact.identity":
-        data = await handleContactIdentity(ctx);
-        break;
       case "contact.invite.create":
         data = await handleContactInviteCreate(frame.args, ctx);
         break;

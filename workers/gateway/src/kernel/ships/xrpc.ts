@@ -3,6 +3,8 @@ import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
 import { signShipCall } from "../atproto";
 import type { KernelContext } from "../context";
+import { FederationActorBlockedError } from "../federation-store";
+import { PublicFederationError } from "../federation/errors";
 import { fetchFederation, MAX_PUBLIC_JSON_BYTES, readFederationBody, readFederationJson } from "../federation/http";
 import { authenticateShipCall, SHIP_SERVICE_FRAGMENT } from "./auth";
 import { resolveDid } from "./did-directory";
@@ -11,6 +13,18 @@ import { ShipCallError, ShipXrpcError } from "./errors";
 /** Ship-to-Ship methods are Ship's own lexicons. */
 export const SHIP_METHOD_PREFIX = "space.ship.";
 const XRPC_PREFIX = "/xrpc/";
+/** How soon a caller tries again while this Ship moves its contacts to DIDs. */
+const MOVE_RETRY_MS = 5 * 60_000;
+/** The XRPC error a shared contact limit or check names by its status. */
+const ERRORS_BY_STATUS = new Map([
+  [400, "InvalidRequest"],
+  [401, "AuthenticationRequired"],
+  [404, "NotFound"],
+  [409, "Conflict"],
+  [410, "Gone"],
+  [413, "PayloadTooLarge"],
+  [429, "RateLimitExceeded"],
+]);
 
 /** One authenticated call to a Ship method. */
 export type ShipCall = {
@@ -42,6 +56,10 @@ export async function handleShipXrpc(request: Request, ctx: KernelContext, metho
     if (!method) throw new ShipXrpcError(501, "MethodNotImplemented", `This Ship doesn't serve ${nsid}`);
     const verb = method.type === "procedure" ? "POST" : "GET";
     if (request.method !== verb) throw new ShipXrpcError(405, "InvalidRequest", `${nsid} takes ${verb}`);
+    // A caller can't be matched to its contact until the move names every contact's DID.
+    if (ctx.federation.awaitingMove()) {
+      throw new ShipXrpcError(503, "TemporarilyUnavailable", "This Ship is moving its contacts to the open network", MOVE_RETRY_MS);
+    }
     const caller = await authenticateShipCall(request, nsid, ctx);
     const input = method.type === "procedure" ? await procedureInput(request) : undefined;
     const output = await method.handle({ caller, input, params: url.searchParams }, { ...ctx, requestSignal: request.signal });
@@ -125,16 +143,23 @@ async function procedureInput(request: Request): Promise<JsonValue | undefined> 
 }
 
 function failure(cause: unknown): Response {
-  if (cause instanceof ShipXrpcError) {
-    return Response.json({ error: cause.error, message: cause.message }, {
-      status: cause.status,
-      headers: cause.retryAfterMs === undefined ? undefined : { "retry-after": String(Math.max(1, Math.ceil(cause.retryAfterMs / 1_000))) },
-    });
+  if (cause instanceof ShipXrpcError) return errorResponse(cause);
+  if (cause instanceof PublicFederationError && ERRORS_BY_STATUS.has(cause.status)) {
+    return errorResponse(new ShipXrpcError(cause.status, ERRORS_BY_STATUS.get(cause.status) ?? "InvalidRequest", cause.message, cause.retryAfterMs));
   }
+  // A blocked caller learns nothing it couldn't learn from a missing record.
+  if (cause instanceof FederationActorBlockedError) return errorResponse(new ShipXrpcError(404, "NotFound", "Not found"));
   // Method input schemas come from the SDK's zod/mini build, which shares the core error trait.
   if (cause instanceof z.core.$ZodError) {
     return Response.json({ error: "InvalidRequest", message: z.prettifyError(cause) }, { status: 400 });
   }
   console.warn("[Kernel] Ship method failed:", cause instanceof Error ? cause.message : String(cause));
   return Response.json({ error: "InternalServerError", message: "This Ship couldn't handle the call" }, { status: 500 });
+}
+
+function errorResponse(error: ShipXrpcError): Response {
+  return Response.json({ error: error.error, message: error.message }, {
+    status: error.status,
+    headers: error.retryAfterMs === undefined ? undefined : { "retry-after": String(Math.max(1, Math.ceil(error.retryAfterMs / 1_000))) },
+  });
 }
