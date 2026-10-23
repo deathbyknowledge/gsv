@@ -29,6 +29,7 @@ import {
   cancelBinaryBody,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame, FrameError } from "./protocol/frames";
+import { ATPROTO_DID_PATH, serveAtprotoDid } from "./atproto-did";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
   createPublicAssetFileSystem,
@@ -83,6 +84,7 @@ export default {
       && url.pathname !== "/ws"
       && url.pathname !== "/oauth/callback"
       && url.pathname !== "/.well-known/oauth-client/gsv.json"
+      && url.pathname !== ATPROTO_DID_PATH
       && !federationPath
       && !profilePath;
 
@@ -106,6 +108,10 @@ export default {
           "access-control-allow-origin": "*",
         },
       });
+    }
+
+    if (url.pathname === ATPROTO_DID_PATH) {
+      return serveAtprotoDid(request, env.PDS, route.identity.installationId);
     }
 
     if (publicAssetMatch) {

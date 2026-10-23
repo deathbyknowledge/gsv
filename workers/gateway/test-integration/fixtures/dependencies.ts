@@ -1,5 +1,6 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 export { IntegrationInstances } from "./instances";
+export { IntegrationPds } from "./pds";
 import { z } from "zod";
 import {
   adapterSendArgsSchema,

@@ -27,6 +27,7 @@ export function integrationGatewayConfig(options: {
   name?: string;
   workersAi?: boolean;
   instances?: boolean;
+  pds?: boolean;
   managed?: boolean;
   managedServices?: {
     accounts: string;
@@ -91,6 +92,7 @@ export function integrationGatewayConfig(options: {
     services: [
       executionBinding,
       ...(options.instances ? [{ binding: "INSTANCES", service: DEPENDENCY_WORKER, entrypoint: "IntegrationInstances" }] : []),
+      ...(options.pds ? [{ binding: "PDS", service: DEPENDENCY_WORKER, entrypoint: "IntegrationPds" }] : []),
       {
         binding: "CHANNEL_DISCORD",
         service: DEPENDENCY_WORKER,
@@ -291,7 +293,7 @@ export function createManagedGatewayTestHarness(): TestHarness {
         config: integrationGatewayConfig(),
       },
       {
-        config: integrationGatewayConfig({ name: "gsv-managed", managed: true }),
+        config: integrationGatewayConfig({ name: "gsv-managed", managed: true, pds: true }),
       },
       {
         config: integrationDependencyConfig("gsv-managed"),
