@@ -6,6 +6,7 @@ import type { Kernel } from "../do";
 import { testPeer } from "../../test-support/peers";
 import { createInstallationStorage } from "../../installation/storage";
 import { getConversationById } from "../../shared/utils";
+import * as transport from "../../shared/utils";
 import type { KernelContext } from "../context";
 import type { ProcessRecord } from "../processes";
 import { ApproachStore } from "../approach-store";
@@ -116,6 +117,25 @@ describe("authenticated first contact", () => {
       await expect(recipient.run((ctx) => handleApproachRetry({ approachId: received.id, expectedRevision: received.revision }, asProcess(ctx, "proc:ship")))).rejects.toThrow("signed-in human");
       await expect(sender.run((ctx) => handleApproachDecide({ approachId: sent.id, expectedRevision: sent.revision, decision: "withdraw" }, asProcess(ctx, "proc:ship")))).rejects.toThrow("signed-in human");
       await sender.run((ctx) => handleApproachDecide({ approachId: sent.id, expectedRevision: sent.revision, decision: "withdraw" }, ctx));
+    });
+  });
+
+  it("asks the owner before their Ship sends a message request and sends nothing when refused", async () => {
+    await withSpaces(async (sender, recipient, profile) => {
+      installTransport(sender, recipient, profile);
+      const procs = { get: (pid: string): Pick<ProcessRecord, "isPersonalController" | "ownerUid"> | null => ({ isPersonalController: pid === "proc:ship", ownerUid: OWNER.uid }) };
+      // SAFETY: the authority check reads only the calling process's controller flag and owner; the tool owner names the Ship's run.
+      const asShipTool = (ctx: KernelContext) => ({ ...ctx, processId: "proc:ship", procs, toolOwner: { runId: "run", requestId: "shell" } } as KernelContext);
+      const authorize = vi.spyOn(transport, "sendFrameToProcess").mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: false } });
+      await expect(sender.run((ctx) => handleApproachCreate({ ...sendIntent(profile), shipHandlesMessages: false }, asShipTool(ctx)))).rejects.toThrow("not approved");
+      expect(authorize).toHaveBeenCalledWith(sender.installationId, "proc:ship", expect.objectContaining({
+        call: "proc.tool.authorize",
+        args: expect.objectContaining({ syscall: "approach.create", defaultAction: "ask", args: expect.objectContaining({ profileUrl: profile.url }) }),
+      }));
+      expect(await sender.run((ctx) => ctx.approaches.list(OWNER.uid, { direction: "outgoing", limit: 10 }))).toEqual([]);
+      authorize.mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: true } });
+      const sent = (await sender.run((ctx) => handleApproachCreate({ ...sendIntent(profile), shipHandlesMessages: false }, asShipTool(ctx)))).approach;
+      expect((await sender.run((ctx) => ctx.approaches.list(OWNER.uid, { direction: "outgoing", limit: 10 }))).map((entry) => entry.id)).toEqual([sent.id]);
     });
   });
 

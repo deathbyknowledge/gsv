@@ -15,8 +15,8 @@ When the owner says "add @handle" or names a person on your service, check
 `contact list --json` for an existing connection, then send a message request:
 `contact connect @handle --message TEXT --handling manual|ship`. Keep the
 message short and in the owner's voice, for example saying who is connecting.
-No approval is needed beyond the owner asking. The other person decides whether
-to accept; report the request as sent, not as connected. Profiles are public by
+Sending asks the owner for approval unless their approval policy allows
+`approach.create`. The other person decides whether to accept; report the request as sent, not as connected. Profiles are public by
 default, so this usually works. If it fails because the profile is unavailable
 or not receiving requests, fall back to a private invitation below.
 
