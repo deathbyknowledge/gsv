@@ -64,8 +64,8 @@ const whatsAppWebhookSchema = z.object({
   }).passthrough()),
 }).passthrough();
 
-/** Message types the Cloud API delivers that GSV neither relays nor answers. */
-const SILENT_MESSAGE_TYPES = new Set(["request_welcome"]);
+/** Message types the Cloud API delivers that GSV neither relays nor answers; a reaction is not a message to reply to. */
+const SILENT_MESSAGE_TYPES = new Set(["request_welcome", "reaction"]);
 /** Media message types relayed as attachments. */
 const MEDIA_MESSAGE_TYPES = new Set(["image", "video", "audio", "document", "sticker"]);
 

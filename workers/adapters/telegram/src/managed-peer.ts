@@ -137,9 +137,9 @@ const PAIRING_CHARACTERS = 12;
  */
 const TELEGRAM_PART_PACE_MS = 1000;
 const UNSUPPORTED_TEXT =
-  "GSV Telegram could not receive that message type. Please send text or a supported attachment.";
+  "Ship could not receive that message type. Please send text or a supported attachment.";
 const MEDIA_UNAVAILABLE_TEXT =
-  "GSV Telegram could not receive that attachment. Please send a smaller file or try again.";
+  "Ship could not receive that attachment. Please send a smaller file or try again.";
 
 export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
   private readonly retirement = new AdapterRetirement(this.ctx.storage);

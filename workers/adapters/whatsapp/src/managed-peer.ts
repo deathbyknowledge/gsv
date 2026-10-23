@@ -168,9 +168,9 @@ const INBOUND_MAX_RECORDS = 4_096;
 const PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const PAIRING_CHARACTERS = 12;
 const UNSUPPORTED_TEXT =
-  "GSV WhatsApp could not receive that message type. Please send text, a photo, a document, a voice note or a location.";
+  "Ship could not receive that message type. Please send text, a photo, a document, a voice note or a location.";
 const MEDIA_UNAVAILABLE_TEXT =
-  "GSV WhatsApp could not receive that attachment. Please send a smaller file or try again.";
+  "Ship could not receive that attachment. Please send a smaller file or try again.";
 
 export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
   private readonly retirement = new AdapterRetirement(this.ctx.storage);
