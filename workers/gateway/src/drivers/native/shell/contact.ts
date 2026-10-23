@@ -217,7 +217,7 @@ async function connectToPerson(args: string[], ctx: KernelContext): Promise<Appr
 }
 
 function approachEnded(approach: Pick<ApproachSummary, "state" | "expiresAtMs">): boolean {
-  return ["declined", "withdrawn", "expired"].includes(approach.state)
+  return ["declined", "withdrawn", "expired", "blocked"].includes(approach.state)
     // A request still preparing or pending past its deadline has ended too; maintenance just hasn't
     // recorded it yet. Accepting requests keep their receipt grace and are not ended here.
     || (["preparing", "pending"].includes(approach.state) && approach.expiresAtMs <= Date.now());

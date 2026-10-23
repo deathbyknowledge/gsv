@@ -85,7 +85,7 @@ describe("contact connect", () => {
       record.summary.expiresAtMs = Date.now() - 1;
       return record;
     };
-    for (const ended of [...(["declined", "withdrawn", "expired"] as const).map((state) => approachRecord({ id: `approach:${state}`, state })), overdue("preparing"), overdue("pending")]) {
+    for (const ended of [...(["declined", "withdrawn", "expired", "blocked"] as const).map((state) => approachRecord({ id: `approach:${state}`, state })), overdue("preparing"), overdue("pending")]) {
       const keys: string[] = [];
       const bash = shell(esteve, undefined, { byIdempotencyKey: (_uid, key) => { keys.push(key); return keys.length === 1 ? ended : null; } });
       expect((await bash.exec("contact connect @ada --message 'Hi Ada' --handling manual")).stderr).toContain("reached create");
