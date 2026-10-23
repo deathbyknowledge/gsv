@@ -8,7 +8,8 @@ import type { KernelContext } from "./context";
 import { FederationStore } from "./federation-store";
 import { FederationIdentity } from "./federation-crypto";
 import { ProfileStore } from "./profile-store";
-import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve, resolveSpacePublicProfile, verifyPublicProfile } from "./profiles";
+import { ConfigStore } from "./config";
+import { ensureDefaultProfile, handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve, resolveSpacePublicProfile, verifyPublicProfile } from "./profiles";
 import { KERNEL_V045_ADD_HUMAN_INVITATIONS } from "./schema/v045_add_human_invitations";
 import { KERNEL_V069_SINGLE_HUMAN_SPACE } from "./schema/v069_single_human_space";
 import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
@@ -105,10 +106,83 @@ describe("explicit profile publication", () => {
     });
   });
 
-  it("starts private and publishes only the exact approved snapshot across later draft edits", async () => {
+  it("publishes a public, request-open profile named by the Ship handle by default once, so an unpublish stays private", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      const published = ctx.profiles.published({ space: true })!;
+      expect(published.profile).toMatchObject({ displayName: "local", about: "", contactPolicy: "requests", representation: "human", revision: 1 });
+      await verifyPublicProfile(published.profile, "https://local.example/profile");
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 1, published: { revision: 1 } });
+      expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })).toEqual(published);
+      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })).toBeNull();
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 2 });
+    });
+  });
+
+  it("retries publishing its own default draft after a failed sign-in, but never an owner's draft", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      const sign = vi.spyOn(ctx.federationIdentity, "sign").mockRejectedValueOnce(new Error("signing unavailable"));
+      await expect(ensureDefaultProfile(OWNER.uid, ctx)).rejects.toThrow("signing unavailable");
+      expect(ctx.profiles.published({ space: true })).toBeNull();
+      sign.mockRestore();
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })!.profile).toMatchObject({ displayName: "local", contactPolicy: "requests", revision: 1 });
+    });
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      vi.spyOn(ctx.federationIdentity, "sign").mockRejectedValueOnce(new Error("signing unavailable"));
+      await expect(ensureDefaultProfile(OWNER.uid, ctx)).rejects.toThrow("signing unavailable");
+      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, contactPolicy: "invitation" } }, ctx);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })).toBeNull();
+    });
+  });
+
+  it("offers the Ship handle as the default draft name", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      expect(handleProfileGet(profileContext(storage)).profile.draft).toMatchObject({ displayName: "local", contactPolicy: "requests" });
+    });
+  });
+
+  it("leaves a profile its owner unpublished before the default existed private", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "invitation" } }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })).toBeNull();
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 2, draft: { contactPolicy: "invitation" } });
+    });
+  });
+
+  it("keeps a draft saved before the default private and leaves an owner-published profile alone", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "closed" } }, ctx);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })).toBeNull();
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 1, draft: { about: DRAFT.about, contactPolicy: "closed" } });
+    });
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = profileContext(storage, sql);
+      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "invitation" } }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published({ space: true })!.profile).toMatchObject({ contactPolicy: "invitation", revision: 1 });
+    });
+  });
+
+  it("offers an open default draft and publishes only the exact approved snapshot across later draft edits", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const ctx = profileContext(storage);
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 0, draft: { contactPolicy: "closed" } });
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 0, draft: { contactPolicy: "requests" } });
       handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
       expect(ctx.profiles.published({ space: true })).toBeNull();
       await handleProfilePublish({ expectedRevision: 1 }, ctx);
@@ -179,8 +253,9 @@ describe("explicit profile publication", () => {
   });
 });
 
-function profileContext(storage: DurableObjectStorage): KernelContext {
+function profileContext(storage: DurableObjectStorage, sql?: SqlStorage): KernelContext {
   const context = {
+    ...(sql ? { config: new ConfigStore(sql) } : undefined),
     installationIdentity: { installationId: `inst_${crypto.randomUUID()}`, canonicalOrigin: "https://local.example", handle: "local" },
     peer: testPeer({ kind: "human", account: OWNER, calls: ["profile.*"] }), callerOwnerUid: OWNER.uid, connection: {},
     profiles: new ProfileStore(storage), federation: new FederationStore(storage), federationIdentity: new FederationIdentity(storage),

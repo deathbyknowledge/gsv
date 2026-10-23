@@ -375,9 +375,14 @@ automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
 `contact` manages relationships with people on other Ships.
-`contact find @HANDLE|ADDRESS` reads a published public profile. An unavailable
-profile does not establish whether the Ship exists; private invitations work
-without a published profile or an existing contact.
+`contact find @HANDLE|ADDRESS` reads a published public profile. Profiles are
+public by default, but an unavailable profile does not establish whether the Ship
+exists: the address may be mistyped, the Ship elsewhere, or the profile private.
+Private invitations work without a published profile or an existing contact.
+`contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]`
+sends that profile a first message request, which the person accepts or declines
+in People. The signed-in human or their canonical Ship may send it; repeating the
+same request returns the existing one.
 `contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
 the other person accepts either while signed in to their own Ship. The default
 lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may

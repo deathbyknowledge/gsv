@@ -21,14 +21,8 @@ export async function processApproachMaintenance(ctx: KernelContext): Promise<vo
           await collectApproach(record, ctx);
           return;
         }
-        const expiry = record.summary.expiresAtMs + (record.summary.state === "accepting" ? APPROACH_RECEIPT_MS : 0);
-        if (!record.summary.acceptedAtMs && expiry <= Date.now()) {
-          record = ctx.federation.transaction(() => {
-            const expired = ctx.approaches.expire(scheduled.summary.id)!;
-            retireInvitation(expired, ctx);
-            return expired;
-          });
-          ctx.broadcastToUserUid(record.ownerUid, "approach.changed");
+        if (approachOverdue(record)) {
+          expireApproach(record, ctx);
           return;
         }
         if (record.nextAttemptAt === null || record.nextAttemptAt > Date.now()) return;
@@ -88,6 +82,29 @@ async function deliverWithdrawal(record: ApproachRecord, ctx: KernelContext): Pr
     if (!(error instanceof FederationHttpError) || ![404, 410].includes(error.status)) throw error;
   }
   ctx.approaches.deliveryReceived(record.summary.id, record.summary.revision);
+}
+
+function approachOverdue(record: ApproachRecord, now = Date.now()): boolean {
+  const expiry = record.summary.expiresAtMs + (record.summary.state === "accepting" ? APPROACH_RECEIPT_MS : 0);
+  return !record.summary.acceptedAtMs && expiry <= now;
+}
+
+/** Expires one overdue request and retires its invitation; the caller holds the request's lock. */
+function expireApproach(record: ApproachRecord, ctx: KernelContext): void {
+  const expired = ctx.federation.transaction(() => {
+    const updated = ctx.approaches.expire(record.summary.id)!;
+    retireInvitation(updated, ctx);
+    return updated;
+  });
+  ctx.broadcastToUserUid(expired.ownerUid, "approach.changed");
+}
+
+/** Expires this exact request if its deadline has passed, under its own lock, without waiting for maintenance. */
+export async function expireOverdueApproach(record: ApproachRecord, ctx: KernelContext): Promise<void> {
+  await ctx.coordinateFederationContact(approachLock(record), async () => {
+    const current = ctx.approaches.get(record.summary.id);
+    if (current && approachOverdue(current)) expireApproach(current, ctx);
+  });
 }
 
 function retireInvitation(record: ApproachRecord, ctx: KernelContext): void {
