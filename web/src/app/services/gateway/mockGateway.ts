@@ -30,6 +30,7 @@
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import type { ProfileState } from "@humansandmachines/gsv/protocol";
+import { contactSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import {
   wireFrameSchemas,
   buildBinaryFrame,
@@ -793,7 +794,8 @@ function refuse(id: string, code: number, message: string): string {
   return JSON.stringify({ type: "res", id, ok: false, error: { code, message } });
 }
 
-function route(socket: MockSocket, id: string, call: string, args: JsonValue): string {
+/* a case may answer later, as the real Kernel does for work that hashes or waits; the socket delivers either */
+function route(socket: MockSocket, id: string, call: string, args: JsonValue): string | Promise<string> {
   switch (call) {
     case "sys.connect":
       world.sockets.add(socket);
@@ -899,14 +901,17 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { entry: maraInboxEntry() });
     }
     case "contact.send": {
-      const { contactId, text } = z.object({ contactId: z.string(), text: z.string() }).parse(args);
+      const { contactId, text, idempotencyKey = crypto.randomUUID() } = z.object({ contactId: z.string(), text: z.string(), idempotencyKey: z.string().optional() }).parse(args);
       if (contactId !== MARA_CONTACT_ID) throw new Error(`Unexpected contact ${contactId}`);
-      const sequence = maraThread.length + 1;
-      maraThread.push({ id: `mara-${sequence}`, conversationId: MARA_CONVERSATION, sequence, author: { kind: "user", uid: OWNER.uid }, text,
-        social: { threadId: "mara-thread", reference: { actor: { shipId: "mock-ship", subjectId: "owner" }, messageId: `mara-${sequence}` }, provenance: { kind: "human" } },
-        origin: { kind: "client", clientId: "web" }, createdAt: Date.now() });
-      broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, latestSequence: sequence });
-      return respond(id, { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" });
+      /* the same id the client predicts for its pending bubble, so history replaces it instead of doubling it */
+      return contactSendMessageId(contactId, maraContact.generation, idempotencyKey).then((messageId) => {
+        const sequence = maraThread.length + 1;
+        maraThread.push({ id: messageId, conversationId: MARA_CONVERSATION, sequence, author: { kind: "user", uid: OWNER.uid }, text,
+          social: { threadId: "mara-thread", reference: { actor: { shipId: "mock-ship", subjectId: "owner" }, messageId }, provenance: { kind: "human" } },
+          origin: { kind: "client", clientId: "web" }, createdAt: Date.now() });
+        broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, latestSequence: sequence });
+        return respond(id, { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" });
+      });
     }
     /* a message request sent from People: kept in this tab so the requests view can list it */
     case "approach.create": {
@@ -1048,13 +1053,14 @@ class MockSocket extends EventTarget implements WebSocket {
     const frame = wireFrameSchemas.request.safeParse(JSON.parse(text.data));
     if (!frame.success) return; // cancels and other signals need no answer
     const { id, call, args } = frame.data;
-    let reply: string;
-    try {
-      reply = route(this, id, call, args);
-    } catch (error) {
-      reply = refuse(id, 400, error instanceof Error ? error.message : "Bad request");
-    }
-    queueMicrotask(() => this.deliverText(reply));
+    const deliver = async () => {
+      try {
+        this.deliverText(await route(this, id, call, args));
+      } catch (error) {
+        this.deliverText(refuse(id, 400, error instanceof Error ? error.message : "Bad request"));
+      }
+    };
+    queueMicrotask(() => { void deliver(); });
   }
 
   close(code = 1000, reason = ""): void {
