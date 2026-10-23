@@ -629,7 +629,7 @@ export const en = {
   "desktop.shortcut.preparing": "Preparing…",
   "desktop.shortcut.change": "change",
   "desktop.shortcut.hint": "Press keys together. Esc to cancel.",
-  "desktop.shortcut.errors.altGr": "Choose a shortcut without AltGr or an accent key.",
+  "desktop.shortcut.errors.mouse": "Mouse buttons can't be shortcuts yet. Press a key combination.",
   "desktop.shortcut.errors.unsupported": "That key is not supported. Try another combination.",
   "desktop.shortcut.errors.modifier": "Include Ctrl, Alt or Command/Windows to keep normal typing available.",
 

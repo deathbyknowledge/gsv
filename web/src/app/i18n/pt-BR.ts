@@ -635,7 +635,7 @@ export const ptBR = {
   "desktop.shortcut.preparing": "Preparando…",
   "desktop.shortcut.change": "alterar",
   "desktop.shortcut.hint": "Pressione as teclas ao mesmo tempo. Esc para cancelar.",
-  "desktop.shortcut.errors.altGr": "Escolha um atalho sem AltGr nem tecla de acento.",
+  "desktop.shortcut.errors.mouse": "Botões do mouse ainda não podem ser atalhos. Pressione uma combinação de teclas.",
   "desktop.shortcut.errors.unsupported": "Essa tecla não é compatível. Tente outra combinação.",
   "desktop.shortcut.errors.modifier": "Inclua Ctrl, Alt ou Command/Windows para continuar digitando normalmente.",
 
