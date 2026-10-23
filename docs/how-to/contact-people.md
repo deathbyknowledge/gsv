@@ -57,8 +57,9 @@ Handles resolve on the operator’s configured primary domain. Accepted legacy d
 In Shell, `contact find @esteve` (or a full address) shows the same public profile,
 and `contact connect @esteve --message TEXT --handling manual|ship` sends the same
 first message request. Telling Ship "add @esteve" is enough: Ship resolves the
-handle and sends the request without a separate approval, and Esteve decides
-whether to accept. Profiles are public by default, so a handle normally resolves.
+handle, asks you to approve sending it (an `approach.create` rule in the
+[approval policy](../reference/configuration.md#tool-approval-policy) can skip the question),
+and Esteve decides whether to accept. Profiles are public by default, so a handle normally resolves.
 An unavailable profile does not establish whether the Ship exists: the handle may
 be mistyped, the Ship elsewhere, or the profile private. It does not prevent
 sharing a private invitation.
@@ -68,7 +69,7 @@ name, choose who handles new messages, then send a first message.
 They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same
 conversation, opens it directly, and enables further messages and attachments.
 
-Your profile is public from your first sign-in, showing your display name and
+A new Ship's profile is public from your first sign-in, named by your handle and
 open to message requests, so people can add you by handle. Choose **your profile**
 at the bottom of People to change what it shows, save a draft and publish it.
 Your public address is `https://YOUR-SPACE/profile`. Existing published
@@ -76,8 +77,8 @@ profile links still work. Drafts remain when you return to a conversation. A pro
 invitation, or close new contact. Saving later edits does not change the public
 page until you publish again. Unpublishing removes the page and keeps it private until you publish again;
 existing contacts and conversations remain. People who already viewed it may
-retain copies. A space that saved a profile draft before this default publishes
-that draft, opened to message requests, on its owner's next sign-in.
+retain copies. A Ship whose owner already saved, published or unpublished a profile
+keeps it exactly as it was; only a Ship with no saved profile gets the public default.
 The published page uses Ship's cursor icon in the browser tab, the same pale block on a dark square as the app.
 On phones, the profile editor keeps its title and back arrow above the scrolling
 form. The same lavender edge used in conversations appears only while text crosses
