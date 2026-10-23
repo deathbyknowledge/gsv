@@ -1236,7 +1236,7 @@ export const es = {
   "shell.help.label": "Ayuda",
   "shell.help.search": "Buscar en Chat",
   "shell.help.views": "Vistas y apariencia",
-  "shell.help.viewsHint": "Los atajos de navegación funcionan fuera de los campos de texto y de los formularios de conexión y de modelo.",
+  "shell.help.viewsHint": "Los atajos de navegación funcionan fuera de los campos de texto y de los formularios de conexión y de modelo. Ve a Configuración para desactivar las estrellas de fondo.",
   "shell.help.memory": "Memoria",
   "shell.help.people": "Personas",
   "shell.help.theme": "Cambiar entre claro y oscuro",

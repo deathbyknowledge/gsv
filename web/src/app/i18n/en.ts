@@ -1235,7 +1235,7 @@ export const en = {
   "shell.help.label": "Help",
   "shell.help.search": "Search Chat",
   "shell.help.views": "Views & appearance",
-  "shell.help.viewsHint": "Navigation shortcuts work outside text fields and the connection and model forms.",
+  "shell.help.viewsHint": "Navigation shortcuts work outside text fields and the connection and model forms. See Settings to toggle off background stars.",
   "shell.help.memory": "Memory",
   "shell.help.people": "People",
   "shell.help.theme": "Switch between light and dark",

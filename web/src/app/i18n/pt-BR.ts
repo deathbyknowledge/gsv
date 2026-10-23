@@ -1241,7 +1241,7 @@ export const ptBR = {
   "shell.help.label": "Ajuda",
   "shell.help.search": "Pesquisar no Chat",
   "shell.help.views": "Visualizações e aparência",
-  "shell.help.viewsHint": "Os atalhos de navegação funcionam fora dos campos de texto e dos formulários de ativação.",
+  "shell.help.viewsHint": "Os atalhos de navegação funcionam fora dos campos de texto e dos formulários de ativação. Acesse Configurações para desativar as estrelas de fundo.",
   "shell.help.memory": "Memória",
   "shell.help.people": "Contatos",
   "shell.help.theme": "Alternar entre claro e escuro",
