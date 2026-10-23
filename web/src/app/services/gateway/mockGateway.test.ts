@@ -109,17 +109,18 @@ describe("mock gateway", () => {
     const client = await connectedClient();
     const raised: JsonValue[] = [];
     client.onSignal((signal, payload) => { if (signal === "proc.run.hil.requested" && payload !== undefined) raised.push(payload); });
-    for (const text of ["/approve-old", "/approve-mail", "/approve-file"]) {
+    for (const text of ["/approve-old", "/approve-mail", "/approve-file", "/approve-publish"]) {
       await client.request("conversation.send", { conversationId: "c-ship", text, idempotencyKey: text });
       await vi.runAllTimersAsync();
       const request = hilSchema.parse(raised.at(-1));
       await client.request("proc.hil", { pid: request.pid, requestId: request.requestId, decision: "deny" });
       await vi.runAllTimersAsync();
     }
-    expect(raised.map((payload) => hilSchema.parse(payload))).toMatchObject([
+    expect(raised).toMatchObject([
       { syscall: "shell.exec", target: "studio" },
       { syscall: "mail.send", purpose: expect.stringContaining("Mike") },
       { syscall: "fs.write", target: "studio", purpose: expect.stringContaining("notes") },
+      { syscall: "atproto.write", target: "gsv", args: expect.objectContaining({ handle: "esteve", address: "esteve.ship.space" }) },
     ]);
     expect(hilSchema.parse(raised[0])).not.toHaveProperty("purpose");
   });

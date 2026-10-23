@@ -26,6 +26,7 @@
  *   /reply     a plain reply is committed (finishing an open step first)
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
+ *   /approve-publish   a publish to the open network carrying a picture; y/n decides
  *   anything else is committed as your message and answered briefly a second later
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
@@ -236,7 +237,7 @@ type Step = {
   thought: string;
   place: "studio" | "gsv";
   tool: "Shell" | "Read" | "Write" | "Search" | "mail.send";
-  syscall: "shell.exec" | "fs.read" | "fs.write" | "fs.search" | "mail.send";
+  syscall: "shell.exec" | "fs.read" | "fs.write" | "fs.search" | "mail.send" | "atproto.write";
   args: JsonObject;
   purpose?: string;
   /** How long the tool runs, before a little jitter. */
@@ -284,6 +285,10 @@ const RUN_LONG_REPLY = [
   "There is no routine for cache cleaning yet. I can clear caches older than a week tonight and add a weekly clean next to the backup entry, which should keep the drive under 80%. Say the word.",
 ].join("\n\n");
 
+/** The picture a mock publish carries; small enough to arrive in one frame. */
+const PUBLISHED_PICTURE = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160"><rect width="240" height="160" fill="#1d2b3a"/><circle cx="182" cy="44" r="18" fill="#ffd24d"/><path d="M0 160 72 70l46 54 34-38 88 74Z" fill="#7a8fa6"/></svg>';
+const PUBLISHED_PICTURE_CID = "bafkreimockpicture";
+
 const GRANOLA_COMMAND = "pgrep -fl Granola 2>/dev/null; echo \"---\"; osascript -e 'tell application \"System Events\" to tell process \"Granola\" to get name of every window' 2>&1 | head -5";
 
 function approvalFor(trigger: string): ApprovalScenario | null {
@@ -309,6 +314,21 @@ function approvalFor(trigger: string): ApprovalScenario | null {
         ms: 900, output: { ok: true, messageId: "mock-mail-1" },
       },
       approved: "Sent Mike the contract follow-up.", denied: "Not sent. The draft is still here if you want to change it.",
+    };
+  }
+  if (trigger === "/approve-publish") {
+    const record = {
+      $type: "space.ship.note", text: "Back from the coast. The light at six was something else.",
+      picture: { $type: "blob", ref: { $link: PUBLISHED_PICTURE_CID }, mimeType: "image/svg+xml", size: PUBLISHED_PICTURE.length },
+    };
+    return {
+      step: {
+        think: "", thought: "Ask before publishing the note publicly.", place: "gsv", tool: "Shell", syscall: "atproto.write",
+        purpose: "publish your trip photo with a short note",
+        args: { handle: "esteve", address: "esteve.ship.space", writes: [{ action: "create", collection: "space.ship.note", record }] },
+        ms: 900, output: { commit: { cid: "bafymockcommit", rev: "3mockrev" }, results: [{ uri: "at://did:plc:mock/space.ship.note/3mockrev", cid: "bafymockrecord" }] },
+      },
+      approved: "Published your note with the photo.", denied: "Not published. Nothing went to the open network.",
     };
   }
   if (trigger === "/approve-file") {
@@ -962,6 +982,12 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { profile: { version: 1, origin, url: `${origin}/profile`, actor: { shipId: "mock-person", subjectId: "owner" },
         displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests", representation: "human-and-ship", revision: 1,
         publishedAtMs: Date.now() } });
+    }
+    case "atproto.blob.read": {
+      const { cid } = z.object({ cid: z.string() }).parse(args);
+      return cid === PUBLISHED_PICTURE_CID
+        ? socket.textResponse(id, { mimeType: "image/svg+xml", size: PUBLISHED_PICTURE.length }, PUBLISHED_PICTURE)
+        : refuse(id, 404, `No file with CID ${cid} on this Ship`);
     }
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });

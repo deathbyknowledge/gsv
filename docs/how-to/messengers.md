@@ -10,6 +10,11 @@ apps offered in **Messengers**. You connect your account on that messenger with
 a short-lived code.
 You do not need to create a bot or paste its token into your Ship.
 
+When Ship needs your approval, the messenger shows what it wants to do. A
+request to publish on the [open network](/architecture/open-network) always
+names the handle and full address it publishes as, such as
+`@alice (alice.ship.space)`, whatever else Ship wrote.
+
 ## Ask Ship to connect
 
 Ask Ship to connect the messenger you want. It gets the current connection

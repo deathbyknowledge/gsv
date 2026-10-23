@@ -40,6 +40,7 @@ export const es = {
   "approval.match.netAll": "Todas las herramientas de red",
   "approval.match.netFetch": "Abrir URL",
   "approval.match.mailSend": "Enviar correo",
+  "approval.match.atprotoWrite": "Publicar en la red abierta",
   "approval.match.webSearch": "Buscar en la web",
   "approval.match.repoAll": "Todas las herramientas de repositorios",
   "approval.match.repoList": "Listar repositorios",
@@ -1294,6 +1295,13 @@ export const es = {
   "shell.approval.alwaysAllowHint": "Permite que Ship o este ayudante ejecute cualquier comando en la terminal de {place} sin volver a preguntar. Los demás siguen preguntando.",
   "shell.approval.alwaysAllow": "Permitir siempre",
   "shell.approval.waiting": "no se ejecuta nada hasta que respondas",
+  "shell.approval.publishAs": "Se publica en la red abierta como {handle}",
+  "shell.approval.publishCreate": "añadir {record}",
+  "shell.approval.publishPut": "añadir o sustituir {record}",
+  "shell.approval.publishDelete": "quitar {record}",
+  "shell.approval.publishPicture": "Imagen que se publica",
+  "shell.approval.fileKilobytes": "{type} · {size} KB",
+  "shell.approval.fileMegabytes": "{type} · {size} MB",
 
   // Shell: welcome
   "shell.retryButton": "Reintentar",
@@ -1585,6 +1593,7 @@ export const es = {
   "chat.call.mailTo": "enviar un correo a {to}",
   "chat.call.mailReply": "responder a un correo",
   "chat.call.mail": "enviar un correo",
+  "chat.call.publish": "publicar en la red abierta",
 
   // Chat: approval requests
   "chat.hil.read": "leer {path}",
@@ -2195,6 +2204,10 @@ export const es = {
   "fleet.ledger.profilePublish": "se publicó el perfil",
   "fleet.ledger.profileUnpublish": "se retiró la publicación del perfil",
   "fleet.ledger.profileResolve": "se abrió un perfil público",
+  "fleet.ledger.atprotoIdentity": "se consultó la identidad en la red abierta",
+  "fleet.ledger.atprotoWrite": "se publicó en la red abierta",
+  "fleet.ledger.atprotoBlobUpload": "se subió un archivo para la red abierta",
+  "fleet.ledger.atprotoBlobRead": "se abrió un archivo para la red abierta",
   "fleet.ledger.contactInviteCreate": "se creó una invitación de contacto",
   "fleet.ledger.contactInviteAccept": "se aceptó una invitación de contacto",
   "fleet.ledger.contactInviteList": "se listaron invitaciones de contacto",

@@ -165,6 +165,9 @@ inspectable in the owning user's ledger arguments like other syscall inputs.
 An explicit `sys.browser.profile.save` is labeled “save browser state”; its
 arguments identify the instance, while cookies and website storage stay inside
 the instance service and never enter ledger arguments.
+Open-network calls read as what they did, such as “published to the open
+network” for `atproto.write`. Its arguments hold the published records; an
+uploaded file's bytes travel as a body and never enter them.
 
 ## Cost
 

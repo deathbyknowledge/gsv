@@ -39,6 +39,7 @@ export function describeCall(request: DescribedCall, place?: string): string {
   switch (request.syscall) {
     case "codemode.exec":
     case "codemode.run": return t("chat.call.code");
+    case "atproto.write": return t("chat.call.publish");
     case "mail.send": {
       const to = callArgumentText(request, "to");
       const subject = callArgumentText(request, "subject");

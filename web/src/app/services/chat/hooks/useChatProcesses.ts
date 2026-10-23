@@ -30,11 +30,13 @@ import {
   type ChatStoredMediaReadArgs,
   readChatResource,
   readChatHistorySegment,
+  readPublishedFile,
   sendChatMessage,
   setChatProcessAiConfig,
   spawnChatProcess,
 } from "../backend/chatService";
 import type { ChatSendDraft } from "../domain/processes";
+import type { HilPublishedFile } from "../domain/hil";
 
 export const chatProcessListQueryKey = (args: ProcListArgs = {}) => [
   "processes",
@@ -185,6 +187,21 @@ export function useChatResource(options: UseChatResourceOptions) {
     queryFn: () => {
       if (!ref) throw new Error("Resource reference is unavailable");
       return readChatResource(client, ref);
+    },
+    staleTime: Infinity,
+  });
+}
+
+/** A file a pending publish references; a published file never changes, so it is read once. */
+export function usePublishedFile(file: HilPublishedFile | null) {
+  const { client, connected } = useGateway();
+
+  return useQuery({
+    queryKey: ["atproto", "blob", file?.cid ?? ""],
+    enabled: connected && file !== null,
+    queryFn: () => {
+      if (!file) throw new Error("Published file is unavailable");
+      return readPublishedFile(client, file);
     },
     staleTime: Infinity,
   });

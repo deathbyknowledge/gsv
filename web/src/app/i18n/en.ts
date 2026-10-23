@@ -39,6 +39,7 @@ export const en = {
   "approval.match.netAll": "All network tools",
   "approval.match.netFetch": "Fetch URLs",
   "approval.match.mailSend": "Send mail",
+  "approval.match.atprotoWrite": "Publish to the open network",
   "approval.match.webSearch": "Search the web",
   "approval.match.repoAll": "All repository tools",
   "approval.match.repoList": "List repositories",
@@ -1293,6 +1294,13 @@ export const en = {
   "shell.approval.alwaysAllowHint": "Allow Ship or this helper to run any shell command on {place} without asking again. Others still ask.",
   "shell.approval.alwaysAllow": "Always allow",
   "shell.approval.waiting": "nothing runs until you answer",
+  "shell.approval.publishAs": "Publishes to the open network as {handle}",
+  "shell.approval.publishCreate": "add {record}",
+  "shell.approval.publishPut": "add or replace {record}",
+  "shell.approval.publishDelete": "remove {record}",
+  "shell.approval.publishPicture": "Picture this publishes",
+  "shell.approval.fileKilobytes": "{type} · {size} KB",
+  "shell.approval.fileMegabytes": "{type} · {size} MB",
 
   // Shell: welcome
   "shell.retryButton": "Retry",
@@ -1584,6 +1592,7 @@ export const en = {
   "chat.call.mailTo": "send an email to {to}",
   "chat.call.mailReply": "reply to an email",
   "chat.call.mail": "send an email",
+  "chat.call.publish": "publish to the open network",
 
   // Chat: approval requests
   "chat.hil.read": "read {path}",
@@ -2194,6 +2203,10 @@ export const en = {
   "fleet.ledger.profilePublish": "published the profile",
   "fleet.ledger.profileUnpublish": "unpublished the profile",
   "fleet.ledger.profileResolve": "opened a public profile",
+  "fleet.ledger.atprotoIdentity": "checked the open network identity",
+  "fleet.ledger.atprotoWrite": "published to the open network",
+  "fleet.ledger.atprotoBlobUpload": "uploaded a file for the open network",
+  "fleet.ledger.atprotoBlobRead": "opened a file for the open network",
   "fleet.ledger.contactInviteCreate": "created a contact invitation",
   "fleet.ledger.contactInviteAccept": "accepted a contact invitation",
   "fleet.ledger.contactInviteList": "listed contact invitations",

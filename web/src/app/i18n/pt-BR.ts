@@ -45,6 +45,7 @@ export const ptBR = {
   "approval.match.netAll": "Todas as ferramentas de rede",
   "approval.match.netFetch": "Abrir URLs",
   "approval.match.mailSend": "Enviar e-mail",
+  "approval.match.atprotoWrite": "Publicar na rede aberta",
   "approval.match.webSearch": "Pesquisar na web",
   "approval.match.repoAll": "Todas as ferramentas de repositórios",
   "approval.match.repoList": "Listar repositórios",
@@ -1299,6 +1300,13 @@ export const ptBR = {
   "shell.approval.alwaysAllowHint": "Permite que esta conversa execute qualquer comando de terminal em {place} sem perguntar de novo. As outras conversas continuam perguntando.",
   "shell.approval.alwaysAllow": "Sempre permitir",
   "shell.approval.waiting": "nada é executado até você responder",
+  "shell.approval.publishAs": "Publica na rede aberta como {handle}",
+  "shell.approval.publishCreate": "adicionar {record}",
+  "shell.approval.publishPut": "adicionar ou substituir {record}",
+  "shell.approval.publishDelete": "remover {record}",
+  "shell.approval.publishPicture": "Imagem que será publicada",
+  "shell.approval.fileKilobytes": "{type} · {size} KB",
+  "shell.approval.fileMegabytes": "{type} · {size} MB",
 
   // Shell: welcome
   "shell.retryButton": "Tentar de novo",
@@ -1590,6 +1598,7 @@ export const ptBR = {
   "chat.call.mailTo": "enviar um e-mail para {to}",
   "chat.call.mailReply": "responder a um e-mail",
   "chat.call.mail": "enviar um e-mail",
+  "chat.call.publish": "publicar na rede aberta",
 
   // Chat: approval requests
   "chat.hil.read": "ler {path}",
@@ -2200,6 +2209,10 @@ export const ptBR = {
   "fleet.ledger.profilePublish": "publicou o perfil",
   "fleet.ledger.profileUnpublish": "cancelou a publicação do perfil",
   "fleet.ledger.profileResolve": "abriu um perfil público",
+  "fleet.ledger.atprotoIdentity": "consultou a identidade na rede aberta",
+  "fleet.ledger.atprotoWrite": "publicou na rede aberta",
+  "fleet.ledger.atprotoBlobUpload": "enviou um arquivo para a rede aberta",
+  "fleet.ledger.atprotoBlobRead": "abriu um arquivo para a rede aberta",
   "fleet.ledger.contactInviteCreate": "criou um convite de contato",
   "fleet.ledger.contactInviteAccept": "aceitou um convite de contato",
   "fleet.ledger.contactInviteList": "listou convites de contato",
