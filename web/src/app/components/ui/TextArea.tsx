@@ -42,7 +42,7 @@ const SIZE_CLASS = {
 export function TextArea(props: TextAreaProps) {
   const t = useT();
   const {
-    placeholder = "What is this agent for? A line or two.",
+    placeholder,
     label = "DESCRIPTION",
     info = "",
     description = "",
