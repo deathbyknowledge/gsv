@@ -78,6 +78,8 @@ describe("writing records", () => {
     const { ctx, repository } = context({ ...shipProcess(), account: null });
     expect(await handleAtprotoWrite({ writes: [NOTE] }, ctx)).toEqual(COMMIT);
     expect(repository.ensureAccount).toHaveBeenCalledExactlyOnceWith("alice.ship.space");
+    // The Kernel keeps the new DID, so checking incoming calls doesn't wait on the PDS.
+    expect(ctx.shipIdentity.remember).toHaveBeenCalledExactlyOnceWith(ACCOUNT.did);
     expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([NOTE]);
     expect(repository[Symbol.dispose]).toHaveBeenCalledOnce();
   });
@@ -242,6 +244,7 @@ function context(options: ContextOptions = {}) {
     procs: { get: () => ({ isPersonalController: personal, ownerUid: OWNER.uid }), getOwnerUid: () => OWNER.uid },
     requestId: "request",
     defer: vi.fn(),
+    shipIdentity: { current: () => null, remember: vi.fn() },
     ...overrides,
   } as KernelContext;
   return { ctx, repository, getInstallation };

@@ -16,6 +16,7 @@ import {
   type PublicRecordWrite,
   type PublicRepository,
   type PublicRepositoryAccount,
+  type ShipServiceAuthRequest,
 } from "@humansandmachines/gsv/services/pds";
 import * as z from "zod/mini";
 import { shipAddress } from "../installation/identity";
@@ -130,6 +131,19 @@ export async function handleAtprotoBlobRead(
   return { data: { mimeType: blob.mimeType, size: blob.size }, body: { stream: blob.body, length: blob.size } };
 }
 
+/** The Ship's DID, created under its address by the first outward act: a publish, an invitation or a message request. */
+export async function ensureShipDid(ctx: KernelContext): Promise<string> {
+  return ctx.shipIdentity.current() ?? await withRepository(ctx, async (repository) => (await ensureIdentity(repository, shipHostname(ctx), ctx)).did);
+}
+
+/** Signs a service-auth token for one call to another Ship, creating the Ship's DID if this is its first outward act. */
+export async function signShipCall(ctx: KernelContext, request: ShipServiceAuthRequest): Promise<string> {
+  return await withRepository(ctx, async (repository) => {
+    if (!ctx.shipIdentity.current()) await ensureIdentity(repository, shipHostname(ctx), ctx);
+    return await raceWithAbort(repository.serviceAuth(request), ctx.requestSignal);
+  });
+}
+
 /** What the caller still needs before it can publish, as the shell manual names it; without a host nothing else helps. */
 export function atprotoMissingRequirements(ctx: KernelContext): string[] {
   if (!ctx.env.PDS) return ["configured open-network host"];
@@ -169,16 +183,25 @@ function publishingAddress(ownerUid: number, ctx: KernelContext) {
   return { handle: address.handle, hostname: new URL(address.origin).hostname };
 }
 
+/** The hostname the Ship's DID is created under; its handle on the open network. */
+function shipHostname(ctx: KernelContext): string {
+  const address = shipAddress(ctx.installationIdentity, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).primaryDomain);
+  if (!address) throw new Error("This Ship has no address to create its identity under");
+  return new URL(address.origin).hostname;
+}
+
 /** An NSID's authority is a domain, so only its name keeps its case. */
 function featureKey(nsid: string): string {
   const name = nsid.lastIndexOf(".");
   return `${nsid.slice(0, name).toLowerCase()}${nsid.slice(name)}`;
 }
 
-/** The Ship's public identity; its first publish creates it. */
+/** The Ship's public identity; its first outward act creates it, and the Kernel keeps its DID. */
 async function ensureIdentity(repository: PublicRepository, hostname: string, ctx: KernelContext): Promise<PublicRepositoryAccount> {
-  return await raceWithAbort(repository.account(), ctx.requestSignal)
+  const account = await raceWithAbort(repository.account(), ctx.requestSignal)
     ?? await raceWithAbort(repository.ensureAccount(hostname), ctx.requestSignal);
+  ctx.shipIdentity.remember(account.did);
+  return account;
 }
 
 async function withRepository<T>(ctx: KernelContext, use: (repository: PublicRepository) => Promise<T>): Promise<T> {

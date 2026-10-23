@@ -8,11 +8,11 @@ import {
   type DidPlcString,
   type IndexedEntryWithSigner,
 } from "@atcute/did-plc";
-import type { DidDocument } from "../src/host/identity";
 
 /**
  * An in-memory did:plc directory. It accepts an operation only when the log
  * rules plc.directory applies would, and serves logs and documents in its format.
+ * The Gateway's tests use it too, so it imports nothing from the PDS.
  */
 export class FakePlcDirectory {
   private readonly logs = new Map<string, IndexedEntryWithSigner[]>();
@@ -40,6 +40,7 @@ export class FakePlcDirectory {
     const last = log?.at(-1)?.operation;
     if (!log || !last) return Response.json({ message: `DID not registered: ${did}` }, { status: 404 });
     if (path === "log") return Response.json(log.map((entry) => entry.operation));
+    if (path === "log/audit") return Response.json(log.map(({ allowedSigners: _allowed, signedBy: _signer, ...entry }) => entry));
     if (path !== "") return Response.json({ message: "Not found" }, { status: 404 });
     if (last.type === "plc_tombstone") return Response.json({ message: `DID not available: ${did}` }, { status: 404 });
     return Response.json(didDocument(did, normalizeOp(last)), { headers: { "content-type": "application/did+ld+json" } });
@@ -66,8 +67,17 @@ export class FakePlcDirectory {
   }
 }
 
+/** A DID document in plc.directory's format. */
+export type PlcDocument = {
+  "@context": string[];
+  id: string;
+  alsoKnownAs: string[];
+  verificationMethod: { id: string; type: string; controller: string; publicKeyMultibase: string }[];
+  service: { id: string; type: string; serviceEndpoint: string }[];
+};
+
 /** The document plc.directory serves for an operation's state. */
-function didDocument(did: string, state: ReturnType<typeof normalizeOp>): DidDocument {
+function didDocument(did: string, state: ReturnType<typeof normalizeOp>): PlcDocument {
   const context = ["https://www.w3.org/ns/did/v1", "https://w3id.org/security/multikey/v1"];
   const verificationMethod = Object.entries(state.verificationMethods).map(([id, key]) => {
     if (parseDidKey(key).type !== "secp256k1") throw new Error("The fake directory formats secp256k1 keys only");

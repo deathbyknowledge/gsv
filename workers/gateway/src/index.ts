@@ -51,6 +51,7 @@ import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
 import * as z from "zod/mini";
 import type { ServicePeerProfile } from "./kernel/peer";
 import { isFederationPublicPath } from "./kernel/federation";
+import { isShipXrpcPath } from "./kernel/ships/xrpc";
 import { matchPublicProfilePath, servePublicProfileRequest } from "./public-profiles";
 import type { GatewayEnv } from "./runtime-env";
 import { DEPLOYMENT_PRESENTATION_PATH, deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
@@ -74,7 +75,8 @@ export default {
     const publicAssetMatch = matchPublicAssetPath(url.pathname);
     const gitMatch = matchGitPath(request);
     const websocketRequest = url.pathname === "/ws" && isWebSocketRequest(request);
-    const federationPath = isFederationPublicPath(url.pathname);
+    // Ship-to-Ship calls reach only an existing Ship; neither kind provisions one.
+    const federationPath = isFederationPublicPath(url.pathname) || isShipXrpcPath(url.pathname);
     const profilePath = matchPublicProfilePath(url.pathname);
     const browserAssetRequest = (
       request.method === "GET" || request.method === "HEAD"

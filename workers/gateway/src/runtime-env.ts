@@ -26,6 +26,8 @@ type GatewayDeploymentBindings = TelemetryEnvironment & {
   FEEDBACK?: FeedbackService;
   INSTANCES?: InstancesService;
   PDS?: PdsService;
+  /** The did:plc directory other Ships' identities are read from; plc.directory unless the operator names another. */
+  PLC_URL?: string;
 };
 
 export type GatewayEnv = Omit<Env, "INFERENCE_EXECUTION"> & GatewayDeploymentBindings;

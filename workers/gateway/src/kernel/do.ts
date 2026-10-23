@@ -128,6 +128,11 @@ import { resolveSpacePublicProfile } from "./profiles";
 import { processApproachMaintenance } from "./approaches/runtime";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { FederationIdentity } from "./federation-crypto";
+import { DidDocumentStore } from "./ships/did-directory";
+import { ShipCallNonces } from "./ships/auth";
+import { ShipIdentity } from "./ships/identity";
+import { SHIP_METHODS } from "./ships/methods";
+import { handleShipXrpc, isShipXrpcPath } from "./ships/xrpc";
 import {
   handleFederationHttpRequest,
   isFederationPublicPath,
@@ -451,6 +456,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly profiles: ProfileStore;
   readonly approaches: ApproachStore;
   readonly federationIdentity: FederationIdentity;
+  readonly shipIdentity: ShipIdentity;
+  readonly didDocuments: DidDocumentStore;
+  readonly shipCallNonces: ShipCallNonces;
   readonly oauth: OAuthStore;
   readonly mcpServers: McpServerStore;
   readonly connections = new Map<string, KernelConnection<ConnectionState>>();
@@ -552,6 +560,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.profiles = new ProfileStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);
     this.federationIdentity = new FederationIdentity(ctx.storage);
+    this.shipIdentity = new ShipIdentity(ctx.storage);
+    this.didDocuments = new DidDocumentStore(sql);
+    this.shipCallNonces = new ShipCallNonces(sql);
 
     this.oauth = new OAuthStore(sql);
 
@@ -815,6 +826,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const url = new URL(request.url);
     if (isFederationPublicPath(url.pathname)) {
       return await handleFederationHttpRequest(request, this.buildKernelContext({}));
+    }
+    if (isShipXrpcPath(url.pathname)) {
+      return await handleShipXrpc(request, this.buildKernelContext({}), SHIP_METHODS);
     }
     if (url.pathname !== "/oauth/callback" || request.method !== "GET") {
       return new Response("Not Found", { status: 404 });
@@ -1607,6 +1621,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
       federationIdentity: this.federationIdentity,
+      shipIdentity: this.shipIdentity,
+      didDocuments: this.didDocuments,
+      shipCallNonces: this.shipCallNonces,
       profiles: this.profiles,
       approaches: this.approaches,
       scheduleApproachMaintenance: () => this.scheduleApproachMaintenance(),
