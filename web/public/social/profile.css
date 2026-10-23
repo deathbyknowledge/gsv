@@ -55,5 +55,6 @@ footer a.identity:hover { color: var(--text); text-decoration-color: currentColo
 .info-bubble::before { content: ""; position: absolute; top: -4px; left: var(--arrow-x, 16px); width: 7px; height: 7px; margin-left: -3.5px; border: 1px solid var(--line); border-bottom: none; border-right: none; background: var(--panel); transform: rotate(45deg); }
 [data-info-row] { position: relative; }
 .identity-row { display: inline-flex; align-items: center; gap: 6px; }
-[data-info-row]:has(.info:hover, .info:focus) .info-bubble, [data-info-row].is-open .info-bubble { visibility: visible; opacity: 1; }
+/* Escape dismisses a hint even while its icon keeps hover or focus. */
+[data-info-row]:not(.is-dismissed):has(.info:hover, .info:focus) .info-bubble, [data-info-row].is-open .info-bubble { visibility: visible; opacity: 1; }
 footer .info-bubble { top: calc(100% + 10px); }

@@ -20,9 +20,18 @@ if (mark && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
   }, 3200);
 }
 
-// Each hint opens on hover, focus or tap. Like the design system tooltip, the bubble stays
-// inside its row and its arrow points at the icon.
-for (const row of document.querySelectorAll("[data-info-row]")) {
+// Each hint opens on hover, focus, tap, Enter or Space, and Escape closes it. Like the design
+// system tooltip, the bubble stays inside its row and its arrow points at the icon.
+const rows = [...document.querySelectorAll("[data-info-row]")];
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  for (const row of rows) {
+    row.classList.remove("is-open");
+    row.classList.add("is-dismissed");
+    row.querySelector(".info")?.setAttribute("aria-expanded", "false");
+  }
+});
+for (const row of rows) {
   const info = row.querySelector(".info");
   const bubble = row.querySelector(".info-bubble");
   if (!(row instanceof HTMLElement) || !(info instanceof HTMLElement) || !(bubble instanceof HTMLElement)) continue;
@@ -34,8 +43,16 @@ for (const row of document.querySelectorAll("[data-info-row]")) {
     bubble.style.setProperty("--bubble-x", `${left}px`);
     bubble.style.setProperty("--arrow-x", `${center - left}px`);
   };
-  info.addEventListener("pointerenter", place);
-  info.addEventListener("focus", place);
-  info.addEventListener("click", () => { place(); row.classList.toggle("is-open"); });
-  document.addEventListener("pointerdown", (event) => { if (!(event.target instanceof Node) || !info.contains(event.target)) row.classList.remove("is-open"); });
+  const show = () => { row.classList.remove("is-dismissed"); place(); };
+  const toggle = () => { show(); info.setAttribute("aria-expanded", String(row.classList.toggle("is-open"))); };
+  info.setAttribute("aria-expanded", "false");
+  info.addEventListener("pointerenter", show);
+  info.addEventListener("focus", show);
+  info.addEventListener("click", toggle);
+  info.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggle();
+  });
+  document.addEventListener("pointerdown", (event) => { if (!(event.target instanceof Node) || !info.contains(event.target)) { row.classList.remove("is-open"); info.setAttribute("aria-expanded", "false"); } });
 }
