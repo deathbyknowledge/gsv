@@ -1,4 +1,4 @@
-import { parseContactInvitation } from "@humansandmachines/gsv/protocol";
+import { OutdatedContactInvitationError, parseContactInvitation } from "@humansandmachines/gsv/protocol";
 import { t } from "../../i18n/locale";
 
 const KEY = "gsv.contact-invitation";
@@ -31,12 +31,12 @@ export function clearContactInvitation(): void {
   window.history.replaceState(window.history.state, "", url);
 }
 
-export function contactInvitationPreview(value: string): { name: string; origin: string; expired: boolean } | { error: string } {
+export function contactInvitationPreview(value: string): { name: string; handle: string; expired: boolean } | { error: string } {
   try {
     const { invitation } = parseContactInvitation(value);
-    return { name: invitation.subject.displayName, origin: new URL(invitation.origin).host, expired: invitation.expiresAtMs <= Date.now() };
-  } catch {
+    return { name: invitation.name, handle: invitation.handle, expired: invitation.expiresAtMs <= Date.now() };
+  } catch (cause) {
     // Any failure here means the pasted link or code is not a usable invitation.
-    return { error: t("session.contact.invalid") };
+    return { error: t(cause instanceof OutdatedContactInvitationError ? "session.contact.outdated" : "session.contact.invalid") };
   }
 }

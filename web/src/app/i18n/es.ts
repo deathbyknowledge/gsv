@@ -1108,6 +1108,7 @@ export const es = {
   "session.contact.review": "Revisa la invitación en Ship antes de conectar.",
   "session.contact.missing": "A este enlace le falta la invitación.",
   "session.contact.invalid": "Esta invitación no es válida. Pega el enlace o el código completo.",
+  "session.contact.outdated": "Esta invitación es de antes de una actualización. Pide una nueva.",
 
   // Session: Ship address
   "session.address.label": "Nombre de usuario o dirección",

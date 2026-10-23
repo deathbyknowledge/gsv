@@ -1107,6 +1107,7 @@ export const en = {
   "session.contact.review": "Review the invitation in Ship before connecting.",
   "session.contact.missing": "This link is missing its invitation.",
   "session.contact.invalid": "This invitation is not valid. Paste the complete link or code.",
+  "session.contact.outdated": "This invitation is from before an update. Ask for a new one.",
 
   // Session: Ship address
   "session.address.label": "Handle or address",

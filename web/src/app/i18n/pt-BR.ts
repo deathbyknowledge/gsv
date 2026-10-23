@@ -1113,6 +1113,7 @@ export const ptBR = {
   "session.contact.review": "Revise o convite no Ship antes de se conectar.",
   "session.contact.missing": "Este link está sem o convite.",
   "session.contact.invalid": "Este convite não é válido. Cole o link ou o código completo.",
+  "session.contact.outdated": "Este convite é de antes de uma atualização. Peça um novo.",
 
   // Session: Ship address
   "session.address.label": "Nome de usuário ou endereço",
