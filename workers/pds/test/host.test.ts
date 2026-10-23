@@ -14,6 +14,7 @@ import { HostedRepo, type LexObject, type RepoWrite } from "../src/host/repo";
 import { handleXrpc, type Admission } from "../src/host/xrpc";
 import { FakePlcDirectory, installFakePlc } from "./plc";
 import { framesFor, subscribe, verifyCommit, type Frame } from "./relay";
+import { deliver, errorOf, read, rejection } from "./support";
 
 const NOTE = "space.gsv.note";
 
@@ -426,30 +427,6 @@ function xrpc(
   return handleXrpc(new Request(`https://pds.test/xrpc/${method}?${new URLSearchParams(params)}`), env, admit);
 }
 
-/** Parses a successful XRPC response with the schema a test expects. */
-async function read<T extends z.ZodType>(schema: T, response: Promise<Response>): Promise<z.output<T>> {
-  const resolved = await response;
-  if (!resolved.ok) throw new Error(`HTTP ${resolved.status}: ${await resolved.text()}`);
-  return schema.parse(await resolved.json());
-}
-
-/** The message a call rejects with. Awaiting it here keeps assertions off an RPC promise's pipelined properties. */
-async function rejection<T>(call: Promise<T>): Promise<string> {
-  try {
-    await call;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-  throw new Error("Expected the call to reject");
-}
-
-/** The XRPC error name a failed call reports. */
-async function errorOf(response: Promise<Response>): Promise<string> {
-  const resolved = await response;
-  expect(resolved.ok).toBe(false);
-  return z.object({ error: z.string() }).parse(await resolved.json()).error;
-}
-
 /** Every page of a collection's listing, as record keys. */
 async function listAll(repo: string, reverse: boolean): Promise<string[][]> {
   const pages: string[][] = [];
@@ -516,20 +493,6 @@ function bytes(text: string): Uint8Array {
 
 async function blobKeys(prefix: string): Promise<string[]> {
   return (await env.BLOBS.list({ prefix })).objects.map((object) => object.key).sort();
-}
-
-/** Runs a repository's alarm until the host firehose holds every event in its outbox. */
-async function deliver(repo: DurableObjectStub<HostedRepo>): Promise<void> {
-  await vi.waitFor(async () => {
-    await runDurableObjectAlarm(repo);
-    expect(await runInDurableObject(repo, async (_instance, state) => {
-      const delivered = (await state.storage.get<number>("firehose.delivered")) ?? 0;
-      return state.storage.sql.exec<{ pending: number }>(
-        "SELECT COUNT(*) AS pending FROM firehose_events WHERE seq > ?",
-        delivered,
-      ).one().pending;
-    })).toBe(0);
-  });
 }
 
 /** Makes every delivery to a host firehose fail until `append` is restored; `errors` records what delivery logs. */

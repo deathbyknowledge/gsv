@@ -5,7 +5,16 @@ host. One `HostedRepo` Durable Object per account holds its did:plc, signed
 repository, blobs and firehose outbox. One `HostFirehose` object numbers every
 repository's events into the host's firehose and keeps the directory of hosted
 repositories. `handleXrpc` serves public reads, sending each repository read to
-the object that holds the repository. Nothing deploys the host yet.
+the object that holds the repository. The host imports nothing from GSV.
+
+`src/gsv/` connects the host to a GSV deployment. Each installation's
+repository object is named by its installation ID and keeps its blobs under
+`installations/<id>/`. `PdsPublisherEntrypoint` hands the Kernel its
+installation's repository when the binding carries the `kernel-publish`
+authority and Accounts reports the installation active. A new account takes
+only a handle that Accounts routes to the same installation. Public reads
+serve an active installation's repository; a retired one reads as deleted and
+any other state as suspended. Nothing deploys the worker yet.
 
 ## Repository engine
 
@@ -67,3 +76,7 @@ firehose as a relay does. They cover a lost directory response, writes that
 overlap while blob storage is slow, a head that no event announced, delivery
 retries with backoff, the blob lifecycle, cursor replay and retention, and the
 XRPC reads, including an unknown DID that must not address any object.
+
+The GSV tests use an in-memory Accounts directory. They cover the publishing
+authority, installations that are not active, the handles a new account may
+take, the installation's blob prefix, and how each installation state reads.
