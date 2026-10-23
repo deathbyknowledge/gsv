@@ -27,7 +27,10 @@ export class ProfileStore {
     const state: ProfileState = {
       revision: row.revision, url: `${origin}/profile`, draft: profileFieldsSchema.parse(JSON.parse(row.draft_json)),
     };
-    if (row.published_json && row.published_revision) state.published = { url: `${origin}/profile`, revision: row.published_revision };
+    if (row.published_json && row.published_revision) {
+      const { contactPolicy } = publicProfileSchema.parse(JSON.parse(row.published_json));
+      state.published = { url: `${origin}/profile`, revision: row.published_revision, contactPolicy };
+    }
     return state;
   }
 

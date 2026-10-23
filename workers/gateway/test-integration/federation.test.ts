@@ -77,7 +77,7 @@ describe("cross-GSV federation integration", () => {
     expect(remote.profile).toMatchObject({ about: draft.about, origin: firstOrigin.origin, revision: 2 });
     expect(remote.profile).not.toHaveProperty("ownerUid");
     expect(remote.profile).not.toHaveProperty("username");
-    expect((await second.profile.get({})).profile.published).toEqual({ url: new URL("/profile", secondOrigin).href, revision: 1 });
+    expect((await second.profile.get({})).profile.published).toEqual({ url: new URL("/profile", secondOrigin).href, revision: 1, contactPolicy: "requests" });
     const subjectUrl = new URL(`/_gsv/federation/v2/subjects/${encodeURIComponent(remote.profile.actor.subjectId)}`, firstOrigin);
     const document = await fetch(subjectUrl);
     expect(await document.json()).toEqual(remote.profile);
