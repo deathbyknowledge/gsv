@@ -630,7 +630,7 @@ export const es = {
   "desktop.shortcut.preparing": "Preparando…",
   "desktop.shortcut.change": "cambiar",
   "desktop.shortcut.hint": "Pulsa las teclas a la vez. Esc para cancelar.",
-  "desktop.shortcut.errors.altGr": "Elige un atajo sin AltGr ni teclas de acento.",
+  "desktop.shortcut.errors.mouse": "Los botones del ratón aún no pueden ser atajos. Pulsa una combinación de teclas.",
   "desktop.shortcut.errors.unsupported": "Esa tecla no es compatible. Prueba otra combinación.",
   "desktop.shortcut.errors.modifier": "Incluye Ctrl, Alt o Comando/Windows para poder seguir escribiendo con normalidad.",
 

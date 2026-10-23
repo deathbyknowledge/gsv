@@ -74,7 +74,7 @@ beforeEach(() => {
   signals.clear();
   statuses.clear();
   send.mockReset();
-  vi.stubGlobal("document", {});
+  vi.stubGlobal("document", { addEventListener: () => {}, removeEventListener: () => {} });
   vi.stubGlobal("window", {
     location: { protocol: "https:", host: "space.example" },
     matchMedia: () => ({ matches: true }),
@@ -419,6 +419,43 @@ describe("Zen conversation entry", () => {
       await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({
         text: "Keep this draft", selectedTarget: "gsv",
       })));
+    } finally { await zen.unmount(); }
+  });
+
+  it("closes the places menu when its trigger is tapped again, even where a tap does not focus the button", async () => {
+    const zen = await mountedZen(undefined, "laptop");
+    try {
+      const trigger = () => zen.nodes().find((node) => node.type === "button" && node.props.class === "zen-place-trigger")!;
+      const menu = () => zen.nodes().find((node) => node.type === "div" && node.props.id === "zen-places")!;
+      /* the harness mounts no DOM: Node is stubbed for the instanceof check, the trigger ref stays null,
+         the menu itself is "inside", and "outside" stands in for focus landing anywhere else */
+      class FakeNode extends EventTarget { contains(node: EventTarget): boolean { return node === this; } }
+      vi.stubGlobal("Node", FakeNode);
+      const inside = new FakeNode();
+      const outside = new FakeNode();
+      const blur = (relatedTarget: FakeNode | null) => menu().props.onfocusout!({ relatedTarget, currentTarget: inside });
+      await act(() => { trigger().props.onClick!(); });
+      expect(menu().props.hidden).toBe(false);
+
+      // Safari: pointerdown on the trigger, the focused menu item blurs with focus going nowhere, then the click lands.
+      await act(() => { trigger().props.onPointerDown!(); });
+      await act(() => { blur(outside); });
+      expect(menu().props.hidden).toBe(false);
+      await act(() => { trigger().props.onClick!(); });
+      expect(menu().props.hidden).toBe(true);
+
+      // Keyboard: focus leaving the menu without a press on the trigger still closes it.
+      await act(() => { trigger().props.onClick!(); });
+      expect(menu().props.hidden).toBe(false);
+      await act(() => { blur(outside); });
+      expect(menu().props.hidden).toBe(true);
+
+      // Focus moving between items inside the menu keeps it open.
+      await act(() => { trigger().props.onClick!(); });
+      await act(() => { blur(inside); });
+      expect(menu().props.hidden).toBe(false);
+      await act(() => { trigger().props.onClick!(); });
+      expect(menu().props.hidden).toBe(true);
     } finally { await zen.unmount(); }
   });
 

@@ -420,6 +420,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [placesOpen, setPlacesOpen] = useState(false);
   const placesRef = useRef<HTMLDivElement>(null);
   const placeButtonRef = useRef<HTMLButtonElement>(null);
+  /* Safari doesn't focus a button on tap, so pressing the trigger blurs the menu with no relatedTarget;
+     the blur must not close what the click is about to toggle. Set on press, consumed by that blur or the click. */
+  const placeTriggerPressed = useRef(false);
   useDismissOnOutsideClick(placesOpen, () => [placesRef.current, placeButtonRef.current], () => setPlacesOpen(false));
   useLayoutEffect(() => {
     if (!active) setPlacesOpen(false);
@@ -1258,7 +1261,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               onKeyDown={(event) => {
                 if (event.key === "Escape" && placesOpen) { event.preventDefault(); event.stopPropagation(); setPlacesOpen(false); }
               }}
-              onClick={() => { setPickerQuery(null); setPlacesOpen((open) => !open); }}>
+              onPointerDown={() => { placeTriggerPressed.current = true; }}
+              onPointerCancel={() => { placeTriggerPressed.current = false; }}
+              onClick={() => { placeTriggerPressed.current = false; setPickerQuery(null); setPlacesOpen((open) => !open); }}>
               <span class={`zen-place-status${currentPlace.online ? " is-online" : ""}`} aria-hidden="true" />
               <span class="zen-place-label">{currentPlace.label}</span>
               <span class="zen-place-chevron" aria-hidden="true" />
@@ -1281,6 +1286,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               if (event.key === "Escape") { event.preventDefault(); setPlacesOpen(false); placeButtonRef.current?.focus(); }
             }}
             onBlur={(event) => {
+              if (placeTriggerPressed.current) { placeTriggerPressed.current = false; return; }
               const next = event.relatedTarget;
               if (next !== placeButtonRef.current && (!(next instanceof Node) || !event.currentTarget.contains(next))) setPlacesOpen(false);
             }}>
