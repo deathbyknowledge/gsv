@@ -9,9 +9,10 @@ export async function sendOwnerVerification(auth: InstallationOwnerAuthStore, ma
   if (issued.sendRequired && issued.deliveryId) {
     let sent = false;
     try {
-      await mail.send({ from: { email: sender.from, name: "Ship" }, to: issued.email,
-        ...(sender.replyTo ? { replyTo: sender.replyTo } : {}),
-        ...ownerVerificationEmail(input.purpose, issued.code, issued.expiresAt) });
+      const message: EmailMessageBuilder = { from: { email: sender.from, name: "Ship" }, to: issued.email,
+        ...ownerVerificationEmail(input.purpose, issued.code, issued.expiresAt) };
+      if (sender.replyTo) message.replyTo = sender.replyTo;
+      await mail.send(message);
       sent = true;
     } catch {
       // Delivery errors can contain addresses and mail bodies. Only expose the outcome.
