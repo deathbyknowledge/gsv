@@ -8,7 +8,7 @@ describe("conversation schema upgrades", () => {
   it("reads and appends ordinary text without removing an experimental local v7 column", async () => {
     await runWithRealKernelSql((sql, storage) => {
       runSqlMigrations(storage, CONVERSATION_SCHEMA_COMPONENT, [
-        ...CONVERSATION_MIGRATIONS,
+        ...CONVERSATION_MIGRATIONS.filter((migration) => migration.id < 7),
         { id: 7, name: "message_action", statements: ["ALTER TABLE messages ADD COLUMN action_json TEXT"] },
       ]);
       sql.exec("INSERT INTO conversation_meta (conversation_id, owner_uid, kind, created_at) VALUES ('conversation', 1000, 'ship', 1)");
@@ -27,6 +27,40 @@ describe("conversation schema upgrades", () => {
       runConversationSqlMigrations(storage);
       expect(new ConversationStore(sql).messageAt(2)?.text).toBe("Just explain the options.");
       expect(sql.exec("SELECT action_json FROM messages WHERE message_id = 'new'").one().action_json).toBeNull();
+    });
+  });
+
+  it("sets origin details from before DIDs aside for the move and keeps their messages readable", async () => {
+    await runWithRealKernelSql((sql, storage) => {
+      runSqlMigrations(storage, CONVERSATION_SCHEMA_COMPONENT, CONVERSATION_MIGRATIONS.filter((migration) => migration.id < 8));
+      sql.exec("INSERT INTO conversation_meta (conversation_id, owner_uid, kind, created_at) VALUES ('conversation', 1000, 'contact', 1)");
+      const social = JSON.stringify({
+        threadId: "thread:mara", reference: { actor: { shipId: "ship:mara", subjectId: "subject:mara" }, messageId: "origin:one" },
+        provenance: { kind: "human" },
+      });
+      sql.exec("INSERT INTO messages (message_id, idempotency_key, author_json, text, social_json, origin_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "old", "old", JSON.stringify({ kind: "contact", contactId: "contact:mara", shipId: "ship:mara", subjectId: "subject:mara", displayName: "Mara" }),
+        "Before the move", social, JSON.stringify({ kind: "client" }), 1);
+      sql.exec(`INSERT INTO message_origins (ship_id, subject_id, origin_message_id, thread_id, message_id, sequence)
+        VALUES ('ship:mara', 'subject:mara', 'origin:one', 'thread:mara', 'old', 1)`);
+      runConversationSqlMigrations(storage);
+      runConversationSqlMigrations(storage);
+
+      const store = new ConversationStore(sql);
+      const author = { kind: "contact" as const, contactId: "contact:mara", displayName: "Mara" };
+      expect(store.messageAt(1)).toEqual({
+        id: "old", conversationId: "conversation", sequence: 1, author, text: "Before the move", origin: { kind: "client" }, createdAt: 1,
+      });
+      expect(store.awaitingMove()).toBe(true);
+      expect(sql.exec("SELECT legacy_social_json FROM messages").one().legacy_social_json).toBe(social);
+      expect(sql.exec("SELECT ship_id, message_id FROM message_origins_legacy").toArray()).toEqual([{ ship_id: "ship:mara", message_id: "old" }]);
+
+      // Messages after the move name their author's Ship by DID.
+      const reference = { did: "did:plc:maraaaaaaaaaaaaaaaaaaaaa", messageId: "origin:two" };
+      store.append({ messageId: "new", idempotencyKey: "new", payloadHash: "fixture", text: "After the move", author,
+        origin: { kind: "client" }, createdAt: 2, social: { threadId: "thread:mara", reference, provenance: { kind: "human" } } });
+      expect(store.messageAt(2)?.social?.reference).toEqual(reference);
+      expect(store.resolveOrigin(reference, "thread:mara")).toEqual({ messageId: "new", sequence: 2 });
     });
   });
 

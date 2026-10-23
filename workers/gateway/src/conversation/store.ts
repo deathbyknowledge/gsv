@@ -145,10 +145,9 @@ export class ConversationStore {
     const message = toMessage(meta.conversation_id, row);
     if (input.social) {
       this.sql.exec(`INSERT INTO message_origins
-        (ship_id, subject_id, origin_message_id, thread_id, message_id, sequence)
-        VALUES (?, ?, ?, ?, ?, ?)`,
-      input.social.reference.actor.shipId, input.social.reference.actor.subjectId,
-      input.social.reference.messageId, input.social.threadId, message.id, message.sequence);
+        (did, origin_message_id, thread_id, message_id, sequence)
+        VALUES (?, ?, ?, ?, ?)`,
+      input.social.reference.did, input.social.reference.messageId, input.social.threadId, message.id, message.sequence);
     }
     this.sql.exec(
       `INSERT INTO message_receipts
@@ -214,10 +213,15 @@ export class ConversationStore {
   resolveOrigin(reference: OriginMessageRef, threadId: string): { messageId: string; sequence: number } | null {
     const row = this.sql.exec<{ message_id: string; sequence: number }>(
       `SELECT message_id, sequence FROM message_origins
-       WHERE ship_id = ? AND subject_id = ? AND origin_message_id = ? AND thread_id = ?`,
-      reference.actor.shipId, reference.actor.subjectId, reference.messageId, threadId,
+       WHERE did = ? AND origin_message_id = ? AND thread_id = ?`,
+      reference.did, reference.messageId, threadId,
     ).toArray()[0];
     return row ? { messageId: row.message_id, sequence: row.sequence } : null;
+  }
+
+  /** Whether hot messages still hold origin details from before DIDs, which the move names. */
+  awaitingMove(): boolean {
+    return this.sql.exec("SELECT 1 FROM messages WHERE legacy_social_json IS NOT NULL LIMIT 1").toArray().length > 0;
   }
 
   listHot(beforeSequence: number, limit: number): ConversationMessage[] {

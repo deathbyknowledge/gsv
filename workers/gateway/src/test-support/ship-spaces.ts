@@ -10,7 +10,7 @@ import type { ShipIdentity } from "../kernel/ships/identity";
 import { SHIP_METHODS } from "../kernel/ships/methods";
 import { handleShipXrpc } from "../kernel/ships/xrpc";
 import { testPeer } from "./peers";
-import { TEST_PDS_URL, TEST_PLC_URL, type TestDidAccount, type TestShipNetwork } from "./ship-network";
+import { TEST_PDS_URL, type TestDidAccount, type TestShipNetwork } from "./ship-network";
 
 /** Each test space has one person, signed in from a client. */
 export const SPACE_OWNER_UID = 1000;
@@ -72,7 +72,7 @@ export async function testSpace(network: TestShipNetwork, name: string): Promise
           ...base,
           // SAFETY: contact handlers only check that a direct human connection exists.
           connection: {} as KernelContext["connection"],
-          env: { ...base.env, PLC_URL: TEST_PLC_URL, PDS: testPds(space, base.shipIdentity) },
+          env: { ...base.env, PDS: testPds(space, base.shipIdentity) },
         };
         try {
           return { ok: true as const, value: await work(ctx, state.storage) };

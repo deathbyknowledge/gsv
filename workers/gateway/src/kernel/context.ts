@@ -12,7 +12,6 @@ import type { ModelMetadataResolver } from "../inference/model-metadata";
 import type { LedgerStore } from "./ledger";
 import type { McpClientManager } from "./mcp-client";
 import type {
-  FederationTransportReceipt,
   BrowserHandoff,
   JsonObject,
   JsonValue,
@@ -148,8 +147,8 @@ export type KernelContext = {
   ) => Promise<void>;
   coordinateFederationInbound: (
     key: string,
-    operation: () => Promise<FederationTransportReceipt>,
-  ) => Promise<FederationTransportReceipt>;
+    operation: () => Promise<void>,
+  ) => Promise<void>;
   coordinateFederationContact: <Value>(
     contactId: string,
     operation: () => Value | Promise<Value>,

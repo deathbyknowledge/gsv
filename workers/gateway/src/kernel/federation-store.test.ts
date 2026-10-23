@@ -543,26 +543,10 @@ describe("FederationStore", () => {
         payloadHash: "hash:changed",
         payload: delivery.payload,
       })).toThrow("different payload");
-      expect(store.commitInbox(
-        contact.id,
-        contact.generation,
-        delivery.deliveryId,
-        { version: 1, status: "committed" },
-        5_000,
-      )).toBe(true);
-      expect(store.commitInbox(
-        contact.id,
-        contact.generation,
-        delivery.deliveryId,
-        { version: 1, status: "changed" },
-        6_000,
-      )).toBe(false);
+      expect(store.commitInbox(contact.id, contact.generation, delivery.deliveryId, 5_000)).toBe(true);
+      expect(store.commitInbox(contact.id, contact.generation, delivery.deliveryId, 6_000)).toBe(false);
       expect(store.inbox(contact.id, contact.generation, delivery.deliveryId))
-        .toMatchObject({
-          state: "committed",
-          response: { version: 1, status: "committed" },
-          committedAtMs: 5_000,
-        });
+        .toMatchObject({ state: "committed", committedAtMs: 5_000 });
     });
   });
 
@@ -745,6 +729,7 @@ describe("FederationStore", () => {
           localMessage: {
             messageId: "message:preparing",
             text: "Preparing",
+            social: { threadId: contact.threadId, reference: { did: LOCAL_DID, messageId: "message:preparing" }, provenance: { kind: "human" } },
             author: { kind: "user", uid: 1000 },
             origin: { kind: "client" },
             processId: "proc:ship",

@@ -69,11 +69,14 @@ export async function handleShipXrpc(request: Request, ctx: KernelContext, metho
   }
 }
 
-/** Calls another Ship's method with a fresh service-auth token; a procedure has `input`. */
+/**
+ * Calls another Ship's method with a fresh service-auth token; a procedure has
+ * `input`. The timeout covers reading the answer's body too.
+ */
 export async function callShip(
   did: string,
   nsid: string,
-  request: { input?: JsonValue; params?: Record<string, string> },
+  request: { input?: JsonValue; params?: Record<string, string>; timeoutMs?: number },
   ctx: KernelContext,
 ): Promise<Response> {
   const { shipEndpoint } = await resolveDid(did, ctx);
@@ -82,13 +85,15 @@ export async function callShip(
   const url = new URL(`${XRPC_PREFIX}${nsid}`, shipEndpoint);
   for (const [name, value] of Object.entries(request.params ?? {})) url.searchParams.set(name, value);
   const authorization = `Bearer ${token}`;
-  if (request.input === undefined) return await fetchFederation(url.href, { method: "GET", headers: { authorization }, signal: ctx.requestSignal }, ctx);
+  if (request.input === undefined) {
+    return await fetchFederation(url.href, { method: "GET", headers: { authorization }, signal: ctx.requestSignal }, ctx, request.timeoutMs);
+  }
   return await fetchFederation(url.href, {
     method: "POST",
     headers: { authorization, "content-type": "application/json" },
     body: JSON.stringify(request.input),
     signal: ctx.requestSignal,
-  }, ctx);
+  }, ctx, request.timeoutMs);
 }
 
 /** Calls another Ship's procedure and reads its output; its XRPC error becomes a ShipCallError. */

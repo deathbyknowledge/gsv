@@ -112,7 +112,6 @@ export const KERNEL_V073_CONTACTS_BY_DID: SqlMigration = {
       payload_hash TEXT NOT NULL,
       payload_json TEXT NOT NULL,
       state TEXT NOT NULL CHECK (state IN ('received', 'committed', 'rejected')),
-      response_json TEXT,
       last_error TEXT,
       received_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,

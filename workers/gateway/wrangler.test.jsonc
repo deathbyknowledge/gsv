@@ -58,6 +58,8 @@
 		]
 	},
 	"services": [{ "binding": "INSTALLATION_DIRECTORY", "service": "gateway-test", "entrypoint": "TestInstallationDirectory" }],
+	// Test Kernels resolve DIDs against the fake directory Ship tests install, never plc.directory.
+	"vars": { "PLC_URL": "https://plc.test" },
 	"observability": {
 		"enabled": true
 	},

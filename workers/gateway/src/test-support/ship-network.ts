@@ -6,7 +6,7 @@ import { FakePlcDirectory } from "@humansandmachines/gsv-pds/test/plc";
 import { vi } from "vitest";
 import * as z from "zod/mini";
 
-/** The directory Ship tests register DIDs with; tests set `PLC_URL` to it. */
+/** The directory Ship tests register DIDs with; the test Worker's `PLC_URL` names it. */
 export const TEST_PLC_URL = "https://plc.test";
 /** Where test accounts keep their repositories. */
 export const TEST_PDS_URL = "https://pds.ship.test";

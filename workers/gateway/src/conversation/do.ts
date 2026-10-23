@@ -6,8 +6,10 @@ import type {
   ConversationSearchArgs,
   ConversationSearchResult,
   ConversationMessage,
+  ConversationMessageAuthor,
   ResourceBlock,
   OriginMessageRef,
+  SocialMessageMetadata,
 } from "@humansandmachines/gsv/protocol";
 import { resourceBlockSchema, socialMessageMetadataSchema, originMessageRefSchema } from "@humansandmachines/gsv/protocol";
 import { createInstallationStorage } from "../installation/storage";
@@ -167,7 +169,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
     this.ctx.storage.kv.put(INTAKE_KEY, { ...intake, discarded: true });
     await Promise.allSettled([this.appendTransition, this.archiveTransition]);
     this.ctx.storage.transactionSync(() => {
-      for (const table of ["messages", "message_receipts", "message_origins", "message_search"]) {
+      for (const table of ["messages", "message_receipts", "message_origins", "message_origins_legacy", "message_search"]) {
         this.ctx.storage.sql.exec(`DELETE FROM ${table}`);
       }
     });
@@ -358,6 +360,8 @@ export class Conversation extends DurableObject<GatewayEnv> {
   private async archiveIfNeeded(): Promise<void> {
     if (this.retirement.state || this.ctx.storage.kv.get<ConversationIntake>(INTAKE_KEY)?.discarded) return;
     while (this.store.hotCount() > HOT_MESSAGE_LIMIT) {
+      // An archive is immutable, so origin details from before DIDs stay hot until the move names them.
+      if (this.store.awaitingMove()) return;
       const messages = this.store.oldestHot(ARCHIVE_SEGMENT_SIZE);
       if (messages.length === 0) return;
       const bytes = new TextEncoder().encode(JSON.stringify(messages));
@@ -456,8 +460,38 @@ export class Conversation extends DurableObject<GatewayEnv> {
     // SAFETY: archive rows are written from ConversationMessage values and the count was verified above.
     // Older local archives may carry the withdrawn request field. Keep their bytes/checksum
     // untouched, but never return that field through the ordinary conversation contract.
-    return parsed.map(({ action: _retiredAction, ...message }: ConversationMessage & { action?: unknown }) => message);
+    return parsed.map(({ action: _retiredAction, ...message }: ArchivedMessage) => withoutShipIds(message));
   }
+}
+
+/** A message as the release that archived its segment wrote it. */
+export type ArchivedMessage = Omit<ConversationMessage, "author" | "social"> & {
+  author: ConversationMessageAuthor | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
+  social?: SocialMessageMetadata | SocialBeforeDids;
+  action?: unknown;
+};
+/** Origin details from before DIDs, which named a Ship by shipId and its person by subject. */
+type SocialBeforeDids = Omit<SocialMessageMetadata, "reference" | "replyTo"> & {
+  reference: OriginBeforeDids;
+  replyTo?: OriginBeforeDids;
+};
+type OriginBeforeDids = { actor: { shipId: string; subjectId: string }; messageId: string };
+
+/**
+ * Messages archived before DIDs named a contact's Ship by shipId and subject,
+ * which the current contract has no place for.
+ */
+function withoutShipIds({ author, social, ...message }: Omit<ArchivedMessage, "action">): ConversationMessage {
+  const current: ConversationMessage = {
+    ...message,
+    author: author.kind === "contact" ? { kind: "contact", contactId: author.contactId, displayName: author.displayName } : author,
+  };
+  if (social && !isBeforeDids(social)) current.social = social;
+  return current;
+}
+
+function isBeforeDids(social: SocialMessageMetadata | SocialBeforeDids): social is SocialBeforeDids {
+  return "actor" in social.reference;
 }
 
 function validateFederationResource(input: ResourceBlock, target: string): ResourceBlock {

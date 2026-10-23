@@ -159,11 +159,9 @@ function makeContact(): FederationContactRecord {
     ownerUid: IDENTITY.uid,
     state: "active",
     generation: "generation:friend",
-    remoteShipId: "ship:friend",
-    remoteSubject: { id: "subject:friend", displayName: "Flynn" },
-    remoteOrigin: "https://flynn.example",
-    remotePublicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" },
-    sharedSecret: "secret",
+    remoteDid: "did:plc:flynnaaaaaaaaaaaaaaaaaaa",
+    remoteName: "Flynn",
+    remoteHandle: "flynn.example",
     conversationId: "conversation:friend",
     threadId: "thread:friend",
     createdAtMs: 1,
@@ -4381,7 +4379,7 @@ describe("native administration shell commands", () => {
       }],
     });
     expect(contacts).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(contacts.stdout).toContain("contact:friend\tactive\tAlice\tship:friend");
+    expect(contacts.stdout).toContain("contact:friend\tactive\tAlice\t@flynn.example");
     expect(help).toMatchObject({ status: "completed", exitCode: 0 });
     expect(help.stdout).toContain("contact invite create");
     expect(list).toHaveBeenCalledWith(IDENTITY.uid, false);
@@ -4487,13 +4485,7 @@ describe("native administration shell commands", () => {
           id: "msg:one",
           conversationId: conversation.id,
           sequence: 1,
-          author: {
-            kind: "contact",
-            contactId: contact.id,
-            shipId: contact.remoteShipId,
-            subjectId: contact.remoteSubject.id,
-            displayName: contact.remoteSubject.displayName,
-          },
+          author: { kind: "contact", contactId: contact.id, displayName: contact.remoteName },
           text: "hello from Flynn",
           origin: { kind: "federation", contactId: contact.id, deliveryId: "delivery:one" },
           createdAt: 1,

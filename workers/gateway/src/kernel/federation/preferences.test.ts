@@ -13,9 +13,7 @@ describe("contact policy authority", () => {
   it("lets only the owner's canonical Ship change handling and retains revision checks", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const store = new FederationStore(storage);
-      const contact = store.activateContact({ ownerUid: OWNER.uid, remoteShipId: "ship:remote",
-        remoteSubject: { id: "subject:remote", displayName: "Remote" }, remoteOrigin: "https://remote.example",
-        remotePublicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" }, sharedSecret: "secret",
+      const contact = store.activateContact({ ownerUid: OWNER.uid, remoteDid: "did:plc:remoteaaaaaaaaaaaaaaaaaa", remoteName: "Remote",
         generation: "generation:one", threadId: "thread:one" });
       const ctx = policyContext(storage, store);
       const change = { contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } };

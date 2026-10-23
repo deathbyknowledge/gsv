@@ -31,6 +31,9 @@ export type FederationContactRecord = ContactSummary & {
   threadId: string;
 };
 
+/** A contact whose Ship this Ship can call: the operator's move has named its DID. */
+export type ReachableContact = FederationContactRecord & { remoteDid: string };
+
 type ActorBlockChange = { block: ContactBlock | null; changed: boolean };
 
 export class FederationActorBlockedError extends Error {
@@ -87,7 +90,7 @@ export type FederationPairingAttemptRecord = FederationPairingAttemptBase & (
 export type FederationOutboxLocalMessage = {
   messageId: string;
   text: string;
-  social?: SocialMessageMetadata;
+  social: SocialMessageMetadata;
   media?: ResourceBlock[];
   author: ConversationMessageAuthor;
   origin: ConversationMessageOrigin;
@@ -153,7 +156,6 @@ export type FederationInboxRecord = {
   payloadHash: string;
   payload: FederationDeliveryPayload;
   state: "received" | "committed" | "rejected";
-  response?: JsonObject;
   lastError?: string;
   receivedAtMs: number;
   updatedAtMs: number;
@@ -236,7 +238,7 @@ const conversationMessageOriginSchema = z.discriminatedUnion("kind", [
 const federationOutboxLocalMessageSchema = z.strictObject({
   messageId: z.string(),
   text: z.string(),
-  social: z.optional(socialMessageMetadataSchema),
+  social: socialMessageMetadataSchema,
   media: z.array(resourceBlockSchema).optional(),
   author: conversationMessageAuthorSchema,
   origin: conversationMessageOriginSchema,
@@ -342,7 +344,6 @@ type InboxRow = {
   payload_hash: string;
   payload_json: string;
   state: FederationInboxRecord["state"];
-  response_json: string | null;
   last_error: string | null;
   received_at: number;
   updated_at: number;
@@ -1476,16 +1477,14 @@ export class FederationStore {
     contactId: string,
     contactGeneration: string,
     deliveryId: string,
-    response: JsonObject,
     now = Date.now(),
   ): boolean {
     const cursor = this.sql.exec(
       `UPDATE federation_inbox SET
-         state = 'committed', response_json = ?, last_error = NULL,
+         state = 'committed', last_error = NULL,
          committed_at = ?, updated_at = ?
        WHERE contact_id = ? AND contact_generation = ? AND delivery_id = ?
          AND state = 'received'`,
-      JSON.stringify(response),
       now,
       now,
       contactId,
@@ -1932,9 +1931,6 @@ function inboxFromRow(row: InboxRow): FederationInboxRecord {
     payloadHash: row.payload_hash,
     payload: federationDeliveryPayloadSchema.parse(JSON.parse(row.payload_json)),
     state: row.state,
-    ...(row.response_json
-      ? { response: jsonObjectSchema.parse(JSON.parse(row.response_json)) }
-      : undefined),
     ...(row.last_error ? { lastError: row.last_error } : undefined),
     receivedAtMs: row.received_at,
     updatedAtMs: row.updated_at,

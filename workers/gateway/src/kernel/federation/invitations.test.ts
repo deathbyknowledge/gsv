@@ -9,6 +9,8 @@ import {
   type TestDidAccount,
 } from "../../test-support/ship-network";
 import { SPACE_OWNER_UID, testSpace, type TestSpace } from "../../test-support/ship-spaces";
+import { SHIP_METHODS } from "../ships/methods";
+import { handleShipXrpc } from "../ships/xrpc";
 import { handleContactInviteAccept, handleContactInviteCancel, handleContactInviteCreate } from "./invitations";
 
 let network: TestShipNetwork;
@@ -127,6 +129,43 @@ describe("invitations", () => {
     const outdated = `gsv-contact-v1:${btoa(JSON.stringify(old)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
     await expect(bob.run((ctx) => handleContactInviteAccept({ code: outdated, shipHandlesMessages: false }, ctx)))
       .rejects.toThrow("This invitation is from before an update. Ask for a new one.");
+  });
+
+  it.each([false, true])("refuses a new acceptance once the person is removed mid-call, answering one already made=%s", async (accepted) => {
+    const { code } = await alice.run((ctx) => handleContactInviteCreate({}, ctx));
+    const { token } = parseContactInvitation(code).invitation;
+    const before = accepted ? await (await callAcceptInvitation(bob.account, alice, { token, name: "Bob" })).json() : null;
+    const authorization = `Bearer ${await serviceAuthToken(bob.account, alice.account, ACCEPT_INVITATION)}`;
+    const serve = network.hosts.get("bob.ship.test");
+    const outcome = await alice.run(async (ctx, storage) => {
+      // Alice is removed while her Ship checks the caller's handle.
+      const checking = Promise.withResolvers<void>();
+      const removed = Promise.withResolvers<void>();
+      network.hosts.set("bob.ship.test", async (request) => {
+        checking.resolve();
+        await removed.promise;
+        if (!serve) throw new Error("Bob's Ship has no host");
+        return await serve(request);
+      });
+      const pending = handleShipXrpc(new Request(`https://${alice.hostname}/xrpc/${ACCEPT_INVITATION}`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ token, name: "Bob" }),
+      }), ctx, SHIP_METHODS);
+      await checking.promise;
+      storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (?, ?)", SPACE_OWNER_UID, Date.now());
+      ctx.auth.invalidateCredentials(SPACE_OWNER_UID, "test account disabled");
+      removed.resolve();
+      const response = await pending;
+      return {
+        status: response.status,
+        body: await response.json(),
+        invite: ctx.federation.listInvites(SPACE_OWNER_UID, true, Date.now())[0]?.state,
+      };
+    });
+    expect(outcome).toMatchObject(accepted
+      ? { status: 200, body: before, invite: "accepted" }
+      : { status: 404, invite: "issued" });
   });
 
   it("waits while contacts move to DIDs, telling callers to retry", async () => {

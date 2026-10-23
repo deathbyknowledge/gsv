@@ -58,6 +58,9 @@ export const deliverOutputSchema = z.strictObject({
 
 /** A file a delivered message references; the response body carries it. */
 export type GetAttachmentParams = { id: string };
+/** The attachment's size and revision come back beside its body. */
+export const ATTACHMENT_SIZE_HEADER = "ship-attachment-size";
+export const ATTACHMENT_REVISION_HEADER = "ship-attachment-revision";
 export const getAttachmentParamsSchema = z.strictObject({
   id: z.string().check(z.regex(/^resource:[A-Za-z0-9_-]{1,119}$/)),
 }) satisfies z.ZodMiniType<GetAttachmentParams>;

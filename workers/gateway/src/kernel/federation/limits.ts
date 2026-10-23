@@ -1,6 +1,6 @@
 import type { FederationDeliveryPayload } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
-import type { FederationContactRecord, FederationRateLimit } from "../federation-store";
+import type { FederationContactRecord, FederationRateLimit, ReachableContact } from "../federation-store";
 import { PublicFederationError } from "./errors";
 
 const MAX_CONTACTS_PER_OWNER = 1_000;
@@ -25,11 +25,16 @@ export const RECEIPT_RETENTION_MS = 8 * 24 * 60 * 60_000;
 const REQUEST_RETENTION_MS = 90 * 24 * 60 * 60_000;
 const RETENTION_PRUNE_BATCH = 1_000;
 
+const CONTACTS_MOVING = "Your contacts are moving to the open network. Try again in a few minutes.";
+
 /** New contacts wait until the operator's move has named every existing contact's DID. */
 export function assertContactsMoved(ctx: KernelContext): void {
-  if (ctx.federation.awaitingMove()) {
-    throw new Error("Your contacts are moving to the open network. Try again in a few minutes.");
-  }
+  if (ctx.federation.awaitingMove()) throw new Error(CONTACTS_MOVING);
+}
+
+/** A contact from before DIDs can't be reached until the move names its Ship. */
+export function assertContactReachable(contact: FederationContactRecord): asserts contact is ReachableContact {
+  if (contact.remoteDid === undefined) throw new Error(CONTACTS_MOVING);
 }
 
 export function pruneFederationState(ctx: KernelContext, now: number): void {
