@@ -29,7 +29,10 @@ trusted Worker service bindings.
 A found identity contains `installationId`, `handle`, `canonicalOrigin`, and
 `state`. Only `installationId` is the security identity. A handle or hostname
 may move to a replacement installation after reset; old credentials and
-delayed work remain scoped to the retired id.
+delayed work remain scoped to the retired id. A handle is one lowercase DNS
+label. Accounts refuses handles reserved for the deployment's own hostnames:
+`deploy`, `docs`, `install`, `pds` (the open-network host), `signup`,
+`staging` and `www`.
 
 Public clients cannot choose an installation id for an ordinary request.
 The gateway resolves the request hostname before addressing a Kernel.
