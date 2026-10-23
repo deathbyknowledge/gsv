@@ -19,6 +19,7 @@ export function adminPageResponse(input: {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${escapeHtml(input.title)} · GSV registry</title>
     <link rel="stylesheet" href="/admin/styles.css">
+    <script src="/admin/time.js" defer></script>
   </head>
   <body>
     <header class="topbar">
@@ -65,6 +66,12 @@ export function adminStylesheet(head: boolean): Response {
   });
 }
 
+export function adminTimeScript(head: boolean): Response {
+  return new Response(head ? null : ADMIN_TIME_SCRIPT, {
+    headers: adminHeaders("text/javascript; charset=utf-8"),
+  });
+}
+
 export function onboardingNotice(issued: IssuedAdminInstallation): string {
   const url = escapeHtml(issued.onboarding.onboardingUrl);
   const resetCopy = issued.reset
@@ -88,15 +95,18 @@ export function stateBadge(value: string): string {
 
 export function formatDate(timestamp: number | null): string {
   if (timestamp === null) return "Not yet";
-  return escapeHtml(new Intl.DateTimeFormat("en", {
+  const date = new Date(timestamp);
+  const fallback = escapeHtml(new Intl.DateTimeFormat("en", {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: "UTC",
-  }).format(new Date(timestamp))) + " UTC";
+  }).format(date)) + " UTC";
+  return `<time datetime="${date.toISOString()}" data-local-time="date">${fallback}</time>`;
 }
 
 export function formatTime(timestamp: number): string {
-  return escapeHtml(new Intl.DateTimeFormat("en", {
+  const date = new Date(timestamp);
+  const fallback = escapeHtml(new Intl.DateTimeFormat("en", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -104,7 +114,8 @@ export function formatTime(timestamp: number): string {
     second: "2-digit",
     hourCycle: "h23",
     timeZone: "UTC",
-  }).format(new Date(timestamp))) + " UTC";
+  }).format(date)) + " UTC";
+  return `<time datetime="${date.toISOString()}" data-local-time="time">${fallback}</time>`;
 }
 
 /** Durations as an operator reads them: 200ms, 3s, 6m 15s, 2h 4m. */
@@ -162,6 +173,7 @@ function adminHeaders(contentType: string): Headers {
     "form-action 'self'",
     "frame-ancestors 'none'",
     "style-src 'self'",
+    "script-src 'self'",
   ].join("; "));
   headers.set("cross-origin-opener-policy", "same-origin");
   headers.set(
@@ -170,6 +182,20 @@ function adminHeaders(contentType: string): Headers {
   );
   return headers;
 }
+
+const ADMIN_TIME_SCRIPT = `
+(() => {
+  const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  const timeFormatter = new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  });
+  const timezone = dateFormatter.resolvedOptions().timeZone;
+  for (const time of document.querySelectorAll('time[data-local-time]')) {
+    const formatter = time.dataset.localTime === 'time' ? timeFormatter : dateFormatter;
+    time.textContent = formatter.format(new Date(time.dateTime)) + ' ' + timezone;
+  }
+})();
+`;
 
 const ADMIN_STYLES = `
 *, *::before, *::after { box-sizing: border-box; }
