@@ -276,14 +276,22 @@ the chip to inspect its full text, or remove it before sending. Sending
 joins the typed words and then each pasted block, in paste order and separated by blank lines, into
 one message. Pasted text preserves its whitespace, with line endings normalized to match the textarea.
 
-Instrument resolves attachment bytes through its authenticated gateway connection. Browser clients
-use ordinary image links and downloads; Desktop opens raster images in an in-app preview and saves
-files to the system Downloads folder. Audio and video retain their inline players. Documents and
-active formats such as HTML and SVG remain downloads rather than executable previews. A Desktop
-image preview retains its own temporary URL until it closes, so navigating away from the source
-message cannot invalidate an open preview; closing it or signing out releases that URL.
-Older messages may link directly to a remote file. Those links open separately in the browser;
-native saves apply to the attachment blobs resolved by the authenticated frontend.
+Instrument resolves attachment bytes through its authenticated gateway connection. Select a file's
+name in Chat to open a read-only in-app preview of those exact bytes; **download** remains a separate
+action. Raster images appear in the message and can be enlarged. Text, JSON, CSV and source files
+open as text, Markdown uses the chat sanitizer, and PDFs use the browser's native viewer when
+available. Text previews are limited to 1 MiB; larger text, unsupported binaries and active formats
+such as HTML and SVG offer download instead of executing content. Audio and video retain their
+inline players. Common source and configuration filenames (including `Dockerfile`) are recognized
+even when the browser supplies no MIME type. No attachment is uploaded to an external viewer.
+
+The signed-in Instrument shell owns the active preview and its temporary URL, independently of
+message rows and conversation paging. Navigating away from the source message cannot invalidate an
+open preview; closing or unmounting it, or signing out, releases that URL. Close or Escape returns
+to the conversation. Desktop retains native file saving and its raster-image viewer.
+Older messages may link directly to a remote file; those links still open separately in the browser,
+not inside the authenticated attachment viewer. File permissions, expiry, immutable revisions and
+the existing resource size limit remain unchanged.
 
 ## Search
 

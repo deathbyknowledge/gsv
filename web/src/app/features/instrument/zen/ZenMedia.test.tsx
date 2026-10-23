@@ -1,4 +1,4 @@
-import type { ComponentChildren, JSX, VNode } from "preact";
+import { cloneElement, type ComponentChildren, type JSX, type VNode } from "preact";
 import { act } from "preact/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,13 +6,16 @@ import { collectNodes, collectText, createTestRoot } from "../../../testing/test
 import { MediaPreviewProvider } from "../../../services/platform/MediaPreview";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { chatProcessMediaQueryKey } from "../../../services/chat/hooks/useChatProcesses";
+import { AttachmentPreview } from "./AttachmentPreview";
+import { AttachmentPreviews } from "./AttachmentPreviews";
 import { ZenDraftPaste, ZenMedia } from "./ZenMedia";
 
 let root: ReturnType<typeof createTestRoot> | undefined;
-afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlobals(); });
+afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 async function links(desktop: boolean, type: "image" | "document", mimeType: string, url?: string) {
   let tree: ComponentChildren;
+  let attachment: VNode<Parameters<typeof AttachmentPreview>[0]> | undefined;
   const preview = vi.fn();
   vi.stubGlobal("window", Object.assign(new EventTarget(), { location: { search: "" }, sessionStorage: { getItem: () => null } }));
   vi.stubGlobal("document", new EventTarget());
@@ -22,21 +25,43 @@ async function links(desktop: boolean, type: "image" | "document", mimeType: str
     tree = ZenMedia({ media: { type, mimeType, key: "image", filename: "attachment.png", url }, processId: "proc:test" });
     return null;
   }
+  function PreviewsHarness({ children }: { children: ComponentChildren }) {
+    const provider = AttachmentPreviews({ children });
+    // SAFETY: The node is selected by AttachmentPreview, so its props match that component's contract.
+    attachment = collectNodes(provider).find((node) => node.type === AttachmentPreview) as VNode<Parameters<typeof AttachmentPreview>[0]> | undefined;
+    // Render the real context provider while inspecting the viewer boundary without DOM insertion.
+    return cloneElement(provider, {}, children);
+  }
   root = createTestRoot("Attachment actions");
   await root.render(<GatewayProvider><QueryClientProvider client={cache}>
-    {desktop ? <MediaPreviewProvider preview={preview}><Harness /></MediaPreviewProvider> : <Harness />}
+    <PreviewsHarness>{desktop ? <MediaPreviewProvider preview={preview}><Harness /></MediaPreviewProvider> : <Harness />}</PreviewsHarness>
   </QueryClientProvider></GatewayProvider>);
   // SAFETY: All matching nodes are anchor VNodes; the generic harness omits DOM-specific attributes.
   const anchors = collectNodes(tree).filter((node) => node.type === "a") as VNode<JSX.AnchorHTMLAttributes<HTMLAnchorElement>>[];
-  return { anchors, preview };
+  return { anchors, preview, attachment: () => attachment?.props, nodes: () => collectNodes(tree) };
 }
 
 describe("attachment opening", () => {
-  it("keeps browser image previews as normal links", async () => {
-    const { anchors, preview } = await links(false, "image", "image/png");
-    expect(anchors[0].props.target).toBe("_blank");
-    expect(anchors[0].props.onClick).toBeUndefined();
+  it("opens browser images in the app without downloading or navigating", async () => {
+    const { anchors, preview, attachment } = await links(false, "image", "image/png");
+    // SAFETY: The anchor handler only uses Event.preventDefault.
+    const event = new Event("click", { cancelable: true }) as JSX.TargetedMouseEvent<HTMLAnchorElement>;
+    await act(() => { anchors[0].props.onClick?.(event); });
+    expect(event.defaultPrevented).toBe(true);
+    expect(attachment()).toMatchObject({ blob: expect.any(Blob), mimeType: "image/png" });
     expect(preview).not.toHaveBeenCalled();
+    expect(anchors[1].props.download).toBe("attachment.png");
+  });
+
+  it.each(["text/plain", "text/markdown", "application/json", "application/pdf"])("opens %s from the filename and keeps download explicit", async (mimeType) => {
+    const { anchors, nodes, attachment } = await links(false, "document", mimeType);
+    const open = nodes().find((node) => node.type === "button");
+    expect(collectText(open)).toBe("attachment.png");
+    await act(() => open?.props.onClick?.());
+    expect(attachment()).toMatchObject({ blob: expect.any(Blob), mimeType });
+    expect(anchors).toHaveLength(1);
+    expect(collectText(anchors[0])).toBe("download");
+    expect(anchors[0].props.download).toBe("attachment.png");
   });
 
   it("opens an image through the desktop viewer without navigating the webview", async () => {
@@ -57,7 +82,7 @@ describe("attachment opening", () => {
     expect(anchors[0].props.onClick).toBeUndefined();
   });
 
-  it.each([["image", "image/svg+xml"], ["document", "text/html"]] as const)("downloads %s %s without opening executable content", async (type, mimeType) => {
+  it.each([["image", "image/svg+xml"], ["document", "text/html"]] as const)("keeps %s %s download links non-executable", async (type, mimeType) => {
     const { anchors, preview } = await links(true, type, mimeType);
     for (const anchor of anchors) {
       expect(anchor.props.download).toBe("attachment.png");
