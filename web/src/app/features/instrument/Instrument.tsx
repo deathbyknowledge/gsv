@@ -12,6 +12,7 @@ import { useConsoleAccounts } from "../../services/system/useConsoleData";
 import { Fleet, type FleetProps } from "./fleet/Fleet";
 import { BrowserControlProvider, BrowserControlOverlay } from "./browser/BrowserControl";
 import { Memory } from "./memory/Memory";
+import { memoryLinkHref } from "./memory/memoryLinks";
 import { Settings } from "./settings/Settings";
 import { People } from "./people/People";
 import { peoplePath, readPeopleRoute } from "./people/peopleNavigation";
@@ -51,6 +52,7 @@ const DISTANCE_TO_PATH = {
 } satisfies Record<Distance, string>;
 
 const DISTANCES: readonly Distance[] = ["zen", "fleet", "memory", "settings", "people"];
+const MANUAL_PAGE = { db: "gsv-manual", path: "gsv-manual/index.md", fragment: "" };
 
 function distanceForPath(path: string): Distance {
   if (path === "/zen/settings") return "settings";
@@ -384,7 +386,14 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
             </dl>
           </>}
           <footer class="instrument-help-footer">
-            <a href="https://github.com/deathbyknowledge/gsv-manual/blob/main/index.md" target="_blank" rel="noopener noreferrer">{t("shell.help.manual")}</a>
+            <a href={memoryLinkHref(MANUAL_PAGE)} onClick={(event) => {
+              if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+              event.preventDefault();
+              if (memoryDirty && !window.confirm(t("shell.confirm.discardPage"))) return;
+              setSelectedMemoryPage({ ...MANUAL_PAGE });
+              navigateApp(memoryLinkHref(MANUAL_PAGE));
+              setHelp(false);
+            }}>{t("shell.help.manual")}</a>
             <p class="instrument-help-discord"><a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">{t("shell.help.discord")}</a></p>
             <p>{t("shell.help.ownership")}</p>
           </footer>

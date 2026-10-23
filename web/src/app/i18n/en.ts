@@ -1233,7 +1233,7 @@ export const en = {
 
   // Shell: keyboard help
   "shell.help.label": "Help",
-  "shell.help.manual": "Ship Manual",
+  "shell.help.manual": "Ship manual",
   "shell.help.discord": "For further help, ask in our Discord.",
   "shell.help.ownership": "Your information is yours.",
   "shell.help.search": "Search Chat",

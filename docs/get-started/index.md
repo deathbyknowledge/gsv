@@ -135,7 +135,7 @@ sizes. The smallest size uses compact message text and tighter spacing to fit
 more conversation on screen. Under **Settings → Preferences
 → Appearance**, turn off **Show stars** for a plain background. Both choices are remembered on this
 device; the star preference also applies to sign-in.
-The **?** Help panel also links to the Ship Manual and community Discord at the bottom.
+The **?** Help panel links to the Ship manual in **Memory** and the community Discord at the bottom.
 
 On your first visit, after dismissing the welcome card, the empty chat shows a
 quiet, centered privacy message. It clears as soon as you or Ship starts the
