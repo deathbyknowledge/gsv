@@ -731,6 +731,9 @@
 .zen-drop-hint { position: absolute; inset: 1rem; z-index: 5; display: grid; place-items: center; border: 1px dashed var(--accent); background: var(--void); color: var(--accent); pointer-events: none; }
 .zen-media { margin: 1rem 0; max-width: 100%; font: .75rem/1.6 var(--gsv-font-mono); }
 .zen-media-image { display: block; width: fit-content; max-width: 100%; }
+/* the filename trigger is text in the caption row, so it opts out of the padding the shared button rule adds, which would lift it out of line with the size, link and download text beside it */
+.zen-media figcaption > button { padding: 0; }
+
 .zen-media img, .zen-media video { display: block; max-width: 100%; max-height: min(28rem, 55vh); object-fit: contain; }
 .zen-media audio { max-width: 100%; }
 .zen-media figcaption { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin-top: .5rem; color: var(--text-dim); overflow-wrap: anywhere; }
