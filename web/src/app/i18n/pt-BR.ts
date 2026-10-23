@@ -1801,6 +1801,7 @@ export const ptBR = {
   "chat.message.dismiss": "descartar",
   "chat.history.failed": "Não foi possível carregar sua conversa: {error}",
   "chat.history.helperEmpty": "Este ajudante ainda não tem mensagens.",
+  "chat.firstOpenPrivacy": "Não usamos seus dados para treinar IA.\nSuas conversas são privadas.\nSuas informações pertencem a você!",
   "chat.history.waking": "O Ship está acordando",
   "chat.history.loadingOlder": "carregando mensagens anteriores",
   "chat.history.loadFailed": "Não foi possível carregar o histórico.",

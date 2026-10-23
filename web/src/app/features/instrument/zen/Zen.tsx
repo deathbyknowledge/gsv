@@ -609,6 +609,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   /* a Ship that has never spoken: the owner's own chat, the welcome dismissed, all history loaded and none of it missing, with no words from Ship yet; what they read meanwhile is the waking line */
   const waking = ready && !pidProp && !welcomeOpen && !conversation.historyError && !processRuntime.history.isError
     && !conversation.hasMore && !processRuntime.hasOlderHistory && awaitingFirstMessage(moments);
+  const showFirstOpenPrivacy = waking && !moments.some((moment) => moment.role === "human" || moment.text || moment.media?.length);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
@@ -1076,6 +1077,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       {draggingFiles && <div class="zen-drop-hint">{t("chat.composer.drop")}</div>}
 
       <div class="zen-body">
+        {showFirstOpenPrivacy && <div class="zen-first-open-privacy"><p>{t("chat.firstOpenPrivacy")}</p></div>}
         {helperEmpty ? (
           <div class="zen-empty"><p>{t("chat.history.helperEmpty")}</p></div>
         ) : !ready ? (

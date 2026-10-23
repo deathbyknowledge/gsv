@@ -651,6 +651,9 @@ describe("Zen conversation entry", () => {
     const waking = () => zen.nodes().filter((node) => node.type === WakingUp).length;
     try {
       await vi.waitFor(() => expect(waking()).toBe(1));
+      expect(zen.text()).toContain("We don't use your data to train AI.");
+      expect(zen.text()).toContain("Your conversations stay private.");
+      expect(zen.text()).toContain("Your information belongs to you!");
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
 
       activeRunId = "welcome-run";
@@ -665,6 +668,7 @@ describe("Zen conversation entry", () => {
       });
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe(greeting.text));
       expect(waking()).toBe(0);
+      expect(zen.text()).not.toContain("Your conversations stay private.");
 
       activeRunId = "later-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
@@ -678,6 +682,7 @@ describe("Zen conversation entry", () => {
     try {
       await vi.waitFor(() => expect(zen.props(PromptLine).disabled).toBe(false));
       expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+      expect(zen.text()).not.toContain("Your conversations stay private.");
       activeRunId = "welcome-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
       await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
@@ -691,6 +696,7 @@ describe("Zen conversation entry", () => {
     try {
       await vi.waitFor(() => expect(zen.text()).toContain("Could not load your conversation: history unavailable"));
       expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+      expect(zen.text()).not.toContain("Your conversations stay private.");
     } finally { await zen.unmount(); }
   });
 
@@ -701,6 +707,21 @@ describe("Zen conversation entry", () => {
     try {
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Are you there?"));
       expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+      expect(zen.text()).not.toContain("Your conversations stay private.");
+    } finally { await zen.unmount(); }
+  });
+
+  it("clears the privacy message when the owner speaks before Ship", async () => {
+    const zen = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(zen.text()).toContain("Your conversations stay private."));
+      const first = message("user", "Hello Ship");
+      await act(() => {
+        messages = [first];
+        for (const listener of signals) listener("message.committed", { message: first, directed: false });
+      });
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe(first.text));
+      expect(zen.text()).not.toContain("Your conversations stay private.");
     } finally { await zen.unmount(); }
   });
 

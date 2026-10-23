@@ -1796,6 +1796,7 @@ export const es = {
   "chat.message.dismiss": "descartar",
   "chat.history.failed": "No se ha podido cargar tu conversación: {error}",
   "chat.history.helperEmpty": "Este ayudante aún no tiene mensajes.",
+  "chat.firstOpenPrivacy": "No usamos tus datos para entrenar IA.\nTus conversaciones son privadas.\n¡Tu información te pertenece!",
   "chat.history.waking": "Ship se está despertando",
   "chat.history.loadingOlder": "cargando mensajes anteriores",
   "chat.history.loadFailed": "No se ha podido cargar el historial.",

@@ -230,11 +230,18 @@ The shell keeps one star field and one header mounted across Chat, People, Work,
 
 Header controls have transparent backgrounds so they follow the pane underneath. Keyboard focus uses an underline on controls and table labels. Work has no permanent footer: Help lists its shortcuts. Work’s command action opens Chat on the selected target, with a direct-shell prompt ready to type.
 
-The `x` shortcut cycles through 85%, 100%, 150% and 200% interface sizes, with
-100% as the default. The 85% size fits more conversation on screen. Settings →
+The `x` shortcut cycles through 75%, 85%, 100%, 150% and 200% interface sizes, with
+100% as the default. The 75% size uses 15px rendered message text, smaller gaps
+between messages and less fading of older messages for a compact overview. Settings →
 Preferences → Appearance includes a **Show stars** checkbox. Both choices are remembered on this device.
 The star preference also applies to sign-in; hiding the stars unmounts their
 renderer and stops its animation while retaining the shared background layout.
+
+After the first welcome card is dismissed, the empty Ship chat shows a centered,
+muted privacy message until either person starts the conversation. It never
+appears in helper conversations, over existing messages, or while history is
+loading or unavailable. The notice sits behind the transcript without intercepting
+pointer input and is independent of the stars preference.
 
 The shared animated star field draws crisp glyphs without blurred text shadows.
 In the WebKitGTK prototype, removing just that shadow restored navigation and

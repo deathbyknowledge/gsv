@@ -1795,6 +1795,7 @@ export const en = {
   "chat.message.dismiss": "dismiss",
   "chat.history.failed": "Could not load your conversation: {error}",
   "chat.history.helperEmpty": "This helper has no messages yet.",
+  "chat.firstOpenPrivacy": "We don't use your data to train AI.\nYour conversations stay private.\nYour information belongs to you!",
   "chat.history.waking": "Ship is waking up",
   "chat.history.loadingOlder": "loading earlier messages",
   "chat.history.loadFailed": "History could not be loaded.",
