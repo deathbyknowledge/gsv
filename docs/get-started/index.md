@@ -135,7 +135,7 @@ sizes. The smallest size uses compact message text and tighter spacing to fit
 more conversation on screen. Under **Settings → Preferences
 → Appearance**, turn off **Show stars** for a plain background. Both choices are remembered on this
 device; the star preference also applies to sign-in.
-The **?** Help panel (also available in the mobile menu) introduces what Ship can help with. **Talking to Ship** expands example requests; the other getting-started rows open WhatsApp connections, Memory, Permissions and the operator’s privacy policy. **Keyboard shortcuts** expands the complete reference. **Need more help?** links to the Ship manual inside Memory, email support and the community Discord. Search Chat stays separate at the top.
+The **?** Help panel (also available in the mobile menu) introduces what Ship can help with. **Talking to Ship** expands example requests; the other getting-started rows open WhatsApp connections, Memory, Permissions and [Ship’s privacy policy](https://ship.space/privacy). **Keyboard shortcuts** replaces Help with Search Chat and the complete shortcut reference; **← Help** returns to getting started. **Need more help?** links to the Ship manual inside Memory, email support and the community Discord.
 
 Preferences starts with **Appearance**, which applies immediately on this device.
 Model order, reasoning, language and timezone share a **Save changes** bar that
@@ -171,7 +171,7 @@ Ship can use cloud browsers without per-action approval by default. To change
 that, select **Cloud browsers** under **Settings → Permissions** and choose
 **Ask** or **Block**; personal computers and browsers keep their existing rules.
 
-Open **Help** in the header or mobile menu and choose **Search Chat** to find earlier messages.
+Open **Help** in the header or mobile menu, choose **Keyboard shortcuts**, and choose **Search Chat** to find earlier messages.
 Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search in browse
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns you to where you were, with your draft.

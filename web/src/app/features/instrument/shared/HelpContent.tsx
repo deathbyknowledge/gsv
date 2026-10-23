@@ -1,6 +1,6 @@
 import type { JSX } from "preact";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useT, type TextKey } from "../../../i18n/locale";
-import { publicDeployment } from "../../../services/deployment";
 import { shortcutLabel } from "../../../services/platform/shortcutKeys";
 import { memoryLinkHref } from "../memory/memoryLinks";
 
@@ -25,7 +25,21 @@ function HelpIcon({ kind }: { kind: "talk" | "phone" | "memory" | "permissions" 
 
 export function HelpContent({ connected, onSearch, onNavigate }: HelpContentProps) {
   const t = useT();
-  const privacyUrl = publicDeployment().privacyUrl;
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const shortcutsButton = useRef<HTMLButtonElement>(null);
+  const backButton = useRef<HTMLButtonElement>(null);
+  const switchedView = useRef(false);
+  const showShortcuts = (open: boolean) => {
+    switchedView.current = true;
+    setShortcutsOpen(open);
+  };
+  useLayoutEffect(() => {
+    if (!switchedView.current) return;
+    const button = shortcutsOpen ? backButton.current : shortcutsButton.current;
+    const panel = button?.closest(".instrument-help");
+    if (panel) panel.scrollTop = 0;
+    button?.focus();
+  }, [shortcutsOpen]);
   const platform = globalThis.navigator?.platform ?? "";
   const modifier = /mac/i.test(platform) ? "Meta" : "Ctrl";
   const saveShortcut = shortcutLabel(`${modifier}+Enter`, platform);
@@ -41,28 +55,12 @@ export function HelpContent({ connected, onSearch, onNavigate }: HelpContentProp
   return <div class="instrument-help-content" onKeyDown={(event) => {
     if (event.key === " " || event.key === "Enter") event.stopPropagation();
   }}>
-    <button type="button" class="instrument-help-search" disabled={!connected} aria-keyshortcuts="Control+K" onClick={onSearch}>
-      <span>{t("shell.help.search")}</span><kbd>{shortcutLabel("Ctrl+K", platform)}</kbd>
-    </button>
-    <h2>{t("shell.help.introductionTitle")}</h2>
-    <p class="instrument-help-introduction">{t("shell.help.introduction")}</p>
-    <h3>{t("shell.help.gettingStarted")}</h3>
-    <div class="instrument-help-topics">
-      <details class="instrument-help-talking">
-        <summary class="instrument-help-row">{row("talk", "shell.help.talking", "shell.help.talkingHint")}</summary>
-        <div class="instrument-help-examples">
-          <p>{t("shell.help.talkingExplanation")}</p>
-          <ul><li>{t("shell.help.examplePlan")}</li><li>{t("shell.help.exampleFind")}</li><li>{t("shell.help.exampleFollowUp")}</li></ul>
-        </div>
-      </details>
-      <a class="instrument-help-row" href="/chat/settings?section=messengers" onClick={navigate}>{row("phone", "shell.help.whatsapp", "shell.help.whatsappHint")}</a>
-      <a class="instrument-help-row" href="/memory" onClick={navigate}>{row("memory", "shell.help.memory", "shell.help.memoryHint")}</a>
-      <a class="instrument-help-row" href="/chat/settings?section=permissions" onClick={navigate}>{row("permissions", "shell.help.permissions", "shell.help.permissionsHint")}</a>
-      {privacyUrl ? <a class="instrument-help-row" href={privacyUrl} target="_blank" rel="noopener noreferrer">{row("privacy", "shell.help.privacy", "shell.help.privacyHint")}</a>
-        : <div class="instrument-help-row" aria-disabled="true">{row("privacy", "shell.help.privacy", "shell.help.privacyUnavailable")}</div>}
-    </div>
-    <details class="instrument-help-shortcuts">
-      <summary>{t("shell.help.shortcuts")}</summary>
+    {shortcutsOpen ? <>
+      <button type="button" class="instrument-help-back" ref={backButton} onClick={() => showShortcuts(false)}><span aria-hidden="true">← </span>{t("shell.help.label")}</button>
+      <h2>{t("shell.help.shortcuts")}</h2>
+      <button type="button" class="instrument-help-search" disabled={!connected} aria-keyshortcuts="Control+K" onClick={onSearch}>
+        <span>{t("shell.help.search")}</span><kbd>{shortcutLabel("Ctrl+K", platform)}</kbd>
+      </button>
           <h4>{t("shell.help.views")}</h4>
           <p>{t("shell.help.viewsHint")}</p>
           <dl>
@@ -126,12 +124,32 @@ export function HelpContent({ connected, onSearch, onNavigate }: HelpContentProp
               <dt>{t("shell.keys.enterOrSpace")}</dt><dd>{t("shell.help.activate")}</dd>
             </dl>
 
-    </details>
+    </> : <>
+    <h2>{t("shell.help.introductionTitle")}</h2>
+    <p class="instrument-help-introduction">{t("shell.help.introduction")}</p>
+    <h3>{t("shell.help.gettingStarted")}</h3>
+    <div class="instrument-help-topics">
+      <details class="instrument-help-talking">
+        <summary class="instrument-help-row">{row("talk", "shell.help.talking", "shell.help.talkingHint")}</summary>
+        <div class="instrument-help-examples">
+          <p>{t("shell.help.talkingExplanation")}</p>
+          <ul><li>{t("shell.help.examplePlan")}</li><li>{t("shell.help.exampleFind")}</li><li>{t("shell.help.exampleFollowUp")}</li></ul>
+        </div>
+      </details>
+      <a class="instrument-help-row" href="/chat/settings?section=messengers" onClick={navigate}>{row("phone", "shell.help.whatsapp", "shell.help.whatsappHint")}</a>
+      <a class="instrument-help-row" href="/memory" onClick={navigate}>{row("memory", "shell.help.memory", "shell.help.memoryHint")}</a>
+      <a class="instrument-help-row" href="/chat/settings?section=permissions" onClick={navigate}>{row("permissions", "shell.help.permissions", "shell.help.permissionsHint")}</a>
+      <a class="instrument-help-row" href="https://ship.space/privacy" target="_blank" rel="noopener noreferrer">{row("privacy", "shell.help.privacy", "shell.help.privacyHint")}</a>
+    </div>
+    <button type="button" class="instrument-help-shortcuts" ref={shortcutsButton} onClick={() => showShortcuts(true)}>
+      <span>{t("shell.help.shortcuts")}</span><span aria-hidden="true">›</span>
+    </button>
     <footer class="instrument-help-footer">
       <h3>{t("shell.help.supportTitle")}</h3>
       <a href={memoryLinkHref(HELP_MANUAL_PAGE)} onClick={navigate}>{t("shell.help.manual")}</a>
       <a href="mailto:hello@humansandmachin.es">{t("shell.help.support")}</a>
       <a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">{t("shell.help.discord")}</a>
     </footer>
+    </>}
   </div>;
 }

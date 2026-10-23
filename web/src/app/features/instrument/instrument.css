@@ -569,14 +569,13 @@
 .instrument-help-icon { flex-shrink: 0; color: var(--faint); }
 .instrument-help-chevron { color: var(--faint); }
 .instrument-help-row:hover .instrument-help-row-copy strong { color: var(--accent); }
-.instrument-help-row[aria-disabled="true"] { cursor: default; opacity: .65; }
 .instrument-help-talking[open] > summary .instrument-help-chevron { transform: rotate(90deg); }
 .instrument-help-examples { padding: 0 0 12px 30px; }
 .instrument-help-examples ul { margin: 0; padding-left: 16px; color: var(--label); font-size: 11px; }
 .instrument-help-examples li + li { margin-top: 6px; }
-.instrument-help-shortcuts { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
-.instrument-help-shortcuts > summary { cursor: pointer; color: var(--text); }
-.instrument-help-shortcuts[open] > summary { margin-bottom: 14px; }
+.instrument-help-shortcuts { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--text); text-align: left; }
+.instrument-help-back { color: var(--label); }
+.instrument-help-shortcuts:hover, .instrument-help-back:hover { color: var(--accent); }
 .instrument-help :is(summary, a, button):focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
 .instrument-help dl { display: grid; grid-template-columns: auto 1fr; gap: 0 14px; margin: 0 0 10px; }
 .instrument-help dt { color: var(--text-hi); white-space: nowrap; }

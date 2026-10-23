@@ -4,10 +4,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { collectNodes, createTestRoot, collectText } from "../../../testing/testHarness";
 import { HelpContent } from "./HelpContent";
 
-vi.mock("../../../services/deployment", () => ({ publicDeployment: () => ({ privacyUrl: "https://example.com/privacy" }) }));
 afterEach(() => vi.unstubAllGlobals());
 
-it.each(["MacIntel", "Win32"])("keeps onboarding destinations and the complete, collapsed shortcut reference on %s", async (platform) => {
+it.each(["MacIntel", "Win32"])("keeps onboarding destinations and the complete shortcut view on %s", async (platform) => {
   vi.stubGlobal("document", {});
   vi.stubGlobal("navigator", { platform });
   const root = createTestRoot("Help");
@@ -34,17 +33,17 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and the complete, 
     const hrefs = links.map((node) => node.props.href);
     expect(hrefs).toEqual(expect.arrayContaining([
       "/chat/settings?section=messengers", "/memory", "/chat/settings?section=permissions",
-      "https://example.com/privacy", "mailto:hello@humansandmachin.es", "https://discord.gg/hy9ExJJFvn",
+      "https://ship.space/privacy", "mailto:hello@humansandmachin.es", "https://discord.gg/hy9ExJJFvn",
     ]));
     expect(hrefs.some((href) => href?.includes("gsv-manual") && href.startsWith("/memory"))).toBe(true);
     const disclosures = nodes.filter((node) => node.type === "details");
-    expect(disclosures).toHaveLength(2);
+    expect(disclosures).toHaveLength(1);
     expect(disclosures.every((node) => !(node.props as { open?: boolean }).open)).toBe(true);
-    expect(nodes.filter((node) => node.type === "summary")).toHaveLength(2);
+    expect(nodes.filter((node) => node.type === "summary")).toHaveLength(1);
     const text = collectText(tree);
-    for (const label of ["What can Ship help with?", "Getting started", "Chat · browse", "Chat · input", "Memory", "Expanded file", "Settings", "Keyboard shortcuts", "Need more help?"]) expect(text).toContain(label);
-    expect(text).toContain(platform === "MacIntel" ? "⌘ Enter" : "Ctrl + Enter");
-    expect(text).toContain(platform === "MacIntel" ? "⌘ F" : "Ctrl + F");
+    for (const label of ["What can Ship help with?", "Getting started", "Memory", "Keyboard shortcuts", "Need more help?"]) expect(text).toContain(label);
+    expect(text).not.toContain("Search Chat");
+    expect(text).not.toContain("Chat · browse");
     expect(text).not.toContain("Your information is yours");
     // SAFETY: The native link handler reads only these event fields and the href.
     const link = links.find((node) => node.props.href === "/chat/settings?section=permissions") as VNode<JSX.AnchorHTMLAttributes<HTMLAnchorElement>>;
@@ -56,8 +55,23 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and the complete, 
     onNavigate.mockClear();
     await act(() => link.props.onClick?.({ ...event, metaKey: true } as unknown as JSX.TargetedMouseEvent<HTMLAnchorElement>));
     expect(onNavigate).not.toHaveBeenCalled();
-    const search = nodes.find((node) => node.type === "button" && node.props.class === "instrument-help-search");
+    const shortcutsButton = nodes.find((node) => node.type === "button" && node.props.class === "instrument-help-shortcuts");
+    await act(() => shortcutsButton?.props.onClick?.());
+    const shortcutNodes = collectNodes(tree);
+    const shortcutText = collectText(tree);
+    for (const label of ["Chat · browse", "Chat · input", "Memory", "Expanded file", "Settings", "Keyboard shortcuts", "Search Chat"]) expect(shortcutText).toContain(label);
+    expect(shortcutText).not.toContain("What can Ship help with?");
+    expect(shortcutText).not.toContain("Getting started");
+    expect(shortcutText).not.toContain("Need more help?");
+    expect(shortcutNodes.some((node) => node.type === "details")).toBe(false);
+    expect(shortcutText).toContain(platform === "MacIntel" ? "⌘ Enter" : "Ctrl + Enter");
+    expect(shortcutText).toContain(platform === "MacIntel" ? "⌘ F" : "Ctrl + F");
+    const search = shortcutNodes.find((node) => node.type === "button" && node.props.class === "instrument-help-search");
     await act(() => search?.props.onClick?.());
     expect(onSearch).toHaveBeenCalledOnce();
+    const back = shortcutNodes.find((node) => node.type === "button" && node.props.class === "instrument-help-back");
+    await act(() => back?.props.onClick?.());
+    expect(collectText(tree)).toContain("Getting started");
+    expect(collectText(tree)).not.toContain("Search Chat");
   } finally { await root.unmount(); }
 });
