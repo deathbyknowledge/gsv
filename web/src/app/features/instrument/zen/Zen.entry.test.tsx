@@ -212,6 +212,7 @@ describe("Zen conversation entry", () => {
       if (!native) {
         expect(zen.props(BrowserVoiceControls).pid).toBe("helper");
         expect(zen.props(BrowserVoiceControls).enabled).toBe(true);
+        expect(zen.props(BrowserVoiceControls).send).toBe(zen.props(PromptLine).onSubmit);
       }
     } finally { await zen.unmount(); }
   });

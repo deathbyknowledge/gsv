@@ -24,7 +24,7 @@ export function HandsfreeStatus() {
     <header><span>{t("desktop.handsfree.title")} <span class="handsfree-phase" role="status">{label}</span></span>
       {recording && <span class="handsfree-actions">
         <button type="button" disabled={voice?.phase === "finishing"} onClick={session.send}>{t("desktop.handsfree.send")}</button>
-        <button type="button" onClick={input.cancel}>{t("common.cancel")}</button>
+        <button type="button" onClick={() => input.cancel()}>{t("common.cancel")}</button>
       </span>}
       {speaking && <button type="button" onClick={() => void speech?.command({ kind: "cancel" })}>{t("desktop.voice.stopSpeaking")}</button>}
     </header>

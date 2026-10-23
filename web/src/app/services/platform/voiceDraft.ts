@@ -70,6 +70,11 @@ export class VoiceDraft {
     return this.render(text);
   }
 
+  /** The prompt as it stood before dictation began: what an explicit cancel restores. */
+  discard(): ComposedVoice {
+    return { value: this.before + this.after, caret: this.before.length };
+  }
+
   sent(selection: DraftSelection): void {
     this.before = selection.value.slice(0, selection.start);
     this.after = selection.value.slice(selection.start);
