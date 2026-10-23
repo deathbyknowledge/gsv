@@ -1,6 +1,7 @@
 import { Bash } from "just-bash";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PublicProfile } from "@humansandmachines/gsv/protocol";
+import type { ApproachState, PublicProfile } from "@humansandmachines/gsv/protocol";
+import type { ApproachRecord } from "../../../kernel/approach-store";
 import type { KernelContext } from "../../../kernel/context";
 import * as admission from "../../../kernel/approaches/admission";
 import * as federation from "../../../kernel/federation";
@@ -8,10 +9,10 @@ import * as profiles from "../../../kernel/profiles";
 import { testPeer } from "../../../test-support/peers";
 import { buildContactCommand } from "./contact";
 
-function shell(installationIdentity: KernelContext["installationIdentity"] = null, primaryDomain?: string) {
+function shell(installationIdentity: KernelContext["installationIdentity"] = null, primaryDomain?: string, approaches: Pick<KernelContext["approaches"], "byIdempotencyKey"> = { byIdempotencyKey: () => null }) {
   const env = { GSV_PUBLIC_CONFIG: primaryDomain ? JSON.stringify({ primaryDomain }) : undefined };
   // SAFETY: handlers are mocked here; command parsing only reads the caller grant, installation address and public deployment config.
-  const ctx = { installationIdentity, env, peer: testPeer({ account: { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/home/owner" }, calls: ["contact.*", "profile.resolve", "approach.create"] }) } as KernelContext;
+  const ctx = { installationIdentity, env, peer: testPeer({ account: { uid: 1000, gid: 1000, gids: [1000], username: "owner", home: "/home/owner", cwd: "/home/owner" }, calls: ["contact.*", "profile.resolve", "approach.create"] }), approaches } as KernelContext;
   return new Bash({ customCommands: [buildContactCommand(ctx)] });
 }
 
@@ -64,6 +65,37 @@ describe("contact connect", () => {
     expect(create.mock.lastCall?.[0].idempotencyKey).not.toBe(first.idempotencyKey);
   });
 
+  it("sends the same text again once the earlier request has ended", async () => {
+    vi.spyOn(profiles, "handleProfileResolve").mockResolvedValue({ profile });
+    vi.spyOn(profiles, "ownerDisplayName").mockReturnValue("Owner Person");
+    const create = vi.spyOn(admission, "handleApproachCreate").mockImplementation(async () => { throw new Error("reached create"); });
+    for (const state of ["declined", "withdrawn", "expired"] as const) {
+      const ended = approachRecord({ id: `approach:${state}`, state });
+      const keys: string[] = [];
+      const bash = shell(esteve, undefined, { byIdempotencyKey: (_uid, key) => { keys.push(key); return keys.length === 1 ? ended : null; } });
+      expect((await bash.exec("contact connect @ada --message 'Hi Ada' --handling manual")).stderr).toContain("reached create");
+      expect(create.mock.lastCall?.[0].idempotencyKey).toBe(keys[1]);
+      expect(keys[1]).not.toBe(keys[0]);
+    }
+  });
+
+  it("returns a pending request with the same text and refuses to change its name or handling", async () => {
+    vi.spyOn(profiles, "handleProfileResolve").mockResolvedValue({ profile });
+    vi.spyOn(profiles, "ownerDisplayName").mockReturnValue("Owner Person");
+    const create = vi.spyOn(admission, "handleApproachCreate");
+    const pending = approachRecord({ id: "approach:pending", state: "pending" });
+    const bash = shell(esteve, undefined, { byIdempotencyKey: () => pending });
+    const same = await bash.exec("contact connect @ada --message 'Hi Ada' --handling manual");
+    expect(same.exitCode).toBe(0);
+    expect(same.stdout).toContain("approach:pending");
+    for (const command of ["contact connect @ada --message 'Hi Ada' --handling ship", "contact connect @ada --message 'Hi Ada' --handling manual --name 'Owner (work)'"]) {
+      const changed = await bash.exec(command);
+      expect(changed.exitCode).toBe(1);
+      expect(changed.stderr).toContain("already waiting for an answer");
+    }
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("sends nothing without a message or a handling choice", async () => {
     const resolve = vi.spyOn(profiles, "handleProfileResolve");
     const create = vi.spyOn(admission, "handleApproachCreate");
@@ -107,3 +139,11 @@ describe("contact find", () => {
     expect(resolve).toHaveBeenLastCalledWith({ url: "https://ada.ship.space/profile" }, expect.anything());
   });
 });
+
+function approachRecord(summary: { id: string; state: ApproachState }): ApproachRecord {
+  // SAFETY: contact connect reads only the summary's id, state and expiry, the handling choice and the sender name.
+  return {
+    summary: { ...summary, expiresAtMs: summary.state === "expired" ? 1 : Date.now() + 60_000 },
+    shipHandlesMessages: false, localDisplayName: "Owner Person",
+  } as ApproachRecord;
+}

@@ -2,6 +2,7 @@ import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import type {
   ApproachResult,
+  ApproachSummary,
   ContactInviteCreateArgs,
   ContactRequestCreateArgs,
   ContactRequestState,
@@ -184,12 +185,32 @@ async function connectToPerson(args: string[], ctx: KernelContext): Promise<Appr
   if (!text?.trim()) throw new Error("connect requires --message TEXT");
   if (shipHandlesMessages === undefined) throw new Error("Ask the owner who should handle new messages, then use --handling manual|ship");
   const { profile } = await handleProfileResolve({ url: profileAddress(address, ctx) }, ctx);
-  const name = displayName ?? ownerDisplayName(resolveCallerOwnerUid(ctx), ctx);
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  const name = displayName ?? ownerDisplayName(ownerUid, ctx);
   if (!name?.trim()) throw new Error("connect requires --name DISPLAY_NAME");
+  // The same message to the same person is one request while it is still open; once it has
+  // ended, sending it again is a new request.
+  const base = `${profile.actor.shipId}\n${profile.actor.subjectId}\n${text}`;
+  let idempotencyKey = `connect:${await sha256Base64Url(base)}`;
+  for (let previous = ctx.approaches.byIdempotencyKey(ownerUid, idempotencyKey); previous;
+    previous = ctx.approaches.byIdempotencyKey(ownerUid, idempotencyKey)) {
+    if (!approachEnded(previous.summary)) {
+      if (["preparing", "pending"].includes(previous.summary.state)
+        && (previous.shipHandlesMessages !== shipHandlesMessages || previous.localDisplayName !== name)) {
+        throw new Error("This message request is already waiting for an answer; withdraw it before sending it with a different name or handling");
+      }
+      return { approach: previous.summary };
+    }
+    idempotencyKey = `connect:${await sha256Base64Url(`${base}\n${previous.summary.id}`)}`;
+  }
   return await handleApproachCreate({
-    profileUrl: profile.url, recipient: profile.actor, profileRevision: profile.revision, displayName: name, text, shipHandlesMessages,
-    idempotencyKey: `connect:${await sha256Base64Url(`${profile.actor.shipId}\n${profile.actor.subjectId}\n${text}`)}`,
+    profileUrl: profile.url, recipient: profile.actor, profileRevision: profile.revision, displayName: name, text, shipHandlesMessages, idempotencyKey,
   }, ctx);
+}
+
+function approachEnded(approach: Pick<ApproachSummary, "state" | "expiresAtMs">): boolean {
+  return ["declined", "withdrawn", "expired"].includes(approach.state)
+    || (approach.state === "pending" && approach.expiresAtMs <= Date.now());
 }
 
 function parseHandling(value: string): boolean {
