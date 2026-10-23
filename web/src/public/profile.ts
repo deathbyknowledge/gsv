@@ -27,7 +27,6 @@ ${profile.contactPolicy === "requests" ? '<script type="module" src="/social/con
 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="5" width="8" height="9" rx="1"/><path d="M10 3V2H2v9h1"/></svg></button>
 <span class="copy-status" role="status"></span></div>
 ${profile.about ? `<p class="about">${escapeHtml(profile.about)}</p>` : '<p class="about is-empty">Space cowboy.</p>'}
-${profile.representation === "human-and-ship" ? '<p class="representation">You may hear from this person or their Ship.</p>' : ""}
 ${restricted}
 
 <footer data-info-row><span class="identity-row"><a class="identity" href="${escapeHtml(documentUrl)}">Ship to Ship profile</a><span class="info" tabindex="0" role="button" aria-describedby="identity-info" aria-label="About the Ship to Ship profile"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.2"/><text x="8" y="11.55" text-anchor="middle" font-size="9.5" font-weight="700" font-family="ui-sans-serif, system-ui, sans-serif" fill="currentColor" stroke="none">?</text></svg></span></span><span class="info-bubble" id="identity-info" role="tooltip">${IDENTITY}</span></footer>

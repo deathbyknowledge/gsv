@@ -18,7 +18,6 @@ h1 { font-size: clamp(32px, 7vw, 54px); line-height: 1.1; font-weight: 500; lett
 .copy-status { color: var(--muted); font: 11px/1.8 "Martian Mono", monospace; }
 .about { white-space: pre-wrap; }
 .about.is-empty { color: var(--muted); }
-.representation { margin-top: 32px; font-size: 15px; color: var(--muted); }
 footer { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 20px; }
 a { color: var(--accent); text-underline-offset: 4px; }
 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }

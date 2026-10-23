@@ -9,7 +9,6 @@ import { canConfigure } from "../settings/settingsModel";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { rich, useT } from "../../../i18n/locale";
 import { Button } from "../../../components/ui/Button";
-import { Checkbox } from "../../../components/ui/Checkbox";
 import { IconButton } from "../../../components/ui/IconButton";
 import { InfoTip } from "../../../components/ui/InfoTip";
 import { Select } from "../../../components/ui/Select";
@@ -103,7 +102,6 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
       : <p class="people-profile-about is-empty">{t("people.profile.emptyBio")}{" "}
         {!editing && <span class="people-profile-complete"><Button variant="link" label={t("people.profile.completeBio")} disabled={!connected || !canConfigure(account, "profile.update")} onClick={() => onEdit("bio")} /></span>}</p>}
     <p class="people-profile-policy">{policyLabel(shown.contactPolicy)}</p>
-    {shown.representation === "human-and-ship" && <p class="people-note">{t("people.profile.representationNote")}</p>}
   </div>;
   const unpublishedChanges = !!state?.published && state.published.revision !== state.revision;
 
@@ -137,8 +135,6 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
         <Select block label={t("people.profile.policy")} disabled={!editable}
           options={[{ value: "requests", label: t("people.profile.policyRequests") }, { value: "invitation", label: t("people.profile.policyInvitation") }]}
           value={fields.contactPolicy === "requests" ? 0 : 1} onChange={(index) => edit({ contactPolicy: index === 0 ? "requests" : "invitation" })} />
-        <Checkbox checked={fields.representation === "human-and-ship"} disabled={!editable} label={t("people.profile.representation")} info={t("people.profile.representationHint")}
-          onChange={(checked) => edit({ representation: checked ? "human-and-ship" : "human" })} />
         {stale && <p class="people-error">{t("people.profile.stale")}</p>}
         <div class="people-actions">
           <Button type="submit" variant="primary" aria-describedby="people-profile-save-note" disabled={!editable || !canPublish || !valid || !submission?.ready} label={publish.isPending ? t("common.saving") : t(submission?.action === "publish" ? "people.profile.publish" : "people.profile.save")} />
