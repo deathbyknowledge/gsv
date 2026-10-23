@@ -135,7 +135,7 @@ sizes. The smallest size uses compact message text and tighter spacing to fit
 more conversation on screen. Under **Settings → Preferences
 → Appearance**, turn off **Show stars** for a plain background. Both choices are remembered on this
 device; the star preference also applies to sign-in.
-The **?** Help panel (also available in the mobile menu) introduces what Ship can help with. **Talking to Ship** expands example requests; the other getting-started rows open WhatsApp connections, Memory, Permissions and [Ship’s privacy policy](https://ship.space/privacy). **Keyboard shortcuts** replaces Help with Search Chat and the complete shortcut reference; **← Help** returns to getting started. **Need more help?** links to the Ship manual inside Memory, email support and the community Discord.
+The **?** Help panel (also available in the mobile menu) introduces what Ship can help with. **Talking to Ship** expands example requests; the other getting-started rows open WhatsApp connections, Memory, Permissions and [Ship’s privacy policy](https://ship.space/privacy). **Keyboard shortcuts** replaces Help with Search Chat, general shortcuts and shortcuts for the current screen; **← Help** returns to getting started. **Need more help?** links to the Ship manual inside Memory, email support and the community Discord.
 
 Preferences starts with **Appearance**, which applies immediately on this device.
 Model order, reasoning, language and timezone share a **Save changes** bar that

@@ -2,19 +2,20 @@ import type { ComponentChildren, JSX, VNode } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, expect, it, vi } from "vitest";
 import { collectNodes, createTestRoot, collectText } from "../../../testing/testHarness";
+import type { Distance } from "../Instrument";
 import { HelpContent } from "./HelpContent";
 
 afterEach(() => vi.unstubAllGlobals());
 
-it.each(["MacIntel", "Win32"])("keeps onboarding destinations and the complete shortcut view on %s", async (platform) => {
+it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts relevant to the current screen on %s", async (platform) => {
   vi.stubGlobal("document", {});
   vi.stubGlobal("navigator", { platform });
   const root = createTestRoot("Help");
   const onNavigate = vi.fn();
   const onSearch = vi.fn();
   let tree: ComponentChildren;
-  function Harness() {
-    tree = HelpContent({ connected: true, onNavigate, onSearch });
+  function Harness({ distance = "zen" }: { distance?: Distance }) {
+    tree = HelpContent({ distance, connected: true, onNavigate, onSearch });
     return null;
   }
   try {
@@ -59,17 +60,30 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and the complete s
     await act(() => shortcutsButton?.props.onClick?.());
     const shortcutNodes = collectNodes(tree);
     const shortcutText = collectText(tree);
-    for (const label of ["Chat · browse", "Chat · input", "Memory", "Expanded file", "Settings", "Keyboard shortcuts", "Search Chat"]) expect(shortcutText).toContain(label);
+    for (const label of ["Chat · browse", "Chat · input", "Keyboard shortcuts", "Search Chat"]) expect(shortcutText).toContain(label);
     expect(shortcutText).not.toContain("What can Ship help with?");
     expect(shortcutText).not.toContain("Getting started");
     expect(shortcutText).not.toContain("Need more help?");
     expect(shortcutNodes.some((node) => node.type === "details")).toBe(false);
-    expect(shortcutText).toContain(platform === "MacIntel" ? "⌘ Enter" : "Ctrl + Enter");
     expect(shortcutText).toContain(platform === "MacIntel" ? "⌘ F" : "Ctrl + F");
-    const search = shortcutNodes.find((node) => node.type === "button" && node.props.class === "instrument-help-search");
+    const sections: Record<Distance, string[]> = {
+      zen: ["Chat · browse", "Chat · input"],
+      memory: ["Memory"],
+      fleet: ["Work", "Expanded file"],
+      people: ["Contact messages"],
+      settings: ["Settings"],
+    };
+    for (const distance of Object.keys(sections) as Distance[]) {
+      await root.render(<Harness distance={distance} />);
+      const headings = collectNodes(tree).filter((node) => node.type === "h4").map((node) => collectText(node));
+      expect(headings).toEqual(["Views & appearance", ...sections[distance]]);
+      expect(collectText(tree)).toContain("Search Chat");
+      if (distance === "memory" || distance === "fleet") expect(collectText(tree)).toContain(platform === "MacIntel" ? "⌘ Enter" : "Ctrl + Enter");
+    }
+    const search = collectNodes(tree).find((node) => node.type === "button" && node.props.class === "instrument-help-search");
     await act(() => search?.props.onClick?.());
     expect(onSearch).toHaveBeenCalledOnce();
-    const back = shortcutNodes.find((node) => node.type === "button" && node.props.class === "instrument-help-back");
+    const back = collectNodes(tree).find((node) => node.type === "button" && node.props.class === "instrument-help-back");
     await act(() => back?.props.onClick?.());
     expect(collectText(tree)).toContain("Getting started");
     expect(collectText(tree)).not.toContain("Search Chat");

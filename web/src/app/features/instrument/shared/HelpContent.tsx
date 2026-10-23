@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import type { Distance } from "../Instrument";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useT, type TextKey } from "../../../i18n/locale";
 import { shortcutLabel } from "../../../services/platform/shortcutKeys";
@@ -7,6 +8,7 @@ import { memoryLinkHref } from "../memory/memoryLinks";
 export const HELP_MANUAL_PAGE = { db: "gsv-manual", path: "gsv-manual/index.md", fragment: "" };
 
 type HelpContentProps = {
+  distance: Distance;
   connected: boolean;
   onSearch: () => void;
   onNavigate: (href: string) => void;
@@ -23,7 +25,7 @@ function HelpIcon({ kind }: { kind: "talk" | "phone" | "memory" | "permissions" 
   return <svg class="instrument-help-icon" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d={paths[kind]} /></svg>;
 }
 
-export function HelpContent({ connected, onSearch, onNavigate }: HelpContentProps) {
+export function HelpContent({ distance, connected, onSearch, onNavigate }: HelpContentProps) {
   const t = useT();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const shortcutsButton = useRef<HTMLButtonElement>(null);
@@ -74,6 +76,7 @@ export function HelpContent({ connected, onSearch, onNavigate }: HelpContentProp
             <dt>?</dt><dd>{t("shell.help.toggle")}</dd>
             <dt>Esc</dt><dd>{t("shell.help.closePanel")}</dd>
           </dl>
+          {distance === "zen" && <>
             <h4>{t("shell.help.chatBrowse")}</h4>
             <dl>
               <dt>j / k</dt><dd>{t("shell.help.nextPrevious")}</dd>
@@ -91,6 +94,8 @@ export function HelpContent({ connected, onSearch, onNavigate }: HelpContentProp
               <dt>{t("shell.help.placeSyntax")}</dt><dd>{t("shell.help.chooseTarget")}</dd>
               <dt>{t("shell.help.commandSyntax")}</dt><dd>{t("shell.help.runCommand")}</dd>
             </dl>
+          </>}
+          {distance === "memory" && <>
             <h4>{t("shell.help.memory")}</h4>
             <dl>
               <dt>j / ↓</dt><dd>{t("shell.help.nextItem")}</dd>
@@ -101,6 +106,8 @@ export function HelpContent({ connected, onSearch, onNavigate }: HelpContentProp
               <dt>{saveShortcut}</dt><dd>{t("shell.help.savePage")}</dd>
               <dt>Esc</dt><dd>{t("shell.help.leaveSearch")}</dd>
             </dl>
+          </>}
+          {distance === "fleet" && <>
             <h4>{t("shell.help.work")}</h4>
             <dl>
               <dt>j / ↓</dt><dd>{t("shell.help.nextRow")}</dd>
@@ -114,15 +121,20 @@ export function HelpContent({ connected, onSearch, onNavigate }: HelpContentProp
               <dt>{saveShortcut}</dt><dd>{t("shell.help.saveFile")}</dd>
               <dt>Esc</dt><dd>{t("shell.help.returnToFleet")}</dd>
             </dl>
+          </>}
+          {distance === "people" && <>
             <h4>{t("shell.help.contactMessages")}</h4>
             <dl>
               <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.sendMessage")}</dd>
             </dl>
+          </>}
+          {distance === "settings" && <>
             <h4>{t("settings.title")}</h4>
             <dl>
               <dt>{t("shell.keys.tab")}</dt><dd>{t("shell.help.moveControls")}</dd>
               <dt>{t("shell.keys.enterOrSpace")}</dt><dd>{t("shell.help.activate")}</dd>
             </dl>
+          </>}
 
     </> : <>
     <h2>{t("shell.help.introductionTitle")}</h2>

@@ -311,7 +311,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       <WelcomeCard onOpenChange={setWelcomeOpen} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label={t("shell.help.label")} ref={helpRef}>
-          <HelpContent connected={status.state === "connected"} onSearch={openSearch} onNavigate={(href) => {
+          <HelpContent distance={distance} connected={status.state === "connected"} onSearch={openSearch} onNavigate={(href) => {
             if (href === "/memory") {
               if (move("memory")) setHelp(false);
               return;
