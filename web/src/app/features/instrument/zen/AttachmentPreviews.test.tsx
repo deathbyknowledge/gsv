@@ -11,8 +11,13 @@ import { AttachmentPreviews } from "./AttachmentPreviews";
 import { ZenMedia } from "./ZenMedia";
 
 let previewTree: ComponentChildren;
-// A real dialog element with its lifecycle spied on: the viewer can ref it without a cast.
-const dialogElement = Object.assign(document.createElement("dialog"), { showModal: vi.fn(), close: vi.fn() });
+type DialogFixture = HTMLDialogElement & { showModal: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> };
+let dialogFixture: DialogFixture | undefined;
+// A real dialog element with its lifecycle spied on, built on first use because the DOM only exists once the test environment has loaded.
+function dialogElement(): DialogFixture {
+  dialogFixture ??= Object.assign(document.createElement("dialog"), { showModal: vi.fn(), close: vi.fn() });
+  return dialogFixture;
+}
 
 // Keep the real viewer hooks and URL ownership; only replace DOM insertion.
 function PreviewHarness(props: Parameters<typeof AttachmentPreview>[0]) {
@@ -20,7 +25,7 @@ function PreviewHarness(props: Parameters<typeof AttachmentPreview>[0]) {
   // SAFETY: AttachmentPreview returns the dialog VNode with dialog-specific attributes.
   const dialog = previewTree as VNode<JSX.DialogHTMLAttributes<HTMLDialogElement>>;
   if (!dialog.ref || !("current" in dialog.ref)) throw new Error("Expected the dialog's object ref");
-  dialog.ref.current = dialogElement;
+  dialog.ref.current = dialogElement();
   useLayoutEffect(() => () => { previewTree = null; }, []);
   return null;
 }
@@ -37,6 +42,7 @@ afterEach(async () => {
   await root?.unmount();
   root = undefined;
   previewTree = null;
+  dialogFixture = undefined;
   vi.restoreAllMocks();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
@@ -82,13 +88,13 @@ describe("shell-owned attachment previews", () => {
     const url = collectNodes(previewTree).find((node) => node.type === "a")?.props.href;
     expect(url).toMatch(/^blob:/);
     expect(url).not.toBe(view.rowUrl);
-    expect(dialogElement.showModal).toHaveBeenCalledOnce();
+    expect(dialogElement().showModal).toHaveBeenCalledOnce();
     expect(collectText(previewTree)).toContain("package main\n");
 
     await view.removeRow();
     expect(view.row()).toBeNull();
     expect(collectText(previewTree)).toContain("package main\n");
-    expect(dialogElement.close).not.toHaveBeenCalled();
+    expect(dialogElement().close).not.toHaveBeenCalled();
     expect(revoke).toHaveBeenCalledWith(view.rowUrl);
     expect(revoke).not.toHaveBeenCalledWith(url);
     // The retained download still resolves to the exact authenticated bytes.
@@ -111,7 +117,7 @@ describe("shell-owned attachment previews", () => {
       });
     }
     expect(previewTree).toBeNull();
-    expect(dialogElement.close).toHaveBeenCalledOnce();
+    expect(dialogElement().close).toHaveBeenCalledOnce();
     expect(revoke).toHaveBeenCalledWith(url);
     expect(view.trigger.focus).not.toHaveBeenCalled();
   });
