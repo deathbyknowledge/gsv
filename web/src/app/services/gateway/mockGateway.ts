@@ -37,6 +37,9 @@ import {
   BINARY_FRAME_END,
   type AccountSummary,
   type AiTextContent,
+  type ApproachSummary,
+  type ContactSummary,
+  type ConversationInboxEntry,
   type AiThinkingContent,
   type AiToolCall,
   type ConnectResult,
@@ -164,7 +167,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "sys.pair.create", "fs.read", "sys.config.set"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -173,6 +176,29 @@ const responsibilityBase = {
   assignee: { kind: "ship" as const }, priority: "normal" as const, revision: 1,
   createdAtMs: at(1, 9, 0), updatedAtMs: at(0, 8, 0),
 };
+const approaches: ApproachSummary[] = [];
+/* one contact with an unread message, so the chat shows a contact notice with its reply box */
+const MARA_CONTACT_ID = "mock-contact-mara";
+const MARA_CONVERSATION = "c-mara";
+const MARA_ACTOR = { shipId: "mock-person", subjectId: "owner" };
+const maraContact: ContactSummary = { id: MARA_CONTACT_ID, ownerUid: OWNER.uid, state: "active", generation: "1", remoteShipId: MARA_ACTOR.shipId,
+  remoteSubject: { id: MARA_ACTOR.subjectId, displayName: "Mara" }, remoteOrigin: "https://mara.ship.space", conversationId: MARA_CONVERSATION,
+  createdAtMs: at(3, 9, 0), updatedAtMs: at(0, 8, 12), lastReceivedAtMs: at(0, 8, 12) };
+const maraThread: ConversationMessage[] = [{ id: "mara-1", conversationId: MARA_CONVERSATION, sequence: 1,
+  author: { kind: "contact", contactId: MARA_CONTACT_ID, shipId: MARA_ACTOR.shipId, subjectId: MARA_ACTOR.subjectId, displayName: "Mara" },
+  text: "Are we still on for the studio visit on Thursday? I can bring the revised quote.",
+  social: { threadId: "mara-thread", reference: { actor: MARA_ACTOR, messageId: "mara-1" }, provenance: { kind: "human" } },
+  origin: { kind: "federation", contactId: MARA_CONTACT_ID, deliveryId: "mara-delivery-1" }, createdAt: at(0, 8, 12) }];
+const maraView = { readThroughSequence: 0, archived: false, revision: 1 };
+function maraConversation(): ConversationSummary {
+  return { id: MARA_CONVERSATION, kind: "contact", ownerUid: OWNER.uid, title: "Mara", latestSequence: maraThread.length, createdAt: at(3, 9, 0), updatedAt: maraThread.at(-1)!.createdAt };
+}
+function maraInboxEntry(): ConversationInboxEntry {
+  const latest = maraThread.at(-1)!;
+  const latestIncoming = [...maraThread].reverse().find((message) => message.author.kind === "contact")?.sequence ?? 0;
+  return { conversation: maraConversation(), contactId: MARA_CONTACT_ID, view: { ...maraView }, unread: latestIncoming > maraView.readThroughSequence,
+    latestIncomingSequence: latestIncoming, preview: { id: latest.id, sequence: latest.sequence, author: latest.author, createdAt: latest.createdAt, text: latest.text, attachmentCount: 0 } };
+}
 const responsibilities: ResponsibilityRecord[] = [
   { ...responsibilityBase, id: "mock-notes", title: "Organise the notes from this week", state: "active", assignee: { kind: "process", processId: HELPER.pid }, details: { outcome: "Keep the action items together and archive the older notes." } },
   { ...responsibilityBase, id: "mock-pricing", title: "Follow up on pricing with Mara", state: "waiting", blocker: "Waiting for Mara’s reply", details: { outcome: "Confirm the revised quote before Thursday." } },
@@ -831,6 +857,10 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "conversation.forProcess": return respond(id, { conversation: conversation(pidArgs.parse(args).pid) });
     case "conversation.history": {
       const { conversationId, beforeSequence = Infinity, afterSequence, limit = 100 } = conversationArgs.parse(args);
+      if (conversationId === MARA_CONVERSATION) {
+        const messages = maraThread.filter((message) => message.sequence < beforeSequence && message.sequence > (afterSequence ?? 0)).slice(-limit);
+        return respond(id, { conversation: maraConversation(), messages, hasMore: false });
+      }
       const ship = conversationId === SHIP_CONVERSATION;
       const all = ship ? world.messages : [];
       const eligible = all.filter((message) => message.sequence < beforeSequence && message.sequence > (afterSequence ?? 0));
@@ -853,7 +883,43 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       const sent = receive(input.text);
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
     }
-    case "contact.list": return respond(id, { contacts: [] });
+    case "contact.list": return respond(id, { contacts: [maraContact] });
+    case "conversation.inbox": {
+      const { attentionOnly } = z.object({ attentionOnly: z.boolean().optional() }).parse(args);
+      const entry = maraInboxEntry();
+      return respond(id, { entries: attentionOnly && !entry.unread ? [] : [entry] });
+    }
+    case "conversation.view.update": {
+      const { conversationId, readThroughSequence } = z.object({ conversationId: z.string(), readThroughSequence: z.number().optional() }).parse(args);
+      if (conversationId !== MARA_CONVERSATION) throw new Error(`Unexpected conversation ${conversationId}`);
+      if (readThroughSequence !== undefined) maraView.readThroughSequence = Math.max(maraView.readThroughSequence, readThroughSequence);
+      maraView.revision += 1;
+      return respond(id, { entry: maraInboxEntry() });
+    }
+    case "contact.send": {
+      const { contactId, text } = z.object({ contactId: z.string(), text: z.string() }).parse(args);
+      if (contactId !== MARA_CONTACT_ID) throw new Error(`Unexpected contact ${contactId}`);
+      const sequence = maraThread.length + 1;
+      maraThread.push({ id: `mara-${sequence}`, conversationId: MARA_CONVERSATION, sequence, author: { kind: "user", uid: OWNER.uid }, text,
+        social: { threadId: "mara-thread", reference: { actor: { shipId: "mock-ship", subjectId: "owner" }, messageId: `mara-${sequence}` }, provenance: { kind: "human" } },
+        origin: { kind: "client", clientId: "web" }, createdAt: Date.now() });
+      return respond(id, { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" });
+    }
+    /* a message request sent from People: kept in this tab so the requests view can list it */
+    case "approach.create": {
+      const { displayName, recipient } = z.object({ displayName: z.string(), recipient: z.object({ shipId: z.string(), subjectId: z.string() }) }).parse(args);
+      const now = Date.now();
+      const approach: ApproachSummary = { id: `mock-approach-${approaches.length + 1}`, direction: "outgoing",
+        reference: { actor: recipient, approachId: `mock-approach-${approaches.length + 1}` }, peer: recipient, displayName,
+        conversationId: `approach:${approaches.length + 1}`, state: "pending", revision: 1, delivery: "received",
+        createdAtMs: now, updatedAtMs: now, expiresAtMs: now + 7 * 24 * 3_600_000 };
+      approaches.push(approach);
+      return respond(id, { approach });
+    }
+    case "approach.list": {
+      const { direction } = z.object({ direction: z.enum(["incoming", "outgoing"]) }).parse(args);
+      return respond(id, { approaches: direction === "outgoing" ? approaches : [] });
+    }
     case "profile.get": return respond(id, { profile: ownProfile });
     case "profile.update": {
       const { draft } = z.object({ expectedRevision: z.number(), draft: z.object({
