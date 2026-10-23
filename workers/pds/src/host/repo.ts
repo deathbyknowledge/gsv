@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { CODEC_RAW, fromString as parseCid, toString as formatCid } from "@atcute/cid";
+import { CODEC_RAW, fromDigest, fromString as parseCid, toString as formatCid } from "@atcute/cid";
 import { isHandle, isNsid, isRecordKey } from "@atcute/lexicons/syntax";
 import { BlockMap } from "@atproto/repo";
 import * as z from "zod/mini";
@@ -36,7 +36,7 @@ export type CommitResult = {
 export type HostedAccount = { did: string; handle: string };
 
 /** Largest blob the host stages. */
-export const MAX_BLOB_BYTES = 5 * 1024 * 1024;
+export const MAX_BLOB_BYTES = 48 * 1024 * 1024;
 
 const ACCOUNT_KEY = "account";
 const DELIVERED_KEY = "firehose.delivered";
@@ -52,7 +52,8 @@ const EVENT_TYPES = ["commit", "identity", "sync", "account"] as const;
 const MIGRATIONS = [{
   id: 1,
   statements: [
-    "CREATE TABLE staged_blobs (cid TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)",
+    // An upload streams into a staged copy named before its CID is known; the CID is set once every byte arrives.
+    "CREATE TABLE staged_blobs (name TEXT PRIMARY KEY, cid TEXT UNIQUE, expires_at INTEGER NOT NULL)",
     "CREATE INDEX staged_blobs_expiry ON staged_blobs(expires_at)",
   ],
 }];
@@ -155,28 +156,59 @@ export class HostedRepo extends DurableObject<HostEnv> {
           : { uri: result.uri, cid: result.cid };
       });
       await this.updateBlobReferences(repo, prepared, results);
-      await this.unstage(repo, promoted);
+      await this.unstage(repo, promoted.flatMap((cid) => this.stagedName(cid) ?? []));
       return { commit: committed.commit, results };
     });
   }
 
-  /** Stages bytes until a record references them; an unreferenced upload expires. */
-  async uploadBlob(bytes: Uint8Array, mimeType: string): Promise<BlobRef> {
-    if (bytes.byteLength > MAX_BLOB_BYTES) {
-      throw new Error(`BlobTooLarge: blobs are limited to ${MAX_BLOB_BYTES} bytes`);
+  /**
+   * Streams an upload of the declared size into staging and names it by its CID
+   * once every byte has arrived. Nothing serves the upload until a record
+   * references it; an upload no record references expires.
+   */
+  async uploadBlob(body: ReadableStream<Uint8Array>, size: number, mimeType: string): Promise<BlobRef> {
+    try {
+      if (!Number.isSafeInteger(size) || size < 0) throw new Error("InvalidRequest: an upload must declare its size");
+      if (size > MAX_BLOB_BYTES) throw new Error(`BlobTooLarge: blobs are limited to ${MAX_BLOB_BYTES} bytes`);
+      if (!MIME_TYPE.test(mimeType)) throw new Error(`InvalidRequest: ${mimeType} is not a MIME type`);
+    } catch (error) {
+      await body.cancel(error).catch(() => {});
+      throw error;
     }
-    return this.write(async (repo) => {
-      const blob = await repo.blobs.putBlob(bytes, mimeType);
+    // The staged copy is recorded before any byte is stored, so it expires even if the upload never finishes.
+    const name = await this.write(async () => {
+      const staged = `upload-${crypto.randomUUID()}`;
       const expiresAt = Date.now() + STAGED_BLOB_TTL_MS;
-      this.ctx.storage.sql.exec(
-        `INSERT INTO staged_blobs (cid, expires_at) VALUES (?, ?)
-         ON CONFLICT (cid) DO UPDATE SET expires_at = excluded.expires_at`,
-        blob.ref.$link,
-        expiresAt,
-      );
+      this.ctx.storage.sql.exec("INSERT INTO staged_blobs (name, cid, expires_at) VALUES (?, NULL, ?)", staged, expiresAt);
       await this.alarmBy(expiresAt);
-      return blob;
+      return staged;
     });
+    const repo = await this.requireRepo();
+    const hashing = hashed(body, size);
+    await repo.blobs.putStaged(name, hashing.stream, mimeType);
+    const cid = formatCid(fromDigest(CODEC_RAW, new Uint8Array(await hashing.digest)));
+    return this.write(async (repo) => {
+      const expiresAt = Date.now() + STAGED_BLOB_TTL_MS;
+      if (this.stagedName(cid) !== null || await repo.blobs.hasBlob(cid)) {
+        // The same bytes are already staged or public; that copy serves this upload too.
+        await this.unstage(repo, [name]);
+        this.ctx.storage.sql.exec("UPDATE staged_blobs SET expires_at = MAX(expires_at, ?) WHERE cid = ?", expiresAt, cid);
+      } else {
+        this.ctx.storage.sql.exec("UPDATE staged_blobs SET cid = ?, expires_at = ? WHERE name = ?", cid, expiresAt, name);
+      }
+      await this.alarmBy(expiresAt);
+      return { $type: "blob", ref: { $link: cid }, mimeType, size };
+    });
+  }
+
+  /** One of this repository's blobs, public or still staged, for its owner to look at before publishing. */
+  async readBlob(cid: string): Promise<{ body: ReadableStream<Uint8Array>; mimeType: string; size: number } | null> {
+    if (!isCanonicalCid(cid, CODEC_RAW)) throw new Error(`InvalidRequest: ${cid} is not a blob CID`);
+    const repo = await this.requireRepo();
+    const staged = this.stagedName(cid);
+    const object = (await repo.blobs.getBlob(cid)) ?? (staged === null ? null : await repo.blobs.getStagedBlob(staged));
+    if (!object) return null;
+    return { body: object.body, mimeType: object.httpMetadata?.contentType ?? "application/octet-stream", size: object.size };
   }
 
   async state(): Promise<RepoState | null> {
@@ -477,9 +509,8 @@ export class HostedRepo extends DurableObject<HostEnv> {
     const promoted: string[] = [];
     for (const cid of new Set(prepared.flatMap((entry) => entry.blobs ?? []))) {
       if (await repo.blobs.hasBlob(cid)) continue;
-      if (this.ctx.storage.sql.exec("SELECT 1 FROM staged_blobs WHERE cid = ?", cid).toArray().length > 0) {
-        await repo.blobs.promoteBlob(cid);
-      }
+      const staged = this.stagedName(cid);
+      if (staged !== null) await repo.blobs.promoteBlob(cid, staged);
       if (!(await repo.blobs.hasBlob(cid))) {
         await unpublish(repo, promoted);
         throw new Error(`BlobNotFound: no uploaded blob has CID ${cid}`);
@@ -513,19 +544,25 @@ export class HostedRepo extends DurableObject<HostEnv> {
     }
   }
 
-  private async unstage(repo: OpenRepo, cids: string[]): Promise<void> {
-    for (const cid of cids) {
-      await repo.blobs.deleteStagedBlob(cid);
-      this.ctx.storage.sql.exec("DELETE FROM staged_blobs WHERE cid = ?", cid);
+  /** The staged copy holding a CID's bytes, once its upload has finished. */
+  private stagedName(cid: string): string | null {
+    return this.ctx.storage.sql.exec<{ name: string }>("SELECT name FROM staged_blobs WHERE cid = ?", cid).toArray()[0]?.name ?? null;
+  }
+
+  /** Deletes staged copies by name, after promotion or once an upload expires. */
+  private async unstage(repo: OpenRepo, names: string[]): Promise<void> {
+    for (const name of names) {
+      await repo.blobs.deleteStagedBlob(name);
+      this.ctx.storage.sql.exec("DELETE FROM staged_blobs WHERE name = ?", name);
     }
   }
 
   private async expireStagedBlobs(repo: OpenRepo, now: number): Promise<void> {
-    const expired = this.ctx.storage.sql.exec<{ cid: string }>(
-      "SELECT cid FROM staged_blobs WHERE expires_at <= ?",
+    const expired = this.ctx.storage.sql.exec<{ name: string }>(
+      "SELECT name FROM staged_blobs WHERE expires_at <= ?",
       now,
     ).toArray();
-    await this.unstage(repo, expired.map((row) => row.cid));
+    await this.unstage(repo, expired.map((row) => row.name));
   }
 
   private nextStagedExpiry(): number | null {
@@ -591,6 +628,34 @@ function isCanonicalCid(value: string, codec?: number): boolean {
   } catch {
     return false;
   }
+}
+
+/** A MIME type without parameters, which a blob is served with. */
+const MIME_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$/i;
+
+/**
+ * Passes a body of the declared size through unchanged while hashing it. The
+ * stream fails if the body is longer or shorter than declared, and has the
+ * fixed length R2 needs.
+ */
+function hashed(body: ReadableStream<Uint8Array>, size: number) {
+  const digest = new crypto.DigestStream("SHA-256");
+  const writer = digest.getWriter();
+  let received = 0;
+  const counted = new TransformStream<Uint8Array, Uint8Array>({
+    async transform(chunk, controller) {
+      received += chunk.byteLength;
+      if (received > size) throw new Error(`InvalidRequest: the upload is longer than its declared ${size} bytes`);
+      // The digest gets a copy, so the stored stream keeps its own bytes whatever the digest does with them.
+      await writer.write(chunk.slice());
+      controller.enqueue(chunk);
+    },
+    async flush() {
+      if (received !== size) throw new Error(`InvalidRequest: the upload ended after ${received} of its declared ${size} bytes`);
+      await writer.close();
+    },
+  });
+  return { stream: body.pipeThrough(counted).pipeThrough(new FixedLengthStream(size)), digest: digest.digest };
 }
 
 function car(bytes: Uint8Array): Response {

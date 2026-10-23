@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { InstallationDirectoryResult, InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
-import type { PdsService } from "@humansandmachines/gsv/services/pds";
+import { PUBLIC_BLOB_MAX_BYTES, type PdsService } from "@humansandmachines/gsv/services/pds";
 import { FakePlcDirectory } from "../test/plc";
 
 type SmokeEnv = {
@@ -48,17 +48,35 @@ export default {
 async function publish(pds: PdsService) {
   const repository = await pds.getInstallation(INSTALLATION_ID);
   const account = await repository.ensureAccount(HANDLE);
-  const blob = await repository.uploadBlob(new TextEncoder().encode("smoke attachment"), "text/plain");
+  const attachment = new TextEncoder().encode("smoke attachment");
+  const blob = await repository.uploadBlob(new Blob([attachment]).stream(), attachment.byteLength, "text/plain");
+  // The largest upload the host takes crosses the service binding as a stream.
+  const video = await repository.uploadBlob(patterned(PUBLIC_BLOB_MAX_BYTES), PUBLIC_BLOB_MAX_BYTES, "video/mp4");
   const note = (text: string) => ({ $type: NOTE, text, createdAt: "2026-10-23T00:00:00.000Z" });
   const commits = [
     await repository.applyWrites([
-      { action: "create", collection: NOTE, rkey: "first", record: { ...note("first"), attachment: blob } },
+      { action: "create", collection: NOTE, rkey: "first", record: { ...note("first"), attachment: blob, video } },
       { action: "create", collection: NOTE, rkey: "second", record: note("second") },
     ]),
-    await repository.applyWrites([{ action: "put", collection: NOTE, rkey: "first", record: { ...note("first, edited"), attachment: blob } }]),
+    await repository.applyWrites([{ action: "put", collection: NOTE, rkey: "first", record: { ...note("first, edited"), attachment: blob, video } }]),
     await repository.applyWrites([{ action: "delete", collection: NOTE, rkey: "second" }]),
   ];
-  return { ...account, blob: blob.ref.$link, revs: commits.map((commit) => commit.commit.rev) };
+  return { ...account, blob: blob.ref.$link, video: video.ref.$link, revs: commits.map((commit) => commit.commit.rev) };
+}
+
+/** A byte stream of `size` bytes repeating a fixed pattern, generated as it is read. */
+function patterned(size: number): ReadableStream<Uint8Array> {
+  const chunk = new Uint8Array(1024 * 1024).map((_, index) => index % 251);
+  let sent = 0;
+  return new ReadableStream({
+    type: "bytes",
+    pull(controller) {
+      if (sent >= size) return controller.close();
+      const next = chunk.slice(0, Math.min(chunk.byteLength, size - sent));
+      sent += next.byteLength;
+      controller.enqueue(next);
+    },
+  });
 }
 
 function installation(): InstallationDirectoryResult {

@@ -50,3 +50,28 @@ export function installFakePlc(directory: FakePlcDirectory, origin: string): voi
     return directory.handle(request);
   });
 }
+
+/** Anything that stages blobs the way the host's callers do: a byte stream of a declared size. */
+type BlobUploader<T> = { uploadBlob(body: ReadableStream<Uint8Array>, size: number, mimeType: string): Promise<T> };
+
+/** Uploads text as a blob, streamed as a caller streams one. */
+export function upload<T>(target: BlobUploader<T>, text: string, mimeType = "text/plain"): Promise<T> {
+  const data = new TextEncoder().encode(text);
+  return target.uploadBlob(byteStream(data), data.byteLength, mimeType);
+}
+
+/** A byte stream of the given bytes in chunks; RPC carries only byte streams. */
+export function byteStream(data: Uint8Array, chunkBytes = 64 * 1024): ReadableStream<Uint8Array> {
+  let offset = 0;
+  return new ReadableStream({
+    type: "bytes",
+    pull(controller) {
+      if (offset >= data.byteLength) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(data.slice(offset, offset + chunkBytes));
+      offset += chunkBytes;
+    },
+  });
+}

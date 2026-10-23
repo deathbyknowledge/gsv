@@ -10,7 +10,7 @@
 //   gh release download v0.2.4 -R bluesky-social/goat -p goat_Linux_x86_64.tar.gz
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
@@ -54,7 +54,7 @@ try {
   const response = await fetch(`${smoke}/_smoke/publish`, { method: "POST" });
   assert.equal(response.status, 200, await response.clone().text());
   const published = await response.json();
-  const { did, handle, blob, revs } = published;
+  const { did, handle, blob, video, revs } = published;
   console.log(`published ${did} (${handle}) in ${revs.length} commits`);
 
   // #account, #identity and #sync announce the account, then one #commit per write call.
@@ -85,12 +85,16 @@ try {
   assert.equal(record.attachment.ref.$link, blob);
   await assert.rejects(goatOut(["get", `at://${did}/${COLLECTION}/second`]), /RecordNotFound/);
   assert.deepEqual(lines(await goatOut(["ls", did])).map((line) => line.split("\t").slice(0, 2).join("/")), [`${COLLECTION}/first`]);
-  assert.deepEqual(lines(await goatOut(["blob", "ls", did])), [blob]);
+  assert.deepEqual(lines(await goatOut(["blob", "ls", did])).sort(), [blob, video].sort());
   const blobs = join(work, "blobs");
   await mkdir(blobs);
   await goatOut(["blob", "export", did], { cwd: blobs });
   const [exported] = await readdir(blobs);
   assert.equal(await readFile(join(blobs, exported, blob), "utf8"), "smoke attachment");
+  // The 48 MiB upload streamed across the binding; the bytes served back hash to its CID.
+  const large = await readFile(join(blobs, exported, video));
+  assert.equal(large.byteLength, 48 * 1024 * 1024);
+  assert.equal(rawCid(large), video);
   assert.deepEqual(lines(await goatOut(["pds", "--pds-host", host, "account", "ls"])), [`${did}\tactive\t${revs.at(-1)}`]);
   console.log("goat: identity, repository export, records, blobs and account listing match what was published");
   passed = true;
@@ -159,6 +163,25 @@ function logs(stream) {
 async function goatOut(args, options = {}) {
   const { stdout } = await run(goat, args, { env: goatEnv, ...options });
   return stdout;
+}
+
+/** The CID ATProto gives a blob: CIDv1, raw codec, sha2-256, in base32. */
+function rawCid(bytes) {
+  const cid = Buffer.concat([Buffer.from([0x01, 0x55, 0x12, 0x20]), createHash("sha256").update(bytes).digest()]);
+  const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+  let out = "b";
+  let value = 0;
+  let bits = 0;
+  for (const byte of cid) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+    value &= (1 << bits) - 1;
+  }
+  return bits > 0 ? out + alphabet[(value << (5 - bits)) & 31] : out;
 }
 
 function lines(text) {

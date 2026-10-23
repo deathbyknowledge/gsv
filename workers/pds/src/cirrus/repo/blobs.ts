@@ -16,6 +16,8 @@ export interface BlobRef {
  *
  *   `${did}/staged/${cid}` – uploaded, not yet referenced by any record.
  *     Served by nothing; expired by an R2 lifecycle rule after seven days.
+ *     A host that streams uploads names the staged copy itself, since the
+ *     CID is only known once every byte has arrived.
  *   `${did}/${cid}`        – referenced by at least one public record.
  *     Served by com.atproto.sync.getBlob.
  *
@@ -119,6 +121,24 @@ export class BlobStore {
 	}
 
 	/**
+	 * Stream an upload into staging under a name the host chooses, for an
+	 * upload whose CID is only known once every byte has arrived. R2 needs
+	 * the body's length up front.
+	 */
+	async putStaged(name: string, body: ReadableStream, mimeType: string): Promise<void> {
+		await this.r2.put(stagedBlobKey(this.keyPrefix, this.did, name), body, {
+			httpMetadata: { contentType: mimeType },
+		});
+	}
+
+	/**
+	 * Retrieve a staged copy by its name: its CID, or the name the host gave it.
+	 */
+	async getStagedBlob(name: string): Promise<R2ObjectBody | null> {
+		return this.r2.get(stagedBlobKey(this.keyPrefix, this.did, name));
+	}
+
+	/**
 	 * Promote a staged blob to a destination key with a streaming copy.
 	 *
 	 * Idempotent: returns early when the destination already exists, so
@@ -127,10 +147,10 @@ export class BlobStore {
 	 * may reference blobs from before this layout existed, and reference
 	 * checking is not this method's job.
 	 */
-	private async promoteTo(cid: string, destKey: string): Promise<void> {
+	private async promoteTo(cid: string, destKey: string, stagedName = cid): Promise<void> {
 		if (await this.r2.head(destKey)) return;
 
-		const staged = await this.r2.get(stagedBlobKey(this.keyPrefix, this.did, cid));
+		const staged = await this.r2.get(stagedBlobKey(this.keyPrefix, this.did, stagedName));
 		if (!staged) return;
 
 		await this.r2.put(destKey, staged.body, {
@@ -139,10 +159,11 @@ export class BlobStore {
 	}
 
 	/**
-	 * Promote a staged blob to the public serving key.
+	 * Promote a staged blob to the public serving key. A staged copy the host
+	 * named itself is promoted by that name.
 	 */
-	async promoteBlob(cid: string): Promise<void> {
-		await this.promoteTo(cid, publicBlobKey(this.keyPrefix, this.did, cid));
+	async promoteBlob(cid: string, stagedName = cid): Promise<void> {
+		await this.promoteTo(cid, publicBlobKey(this.keyPrefix, this.did, cid), stagedName);
 	}
 
 	/**
@@ -176,9 +197,10 @@ export class BlobStore {
 
 	/**
 	 * Delete a blob's staged copy, after promotion or when an unreferenced
-	 * upload expires.
+	 * upload expires. The copy is named by its CID, or by the name the host
+	 * gave it.
 	 */
-	async deleteStagedBlob(cid: string): Promise<void> {
-		await this.r2.delete(stagedBlobKey(this.keyPrefix, this.did, cid));
+	async deleteStagedBlob(name: string): Promise<void> {
+		await this.r2.delete(stagedBlobKey(this.keyPrefix, this.did, name));
 	}
 }

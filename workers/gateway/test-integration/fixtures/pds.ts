@@ -3,9 +3,9 @@ import type { PublicRepository, PublicRepositoryAccount } from "@humansandmachin
 
 // Public repositories the deployment's PDS holds for the integration installations.
 const ACCOUNTS = new Map<string, PublicRepositoryAccount>([
-  ["inst_integration_first", { did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", handle: "first.gsv.space" }],
+  ["inst_integration_first", { did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", handle: "first.gsv.space", host: "https://pds.gsv.space" }],
   // Its handle is another hostname, which second.gsv.space must not claim.
-  ["inst_integration_second", { did: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb", handle: "second.ship.space" }],
+  ["inst_integration_second", { did: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb", handle: "second.ship.space", host: "https://pds.gsv.space" }],
 ]);
 
 class IntegrationRepository extends RpcTarget implements Pick<PublicRepository, "account"> {

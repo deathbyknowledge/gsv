@@ -7,12 +7,14 @@ import type {
 } from "@humansandmachines/gsv/services/directory";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { PUBLIC_BLOB_MAX_BYTES } from "@humansandmachines/gsv/services/pds";
 import { admitInstallation } from "../src/gsv/admission";
 import type { PdsEnv } from "../src/gsv/env";
 import { PdsPublisherEntrypoint } from "../src/gsv/publisher";
+import { MAX_BLOB_BYTES } from "../src/host/repo";
 import worker from "../src/index";
 import { FakePlcDirectory } from "./plc";
-import { deliver, errorOf, installFakePlc, read, rejection } from "./support";
+import { deliver, errorOf, installFakePlc, read, rejection, upload } from "./support";
 
 const NOTE = "space.gsv.note";
 
@@ -100,19 +102,20 @@ describe("publishing for an installation", () => {
     }
 
     const account = await repository.ensureAccount(ship.handle.toUpperCase());
-    expect(account).toEqual({ did: expect.stringMatching(/^did:plc:/), handle: ship.handle });
+    expect(account).toEqual({ did: expect.stringMatching(/^did:plc:/), handle: ship.handle, host: env.PDS_ORIGIN });
     expect(plc.operations(account.did)).toEqual([expect.objectContaining({ alsoKnownAs: [`at://${ship.handle}`] })]);
     // Another hostname for the same installation finds the account it already has.
     expect(await repository.ensureAccount(ship.canonical)).toEqual(account);
     expect(plc.operations(account.did)).toHaveLength(1);
-    expect(await env.REPOS.getByName(ship.installationId).account()).toEqual(account);
+    expect(await repository.account()).toEqual(account);
+    expect(await env.REPOS.getByName(ship.installationId).account()).toEqual({ did: account.did, handle: account.handle });
   });
 
   it("publishes records and blobs under the installation's storage prefix", async () => {
     const ship = accounts.add();
     const repository = await publisher().getInstallation(ship.installationId);
     const { did } = await repository.ensureAccount(ship.handle);
-    const blob = await repository.uploadBlob(new TextEncoder().encode("avatar"), "text/plain");
+    const blob = await upload(repository, "avatar");
     const commit = await repository.applyWrites([{
       action: "put",
       collection: NOTE,
@@ -123,6 +126,12 @@ describe("publishing for an installation", () => {
     const prefix = `installations/${encodeURIComponent(ship.installationId)}/`;
     expect((await env.BLOBS.list({ prefix })).objects.map((object) => object.key))
       .toEqual([`${prefix}${did}/${blob.ref.$link}`]);
+    const read = await repository.readBlob(blob.ref.$link);
+    expect(read && await new Response(read.body).text()).toBe("avatar");
+  });
+
+  it("accepts blobs as large as a message may attach", () => {
+    expect(MAX_BLOB_BYTES).toBe(PUBLIC_BLOB_MAX_BYTES);
   });
 });
 

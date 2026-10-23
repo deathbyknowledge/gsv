@@ -1,5 +1,6 @@
 import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { CODEC_RAW, create as createCid, fromDigest, toString as formatCid } from "@atcute/cid";
 import { Secp256k1PrivateKey, Secp256k1PrivateKeyExportable } from "@atcute/crypto";
 import { fromBase16 } from "@atcute/multibase";
 import { CID } from "@atproto/lex-data";
@@ -10,11 +11,11 @@ import { encode } from "../src/cirrus/cbor-compat";
 import { BlobStore, type BlobRef } from "../src/cirrus/repo/blobs";
 import { FIREHOSE_NAME, HostFirehose, type OutboxEvent, type RepoState } from "../src/host/firehose";
 import { mintIdentity, registerGenesis } from "../src/host/identity";
-import { HostedRepo, type LexObject, type RepoWrite } from "../src/host/repo";
+import { HostedRepo, MAX_BLOB_BYTES, type LexObject, type RepoWrite } from "../src/host/repo";
 import { handleXrpc, type Admission } from "../src/host/xrpc";
 import { FakePlcDirectory } from "./plc";
 import { framesFor, subscribe, verifyCommit, type Frame } from "./relay";
-import { deliver, errorOf, installFakePlc, read, rejection } from "./support";
+import { byteStream, deliver, errorOf, installFakePlc, read, rejection, upload } from "./support";
 
 const NOTE = "space.gsv.note";
 
@@ -100,7 +101,7 @@ describe("hosted repository", () => {
   it("decides each write against the commit before it, even while another write waits on blob storage", async () => {
     const { name, repo, account } = await hostAccount();
     const prefix = `${blobPrefix(name)}${account.did}/`;
-    const [first, second] = await Promise.all([repo.uploadBlob(bytes("first"), "text/plain"), repo.uploadBlob(bytes("second"), "text/plain")]);
+    const [first, second] = await Promise.all([upload(repo, "first"), upload(repo, "second")]);
     const put = (text: string, blob: BlobRef): RepoWrite => ({
       action: "put",
       collection: NOTE,
@@ -109,9 +110,9 @@ describe("hosted repository", () => {
     });
     // R2 calls take network time, during which the object accepts other requests.
     const promote = BlobStore.prototype.promoteBlob;
-    vi.spyOn(BlobStore.prototype, "promoteBlob").mockImplementation(async function (this: BlobStore, cid: string) {
+    vi.spyOn(BlobStore.prototype, "promoteBlob").mockImplementation(async function (this: BlobStore, cid: string, staged?: string) {
       await new Promise((resolve) => setTimeout(resolve, 20));
-      return promote.call(this, cid);
+      return promote.call(this, cid, staged);
     });
     // Both writes start before either commits; each first promotes its upload.
     await Promise.all([repo.applyWrites([put("first", first)]), repo.applyWrites([put("second", second)])]);
@@ -185,8 +186,8 @@ describe("hosted repository", () => {
   it("publishes an upload once a record references it and deletes blobs no record references", async () => {
     const { name, repo, account } = await hostAccount();
     const prefix = `${blobPrefix(name)}${account.did}/`;
-    const first = await repo.uploadBlob(bytes("first"), "text/plain");
-    expect(await blobKeys(prefix)).toEqual([`${prefix}staged/${first.ref.$link}`]);
+    const first = await upload(repo, "first");
+    expect(await blobKeys(prefix)).toEqual([stagedCopy(prefix)]);
     expect(await errorOf(xrpc("com.atproto.sync.getBlob", { did: account.did, cid: first.ref.$link }))).toBe("BlobNotFound");
 
     await repo.applyWrites([note("card", "with a file", { file: blobField(first) })]);
@@ -197,7 +198,7 @@ describe("hosted repository", () => {
     expect(served.headers.get("Content-Security-Policy")).toBe("default-src 'none'; sandbox");
     expect(await served.text()).toBe("first");
 
-    const second = await repo.uploadBlob(bytes("second"), "text/plain");
+    const second = await upload(repo, "second");
     await repo.applyWrites([
       { action: "put", collection: NOTE, rkey: "card", record: noteRecord("replaced", { file: blobField(second) }) },
       note("copy", "shares the file", { file: blobField(second) }),
@@ -215,18 +216,18 @@ describe("hosted repository", () => {
   it("leaves no blob public when a write references one that was never uploaded", async () => {
     const { name, repo, account } = await hostAccount();
     const prefix = `${blobPrefix(name)}${account.did}/`;
-    const uploaded = await repo.uploadBlob(bytes("uploaded"), "text/plain");
+    const uploaded = await upload(repo, "uploaded");
     const missing = { ...uploaded, ref: { $link: "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku" } };
     const write = note("pair", "two files", { files: [blobField(uploaded), blobField(missing)] });
 
     expect(await rejection(repo.applyWrites([write]))).toContain("BlobNotFound");
-    expect(await blobKeys(prefix)).toEqual([`${prefix}staged/${uploaded.ref.$link}`]);
+    expect(await blobKeys(prefix)).toEqual([stagedCopy(prefix)]);
   });
 
   it("expires an upload that no record references", async () => {
     const { name, repo, account } = await hostAccount();
     const prefix = `${blobPrefix(name)}${account.did}/`;
-    const orphan = await repo.uploadBlob(bytes("orphan"), "text/plain");
+    const orphan = await upload(repo, "orphan");
     await runInDurableObject(repo, async (_instance, state) => {
       state.storage.sql.exec("UPDATE staged_blobs SET expires_at = ?", Date.now() - 1);
     });
@@ -235,6 +236,79 @@ describe("hosted repository", () => {
       expect(await blobKeys(prefix)).toEqual([]);
     });
     expect(await rejection(repo.applyWrites([note("late", "an expired file", { file: blobField(orphan) })]))).toContain("BlobNotFound");
+  });
+
+  it("names a streamed upload by the CID of its bytes, keeping one staged copy for identical uploads", async () => {
+    const { name, repo, account } = await hostAccount();
+    const prefix = `${blobPrefix(name)}${account.did}/`;
+    const text = "x".repeat(200_000);
+    const first = await upload(repo, text, "image/png");
+    expect(first).toEqual({
+      $type: "blob",
+      ref: { $link: formatCid(await createCid(CODEC_RAW, new TextEncoder().encode(text))) },
+      mimeType: "image/png",
+      size: 200_000,
+    });
+    expect(await upload(repo, text, "image/png")).toEqual(first);
+    expect(await blobKeys(prefix)).toEqual([stagedCopy(prefix)]);
+    expect(await stagedRows(repo)).toEqual([first.ref.$link]);
+  });
+
+  it("refuses an upload that differs from its declared size or type, storing nothing and expiring its record", async () => {
+    const { name, repo, account } = await hostAccount();
+    const prefix = `${blobPrefix(name)}${account.did}/`;
+    const data = new TextEncoder().encode("eleven byte");
+    expect(await rejection(repo.uploadBlob(byteStream(data), data.byteLength - 1, "text/plain"))).toContain("longer than its declared");
+    expect(await rejection(repo.uploadBlob(byteStream(data), data.byteLength + 1, "text/plain"))).toContain("ended after 11");
+    expect(await rejection(repo.uploadBlob(byteStream(data), MAX_BLOB_BYTES + 1, "text/plain"))).toContain("BlobTooLarge");
+    for (const mimeType of ["text/plain; charset=utf-8", "plain", ""]) {
+      expect(await rejection(repo.uploadBlob(byteStream(data), data.byteLength, mimeType))).toContain("is not a MIME type");
+    }
+    expect(await blobKeys(prefix)).toEqual([]);
+    expect(await stagedRows(repo)).toEqual([null, null]);
+    await runInDurableObject(repo, async (_instance, state) => {
+      state.storage.sql.exec("UPDATE staged_blobs SET expires_at = ?", Date.now() - 1);
+    });
+    await vi.waitFor(async () => {
+      await runDurableObjectAlarm(repo);
+      expect(await stagedRows(repo)).toEqual([]);
+    });
+  });
+
+  it("reads back an upload before a record publishes it, and after", async () => {
+    const { repo } = await hostAccount();
+    const uploaded = await upload(repo, "draft photo", "image/jpeg");
+    const readBack = async () => {
+      const blob = await repo.readBlob(uploaded.ref.$link);
+      return blob && { mimeType: blob.mimeType, size: blob.size, text: await new Response(blob.body).text() };
+    };
+    expect(await readBack()).toEqual({ mimeType: "image/jpeg", size: 11, text: "draft photo" });
+    await repo.applyWrites([note("photo", "published", { file: blobField(uploaded) })]);
+    expect(await readBack()).toEqual({ mimeType: "image/jpeg", size: 11, text: "draft photo" });
+    expect(await repo.readBlob("bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku")).toBeNull();
+    expect(await rejection(repo.readBlob(`staged/${uploaded.ref.$link}`))).toContain("is not a blob CID");
+  });
+
+  it("streams an upload as large as the host stages", { timeout: 120_000 }, async () => {
+    const { repo } = await hostAccount();
+    const chunk = new Uint8Array(1024 * 1024).map((_, index) => index % 251);
+    const chunks = MAX_BLOB_BYTES / chunk.byteLength;
+    const digest = new crypto.DigestStream("SHA-256");
+    const writer = digest.getWriter();
+    for (let index = 0; index < chunks; index += 1) await writer.write(chunk);
+    await writer.close();
+    let sent = 0;
+    const body = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        if (sent === chunks) return controller.close();
+        sent += 1;
+        controller.enqueue(chunk.slice());
+      },
+    });
+    const blob = await repo.uploadBlob(body, MAX_BLOB_BYTES, "video/mp4");
+    expect(blob.ref.$link).toBe(formatCid(fromDigest(CODEC_RAW, new Uint8Array(await digest.digest))));
+    expect(blob.size).toBe(MAX_BLOB_BYTES);
   });
 });
 
@@ -297,7 +371,7 @@ describe("host XRPC", () => {
 
   it("refuses a blob CID that would name a staged upload", async () => {
     const { repo, account } = await hostAccount();
-    const staged = await repo.uploadBlob(bytes("unpublished"), "text/plain");
+    const staged = await upload(repo, "unpublished");
     expect(await errorOf(xrpc("com.atproto.sync.getBlob", { did: account.did, cid: `staged/${staged.ref.$link}` })))
       .toBe("InvalidRequest");
   });
@@ -487,8 +561,14 @@ function blobField(blob: BlobRef): LexObject {
   return { $type: blob.$type, ref: { $link: blob.ref.$link }, mimeType: blob.mimeType, size: blob.size };
 }
 
-function bytes(text: string): Uint8Array {
-  return new TextEncoder().encode(text);
+/** The key of an upload's staged copy, which is named before its CID is known. */
+function stagedCopy(prefix: string) {
+  return expect.stringMatching(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}staged/upload-[0-9a-f-]{36}$`));
+}
+
+async function stagedRows(repo: DurableObjectStub<HostedRepo>) {
+  return runInDurableObject(repo, async (_instance, state) =>
+    state.storage.sql.exec<{ cid: string | null }>("SELECT cid FROM staged_blobs").toArray().map((row) => row.cid));
 }
 
 async function blobKeys(prefix: string): Promise<string[]> {

@@ -37,6 +37,10 @@ Cirrus is MIT-licensed by Matt Kane, as declared in its
   blob's staged and public copies. A host whose key prefix keeps R2 lifecycle
   rules from reaching `staged/` cleans up with them, and deletes a public copy
   once no record references it.
+- `repo/blobs.ts`: `BlobStore.putStaged` streams an upload into `staged/` under
+  a name the host chooses, and `getStagedBlob`, `promoteBlob` and
+  `deleteStagedBlob` take that name. A streamed upload's CID is only known once
+  every byte has arrived.
 
 Each local change has a test that fails without it. Make any other engine fix
 upstream, then refresh the copy. GSV code that wraps the engine lives outside
@@ -77,6 +81,13 @@ overlap while blob storage is slow, a head that no event announced, delivery
 retries with backoff, the blob lifecycle, cursor replay and retention, and the
 XRPC reads, including an unknown DID that must not address any object.
 
+Uploads stream in with a declared size, up to 48 MiB. The host hashes the bytes
+as they arrive, names the staged copy by the resulting CID, and keeps one
+staged copy for identical uploads. An upload that ends early, runs long or has
+no plain MIME type stores nothing. Its staged record expires with every other
+unreferenced upload, after six hours. The account can read an upload back
+before any record publishes it.
+
 The GSV tests use an in-memory Accounts directory. They cover the publishing
 authority, installations that are not active, the handles a new account may
 take, the installation's blob prefix, and how each installation state reads.
@@ -91,10 +102,11 @@ The smoke check runs a clean local host and checks it with
 [goat](https://github.com/bluesky-social/goat), the reference ATProto CLI. One
 wrangler session runs the host from `src/index.ts`. A second runs
 `smoke/worker.ts`, which stands in for the PLC directory, Accounts and the
-Kernel's publisher binding. The run creates an account, uploads a blob, and
-creates, updates and deletes records in three commits. goat then resolves the
-DID, exports and inspects the repository, reads the records and blobs, and
-lists the host's accounts. It also follows the firehose live and from cursor 0,
+Kernel's publisher binding. The run creates an account, uploads a small blob and a
+48 MiB one across the service binding, and creates, updates and deletes records
+in three commits. goat then resolves the
+DID, exports and inspects the repository, reads the records, downloads both
+blobs (the large one must hash to its CID), and lists the host's accounts. It also follows the firehose live and from cursor 0,
 verifying each commit's signature and MST.
 
 goat 0.2.5 and later refuse loopback addresses, so `GOAT` must name a goat
