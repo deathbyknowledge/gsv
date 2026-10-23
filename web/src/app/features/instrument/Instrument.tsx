@@ -1,3 +1,4 @@
+import { FEEDBACK_FEATURE } from "@humansandmachines/gsv/services/feedback";
 import type { ActivityRequest } from "./zen/chatContextModel";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useColorTheme } from "../../components/ui/useColorTheme";
@@ -90,7 +91,7 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string; handsfreeDirty: boolean }) {
   const t = useT();
   const viewportRef = useInstrumentViewport();
-  const { service: session } = useSession();
+  const { service: session, snapshot } = useSession();
   const { client, status } = useGateway();
   useEffect(() => {
     if (status.state !== "connected") return;
@@ -126,6 +127,8 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const [help, setHelp] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [searchRequested, setSearchRequested] = useState(false);
+  const [feedbackRequest, setFeedbackRequest] = useState(0);
+  const feedbackAvailable = snapshot.server?.features?.includes(FEEDBACK_FEATURE) || import.meta.env.VITE_GSV_PREVIEW === "true";
   const helpRef = useRef<HTMLElement>(null);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const navigationRef = useRef<HTMLElement>(null);
@@ -293,7 +296,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       <div class="instrument-viewport">
       <div class="instrument-scaled">
       <HandsfreeStatus />
-      <InstrumentHeader distance={distance} onNavigate={(to) => {
+      <InstrumentHeader distance={distance} feedbackRequest={feedbackRequest} onNavigate={(to) => {
         if (move(to) && navigationOpen) navigationButtonRef.current?.focus();
       }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0}
         helper={distance === "zen" && zenPid !== null}
@@ -311,7 +314,10 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       <WelcomeCard onOpenChange={setWelcomeOpen} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label={t("shell.help.label")} ref={helpRef}>
-          <HelpContent distance={distance} connected={status.state === "connected"} onSearch={openSearch} onNavigate={(href) => {
+          <HelpContent distance={distance} connected={status.state === "connected"} onSearch={openSearch} onFeedback={feedbackAvailable ? () => {
+            setHelp(false);
+            setFeedbackRequest((request) => request + 1);
+          } : undefined} onNavigate={(href) => {
             if (href === "/memory") {
               if (move("memory")) setHelp(false);
               return;

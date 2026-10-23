@@ -583,10 +583,10 @@
 .instrument-help dt { color: var(--text-hi); white-space: nowrap; }
 .instrument-help dd { margin: 0; }
 .instrument-help-footer { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
-.instrument-help-footer a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
-.instrument-help-footer a:hover { color: var(--accent); }
-.instrument-help-footer a:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
-.instrument-help-footer > a { display: block; width: fit-content; margin-top: 8px; }
+.instrument-help-footer :is(a, button) { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.instrument-help-footer :is(a, button):hover { color: var(--accent); }
+.instrument-help-footer :is(a, button):focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+.instrument-help-footer > :is(a, button) { display: block; width: fit-content; margin-top: 8px; }
 @container instrument (max-width: 350px) {
   .instrument-help dl { grid-template-columns: minmax(0, 1fr); }
   .instrument-help dd { margin-bottom: 8px; }

@@ -1272,6 +1272,7 @@ export const es = {
   "shell.help.privacyUnavailable": "Este operador no ha proporcionado una política de privacidad.",
   "shell.help.shortcuts": "Atajos de teclado",
   "shell.help.supportTitle": "¿Necesitas más ayuda?",
+  "shell.help.feedback": "Comentarios o errores",
   "shell.help.support": "Contactar con soporte",
   "shell.help.label": "Ayuda",
   "shell.help.manual": "Manual de Ship",

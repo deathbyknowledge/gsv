@@ -137,7 +137,7 @@ more conversation on screen. Under **Settings → Preferences
 device; the star preference also applies to sign-in.
 Hover over or focus a top-right navigation button to see a short explanation and its keyboard shortcut. Press **w** outside a text field to open Work.
 
-The **?** Help panel (also available in the mobile menu) introduces what Ship can help with. **Talking to Ship** expands example requests; the other getting-started rows open WhatsApp connections, Memory, Permissions and [Ship’s privacy policy](https://ship.space/privacy). **Keyboard shortcuts** replaces Help with Search Chat, general shortcuts and shortcuts for the current screen; **← Help** returns to getting started. **Need more help?** links to the Ship manual inside Memory, email support and the community Discord.
+The **?** Help panel (also available in the mobile menu) introduces what Ship can help with. **Talking to Ship** expands example requests; the other getting-started rows open WhatsApp connections, Memory, Permissions and [Ship’s privacy policy](https://ship.space/privacy). **Keyboard shortcuts** replaces Help with Search Chat, general shortcuts and shortcuts for the current screen; **← Help** returns to getting started. **Need more help?** opens the existing Feedback form through **Feedback or bugs**, when feedback is available, and links to the Ship manual inside Memory, email support and the community Discord.
 
 Preferences starts with **Appearance**, which applies immediately on this device.
 Model order, reasoning, language and timezone share a **Save changes** bar that

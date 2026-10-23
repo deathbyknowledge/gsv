@@ -10,6 +10,7 @@ type InstrumentHeaderProps = {
   distance: Distance;
   onNavigate: (distance: Distance) => void;
   peopleWaiting?: boolean;
+  feedbackRequest?: number;
   helper: boolean;
   /** Back to the ship's own conversation. */
   onShip: () => void;
@@ -31,7 +32,7 @@ const VIEW_LABELS = {
   settings: "shell.nav.settings",
 } satisfies Record<Exclude<Distance, "zen">, TextKey>;
 
-export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, onShip, help, onHelp, helpButtonRef,
+export function InstrumentHeader({ distance, onNavigate, peopleWaiting, feedbackRequest, helper, onShip, help, onHelp, helpButtonRef,
   navigationOpen, onNavigationToggle, navigationButtonRef, navigationRef }: InstrumentHeaderProps) {
   const t = useT();
   return (
@@ -41,7 +42,7 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, 
           <Wordmark />
         </button>
         {distance !== "zen" && <span class="instrument-current-view">{t(VIEW_LABELS[distance])}</span>}
-        <Feedback view={distance} />
+        <Feedback view={distance} openRequest={feedbackRequest} />
         <PlatformIdentity />
         {helper && <span class="instrument-helper">{t("shell.header.helper")} · <button type="button" onClick={onShip}>{t("shell.header.backToShip")}</button></span>}
       </div>

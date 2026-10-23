@@ -13,9 +13,10 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts rele
   const root = createTestRoot("Help");
   const onNavigate = vi.fn();
   const onSearch = vi.fn();
+  const onFeedback = vi.fn();
   let tree: ComponentChildren;
   function Harness({ distance = "zen" }: { distance?: Distance }) {
-    tree = HelpContent({ distance, connected: true, onNavigate, onSearch });
+    tree = HelpContent({ distance, connected: true, onNavigate, onSearch, onFeedback });
     return null;
   }
   try {
@@ -56,6 +57,10 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts rele
     onNavigate.mockClear();
     await act(() => link.props.onClick?.({ ...event, metaKey: true } as unknown as JSX.TargetedMouseEvent<HTMLAnchorElement>));
     expect(onNavigate).not.toHaveBeenCalled();
+    const feedback = nodes.find((node) => node.type === "button" && node.props.class === "instrument-help-feedback");
+    expect(collectText(feedback)).toBe("Feedback or bugs");
+    await act(() => feedback?.props.onClick?.());
+    expect(onFeedback).toHaveBeenCalledOnce();
     const shortcutsButton = nodes.find((node) => node.type === "button" && node.props.class === "instrument-help-shortcuts");
     await act(() => shortcutsButton?.props.onClick?.());
     const shortcutNodes = collectNodes(tree);

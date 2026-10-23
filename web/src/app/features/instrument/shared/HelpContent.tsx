@@ -11,6 +11,7 @@ type HelpContentProps = {
   distance: Distance;
   connected: boolean;
   onSearch: () => void;
+  onFeedback?: () => void;
   onNavigate: (href: string) => void;
 };
 
@@ -25,7 +26,7 @@ function HelpIcon({ kind }: { kind: "talk" | "phone" | "memory" | "permissions" 
   return <svg class="instrument-help-icon" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d={paths[kind]} /></svg>;
 }
 
-export function HelpContent({ distance, connected, onSearch, onNavigate }: HelpContentProps) {
+export function HelpContent({ distance, connected, onSearch, onFeedback, onNavigate }: HelpContentProps) {
   const t = useT();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const shortcutsButton = useRef<HTMLButtonElement>(null);
@@ -158,6 +159,7 @@ export function HelpContent({ distance, connected, onSearch, onNavigate }: HelpC
     </button>
     <footer class="instrument-help-footer">
       <h3>{t("shell.help.supportTitle")}</h3>
+      {onFeedback && <button type="button" class="instrument-help-feedback" aria-haspopup="dialog" onClick={onFeedback}>{t("shell.help.feedback")}</button>}
       <a href={memoryLinkHref(HELP_MANUAL_PAGE)} onClick={navigate}>{t("shell.help.manual")}</a>
       <a href="mailto:hello@humansandmachin.es">{t("shell.help.support")}</a>
       <a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">{t("shell.help.discord")}</a>

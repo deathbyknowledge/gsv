@@ -1271,6 +1271,7 @@ export const en = {
   "shell.help.privacyUnavailable": "No privacy policy has been provided by this operator.",
   "shell.help.shortcuts": "Keyboard shortcuts",
   "shell.help.supportTitle": "Need more help?",
+  "shell.help.feedback": "Feedback or bugs",
   "shell.help.support": "Contact support",
   "shell.help.label": "Help",
   "shell.help.manual": "Ship manual",

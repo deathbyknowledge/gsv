@@ -1277,6 +1277,7 @@ export const ptBR = {
   "shell.help.privacyUnavailable": "Este operador não forneceu uma política de privacidade.",
   "shell.help.shortcuts": "Atalhos de teclado",
   "shell.help.supportTitle": "Precisa de mais ajuda?",
+  "shell.help.feedback": "Feedback ou problemas",
   "shell.help.support": "Falar com o suporte",
   "shell.help.label": "Ajuda",
   "shell.help.manual": "Manual do Ship",
