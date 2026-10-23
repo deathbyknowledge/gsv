@@ -8,10 +8,14 @@ type FixturePds = { getInstallation(installationId: string): Promise<{ commits()
 const NOTE = { action: "put" as const, collection: "space.ship.note", rkey: "first", record: { $type: "space.ship.note", text: "hello" } };
 
 describe("publishing to the open network", () => {
-  it("lets the signed-in person publish directly, creating the Ship's identity on the first write", async () => {
+  it("publishes the person's profile at sign-in, creating the Ship's identity, then lets them publish directly", async () => {
     const runtime = await startProcessRuntimeHarness({ pds: true });
     try {
-      expect(await runtime.client.atproto.identity({})).toEqual({ identity: null });
+      const [profile] = await profilePublishedAtSignIn(runtime);
+      expect(profile).toEqual([expect.objectContaining({ action: "put", collection: "space.ship.profile", rkey: "self" })]);
+      expect(await runtime.client.atproto.identity({})).toEqual({
+        identity: { did: "did:plc:dddddddddddddddddddddddd", handle: "default.gsv.space", host: "https://pds.gsv.space" },
+      });
       // Large enough that the file is still streaming after the Kernel releases its repository handle.
       const bytes = Uint8Array.from({ length: 2 * 1024 * 1024 }, (_, index) => index % 251);
       const uploaded = await runtime.client.request("atproto.blob.upload", { mimeType: "image/png" }, { body: bodyFromBytes(bytes) });
@@ -24,14 +28,11 @@ describe("publishing to the open network", () => {
 
       const write = { ...NOTE, record: { ...NOTE.record, picture: blob } };
       const commit = await runtime.client.atproto.write({ writes: [write] });
-      expect(commit.results).toEqual([{ uri: "at://did:plc:dddddddddddddddddddddddd/space.ship.note/first", cid: "bafyrecord1" }]);
-      expect(await runtime.client.atproto.identity({})).toEqual({
-        identity: { did: "did:plc:dddddddddddddddddddddddd", handle: "default.gsv.space", host: "https://pds.gsv.space" },
-      });
-      expect(await committed(runtime.harness)).toEqual([[write]]);
+      expect(commit.results).toEqual([{ uri: "at://did:plc:dddddddddddddddddddddddd/space.ship.note/first", cid: "bafyrecord2" }]);
+      expect(await committed(runtime.harness)).toEqual([profile, [write]]);
       await expect(runtime.client.atproto.write({ writes: [{ action: "delete", collection: "space.ship.profile", rkey: "self" }] }))
         .rejects.toThrow("space.ship.profile is your profile; change it in People");
-      expect(await committed(runtime.harness)).toHaveLength(1);
+      expect(await committed(runtime.harness)).toHaveLength(2);
     } finally { await runtime.close(); }
   });
 });
@@ -40,6 +41,7 @@ describe("the Ship publishing to the open network", () => {
   it("asks first, even when other tools run without asking, and writes only what the person approves", async () => {
     const runtime = await startProcessRuntimeHarness({ pds: true });
     try {
+      const signIn = await profilePublishedAtSignIn(runtime);
       const ship = (await runtime.client.proc.list({})).processes.find(({ personal }) => personal);
       if (!ship) throw new Error("Setup did not create Ship");
       await runtime.configureAi(ship.pid);
@@ -65,21 +67,24 @@ describe("the Ship publishing to the open network", () => {
           handle: "default", address: "default.gsv.space",
           writes: [{ ...written, rkey }],
         } });
-        expect(await committed(runtime.harness)).toEqual([]);
+        expect(await committed(runtime.harness)).toEqual(signIn);
         expect(await runtime.client.proc.hil({ pid: ship.pid, requestId: history.pendingHil.requestId, decision })).toMatchObject({ ok: true });
         await runtime.waitFor(async () => {
           const state = await runtime.client.proc.history({ pid: ship.pid, includeMessages: false });
           return state.ok && state.activeRunId === null;
         }, `the ${rkey} run to finish`, 15000);
-        if (decision === "deny") {
-          expect(await committed(runtime.harness)).toEqual([]);
-          expect(await runtime.client.atproto.identity({})).toEqual({ identity: null });
-        }
+        if (decision === "deny") expect(await committed(runtime.harness)).toEqual(signIn);
       }
-      expect(await committed(runtime.harness)).toEqual([[written]]);
+      expect(await committed(runtime.harness)).toEqual([...signIn, [written]]);
     } finally { await runtime.close(); }
   });
 });
+
+/** The write batches committed once the person's sign-in has published their profile, the Ship's first write. */
+async function profilePublishedAtSignIn(runtime: Awaited<ReturnType<typeof startProcessRuntimeHarness>>) {
+  await runtime.waitFor(async () => (await committed(runtime.harness)).length > 0, "the profile published at sign-in");
+  return await committed(runtime.harness);
+}
 
 /** The write batches the fixture PDS committed for the harness installation. */
 async function committed(harness: Awaited<ReturnType<typeof startProcessRuntimeHarness>>["harness"]) {
