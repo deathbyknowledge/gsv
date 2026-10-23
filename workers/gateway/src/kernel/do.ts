@@ -752,9 +752,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const gate = await this.onboarding.managedWorkGate();
     if (!gate.allowed) return null;
     this.retirement.assertActive();
-    const projection = await resolveSpacePublicProfile(locator, this.buildKernelContext({}));
+    const ctx = this.buildKernelContext({});
+    const projection = await resolveSpacePublicProfile(locator, ctx);
     this.retirement.assertActive();
-    return projection;
+    const handle = ctx.installationIdentity?.handle;
+    return projection && handle ? { ...projection, handle } : projection;
   }
 
   async scheduleApproachMaintenance(runningTaskId?: string): Promise<void> {

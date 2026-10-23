@@ -226,7 +226,7 @@ export function Select(props: SelectProps) {
           </span>
           <span style={{ marginLeft: "auto", display: "flex" }}>
             <svg width="9" height="6" viewBox="0 0 9 6" aria-hidden="true">
-              <path d="M0 0 L9 0 L4.5 6 Z" fill="#b3aeff" />
+              <path d="M0 0 L9 0 L4.5 6 Z" style={{ fill: "var(--accent)" }} />
             </svg>
           </span>
         </button>
@@ -247,9 +247,9 @@ export function Select(props: SelectProps) {
               top: "100%",
               marginTop: "4px",
               zIndex: 20,
-              background: "#13112e",
-              border: "1px solid #4a449e",
-              boxShadow: "0 12px 30px rgba(0,0,0,.55)",
+              background: "var(--gsv-field-surface, var(--panel-2))",
+              border: "1px solid var(--border-raised)",
+              boxShadow: "var(--gsv-sel-list-shadow, 0 12px 30px rgba(0,0,0,.55))",
               outline: "none",
             }}
           >
@@ -259,17 +259,17 @@ export function Select(props: SelectProps) {
               const row = (
                 <button
                   type="button"
-                  class={`gsv-sel-row${i === highlight ? " is-highlighted" : ""}`}
+                  class={`gsv-sel-row${i === idx ? " is-selected" : ""}${i === highlight ? " is-highlighted" : ""}`}
                   key={`option:${i}`}
                   id={optId(i)}
                   role="option"
                   aria-selected={i === idx}
                   tabIndex={-1}
-                  style={i === idx ? { background: "#171441" } : undefined}
+
                   onClick={() => pick(i)}
                   onMouseEnter={() => setHighlight(i)}
                 >
-                  <span class="gsv-sel-row-copy" style={{ color: i === idx ? "#fff" : "#c4bfee" }}>
+                  <span class="gsv-sel-row-copy" style={{ color: i === idx ? "var(--text-hi)" : "var(--label)" }}>
                     <span>{option.label}</span>
                     {option.description ? <small>{option.description}</small> : null}
                   </span>
@@ -281,8 +281,8 @@ export function Select(props: SelectProps) {
                         width: "6px",
                         height: "6px",
                         borderRadius: "50%",
-                        background: "#cbc7ff",
-                        boxShadow: "0 0 6px #cbc7ff",
+                        background: "var(--accent-bright)",
+                        boxShadow: "0 0 var(--gsv-fld-glow, 6px) var(--accent-bright)",
                       }}
                     />
                   ) : null}

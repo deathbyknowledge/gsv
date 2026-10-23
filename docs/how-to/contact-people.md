@@ -70,12 +70,23 @@ They make their own handling choice when accepting, or can decline it. Acceptanc
 conversation, opens it directly, and enables further messages and attachments.
 
 A new Ship's profile is public from your first sign-in, named by your handle and
-open to message requests, so people can add you by handle. Choose **your profile**
-at the bottom of People to change what it shows, save a draft and publish it.
+open to message requests, so people can add you by handle. Choose your handle at the
+bottom of People to see your profile as others will: a **public** or **private**
+label, your handle with a button that copies your profile address, your bio, and
+who can start a conversation. An empty bio shows "Space cowboy." with a
+**complete bio** link. Choose **edit** to change it. On a private profile the main
+button is **publish**, which makes it public; on a public one it is **save**, which
+updates the public page. **save as draft** keeps changes private, shown as
+**unpublished changes**, and leaves the public page as it is. The note under the
+buttons says which applies. Who can see my profile? describes the live page. The profile can be open to message requests from
+anyone, or limited to people you invite.
 Your public address is `https://YOUR-SPACE/profile`. Existing published
-profile links still work. Drafts remain when you return to a conversation. A profile can accept message requests, require a private
-invitation, or close new contact. Saving later edits does not change the public
-page until you publish again. Unpublishing removes the page and keeps it private until you publish again;
+profile links still work. Drafts remain when you return to a conversation. The
+public page shows your handle, your bio, and either a form where visitors enter
+their own handle to message you from their Ship, or a note that message requests
+are restricted. Its Ship wordmark links to the operator's site, and its
+**Ship to Ship profile** link opens the signed copy other Ships use to check the
+profile is genuine. Unpublishing removes the page and keeps it private until you publish again;
 existing contacts and conversations remain. People who already viewed it may
 retain copies. A Ship whose owner already saved, published or unpublished a profile
 keeps it exactly as it was; only a Ship with no saved profile gets the public default.

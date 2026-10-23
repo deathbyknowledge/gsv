@@ -15,6 +15,8 @@ export interface ButtonProps {
   onClick?: () => void;
   /** Extra data-* attributes spread onto the root (e.g. focus markers). */
   dataAttrs?: Record<`data-${string}`, string | number | boolean>;
+  /** Set by a wrapping tooltip (`Hint`) so the button announces its hint. */
+  "aria-describedby"?: string;
 }
 
 const VARIANT_CLASS = {
@@ -27,7 +29,7 @@ const VARIANT_CLASS = {
 };
 
 /** Button — ported from Button.dc.html. */
-export function Button({ variant = "primary", tone, label, disabled = false, block = false, type = "button", onClick, dataAttrs }: ButtonProps) {
+export function Button({ variant = "primary", tone, label, disabled = false, block = false, type = "button", onClick, dataAttrs, "aria-describedby": describedBy }: ButtonProps) {
   const t = useT();
   const toneClass = variant === "link" && tone ? ` is-tone-${tone}` : "";
   const cls = `gsv-btn ${VARIANT_CLASS[variant]}${toneClass}${block ? " gsv-btn-block" : ""}${disabled ? " is-disabled" : ""}`;
@@ -37,6 +39,7 @@ export function Button({ variant = "primary", tone, label, disabled = false, blo
       type={type}
       class={cls}
       disabled={disabled}
+      aria-describedby={describedBy}
       onClick={disabled ? undefined : onClick}
     >
       <span class="gsv-btn-label">{label ?? t("ui.button.label")}</span>

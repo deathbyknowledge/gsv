@@ -6,6 +6,8 @@ import "./InfoTip.css";
 export interface InfoTipProps {
   /** The hint shown in the tooltip bubble. */
   text: string;
+  /** Optional bold first line above the hint. */
+  title?: string;
   /** Which side the bubble opens on (default "top"). */
   position?: TooltipPosition;
   /** Accessible name for the trigger (default "More info"). */
@@ -19,12 +21,12 @@ export interface InfoTipProps {
  *  so the bubble escapes any `overflow`-clipping ancestor (a field label row,
  *  a list row, a scroll container). The `gsv-infotip` wrapper is kept so
  *  InfoTip.css can align/space the trigger after a label. */
-export function InfoTip({ text, position = "top", label }: InfoTipProps) {
+export function InfoTip({ text, title, position = "top", label }: InfoTipProps) {
   const t = useT();
   return (
     <span class="gsv-infotip">
-      <Hint text={text} position={position}>
-        <IconButton glyph="help" ghost size={16} ariaLabel={label ?? t("ui.infoTip.label")} />
+      <Hint text={text} title={title} position={position} openOnTap>
+        <IconButton glyph="help" ghost size={22} ariaLabel={label ?? t("ui.infoTip.label")} />
       </Hint>
     </span>
   );

@@ -238,7 +238,9 @@ function placementsEqual(a: Placement, b: Placement): boolean {
  *  open, is re-positioned every frame by the singleton manager against the
  *  trigger's currently-visible rect. Reveal is JS-driven since a portaled node is
  *  not a descendant of the hovered wrapper. */
-function useTooltipReveal(position: TooltipPosition) {
+/** `openOnTap`: a touch or pen tap opens the bubble instead of dismissing it, for
+ *  help triggers whose only job is to show their hint; tapping elsewhere closes it. */
+function useTooltipReveal(position: TooltipPosition, openOnTap = false) {
   const wrapRef = useRef<HTMLSpanElement>(null);
   const bubbleRef = useRef<HTMLSpanElement>(null);
   const [open, setOpen] = useState(false);
@@ -293,11 +295,11 @@ function useTooltipReveal(position: TooltipPosition) {
       suppressFocusOpen = false;
       setOpen(false);
     };
-    const onActivate = () => {
+    const onActivate = (event?: PointerEvent) => {
       disarm();
       suppressHover = true;
       suppressFocusOpen = true;
-      setOpen(false);
+      setOpen(openOnTap && event !== undefined && event.pointerType !== "mouse");
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") onActivate();
@@ -341,6 +343,8 @@ function useTooltipReveal(position: TooltipPosition) {
         "--panel": style.getPropertyValue("--panel"),
         "--border": style.getPropertyValue("--border"),
         "--text": style.getPropertyValue("--text"),
+        "--text-dim": style.getPropertyValue("--text-dim"),
+        "--gsv-font-prose": style.getPropertyValue("--gsv-font-prose"),
       });
     }
     const handle = handleRef.current!;
@@ -392,6 +396,7 @@ function TooltipBubble({
   bubbleRef,
   theme,
   text,
+  title,
 }: {
   open: boolean;
   shown: boolean;
@@ -399,6 +404,7 @@ function TooltipBubble({
   bubbleRef: RefObject<HTMLSpanElement>;
   theme: JSX.CSSProperties;
   text: string;
+  title?: string;
 }) {
   if (!open) return null;
   const sideClass = placement ? SIDE_CLASS[placement.side] : "";
@@ -415,6 +421,7 @@ function TooltipBubble({
       aria-hidden="true"
       style={style}
     >
+      {title ? <strong class="gsv-tt-title">{title}</strong> : null}
       {text}
       <span class="gsv-tt-arrow" />
     </span>,
@@ -462,6 +469,10 @@ export function Tooltip({
 export interface HintProps {
   /** The hint shown in the tooltip bubble. */
   text: string;
+  /** Open on a touch tap instead of dismissing; for help triggers with no other action. */
+  openOnTap?: boolean;
+  /** Optional bold first line above the hint. */
+  title?: string;
   /** Which side the bubble opens on (default "top"). */
   position?: TooltipPosition;
   /** The interactive control to attach the tooltip to. Rendered as-is (no extra
@@ -477,9 +488,9 @@ export interface HintProps {
  *  description span, so the description exists the moment focus lands. Use this
  *  to give icon buttons a styled, explanatory tooltip in place of native
  *  `title`. */
-export function Hint({ text, position = "top", children }: HintProps) {
+export function Hint({ text, title, position = "top", openOnTap = false, children }: HintProps) {
   const bubbleId = useId();
-  const { wrapRef, bubbleRef, open, shown, placement, theme } = useTooltipReveal(position);
+  const { wrapRef, bubbleRef, open, shown, placement, theme } = useTooltipReveal(position, openOnTap);
   const child = isValidElement(children)
     // SAFETY: isValidElement narrows children to a VNode accepted by cloneElement.
     ? cloneElement(children, {
@@ -489,7 +500,7 @@ export function Hint({ text, position = "top", children }: HintProps) {
   return (
     <span ref={wrapRef} class={`gsv-tt ${POS_CLASS[position]} gsv-hint`}>
       {child}
-      <span class="gsv-tt-desc" id={bubbleId} role="tooltip" aria-hidden="true">{text}</span>
+      <span class="gsv-tt-desc" id={bubbleId} role="tooltip" aria-hidden="true">{title ? `${title} ${text}` : text}</span>
       <TooltipBubble
         open={open}
         shown={shown}
@@ -497,6 +508,7 @@ export function Hint({ text, position = "top", children }: HintProps) {
         bubbleRef={bubbleRef}
         theme={theme}
         text={text}
+        title={title}
       />
     </span>
   );

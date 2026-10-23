@@ -73,7 +73,6 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
       <div class="people-profile-preview">
         <span class="people-kicker">{profileAddressLabel(profile.origin)}</span>
         <h2>{profile.displayName}</h2>{profile.about && <p>{profile.about}</p>}
-        {profile.representation === "human-and-ship" && <p class="people-note">{t("people.compose.mayReply")}</p>}
       </div>
       {existing ? <button class="ibtn is-primary" onClick={() => onOpen(existing.id)}>{t("people.compose.openExisting")}</button>
         : profile.contactPolicy !== "requests" ? <p class="people-note">{t(profile.contactPolicy === "invitation" ? "people.compose.byInvitation" : "people.compose.closed")}</p>
