@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { profileFieldsSchema, type ProfileFields, type ProfileState } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { LoadingState } from "../../../components/ui/Spinner";
@@ -15,7 +15,10 @@ import { Select } from "../../../components/ui/Select";
 import { Tag } from "../../../components/ui/Tag";
 import { TextArea } from "../../../components/ui/TextArea";
 import { Hint } from "../../../components/ui/Tooltip";
-import { profileNamed, profileSubmission, profileVisibility } from "./profileModel";
+import { profileNamed, profileSubmission, profileVisibility, type ProfilePictureEdit, type ProfileSubmission } from "./profileModel";
+import { profilePicture, readProfilePicture, saveProfilePicture } from "./profilePicture";
+import { ProfilePicturePicker, useObjectUrl } from "./ProfilePicturePicker";
+import { ProfileNotice } from "./ProfileNotice";
 
 const VISIBILITY_TEXT = {
   private: "people.profile.visibilityPrivate", requests: "people.profile.visibilityPublic", invitation: "people.profile.visibilityPublicInvite",
@@ -30,24 +33,48 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
   const cache = useQueryClient();
   const key = [...INSTRUMENT_PROFILE_KEY, account.uid];
   const [draft, setDraft] = useState<{ revision: number; fields: ProfileFields } | null>(null);
+  const [pictureEdit, setPictureEdit] = useState<ProfilePictureEdit | null>(null);
+  const [pictureError, setPictureError] = useState<string | null>(null);
   const canRead = canConfigure(account, "profile.get");
   const profile = useQuery({ queryKey: key, queryFn: async () => (await client.profile.get({})).profile, enabled: connected && active && canRead });
+  const savedAvatar = profile.data?.avatar;
+  // A picture is named by its CID, so its bytes never change and profile updates don't refetch it.
+  const savedPicture = useQuery({
+    queryKey: ["instrument", "profile-picture", account.uid, savedAvatar?.cid ?? null],
+    queryFn: async () => await readProfilePicture(client, savedAvatar!),
+    enabled: connected && active && !!savedAvatar,
+    staleTime: Infinity,
+  });
+  const savedPictureUrl = useObjectUrl(savedAvatar ? savedPicture.data ?? null : null);
+  const chosenPicture = useMemo(() => pictureEdit?.picture ? new Blob([pictureEdit.picture.bytes.slice()], { type: pictureEdit.picture.mimeType }) : null, [pictureEdit]);
+  const chosenPictureUrl = useObjectUrl(chosenPicture);
   const refresh = async (state: ProfileState) => {
     await cache.cancelQueries({ queryKey: key, exact: true });
     cache.setQueryData(key, state);
     await cache.invalidateQueries({ queryKey: key, exact: true });
   };
+  /** Saves the chosen picture first; edits still in the editor move to the revision it leaves. */
+  const savePicture = async (revision: number, edit: ProfilePictureEdit): Promise<number> => {
+    const saved = await saveProfilePicture(client, revision, edit.picture);
+    setPictureEdit(null);
+    setDraft((current) => current?.revision === revision ? { ...current, revision: saved.revision } : current);
+    await refresh(saved);
+    return saved.revision;
+  };
   const save = useMutation({
-    mutationFn: async (input: { revision: number; fields: ProfileFields }) => (await client.profile.update({ expectedRevision: input.revision, draft: input.fields })).profile,
-    onSuccess: async (state) => { setDraft(null); await refresh(state); },
+    mutationFn: async (input: { revision: number; fields: ProfileFields | null; picture: ProfilePictureEdit | null }) => {
+      const revision = input.picture ? await savePicture(input.revision, input.picture) : input.revision;
+      return input.fields ? (await client.profile.update({ expectedRevision: revision, draft: input.fields })).profile : null;
+    },
+    onSuccess: async (state) => { setDraft(null); if (state) await refresh(state); },
   });
   const publish = useMutation({
-    mutationFn: async (input: { revision: number; fields: ProfileFields | null }) => {
-      let revision = input.revision;
+    mutationFn: async (input: ProfileSubmission) => {
+      let revision = input.picture ? await savePicture(input.revision, input.picture) : input.revision;
       if (input.fields) {
         // Commit the saved draft before publishing: if publishing fails, the edit stays saved as
         // unpublished changes and save can retry, instead of leaving a stale local draft.
-        const saved = (await client.profile.update({ expectedRevision: input.revision, draft: input.fields })).profile;
+        const saved = (await client.profile.update({ expectedRevision: revision, draft: input.fields })).profile;
         setDraft(null);
         await refresh(saved);
         revision = saved.revision;
@@ -60,22 +87,38 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
     mutationFn: async (revision: number) => (await client.profile.unpublish({ expectedRevision: revision })).profile,
     onSuccess: async (state, revision) => {
       setDraft((current) => current?.revision === revision ? { ...current, revision: state.revision } : current);
+      setPictureEdit((current) => current?.revision === revision ? { ...current, revision: state.revision } : current);
       await refresh(state);
     },
   });
   const pending = save.isPending || publish.isPending || unpublish.isPending;
   const state = profile.data;
   const fields = draft?.fields ?? state?.draft;
-  const dirty = draft !== null;
-  const stale = !!draft && !!state && draft.revision !== state.revision;
+  const dirty = draft !== null || pictureEdit !== null;
+  const stale = !!state && ((!!draft && draft.revision !== state.revision) || (!!pictureEdit && pictureEdit.revision !== state.revision));
   const valid = !!fields && !!fields.displayName.trim() && profileFieldsSchema.safeParse(fields).success;
   const edit = (patch: Partial<ProfileFields>) => {
     if (!state || !fields) return;
     setDraft({ revision: draft?.revision ?? state.revision, fields: { ...fields, ...patch } });
   };
+  const choosePicture = (file: File) => {
+    if (!state) return;
+    setPictureError(null);
+    void profilePicture(file).then(
+      (picture) => setPictureEdit({ revision: pictureEdit?.revision ?? draft?.revision ?? state.revision, picture }),
+      (cause: unknown) => setPictureError(cause instanceof Error ? cause.message : t("people.profile.pictureUnreadable")),
+    );
+  };
+  const removePicture = () => {
+    if (!state) return;
+    setPictureError(null);
+    // A picture chosen in the editor and removed again leaves nothing to save.
+    setPictureEdit(state.avatar ? { revision: pictureEdit?.revision ?? draft?.revision ?? state.revision, picture: null } : null);
+  };
+  const shownPictureUrl = pictureEdit ? chosenPictureUrl : savedPictureUrl;
   const editable = connected && canConfigure(account, "profile.update") && !pending;
   const canPublish = canConfigure(account, "profile.publish");
-  const submission = state ? profileSubmission(state, draft) : null;
+  const submission = state ? profileSubmission(state, draft, pictureEdit) : null;
   useLayoutEffect(() => { onDirty(dirty || pending); }, [dirty, pending, onDirty]);
   const error = profile.error ?? save.error ?? publish.error ?? unpublish.error;
   const bio = useRef<HTMLTextAreaElement>(null);
@@ -95,8 +138,9 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
     </Hint>
     <span class="people-note" role="status">{copied === "copied" ? t("shell.copied") : copied === "failed" ? t("people.profile.copyFailed") : ""}</span>
   </span>;
-  const preview = (shown: ProfileFields, note: string | null) => state && <div class="people-profile-preview" aria-label={t("people.profile.preview")}>
+  const preview = (shown: ProfileFields, note: string | null, pictureUrl: string | null) => state && <div class="people-profile-preview" aria-label={t("people.profile.preview")}>
     {note && <p class="people-note">{note}</p>}
+    {pictureUrl && <img class="people-picture-image" src={pictureUrl} alt={t("people.profile.pictureAlt")} width={96} height={96} />}
     {copyAddress}
     {shown.about ? <p class="people-profile-about">{shown.about}</p>
       : <p class="people-profile-about is-empty">{t("people.profile.emptyBio")}{" "}
@@ -123,13 +167,16 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
     {!canRead && <p class="people-note">{t("people.profile.noAccess")}</p>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
     {profile.isPending && connected && canRead && <LoadingState variant="panel">{t("people.profile.loading")}</LoadingState>}
-    {state && !editing && preview(state.draft, unpublishedChanges ? t("people.profile.previewSaved") : null)}
+    {state && !editing && <ProfileNotice ownerUid={account.uid} published={!!state.published} />}
+    {state && !editing && preview(state.draft, unpublishedChanges ? t("people.profile.previewSaved") : null, savedPictureUrl)}
     {state && fields && editing && <>
       {status}
       <form class="people-form" onSubmit={(event) => {
         event.preventDefault();
-        if (valid && editable && canPublish && submission?.ready) publish.mutate({ revision: submission.revision, fields: submission.fields });
+        if (valid && editable && canPublish && submission?.ready) publish.mutate(submission);
       }}>
+        <ProfilePicturePicker src={shownPictureUrl} disabled={!editable} error={pictureError ?? savedPicture.error?.message ?? null}
+          onChoose={choosePicture} onRemove={removePicture} />
         <TextArea label={t("people.profile.about")} value={fields.about} maxLength={2048} rows={4} disabled={!editable} placeholder={t("people.profile.emptyBio")}
           onChange={(about) => edit({ about })} textareaProps={{ ref: bio }} />
         <Select block label={t("people.profile.policy")} disabled={!editable}
@@ -138,12 +185,14 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
         {stale && <p class="people-error">{t("people.profile.stale")}</p>}
         <div class="people-actions">
           <Button type="submit" variant="primary" aria-describedby="people-profile-save-note" disabled={!editable || !canPublish || !valid || !submission?.ready} label={publish.isPending ? t("common.saving") : t(submission?.action === "publish" ? "people.profile.publish" : "people.profile.save")} />
-          <Button variant="secondary" aria-describedby="people-profile-save-note" disabled={!editable || !valid || !dirty || stale} label={save.isPending ? t("common.saving") : t("people.profile.saveDraft")} onClick={() => { if (draft) save.mutate({ ...draft, fields: profileNamed(state, draft.fields) }); }} />
-          {draft && <Button variant="link" tone="neutral" disabled={pending} label={t("people.profile.discard")} onClick={() => { setDraft(null); save.reset(); }} />}
+          <Button variant="secondary" aria-describedby="people-profile-save-note" disabled={!editable || !valid || !dirty || stale} label={save.isPending ? t("common.saving") : t("people.profile.saveDraft")} onClick={() => {
+            save.mutate({ revision: draft?.revision ?? pictureEdit?.revision ?? state.revision, fields: draft ? profileNamed(state, draft.fields) : null, picture: pictureEdit });
+          }} />
+          {dirty && <Button variant="link" tone="neutral" disabled={pending} label={t("people.profile.discard")} onClick={() => { setDraft(null); setPictureEdit(null); setPictureError(null); save.reset(); }} />}
         </div>
         <p id="people-profile-save-note" class="people-note people-profile-save-note">{t(state.published ? "people.profile.saveNote" : "people.profile.publishNote")}</p>
       </form>
-      {preview(fields, t(dirty ? "people.profile.previewUnsaved" : "people.profile.previewSaved"))}
+      {preview(fields, t(dirty ? "people.profile.previewUnsaved" : "people.profile.previewSaved"), shownPictureUrl)}
       {state.published && <div class="people-actions">
         <Button variant="dangerGhost" disabled={!connected || pending || !canConfigure(account, "profile.unpublish")} label={t("people.profile.unpublish")} onClick={() => unpublish.mutate(state.revision)} />
       </div>}

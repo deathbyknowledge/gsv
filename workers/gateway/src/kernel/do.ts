@@ -122,9 +122,9 @@ import {
   recordAdapterStatusTransition,
 } from "./lifecycle-responsibilities";
 import { FederationStore } from "./federation-store";
-import { ProfileStore, type PublicProfileLocator, type PublicProfileProjection } from "./profile-store";
+import { ProfileStore, type ProfileAvatarFile } from "./profile-store";
 import { ApproachStore } from "./approach-store";
-import { resolveSpacePublicProfile } from "./profiles";
+import { publicProfileAvatar, publicProfileProjection, type PublicProfileProjection } from "./profiles";
 import { processApproachMaintenance } from "./approaches/runtime";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { FederationIdentity } from "./federation-crypto";
@@ -762,16 +762,22 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } finally { service[Symbol.dispose]?.(); }
   }
 
-  async getPublicProfileProjection(locator: PublicProfileLocator): Promise<PublicProfileProjection | null> {
+  /** The published profile the public page renders. */
+  async getPublicProfile(): Promise<PublicProfileProjection | null> {
     this.retirement.assertActive();
     const gate = await this.onboarding.managedWorkGate();
     if (!gate.allowed) return null;
     this.retirement.assertActive();
-    const ctx = this.buildKernelContext({});
-    const projection = await resolveSpacePublicProfile(locator, ctx);
+    return publicProfileProjection(this.buildKernelContext({}));
+  }
+
+  /** The published profile's picture, served from the Ship's own host. */
+  async getPublicProfileAvatar(): Promise<ProfileAvatarFile | null> {
     this.retirement.assertActive();
-    const handle = ctx.installationIdentity?.handle;
-    return projection && handle ? { ...projection, handle } : projection;
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) return null;
+    this.retirement.assertActive();
+    return publicProfileAvatar(this.buildKernelContext({}));
   }
 
   async scheduleApproachMaintenance(runningTaskId?: string): Promise<void> {

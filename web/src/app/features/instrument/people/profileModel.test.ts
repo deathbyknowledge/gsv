@@ -4,12 +4,13 @@ import { profileSubmission, profileVisibility } from "./profileModel";
 
 const fields: ProfileFields = { displayName: "ada", about: "Hello", contactPolicy: "requests" };
 const url = "https://ada.ship.example/profile";
-const live = (contactPolicy: ProfileFields["contactPolicy"] = "requests") => ({ url, cid: "bafyreiprofile", contactPolicy });
+const live = (contactPolicy: ProfileFields["contactPolicy"] = "requests") => ({ url, cid: "bafyreiprofile", revision: 2, contactPolicy });
 const state = (overrides: Partial<ProfileState> = {}): ProfileState => ({ revision: 2, url, draft: fields, handle: "ada", ...overrides });
+const picture = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]), mimeType: "image/png" as const };
 
 describe("profile submission", () => {
   it("publishes a private profile, naming the action publish", () => {
-    expect(profileSubmission(state(), null)).toEqual({ action: "publish", ready: true, revision: 2, fields: null });
+    expect(profileSubmission(state(), null)).toEqual({ action: "publish", ready: true, revision: 2, fields: null, picture: null });
     expect(profileSubmission(state(), { revision: 2, fields: { ...fields, about: "Edited" } }))
       .toMatchObject({ action: "publish", ready: true, fields: { about: "Edited" } });
   });
@@ -20,7 +21,18 @@ describe("profile submission", () => {
       .toMatchObject({ action: "save", ready: true, revision: 2, fields: { about: "Edited" } });
   });
 
-  it.todo("publishes saved unpublished changes without further edits");
+  it("publishes saved unpublished changes without further edits", () => {
+    expect(profileSubmission(state({ revision: 3, published: { ...live(), revision: 2 } }), null))
+      .toEqual({ action: "save", ready: true, revision: 3, fields: null, picture: null });
+  });
+
+  it("saves a new or removed picture on its own, without committing unchanged fields", () => {
+    expect(profileSubmission(state({ published: live() }), null, { revision: 2, picture }))
+      .toEqual({ action: "save", ready: true, revision: 2, fields: null, picture: { revision: 2, picture } });
+    expect(profileSubmission(state({ published: live() }), null, { revision: 2, picture: null })).toMatchObject({ ready: true, picture: { picture: null } });
+    expect(profileSubmission(state({ published: live() }), { revision: 2, fields: { ...fields, about: "Edited" } }, { revision: 2, picture }))
+      .toMatchObject({ ready: true, fields: { about: "Edited" }, picture: { picture } });
+  });
 
   it("saves the recorded handle over an older name, even without other edits", () => {
     const older = state({ draft: { ...fields, displayName: "Owner Person" }, published: live() });
@@ -40,6 +52,7 @@ describe("profile submission", () => {
 
   it("refuses an edit made against an older revision", () => {
     expect(profileSubmission(state({ revision: 3 }), { revision: 2, fields })).toMatchObject({ ready: false });
+    expect(profileSubmission(state({ revision: 3 }), null, { revision: 2, picture })).toMatchObject({ ready: false });
   });
 });
 

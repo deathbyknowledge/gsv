@@ -330,7 +330,8 @@ import type {
 import type {
   ProfileGetArgs, ProfileGetResult, ProfileUpdateArgs, ProfileUpdateResult,
   ProfilePublishArgs, ProfilePublishResult, ProfileUnpublishArgs, ProfileUnpublishResult,
-  ProfileResolveArgs, ProfileResolveResult,
+  ProfileResolveArgs, ProfileResolveResult, ProfileAvatarSetArgs, ProfileAvatarSetResult,
+  ProfileAvatarRemoveArgs, ProfileAvatarRemoveResult, ProfileAvatarReadArgs, ProfileAvatarReadResult,
 } from "./profile";
 import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachRetryArgs } from "./approach";
 
@@ -373,6 +374,9 @@ export type SyscallDomains = {
   "profile.publish": { args: ProfilePublishArgs; result: ProfilePublishResult };
   "profile.unpublish": { args: ProfileUnpublishArgs; result: ProfileUnpublishResult };
   "profile.resolve": { args: ProfileResolveArgs; result: ProfileResolveResult };
+  "profile.avatar.set": { args: ProfileAvatarSetArgs; result: ProfileAvatarSetResult };
+  "profile.avatar.remove": { args: ProfileAvatarRemoveArgs; result: ProfileAvatarRemoveResult };
+  "profile.avatar.read": { args: ProfileAvatarReadArgs; result: ProfileAvatarReadResult };
 
   "atproto.identity": { args: AtprotoIdentityArgs; result: AtprotoIdentityResult };
   "atproto.write": { args: AtprotoWriteArgs; result: AtprotoWriteResult };

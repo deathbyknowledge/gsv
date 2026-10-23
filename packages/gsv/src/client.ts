@@ -292,6 +292,7 @@ const SYSCALL_NAMES = [
   "profile.publish",
   "profile.unpublish",
   "profile.resolve",
+  "profile.avatar.remove",
   "atproto.identity",
   "atproto.write",
   "approach.create",

@@ -238,9 +238,9 @@ function context(options: ContextOptions = {}) {
     callerOwnerUid: OWNER.uid,
     connection: {},
     auth: { getHumanAccount: () => ({ ...OWNER, uid: humanUid }) },
-    profiles: { get: (uid: number, origin: string) => uid === OWNER.uid && origin === "https://alice.gsv.space" && profile.published
-      ? { published: { url: "https://alice.ship.space/profile", revision: 1, contactPolicy: "requests" } }
-      : { revision: 1 } },
+    profiles: { published: (uid: number) => uid === OWNER.uid && profile.published
+      ? { cid: "bafyprofile", record: { $type: "space.ship.profile", displayName: "Alice", contactPolicy: "requests" } }
+      : null },
     procs: { get: () => ({ isPersonalController: personal, ownerUid: OWNER.uid }), getOwnerUid: () => OWNER.uid },
     requestId: "request",
     defer: vi.fn(),

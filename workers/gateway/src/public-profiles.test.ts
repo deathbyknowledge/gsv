@@ -1,105 +1,118 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PublicProfile } from "@humansandmachines/gsv/protocol";
+import type { ShipProfileRecord } from "@humansandmachines/gsv/protocol";
+import type { ProfileAvatarFile } from "./kernel/profile-store";
+import type { PublicProfileProjection } from "./kernel/profiles";
 import { matchPublicProfilePath, servePublicProfileRequest } from "./public-profiles";
 
-const PROFILE: PublicProfile = {
-  version: 2, domain: "gsv-federation/2/profile", actor: { shipId: "ship:one", subjectId: "subject:one" },
-  publicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" }, origin: "https://profile.example", url: "https://profile.example/@person",
-  alias: "person", displayName: "Person <script>alert(1)</script>", about: "<script>alert(1)</script><img src=x onerror=alert(1)>\nHello", contactPolicy: "invitation", representation: "human",
-  revision: 1, publishedAtMs: 1, signature: "fixture",
+const PROFILE_URL = "https://person.ship.example/profile";
+const RECORD: ShipProfileRecord = {
+  $type: "space.ship.profile", displayName: "Person <script>alert(1)</script>",
+  about: "<script>alert(1)</script><img src=x onerror=alert(1)>\nHello", contactPolicy: "invitation",
 };
-const projection = { ownerUid: 1000, alias: "person", revision: 1, profile: PROFILE };
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+const AVATAR: ProfileAvatarFile = { cid: "bafkreiavatar", mimeType: "image/png", size: PNG.byteLength, bytes: PNG };
+const PROJECTION: PublicProfileProjection = { url: PROFILE_URL, handle: "person", cid: "bafyreirecord", record: RECORD };
 
-describe("public profile projection serving", () => {
-  it.each(["text/html", "application/json"])("redirects hostname aliases to the published identity for %s", async (accept) => {
-    const request = new Request("https://person.new.example/profile", { headers: { accept } });
-    const path = { locator: { space: true as const }, json: false };
-    const response = await servePublicProfileRequest(request, path, async () => projection);
-    expect(response.status).toBe(308);
-    expect(response.headers.get("location")).toBe(PROFILE.url);
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect((await servePublicProfileRequest(request, path, async () => null)).status).toBe(404);
+function source(page: PublicProfileProjection | null = PROJECTION, avatar: ProfileAvatarFile | null = null) {
+  return { page: vi.fn(async () => page), avatar: vi.fn(async () => avatar) };
+}
+
+describe("public profile serving", () => {
+  it("matches the page, its picture and old alias links without admitting ambiguous paths", () => {
+    expect(matchPublicProfilePath("/profile")).toBe("page");
+    expect(matchPublicProfilePath("/profile/avatar")).toBe("avatar");
+    expect(matchPublicProfilePath("/@person")).toBe("alias");
+    for (const path of ["/@", "/@person/extra", "/@%70erson", "/@PERSON"]) expect(matchPublicProfilePath(path)).toBe("invalid");
+    for (const path of ["/zen", "/profile/", "/profile.json", "/_gsv/federation/v2/subjects/subject%3Aone"]) expect(matchPublicProfilePath(path)).toBeNull();
   });
 
-  it("hands off only the reviewed public profile address without creating an approach", async () => {
-    const response = await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, async () => ({ ...projection, profile: { ...PROFILE, contactPolicy: "requests" } }));
+  it("renders the published record as an escaped page, and only as a page", async () => {
+    const response = await servePublicProfileRequest(new Request(PROFILE_URL, { headers: { accept: "application/json" } }), "page", source());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(response.headers.get("vary")).toBeNull();
+    expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+    expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(response.headers.get("content-security-policy")).toContain("img-src 'self'");
     const html = await response.text();
-    expect(html).toContain('data-profile="https://profile.example/@person"');
-    expect(html).toContain('src="/social/connect.js"');
-    expect(html).not.toContain("data-handle-domain");
     expect(html).toContain("<h1>@person</h1>");
-    const recorded = await (await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, async () => ({ ...projection, handle: "ada" }))).text();
-    expect(recorded).toContain("<h1>@ada</h1>");
-    expect(html).toContain('<span class="brand wordmark">Ship</span>');
-    const linked = await (await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, async () => projection, "https://ship.example")).text();
-    expect(linked).toContain('<a class="brand wordmark" href="https://ship.example">Ship</a>');
-    const open = await (await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, async () => ({ ...projection, profile: { ...PROFILE, contactPolicy: "requests" } }), "https://ship.example")).text();
-    expect(open).toContain('data-handle-domain="ship.example"');
-    expect(open).toContain('placeholder="@yourhandle"');
-    expect(html).not.toContain("Message requests restricted");
-    const restricted = await (await servePublicProfileRequest(new Request(PROFILE.url), { locator: { alias: "person" }, json: false }, async () => projection)).text();
-    expect(restricted).toContain('<p class="restricted" data-info-row>Message requests restricted');
-    expect(restricted).not.toContain("<form");
-    expect(html).toContain('src="/social/profile.js"');
-    expect(html).not.toContain("approach.create");
-    expect(html).not.toContain("ownerUid");
-    expect(response.headers.get("content-security-policy")).toContain("script-src 'self'");
-  });
-
-  it("uses exact alias and subject routes without admitting ambiguous paths", () => {
-    expect(matchPublicProfilePath("/profile")).toEqual({ locator: { space: true }, json: false });
-    expect(matchPublicProfilePath("/@person")).toEqual({ locator: { alias: "person" }, json: false });
-    expect(matchPublicProfilePath("/_gsv/federation/v2/subjects/subject%3Aone")).toEqual({ locator: { subjectId: "subject:one" }, json: true });
-    for (const path of ["/@", "/@person/extra", "/@%70erson", "/@PERSON", "/_gsv/federation/v2/subjects/%2f", "/_gsv/federation/v2/subjects/%"]) {
-      expect(matchPublicProfilePath(path)).toEqual({ invalid: true });
-    }
-    expect(matchPublicProfilePath("/zen")).toBeNull();
-  });
-
-  it("redirects old page links while returning signed JSON directly to federated readers", async () => {
-    const { alias: _alias, ...fields } = PROFILE;
-    const profile = { ...fields, version: 3 as const, domain: "gsv-federation/3/profile" as const, url: "https://profile.example/profile" };
-    const resolve = async () => ({ ...projection, profile });
-    const path = { locator: { alias: "person" }, json: false };
-    const page = await servePublicProfileRequest(new Request(PROFILE.url), path, resolve);
-    expect(page.status).toBe(308);
-    expect(page.headers.get("location")).toBe("/profile");
-    const json = await servePublicProfileRequest(new Request(PROFILE.url, { headers: { accept: "application/json" } }), path, resolve);
-    expect(json.status).toBe(200);
-    expect(await json.json()).toEqual(profile);
-  });
-
-  it("escapes published text, serves signed JSON separately, and rechecks before a 304", async () => {
-    const resolve = vi.fn(async () => projection);
-    const path = { locator: { alias: "person" }, json: false };
-    const page = await servePublicProfileRequest(new Request(PROFILE.url), path, resolve);
-    expect(page.status).toBe(200);
-    expect(page.headers.get("content-security-policy")).toContain("default-src 'none'");
-    const html = await page.text();
-    expect(html).toContain("&lt;script&gt;");
-    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;&lt;img src=x");
+    expect(html).not.toContain("<script>alert");
     expect(html).not.toContain("<img src=x");
-    expect(html).not.toContain("ownerUid");
-    const json = await servePublicProfileRequest(new Request(PROFILE.url, { headers: { accept: "application/json" } }), path, resolve);
-    expect(await json.json()).toEqual(PROFILE);
-    expect(json.headers.get("etag")).not.toBe(page.headers.get("etag"));
-    const cached = await servePublicProfileRequest(new Request(PROFILE.url, { headers: { "if-none-match": page.headers.get("etag")! } }), path, resolve);
+    expect(html).not.toContain('class="avatar"');
+    expect(html).not.toContain("application/json");
+    expect(html).not.toContain("_gsv/federation");
+    expect(html).toContain('<p class="restricted" data-info-row>Message requests restricted');
+    expect(html).not.toContain("<form");
+  });
+
+  it("offers message requests only for an open profile, and reads an unknown policy as closed", async () => {
+    const open = await (await servePublicProfileRequest(new Request(PROFILE_URL), "page", source({ ...PROJECTION, record: { ...RECORD, contactPolicy: "requests" } }), "https://ship.example")).text();
+    expect(open).toContain(`data-profile="${PROFILE_URL}"`);
+    expect(open).toContain('data-handle-domain="ship.example"');
+    expect(open).toContain('src="/social/connect.js"');
+    expect(open).toContain('<a class="brand wordmark" href="https://ship.example">Ship</a>');
+    const unknown = await (await servePublicProfileRequest(new Request(PROFILE_URL), "page", source({ ...PROJECTION, record: { ...RECORD, contactPolicy: "everyone" } }))).text();
+    expect(unknown).toContain("Message requests restricted");
+    expect(unknown).not.toContain("<form");
+    const unnamed = await (await servePublicProfileRequest(new Request(PROFILE_URL), "page", source({ url: PROFILE_URL, cid: "bafyreirecord", record: { ...RECORD, displayName: "Person" } }))).text();
+    expect(unnamed).toContain("<h1>Person</h1>");
+  });
+
+  it("shows the record's picture from the Ship's own host and serves it sandboxed", async () => {
+    const page = await (await servePublicProfileRequest(new Request(PROFILE_URL), "page", source({ ...PROJECTION, avatar: { cid: AVATAR.cid, mimeType: AVATAR.mimeType, size: AVATAR.size } }))).text();
+    expect(page).toContain('<img class="avatar" src="/profile/avatar" alt=""');
+    const avatarUrl = "https://person.ship.example/profile/avatar";
+    const response = await servePublicProfileRequest(new Request(avatarUrl), "avatar", source(PROJECTION, AVATAR));
+    expect(response.status).toBe(200);
+    expect(Object.fromEntries(response.headers)).toMatchObject({
+      "content-type": "image/png", "content-length": String(PNG.byteLength), etag: `"${AVATAR.cid}"`,
+      "content-security-policy": "default-src 'none'; sandbox", "x-content-type-options": "nosniff",
+    });
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(PNG);
+    const cached = await servePublicProfileRequest(new Request(avatarUrl, { headers: { "if-none-match": `"${AVATAR.cid}"` } }), "avatar", source(PROJECTION, AVATAR));
     expect(cached.status).toBe(304);
-    const revoked = await servePublicProfileRequest(new Request(PROFILE.url, { headers: { "if-none-match": page.headers.get("etag")! } }), path, async () => null);
-    expect(revoked.status).toBe(404);
-    expect(revoked.headers.get("cache-control")).toBe("no-store");
-    expect(resolve).toHaveBeenCalledTimes(6);
+    const head = await servePublicProfileRequest(new Request(avatarUrl, { method: "HEAD" }), "avatar", source(PROJECTION, AVATAR));
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+    const missing = await servePublicProfileRequest(new Request(avatarUrl), "avatar", source());
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("sends another host of the Ship and old alias links to the profile", async () => {
+    const moved = await servePublicProfileRequest(new Request("https://person.old.example/profile"), "page", source());
+    expect(moved.status).toBe(308);
+    expect(moved.headers.get("location")).toBe(PROFILE_URL);
+    expect(moved.headers.get("cache-control")).toBe("no-store");
+    const profiles = source();
+    const alias = await servePublicProfileRequest(new Request("https://person.ship.example/@person"), "alias", profiles);
+    expect(alias.status).toBe(308);
+    expect(alias.headers.get("location")).toBe("/profile");
+    expect(profiles.page).not.toHaveBeenCalled();
+    expect((await servePublicProfileRequest(new Request("https://person.ship.example/@PERSON"), "invalid", profiles)).status).toBe(404);
+  });
+
+  it("rechecks the published profile before a 304", async () => {
+    const page = await servePublicProfileRequest(new Request(PROFILE_URL), "page", source());
+    const etag = page.headers.get("etag")!;
+    const cached = await servePublicProfileRequest(new Request(PROFILE_URL, { headers: { "if-none-match": etag } }), "page", source());
+    expect(cached.status).toBe(304);
+    const edited = await servePublicProfileRequest(new Request(PROFILE_URL, { headers: { "if-none-match": etag } }), "page", source({ ...PROJECTION, record: { ...RECORD, about: "Edited" } }));
+    expect(edited.status).toBe(200);
+    const unpublished = await servePublicProfileRequest(new Request(PROFILE_URL, { headers: { "if-none-match": etag } }), "page", source(null));
+    expect(unpublished.status).toBe(404);
+    expect(unpublished.headers.get("cache-control")).toBe("no-store");
   });
 
   it("supports HEAD and refuses mutation methods without consulting the profile", async () => {
-    const path = { locator: { alias: "person" }, json: false };
-    const resolve = vi.fn(async () => projection);
-    const head = await servePublicProfileRequest(new Request(PROFILE.url, { method: "HEAD" }), path, resolve);
+    const head = await servePublicProfileRequest(new Request(PROFILE_URL, { method: "HEAD" }), "page", source());
     expect(head.status).toBe(200);
     expect(await head.text()).toBe("");
-    resolve.mockClear();
-    const post = await servePublicProfileRequest(new Request(PROFILE.url, { method: "POST" }), path, resolve);
+    const profiles = source();
+    const post = await servePublicProfileRequest(new Request(PROFILE_URL, { method: "POST" }), "page", profiles);
     expect(post.status).toBe(405);
-    expect(resolve).not.toHaveBeenCalled();
+    expect(profiles.page).not.toHaveBeenCalled();
+    expect(profiles.avatar).not.toHaveBeenCalled();
   });
 });

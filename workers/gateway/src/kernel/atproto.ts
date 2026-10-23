@@ -8,8 +8,9 @@ import type {
   AtprotoWriteResult,
   BinaryBody,
   JsonValue,
+  ShipProfileRecord,
 } from "@humansandmachines/gsv/protocol";
-import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
+import { jsonObjectSchema, SHIP_PROFILE_COLLECTION, SHIP_PROFILE_RKEY } from "@humansandmachines/gsv/protocol";
 import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
 import {
   PUBLIC_BLOB_MAX_BYTES,
@@ -22,6 +23,7 @@ import * as z from "zod/mini";
 import { shipAddress } from "../installation/identity";
 import { raceWithAbort } from "../shared/abort";
 import { principalOf, resolveCallerOwnerUid, type KernelContext } from "./context";
+import type { ProfileAvatarFile } from "./profile-store";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 
 /** Collections a Ship feature publishes itself, and where the person changes them instead. */
@@ -131,6 +133,44 @@ export async function handleAtprotoBlobRead(
   return { data: { mimeType: blob.mimeType, size: blob.size }, body: { stream: blob.body, length: blob.size } };
 }
 
+/**
+ * Writes the person's profile record, after its picture, to the Ship's
+ * repository and returns the record's CID. People decides what to publish and
+ * the Kernel's profile rules who may; this is the profile's own write, so it
+ * waits for no published profile and asks no approval. A first publish
+ * creates the Ship's DID.
+ */
+export async function putProfileRecord(ctx: KernelContext, record: ShipProfileRecord, avatar: ProfileAvatarFile | null): Promise<string> {
+  return await withRepository(ctx, async (repository) => {
+    await ensureIdentity(repository, shipHostname(ctx), ctx);
+    if (avatar) {
+      const blob = await raceWithAbort(repository.uploadBlob(new Blob([avatar.bytes.slice()]).stream(), avatar.size, avatar.mimeType), ctx.requestSignal);
+      if (blob.ref.$link !== avatar.cid) throw new Error("The open-network host named the profile picture differently");
+    }
+    // A commit already sent completes, so its outcome is reported rather than raced.
+    ctx.requestSignal?.throwIfAborted();
+    const commit = await repository.applyWrites([
+      { action: "put", collection: SHIP_PROFILE_COLLECTION, rkey: SHIP_PROFILE_RKEY, record: jsonObjectSchema.parse(record) },
+    ]);
+    const cid = commit.results[0]?.cid;
+    if (!cid) throw new Error("The open-network host didn't name the profile record it stored");
+    return cid;
+  });
+}
+
+/** Deletes the profile record from the Ship's repository; a record already gone stays gone. */
+export async function deleteProfileRecord(ctx: KernelContext): Promise<void> {
+  await withRepository(ctx, async (repository) => {
+    ctx.requestSignal?.throwIfAborted();
+    try {
+      await repository.applyWrites([{ action: "delete", collection: SHIP_PROFILE_COLLECTION, rkey: SHIP_PROFILE_RKEY }]);
+    } catch (error) {
+      // The repository refuses to delete a record it doesn't hold, which an interrupted unpublish leaves behind.
+      if (!(error instanceof Error && error.message.includes(`Could not find a record with key: ${SHIP_PROFILE_COLLECTION}/${SHIP_PROFILE_RKEY}`))) throw error;
+    }
+  });
+}
+
 /** The Ship's DID, created under its address by the first outward act: a publish, an invitation or a message request. */
 /** The Ship's account on the open network: its DID and the handle that names it; its first outward act creates them. */
 export async function ensureShipAccount(ctx: KernelContext): Promise<PublicRepositoryAccount> {
@@ -174,8 +214,7 @@ function requirePublisher(ctx: KernelContext): number {
 }
 
 function profilePublished(ownerUid: number, ctx: KernelContext): boolean {
-  const origin = ctx.installationIdentity?.canonicalOrigin;
-  return origin !== undefined && ctx.profiles.get(ownerUid, origin)?.published !== undefined;
+  return ctx.profiles.published(ownerUid) !== null;
 }
 
 /** The Ship's address to publish under; the public identity comes with the person's published profile. */

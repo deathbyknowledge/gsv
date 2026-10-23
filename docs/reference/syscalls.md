@@ -980,13 +980,14 @@ metadata. Each queued delivery retains the wire version chosen when it was creat
 
 ### Public profiles and first messages
 
-Each space has one owner-authenticated profile at `https://SPACE/profile`. The Kernel publishes
-it by default on the owner's first sign-in, named by the Ship's handle with `contactPolicy: "requests"`,
+Each space has one owner-authenticated profile, published as the Ship's `space.ship.profile` record
+(record key `self`) in its [open-network repository](#open-network-atproto). The Gateway renders that
+record as the page at `https://SPACE/profile`, and older `/@name` links redirect there. The Kernel publishes
+the profile by default on the owner's first sign-in, named by the Ship's handle with `contactPolicy: "requests"`,
 only when the owner has no saved profile, and applies that default once, so a saved draft or an explicit
-unpublish stays private. Reading the
-address with `Accept: application/json` returns its signed document. Publication is atomic;
-draft changes stay private until the next explicit publish. No public alias is required. Profile
-mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
+unpublish stays private. Without the `PDS` service nothing publishes, and the default waits for it.
+Draft changes stay private until the next explicit publish, which writes the record; unpublishing
+deletes it. Profile mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
 may resolve a profile and create, read, list and retry outgoing message requests (`approach.create`,
 `approach.get`, `approach.list`, `approach.retry`) on their behalf. A Ship's `approach.create` asks the
 owner first unless an approval rule matches it, and a replay of a request already sent does not ask again. Incoming requests, publishing a
@@ -1012,8 +1013,20 @@ type ProfileAndApproachSyscalls = {
     result: { profile: ProfileState };
   };
   "profile.resolve": {
-    args: { url: string };
+    args: { address: string };
     result: { profile: PublicProfile };
+  };
+  "profile.avatar.set": {
+    args: { expectedRevision: number; mimeType: "image/png" | "image/jpeg" | "image/webp" };
+    result: { profile: ProfileState };
+  };
+  "profile.avatar.remove": {
+    args: { expectedRevision: number };
+    result: { profile: ProfileState };
+  };
+  "profile.avatar.read": {
+    args: { cid: string };
+    result: ProfileAvatar;
   };
   "approach.create": {
     args: {
@@ -1050,18 +1063,44 @@ type ProfileAndApproachSyscalls = {
 };
 ```
 
-`ProfileFields` contains `displayName`, `about`, `contactPolicy`
-(`requests`, `invitation` or `closed`) and `representation` (`human` or `human-and-ship`).
-Clients no longer display `representation`; whether a Ship replies is chosen for each contact.
-`ProfileState` returns those fields as `draft`, its canonical `url`, a revision, optional published URL/revision, and the space's recorded `handle` when the installation has one. Clients name the profile by that handle rather than parsing it from the URL.
-New signed documents use version 3 and domain `gsv-federation/3/profile`; federation
-transport remains v2. Readers also verify legacy v2 documents. On upgrade, the
-Kernel re-signs only the previously published snapshot at `/profile`, retaining
-the old published alias for links. Legacy HTML links redirect; JSON requests return
-the signed document directly. Concurrent unpublishing fences this conversion.
-`profile.resolve` reads a published profile, verifies the signed identity and checks
-existing contact pins. A 404 means no public profile is available at that address;
-it does not establish whether the Ship exists or prevent a private invitation.
+`ProfileFields` contains `displayName` (1 to 80 characters), `about` (up to 2,048) and
+`contactPolicy` (`requests`, `invitation` or `closed`). `ProfileState` returns those fields as
+`draft`, the draft's picture as `avatar` (`{ cid, mimeType, size }`), its canonical `url`, a
+revision, and the space's recorded `handle` when the installation has one. Clients name the profile
+by that handle rather than parsing it from the URL. While the record exists, `published` gives the
+page `url`, the record's `cid`, the live `contactPolicy` and the draft `revision` the record was
+written from. A later draft revision is an unpublished change; publishing it again also retries a
+publish that failed after the draft was saved.
+
+`profile.avatar.set` replaces the draft's picture with its request body: a PNG, JPEG or WebP of at
+most 1 MB, of declared length, whose bytes match its type. `profile.avatar.remove` removes the
+picture. Both advance the draft revision, and the picture becomes public with the next publish.
+`profile.avatar.read` returns the draft's or the published picture as the response body, for the
+owner's editor.
+
+```ts
+type ShipProfileRecord = {
+  $type: "space.ship.profile";
+  displayName: string; // 1 to 80 graphemes, at most 640 bytes
+  about?: string; // up to 2,048 graphemes and 20,480 bytes; absent when empty
+  avatar?: { $type: "blob"; ref: { $link: string }; mimeType: "image/png" | "image/jpeg" | "image/webp"; size: number };
+  contactPolicy: string; // requests, invitation or closed
+};
+```
+
+Readers ignore record fields they don't know and read an unknown `contactPolicy` as `closed`.
+The page shows the record's picture from the Ship's own host at `/profile/avatar`, served as a
+sandboxed image, and asks search engines not to index either. The page has no JSON form; other
+Ships read the record.
+
+`profile.resolve` takes a handle, with or without its `@`, or a profile link. A bare handle is on
+the Ship's own domain, and one on the operator's older domain names the same Ship on its primary
+domain. The Kernel resolves the handle to a DID, checks that the DID document claims the handle,
+and reads the record from the repository the document names. `PublicProfile` returns the `did`,
+`handle`, record `cid`, `displayName`, `about`, `contactPolicy` and page `url`. A 404 means no public
+profile is available at that address; it does not establish whether the Ship exists or prevent a
+private invitation. A profile published as a signed document before profiles were records keeps its
+published fields and is written as a record at its owner's next sign-in.
 Creating a first message binds it to the exact recipient and profile revision the sender reviewed.
 
 First-contact messages expire after 30 days and accept text only, up to 32 KiB. Acceptance promotes

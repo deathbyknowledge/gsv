@@ -136,8 +136,10 @@ export default {
 
     if (profilePath) {
       const { primaryDomain } = deploymentPresentation(env.GSV_PUBLIC_CONFIG);
-      return servePublicProfileRequest(request, profilePath,
-        (locator) => kernelDO.getPublicProfileProjection(locator), primaryDomain ? `https://${primaryDomain}` : undefined);
+      return servePublicProfileRequest(request, profilePath, {
+        page: () => kernelDO.getPublicProfile(),
+        avatar: () => kernelDO.getPublicProfileAvatar(),
+      }, primaryDomain ? `https://${primaryDomain}` : undefined);
     }
 
     if (federationPath) {

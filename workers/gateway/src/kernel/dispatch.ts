@@ -131,7 +131,10 @@ import {
   handleContactInviteCreate,
   handleContactInviteList,
 } from "./federation/invitations";
-import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve } from "./profiles";
+import {
+  handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet, handleProfilePublish,
+  handleProfileResolve, handleProfileUnpublish, handleProfileUpdate,
+} from "./profiles";
 import { handleConversationInbox, handleConversationViewGet, handleConversationViewUpdate } from "./conversation-views";
 import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachRetry } from "./approaches/admission";
 import {
@@ -821,6 +824,19 @@ async function dispatchKernel(
       case "profile.resolve":
         data = await handleProfileResolve(frame.args, ctx);
         break;
+      case "profile.avatar.set":
+        data = await handleProfileAvatarSet(frame.args, ctx, frame.body);
+        break;
+      case "profile.avatar.remove":
+        data = handleProfileAvatarRemove(frame.args, ctx);
+        break;
+      case "profile.avatar.read":
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...handleProfileAvatarRead(frame.args, ctx),
+        };
       // --- contact.* ---
       case "contact.invite.create":
         data = await handleContactInviteCreate(frame.args, ctx);
