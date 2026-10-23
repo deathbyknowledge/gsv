@@ -258,6 +258,8 @@
   letter-spacing: 0.12em;
   color: var(--text-title);
   text-shadow: var(--glow-soft);
+  /* titles can carry an unbreakable id; on a phone it must wrap rather than widen the panel */
+  overflow-wrap: anywhere;
 }
 .fleet-inspector .sub {
   font-size: 11px;
@@ -404,7 +406,7 @@
 .fleet .kv, .fleet-kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 12px; font-size: 12px; margin: 0; }
 .fleet .kv dt, .fleet-kv dt { color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase; font-size: 10px; padding-top: 2px; }
 .fleet .kv dd, .fleet-kv dd { margin: 0; color: var(--label); white-space: normal; overflow-wrap: anywhere; }
-.fleet .inspector h3 { margin: 0 0 4px; font-size: 16px; font-weight: 400; letter-spacing: 0.12em; color: var(--text-title); text-shadow: var(--glow-soft); }
+.fleet .inspector h3 { margin: 0 0 4px; font-size: 16px; font-weight: 400; letter-spacing: 0.12em; color: var(--text-title); text-shadow: var(--glow-soft); overflow-wrap: anywhere; }
 .fleet .inspector .sub { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 16px; }
 .fleet .inspector .note { margin-top: 18px; font-size: 12px; color: var(--text-dim); line-height: 1.55; }
 
@@ -493,7 +495,8 @@
 .fleet-work-row:hover .fleet-work-title, .fleet-work-row:focus-visible .fleet-work-title { color: var(--accent); }
 .fleet-work-row:focus-visible { text-decoration: none; }
 .fleet-work-row:focus-visible .fleet-work-title { text-decoration: underline; text-underline-offset: 4px; }
-.fleet-work-title { color: var(--text-hi); font: 500 18px/1.35 var(--gsv-font-prose); overflow-wrap: anywhere; }
+/* two lines at most in the list, with an ellipsis; the responsibility's own page shows the whole title */
+.fleet-work-title { color: var(--text-hi); font: 500 18px/1.35 var(--gsv-font-prose); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .fleet-work-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; color: var(--text-dim); font: 11px/1.7 var(--gsv-font-mono); overflow-wrap: anywhere; }
 .fleet-work-summary > span { min-width: 0; }
 .fleet-work-state[data-state="active"] { color: var(--accent); }
