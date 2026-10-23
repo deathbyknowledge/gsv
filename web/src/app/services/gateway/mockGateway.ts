@@ -180,7 +180,7 @@ const approaches: ApproachSummary[] = [];
 /* one contact with an unread message, so the chat shows a contact notice with its reply box */
 const MARA_CONTACT_ID = "mock-contact-mara";
 const MARA_CONVERSATION = "c-mara";
-const MARA_ACTOR = { shipId: "mock-person", subjectId: "owner" };
+const MARA_ACTOR = { shipId: "mock-mara", subjectId: "owner" };
 const maraContact: ContactSummary = { id: MARA_CONTACT_ID, ownerUid: OWNER.uid, state: "active", generation: "1", remoteShipId: MARA_ACTOR.shipId,
   remoteSubject: { id: MARA_ACTOR.subjectId, displayName: "Mara" }, remoteOrigin: "https://mara.ship.space", conversationId: MARA_CONVERSATION,
   createdAtMs: at(3, 9, 0), updatedAtMs: at(0, 8, 12), lastReceivedAtMs: at(0, 8, 12) };
@@ -883,17 +883,19 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       const sent = receive(input.text);
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
     }
-    case "contact.list": return respond(id, { contacts: [maraContact] });
+    case "contact.list": return respond(id, { contacts: fresh ? [] : [maraContact] });
     case "conversation.inbox": {
-      const { attentionOnly } = z.object({ attentionOnly: z.boolean().optional() }).parse(args);
+      const { attentionOnly, archived = false } = z.object({ attentionOnly: z.boolean().optional(), archived: z.boolean().optional() }).parse(args);
       const entry = maraInboxEntry();
-      return respond(id, { entries: attentionOnly && !entry.unread ? [] : [entry] });
+      const listed = !fresh && entry.view.archived === archived && (!attentionOnly || entry.unread);
+      return respond(id, { entries: listed ? [entry] : [] });
     }
     case "conversation.view.update": {
       const { conversationId, readThroughSequence } = z.object({ conversationId: z.string(), readThroughSequence: z.number().optional() }).parse(args);
       if (conversationId !== MARA_CONVERSATION) throw new Error(`Unexpected conversation ${conversationId}`);
       if (readThroughSequence !== undefined) maraView.readThroughSequence = Math.max(maraView.readThroughSequence, readThroughSequence);
       maraView.revision += 1;
+      broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, viewOnly: true });
       return respond(id, { entry: maraInboxEntry() });
     }
     case "contact.send": {
@@ -903,6 +905,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       maraThread.push({ id: `mara-${sequence}`, conversationId: MARA_CONVERSATION, sequence, author: { kind: "user", uid: OWNER.uid }, text,
         social: { threadId: "mara-thread", reference: { actor: { shipId: "mock-ship", subjectId: "owner" }, messageId: `mara-${sequence}` }, provenance: { kind: "human" } },
         origin: { kind: "client", clientId: "web" }, createdAt: Date.now() });
+      broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, latestSequence: sequence });
       return respond(id, { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" });
     }
     /* a message request sent from People: kept in this tab so the requests view can list it */
