@@ -1,3 +1,4 @@
+import { normalizeUsernamePolicy } from "./username-policy";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { parseOpaqueId } from "./domain";
@@ -27,8 +28,14 @@ export class InstallationSignup {
   }
 
   async available(value: string): Promise<boolean> {
-    const handle = this.accounts.validateHandle(value);
-    return !await this.db.prepare("SELECT 1 FROM installations WHERE handle = ?").bind(handle).first();
+    let handle: string;
+    try { handle = this.accounts.validateHandle(value); }
+    catch (error) {
+      if (error instanceof Error && error.message.startsWith("handle is reserved")) return false;
+      throw error;
+    }
+    return !await this.db.prepare(`SELECT 1 FROM installations WHERE handle = ?
+      UNION ALL SELECT 1 FROM username_policy WHERE normalized_handle = ? LIMIT 1`).bind(handle, normalizeUsernamePolicy(handle)).first();
   }
 
   async prepare(operationIdValue: string, principalIdValue: string, handle: string) {

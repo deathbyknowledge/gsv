@@ -17,7 +17,7 @@ type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>
   | { email: string; expiresAt: number; spaceDomain: string; spaces: Awaited<ReturnType<InstallationOwnerStore["spaces"]>>; setups: PendingSetup[]; signupEnabled: boolean; invites: never[] }
   | Awaited<ReturnType<InstallationSignup["prepare"]>>
   | { ok: true } | { available: boolean }
-  | { error: string; code?: OwnerAuthErrorCode | "signed_out" | "space_exists"; retryAt?: number };
+  | { error: string; code?: OwnerAuthErrorCode | "signed_out" | "space_exists" | "handle_unavailable"; retryAt?: number };
 
 /** Explicit bearer authentication; browser cookies never authorize this native API. */
 export class InstallationOwnerApi {
@@ -75,6 +75,9 @@ export class InstallationOwnerApi {
       }
       if (error instanceof Error && error.message === "handle is invalid") {
         return json({ error: "Use letters, numbers or hyphens. Start and end with a letter or number." }, 400);
+      }
+      if (error instanceof Error && (error.message === "handle is unavailable" || error.message.startsWith("handle is reserved"))) {
+        return json({ error: "This username is unavailable. Choose another.", code: "handle_unavailable" }, 400);
       }
       if (error instanceof Error && error.message.startsWith("You already have a Ship")) {
         return json({ error: error.message, code: "space_exists" }, 409);

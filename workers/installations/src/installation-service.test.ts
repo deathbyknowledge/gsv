@@ -58,10 +58,12 @@ it.each(["https://accounts.example.com", "https://owners.example.com"])("complet
   expect((await request("/verify", { challengeId: challenge.challengeId, browserSecret: challenge.browserSecret, code, sessionSecret })).status).toBe(200);
   const operationId = crypto.randomUUID();
   for (const handle of ["accounts", "join", "owners"]) {
-    expect((await request(`/handle?value=${handle}`)).status).toBe(400);
+    const availability = await request(`/handle?value=${handle}`);
+    expect(availability.status).toBe(200);
+    expect(await availability.json()).toEqual({ available: false });
     const denied = await request("/spaces", { operationId, handle });
     expect(denied.status).toBe(400);
-    expect(await denied.json()).toEqual({ error: "handle is reserved for an operator service" });
+    expect(await denied.json()).toEqual({ error: "This username is unavailable. Choose another.", code: "handle_unavailable" });
     expect(await service.resolveHostname(`${handle}.example.com`)).toEqual({ found: false });
   }
   expect(await env.INSTALLATIONS_DB.prepare("SELECT operation_id FROM provisioning_operations WHERE operation_id = ?")

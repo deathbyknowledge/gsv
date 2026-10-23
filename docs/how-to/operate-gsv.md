@@ -68,6 +68,15 @@ Create a Ship, reserve its handle, and give the person the resulting one-time
 activation link. They use that link to create their personal account and root
 password. Further Ships use this same administration flow.
 
+Open **Signup** in administration (`<admin-origin>/admin/signup`) to edit the
+reserved and blocked username lists. Both lists start empty; add the names you
+want to reserve or block, then save. Reserved names can be assigned to
+operator-controlled Ships through administration; blocked names cannot be assigned
+to any new Ship. Save changes to apply them immediately. Matching ignores case,
+accents and separators, but checks the whole name. Existing Ships and unfinished
+activations keep their names. See the [username policy](../architecture/installation-directory.md#open-registration)
+for matching rules and terms that require contextual review.
+
 Administration timestamps use your device's timezone, including audit entries and
 run times. With JavaScript disabled, they use the labelled UTC fallback.
 

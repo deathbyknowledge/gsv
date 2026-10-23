@@ -27,6 +27,7 @@ export function adminPageResponse(input: {
       <nav aria-label="Operator navigation">
         ${navLink("/admin/installations", "Ships", input.section === "installations")}
         ${(input.navigation ?? []).map((item) => navLink(item.href, item.label, input.section === item.section)).join("")}
+        ${navLink("/admin/signup", "Signup", input.section === "signup")}
         ${navLink("/admin/audit", "Audit", input.section === "audit")}
       </nav>
       <small>private operator surface</small>
@@ -223,7 +224,7 @@ p { color: #a7a7b2; font: 13px/1.55 system-ui, sans-serif; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 .filters { display: grid; grid-template-columns: minmax(220px, 1fr) 190px auto auto; align-items: end; gap: 10px; }
 label { display: grid; gap: 8px; color: #c4c4ce; font-size: 12px; }
-input, select { width: 100%; border: 1px solid #3a3a46; padding: 11px 12px; color: #fff; background: #08080c; font: inherit; }
+input, select, textarea { width: 100%; border: 1px solid #3a3a46; padding: 11px 12px; color: #fff; background: #08080c; font: inherit; }
 button, .button { display: inline-block; border: 1px solid #716bea; padding: 10px 14px; color: #fff; background: #34306f; font: inherit; line-height: normal; text-align: center; text-decoration: none; cursor: pointer; }
 button.secondary, .button.secondary { border-color: #3d3d49; background: #17171e; } button.danger, .button.danger { border-color: #743b42; background: #481f25; }
 .table-wrap { overflow-x: auto; border: 1px solid #292932; }

@@ -32,6 +32,8 @@ then pick a password and select **Activate Ship**. No registration invite is
 needed, and the terms you agreed to at signup are not asked again during activation.
 Handles use lowercase letters, numbers and hyphens; uppercase input is converted
 automatically. Validation and availability feedback appears beside the field.
+Names already in use, reserved for official services, or blocked by the operator
+appear as unavailable. Choose another name to continue.
 One verified email can create one Ship.
 
 If creation is interrupted, retry with the same handle to resume that activation.
