@@ -33,6 +33,7 @@ import { useGateway } from "../../services/gateway/GatewayProvider";
 import { trackClientActivity } from "../../services/gateway/clientActivity";
 import { NativeVoiceSession } from "../../services/platform/NativeVoiceSession";
 import { HandsfreeStatus } from "../../services/platform/HandsfreeStatus";
+import { ApprovalPrompt } from "./shared/ApprovalToast";
 import { useT } from "../../i18n/locale";
 import "./instrument.css";
 
@@ -291,7 +292,15 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       <WireSync />
       <div class="instrument-viewport">
       <div class="instrument-scaled">
-      <HandsfreeStatus />
+      <div class="instrument-corner">
+        <HandsfreeStatus />
+        <ApprovalPrompt viewerUid={viewer?.uid ?? null} onOpen={({ process, request }) => {
+          if (!process.personal) { move("fleet", { kind: "approval", pid: process.pid, requestId: request.requestId }); return; }
+          if (zenPid && zenDirty && !window.confirm(t("shell.confirm.returnToShip"))) return;
+          if (!move("zen")) return;
+          setZenPid(null);
+        }} />
+      </div>
       <InstrumentHeader distance={distance} onNavigate={(to) => {
         if (move(to) && navigationOpen) navigationButtonRef.current?.focus();
       }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0}

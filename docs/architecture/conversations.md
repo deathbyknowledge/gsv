@@ -197,7 +197,12 @@ chosen destination through retries; changing activity does not replay old notifi
 
 In Web and Desktop, new approval requests scroll into view without moving the composer cursor or
 changing its draft. Use **Allow once**, **Always allow** or **Block** to decide, or `y` / `n` when not typing. The request has its own
-transcript row, independent of messages and runtime activity. Approvals from delegated work appear
+transcript row, independent of messages and runtime activity. Wherever a request's own card is not
+on screen, it also appears as a corner card: every approval waiting for you, from Ship or any
+other work you own (other people's never show, even to root), newest first with a count of the rest. The corner card names the work it comes from,
+offers the same decisions and **Open**, which goes to the request's own card: Chat for Ship, the
+process in Work for anything else. It follows the process registry, so it leaves once any client
+answers or the run ends. It announces itself without taking focus and sits beneath dialogs. Approvals from delegated work appear
 above the composer. Ship, delegated work and Work share one approval card: the
 action's purpose comes first, with command or request details folded underneath.
 The **full request** fold preserves every argument, including structured MCP

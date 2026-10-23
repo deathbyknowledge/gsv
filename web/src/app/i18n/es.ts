@@ -1294,6 +1294,11 @@ export const es = {
   "shell.approval.alwaysAllowHint": "Permite que Ship o este ayudante ejecute cualquier comando en la terminal de {place} sin volver a preguntar. Los demás siguen preguntando.",
   "shell.approval.alwaysAllow": "Permitir siempre",
   "shell.approval.waiting": "no se ejecuta nada hasta que respondas",
+  "shell.approval.toastLabel": "Aprobaciones pendientes",
+  "shell.approval.shipWaiting": "Tu Ship espera tu aprobación",
+  "shell.approval.workWaiting": "«{work}» espera tu aprobación",
+  "shell.approval.open": "Abrir",
+  "shell.approval.more": { one: "{count} más en espera", other: "{count} más en espera" },
 
   // Shell: welcome
   "shell.retryButton": "Reintentar",

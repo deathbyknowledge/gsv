@@ -1293,6 +1293,11 @@ export const en = {
   "shell.approval.alwaysAllowHint": "Allow Ship or this helper to run any shell command on {place} without asking again. Others still ask.",
   "shell.approval.alwaysAllow": "Always allow",
   "shell.approval.waiting": "nothing runs until you answer",
+  "shell.approval.toastLabel": "Pending approvals",
+  "shell.approval.shipWaiting": "Ship is waiting for your approval",
+  "shell.approval.workWaiting": "“{work}” is waiting for your approval",
+  "shell.approval.open": "Open",
+  "shell.approval.more": { one: "{count} more waiting", other: "{count} more waiting" },
 
   // Shell: welcome
   "shell.retryButton": "Retry",
