@@ -26,6 +26,8 @@ with the words that fit. Explicit line breaks in a message remain intact.
 The smallest `x` size, 75%, uses 15px rendered message text and tighter vertical
 spacing for a compact conversation overview. Older messages stay more readable
 in this mode. The size choice is stored on the current device.
+On devices that support hover, pointing at an older message restores its full
+brightness at every text size without changing the selected message or scroll position.
 
 After the first welcome card is dismissed, the empty Ship chat shows centered,
 muted privacy copy behind the transcript. It clears when the owner writes or

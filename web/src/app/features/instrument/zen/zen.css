@@ -628,6 +628,9 @@
   height: 1.1em;
 }
 .zen-moment.is-focus.is-older { opacity: 0.85; }
+@media (hover: hover) {
+  .instrument .zen-moment.is-older:hover { opacity: 1; }
+}
 .zen.has-text-selection .zen-moment.is-older { opacity: 1; }
 .zen.is-browse .prompt-line { opacity: 0.55; }
 

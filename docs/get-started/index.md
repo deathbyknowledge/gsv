@@ -174,6 +174,7 @@ While reconnecting, you can keep editing your draft and adding attachments.
 Sending becomes available when the connection returns; your draft is not sent automatically.
 The header stays above the scrolling content. Tap a message once to select it
 and show its timestamp and copy action.
+With a mouse, hovering over an older message brightens it immediately.
 Scrolling selects the message nearest the center, switching to the first or latest message
 at either end. On phones, the down arrow on the right returns to the latest message.
 Text actions have a subtle underline. The **+** menu groups file and person references under
