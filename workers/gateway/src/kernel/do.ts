@@ -2021,6 +2021,7 @@ function envWithInstallationResources(
             const scoped: PublicRepository = {
               ensureAccount: (handle) => retirement.write(() => repository.ensureAccount(handle)),
               account: () => repository.account(),
+              serviceAuth: (request) => retirement.write(() => repository.serviceAuth(request)),
               applyWrites: (writes) => retirement.write(() => repository.applyWrites(writes)),
               uploadBlob: (body, size, mimeType) => retirement.write(() => repository.uploadBlob(body, size, mimeType)),
               readBlob: (cid) => repository.readBlob(cid),

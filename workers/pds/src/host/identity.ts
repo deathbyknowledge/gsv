@@ -7,6 +7,7 @@ import {
   validateIncomingOp,
   type DidPlcString,
   type Operation,
+  type Service,
 } from "@atcute/did-plc";
 import { fromBase16 } from "@atcute/multibase";
 import type { HostEnv } from "./env";
@@ -33,11 +34,12 @@ export type DidDocument = {
 };
 
 /**
- * Creates a did:plc that names this host as its PDS. The host's rotation key
- * signs it; a configured recovery key outranks the rotation key, so its
- * holder can reverse a host operation during PLC's recovery window.
+ * Creates a did:plc that names this host as its PDS, plus any other services
+ * the account offers. The host's rotation key signs it; a configured recovery
+ * key outranks the rotation key, so its holder can reverse a host operation
+ * during PLC's recovery window.
  */
-export async function mintIdentity(env: HostEnv, handle: string): Promise<RepoIdentity> {
+export async function mintIdentity(env: HostEnv, handle: string, services: Record<string, Service> = {}): Promise<RepoIdentity> {
   const signing = await Secp256k1PrivateKeyExportable.createKeypair();
   const rotation = await Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY));
   const hostKey = await rotation.exportPublicKey("did");
@@ -48,7 +50,7 @@ export async function mintIdentity(env: HostEnv, handle: string): Promise<RepoId
     rotationKeys: env.PLC_RECOVERY_KEY ? [recoveryKey(env.PLC_RECOVERY_KEY), hostKey] : [hostKey],
     verificationMethods: { atproto: signingDidKey },
     alsoKnownAs: [`at://${handle}`],
-    services: { atproto_pds: { type: "AtprotoPersonalDataServer", endpoint: env.PDS_ORIGIN } },
+    services: { atproto_pds: { type: "AtprotoPersonalDataServer", endpoint: env.PDS_ORIGIN }, ...services },
   }, rotation);
   validateIncomingOp(genesis);
   return {
@@ -75,7 +77,9 @@ export async function registerGenesis(env: HostEnv, identity: RepoIdentity): Pro
   }
 }
 
-export function didDocument(identity: RepoIdentity, pdsOrigin: string): DidDocument {
+/** The DID document a directory derives from the identity's genesis operation. */
+export function didDocument(identity: RepoIdentity): DidDocument {
+  const { alsoKnownAs, verificationMethods, services } = identity.genesis;
   return {
     "@context": [
       "https://www.w3.org/ns/did/v1",
@@ -83,14 +87,14 @@ export function didDocument(identity: RepoIdentity, pdsOrigin: string): DidDocum
       "https://w3id.org/security/suites/secp256k1-2019/v1",
     ],
     id: identity.did,
-    alsoKnownAs: [`at://${identity.handle}`],
-    verificationMethod: [{
-      id: `${identity.did}#atproto`,
+    alsoKnownAs,
+    verificationMethod: Object.entries(verificationMethods).map(([id, key]) => ({
+      id: `${identity.did}#${id}`,
       type: "Multikey",
       controller: identity.did,
-      publicKeyMultibase: identity.signingDidKey.slice("did:key:".length),
-    }],
-    service: [{ id: "#atproto_pds", type: "AtprotoPersonalDataServer", serviceEndpoint: pdsOrigin }],
+      publicKeyMultibase: key.slice("did:key:".length),
+    })),
+    service: Object.entries(services).map(([id, service]) => ({ id: `#${id}`, type: service.type, serviceEndpoint: service.endpoint })),
   };
 }
 

@@ -22,11 +22,16 @@ export type PublicBlob = {
   size: number;
 };
 
+/** One Ship-to-Ship call: the receiving Ship's DID with its `#ship` service, and one `space.ship.*` method. */
+export type ShipServiceAuthRequest = { aud: string; lxm: string };
+
 /** One installation's public ATProto repository, minted for a trusted Gateway binding. */
 export interface PublicRepository {
   /** Creates the installation's did:plc and empty repository for a handle, or returns the account it already has. */
   ensureAccount(handle: string): Promise<PublicRepositoryAccount>;
   account(): Promise<PublicRepositoryAccount | null>;
+  /** Signs a service-auth token for one call to another Ship; it lasts about a minute and a receiver accepts it once. */
+  serviceAuth(request: ShipServiceAuthRequest): Promise<string>;
   applyWrites(writes: PublicRecordWrite[]): Promise<PublicCommit>;
   /**
    * Streams a blob of the declared size into staging, where nothing serves it

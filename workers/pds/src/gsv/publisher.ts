@@ -7,9 +7,16 @@ import type {
   PublicRecordWrite,
   PublicRepository,
   PublicRepositoryAccount,
+  ShipServiceAuthRequest,
 } from "@humansandmachines/gsv/services/pds";
 import type { HostedAccount, HostedRepo } from "../host/repo";
 import type { PdsEnv } from "./env";
+
+/** The DID document service other Ships call, at the Ship's own address. */
+const SHIP_SERVICE = "ship";
+const SHIP_SERVICE_TYPE = "ShipService";
+/** The Kernel signs only Ship-to-Ship calls: one of Ship's methods, to another Ship's service. */
+const SHIP_METHOD_PREFIX = "space.ship.";
 
 /** Only the Kernel's deployment-granted binding may publish, and only for an installation Accounts reports active. */
 export class PdsPublisherEntrypoint extends WorkerEntrypoint<PdsEnv, { authority: "kernel-publish" }> implements PdsService {
@@ -37,7 +44,8 @@ class InstallationRepository extends RpcTarget implements PublicRepository {
   /**
    * Returns the account the repository already has. Otherwise creates one for a
    * handle Accounts routes to this installation, whose /.well-known/atproto-did
-   * then names the new DID.
+   * then names the new DID. The handle is also the Ship's address, so the DID
+   * names it as the service other Ships call.
    */
   async ensureAccount(handle: string): Promise<PublicRepositoryAccount> {
     const existing = await this.repo.account();
@@ -46,12 +54,20 @@ class InstallationRepository extends RpcTarget implements PublicRepository {
     if (!route.found || route.installationId !== this.installationId || route.state !== "active") {
       throw new Error(`InvalidHandle: ${handle} does not address this installation`);
     }
-    return this.hosted(await this.repo.create(handle, `installations/${encodeURIComponent(this.installationId)}/`));
+    const ship = { type: SHIP_SERVICE_TYPE, endpoint: `https://${handle.toLowerCase()}` };
+    return this.hosted(await this.repo.create(handle, `installations/${encodeURIComponent(this.installationId)}/`, { [SHIP_SERVICE]: ship }));
   }
 
   async account(): Promise<PublicRepositoryAccount | null> {
     const account = await this.repo.account();
     return account ? this.hosted(account) : null;
+  }
+
+  async serviceAuth(request: ShipServiceAuthRequest): Promise<string> {
+    if (!request.aud.endsWith(`#${SHIP_SERVICE}`) || !request.lxm.startsWith(SHIP_METHOD_PREFIX)) {
+      throw new Error("InvalidRequest: the Kernel signs only Ship methods addressed to another Ship");
+    }
+    return this.repo.serviceAuth(request);
   }
 
   applyWrites(writes: PublicRecordWrite[]): Promise<PublicCommit> {

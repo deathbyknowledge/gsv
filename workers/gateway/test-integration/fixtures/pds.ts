@@ -30,6 +30,10 @@ class IntegrationRepository extends RpcTarget implements PublicRepository {
     return ACCOUNTS.get(this.installationId) ?? null;
   }
 
+  async serviceAuth(): Promise<string> {
+    throw new Error("The integration PDS signs no Ship-to-Ship calls yet");
+  }
+
   async applyWrites(writes: PublicRecordWrite[]): Promise<PublicCommit> {
     const account = ACCOUNTS.get(this.installationId);
     if (!account) throw new Error("RepoNotFound: this repository has no account");

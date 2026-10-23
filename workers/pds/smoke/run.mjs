@@ -71,7 +71,8 @@ try {
 
   const document = JSON.parse(await goatOut(["resolve", did]));
   assert.deepEqual(document.alsoKnownAs, [`at://${handle}`]);
-  assert.deepEqual(document.service.map((service) => service.serviceEndpoint), [host]);
+  // The PDS hosting the repository, then the Ship other Ships call at its own address.
+  assert.deepEqual(document.service.map(({ id, serviceEndpoint }) => [id, serviceEndpoint]), [["#atproto_pds", host], ["#ship", `https://${handle}`]]);
 
   const car = join(work, "repo.car");
   await goatOut(["repo", "export", did, "-o", car]);

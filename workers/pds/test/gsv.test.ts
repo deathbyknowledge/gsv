@@ -8,6 +8,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { PUBLIC_BLOB_MAX_BYTES } from "@humansandmachines/gsv/services/pds";
+import { fromBase64Url } from "@atcute/multibase";
 import { admitInstallation } from "../src/gsv/admission";
 import type { PdsEnv } from "../src/gsv/env";
 import { PdsPublisherEntrypoint } from "../src/gsv/publisher";
@@ -103,12 +104,33 @@ describe("publishing for an installation", () => {
 
     const account = await repository.ensureAccount(ship.handle.toUpperCase());
     expect(account).toEqual({ did: expect.stringMatching(/^did:plc:/), handle: ship.handle, host: env.PDS_ORIGIN });
-    expect(plc.operations(account.did)).toEqual([expect.objectContaining({ alsoKnownAs: [`at://${ship.handle}`] })]);
+    expect(plc.operations(account.did)).toEqual([expect.objectContaining({
+      alsoKnownAs: [`at://${ship.handle}`],
+      // Other Ships call the Ship at its address, the same name as its handle.
+      services: expect.objectContaining({ ship: { type: "ShipService", endpoint: `https://${ship.handle}` } }),
+    })]);
     // Another hostname for the same installation finds the account it already has.
     expect(await repository.ensureAccount(ship.canonical)).toEqual(account);
     expect(plc.operations(account.did)).toHaveLength(1);
     expect(await repository.account()).toEqual(account);
     expect(await env.REPOS.getByName(ship.installationId).account()).toEqual({ did: account.did, handle: account.handle });
+  });
+
+  it("signs only Ship methods addressed to another Ship's service", async () => {
+    const ship = accounts.add();
+    const repository = await publisher().getInstallation(ship.installationId);
+    const { did } = await repository.ensureAccount(ship.handle);
+    const aud = "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb#ship";
+    for (const request of [
+      { aud: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb#atproto_pds", lxm: "space.ship.deliver" },
+      { aud: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb", lxm: "space.ship.deliver" },
+      { aud, lxm: "com.atproto.server.createAccount" },
+    ]) {
+      expect(await rejection(repository.serviceAuth(request))).toContain("InvalidRequest");
+    }
+    const token = await repository.serviceAuth({ aud, lxm: "space.ship.deliver" });
+    const payload = token.split(".")[1] ?? "";
+    expect(JSON.parse(new TextDecoder().decode(fromBase64Url(payload)))).toMatchObject({ iss: did, aud, lxm: "space.ship.deliver" });
   });
 
   it("publishes records and blobs under the installation's storage prefix", async () => {

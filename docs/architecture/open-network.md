@@ -37,6 +37,14 @@ Accounts routes to the same installation. The Gateway answers
 `/.well-known/atproto-did` on that hostname with the DID, which is how apps
 verify the handle; a hostname the repository does not name returns 404.
 
+The DID document names two services: `#atproto_pds`, the PDS that holds the
+repository, and `#ship`, the Ship's hostname, where other Ships reach it. The
+PDS also signs ATProto service-auth tokens with the Ship's key for the Kernel,
+only for Ship-to-Ship calls. Each token names the receiving Ship's DID with its
+`#ship` service and one `space.ship.*` method, expires after a minute, and
+carries a fresh `jti`, so a receiver that remembers them accepts each token
+once.
+
 The host's rotation key signs the DID's operations. A recovery key, when the
 operator configures one, outranks it.
 

@@ -1,8 +1,8 @@
 import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { CODEC_RAW, create as createCid, fromDigest, toString as formatCid } from "@atcute/cid";
-import { Secp256k1PrivateKey, Secp256k1PrivateKeyExportable } from "@atcute/crypto";
-import { fromBase16 } from "@atcute/multibase";
+import { Secp256k1PrivateKey, Secp256k1PrivateKeyExportable, verifySigWithDidKey } from "@atcute/crypto";
+import { fromBase16, fromBase64Url, toBase64Url } from "@atcute/multibase";
 import { CID } from "@atproto/lex-data";
 import { verifyProofs, verifyRepoCar } from "@atproto/repo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -83,6 +83,49 @@ describe("hosted repository", () => {
 
     const unprefixed = recovery.slice("did:key:".length);
     await expect(mintIdentity({ ...env, PLC_RECOVERY_KEY: unprefixed }, "bad.ship.test")).rejects.toThrow("PLC_RECOVERY_KEY");
+  });
+
+  it("names the other services an account offers in its DID document", async () => {
+    const name = crypto.randomUUID();
+    const handle = `${name}.ship.test`;
+    const repo = env.REPOS.getByName(name);
+    const ship = { type: "ShipService", endpoint: `https://${handle}` };
+    const account = await repo.create(handle, blobPrefix(name), { ship });
+    expect(plc.operations(account.did)).toEqual([expect.objectContaining({
+      services: { atproto_pds: { type: "AtprotoPersonalDataServer", endpoint: env.PDS_ORIGIN }, ship },
+    })]);
+
+    await deliver(repo);
+    const description = await read(describedRepo, xrpc("com.atproto.repo.describeRepo", { repo: handle }));
+    expect(description.didDoc).toEqual(await (await fetch(`${env.PLC_URL}/${account.did}`)).json());
+    expect(description.didDoc).toMatchObject({ service: [
+      { id: "#atproto_pds", type: "AtprotoPersonalDataServer", serviceEndpoint: env.PDS_ORIGIN },
+      { id: "#ship", type: "ShipService", serviceEndpoint: `https://${handle}` },
+    ] });
+  });
+
+  it("signs service-auth tokens that the account's published key verifies, each with its own nonce", async () => {
+    const { repo, account } = await hostAccount();
+    const request = { aud: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb#ship", lxm: "space.ship.deliver" };
+    const issuedFrom = Math.floor(Date.now() / 1000);
+    const first = decodeToken(await repo.serviceAuth(request));
+    const second = decodeToken(await repo.serviceAuth(request));
+
+    expect(first.header).toEqual({ typ: "JWT", alg: "ES256K" });
+    expect(first.payload).toEqual({ iss: account.did, ...request, iat: expect.any(Number), exp: expect.any(Number), jti: expect.any(String) });
+    expect(first.payload.iat).toBeGreaterThanOrEqual(issuedFrom);
+    expect(first.payload.exp).toBe(Number(first.payload.iat) + 60);
+    expect(second.payload.jti).not.toBe(first.payload.jti);
+    const key = await signingDidKey(account.did);
+    expect(await verifySigWithDidKey(key, first.signature, first.signed, { jwtAlg: "ES256K" })).toBe(true);
+    // The signature covers the claims: naming another audience breaks it.
+    const redirected = `${first.parts[0]}.${toBase64Url(utf8(JSON.stringify({ ...first.payload, aud: "did:plc:cccccccccccccccccccccccc#ship" })))}`;
+    expect(await verifySigWithDidKey(key, first.signature, utf8(redirected), { jwtAlg: "ES256K" })).toBe(false);
+
+    for (const invalid of [{ ...request, aud: "bob.ship.test#ship" }, { ...request, aud: `${request.aud}#again` }, { ...request, lxm: "deliver" }]) {
+      expect(await rejection(repo.serviceAuth(invalid))).toContain("InvalidRequest");
+    }
+    expect(await rejection(env.REPOS.getByName(crypto.randomUUID()).serviceAuth(request))).toContain("RepoNotFound");
   });
 
   it("finishes creating an account after the directory's response was lost", async () => {
@@ -532,6 +575,20 @@ async function hostAccount() {
   const created = await createAccount();
   await deliver(created.repo);
   return created;
+}
+
+/** A service-auth token's decoded parts and the bytes its signature covers. */
+function decodeToken(token: string) {
+  const parts = token.split(".");
+  const [header, payload, signature] = parts;
+  if (parts.length !== 3 || !header || !payload || !signature) throw new Error("A token has three parts");
+  const json = (part: string) => z.record(z.string(), z.union([z.string(), z.number()])).parse(JSON.parse(new TextDecoder().decode(fromBase64Url(part))));
+  return { parts, header: json(header), payload: json(payload), signature: fromBase64Url(signature), signed: utf8(`${header}.${payload}`) };
+}
+
+/** UTF-8 bytes backed by a plain ArrayBuffer, which the atcute verifiers take. */
+function utf8(text: string): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(new TextEncoder().encode(text));
 }
 
 function blobPrefix(name: string): string {

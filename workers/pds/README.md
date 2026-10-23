@@ -5,16 +5,21 @@ host. One `HostedRepo` Durable Object per account holds its did:plc, signed
 repository, blobs and firehose outbox. One `HostFirehose` object numbers every
 repository's events into the host's firehose and keeps the directory of hosted
 repositories. `handleXrpc` serves public reads, sending each repository read to
-the object that holds the repository. The host imports nothing from GSV.
+the object that holds the repository. Each `HostedRepo` also signs
+service-auth tokens with its account's key for calls to other services. The
+host imports nothing from GSV.
 
 `src/gsv/` connects the host to a GSV deployment. Each installation's
 repository object is named by its installation ID and keeps its blobs under
 `installations/<id>/`. `PdsPublisherEntrypoint` hands the Kernel its
 installation's repository when the binding carries the `kernel-publish`
 authority and Accounts reports the installation active. A new account takes
-only a handle that Accounts routes to the same installation. Public reads
-serve an active installation's repository; a retired one reads as deleted and
-any other state as suspended. Nothing deploys the worker yet.
+only a handle that Accounts routes to the same installation, and its DID names
+that hostname as the `#ship` service other Ships call. The Kernel gets
+service-auth tokens only for `space.ship.*` methods addressed to another Ship's
+`#ship` service. Public reads serve an active installation's repository; a
+retired one reads as deleted and any other state as suspended. Nothing deploys
+the worker yet.
 
 ## Repository engine
 

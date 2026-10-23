@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { CODEC_RAW, fromDigest, fromString as parseCid, toString as formatCid } from "@atcute/cid";
+import type { Service } from "@atcute/did-plc";
 import { isHandle, isNsid, isRecordKey } from "@atcute/lexicons/syntax";
 import { BlockMap } from "@atproto/repo";
 import * as z from "zod/mini";
@@ -13,6 +14,7 @@ import type { HostEnv } from "./env";
 import { FIREHOSE_NAME, type OutboxEvent, type RepoState } from "./firehose";
 import { didDocument, mintIdentity, registerGenesis, type RepoIdentity } from "./identity";
 import { migrate } from "./schema";
+import { signServiceAuth, type ServiceAuthRequest } from "./service-auth";
 import { parseQuery, repositoryParameter, XRPC_PREFIX, XrpcError } from "./xrpc";
 
 /** A JSON value inside a repository record. */
@@ -116,12 +118,15 @@ export class HostedRepo extends DurableObject<HostEnv> {
   private opened: OpenRepo | null = null;
   private queue: Promise<void> = Promise.resolve();
 
-  /** Creates the account's DID and empty repository, or returns the account this object already holds. */
-  async create(handle: string, blobPrefix: string): Promise<HostedAccount> {
+  /**
+   * Creates the account's DID, naming any other services it offers, and its
+   * empty repository, or returns the account this object already holds.
+   */
+  async create(handle: string, blobPrefix: string, services: Record<string, Service> = {}): Promise<HostedAccount> {
     if (!isHandle(handle)) throw new Error(`InvalidHandle: ${handle} is not a handle`);
     return this.serialize(async () => {
       // Handles compare without case; the host keeps the lowercase form.
-      const repo = this.open(await this.provision(handle.toLowerCase(), blobPrefix));
+      const repo = this.open(await this.provision(handle.toLowerCase(), blobPrefix, services));
       // The first access commits the empty repository; activation then announces
       // #account, #identity and #sync, and does nothing once the account is active.
       await repo.engine.getStatus();
@@ -133,6 +138,13 @@ export class HostedRepo extends DurableObject<HostEnv> {
   async account(): Promise<HostedAccount | null> {
     const account = await this.storedAccount();
     return account ? { did: account.did, handle: account.handle } : null;
+  }
+
+  /** Signs a service-auth token for one call from this account to another service. */
+  async serviceAuth(request: ServiceAuthRequest): Promise<string> {
+    const repo = await this.requireRepo();
+    if (!await repo.storage.getActive()) throw new Error(`RepoDeactivated: ${repo.account.did} cannot sign calls`);
+    return signServiceAuth(repo.account.did, repo.account.signingKey, request);
   }
 
   /** Applies writes in one signed commit after validating records and the blobs they reference. */
@@ -266,7 +278,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
     switch (method) {
       case "com.atproto.repo.describeRepo": {
         const { collections } = await repo.engine.describeRepo();
-        const didDoc = didDocument(repo.account, this.env.PDS_ORIGIN);
+        const didDoc = didDocument(repo.account);
         return Response.json({ handle, did, didDoc, collections, handleIsCorrect: true });
       }
       case "com.atproto.repo.getRecord": {
@@ -360,7 +372,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
     return { records, cursor: keys.length === query.limit && last ? last.slice(prefix.length) : undefined };
   }
 
-  private async provision(handle: string, blobPrefix: string): Promise<StoredAccount> {
+  private async provision(handle: string, blobPrefix: string, services: Record<string, Service>): Promise<StoredAccount> {
     const name = this.ctx.id.name;
     if (!name) throw new Error("A hosted repository must be addressed by name");
     let account = await this.ctx.storage.get<StoredAccount>(ACCOUNT_KEY);
@@ -368,7 +380,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
       throw new Error("RepoConflict: this repository already belongs to another account");
     }
     if (!account) {
-      account = { ...(await mintIdentity(this.env, handle)), name, blobPrefix, registered: false };
+      account = { ...(await mintIdentity(this.env, handle, services)), name, blobPrefix, registered: false };
       await this.ctx.storage.put(ACCOUNT_KEY, account);
     }
     if (!account.registered) {
