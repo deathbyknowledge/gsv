@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attachmentPreviewKind } from "./attachmentPreview";
+import { attachmentPreviewKind } from "./attachmentKind";
 
 describe("attachment preview policy", () => {
   it.each([

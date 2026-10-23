@@ -3,7 +3,7 @@ import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { AttachmentPreview } from "./AttachmentPreview";
-import { TEXT_PREVIEW_LIMIT } from "./attachmentPreview";
+import { TEXT_PREVIEW_LIMIT } from "./attachmentKind";
 
 let root: ReturnType<typeof createTestRoot> | undefined;
 afterEach(async () => { await root?.unmount(); root = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals(); });

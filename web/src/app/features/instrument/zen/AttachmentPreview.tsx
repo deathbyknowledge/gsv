@@ -4,7 +4,7 @@ import { useT } from "../../../i18n/locale";
 import { useMediaObjectUrl } from "../../../services/chat/hooks/useChatMediaSource";
 import { renderMarkdownHtml } from "../shared/markdown";
 import { enhanceCodeBlocks } from "../shared/codeBlocks";
-import { attachmentPreviewKind, TEXT_PREVIEW_LIMIT } from "./attachmentPreview";
+import { attachmentPreviewKind, TEXT_PREVIEW_LIMIT } from "./attachmentKind";
 import "./attachment-preview.css";
 
 /** A read-only projection of the already-authorized, immutable attachment bytes. */
