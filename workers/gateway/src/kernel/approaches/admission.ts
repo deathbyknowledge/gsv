@@ -2,7 +2,7 @@ import type {
   ApproachContent, ApproachCreateArgs, ApproachDecideArgs, ApproachEnvelope, ApproachGetArgs,
   ApproachListArgs, ApproachListResult, ApproachReceipt, ApproachResult, ApproachRetryArgs, PublicProfile,
 } from "@humansandmachines/gsv/protocol";
-import { actorRefSchema, approachContentSchema, jsonValueSchema } from "@humansandmachines/gsv/protocol";
+import { actorRefSchema, approachContentSchema, jsonObjectSchema, jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod/mini";
 import type { KernelContext } from "../context";
 import { APPROACH_LIFETIME_MS } from "../approach-store";
@@ -13,6 +13,7 @@ import { localShipDocumentV2 } from "../federation/protocol";
 import { consumeLocalRateLimits, consumePublicRateLimits } from "../federation/limits";
 import { MAX_PUBLIC_JSON_BYTES } from "../federation/http";
 import { PublicFederationError } from "../federation/errors";
+import { authorizeNestedOperation } from "../tool-approval";
 import { getConversationById } from "../../shared/utils";
 import { stableOpaqueId } from "../../shared/stable-id";
 import { approachFingerprint, approachLock, authenticateApproachPeer, sameActor, signApproachValue } from "./shared";
@@ -53,6 +54,11 @@ export async function handleApproachCreate(input: ApproachCreateArgs, ctx: Kerne
   const ownerUid = requireContactCaller(ctx, true);
   const args = createSchema.parse(input);
   contactHandlingChoice(args.shipHandlesMessages, ctx);
+  // A message request reaches someone who is not a contact yet, so the Ship asks first
+  // unless the owner's approval policy says otherwise. A replay of a request already sent does not ask again.
+  if (!ctx.approaches.byIdempotencyKey(ownerUid, args.idempotencyKey)) {
+    await authorizeNestedOperation(ctx, "approach.create", jsonObjectSchema.parse(args), "ask");
+  }
   return await ctx.coordinateFederationContact(`approach-send:${ownerUid}:${args.idempotencyKey}`, () => createApproach(args, ownerUid, ctx));
 }
 

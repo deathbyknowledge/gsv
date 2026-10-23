@@ -186,7 +186,9 @@ Default policy (`default` is `auto`; the runtime, the Process fallback, and the 
 | `{ "route": "instance", "platform": "browser" }`, Ship-provisioned browsers | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `{ "route": "instance", "platform": "linux" }`, Ship-provisioned computers | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `targets/*`, connected computers and browsers | `fs.read`, `fs.search`, `fs.transfer.stat`, `fs.transfer.send` | every other `fs.*` call, `shell.exec`, `net.fetch` |
-| any target | `web.search` | `sys.mcp.call`, `mail.send` |
+| any target | `web.search` | `sys.mcp.call`, `mail.send`, `approach.create` |
+
+`approach.create`, the Ship sending a first message request to someone who is not a contact yet, asks even under a stored policy without a matching rule; add an explicit `approach.create` rule to allow or block it.
 
 Native work in the cloud home and Ship-provisioned browsers proceeds without asking. Connected personal browsers and computers still ask before changing files, running commands, or making network requests. Capability grants, ownership checks, and browser sign-in handoffs still apply. A cloud browser may retain website logins; use an Ask or Block rule for **Cloud browsers**, or for one target, to restrict its use.
 

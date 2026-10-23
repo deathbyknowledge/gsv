@@ -20,12 +20,14 @@ export function handleProfileGet(ctx: KernelContext): ProfileGetResult {
   const handle = ctx.installationIdentity?.handle;
   const existing = ctx.profiles.get(ownerUid, origin);
   if (existing) return { profile: { ...existing, ...(handle ? { handle } : undefined) } };
-  return { profile: { revision: 0, url: `${origin}/profile`, draft: defaultProfileDraft(ctx.auth.getPasswdByUid(ownerUid)!), ...(handle ? { handle } : undefined) } };
+  return { profile: { revision: 0, url: `${origin}/profile`, draft: defaultProfileDraft(ownerUid, ctx), ...(handle ? { handle } : undefined) } };
 }
 
-/** A profile is public and open to message requests unless its owner chooses otherwise. */
-function defaultProfileDraft(account: { gecos: string; username: string }): ProfileFields {
-  return { displayName: account.gecos || account.username, about: "", contactPolicy: "requests", representation: "human" };
+/** A profile is named by the Ship's handle, public and open to message requests unless its owner chooses otherwise. */
+function defaultProfileDraft(ownerUid: number, ctx: KernelContext): ProfileFields {
+  const account = ctx.auth.getPasswdByUid(ownerUid)!;
+  const displayName = ctx.installationIdentity?.handle || account.gecos || account.username;
+  return { displayName, about: "", contactPolicy: "requests", representation: "human" };
 }
 
 /** The name the owner shows to other people: their profile's display name, else their account name. */
@@ -38,21 +40,19 @@ export function ownerDisplayName(ownerUid: number, ctx: KernelContext): string |
 /**
  * Publish the owner's profile once by default. Runs on every human sign-in but
  * acts only until the default has been applied, so a later unpublish stays
- * private. A draft saved before this default is published as it is, opened to
- * message requests; a profile the owner already published is left alone.
+ * private. Any saved profile is the owner's own choice: a draft, a published
+ * profile and one they unpublished before this default existed are left alone.
  */
 export async function ensureDefaultProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
   const key = `users/${ownerUid}/profile/default_published`;
   if (ctx.config.getExplicit(key) === "1" || !profileOwnerActive(ownerUid, ctx)) return;
   const origin = ctx.installationIdentity?.canonicalOrigin;
   if (!origin) return;
-  const existing = ctx.profiles.get(ownerUid, origin);
-  if (!existing?.published) {
+  if (!ctx.profiles.get(ownerUid, origin)) {
     const account = ctx.auth.getPasswdByUid(ownerUid)!;
     const subject = ctx.federation.ensureSubject(ownerUid, account.gecos || account.username);
-    const draft = existing ? { ...existing.draft, contactPolicy: "requests" as const } : defaultProfileDraft(account);
-    ctx.profiles.update(ownerUid, subject.id, existing?.revision ?? 0, draft);
-    await publishProfileRevision(ownerUid, ctx.profiles.get(ownerUid, origin)!.revision, ctx);
+    ctx.profiles.update(ownerUid, subject.id, 0, defaultProfileDraft(ownerUid, ctx));
+    await publishProfileRevision(ownerUid, 1, ctx);
     ctx.broadcastToUserUid(ownerUid, "profile.changed");
   }
   ctx.config.set(key, "1");
