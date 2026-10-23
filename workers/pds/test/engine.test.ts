@@ -1,9 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Secp256k1Keypair } from "@atproto/crypto";
-import {
-  def, getAndParseByDef, MemoryBlockstore, MST, readCarWithRoot, verifyCommitSig, verifyRepoCar,
-} from "@atproto/repo";
+import { verifyRepoCar } from "@atproto/repo";
 import { describe, expect, it, vi } from "vitest";
 import { BlobStore, extractJsonBlobCids } from "../src/cirrus/repo/blobs";
 import { RepoEngine } from "../src/cirrus/repo/engine";
@@ -11,6 +9,7 @@ import { Firehose } from "../src/cirrus/repo/firehose";
 import { Sequencer, type CommitEvent, type SeqEvent } from "../src/cirrus/repo/sequencer";
 import { SqliteRepoStorage } from "../src/cirrus/repo/storage";
 import { getRepoCar } from "../src/cirrus/repo/sync";
+import { verifyCommit } from "./relay";
 
 const DID = "did:web:repo.test";
 const NOTE = "space.gsv.note";
@@ -44,31 +43,10 @@ function acceptSubscriber(state: DurableObjectState) {
   return { server, frames };
 }
 
-/** Checks a commit the way a sync 1.1 relay does: from the event's own blocks, without the repository. */
-async function verifyCommitEvent(event: CommitEvent, didKey: string): Promise<void> {
-  const { root, blocks } = await readCarWithRoot(event.blocks);
-  expect(root.equals(event.commit)).toBe(true);
-  const { obj: commit } = await getAndParseByDef(blocks, root, def.commit);
-  expect(commit.rev).toBe(event.rev);
-  expect(await verifyCommitSig(commit, didKey)).toBe(true);
-  let tree = MST.load(new MemoryBlockstore(blocks), commit.data);
-  for (const op of event.ops) {
-    if (op.action === "create") {
-      tree = await tree.delete(op.path);
-    } else if (!op.prev) {
-      throw new Error(`${op.action} of ${op.path} has no prev`);
-    } else {
-      tree = op.action === "update" ? await tree.update(op.path, op.prev) : await tree.add(op.path, op.prev);
-    }
-  }
-  expect(event.prevData).not.toBeNull();
-  expect((await tree.getPointer()).equals(event.prevData)).toBe(true);
-}
-
 describe("vendored Cirrus repo engine", () => {
   it("writes, reads, updates and deletes records", async () => {
     const { signingKey } = await testSigner();
-    await runInDurableObject(env.REPOS.getByName("records"), async (_host, state) => {
+    await runInDurableObject(env.ENGINE.getByName("records"), async (_host, state) => {
       const { engine } = openRepo(state, signingKey);
       const created = await engine.createRecord(NOTE, "first", { $type: NOTE, text: "hello" });
       expect(created.uri).toBe(`at://${DID}/${NOTE}/first`);
@@ -88,7 +66,7 @@ describe("vendored Cirrus repo engine", () => {
 
   it("sequences a commit chain a relay can verify from each event, across a reload", async () => {
     const { didKey, signingKey } = await testSigner();
-    const stub = env.REPOS.getByName("commits");
+    const stub = env.ENGINE.getByName("commits");
     const live: CommitEvent[] = [];
     const record = async (event: SeqEvent) => {
       if (event.type === "commit") live.push(event.event);
@@ -109,7 +87,7 @@ describe("vendored Cirrus repo engine", () => {
     expect(live.map((event) => event.ops.map((op) => op.action)))
       .toEqual([["create"], ["update"], ["create"], ["delete"]]);
     for (const [index, event] of live.entries()) {
-      await verifyCommitEvent(event, didKey);
+      await verifyCommit(event, didKey);
       const previous = live[index - 1];
       if (previous) expect(event.since).toBe(previous.rev);
     }
@@ -117,7 +95,7 @@ describe("vendored Cirrus repo engine", () => {
 
   it("replays the same firehose frames a subscriber received live", async () => {
     const { signingKey } = await testSigner();
-    await runInDurableObject(env.REPOS.getByName("firehose"), async (_host, state) => {
+    await runInDurableObject(env.ENGINE.getByName("firehose"), async (_host, state) => {
       const sequencer = new Sequencer(state.storage.sql);
       const firehose = new Firehose(sequencer, () => state.getWebSockets());
       const live = acceptSubscriber(state);
@@ -136,7 +114,7 @@ describe("vendored Cirrus repo engine", () => {
 
   it("exports a repository CAR that verifies against the signing key", async () => {
     const { didKey, signingKey } = await testSigner();
-    await runInDurableObject(env.REPOS.getByName("export"), async (_host, state) => {
+    await runInDurableObject(env.ENGINE.getByName("export"), async (_host, state) => {
       const { engine, storage } = openRepo(state, signingKey);
       await engine.createRecord(NOTE, "kept", { $type: NOTE, text: "kept" });
       await engine.createRecord(NOTE, "gone", { $type: NOTE, text: "gone" });
@@ -159,6 +137,18 @@ describe("vendored Cirrus repo engine", () => {
     const served = await blobs.getBlob(blob.ref.$link);
     expect(served?.httpMetadata?.contentType).toBe("text/plain");
     expect(await served?.text()).toBe("hello");
+  });
+
+  it("deletes a blob's staged and public copies", async () => {
+    const blobs = new BlobStore(env.BLOBS, DID, "installations/deletes/");
+    const blob = await blobs.putBlob(new TextEncoder().encode("gone"), "text/plain");
+    await blobs.promoteBlob(blob.ref.$link);
+
+    await blobs.deleteStagedBlob(blob.ref.$link);
+    expect(await env.BLOBS.head(`installations/deletes/${DID}/staged/${blob.ref.$link}`)).toBeNull();
+    expect(await blobs.hasBlob(blob.ref.$link)).toBe(true);
+    await blobs.deleteBlob(blob.ref.$link);
+    expect(await blobs.hasBlob(blob.ref.$link)).toBe(false);
   });
 
   it("keeps blobs under the store's key prefix", async () => {

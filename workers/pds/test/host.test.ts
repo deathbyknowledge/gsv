@@ -1,0 +1,584 @@
+import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import { Secp256k1PrivateKey, Secp256k1PrivateKeyExportable } from "@atcute/crypto";
+import { fromBase16 } from "@atcute/multibase";
+import { CID } from "@atproto/lex-data";
+import { verifyProofs, verifyRepoCar } from "@atproto/repo";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { encode } from "../src/cirrus/cbor-compat";
+import { BlobStore, type BlobRef } from "../src/cirrus/repo/blobs";
+import { FIREHOSE_NAME, HostFirehose, type OutboxEvent, type RepoState } from "../src/host/firehose";
+import { mintIdentity, registerGenesis } from "../src/host/identity";
+import { HostedRepo, type LexObject, type RepoWrite } from "../src/host/repo";
+import { handleXrpc, type Admission } from "../src/host/xrpc";
+import { FakePlcDirectory, installFakePlc } from "./plc";
+import { framesFor, subscribe, verifyCommit, type Frame } from "./relay";
+
+const NOTE = "space.gsv.note";
+
+const describedRepo = z.object({
+  did: z.string(),
+  handle: z.string(),
+  didDoc: z.looseObject({ verificationMethod: z.array(z.looseObject({ publicKeyMultibase: z.string() })) }),
+  collections: z.array(z.string()),
+});
+const recordPage = z.object({
+  records: z.array(z.object({ uri: z.string(), cid: z.string(), value: z.object({ text: z.string() }) })),
+  cursor: z.string().optional(),
+});
+const latestCommit = z.object({ cid: z.string(), rev: z.string() });
+
+let plc: FakePlcDirectory;
+
+beforeEach(() => {
+  plc = new FakePlcDirectory();
+  installFakePlc(plc, env.PLC_URL);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("hosted repository", () => {
+  it("creates a did:plc that names this host and announces the account once", async () => {
+    const live = await subscribe(hostFirehose());
+    const { name, handle, repo, account } = await createAccount();
+    expect(account).toEqual({ did: expect.stringMatching(/^did:plc:[a-z2-7]{24}$/), handle });
+    expect(await repo.create(handle.toUpperCase(), blobPrefix(name))).toEqual(account);
+    expect(await rejection(repo.create(`other.${handle}`, blobPrefix(name)))).toContain("RepoConflict");
+
+    await deliver(repo);
+    const description = await read(describedRepo, xrpc("com.atproto.repo.describeRepo", { repo: handle }));
+    expect(plc.operations(account.did)).toEqual([expect.objectContaining({
+      type: "plc_operation",
+      prev: null,
+      rotationKeys: [await hostRotationKey()],
+      verificationMethods: { atproto: await signingDidKey(account.did) },
+      alsoKnownAs: [`at://${handle}`],
+      services: { atproto_pds: { type: "AtprotoPersonalDataServer", endpoint: env.PDS_ORIGIN } },
+    })]);
+    const resolved = await fetch(`${env.PLC_URL}/${account.did}`);
+    expect(description.didDoc).toEqual(await resolved.json());
+
+    const state = await repo.state();
+    await vi.waitFor(() => expect(framesFor(live, account.did)).toHaveLength(3));
+    expect(framesFor(live, account.did)).toMatchObject([
+      { type: "#account", body: { active: true } },
+      // Consumers resolve the handle from the DID document; the event only says to.
+      { type: "#identity", body: { did: account.did } },
+      { type: "#sync", body: { rev: state?.rev } },
+    ]);
+    expect(await hostFirehose().locate(handle.toUpperCase())).toEqual({ ...state, name });
+  });
+
+  it("ranks a configured recovery key above the host's rotation key", async () => {
+    const recovery = await (await Secp256k1PrivateKeyExportable.createKeypair()).exportPublicKey("did");
+    const identity = await mintIdentity({ ...env, PLC_RECOVERY_KEY: recovery }, "recovered.ship.test");
+    expect(identity.genesis.rotationKeys).toEqual([recovery, await hostRotationKey()]);
+    await registerGenesis(env, identity);
+    expect(plc.operations(identity.did)).toEqual([identity.genesis]);
+
+    const unprefixed = recovery.slice("did:key:".length);
+    await expect(mintIdentity({ ...env, PLC_RECOVERY_KEY: unprefixed }, "bad.ship.test")).rejects.toThrow("PLC_RECOVERY_KEY");
+  });
+
+  it("finishes creating an account after the directory's response was lost", async () => {
+    const name = crypto.randomUUID();
+    const handle = `${name}.ship.test`;
+    const repo = env.REPOS.getByName(name);
+    plc.loseNextResponse();
+    expect(await rejection(repo.create(handle, blobPrefix(name)))).toContain("Network connection lost");
+    expect(await repo.account()).toBeNull();
+
+    const account = await repo.create(handle, blobPrefix(name));
+    expect(plc.operations(account.did)).toHaveLength(1);
+    expect(await repo.account()).toEqual(account);
+  });
+
+  it("decides each write against the commit before it, even while another write waits on blob storage", async () => {
+    const { name, repo, account } = await hostAccount();
+    const prefix = `${blobPrefix(name)}${account.did}/`;
+    const [first, second] = await Promise.all([repo.uploadBlob(bytes("first"), "text/plain"), repo.uploadBlob(bytes("second"), "text/plain")]);
+    const put = (text: string, blob: BlobRef): RepoWrite => ({
+      action: "put",
+      collection: NOTE,
+      rkey: "card",
+      record: noteRecord(text, { file: blobField(blob) }),
+    });
+    // R2 calls take network time, during which the object accepts other requests.
+    const promote = BlobStore.prototype.promoteBlob;
+    vi.spyOn(BlobStore.prototype, "promoteBlob").mockImplementation(async function (this: BlobStore, cid: string) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return promote.call(this, cid);
+    });
+    // Both writes start before either commits; each first promotes its upload.
+    await Promise.all([repo.applyWrites([put("first", first)]), repo.applyWrites([put("second", second)])]);
+
+    const card = await read(z.object({ value: z.object({ text: z.string() }) }), xrpc("com.atproto.repo.getRecord", {
+      repo: account.did,
+      collection: NOTE,
+      rkey: "card",
+    }));
+    expect(card.value.text).toBe("second");
+    expect(await blobKeys(prefix)).toEqual([`${prefix}${second.ref.$link}`]);
+  });
+
+  it("chains overlapping writes into commits a relay can verify", async () => {
+    const live = await subscribe(hostFirehose());
+    const { repo, account } = await hostAccount();
+    const commits = await Promise.all(
+      Array.from({ length: 8 }, (_, index) => repo.applyWrites([note(`note-${index}`, `note ${index}`)])),
+    );
+    const listed = await read(recordPage, xrpc("com.atproto.repo.listRecords", { repo: account.did, collection: NOTE }));
+    expect(listed.records.map((record) => record.uri).sort())
+      .toEqual(commits.flatMap((commit) => commit.results.map((result) => result.uri)).sort());
+
+    await deliver(repo);
+    const didKey = await signingDidKey(account.did);
+    await vi.waitFor(() => expect(framesFor(live, account.did)).toHaveLength(11));
+    expect(await verifyChain(framesFor(live, account.did), didKey)).toBe(8);
+    const exported = await xrpc("com.atproto.sync.getRepo", { did: account.did });
+    const car = new Uint8Array(await exported.arrayBuffer());
+    expect((await verifyRepoCar(car, account.did, didKey)).creates).toHaveLength(8);
+  });
+
+  it("announces a head that no event announced before the repository's next write", async () => {
+    const { repo, account } = await hostAccount();
+    const live = await subscribe(hostFirehose());
+    const blocked = blockDelivery();
+    const lost = await repo.applyWrites([note("lost", "its event never reached the outbox")]);
+    await runInDurableObject(repo, async (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM firehose_events WHERE event_type = 'commit'");
+    });
+    // A restarted object compares the head with its last announced revision before writing.
+    await runInDurableObject(repo, async (_instance, state) => {
+      await new HostedRepo(state, env).applyWrites([note("next", "after a restart")]);
+    });
+    blocked.append.mockRestore();
+
+    await deliver(repo);
+    await vi.waitFor(() => expect(framesFor(live, account.did)).toHaveLength(2));
+    expect(framesFor(live, account.did)).toMatchObject([
+      { type: "#sync", body: { rev: lost.commit.rev } },
+      { type: "#commit", body: { since: lost.commit.rev } },
+    ]);
+    expect(await verifyChain(framesFor(live, account.did), await signingDidKey(account.did))).toBe(1);
+  });
+
+  it("retries delivery with backoff until the host firehose accepts it", async () => {
+    const blocked = blockDelivery();
+    const { repo, account } = await createAccount();
+    const first = await nextRetry(repo, 0);
+    const second = await nextRetry(repo, first.failures);
+    expect(second.failures).toBe(first.failures + 1);
+    expect(second.delay).toBeGreaterThan(first.delay);
+    expect(blocked.errors).toHaveBeenCalledWith("Firehose delivery failed; retrying", expect.any(Error));
+    blocked.append.mockRestore();
+
+    await deliver(repo);
+    expect((await retryState(repo)).failures).toBe(0);
+    expect(await hostFirehose().locate(account.did)).toMatchObject({ rev: (await repo.state())?.rev });
+  });
+
+  it("publishes an upload once a record references it and deletes blobs no record references", async () => {
+    const { name, repo, account } = await hostAccount();
+    const prefix = `${blobPrefix(name)}${account.did}/`;
+    const first = await repo.uploadBlob(bytes("first"), "text/plain");
+    expect(await blobKeys(prefix)).toEqual([`${prefix}staged/${first.ref.$link}`]);
+    expect(await errorOf(xrpc("com.atproto.sync.getBlob", { did: account.did, cid: first.ref.$link }))).toBe("BlobNotFound");
+
+    await repo.applyWrites([note("card", "with a file", { file: blobField(first) })]);
+    expect(await blobKeys(prefix)).toEqual([`${prefix}${first.ref.$link}`]);
+    expect(await read(z.json(), xrpc("com.atproto.sync.listBlobs", { did: account.did }))).toEqual({ cids: [first.ref.$link] });
+    const served = await xrpc("com.atproto.sync.getBlob", { did: account.did, cid: first.ref.$link });
+    expect(served.headers.get("Content-Type")).toBe("text/plain");
+    expect(served.headers.get("Content-Security-Policy")).toBe("default-src 'none'; sandbox");
+    expect(await served.text()).toBe("first");
+
+    const second = await repo.uploadBlob(bytes("second"), "text/plain");
+    await repo.applyWrites([
+      { action: "put", collection: NOTE, rkey: "card", record: noteRecord("replaced", { file: blobField(second) }) },
+      note("copy", "shares the file", { file: blobField(second) }),
+    ]);
+    expect(await blobKeys(prefix)).toEqual([`${prefix}${second.ref.$link}`]);
+
+    await repo.applyWrites([{ action: "delete", collection: NOTE, rkey: "card" }]);
+    expect(await blobKeys(prefix)).toEqual([`${prefix}${second.ref.$link}`]);
+    await repo.applyWrites([{ action: "delete", collection: NOTE, rkey: "copy" }]);
+    expect(await blobKeys(prefix)).toEqual([]);
+
+    expect(await rejection(repo.applyWrites([note("again", "a deleted file", { file: blobField(first) })]))).toContain("BlobNotFound");
+  });
+
+  it("leaves no blob public when a write references one that was never uploaded", async () => {
+    const { name, repo, account } = await hostAccount();
+    const prefix = `${blobPrefix(name)}${account.did}/`;
+    const uploaded = await repo.uploadBlob(bytes("uploaded"), "text/plain");
+    const missing = { ...uploaded, ref: { $link: "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku" } };
+    const write = note("pair", "two files", { files: [blobField(uploaded), blobField(missing)] });
+
+    expect(await rejection(repo.applyWrites([write]))).toContain("BlobNotFound");
+    expect(await blobKeys(prefix)).toEqual([`${prefix}staged/${uploaded.ref.$link}`]);
+  });
+
+  it("expires an upload that no record references", async () => {
+    const { name, repo, account } = await hostAccount();
+    const prefix = `${blobPrefix(name)}${account.did}/`;
+    const orphan = await repo.uploadBlob(bytes("orphan"), "text/plain");
+    await runInDurableObject(repo, async (_instance, state) => {
+      state.storage.sql.exec("UPDATE staged_blobs SET expires_at = ?", Date.now() - 1);
+    });
+    await vi.waitFor(async () => {
+      await runDurableObjectAlarm(repo);
+      expect(await blobKeys(prefix)).toEqual([]);
+    });
+    expect(await rejection(repo.applyWrites([note("late", "an expired file", { file: blobField(orphan) })]))).toContain("BlobNotFound");
+  });
+});
+
+describe("host XRPC", () => {
+  it("lists records newest first, or oldest first when reversed, one page at a time", async () => {
+    const { repo, account, handle } = await hostAccount();
+    await repo.applyWrites(["a", "b", "c", "d", "e"].map((rkey) => note(rkey, rkey)));
+
+    expect(await listAll(handle.toUpperCase(), false)).toEqual([["e", "d"], ["c", "b"], ["a"]]);
+    expect(await listAll(account.did, true)).toEqual([["a", "b"], ["c", "d"], ["e"]]);
+    expect(await errorOf(xrpc("com.atproto.repo.listRecords", { repo: account.did, collection: NOTE, limit: "0" })))
+      .toBe("InvalidRequest");
+  });
+
+  it("serves records and the proofs a client verifies them with", async () => {
+    const { repo, account } = await hostAccount();
+    const { results: [written] } = await repo.applyWrites([note("proved", "a proved record")]);
+    const didKey = await signingDidKey(account.did);
+
+    const record = { repo: account.did, collection: NOTE, rkey: "proved" };
+    expect(await read(z.json(), xrpc("com.atproto.repo.getRecord", record))).toEqual({
+      uri: written?.uri,
+      cid: written?.cid,
+      value: noteRecord("a proved record"),
+    });
+    expect(await errorOf(xrpc("com.atproto.repo.getRecord", { ...record, cid: "bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqcsgz7soitae" })))
+      .toBe("RecordNotFound");
+    expect(await errorOf(xrpc("com.atproto.repo.getRecord", { ...record, rkey: "missing" }))).toBe("RecordNotFound");
+
+    const proof = await xrpc("com.atproto.sync.getRecord", { did: account.did, collection: NOTE, rkey: "proved" });
+    const claims = [{ collection: NOTE, rkey: "proved", cid: CID.parse(written?.cid ?? "") }];
+    expect((await verifyProofs(new Uint8Array(await proof.arrayBuffer()), claims, account.did, didKey)).verified).toHaveLength(1);
+
+    const latest = await read(latestCommit, xrpc("com.atproto.sync.getLatestCommit", { did: account.did }));
+    expect(latest.rev).toBe((await repo.state())?.rev);
+    expect(await read(z.json(), xrpc("com.atproto.sync.getRepoStatus", { did: account.did })))
+      .toEqual({ did: account.did, active: true, rev: latest.rev });
+    const blocks = await xrpc("com.atproto.sync.getBlocks", { did: account.did, cids: latest.cid });
+    expect(blocks.headers.get("Content-Type")).toBe("application/vnd.ipld.car");
+  });
+
+  it("answers for a repository the host does not hold without addressing any repository object", async () => {
+    const before = (await listDurableObjectIds(env.REPOS)).length;
+    const unknown = "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz";
+    expect(await errorOf(xrpc("com.atproto.repo.describeRepo", { repo: unknown }))).toBe("RepoNotFound");
+    expect(await errorOf(xrpc("com.atproto.sync.getRepo", { did: unknown }))).toBe("RepoNotFound");
+    expect(await errorOf(xrpc("com.atproto.repo.getRecord", { repo: "nobody.ship.test", collection: NOTE, rkey: "self" })))
+      .toBe("RepoNotFound");
+    expect(await errorOf(xrpc("com.atproto.sync.getRepo", { did: "nobody.ship.test" }))).toBe("InvalidRequest");
+    expect(await listDurableObjectIds(env.REPOS)).toHaveLength(before);
+  });
+
+  it("reports a repository the deployment does not admit", async () => {
+    const { account } = await hostAccount();
+    const suspended = async (): Promise<Admission> => "suspended";
+    expect(await errorOf(xrpc("com.atproto.repo.describeRepo", { repo: account.did }, suspended))).toBe("RepoSuspended");
+    expect(await read(z.json(), xrpc("com.atproto.sync.getRepoStatus", { did: account.did }, suspended)))
+      .toEqual({ did: account.did, active: false, status: "suspended" });
+  });
+
+  it("refuses a blob CID that would name a staged upload", async () => {
+    const { repo, account } = await hostAccount();
+    const staged = await repo.uploadBlob(bytes("unpublished"), "text/plain");
+    expect(await errorOf(xrpc("com.atproto.sync.getBlob", { did: account.did, cid: `staged/${staged.ref.$link}` })))
+      .toBe("InvalidRequest");
+  });
+
+  it("serves host methods with CORS and streams the firehose", async () => {
+    const { account } = await hostAccount();
+    const server = await xrpc("com.atproto.server.describeServer", {});
+    expect(server.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(await server.json()).toEqual({ did: "did:web:pds.test", availableUserDomains: [], inviteCodeRequired: true });
+
+    const listing = z.object({ repos: z.array(z.object({ did: z.string(), active: z.boolean() })) })
+      .parse(await read(z.json(), xrpc("com.atproto.sync.listRepos", { limit: "1000" })));
+    expect(listing.repos).toContainEqual(expect.objectContaining({ did: account.did, active: true }));
+
+    const preflight = await handleXrpc(new Request("https://pds.test/xrpc/_health", { method: "OPTIONS" }), env, admitAll);
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS");
+    expect(await errorOf(xrpc("com.atproto.repo.createRecord", {}))).toBe("MethodNotImplemented");
+    const post = await handleXrpc(new Request("https://pds.test/xrpc/_health", { method: "POST" }), env, admitAll);
+    expect(post.status).toBe(405);
+
+    const upgrade = new Request("https://pds.test/xrpc/com.atproto.sync.subscribeRepos", { headers: { Upgrade: "websocket" } });
+    const socket = await handleXrpc(upgrade, env, admitAll);
+    expect(socket.status).toBe(101);
+    socket.webSocket?.accept();
+    socket.webSocket?.close();
+  });
+});
+
+describe("host firehose", () => {
+  const did = "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa";
+
+  it("appends a retried batch once and keeps each DID with one repository", async () => {
+    const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
+    expect(await firehose.append("one", repoState(did), identityEvents(did, 1, 3))).toBe(3);
+    expect(await firehose.append("one", repoState(did), identityEvents(did, 1, 3))).toBe(3);
+    expect(await firehose.append("one", repoState(did), identityEvents(did, 3, 5))).toBe(5);
+    const replay = await subscribe(firehose, 0);
+    await vi.waitFor(() => expect(replay.frames.map(seqOf)).toEqual([1, 2, 3, 4, 5]));
+
+    expect(await rejection(firehose.append("two", repoState(did), identityEvents(did, 6, 6)))).toContain("RepoConflict");
+    const other = "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb";
+    expect(await rejection(firehose.append("one", repoState(other), identityEvents(other, 1, 1)))).toContain("RepoConflict");
+  });
+
+  it("replays every retained frame after a cursor, across pages", async () => {
+    const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
+    for (let from = 1; from <= 1200; from += 100) {
+      await firehose.append("one", repoState(did), identityEvents(did, from, from + 99));
+    }
+    const all = await subscribe(firehose, 0);
+    const tail = await subscribe(firehose, 700);
+    await vi.waitFor(() => {
+      expect(all.frames).toHaveLength(1200);
+      expect(tail.frames).toHaveLength(500);
+    });
+    expect(all.frames.map(seqOf)).toEqual(range(1, 1200));
+    expect(tail.frames.map(seqOf)).toEqual(range(701, 1200));
+  });
+
+  it("closes a subscription whose cursor is in the future", async () => {
+    const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
+    await firehose.append("one", repoState(did), identityEvents(did, 1, 2));
+    const future = await subscribe(firehose, 3);
+    expect(await future.closed).toBe(1008);
+    expect(future.frames).toEqual([{ type: "error", body: { error: "FutureCursor", message: "Cursor is in the future" } }]);
+  });
+
+  it("tells a subscriber whose cursor predates retention that events were skipped", async () => {
+    const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
+    await firehose.append("one", repoState(did), identityEvents(did, 1, 5));
+    await runInDurableObject(firehose, async (_instance, state) => {
+      state.storage.sql.exec("UPDATE events SET appended_at = 0 WHERE seq <= 3");
+    });
+    await firehose.append("one", repoState(did), identityEvents(did, 6, 6));
+
+    const outdated = await subscribe(firehose, 1);
+    const current = await subscribe(firehose, 3);
+    await vi.waitFor(() => {
+      expect(outdated.frames).toHaveLength(4);
+      expect(current.frames).toHaveLength(3);
+    });
+    expect(outdated.frames[0]).toMatchObject({ type: "#info", body: { name: "OutdatedCursor" } });
+    expect(outdated.frames.slice(1).map(seqOf)).toEqual([4, 5, 6]);
+    expect(current.frames.map(seqOf)).toEqual([4, 5, 6]);
+  });
+
+  it("lists repositories with a head in DID order and finds them by DID or handle", async () => {
+    const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
+    const alice = repoState("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "alice.ship.test");
+    const bob = repoState("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb", "bob.ship.test");
+    const carol = { ...repoState("did:plc:cccccccccccccccccccccccc", "carol.ship.test"), rev: null, head: null };
+    await firehose.append("bob", bob, identityEvents(bob.did, 1, 1));
+    await firehose.append("alice", alice, identityEvents(alice.did, 1, 1));
+    await firehose.append("carol", carol, identityEvents(carol.did, 1, 1));
+
+    const first = await firehose.listRepos(1);
+    expect(first).toEqual({ repos: [alice], cursor: alice.did });
+    expect(await firehose.listRepos(1, first.cursor)).toEqual({ repos: [bob] });
+    expect(await firehose.locate("ALICE.ship.test")).toEqual({ ...alice, name: "alice" });
+    expect(await firehose.locate(carol.did)).toEqual({ ...carol, name: "carol" });
+    expect(await firehose.locate("nobody.ship.test")).toBeNull();
+  });
+});
+
+async function admitAll(): Promise<Admission> {
+  return "active";
+}
+
+function xrpc(
+  method: string,
+  params: ConstructorParameters<typeof URLSearchParams>[0],
+  admit: (name: string) => Promise<Admission> = admitAll,
+): Promise<Response> {
+  return handleXrpc(new Request(`https://pds.test/xrpc/${method}?${new URLSearchParams(params)}`), env, admit);
+}
+
+/** Parses a successful XRPC response with the schema a test expects. */
+async function read<T extends z.ZodType>(schema: T, response: Promise<Response>): Promise<z.output<T>> {
+  const resolved = await response;
+  if (!resolved.ok) throw new Error(`HTTP ${resolved.status}: ${await resolved.text()}`);
+  return schema.parse(await resolved.json());
+}
+
+/** The message a call rejects with. Awaiting it here keeps assertions off an RPC promise's pipelined properties. */
+async function rejection<T>(call: Promise<T>): Promise<string> {
+  try {
+    await call;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  throw new Error("Expected the call to reject");
+}
+
+/** The XRPC error name a failed call reports. */
+async function errorOf(response: Promise<Response>): Promise<string> {
+  const resolved = await response;
+  expect(resolved.ok).toBe(false);
+  return z.object({ error: z.string() }).parse(await resolved.json()).error;
+}
+
+/** Every page of a collection's listing, as record keys. */
+async function listAll(repo: string, reverse: boolean): Promise<string[][]> {
+  const pages: string[][] = [];
+  let cursor: string | undefined;
+  do {
+    const params = new URLSearchParams({ repo, collection: NOTE, limit: "2", reverse: String(reverse) });
+    if (cursor !== undefined) params.set("cursor", cursor);
+    const page = await read(recordPage, xrpc("com.atproto.repo.listRecords", params));
+    pages.push(page.records.map((record) => record.uri.split("/").at(-1) ?? ""));
+    cursor = page.cursor;
+  } while (cursor !== undefined);
+  return pages;
+}
+
+function hostFirehose(): DurableObjectStub<HostFirehose> {
+  return env.FIREHOSE.getByName(FIREHOSE_NAME);
+}
+
+async function createAccount() {
+  const name = crypto.randomUUID();
+  const handle = `${name}.ship.test`;
+  const repo = env.REPOS.getByName(name);
+  const account = await repo.create(handle, blobPrefix(name));
+  return { name, handle, repo, account };
+}
+
+/** Creates an account and waits until the host directory lists it. */
+async function hostAccount() {
+  const created = await createAccount();
+  await deliver(created.repo);
+  return created;
+}
+
+function blobPrefix(name: string): string {
+  return `installations/${name}/`;
+}
+
+async function hostRotationKey(): Promise<string> {
+  return (await Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY))).exportPublicKey("did");
+}
+
+async function signingDidKey(did: string): Promise<string> {
+  const description = await read(describedRepo, xrpc("com.atproto.repo.describeRepo", { repo: did }));
+  const method = description.didDoc.verificationMethod[0];
+  if (!method) throw new Error("The repository publishes no signing key");
+  return `did:key:${method.publicKeyMultibase}`;
+}
+
+function noteRecord(text: string, fields: LexObject = {}): LexObject {
+  return { $type: NOTE, text, createdAt: "2026-10-23T00:00:00.000Z", ...fields };
+}
+
+function note(rkey: string, text: string, fields: LexObject = {}): RepoWrite {
+  return { action: "create", collection: NOTE, rkey, record: noteRecord(text, fields) };
+}
+
+function blobField(blob: BlobRef): LexObject {
+  return { $type: blob.$type, ref: { $link: blob.ref.$link }, mimeType: blob.mimeType, size: blob.size };
+}
+
+function bytes(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
+async function blobKeys(prefix: string): Promise<string[]> {
+  return (await env.BLOBS.list({ prefix })).objects.map((object) => object.key).sort();
+}
+
+/** Runs a repository's alarm until the host firehose holds every event in its outbox. */
+async function deliver(repo: DurableObjectStub<HostedRepo>): Promise<void> {
+  await vi.waitFor(async () => {
+    await runDurableObjectAlarm(repo);
+    expect(await runInDurableObject(repo, async (_instance, state) => {
+      const delivered = (await state.storage.get<number>("firehose.delivered")) ?? 0;
+      return state.storage.sql.exec<{ pending: number }>(
+        "SELECT COUNT(*) AS pending FROM firehose_events WHERE seq > ?",
+        delivered,
+      ).one().pending;
+    })).toBe(0);
+  });
+}
+
+/** Makes every delivery to a host firehose fail until `append` is restored; `errors` records what delivery logs. */
+function blockDelivery() {
+  return {
+    append: vi.spyOn(HostFirehose.prototype, "append").mockRejectedValue(new Error("Firehose unavailable")),
+    errors: vi.spyOn(console, "error").mockImplementation(() => undefined),
+  };
+}
+
+/** Runs a repository's alarm until delivery has failed more than `after` times; returns the retry it scheduled. */
+async function nextRetry(repo: DurableObjectStub<HostedRepo>, after: number) {
+  return vi.waitFor(async () => {
+    await runDurableObjectAlarm(repo);
+    const retry = await retryState(repo);
+    expect(retry.failures).toBeGreaterThan(after);
+    return retry;
+  });
+}
+
+async function retryState(repo: DurableObjectStub<HostedRepo>) {
+  return runInDurableObject(repo, async (_instance, state) => ({
+    failures: (await state.storage.get<number>("firehose.failures")) ?? 0,
+    delay: ((await state.storage.getAlarm()) ?? Date.now()) - Date.now(),
+  }));
+}
+
+/** Verifies each commit from its own blocks and checks it builds on the revision announced before it. */
+async function verifyChain(frames: Frame[], didKey: string): Promise<number> {
+  let since: string | null = null;
+  let commits = 0;
+  for (const frame of frames) {
+    if (frame.type === "#sync") since = frame.body.rev;
+    if (frame.type !== "#commit") continue;
+    await verifyCommit(frame.body, didKey);
+    expect(frame.body.since).toBe(since);
+    since = frame.body.rev;
+    commits += 1;
+  }
+  return commits;
+}
+
+function repoState(did: string, handle = "repo.ship.test"): RepoState {
+  return {
+    did,
+    handle,
+    active: true,
+    status: null,
+    rev: "3m3cu3ae2wk2a",
+    head: "bafyreigq5ajqdyoscxcc6vfnsdhyjd5bp6lvt6xf6tzfxqavsumubocwge",
+  };
+}
+
+function identityEvents(did: string, from: number, to: number): OutboxEvent[] {
+  return range(from, to).map((seq) => ({ seq, type: "identity", payload: encode({ did, time: "2026-10-23T00:00:00.000Z" }) }));
+}
+
+function seqOf(frame: Frame): number | null {
+  return "seq" in frame ? frame.seq : null;
+}
+
+function range(from: number, to: number): number[] {
+  return Array.from({ length: to - from + 1 }, (_, index) => from + index);
+}

@@ -1,0 +1,105 @@
+import { parseDidKey, Secp256k1PrivateKey, Secp256k1PrivateKeyExportable, type DidKeyString } from "@atcute/crypto";
+import {
+  deriveDidFromGenesisOp,
+  PlcClient,
+  PlcClientError,
+  signOperation,
+  validateIncomingOp,
+  type DidPlcString,
+  type Operation,
+} from "@atcute/did-plc";
+import { fromBase16 } from "@atcute/multibase";
+import type { HostEnv } from "./env";
+
+/** A hosted account's did:plc, handle and repository signing key. */
+export type RepoIdentity = {
+  did: DidPlcString;
+  handle: string;
+  /** Hex secp256k1 key that signs repository commits. */
+  signingKey: string;
+  /** Public form of the signing key, published as the DID's atproto verification method. */
+  signingDidKey: DidKeyString;
+  /** Signed genesis operation the DID derives from. */
+  genesis: Operation;
+};
+
+/** The DID document a did:plc directory serves for a hosted account. */
+export type DidDocument = {
+  "@context": string[];
+  id: string;
+  alsoKnownAs: string[];
+  verificationMethod: Array<{ id: string; type: string; controller: string; publicKeyMultibase: string }>;
+  service: Array<{ id: string; type: string; serviceEndpoint: string }>;
+};
+
+/**
+ * Creates a did:plc that names this host as its PDS. The host's rotation key
+ * signs it; a configured recovery key outranks the rotation key, so its
+ * holder can reverse a host operation during PLC's recovery window.
+ */
+export async function mintIdentity(env: HostEnv, handle: string): Promise<RepoIdentity> {
+  const signing = await Secp256k1PrivateKeyExportable.createKeypair();
+  const rotation = await Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY));
+  const hostKey = await rotation.exportPublicKey("did");
+  const signingDidKey = await signing.exportPublicKey("did");
+  const genesis = await signOperation({
+    type: "plc_operation",
+    prev: null,
+    rotationKeys: env.PLC_RECOVERY_KEY ? [recoveryKey(env.PLC_RECOVERY_KEY), hostKey] : [hostKey],
+    verificationMethods: { atproto: signingDidKey },
+    alsoKnownAs: [`at://${handle}`],
+    services: { atproto_pds: { type: "AtprotoPersonalDataServer", endpoint: env.PDS_ORIGIN } },
+  }, rotation);
+  validateIncomingOp(genesis);
+  return {
+    did: await deriveDidFromGenesisOp(genesis),
+    handle,
+    signingKey: await signing.exportPrivateKey("rawHex"),
+    signingDidKey,
+    genesis,
+  };
+}
+
+/**
+ * Submits an identity's genesis operation. A retry after a submission whose
+ * response was lost finds the same operation already logged, and succeeds.
+ */
+export async function registerGenesis(env: HostEnv, identity: RepoIdentity): Promise<void> {
+  const plc = new PlcClient({ serviceUrl: env.PLC_URL });
+  try {
+    await plc.submitOperation(identity.did, identity.genesis);
+  } catch (error) {
+    if (!(error instanceof PlcClientError)) throw error;
+    const logged = await plc.getOperationLog(identity.did).catch(() => null);
+    if (logged?.at(0)?.sig !== identity.genesis.sig) throw error;
+  }
+}
+
+export function didDocument(identity: RepoIdentity, pdsOrigin: string): DidDocument {
+  return {
+    "@context": [
+      "https://www.w3.org/ns/did/v1",
+      "https://w3id.org/security/multikey/v1",
+      "https://w3id.org/security/suites/secp256k1-2019/v1",
+    ],
+    id: identity.did,
+    alsoKnownAs: [`at://${identity.handle}`],
+    verificationMethod: [{
+      id: `${identity.did}#atproto`,
+      type: "Multikey",
+      controller: identity.did,
+      publicKeyMultibase: identity.signingDidKey.slice("did:key:".length),
+    }],
+    service: [{ id: "#atproto_pds", type: "AtprotoPersonalDataServer", serviceEndpoint: pdsOrigin }],
+  };
+}
+
+function recoveryKey(value: string): DidKeyString {
+  if (!isDidKey(value)) throw new Error("PLC_RECOVERY_KEY must be a did:key");
+  parseDidKey(value);
+  return value;
+}
+
+function isDidKey(value: string): value is DidKeyString {
+  return value.startsWith("did:key:");
+}

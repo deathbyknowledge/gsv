@@ -13,12 +13,16 @@
     "@atcute/bluesky": "3.2.17",
     "@atcute/cbor": "2.3.0",
     "@atcute/cid": "2.4.0",
+    "@atcute/crypto": "2.4.4",
+    "@atcute/did-plc": "1.0.2",
     "@atcute/lexicons": "1.2.7",
+    "@atcute/multibase": "1.2.5",
     "@atcute/tid": "1.1.1",
     "@atproto/crypto": "0.4.5",
     "@atproto/lex-data": "0.0.3",
     "@atproto/lex-json": "0.0.11",
-    "@atproto/repo": "0.8.12"
+    "@atproto/repo": "0.8.12",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.22.0",

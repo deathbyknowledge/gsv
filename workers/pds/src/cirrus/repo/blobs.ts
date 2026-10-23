@@ -24,6 +24,10 @@ export interface BlobRef {
  * the commit is applied, so anything reacting to the commit never sees a
  * 404. Keys never move back: promotion is idempotent and `staged/` copies
  * are left for the lifecycle rule to reap.
+ *
+ * A host whose key prefix keeps lifecycle rules from matching `staged/`
+ * deletes those copies itself with deleteStagedBlob, and removes a public
+ * copy with deleteBlob once no record references it.
  */
 function stagedBlobKey(prefix: string, did: string, cid: string): string {
 	return `${prefix}${did}/staged/${cid}`;
@@ -161,5 +165,20 @@ export class BlobStore {
 	async hasBlob(cid: string): Promise<boolean> {
 		const head = await this.r2.head(publicBlobKey(this.keyPrefix, this.did, cid));
 		return head !== null;
+	}
+
+	/**
+	 * Delete a blob's public copy, once no record references it.
+	 */
+	async deleteBlob(cid: string): Promise<void> {
+		await this.r2.delete(publicBlobKey(this.keyPrefix, this.did, cid));
+	}
+
+	/**
+	 * Delete a blob's staged copy, after promotion or when an unreferenced
+	 * upload expires.
+	 */
+	async deleteStagedBlob(cid: string): Promise<void> {
+		await this.r2.delete(stagedBlobKey(this.keyPrefix, this.did, cid));
 	}
 }
