@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
+import { ProductEmailConsent, PRODUCT_EMAIL_WORDING_VERSION } from "./product-email";
 import { AccountStore } from "./store";
 import { InstallationOwnerStore } from "./owner-store";
 import { InstallationOwnerAuthStore } from "./owner-auth-store";
@@ -11,7 +12,7 @@ import type { JsonObject } from "@humansandmachines/gsv/protocol";
 const ORIGIN = "https://accounts.example.com";
 const secret = () => crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
 
-async function fixture() {
+async function fixture(productEmails = false) {
   const accounts = new AccountStore(env.INSTALLATIONS_DB, "example.com");
   const registry = `registry_${crypto.randomUUID()}`;
   await accounts.createPrincipal({ principalId: registry, email: `${registry}@example.com`, displayName: "Registry", verified: true });
@@ -25,7 +26,7 @@ async function fixture() {
     code = message.text?.match(/code is ([0-9]{6})\./)?.[1] ?? "";
     return { messageId: crypto.randomUUID() };
   });
-  const makeApi = () => new InstallationOwnerApi(auth, owners, signup, { send }, "accounts@example.com", ORIGIN, "example.com");
+  const makeApi = () => new InstallationOwnerApi(auth, owners, signup, { send }, "accounts@example.com", ORIGIN, "example.com", productEmails ? new ProductEmailConsent(env.INSTALLATIONS_DB) : undefined);
   let api = makeApi();
   const request = async (path: string, token?: string, body?: JsonObject, headers: Record<string, string> = {}) => {
     const requestHeaders = new Headers({ "content-type": "application/json", "cf-connecting-ip": registry, ...headers });
@@ -118,4 +119,24 @@ describe("desktop owner API", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "Use letters, numbers or hyphens. Start and end with a letter or number." });
   });
+});
+
+it("signup consent is activated only after verification and preference writes need a bearer session", async () => {
+  const f = await fixture(true); const store = new ProductEmailConsent(env.INSTALLATIONS_DB);
+  const productEmails = { optedIn: true, locale: "en", wordingVersion: PRODUCT_EMAIL_WORDING_VERSION };
+  expect((await f.request("/product-email", undefined, { ...productEmails, revision: 0 })).status).toBe(401);
+  expect((await f.request("/code", undefined, { ...f.challenge, productEmails })).status).toBe(200);
+  expect((await store.preference(f.challenge.email)).optedIn).toBe(false);
+  expect((await f.request("/verify", undefined, { ...f.challenge, sessionSecret: f.sessionSecret, code: "invalid" })).status).toBe(400);
+  expect((await store.preference(f.challenge.email)).optedIn).toBe(false);
+  const { email: _email, ...verification } = f.challenge;
+  expect((await f.request("/verify", undefined, { ...verification, sessionSecret: f.sessionSecret, code: f.code() })).status).toBe(200);
+  expect((await store.preference(f.challenge.email)).optedIn).toBe(true);
+  expect((await f.request("/product-email", f.sessionSecret, { ...productEmails, optedIn: false, revision: 1 })).status).toBe(200);
+  expect((await store.preference(f.challenge.email)).optedIn).toBe(false);
+});
+it("disabled optional marketing never blocks the verification email", async () => {
+  const f = await fixture();
+  const response = await f.request("/code", undefined, { ...f.challenge, productEmails: { optedIn: true, locale: "en", wordingVersion: PRODUCT_EMAIL_WORDING_VERSION } });
+  expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ productEmailSaved: false, deliveryStatus: "sent" });
 });

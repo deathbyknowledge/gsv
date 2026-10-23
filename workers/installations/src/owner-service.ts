@@ -3,7 +3,9 @@ import type { BeginInstallationOwnerLinkInput, InstallationOwnershipService, Ins
 import { InstallationOwnerStore } from "./owner-store";
 
 export const OPERATOR_REGISTRY_PRINCIPAL_ID = "principal_operator_registry";
-export type InstallationOwnerEnvironment = {
+import type { ProductEmailEnvironment } from "./product-email-http";
+
+export type InstallationOwnerEnvironment = ProductEmailEnvironment & {
   GSV_SIGNUP_ENABLED?: string;
   INSTALLATIONS_DB: D1Database;
   GSV_ADMIN_ORIGIN: string;

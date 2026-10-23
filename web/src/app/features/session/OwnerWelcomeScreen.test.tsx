@@ -171,6 +171,10 @@ describe("owner welcome", () => {
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "success", message: "Available" }));
       await act(() => { fieldOf(tree, "Email")!.props.onChange?.("Owner@Example.com"); });
       expect(checkboxOf(tree).props).toMatchObject({ required: true, checked: false });
+      const optional = collectNodes(tree).filter((node) => node.type === "input")[1] as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
+      expect(optional.props.checked).toBe(false);
+      expect(optional.props.required).toBeUndefined();
+      if (resumed) await act(() => optional.props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>));
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       expect(fetcher.mock.calls.some(([url]) => url.endsWith("/code"))).toBe(false);
       expect(checkboxOf(tree).props["aria-invalid"]).toBe(true);
@@ -180,6 +184,8 @@ describe("owner welcome", () => {
       expect(checkboxOf(tree).props["aria-invalid"]).toBeUndefined();
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(fieldOf(tree, "Code")).toBeDefined());
+      const codeRequest = fetcher.mock.calls.find(([url]) => url.endsWith("/code"))!;
+      expect(JSON.parse(codeRequest[1].body!).productEmails).toMatchObject({ optedIn: resumed, wordingVersion: "ship-product-updates-2026-10-23", locale: "en" });
       expect(store.snapshot().value).toMatchObject({ flow: "create", handle: "spacecowboy", challenge: { email: "owner@example.com" } });
       expect(store.snapshot().value!.operationId).toMatch(/^[0-9a-f-]{36}$/);
       expect(collectText(tree)).toContain("Check your email");

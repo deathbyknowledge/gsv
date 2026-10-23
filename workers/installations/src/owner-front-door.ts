@@ -1,3 +1,4 @@
+import { ProductEmailConsent } from "./product-email";
 import { InstallationOwnerAuthStore } from "./owner-auth-store";
 import { InstallationOwnerEmailHttp } from "./owner-email-http";
 import { InstallationOwnerHttp } from "./owner-http";
@@ -26,14 +27,15 @@ export async function handleInstallationOwnerRequest(request: Request, env: Inst
   if (path.startsWith("/owner/api/")) {
     if (!emailEnabled || !signupFlow) return unavailable();
     return new InstallationOwnerApi(authentication(),
-      new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId), signupFlow, env.OWNER_EMAIL!, env.GSV_OWNER_EMAIL_FROM!, env.GSV_ADMIN_ORIGIN, env.GSV_BASE_DOMAIN).handle(request);
+      new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId), signupFlow, env.OWNER_EMAIL!, env.GSV_OWNER_EMAIL_FROM!, env.GSV_ADMIN_ORIGIN, env.GSV_BASE_DOMAIN, env.GSV_PRODUCT_EMAIL_ENABLED === "true" ? new ProductEmailConsent(env.INSTALLATIONS_DB) : undefined).handle(request);
   }
   if (!env.ACCOUNTS_GATEWAY_RECOVERY) return unavailable();
   const owners = new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId);
   if (emailEnabled && path !== "/owner/callback" && !path.startsWith("/owner/identity/")) {
     return new InstallationOwnerEmailHttp(authentication(),
       owners, env.OWNER_EMAIL!, env.GSV_OWNER_EMAIL_FROM!, env.ACCOUNTS_GATEWAY_RECOVERY, env.GSV_ADMIN_ORIGIN,
-      Boolean(env.GSV_OWNER_OIDC_ISSUER && env.GSV_OWNER_OIDC_CLIENT_ID)).handle(request);
+      Boolean(env.GSV_OWNER_OIDC_ISSUER && env.GSV_OWNER_OIDC_CLIENT_ID),
+      env.GSV_PRODUCT_EMAIL_ENABLED === "true" ? new ProductEmailConsent(env.INSTALLATIONS_DB) : undefined).handle(request);
   }
   if (env.GSV_OWNER_OIDC_ISSUER && env.GSV_OWNER_OIDC_CLIENT_ID) {
     return new InstallationOwnerHttp(owners, new OwnerIdentityProvider({ issuer: env.GSV_OWNER_OIDC_ISSUER,

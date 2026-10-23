@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { InstallationOwnerAuthStore, OWNER_CODE_RESEND_MS } from "./owner-auth-store";
 import { InstallationOwnerEmailHttp } from "./owner-email-http";
 import { InstallationOwnerStore } from "./owner-store";
+import { ProductEmailConsent, PRODUCT_EMAIL_WORDING_VERSION } from "./product-email";
 import { AccountStore } from "./store";
 import { sha256Hex } from "./tokens";
 
@@ -30,7 +31,7 @@ async function formFields(response: Response): Promise<Form> {
     .map((match) => [match[1], match[2].replaceAll("&amp;", "&").replaceAll("&quot;", '"')]));
 }
 
-async function fixture() {
+async function fixture(productEmails = false) {
   let now = Date.now();
   vi.spyOn(Date, "now").mockImplementation(() => now);
   const suffix = crypto.randomUUID().slice(0, 8);
@@ -48,7 +49,7 @@ async function fixture() {
   const mail: SendEmail = { send };
   const gateway = { authorizeRootRecovery: vi.fn(async () => ({ authorized: true as const })),
     confirmOwnerLinkAuthorization: vi.fn(async () => ({ authorized: true as const })) };
-  const makeHttp = () => new InstallationOwnerEmailHttp(auth, owners, mail, "accounts@example.com", gateway, ORIGIN);
+  const makeHttp = () => new InstallationOwnerEmailHttp(auth, owners, mail, "accounts@example.com", gateway, ORIGIN, false, productEmails ? new ProductEmailConsent(env.INSTALLATIONS_DB) : undefined);
   let http = makeHttp();
   const request = async (path: string, cookies: Cookies, form?: Form, origin: string | null = ORIGIN, acceptCookies = true): Promise<Response> => {
     const headers = new Headers({ cookie: cookieHeader(cookies), "cf-connecting-ip": `fixture-${suffix}` });
@@ -278,4 +279,24 @@ describe("native owner email HTTP", () => {
     expect(f.delivered).toHaveLength(2);
     expect((await f.request("/owner/verify", cookies, { ...form, code: f.code() })).status).toBe(303);
   });
+});
+
+it("saves product-email preferences without JavaScript and rejects cross-origin or stale forms", async () => {
+  const f = await fixture(true); const cookies: Cookies = new Map();
+  expect((await f.request("/owner/email-preferences", cookies)).headers.get("location")).toBe("/owner/login");
+  const form = await f.start(cookies, "login", f.email);
+  await f.request("/owner/login", cookies, form);
+  await f.request("/owner/verify", cookies, { ...form, code: f.code() });
+  const page = await f.request("/owner/email-preferences", cookies);
+  const text = await page.clone().text();
+  expect(text).toContain('name="productEmails"'); expect(text).not.toContain('value="yes" checked');
+  const fields = await formFields(page);
+  expect(fields.wordingVersion).toBe(PRODUCT_EMAIL_WORDING_VERSION);
+  expect((await f.request("/owner/email-preferences", cookies, { ...fields, productEmails: "yes" }, "https://forged.example")).status).toBe(403);
+  expect((await f.request("/owner/email-preferences", cookies, { ...fields, productEmails: "yes" })).status).toBe(200);
+  expect((await f.request("/owner/email-preferences", cookies, fields)).status).toBe(409);
+  const current = await formFields(await f.request("/owner/email-preferences", cookies));
+  expect((await f.request("/owner/email-preferences", cookies, current)).status).toBe(200);
+  expect((await new ProductEmailConsent(env.INSTALLATIONS_DB).preference(f.email)).optedIn).toBe(false);
+  expect(f.send).toHaveBeenCalledTimes(1);
 });
