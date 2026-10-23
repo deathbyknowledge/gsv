@@ -11,7 +11,8 @@ import { AttachmentPreviews } from "./AttachmentPreviews";
 import { ZenMedia } from "./ZenMedia";
 
 let previewTree: ComponentChildren;
-const dialogElement = { showModal: vi.fn(), close: vi.fn() };
+// A real dialog element with its lifecycle spied on: the viewer can ref it without a cast.
+const dialogElement = Object.assign(document.createElement("dialog"), { showModal: vi.fn(), close: vi.fn() });
 
 // Keep the real viewer hooks and URL ownership; only replace DOM insertion.
 function PreviewHarness(props: Parameters<typeof AttachmentPreview>[0]) {
@@ -19,8 +20,7 @@ function PreviewHarness(props: Parameters<typeof AttachmentPreview>[0]) {
   // SAFETY: AttachmentPreview returns the dialog VNode with dialog-specific attributes.
   const dialog = previewTree as VNode<JSX.DialogHTMLAttributes<HTMLDialogElement>>;
   if (!dialog.ref || !("current" in dialog.ref)) throw new Error("Expected the dialog's object ref");
-  // SAFETY: The viewer lifecycle only calls showModal and close, both implemented by this fixture.
-  dialog.ref.current = dialogElement as HTMLDialogElement;
+  dialog.ref.current = dialogElement;
   useLayoutEffect(() => () => { previewTree = null; }, []);
   return null;
 }
