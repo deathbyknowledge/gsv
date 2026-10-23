@@ -1,3 +1,4 @@
+import { UsernamePolicy, type UsernamePolicyInput, type UsernamePolicyLists } from "../username-policy";
 import type { InstallationResetService } from "@humansandmachines/gsv/services/lifecycle";
 import { InstallationAdminStore, type AdminInstallation } from "../administration";
 import { parseOpaqueId } from "../domain";
@@ -28,10 +29,18 @@ export class InstallationAdminService extends InstallationAdminStore {
     this.resets = new InstallationResetCoordinator(database, accounts, participants);
   }
 
+  getUsernamePolicy(): Promise<UsernamePolicyLists> {
+    return new UsernamePolicy(this.database).list();
+  }
+
+  setUsernamePolicy(value: UsernamePolicyInput): Promise<void> {
+    return new UsernamePolicy(this.database).replace(value);
+  }
+
   async reserve(input: { operationId: string; handle: string }) {
     await this.ensureRegistryPrincipal();
     return this.accounts.reserveInstallation({
-      principalId: this.registryPrincipal.id, operationId: input.operationId, handle: input.handle,
+      principalId: this.registryPrincipal.id, operationId: input.operationId, handle: input.handle, allowReservedHandle: true,
     });
   }
 

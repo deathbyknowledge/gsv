@@ -157,6 +157,39 @@ delivery and again during verification, and rejects new Space allocations before
 reservation. Existing credentials can still sign in and admitted setups can resume.
 The managed composition uses this to prevent GSV mailboxes from registering more Spaces.
 
+Operators manage reserved and blocked public usernames at **Administration → Signup**
+(`/admin/signup`). Accounts stores both lists; edits take effect immediately without
+redeployment. Enter one name per line or separate entries with commas (up to 500
+per list). Reserved names are available only for operator-controlled installations
+created through administration. Blocked names are unavailable for all new allocations,
+including operator creation, and take precedence over reserved entries.
+Configured service hostnames and built-in routes remain protected.
+
+Policy matching compares the **entire** name after lowercasing, Unicode NFKD accent
+removal, and removal of hyphens, underscores, dots and whitespace. Both candidates
+and list entries use this comparison. It never changes stored usernames, syntax
+rules or uniqueness: an ordinary `alice-smith` remains distinct from `alicesmith`.
+The migration supplies the maintained English, Spanish and Portuguese starter lists;
+equivalent spellings share one policy entry. Add targeted evasions as encountered.
+
+Context-dependent terms are assessed when reported, not automatically blocked:
+`kike`, `kikes`, `coon`, `coons`, `gook`, `gooks`, `chink`, `chinks`, `paki`, `pakis`,
+`dyke`, `dykes`, `fag`, `fags`, `marica`, `maricas`, `bicha`, `bichas`, `tortillera`,
+`tortilleras`, `bollera`, `bolleras`, `pedo`, `puto`, `putos`, `rape`, `groomer`,
+`grooming`, and `kys`. Ordinary identities, names, colors and ambiguous abbreviations
+also stay outside automatic blocking, including `gay`, `queer`, `trans`, `travesti`,
+`negro`, `preto`, `moro`, `judeu`, `judio`, `isis`, `adolf`, `aryan`, `loli`, `shota`,
+`ss`, `88`, `cp`, and `csa`.
+
+Availability reports both categories as unavailable to signup. Accounts checks
+policy atomically when reserving a new installation, preventing direct creation
+or concurrent list edits from bypassing the check. Existing installations, admitted
+setup retries and resets retain their handles. There is no public handle rename
+or new-installation import path today; any such path must enforce this same policy
+before assigning a new public handle, without using its normalization for uniqueness.
+Only authenticated operators can edit the lists, with same-origin mutation checks
+and an audit event when operator auditing is configured.
+
 Contact invitations remain entirely Kernel-owned. The browser carries a pending
 contact link through signup and local setup, then presents the normal acceptance
 and message-handling choice. Creating, cancelling or accepting a contact invitation

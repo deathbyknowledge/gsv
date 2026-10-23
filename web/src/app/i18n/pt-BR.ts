@@ -1136,7 +1136,7 @@ export const ptBR = {
   "session.welcome.handle": "Nome de usuário",
   "session.welcome.handlePlaceholder": "seu-nome",
   "session.welcome.available": "Disponível",
-  "session.welcome.taken": "Já está em uso",
+  "session.welcome.taken": "Indisponível",
   "session.welcome.email": "E-mail",
   "session.welcome.emailPlaceholder": "voce@exemplo.com",
   "session.welcome.code": "Código",

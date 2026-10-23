@@ -1131,7 +1131,7 @@ export const es = {
   "session.welcome.handle": "Nombre de usuario",
   "session.welcome.handlePlaceholder": "tu-nombre",
   "session.welcome.available": "Disponible",
-  "session.welcome.taken": "Ya está en uso",
+  "session.welcome.taken": "No disponible",
   "session.welcome.email": "Correo electrónico",
   "session.welcome.emailPlaceholder": "tu@ejemplo.com",
   "session.welcome.code": "Código",

@@ -179,6 +179,7 @@ describe("account directory", () => {
       principalId,
       operationId: "op_internal_service_name",
       handle: "accounts",
+      allowReservedHandle: true,
     })).resolves.toMatchObject({ handle: "accounts" });
   });
 

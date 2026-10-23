@@ -1130,7 +1130,7 @@ export const en = {
   "session.welcome.handle": "Handle",
   "session.welcome.handlePlaceholder": "your-name",
   "session.welcome.available": "Available",
-  "session.welcome.taken": "Already taken",
+  "session.welcome.taken": "Unavailable",
   "session.welcome.email": "Email",
   "session.welcome.emailPlaceholder": "you@example.com",
   "session.welcome.code": "Code",

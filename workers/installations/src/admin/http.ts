@@ -1,3 +1,5 @@
+import type { UsernamePolicyInput, UsernamePolicyLists } from "../username-policy";
+import { adminSignupPage } from "./signup-page";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { AdminInstallation, AdminInstallationList, AdminInstallationListQuery, AdminInstallationSummary } from "../administration";
 import { hasExpectedOrigin, json, noStoreHeaders, readRequestBody, requireString } from "../http";
@@ -13,6 +15,8 @@ import type { AccountsDeletionRuntime } from "../deletion-runtime";
 
 type AdminCreateFormInput = { operationId: string; handle: string };
 type AdminService<Detail extends AdminInstallation, Summary extends AdminInstallationSummary> = {
+  getUsernamePolicy(): Promise<UsernamePolicyLists>;
+  setUsernamePolicy(value: UsernamePolicyInput): Promise<void>;
   listInstallations(input: AdminInstallationListQuery): Promise<Omit<AdminInstallationList, "installations"> & { installations: Summary[] }>;
   getInstallation(installationId: string): Promise<Detail | null>;
   create(input: AdminCreateFormInput): Promise<IssuedAdminInstallation & { installation: Detail }>;
@@ -53,6 +57,7 @@ export class InstallationAdminHttp<
     const head = request.method === "HEAD";
     const route = /^\/admin\/installations\/([^/]+)(?:\/(onboarding|lifecycle|reset))?$/.exec(url.pathname);
     let createFormInput: AdminCreateFormInput | undefined;
+    let usernamePolicyInput: UsernamePolicyInput | undefined;
     try {
       if (url.pathname === "/admin/styles.css" && (request.method === "GET" || head)) return adminStylesheet(head);
       if (url.pathname === "/admin/time.js" && (request.method === "GET" || head)) return adminTimeScript(head);
@@ -63,6 +68,21 @@ export class InstallationAdminHttp<
       if (url.pathname === "/admin/audit" && (request.method === "GET" || head)) {
         const page = readAuditPage(url);
         return adminAuditPage(this.insight ? await this.insight.audit.list({ page }) : null, head, this.presentation.navigation);
+      }
+      if (url.pathname === "/admin/signup" && (request.method === "GET" || head)) {
+        const lists = await this.service.getUsernamePolicy();
+        return adminSignupPage({ lists: { reserved: lists.reserved.join("\n"), blocked: lists.blocked.join("\n") }, head,
+          saved: url.searchParams.get("saved") === "1", navigation: this.presentation.navigation });
+      }
+      if (url.pathname === "/admin/signup" && request.method === "POST") {
+        requireAdminMutationOrigin(request, this.origin);
+        const form = await readAdminForm(request);
+        const reserved = form.get("reserved"), blocked = form.get("blocked");
+        if (reserved === null || blocked === null) throw new Error("handle lists are required");
+        const input = { reserved, blocked };
+        usernamePolicyInput = input;
+        await this.audited(request, { name: "signup.username-policy.update" }, () => this.service.setUsernamePolicy(input));
+        return adminRedirect("/admin/signup?saved=1");
       }
       if (url.pathname === "/admin/installations/new" && (request.method === "GET" || head)) {
         return adminNewInstallationPage(undefined, head, 200, undefined, this.presentation.navigation);
@@ -120,6 +140,10 @@ export class InstallationAdminHttp<
       const failure = installationAdminFailure(error instanceof Error ? error : new Error("request failed"));
       if (failure.status >= 500) console.warn("[Operator] Admin request failed:", url.pathname, exceptionDiagnostics(error));
       if (isAdminApiPath(url.pathname)) return json({ error: failure.message }, failure.status);
+      if (request.method === "POST" && url.pathname === "/admin/signup" && usernamePolicyInput !== undefined) {
+        return adminSignupPage({ lists: usernamePolicyInput, error: failure.message, status: failure.status,
+          navigation: this.presentation.navigation });
+      }
       if (request.method === "POST" && url.pathname === "/admin/installations") {
         return adminNewInstallationPage(failure.message, false, failure.status, createFormInput, this.presentation.navigation);
       }

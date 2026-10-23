@@ -1,3 +1,4 @@
+import { UsernamePolicy } from "./username-policy";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import { AccountStore } from "./store";
@@ -118,4 +119,24 @@ describe("desktop owner API", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "Use letters, numbers or hyphens. Start and end with a letter or number." });
   });
+});
+
+it("returns unavailable for normalized policy matches and rejects direct creation with a field error", async () => {
+  const f = await fixture();
+  await f.signIn();
+  const policy = new UsernamePolicy(env.INSTALLATIONS_DB);
+  const initial = await policy.list();
+  try {
+    await policy.replace({ reserved: "Shíp.Support", blocked: "Bád_Name" });
+    for (const handle of ["SHIP-SUPPORT", "BAD-NAME"]) {
+      expect(await (await f.request(`/handle?value=${handle}`, f.sessionSecret)).json()).toEqual({ available: false });
+      const operationId = crypto.randomUUID();
+      const denied = await f.request("/spaces", f.sessionSecret, { operationId, handle });
+      expect(denied.status).toBe(400);
+      expect(await denied.json()).toEqual({ error: "This username is unavailable. Choose another.", code: "handle_unavailable" });
+      expect(await f.accounts.getReservationByOperation(operationId)).toBeNull();
+    }
+  } finally {
+    await policy.replace({ reserved: initial.reserved.join("\n"), blocked: initial.blocked.join("\n") });
+  }
 });
