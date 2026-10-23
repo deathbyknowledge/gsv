@@ -199,7 +199,7 @@ In Web and Desktop, new approval requests scroll into view without moving the co
 changing its draft. Use **Allow once**, **Always allow** or **Block** to decide, or `y` / `n` when not typing. The request has its own
 transcript row, independent of messages and runtime activity. Wherever a request's own card is not
 on screen, it also appears as a corner card: every approval waiting for you, from Ship or any
-other work, newest first with a count of the rest. The corner card names the work it comes from,
+other work you own (other people's never show, even to root), newest first with a count of the rest. The corner card names the work it comes from,
 offers the same decisions and **Open**, which goes to the request's own card: Chat for Ship, the
 process in Work for anything else. It follows the process registry, so it leaves once any client
 answers or the run ends. It announces itself without taking focus and sits beneath dialogs. Approvals from delegated work appear

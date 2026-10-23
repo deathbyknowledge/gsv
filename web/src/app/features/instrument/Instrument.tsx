@@ -294,7 +294,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       <div class="instrument-scaled">
       <div class="instrument-corner">
         <HandsfreeStatus />
-        <ApprovalPrompt onOpen={({ process, request }) => {
+        <ApprovalPrompt viewerUid={viewer?.uid ?? null} onOpen={({ process, request }) => {
           if (!process.personal) { move("fleet", { kind: "approval", pid: process.pid, requestId: request.requestId }); return; }
           if (zenPid && zenDirty && !window.confirm(t("shell.confirm.returnToShip"))) return;
           if (!move("zen")) return;

@@ -20,7 +20,7 @@ function request(pid: string, createdAt: number, extra: Record<string, unknown> 
 }
 
 const ship = process("ship", { personal: true, interactive: true, label: "ship", username: "ship" });
-const crew = process("crew", { label: "Tidy the downloads folder" });
+const crew = process("crew", { label: "tidy the downloads folder" });
 let pending: Record<string, ReturnType<typeof request> | null>;
 const roots: ReturnType<typeof createTestRoot>[] = [];
 
@@ -49,7 +49,7 @@ async function mount(processes: ConsoleProcess[], { cardFor }: { cardFor?: strin
   cache.setQueryData(INSTRUMENT_TARGETS_KEY, []);
   const onOpen = vi.fn();
   let tree: ComponentChildren = null;
-  function Prompt() { tree = ApprovalPrompt({ onOpen }); return null; }
+  function Prompt() { tree = ApprovalPrompt({ viewerUid: 1000, onOpen }); return null; }
   function Card({ pid }: { pid: string }) {
     const shown = pending[pid];
     // The card renders inside the root, so its hooks have a component to belong to.
@@ -74,8 +74,8 @@ describe("app-wide approval toast", () => {
   });
 
   it("shows a delegated process's approval under its title and opens its own view", async () => {
-    const app = await mount([process("crew", { label: "Tidy the downloads folder" })]);
-    await vi.waitFor(() => expect(app.text()).toContain("Tidy the downloads folder is waiting for your approval"));
+    const app = await mount([crew]);
+    await vi.waitFor(() => expect(app.text()).toContain("“Tidy the downloads folder” is waiting for your approval"));
     app.button("Open")?.props.onClick?.();
     expect(app.onOpen).toHaveBeenCalledWith(expect.objectContaining({ process: expect.objectContaining({ pid: "crew" }), request: expect.objectContaining({ requestId: "crew-request" }) }));
   });
@@ -83,14 +83,21 @@ describe("app-wide approval toast", () => {
   it("shows the newest request with a count of the rest", async () => {
     const app = await mount([ship, crew]);
     await vi.waitFor(() => expect(app.text()).toContain("1 more waiting"));
-    expect(app.text()).toContain("Tidy the downloads folder is waiting for your approval");
+    expect(app.text()).toContain("“Tidy the downloads folder” is waiting for your approval");
   });
 
   it("hides a request only while its own card is visible", async () => {
     const app = await mount([ship, crew], { cardFor: "crew" });
     await vi.waitFor(() => expect(app.text()).toContain("Ship is waiting for your approval"));
     expect(app.text()).not.toContain("more waiting");
-    expect(app.text()).not.toContain("Tidy the downloads folder");
+    expect(app.text()).not.toContain("downloads folder");
+  });
+
+  it("leaves out approvals that belong to someone else, as the Kernel only lets their owner decide", async () => {
+    const app = await mount([process("theirs", { uid: 2000, label: "their task" }), ship]);
+    await vi.waitFor(() => expect(app.text()).toContain("Ship is waiting for your approval"));
+    expect(app.text()).not.toContain("more waiting");
+    expect(app.request.mock.calls.some(([, args]) => (args as { pid?: string }).pid === "theirs")).toBe(false);
   });
 
   it("clears once the process stops waiting, whichever client answered", async () => {

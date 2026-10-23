@@ -1300,8 +1300,8 @@ export const ptBR = {
   "shell.approval.alwaysAllow": "Sempre permitir",
   "shell.approval.waiting": "nada é executado até você responder",
   "shell.approval.toastLabel": "Aprovações pendentes",
-  "shell.approval.waitingFor": "{work} aguarda sua aprovação",
-  "shell.approval.ship": "Ship",
+  "shell.approval.shipWaiting": "Seu Ship aguarda sua aprovação",
+  "shell.approval.workWaiting": "“{work}” aguarda sua aprovação",
   "shell.approval.open": "Abrir",
   "shell.approval.more": { one: "mais {count} aguardando", other: "mais {count} aguardando" },
 

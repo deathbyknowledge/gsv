@@ -21,16 +21,17 @@ const PENDING_KEY = ["approvals", "pending"] as const;
  * card beside handsfree's. The process registry, which WireSync keeps current from
  * the wire, says who is waiting; each one's history supplies the exact request, so a
  * request answered anywhere, or a run that ends, leaves as soon as the registry moves.
+ * Only the owning human may decide a request, so other people's never show, even to root.
  * A request whose own card is on screen stays with that card. The newest shows, with
  * a count of the rest; it announces itself through a live region and never takes focus.
  */
-export function ApprovalPrompt({ onOpen }: { onOpen: (approval: PendingApproval) => void }) {
+export function ApprovalPrompt({ viewerUid, onOpen }: { viewerUid: number | null; onOpen: (approval: PendingApproval) => void }) {
   const t = useT();
   const { client, connected } = useGateway();
   const queries = useQueryClient();
   const processes = useQuery({ queryKey: INSTRUMENT_PROCESSES_KEY, queryFn: () => loadConsoleProcesses(client), enabled: connected });
   const targets = useQuery({ queryKey: INSTRUMENT_TARGETS_KEY, queryFn: () => loadConsoleTargets(client), enabled: connected });
-  const waiting = (processes.data ?? []).filter((process) => process.state === "waiting_hil" && process.activeRunId);
+  const waiting = (processes.data ?? []).filter((process) => process.uid === viewerUid && process.state === "waiting_hil" && process.activeRunId);
   const requests = useQueries({
     queries: waiting.map((process) => ({
       queryKey: [...PENDING_KEY, process.pid, process.activeRunId],
@@ -59,8 +60,8 @@ export function ApprovalPrompt({ onOpen }: { onOpen: (approval: PendingApproval)
   }).sort((a, b) => b.request.createdAt - a.request.createdAt);
 
   const shown = approvals[0];
-  const work = shown ? shown.process.personal ? t("shell.approval.ship") : shown.process.label || shown.process.pid : "";
-  const title = shown ? t("shell.approval.waitingFor", { work }) : "";
+  const title = !shown ? "" : shown.process.personal ? t("shell.approval.shipWaiting")
+    : t("shell.approval.workWaiting", { work: capitalized(shown.process.label || shown.process.pid) });
   const places = (targets.data ?? []).map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online }));
   const place = shown ? placeLabel(shown.request.target, places) : "";
   const line = shown ? hilRequestLine(shown.request) : null;
@@ -88,4 +89,10 @@ export function ApprovalPrompt({ onOpen }: { onOpen: (approval: PendingApproval)
       {failed && <p class="approval-toast-error" role="alert">{failed}</p>}
     </aside>}
   </>;
+}
+
+/** A task title as a heading: its first letter upper-cased, the rest as written. */
+function capitalized(title: string): string {
+  const first = Array.from(title)[0] ?? "";
+  return `${first.toLocaleUpperCase()}${title.slice(first.length)}`;
 }

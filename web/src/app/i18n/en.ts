@@ -1294,8 +1294,8 @@ export const en = {
   "shell.approval.alwaysAllow": "Always allow",
   "shell.approval.waiting": "nothing runs until you answer",
   "shell.approval.toastLabel": "Pending approvals",
-  "shell.approval.waitingFor": "{work} is waiting for your approval",
-  "shell.approval.ship": "Ship",
+  "shell.approval.shipWaiting": "Ship is waiting for your approval",
+  "shell.approval.workWaiting": "“{work}” is waiting for your approval",
   "shell.approval.open": "Open",
   "shell.approval.more": { one: "{count} more waiting", other: "{count} more waiting" },
 
