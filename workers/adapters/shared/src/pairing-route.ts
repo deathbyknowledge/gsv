@@ -26,7 +26,7 @@ export function prepareAdapterPairing<State extends AdapterPeerLink>(state: Stat
   }
   if (pairing.expiresAt <= input.now) throw new Error("Pairing code expired");
   if (state.activeRoute?.installationId === input.route.installationId && state.activeRoute.localUid !== input.route.localUid) {
-    throw new Error(`Disconnect this ${adapter} identity before linking it to another user here`);
+    throw new Error(`Disconnect your ${adapter} account before connecting it to another user here`);
   }
   const prepared: AdapterPeerPairing = { ...pairing, status: "prepared", operationId: input.operationId, preparedRoute: input.route, previousRoute: state.activeRoute };
   return { state: { ...state, pairing: prepared }, pairing: prepared };

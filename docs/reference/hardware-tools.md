@@ -223,8 +223,8 @@ Important native paths:
 
 Native shell commands run in the Worker sandbox. They are useful for GSV control-plane work, virtual filesystem inspection, and HTTP/network operations allowed by the runtime. They do not run on the user's laptop.
 
-`man --search` includes reusable process workflows populated from layered
-`skills.d` directories. Its `NEXT` action opens matching workflows with
+`man --search` includes reusable process workflows from the built-in
+`/sys/skills.d` and layered home `skills.d` directories. Its `NEXT` action opens matching workflows with
 `skills show <skill>`; the specialized `skills list`, `skills search`, and
 `skills tree` commands remain available for direct inspection. `skills create`
 persists a complete reusable workflow in the current program's home and

@@ -105,7 +105,7 @@ function parseMessageCommand(
   finish: boolean,
 ): RunControlCommandParseResult | null {
   const args = command.args.map(literalWord);
-  if (hasAdditionalSendFlag(args.slice(1))) return null;
+  if (hasExplicitSendOption(args.slice(1))) return null;
   if (command.redirections.length > 0) {
     return parseMessageHeredoc(input, command, finish);
   }
@@ -189,11 +189,11 @@ function parseOpaqueMessageSend(
   return { ok: true, command: { action: "message", text: unwrapped, finish } };
 }
 
-function hasAdditionalSendFlag(args: Array<string | null>): boolean {
+function hasExplicitSendOption(args: Array<string | null>): boolean {
   const optionsWithValues = new Set(["--message", "--to", "--attach", "--mime", "--delivery-id"]);
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
-    if (current === "--also") return true;
+    if (current === "--to" || current === "--also") return true;
     if (current && optionsWithValues.has(current)) index += 1;
   }
   return false;

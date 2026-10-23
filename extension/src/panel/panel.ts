@@ -262,7 +262,7 @@ function keepFormState(): () => void {
 
 function header(current: ExtensionUiState, paired: boolean): string {
   const mood = paired ? tone(current) : "idle";
-  const label = !paired ? "not paired"
+  const label = !paired ? "not connected"
     : liveAccessCount(current) > 0 ? "working"
     : current.connection.state === "connected" ? "ready"
     : current.connection.state === "connecting" ? "connecting"
@@ -335,17 +335,17 @@ function pairing(current: ExtensionUiState): string {
   return `
     <section class="say">
       <h1>Connect this browser to your Ship.</h1>
-      <p>Pair it to let your Ship help with tasks you give it on sites you're signed into. You can see recent activity here and pause the connection anytime.</p>
+      <p>Connect it to let your Ship help with tasks you give it on sites you're signed into. You can see recent activity here and pause the connection anytime.</p>
     </section>
     <form class="pair" data-form="pair">
       <ol>
-        <li>In your Ship, open Fleet and choose Connect.</li>
+        <li>In your Ship, open Work (called Fleet in older versions) and choose connect.</li>
         <li>Pick Browser and copy the invitation.</li>
         <li>Paste it here.</li>
       </ol>
       <textarea name="invitation" placeholder="gsv-pair1_…" autocomplete="off" spellcheck="false" ${pending ? "disabled" : ""}></textarea>
       <div class="actions">
-        <button type="submit" class="ibtn is-primary" data-focus-key="pair-submit" ${pending ? "disabled" : ""}>${pending ? "pairing…" : "pair this browser"}</button>
+        <button type="submit" class="ibtn is-primary" data-focus-key="pair-submit" ${pending ? "disabled" : ""}>${pending ? "connecting…" : "connect this browser"}</button>
         ${current.connection.message ? `<span class="tbtn" aria-hidden="true">${escapeHtml(truncateMiddle(current.connection.message, 48))}</span>` : ""}
       </div>
     </form>`;
@@ -447,7 +447,7 @@ function footer(current: ExtensionUiState, paired: boolean): string {
       ${textButton("toggle-theme", effectiveTheme() === "light" ? "dark" : "light")}
       ${website
         ? `<a class="host" href="${escapeHtml(website.toString())}" target="_blank" rel="noopener noreferrer" title="Open your Ship" data-focus-key="space-link">${escapeHtml(current.gatewayHost)}</a>`
-        : `<span class="host">not paired yet</span>`}
+        : `<span class="host">not connected yet</span>`}
     </footer>`;
 }
 
@@ -571,7 +571,7 @@ function validate(config: ExtensionConfig) {
   const errors: FieldErrors = {};
   if (!normalizeGatewayUrl(config.gatewayUrl)) errors.gatewayUrl = "Enter your Ship's address, like yours.ship.space.";
   if (!config.username) errors.username = "Username is required.";
-  if (!config.token) errors.token = "A credential is required. Pairing fills this in.";
+  if (!config.token) errors.token = "A credential is required. Connecting fills this in.";
   if (!config.deviceId) errors.deviceId = "Give this browser a name.";
   else if (/\s/.test(config.deviceId)) errors.deviceId = "No spaces in the name.";
   return errors;

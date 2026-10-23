@@ -28,7 +28,7 @@ import {
   binaryBodySchema,
   cancelBinaryBody,
 } from "@humansandmachines/gsv/protocol";
-import type { Frame } from "./protocol/frames";
+import type { Frame, FrameError } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
   createPublicAssetFileSystem,
@@ -60,6 +60,7 @@ export { Conversation } from "./conversation/do";
 export { GatewayLifecycleEntrypoint } from "./installation/deletion-entrypoint";
 export { GatewayRecoveryEntrypoint } from "./installation/recovery-entrypoint";
 export { InstancesGatewayEntrypoint } from "./installation/instances-entrypoint";
+export { OperatorGatewayEntrypoint } from "./installation/operator-entrypoint";
 
 export default {
   async fetch(request, env): Promise<Response> {
@@ -234,10 +235,21 @@ export class AdapterGatewayEntrypoint
     inputContext: AdapterLinkedPeerContext,
     inputFrame: Frame,
   ): Promise<Frame | null> {
+    let installation: AdapterInstallationContext;
+    let context: AdapterLinkedPeerContext;
+    let frame: Frame;
     try {
-      const installation = adapterInstallationContextSchema.parse(inputInstallation);
-      const context = adapterLinkedPeerContextSchema.parse(inputContext);
-      const frame = requireAdapterServiceFrame(inputFrame);
+      installation = adapterInstallationContextSchema.parse(inputInstallation);
+      context = adapterLinkedPeerContextSchema.parse(inputContext);
+      frame = requireAdapterServiceFrame(inputFrame);
+    } catch (error) {
+      return await failLinkedPeerFrame(inputFrame, error, {
+        code: 403,
+        message: "Linked adapter request was rejected",
+        retryable: false,
+      });
+    }
+    try {
       return await routeAdapterLinkedPeerFrame(
         this.env,
         installation,
@@ -246,20 +258,13 @@ export class AdapterGatewayEntrypoint
         frame,
       );
     } catch (error) {
-      await cancelBinaryBody(
-        adapterServiceFrameBody(inputFrame),
-        "Linked adapter request was rejected",
-      );
-      console.error("[AdapterGatewayEntrypoint] linkedPeerFrame failed:", error);
-      const parsedCandidate = adapterGatewayFrameSchema.safeParse(inputFrame);
-      return parsedCandidate.success && parsedCandidate.data.type === "req"
-        ? {
-            type: "res",
-            id: parsedCandidate.data.id,
-            ok: false,
-            error: { code: 403, message: "Linked adapter request was rejected" },
-          }
-        : null;
+      // The Kernel answers its own refusals with error frames. A thrown failure
+      // is transport or service trouble, so the adapter keeps the person's choice and retries.
+      return await failLinkedPeerFrame(inputFrame, error, {
+        code: 503,
+        message: "Linked adapter request failed",
+        retryable: true,
+      });
     }
   }
 
@@ -481,6 +486,19 @@ async function routeAdapterLinkedPeerFrame(
     ): Promise<Frame | null>;
   };
   return await kernel.linkedAdapterPeerFrame(profile, context, frame);
+}
+
+async function failLinkedPeerFrame(
+  inputFrame: Frame,
+  cause: unknown,
+  error: FrameError,
+): Promise<Frame | null> {
+  await cancelBinaryBody(adapterServiceFrameBody(inputFrame), error.message);
+  console.error("[AdapterGatewayEntrypoint] linkedPeerFrame failed:", cause);
+  const parsedCandidate = adapterGatewayFrameSchema.safeParse(inputFrame);
+  return parsedCandidate.success && parsedCandidate.data.type === "req"
+    ? { type: "res", id: parsedCandidate.data.id, ok: false, error }
+    : null;
 }
 
 function requireAdapterServiceFrame(value: Frame): Frame {

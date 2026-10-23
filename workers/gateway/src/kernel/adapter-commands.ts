@@ -13,9 +13,9 @@ const COMMANDS: ReadonlyArray<{
   description: string;
 }> = [
   { name: "help", description: "show available commands" },
-  { name: "list", description: "list Ship and work processes" },
-  { name: "where", description: "show Ship or the selected work session" },
-  { name: "ship", description: "leave the work session and return to Ship" },
+  { name: "list", description: "list Ship and its helpers" },
+  { name: "where", description: "show Ship or the selected helper" },
+  { name: "ship", description: "leave the helper and return to Ship" },
 ];
 
 export function parseAdapterCommand(text: string): ParsedAdapterCommand | null {
@@ -36,7 +36,7 @@ export function renderAdapterCommandHelp(): string {
     "Commands:",
     ...COMMANDS.map((command) => `/${command.name} - ${command.description}`),
     "",
-    "When approval is pending, reply approve, deny, or approve always.",
+    "When an approval is pending, answer it with its Allow once, Always allow or Block buttons, or in Chat.",
   ].join("\n");
 }
 
@@ -50,9 +50,9 @@ export function renderAdapterProcessList(processes: ProcListEntry[]): string {
       : "[SHIP] unavailable",
   ];
   if (work.length === 0) {
-    lines.push("", "WORK: none");
+    lines.push("", "HELPERS: none");
   } else {
-    lines.push("", "WORK:", ...work.map((process) => `- ${describeProcess(process)}`));
+    lines.push("", "HELPERS:", ...work.map((process) => `- ${describeProcess(process)}`));
   }
   if (processes.length > visible.length) {
     lines.push(`…and ${processes.length - visible.length} more.`);

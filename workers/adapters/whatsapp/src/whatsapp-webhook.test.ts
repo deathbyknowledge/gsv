@@ -177,7 +177,7 @@ describe("WhatsApp webhook normalization", () => {
     expect(normalizeWhatsAppWebhook(notification([{
       from: "34611111189", id: "wamid.reply", type: "interactive", timestamp: "1700000100",
       context: { from: "34600000000", id: "wamid.prompt" },
-      interactive: { type: "button_reply", button_reply: { id: "gsvh:abcdefghijklmnop:a", title: "Always approve" } },
+      interactive: { type: "button_reply", button_reply: { id: "gsvh:abcdefghijklmnop:a", title: "Always allow" } },
     }]), PHONE_NUMBER_ID)).toEqual({
       kind: "accepted",
       events: [{
@@ -226,15 +226,14 @@ describe("WhatsApp webhook normalization", () => {
     });
   });
 
-  it("marks reactions, contacts, list replies and foreign buttons as unsupported content", () => {
+  it("marks contacts, list replies and foreign buttons as unsupported content", () => {
     const result = normalizeWhatsAppWebhook(notification([
-      { from: "34611111189", id: "wamid.react", type: "reaction", reaction: { message_id: "wamid.x", emoji: "👍" } },
       { from: "34611111189", id: "wamid.contacts", type: "contacts", contacts: [{ name: { formatted_name: "Someone" } }] },
       { from: "34611111189", id: "wamid.list", type: "interactive", interactive: { type: "list_reply", list_reply: { id: "row-1" } } },
       { from: "34611111189", id: "wamid.other", type: "interactive", context: { id: "wamid.prompt" }, interactive: { type: "button_reply", button_reply: { id: "someone-else:x" } } },
     ]), PHONE_NUMBER_ID);
     if (result.kind !== "accepted") throw new Error("expected accepted events");
-    expect(result.events).toHaveLength(4);
+    expect(result.events).toHaveLength(3);
     expect(result.events.every((event) => event.kind === "message" && event.inbound.unsupportedContent && event.inbound.text === "")).toBe(true);
   });
 
@@ -254,6 +253,13 @@ describe("WhatsApp webhook normalization", () => {
       .toEqual({ kind: "ignored" });
     expect(normalizeWhatsAppWebhook(notification([{ from: "34611111189", id: "wamid.welcome", type: "request_welcome" }]), PHONE_NUMBER_ID))
       .toEqual({ kind: "ignored" });
+  });
+
+  it("ignores reactions and their removal instead of answering them", () => {
+    expect(normalizeWhatsAppWebhook(notification([
+      { from: "34611111189", id: "wamid.react", type: "reaction", reaction: { message_id: "wamid.x", emoji: "👍" } },
+      { from: "34611111189", id: "wamid.unreact", type: "reaction", reaction: { message_id: "wamid.x", emoji: "" } },
+    ]), PHONE_NUMBER_ID)).toEqual({ kind: "ignored" });
   });
 
   it("rejects malformed envelopes", () => {

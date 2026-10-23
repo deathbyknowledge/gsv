@@ -6,12 +6,13 @@ import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import { RipgitClient, type RipgitRepoRef } from "../fs/ripgit/client";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
+import { BUILTIN_SKILL_NAMES, SYSTEM_SKILLS_ROOT, systemSkillsReader } from "./sys/builtin-skills";
 
 const TEXT_DECODER = new TextDecoder();
 const MAX_SKILL_WALK_DEPTH = 4;
 const MAX_DESCRIPTION_LENGTH = 220;
 
-export type SkillSourceKind = "home";
+export type SkillSourceKind = "system" | "home";
 
 export type SkillSource = {
   kind: SkillSourceKind;
@@ -68,6 +69,8 @@ type SkillCollectionOptions = {
   strictReads?: boolean;
 };
 
+const SYSTEM_SKILL_SOURCE: SkillSource = { kind: "system", label: "system", writable: false };
+
 type SkillHomeLayer = {
   identity: ProcessIdentity;
   label: string;
@@ -93,7 +96,7 @@ export async function collectKernelSkillDocuments(
   ctx: KernelContext,
   options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillDocument[]> {
-  const files: ParsedSkillFile[] = [];
+  const files = await collectSystemSkillFiles(options);
 
   const ripgit = ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null;
   const runAsIdentity = principalOf(ctx)?.account;
@@ -115,7 +118,7 @@ export async function collectFilesystemSkillDocuments(
   options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillDocument[]> {
   const roots = filesystemSkillRoots(resolveSkillHomeLayers(ctx, identity));
-  const files: ParsedSkillFile[] = [];
+  const files = await collectSystemSkillFiles(options);
   for (const root of roots) {
     files.push(...await collectFsSkillFiles(fs, root.rootPath, root.source, root.idPrefix, options));
   }
@@ -175,7 +178,7 @@ export async function listSkillFiles(
     ? doc.path.slice(0, -"/SKILL.md".length)
     : doc.path.replace(/\/+$/, "");
   const files: string[] = [];
-  await walkFsSupportingFiles(fs, root, "", files, 0);
+  await walkFsSupportingFiles(skillReader(fs, doc), root, "", files, 0);
   return files.sort((left, right) => left.localeCompare(right));
 }
 
@@ -311,6 +314,16 @@ function formatPromptSkillEntry(
       : []),
     "</skill>",
   ].join("\n");
+}
+
+/** Built-in skills are read from the deployed bundle, never from a home. */
+async function collectSystemSkillFiles(options: SkillCollectionOptions): Promise<ParsedSkillFile[]> {
+  return await collectFsSkillFiles(systemSkillsReader, SYSTEM_SKILLS_ROOT, SYSTEM_SKILL_SOURCE, undefined, options);
+}
+
+/** The reader that holds a skill's own files: the bundle for a built-in skill. */
+export function skillReader<T extends FsReader>(fs: T, doc: Pick<SkillDocument, "source">): FsReader {
+  return doc.source.kind === "system" ? systemSkillsReader : fs;
 }
 
 async function collectRipgitRuntimeSkillFiles(
@@ -696,7 +709,11 @@ function createSkillFile(args: Omit<SkillFile, "idBase">): ParsedSkillFile | nul
 }
 
 function buildSkillDocuments(files: ParsedSkillFile[]): SkillDocument[] {
-  const parsed = [...files].sort((left, right) => {
+  // Built-in names are reserved: a home skill claiming one, and its nested
+  // skills, stay hidden so every process sees the same built-in skill.
+  const parsed = files.filter((file) =>
+    file.source.kind === "system" || !isBuiltinSkillName(file.idBase.split("/")[0])
+  ).sort((left, right) => {
     const source = sourceRank(left.source) - sourceRank(right.source);
     if (source !== 0) {
       return source;
@@ -757,7 +774,12 @@ function sourceSkillKey(file: SkillFile, idBase = file.idBase): string {
   ].join("\0");
 }
 
+export function isBuiltinSkillName(name: string): boolean {
+  return BUILTIN_SKILL_NAMES.has(normalizeLookup(name));
+}
+
 function sourceRank(source: SkillSource): number {
+  if (source.kind === "system") return -1;
   switch (source.label) {
     case "home": return 0;
     case "user": return 0;

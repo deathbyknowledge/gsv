@@ -1,3 +1,6 @@
+import type { OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
+import { buildOperatorShipSnapshot } from "./operator-snapshot";
+import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
 import { InitialOnboarding } from "./onboarding-responsibility";
 import {
@@ -701,6 +704,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   async quiesceInstallation(input: InstallationDeletionRequest) {
+    this.onboarding.invalidateWorkGate();
     return this.deletion.quiesce(input);
   }
 
@@ -767,15 +771,30 @@ export class Kernel extends DurableObject<GatewayEnv> {
     });
   }
 
+  /** Operator Ship page: metadata only, reached through the Accounts-bound operator entrypoint. */
+  async operatorShipSnapshot(runLimit: number): Promise<OperatorShipSnapshot> {
+    this.retirement.assertActive();
+    return await buildOperatorShipSnapshot({
+      installationId: this.installationId,
+      procs: this.procs,
+      identityLinks: this.adapters.identityLinks,
+      targets: this.targets,
+      responsibilities: this.responsibilities,
+      shipEvents: this.shipEvents,
+      shipSummary: async (pid) => await (await getProcessByPid(pid, this.installationId)).operatorRunSummary(runLimit),
+      now: () => Date.now(),
+    });
+  }
+
   async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {
-    const gate = await this.onboarding.managedWorkGate();
+    const gate = await this.onboarding.managedWorkGate({ fresh: true });
     if (!gate.allowed) throw new Error("This Ship is unavailable");
     this.accountRecovery.authorize(input);
     return { authorized: true };
   }
 
   async confirmOwnerLinkAuthorization(attemptId: string): Promise<{ authorized: true }> {
-    const gate = await this.onboarding.managedWorkGate();
+    const gate = await this.onboarding.managedWorkGate({ fresh: true });
     if (!gate.allowed) throw new Error("This Ship is unavailable");
     this.accountRecovery.confirmOwnerLink(attemptId);
     return { authorized: true };

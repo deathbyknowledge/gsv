@@ -14,6 +14,7 @@ import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationAdminHttp } from "./admin/http";
 import { CloudflareInstallationAdminAccess } from "./admin/access";
+import { ShipInsight, type OperatorEnvironment } from "./admin/insight";
 import { InstallationAdminService } from "./admin/service";
 import { cleanExpiredOwnerAuthentication, handleInstallationOwnerRequest } from "./owner-front-door";
 import { OPERATOR_REGISTRY_PRINCIPAL_ID, type InstallationOwnerEnvironment } from "./owner-service";
@@ -23,7 +24,7 @@ import { createAccountsDeletionRuntime } from "./deletion-runtime";
 import { configuredDeletionEnvironment, type DeletionResourceEnvironment } from "./deletion-verifier";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
 
-export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment>
+export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment & OperatorEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
   async scheduled(): Promise<void> {
     await cleanExpiredOwnerAuthentication(this.env);
@@ -53,6 +54,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     const api = new InstallationAdminHttp(administration, access, this.env.GSV_ADMIN_ORIGIN,
       {},
       createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)),
+      new ShipInsight(this.env.INSTALLATIONS_DB, { gateway: this.env.OPERATOR_GATEWAY, mailDomain: this.env.GSV_MAIL_DOMAIN }),
     );
     const response = await api.handle(request);
     if (response) return response;

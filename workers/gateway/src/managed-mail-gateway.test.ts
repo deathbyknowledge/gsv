@@ -54,7 +54,7 @@ describe("outbound mail reference resolution", () => {
     await expect(f.gateway.resolveOutboundMailReference({ installationId: "../foreign" }, { outboundId: "mail-outbound:lookup" })).rejects.toThrow();
     expect(f.resolveInstallation).not.toHaveBeenCalled();
     f.resolveInstallation.mockRejectedValueOnce(new Error("Directory unavailable"));
-    await expect(f.gateway.resolveOutboundMailReference({ installationId: "installation-hank" }, { outboundId: "mail-outbound:lookup" })).rejects.toThrow("unavailable");
+    await expect(f.gateway.resolveOutboundMailReference({ installationId: "installation-hank" }, { outboundId: "mail-outbound:lookup" })).rejects.toThrow("briefly unreachable");
     expect(f.getByName).not.toHaveBeenCalled();
   });
 });

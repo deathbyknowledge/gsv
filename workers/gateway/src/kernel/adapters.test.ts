@@ -2318,10 +2318,10 @@ describe("adapter lifecycle handlers", () => {
     expect(replay).toMatchObject({
       ok: true,
       replayed: "completed",
-      reply: { text: expect.stringContaining("/ship - leave the work session") },
+      reply: { text: expect.stringContaining("/ship - leave the helper") },
     });
     expect(replay.reply?.text).not.toContain("/work");
-    expect(replay.reply?.text).toContain("/list - list Ship and work processes");
+    expect(replay.reply?.text).toContain("/list - list Ship and its helpers");
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
     expect(receipts.complete).toHaveBeenCalledTimes(2);
   });

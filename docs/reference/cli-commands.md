@@ -24,7 +24,7 @@ the cached session token from `gsv auth login`, or prompt/login when needed.
 
 ## Chat and Shell
 
-When the operator enables feedback, the Instrument header has a **feedback** action.
+When the operator enables feedback, the web app's header has a **feedback** action.
 Reports include the text you submit, your Ship, account, and app/server versions.
 The optional **Include last 20 Ship messages** checkbox starts unchecked. It
 captures recent messages, thinking, tool inputs/results and runtime events through
@@ -99,7 +99,7 @@ unsupported website storage. Inspect save status and per-site usage with
 saved logins and stops the browser using them.
 Ordinary browsers
 remember logins automatically. Use `browser handoff` when Ship needs a human to
-complete a sign-in; opening Fleet's browser view otherwise leaves Ship running
+complete a sign-in; opening Work's browser view otherwise leaves Ship running
 and accepts direct input. These are native target commands, available to Ship
 through Shell as well. See [cloud browsers](/how-to/cloud-browsers) for saved
 logins, recovery after a lost response, and the complete sign-in flow.
@@ -253,6 +253,12 @@ unavailable when the installation has no mailbox.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
 
+`skills list` shows the built-in skills, served read-only from `/sys/skills.d`,
+before the owner's and the agent's own. `skills create` writes to the current
+account's `~/skills.d` and refuses a built-in name. `man --search` ranks a
+command or workflow by what it says about itself; words that appear only in a
+skill's body add little, so a long skill does not outrank a matching command.
+
 `message search "words"` searches retained conversation messages saved after search was
 enabled, including those later archived, and defaults to Ship. Older search entries
 are removed as the conversation database approaches its storage budget; their original
@@ -271,7 +277,10 @@ next current-conversation message; it does not create an extra message. The
 Process retains each exact source revision in its immutable media archive before
 committing the message. `--mime` can classify a single attachment for
 presentation while its reference retains the source's authoritative stored
-content type. A direct Shell call using a literal block sends a message and
+content type. Staged files never go to another destination: a `message send
+--to` without its own `--attach` is refused while files are staged, because the
+run's next reply would otherwise carry them to the owner. A `message attach`
+running in parallel with such a send is refused instead. A direct Shell call using a literal block sends a message and
 leaves the run active:
 
 ```bash
@@ -351,6 +360,11 @@ message attach /tmp/report.pdf
 message send --message "Here is the report." && yield
 message send --to DESTINATION --message "Here is the report elsewhere." --attach /tmp/report.pdf --also
 ```
+
+If an explicit send is rejected because `--also` is missing, keep `--to` and
+add `--also` to the retry. Removing `--to` sends into the process's current
+conversation instead; a scheduled Work process does not inherit Ship's
+messenger destination.
 
 `message send` allocates a stable delivery id before contacting an adapter and
 retries one transport failure with that same id. If delivery still cannot be
@@ -550,7 +564,7 @@ release. Download and unzip the extension, load its folder from
 `chrome://extensions` with developer mode enabled, then open **Your Ship** from
 the toolbar or Extensions button and paste `code` into its panel.
 
-Open **Fleet**, click **connect** beside Places, name the computer and create an invitation.
+Open **Work**, click **connect** beside Connections, name the computer and create an invitation.
 After installing Ship, paste the provided command:
 
 ```bash

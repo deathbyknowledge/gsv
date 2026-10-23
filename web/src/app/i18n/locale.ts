@@ -31,6 +31,7 @@ const locales: InterfaceLocale[] = [
   { tag: "en", dir: "ltr", load: () => english },
   // A translation is fetched only for someone whose language chooses it.
   { tag: "es", dir: "ltr", load: () => import("./es").then(({ es }) => (key) => es[key]) },
+  { tag: "pt-BR", dir: "ltr", load: () => import("./pt-BR").then(({ ptBR }) => (key) => ptBR[key]) },
 ];
 if (import.meta.env.DEV) {
   // The pseudo-locale en-XA finds text that bypasses the catalog.
@@ -73,12 +74,16 @@ function activate(locale: InterfaceLocale, message: Lookup): ActiveLocale {
   return { locale, translate: (key, values) => formatMessage(message(key), plural, values) };
 }
 
-/** The first supported language in the preference, then this device's languages; a regional tag such as es-MX matches its base language. */
+/**
+ * The first supported language in the preference, then this device's languages. A tag that has no exact catalog matches the
+ * first catalog of its base language: es-MX reads Spanish, and pt or pt-PT read Brazilian Portuguese.
+ */
 export function resolveLocale(preference: string | undefined, device: readonly string[]): InterfaceLocale {
   for (const tag of preference ? [preference, ...device] : device) {
     const requested = tag.toLowerCase();
+    const language = requested.split("-")[0];
     const match = locales.find((locale) => locale.tag.toLowerCase() === requested)
-      ?? locales.find((locale) => locale.tag === requested.split("-")[0]);
+      ?? locales.find((locale) => locale.tag.toLowerCase().split("-")[0] === language);
     if (match) return match;
   }
   return locales[0];

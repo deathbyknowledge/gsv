@@ -3,7 +3,7 @@ import { resolvePromptProviders } from "../../workers/gateway/src/process/contex
 import type { PromptAssemblyInput, PromptAssemblySnapshot, PromptSection } from "../../workers/gateway/src/process/context/types";
 import { SYSTEM_CONFIG_DEFAULTS } from "../../workers/gateway/src/kernel/config";
 import { parseSkillMarkdown } from "../../workers/gateway/src/kernel/skills";
-import { BUILTIN_SKILL_FILES } from "../../workers/gateway/src/kernel/sys/builtin-skills";
+import { BUILTIN_SKILL_NAMES, SYSTEM_SKILLS_ROOT, readSystemSkillPath } from "../../workers/gateway/src/kernel/sys/builtin-skills";
 import { contextFiles } from "../../workers/gateway/src/prompts/context";
 import { shipContextFiles } from "../../workers/gateway/src/prompts/personal-intelligence";
 import { PROMPT_SOURCES, type PromptSource } from "./prompt-sources";
@@ -40,11 +40,11 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       contextWindowTokens: 128000, contextWindowSource: "model",
       maxContextBytes: Number(SYSTEM_CONFIG_DEFAULTS["config/ai/max_context_bytes"]),
       systemContextFiles,
-      skillIndex: BUILTIN_SKILL_FILES.map(({ path, content }) => {
-        const id = path.split("/")[0];
-        const metadata = parseSkillMarkdown(content, id);
+      skillIndex: [...BUILTIN_SKILL_NAMES].sort().map((id) => {
+        const file = readSystemSkillPath(`${SYSTEM_SKILLS_ROOT}/${id}/SKILL.md`);
+        const metadata = parseSkillMarkdown(file.kind === "file" ? file.content : "", id);
         return { id, name: metadata.name, description: metadata.description,
-          source: { kind: "home", label: `home:${id}`, writable: true } };
+          source: { kind: "system", label: "system", writable: false } };
       }),
     },
     runtime: { date: "2026-01-01", timezone: "UTC" },

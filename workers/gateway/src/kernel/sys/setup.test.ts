@@ -1,13 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { KernelContext } from "../context";
 
 import * as utils from "../../shared/utils";
 import * as bootstrap from "./bootstrap";
-import * as skillsSeed from "./skills-seed";
 import * as personalController from "../personal-controller";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 const handleSysBootstrapMock = vi.spyOn(bootstrap, "handleSysBootstrap");
-const seedBuiltinSkillsToHomeMock = vi.spyOn(skillsSeed, "seedBuiltinSkillsToHome");
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 
 import { handleSysSetup, recoverCompletedSysSetup } from "./setup";
@@ -196,7 +195,6 @@ describe("handleSysSetup", () => {
       head: "manual123",
       changed: true,
     });
-    seedBuiltinSkillsToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
     ensurePersonalControllerMock.mockResolvedValue("proc:personal");
     getConversationByIdMock.mockReturnValue({ initialize: vi.fn(async () => undefined) });
   });
@@ -337,13 +335,16 @@ describe("handleSysSetup", () => {
     );
   });
 
-  it("seeds shipped skills into root home after first setup bootstrap", async () => {
+  it("writes no built-in skills into homes during first setup", async () => {
+    const written: string[] = [];
+    const applyBody = z.object({ ops: z.array(z.object({ path: z.string() })) });
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ripgit = {
-      fetch: vi.fn(async (input: RequestInfo | URL) => {
+      fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input));
         if (url.pathname.endsWith("/refs")) return Response.json({ heads: { main: "home123" }, tags: {} });
         if (url.pathname.endsWith("/apply")) {
+          written.push(...applyBody.parse(JSON.parse(String(init?.body))).ops.map((op) => op.path));
           return new Response(JSON.stringify({ ok: true, head: "home123" }), {
             headers: { "Content-Type": "application/json" },
           });
@@ -374,10 +375,8 @@ describe("handleSysSetup", () => {
         }),
       }),
     );
-    expect(seedBuiltinSkillsToHomeMock).toHaveBeenCalledWith(
-      expect.any(Object),
-      expect.objectContaining({ username: "root", home: "/root" }),
-    );
+    // Built-in skills are served from /sys/skills.d; homes only get their skills.d marker.
+    expect(written.filter((path) => path.startsWith("skills.d/") && path !== "skills.d/.dir")).toEqual([]);
   });
 
   it("requires a valid username and password", async () => {

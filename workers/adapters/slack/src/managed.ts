@@ -212,7 +212,7 @@ export class ManagedSlackChannel extends WorkerEntrypoint<Env> implements Adapte
       accountId: PAIRING_ACCOUNT_ID,
       configured: managedSlackConfigured(this.env),
       installUrl: managedSlackInstallUrl(this.env),
-      instructions: "Install GSV using the link, then send link in a direct message to the GSV app to get a pairing code.",
+      instructions: "Install GSV using the link, then send link in a direct message to the GSV app to get a code.",
     };
   }
 

@@ -147,6 +147,12 @@ export class ProcessHistoryRepository {
     )].map(historySegment);
   }
 
+  lastCompactionAt(): number | null {
+    return this.store.first<{ created_at: number }>(
+      "SELECT created_at FROM history_segments WHERE kind = 'compaction' ORDER BY created_at DESC LIMIT 1",
+    )?.created_at ?? null;
+  }
+
   getHistorySegment(segmentId: string): ProcessHistorySegmentRecord | null {
     const row = this.store.first<HistorySegmentRow>(
       `SELECT id, generation, kind, from_message_id, to_message_id,

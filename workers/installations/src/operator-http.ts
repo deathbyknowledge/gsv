@@ -1,5 +1,5 @@
 import type { InstallationAdminAccess } from "./admin/access";
-import { adminPageResponse, adminStylesheet } from "./admin/page";
+import { adminPageResponse, adminStylesheet, adminTimeScript } from "./admin/page";
 import { InstallationBootstrapService, type OperatorAccessMode } from "./bootstrap";
 import { hasExpectedOrigin, json, noStoreHeaders, readJsonObject, requireString } from "./http";
 
@@ -16,6 +16,16 @@ export class OperatorInstallationAdminAccess implements InstallationAdminAccess 
       .find((part) => part.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
     return this.bootstrap.authorizeOperator(bearer ?? cookie ?? "");
   }
+
+  async operatorIdentity(request: Request): Promise<string | null> {
+    if (this.mode === "access") {
+      return this.access.operatorIdentity
+        ? await this.access.operatorIdentity(request)
+        : await this.access.allows(request) ? "access" : null;
+    }
+    // The deployment holds one operator credential; it is named, never recorded.
+    return await this.allows(request) ? "operator credential" : null;
+  }
 }
 
 export class InstallationOperatorHttp {
@@ -25,6 +35,7 @@ export class InstallationOperatorHttp {
   async handle(request: Request): Promise<Response | null> {
     const path = new URL(request.url).pathname;
     if (path === "/admin/styles.css" && request.method === "GET") return adminStylesheet(false);
+    if (path === "/admin/time.js" && (request.method === "GET" || request.method === "HEAD")) return adminTimeScript(request.method === "HEAD");
     if (path === "/operator/client.js" && request.method === "GET") {
       return new Response(OPERATOR_CLIENT, { headers: noStoreHeaders({ "content-type": "text/javascript; charset=utf-8" }) });
     }
@@ -73,7 +84,7 @@ export class InstallationOperatorHttp {
         </form>
         <p id="operator-status" role="status"></p>
         <div id="operator-result" hidden>
-          <p><a id="setup-link" class="button" hidden>Set up your Ship</a></p>
+          <p><a id="setup-link" class="button" hidden>Activate your Ship</a></p>
           <div id="credential-result" hidden><p>Save this operator credential now. It is shown once.</p><textarea id="operator-credential" readonly rows="3"></textarea></div>
           <p><a href="/admin/installations">Manage Ships</a></p>
         </div>
@@ -135,6 +146,6 @@ form.addEventListener('submit', async (event) => {
       document.getElementById('credential-result').hidden = false;
       document.getElementById('operator-credential').value = attempt.operatorToken;
     }
-    status.textContent = result.onboardingUrl ? 'Your first Ship is ready to set up.' : 'This Ship already has a setup claim. Use administration if you need to reissue it.';
+    status.textContent = result.onboardingUrl ? 'Your first Ship is ready to activate.' : 'This Ship already has an activation link. Use administration if you need to reissue it.';
   } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
 });`;

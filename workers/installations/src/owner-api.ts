@@ -79,8 +79,8 @@ export class InstallationOwnerApi {
       if (error instanceof Error && error.message.startsWith("You already have a Ship")) {
         return json({ error: error.message, code: "space_exists" }, 409);
       }
-      const message = error instanceof Error && /^(handle is |Ship setup is unavailable|Ship setup failed|Registration is currently closed)/.test(error.message)
-        ? error.message : error instanceof z.ZodError ? "Check the details and try again." : "Could not complete setup. Try again.";
+      const message = error instanceof Error && /^(handle is |Ship activation is unavailable|Ship activation failed|Registration is currently closed)/.test(error.message)
+        ? error.message : error instanceof z.ZodError ? "Check the details and try again." : "Could not activate your Ship. Try again.";
       return json({ error: message }, 400);
     }
   }

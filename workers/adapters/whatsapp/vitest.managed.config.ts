@@ -15,6 +15,7 @@ export default defineConfig({
               const calls = [];
               let approvalReleased = false;
               let recoveryReleased = false;
+              let obsoleteApprovalRecovered = false;
               export class AdapterGatewayEntrypoint extends WorkerEntrypoint {
                 async resolveInstallation(id) { return { found: true, installationId: id, state: id.startsWith("retired-") ? "retained" : "active", handle: "test", canonicalOrigin: "https://test.gsv.space" }; }
                 async serviceFrame(installation, frame) {
@@ -45,6 +46,16 @@ export default defineConfig({
                 }
                 async linkedPeerFrame(installation, context, frame) {
                   calls.push({ installation, linkedContext: context, call: frame.call, args: frame.args });
+                  if (frame.args.requestId === "obsolete-approval-404" || frame.args.requestId === "obsolete-approval-503") {
+                    const unavailable = frame.args.requestId === "obsolete-approval-503" && !obsoleteApprovalRecovered;
+                    // Mirrors AdapterGatewayEntrypoint: a thrown Kernel failure becomes a retryable 503.
+                    return {
+                      type: "res", id: frame.id, ok: false,
+                      error: unavailable
+                        ? { code: 503, message: "Linked adapter request failed", retryable: true }
+                        : { code: 404, message: "Process not found: proc-deleted", retryable: false },
+                    };
+                  }
                   if (frame.args.requestId === "held-retirement-approval") {
                     const until = Date.now() + 5000;
                     while (!approvalReleased && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10));
@@ -70,6 +81,7 @@ export default defineConfig({
                 async fetch(request) {
                   if (new URL(request.url).pathname === "/release-approval") approvalReleased = true;
                   if (new URL(request.url).pathname === "/release-recovery") recoveryReleased = true;
+                  if (new URL(request.url).pathname === "/recover-obsolete-approval") obsoleteApprovalRecovered = true;
                   return Response.json(calls);
                 }
               }
@@ -91,6 +103,7 @@ export default defineConfig({
               let resumeSend = null;
               let blockedSend = null;
               let failNextTemplate = false;
+              let failNextReaction = false;
               const windowRejections = new Set();
               let nextId = 100;
               export default {
@@ -98,6 +111,12 @@ export default defineConfig({
                   const url = new URL(request.url);
                   if (request.method === "POST" && url.pathname === "/fail-next-template") {
                     failNextTemplate = true;
+                    return Response.json({ ok: true });
+                  }
+                  // The next reaction fails with an unknown outcome (500), a definite rejection (400 for
+                  // "rejected") or a rate limit (429 for "throttled").
+                  if (request.method === "POST" && url.pathname === "/fail-next-reaction") {
+                    failNextReaction = { rejected: 400, throttled: 429 }[await request.text()] ?? 500;
                     return Response.json({ ok: true });
                   }
                   if (request.method === "GET" && url.pathname === "/records") {
@@ -171,6 +190,12 @@ export default defineConfig({
                   if (request.method === "POST" && segments[2] === "messages") {
                     const body = await request.json();
                     if (body.status === "read") {
+                      const pause = pausedSend;
+                      if (pause?.kind === "read") {
+                        blockedSend = body;
+                        await pause.promise;
+                        blockedSend = null;
+                      }
                       records.push({ kind: "read", version, phoneNumberId: segments[1], body, result: { success: true } });
                       return Response.json({ success: true });
                     }
@@ -190,6 +215,15 @@ export default defineConfig({
                       return Response.json(
                         { error: { message: "Re-engagement message", type: "OAuthException", code: 131047 } },
                         { status: 400 },
+                      );
+                    }
+                    if (body.type === "reaction" && failNextReaction) {
+                      const status = failNextReaction;
+                      failNextReaction = false;
+                      rejected.push({ kind: "message", status, body });
+                      return Response.json(
+                        { error: { message: status === 500 ? "unknown" : "rejected", type: "OAuthException", code: { 400: 131026, 429: 130429 }[status] ?? 2, fbtrace_id: "trace-reaction" } },
+                        { status },
                       );
                     }
                     if (body.type === "template" && failNextTemplate) {

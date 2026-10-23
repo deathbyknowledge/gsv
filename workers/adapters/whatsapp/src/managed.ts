@@ -58,12 +58,20 @@ type ManagedWhatsAppPeerStub = {
     body?: BinaryBody,
     context?: AdapterDeliveryContext,
   ): Promise<AdapterSendResult>;
-  setTyping(
+  setWorking(
     installationId: string,
     surface: AdapterSurface,
     actorId: string,
     routeGeneration: string,
     active: boolean,
+    runId: string,
+    messageId?: string,
+  ): Promise<{ accepted: boolean }>;
+  setTyping(
+    installationId: string,
+    surface: AdapterSurface,
+    actorId: string,
+    routeGeneration: string,
   ): Promise<{ accepted: boolean }>;
   disconnect(input: AdapterPairingDisconnectInput): Promise<AdapterPairingDisconnectResult>;
 };
@@ -155,18 +163,24 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
         throw new Error("Managed WhatsApp account ID is invalid");
       }
       if (surface.kind !== "dm") throw new Error("Managed WhatsApp supports direct messages only");
-      if (activity.kind !== "typing" || !activity.active) return { ok: true };
+      // Typing ends when the reply arrives, so only its start is sent to Meta.
+      if (activity.kind !== "working" && !(activity.kind === "typing" && activity.active)) return { ok: true };
       const routeGeneration = activity.routeGeneration?.trim();
       if (!routeGeneration) {
         throw new Error("Managed WhatsApp route generation is required");
       }
-      const result = await this.peer(surface.id).setTyping(
-        parsed.installationId,
-        surface,
-        surface.id,
-        routeGeneration,
-        true,
-      );
+      const peer = this.peer(surface.id);
+      const result = activity.kind === "working"
+        ? await peer.setWorking(
+          parsed.installationId,
+          surface,
+          surface.id,
+          routeGeneration,
+          activity.active,
+          activity.runId,
+          activity.messageId,
+        )
+        : await peer.setTyping(parsed.installationId, surface, surface.id, routeGeneration);
       if (!result.accepted) {
         throw new Error("WhatsApp route changed before activity delivery");
       }
@@ -185,7 +199,7 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
       accountId: MANAGED_WHATSAPP_ACCOUNT_ID,
       configured: this.isConfigured(),
       installUrl: managedWhatsAppChatUrl(this.env.WHATSAPP_DISPLAY_NUMBER),
-      instructions: ["Open the chat link and send /link to get a pairing code.", managedWhatsAppReachNote(this.env)]
+      instructions: ["Open the chat link and send /link to get a code.", managedWhatsAppReachNote(this.env)]
         .filter(Boolean)
         .join(" "),
       unreachableCallingCodes: managedWhatsAppUnreachableCallingCodes(this.env),

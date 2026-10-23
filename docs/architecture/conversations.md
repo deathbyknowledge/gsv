@@ -34,9 +34,9 @@ When the reader scrolls above the latest chat message, a small button returns th
 the bottom and resumes following new replies.
 The Chat composer always uses "Message your ship" as its empty-field placeholder, across focus,
 connection and approval states.
-The composer shows connection problems, errors and an offline selected place; ordinary model
+The composer shows connection problems, errors and an offline selected connection; ordinary model
 and target readiness do not add a status line. Run activity remains visible in the transcript.
-On phones, both the prompt and its attachment, place and recording controls follow the visible
+On phones, both the prompt and its attachment, connection and recording controls follow the visible
 area as the browser toolbar or keyboard opens and closes. The star field keeps its full height.
 Installed PWAs fill the screen, including the home-indicator area. The bottom safe-area inset
 is padding inside each surface; it does not shorten the page or its star field.
@@ -51,7 +51,7 @@ Running work, failed actions, fallback notices, approvals and already-open recei
 Direct `$` commands use a compact target header on phones, with running, unavailable or failed
 states when relevant. Expand it to read the complete command, output and terminal controls.
 
-A very long message in Zen folds behind **read more** once it has finished arriving, and **show
+A very long message in Chat folds behind **read more** once it has finished arriving, and **show
 less** folds it again. Folding uses the rendered height at the current width and text size:
 messages up to eighteen line-heights remain whole; longer messages show twelve line-heights
 with a short fade at the end. A reply the user watched stream in stays open. Opening or folding
@@ -196,17 +196,18 @@ Delegated Work retains its inherited approval route. An already queued adapter d
 chosen destination through retries; changing activity does not replay old notifications.
 
 In Web and Desktop, new approval requests scroll into view without moving the composer cursor or
-changing its draft. Use the buttons to decide, or `y` / `n` when not typing. The request has its own
+changing its draft. Use **Allow once**, **Always allow** or **Block** to decide, or `y` / `n` when not typing. The request has its own
 transcript row, independent of messages and runtime activity. Approvals from delegated work appear
-above the composer. Ship, delegated work and Fleet share one approval card: the
+above the composer. Ship, delegated work and Work share one approval card: the
 action's purpose comes first, with command or request details folded underneath.
 The **full request** fold preserves every argument, including structured MCP
 parameters, mail bodies and execution options. Requests without a readable
 summary still expose their complete request in the details fold.
-Shell approvals on a specific target also offer **always allow**. Its tooltip
-explains that this remembers all shell commands on that target for the requesting
-process, not just the displayed command. Other processes and targets still use
-their own approval rules; ordinary approval and denial never remember a rule.
+Shell approvals on a specific target also offer **Always allow**. Its tooltip
+explains that this remembers all shell commands on that target for the
+requesting Ship or helper, not just the displayed command. The memory lives in
+that process, so a replaced Ship asks again. Other helpers and targets still use
+their own permission rules; ordinary approval and denial never remember a rule.
 
 Web and Desktop present a failed run, and a failure reported above the composer, as a plain-language
 summary with a recommended next step, such as trying again, waiting a few minutes or restarting the
@@ -224,12 +225,12 @@ owner and are resolved only when a user inspects a span.
 
 ## Storage and retention
 
-Instrument's People indicator and Zen activity strip read the ordinary owner-scoped
+The web app's People indicator and Chat activity strip read the ordinary owner-scoped
 inbox with `attentionOnly: true` and the incoming request list. The Kernel filters
 unread, active, unmuted, unblocked conversations before pagination; the caller selects
 the usual archived state. Existing `conversation.changed`, `contact.changed` and
 `approach.changed` signals invalidate those bounded reads, and reconnect refreshes
-them. Attention survives reload through the private inbox projection. Zen and People
+them. Attention survives reload through the private inbox projection. Chat and People
 observe the same paginated conversation cache. Only unfinished reply drafts and
 their submitted send identities remain local. A draft retains the read position where it began, so reads elsewhere do
 not hide its context or pull older read history into the panel. Each send retains the
@@ -344,13 +345,13 @@ does not present them as “Memory” messages or interrupt the composer when th
 working context changes.
 
 
-## Contextual requests in Instrument
+## Contextual requests in the web app
 
 Chat’s `+` menu can attach a file, find a person by handle, saved name or GSV address,
-reference a file on a place, or stage a request to create a routine, connect a
+reference a file on a connection, or stage a request to create a routine, connect a
 computer or start a browser. Selecting a request keeps the current text and
 attachments. The person can add details, remove the request, or send it normally.
-No selection creates a schedule, connects a device or contacts another person.
+No selection creates a schedule, connects a computer or contacts another person.
 
 Requests are ordinary editable text in the composer, not hidden instructions or
 structured message actions. The whole request, including object IDs, profile URLs
@@ -364,13 +365,13 @@ the contextual panel, with one level of tabs: **ongoing**, **routines** and **hi
 The `+` menu contains attachments and requests, without a second plans entry.
 Responsibilities retain hierarchy and show blockers before ordinary follow-ups.
 Rows use a short state label; the full blocker is readable prose in the inspector.
-Standing policies are configured in **Settings → standing**. Details allow inspection, cancellation and asking Ship about the exact
+Standing policies are configured in **Settings → Standing responsibilities**. Details allow inspection, cancellation and asking Ship about the exact
 record. Routines show their cadence and state, with pause/enable and edit controls;
 creating one stages a request to Ship. These panels use the existing authorized
 syscalls and signal-driven caches. Closing them preserves drafts and pauses hidden
 reads. The shared file browser can move above the home directory using **../**,
 stopping at the selected target’s root. Chat selects a file immediately into the
-draft; Fleet retains its file inspector. Fleet retains places and processes.
+draft; Work retains its file inspector. Work retains connections, Ship and its helpers.
 
 The shell locks document scrolling and sizes the visible content from
 `VisualViewport`, keeping the header and composer outside the scrolling content.

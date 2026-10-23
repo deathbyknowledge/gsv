@@ -99,21 +99,38 @@ This block never closes.`,
     });
   });
 
-  it("leaves explicit additional sends to the ordinary shell command", () => {
-    expect(
-      parseRunControlCommand("message send --to telegram --message 'also there' --also"),
-    ).toBeNull();
+  it.each([
+    "message send --to telegram --message 'also there' --also",
+    "message send --to telegram --message 'also there'",
+    "message send --message 'also there' --to telegram",
+    "message send --message 'also there' --to telegram --also",
+    "message send --to contact:friend --message hello",
+    "message send --to message-destination:opaque --message hello && yield",
+    "message send --to \"$DESTINATION\" --message hello",
+    "message send --to",
+  ])("leaves an explicit destination to the ordinary shell: %s", (input) => {
+    expect(parseRunControlCommand(input)).toBeNull();
   });
 
   it("rejects unsupported current-conversation options", () => {
-    expect(parseRunControlCommand("message send --to telegram --message hi")).toEqual({
+    expect(parseRunControlCommand("message send --attach /tmp/file")).toEqual({
       ok: false,
       action: "message",
-      error: "message send does not accept --to for the current conversation; "
+      error: "message send does not accept --attach for the current conversation; "
         + "stage files first with `message attach PATH...`, then issue `message send ...` "
         + "as its own direct Shell tool call without --to or --also",
     });
   });
+
+  it.each(["--to", "--also", "Use --to telegram for a reminder."])(
+    "keeps option-like message text in the current conversation: %s",
+    (text) => {
+      expect(parseRunControlCommand(`message send --message '${text}'`)).toEqual({
+        ok: true,
+        command: { action: "message", text, finish: false },
+      });
+    },
+  );
 
   it("treats the message option tail as opaque text", () => {
     expect(parseRunControlCommand("message send --message safe; echo unsafe")).toEqual({

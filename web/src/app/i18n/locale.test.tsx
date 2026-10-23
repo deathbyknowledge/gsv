@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestRoot } from "../testing/testHarness";
 import { en } from "./en";
 import { es } from "./es";
+import { ptBR } from "./pt-BR";
 import { applyLanguagePreference, formatMessage, resolveLocale, rich, t, useT } from "./locale";
 
 beforeEach(() => {
@@ -39,6 +40,8 @@ describe("interface language", () => {
     expect(resolveLocale(undefined, ["fr-FR", "de"]).tag).toBe("en");
     expect(resolveLocale("es-MX", ["en-US"]).tag).toBe("es");
     expect(resolveLocale(undefined, ["fr-FR", "es-419", "en"]).tag).toBe("es");
+    expect(resolveLocale("pt", ["en-US"]).tag).toBe("pt-BR");
+    expect(resolveLocale(undefined, ["pt-PT", "en"]).tag).toBe("pt-BR");
   });
 
   it("fills slots and chooses plural forms", () => {
@@ -53,12 +56,12 @@ describe("interface language", () => {
       .toBe("1000000 herramientas");
   });
 
-  it("keeps every English slot in Spanish and uses Spanish plural forms", () => {
-    const spanish = new Map(Object.entries(es));
-    const pluralForms = new Intl.PluralRules("es").resolvedOptions().pluralCategories;
+  it.each([["es", es], ["pt-BR", ptBR]] as const)("keeps every English slot in %s and uses its plural forms", (tag, catalog) => {
+    const translation = new Map(Object.entries(catalog));
+    const pluralForms = new Intl.PluralRules(tag).resolvedOptions().pluralCategories;
     for (const [key, english] of Object.entries(en)) {
-      const message = spanish.get(key);
-      if (message === undefined) throw new Error(`Spanish has no message for ${key}`);
+      const message = translation.get(key);
+      if (message === undefined) throw new Error(`${tag} has no message for ${key}`);
       expect(slotSets(message), key).toEqual(slotSets(english));
       for (const [form] of formsOf(message)) expect(pluralForms, `${key} ${form}`).toContain(form);
     }

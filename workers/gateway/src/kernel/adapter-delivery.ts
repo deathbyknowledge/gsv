@@ -5,6 +5,7 @@ import type {
   SignalFrame,
 } from "../protocol/frames";
 import type {
+  AdapterActivity,
   AdapterMedia,
   AdapterMediaPart,
   BinaryBody,
@@ -46,7 +47,7 @@ import {
   deliverAdapterDestination,
 } from "./adapter-send";
 import {
-  setAdapterActivityForKernel,
+  setAdapterRouteActivity,
 } from "./adapter-service";
 import type {
   AdapterDeliveryPresentation,
@@ -58,6 +59,7 @@ import {
 import {
   procMediaInputSchema,
   adapterTypingActivity,
+  adapterWorkingActivity,
 } from "./do-shared";
 import type {
   AdapterDeliveryRoute,
@@ -409,52 +411,23 @@ async deliverAdapterRouteEvent(
     route: AdapterDeliveryRoute,
     frame: SignalFrame,
   ): Promise<AdapterRouteDeliveryOutcome> {
-    const { adapter, accountId, surface } = route.destination;
     if (frame.signal === "proc.run.started") {
-      await setAdapterActivityForKernel(
-        this.host.bindings,
-        this.host.installationId,
-        adapter,
-        accountId,
-        surface,
-        adapterTypingActivity(route, true),
-      );
+      await this.setRouteActivity(route, adapterWorkingActivity(route, true));
       return { state: "delivered" };
     }
 
     if (frame.signal === "proc.run.hil.requested") {
       const parsedRequest = procHilRequestSchema.safeParse(frame.payload);
       if (!parsedRequest.success) {
-        await setAdapterActivityForKernel(
-          this.host.bindings,
-          this.host.installationId,
-          adapter,
-          accountId,
-          surface,
-          adapterTypingActivity(route, false),
-        ).catch(() => undefined);
+        await this.setRouteActivity(route, adapterWorkingActivity(route, false));
         return { state: "skipped" };
       }
       const request = parsedRequest.data;
-
-      try {
-        return await this.deliverAdapterRouteReply(route, {
-          deliveryId: `${route.runId}:hil:${request.requestId}`,
-          text: "",
-          hil: request,
-        });
-      } finally {
-        await setAdapterActivityForKernel(
-          this.host.bindings,
-          this.host.installationId,
-          adapter,
-          accountId,
-          surface,
-          adapterTypingActivity(route, false),
-        ).catch((error) => {
-          console.warn(`[Kernel] Failed to stop adapter typing for ${route.runId}:`, error);
-        });
-      }
+      return await this.deliverWithTyping(route, () => this.deliverAdapterRouteReply(route, {
+        deliveryId: `${route.runId}:hil:${request.requestId}`,
+        text: "",
+        hil: request,
+      }));
     }
 
     if (frame.signal === "message.committed") {
@@ -464,31 +437,24 @@ async deliverAdapterRouteEvent(
       if (message.processId !== route.processId || message.runId !== route.runId) {
         return { state: "skipped" };
       }
-      try {
-        const attachmentBundle = await this.bundleConversationReplyMedia(
-          message.conversationId,
-          message.media,
-          message.author.uid,
-        );
-        if (!message.text.trim() && attachmentBundle.media.length === 0) {
-          return { state: "delivered" };
-        }
-        const reply = {
-          deliveryId: message.id,
-          text: message.text,
-          media: attachmentBundle.media.length > 0 ? attachmentBundle.media : undefined,
-        };
-        return await this.deliverAdapterRouteReply(route, reply, attachmentBundle.body);
-      } finally {
-        await setAdapterActivityForKernel(
-          this.host.bindings,
-          this.host.installationId,
-          adapter,
-          accountId,
-          surface,
-          adapterTypingActivity(route, false),
-        ).catch(() => undefined);
+      const attachmentBundle = await this.bundleConversationReplyMedia(
+        message.conversationId,
+        message.media,
+        message.author.uid,
+      );
+      if (!message.text.trim() && attachmentBundle.media.length === 0) {
+        await this.setRouteActivity(route, adapterWorkingActivity(route, false));
+        return { state: "delivered" };
       }
+      const reply = {
+        deliveryId: message.id,
+        text: message.text,
+        media: attachmentBundle.media.length > 0 ? attachmentBundle.media : undefined,
+      };
+      return await this.deliverWithTyping(
+        route,
+        () => this.deliverAdapterRouteReply(route, reply, attachmentBundle.body),
+      );
     }
 
     if (frame.signal === "proc.run.finished") {
@@ -507,6 +473,23 @@ async deliverAdapterRouteEvent(
     }
 
     return { state: "skipped" };
+  }
+
+private async setRouteActivity(route: AdapterDeliveryRoute, activity: AdapterActivity | null): Promise<void> {
+    await setAdapterRouteActivity(this.host.bindings, this.host.installationId, route, activity).catch(() => undefined);
+  }
+
+  /** Typing precedes a delivery; once the reply or approval request is out, Ship's acknowledgement ends. */
+  private async deliverWithTyping(
+    route: AdapterDeliveryRoute,
+    deliver: () => Promise<AdapterRouteDeliveryOutcome>,
+  ): Promise<AdapterRouteDeliveryOutcome> {
+    await this.setRouteActivity(route, adapterTypingActivity(route));
+    try {
+      return await deliver();
+    } finally {
+      await this.setRouteActivity(route, adapterWorkingActivity(route, false));
+    }
   }
 
 async deliverAdapterRouteReply(

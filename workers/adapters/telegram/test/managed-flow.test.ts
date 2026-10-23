@@ -311,7 +311,7 @@ describe("managed Telegram clean-instance flow", () => {
       : approvalResult.message_id;
     const approveAlwaysData = approvalMessage?.body.reply_markup
       ?.inline_keyboard?.[0]?.[1]?.callback_data;
-    expect(approvalMessage?.body.text).toContain("Run a command in your cloud home.\n\"date\"");
+    expect(approvalMessage?.body.text).toContain("Run a command in Ship's home.\n\"date\"");
     expect(approvalMessageId).toBeTruthy();
     expect(approveAlwaysData).toMatch(/^gsvh:[A-Za-z0-9_-]{16}:a$/);
 
@@ -343,7 +343,7 @@ describe("managed Telegram clean-instance flow", () => {
         body: expect.objectContaining({
           chat_id: "12345",
           message_id: approvalMessageId,
-          text: expect.stringContaining("Approved for this conversation."),
+          text: expect.stringContaining("Allowed for this conversation."),
         }),
       }));
     });
@@ -351,7 +351,7 @@ describe("managed Telegram clean-instance flow", () => {
       message.method === "editMessageText"
       && message.body.message_id === approvalMessageId
     ));
-    expect(resolvedApproval?.body.text).toContain("Run a command in your cloud home.\n\"date\"");
+    expect(resolvedApproval?.body.text).toContain("Run a command in Ship's home.\n\"date\"");
     expect(resolvedApproval?.body.text).not.toContain("I need your confirmation");
     expect(resolvedApproval?.body.text).not.toContain("hil[");
 

@@ -93,6 +93,14 @@ export class ManagedWhatsAppDeliveryError extends Error {
   get templateRejected(): boolean {
     return isWhatsAppTemplateErrorCode(this.graphCode);
   }
+
+  get rateLimited(): boolean {
+    return this.graphStatus !== undefined && isWhatsAppRateLimit(this.graphStatus, this.graphCode);
+  }
+}
+
+function isWhatsAppRateLimit(status: number, code: number | undefined): boolean {
+  return status === 429 || (code !== undefined && RATE_LIMIT_CODES.has(code));
 }
 
 export function isWhatsAppTemplateErrorCode(code: number | undefined): boolean {
@@ -113,6 +121,22 @@ export async function sendWhatsAppMessage(
     { idempotent: false, schema: sentMessageSchema },
   );
   return { messageId: result.messages[0]!.id };
+}
+
+/** Sets this number's reaction on one message; an empty emoji removes it. */
+export async function reactToWhatsAppMessage(
+  accessToken: string,
+  phoneNumberId: string,
+  to: string,
+  messageId: string,
+  emoji: string,
+  fetcher: ManagedWhatsAppFetch = fetch,
+): Promise<void> {
+  await sendWhatsAppMessage(accessToken, phoneNumberId, {
+    to,
+    type: "reaction",
+    reaction: { message_id: messageId, emoji },
+  }, fetcher);
 }
 
 /** Marks one inbound message read; the typing indicator rides on the same call. */
@@ -312,7 +336,7 @@ export function classifyWhatsAppFailure(
   idempotent: boolean,
 ): DeliveryFailureKind {
   if (code === WHATSAPP_WINDOW_CLOSED_CODE) return "permanent";
-  if (status === 429 || (code !== undefined && RATE_LIMIT_CODES.has(code))) return "retryable";
+  if (isWhatsAppRateLimit(status, code)) return "retryable";
   const kind = classifyNonIdempotentProviderStatus(status);
   return kind === "ambiguous" && idempotent ? "retryable" : kind;
 }
