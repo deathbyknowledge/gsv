@@ -36,6 +36,11 @@ export function profileNamed(state: ProfileState, shown: ProfileFields): Profile
   };
 }
 
+/** Whether the saved profile has changes its live page doesn't show yet; a private profile has no live page. */
+export function profileUnpublished(state: ProfileState): boolean {
+  return !!state.published && state.published.revision !== state.revision;
+}
+
 /** Who can reach the owner through the live page now; unpublished changes do not count until published. */
 export function profileVisibility(state: ProfileState): "private" | "requests" | "invitation" {
   if (!state.published) return "private";

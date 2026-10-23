@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProfileFields, ProfileState } from "@humansandmachines/gsv/protocol";
-import { profileSubmission, profileVisibility } from "./profileModel";
+import { profileSubmission, profileUnpublished, profileVisibility } from "./profileModel";
 
 const fields: ProfileFields = { displayName: "ada", about: "Hello", contactPolicy: "requests" };
 const url = "https://ada.ship.example/profile";
@@ -63,5 +63,13 @@ describe("profile visibility", () => {
     expect(profileVisibility(state({ revision: 3, draft: { ...fields, contactPolicy: "invitation" }, published: live("requests") }))).toBe("requests");
     expect(profileVisibility(state({ revision: 3, draft: fields, published: live("invitation") }))).toBe("invitation");
     expect(profileVisibility(state({ published: live("closed") }))).toBe("invitation");
+  });
+});
+
+describe("unpublished changes", () => {
+  it("names saved changes the live page doesn't show yet, which a private profile can't have", () => {
+    expect(profileUnpublished(state({ revision: 3, published: { ...live(), revision: 2 } }))).toBe(true);
+    expect(profileUnpublished(state({ published: live() }))).toBe(false);
+    expect(profileUnpublished(state({ revision: 3 }))).toBe(false);
   });
 });

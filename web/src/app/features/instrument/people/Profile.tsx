@@ -15,7 +15,7 @@ import { Select } from "../../../components/ui/Select";
 import { Tag } from "../../../components/ui/Tag";
 import { TextArea } from "../../../components/ui/TextArea";
 import { Hint } from "../../../components/ui/Tooltip";
-import { profileNamed, profileSubmission, profileVisibility, type ProfilePictureEdit, type ProfileSubmission } from "./profileModel";
+import { profileNamed, profileSubmission, profileUnpublished, profileVisibility, type ProfilePictureEdit, type ProfileSubmission } from "./profileModel";
 import { profilePicture, readProfilePicture, saveProfilePicture } from "./profilePicture";
 import { ProfilePicturePicker, useObjectUrl } from "./ProfilePicturePicker";
 import { ProfileNotice } from "./ProfileNotice";
@@ -147,7 +147,7 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
         {!editing && <span class="people-profile-complete"><Button variant="link" label={t("people.profile.completeBio")} disabled={!connected || !canConfigure(account, "profile.update")} onClick={() => onEdit("bio")} /></span>}</p>}
     <p class="people-profile-policy">{policyLabel(shown.contactPolicy)}</p>
   </div>;
-  const unpublishedChanges = false;
+  const unpublishedChanges = !!state && profileUnpublished(state);
 
   return <section class="people-profile" aria-labelledby="people-profile-title">
     <header class="people-conversation-header">
