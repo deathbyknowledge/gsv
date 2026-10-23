@@ -133,6 +133,8 @@ with 👀 and removes the reaction when it replies, asks for approval or stops.
 The typing indicator appears only just before a reply arrives. Work Ship starts
 for another reason, such as a contact's message, a schedule or a message from
 the web app, adds no 👀 to your chat.
+Reacting to one of Ship's messages, or removing a reaction, sends Ship nothing
+and gets no reply.
 
 Markdown document uploads keep their `.md` filename and original contents;
 the WhatsApp messenger uploads them as plain text because Meta does not accept

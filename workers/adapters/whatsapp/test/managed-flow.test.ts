@@ -165,7 +165,7 @@ type MessageContent =
   | { type: "text"; text: { body: string } }
   | { type: "audio"; audio: { id: string; mime_type: string; voice: boolean } }
   | { type: "image"; image: { id: string; mime_type: string } }
-  | { type: "reaction"; reaction: { message_id: string; emoji: string } }
+  | { type: "contacts"; contacts: { name: { formatted_name: string } }[] }
   | { type: "interactive"; context: { from: string; id: string }; interactive: { type: "button_reply"; button_reply: { id: string; title: string } } }
   | { type: "button"; context: { from: string; id: string }; button: { payload: string; text: string } };
 
@@ -819,8 +819,8 @@ describe("managed WhatsApp clean-instance flow", () => {
     // admitted it. Throttle it so it is still pending when the person relinks.
     await throttle("could not receive that message type");
     expect((await SELF.fetch(await notification("wamid.in.13", {
-      type: "reaction",
-      reaction: { message_id: "wamid.in.12", emoji: "👍" },
+      type: "contacts",
+      contacts: [{ name: { formatted_name: "Someone" } }],
     }))).status).toBe(200);
     await vi.waitFor(async () => {
       expect((await rejectedSends()).some((record) => record.status === 429 && record.body.context?.message_id === "wamid.in.13")).toBe(true);
@@ -867,8 +867,8 @@ describe("managed WhatsApp clean-instance flow", () => {
 
     // An unsupported message on the new route is answered as usual.
     expect((await SELF.fetch(await notification("wamid.in.15", {
-      type: "reaction",
-      reaction: { message_id: "wamid.in.14", emoji: "👍" },
+      type: "contacts",
+      contacts: [{ name: { formatted_name: "Someone" } }],
     }))).status).toBe(200);
     await vi.waitFor(async () => {
       expect(await sentMessages()).toContainEqual(expect.objectContaining({
