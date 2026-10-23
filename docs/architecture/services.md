@@ -83,7 +83,10 @@ adapter over this loop. Changing a funded provider does not change the
 `gsv/default` identity or the Gateway/client contract.
 Routes distinguish the operator's provider identity from the provider's model ID.
 Two providers can therefore serve the same model in an ordered fallback chain,
-with separate credentials, prices and attempt telemetry. Older deployments may
+with separate credentials, prices and attempt telemetry. Before output starts,
+the next route takes over after a transient failure, or after a billing or
+authentication refusal of the operator's provider account; a rejected request
+does not move on. Older deployments may
 omit the provider field until their operator migrates the routing configuration.
 Telemetry producers classify that identity with `inferenceProviderFromName`:
 unknown transports use `other`, preserving the event without exporting arbitrary
