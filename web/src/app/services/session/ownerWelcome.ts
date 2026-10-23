@@ -19,7 +19,8 @@ type OwnerFetch = (url: string, init: {
 export const PRODUCT_EMAIL_WORDING_VERSION = "ship-product-updates-2026-10-23";
 export type ProductEmailChoice = { optedIn: boolean; locale: "en" | "es" | "pt-BR"; wordingVersion: string };
 const emailPreferenceSchema = z.object({ revision: z.number(), optedIn: z.boolean(), status: z.string(), suppressed: z.boolean() });
-type OwnerRequest = { productEmails?: ProductEmailChoice; challengeId: string; email: string; browserSecret: string; resend: boolean }
+type OwnerCodeRequest = { productEmails?: ProductEmailChoice; challengeId: string; email: string; browserSecret: string; resend: boolean };
+type OwnerRequest = OwnerCodeRequest
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
   | { operationId: string; handle: string } | (ProductEmailChoice & { revision: number }) | Record<string, never>;
 type OwnerHeaders = { "content-type": string; authorization?: string };
@@ -66,9 +67,11 @@ export class OwnerWelcome {
       await this.save({ challenge: { id: crypto.randomUUID(), email, browserSecret: randomSecret() }, sessionSecret: randomSecret() });
     }
     const pending = this.state.challenge!;
-    const result = await this.request("/code", deliverySchema, {
-      challengeId: pending.id, email: pending.email, browserSecret: pending.browserSecret, resend, ...(productEmails ? { productEmails } : {}),
-    }, false);
+    const body: OwnerCodeRequest = {
+      challengeId: pending.id, email: pending.email, browserSecret: pending.browserSecret, resend,
+    };
+    if (productEmails) body.productEmails = productEmails;
+    const result = await this.request("/code", deliverySchema, body, false);
     if (result.deliveryStatus !== "sent") throw new OwnerApiError(t("session.owner.emailSending"));
     return result.productEmailSaved;
   }

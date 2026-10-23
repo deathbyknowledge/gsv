@@ -16,7 +16,7 @@ export type Consent = {
 };
 export type ProductEmailPreference = { revision: number; optedIn: boolean; status: string; suppressed: boolean };
 const DAY = 86_400_000;
-export function productEmailLocale(value: unknown): ProductEmailLocale {
+export function productEmailLocale(value: string): ProductEmailLocale {
   return value === "es" || value === "pt-BR" ? value : "en";
 }
 export function normalizeProductEmail(value: string): string {

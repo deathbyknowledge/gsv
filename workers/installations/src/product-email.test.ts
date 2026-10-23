@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AccountStore } from "./store";
 import { InstallationOwnerAuthStore } from "./owner-auth-store";
 import { ProductEmailConsent, PRODUCT_EMAIL_WORDING_VERSION as VERSION } from "./product-email";
-import { Buttondown, BUTTONDOWN_API_VERSION, verifyButtondownSignature, type Subscriber } from "./product-email-provider";
+import { Buttondown, BUTTONDOWN_API_VERSION, verifyButtondownSignature, type Subscriber, type SubscriberWrite } from "./product-email-provider";
 import { handleProductEmailPublic } from "./product-email-http";
 import { ServiceNotices, handleServiceNotices } from "./service-notices";
 
@@ -21,7 +21,7 @@ async function fixture() {
 }
 function provider() {
   let subscriber: Subscriber | null = null;
-  const writes: { method: string; body: Record<string, unknown>; key: string }[] = [];
+  const writes: { method: string; body: SubscriberWrite; key: string }[] = [];
   let down = false;
   let beforeCreate: (() => Promise<void>) | undefined;
   const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {

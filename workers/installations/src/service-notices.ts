@@ -74,7 +74,7 @@ export class ServiceNotices {
 export async function handleServiceNotices(request: Request, db: D1Database, access: InstallationAdminAccess, origin: string, enabled: boolean): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/admin/service-notices/")) return null;
-  const reply = (value: object, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
+  const reply = (value: { error: string } | { queued: true } | Awaited<ReturnType<ServiceNotices["preview"]>>, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
   if (url.origin !== origin || !await access.allows(request) || !hasExpectedOrigin(request, origin)) return reply({ error: "forbidden" }, 403);
   if (request.method !== "POST") return reply({ error: "method_not_allowed" }, 405);
   try {

@@ -171,10 +171,15 @@ describe("owner welcome", () => {
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "success", message: "Available" }));
       await act(() => { fieldOf(tree, "Email")!.props.onChange?.("Owner@Example.com"); });
       expect(checkboxOf(tree).props).toMatchObject({ required: true, checked: false });
+      // SAFETY: the signup tree renders the optional marketing input after the Terms input.
       const optional = collectNodes(tree).filter((node) => node.type === "input")[1] as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
       expect(optional.props.checked).toBe(false);
       expect(optional.props.required).toBeUndefined();
-      if (resumed) await act(() => optional.props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>));
+      if (resumed) await act(() => {
+        // SAFETY: the input handler reads only currentTarget.checked from this event fixture.
+        const event = { currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>;
+        optional.props.onChange?.(event);
+      });
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       expect(fetcher.mock.calls.some(([url]) => url.endsWith("/code"))).toBe(false);
       expect(checkboxOf(tree).props["aria-invalid"]).toBe(true);

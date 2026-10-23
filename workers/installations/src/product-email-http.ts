@@ -29,7 +29,7 @@ export async function runProductEmailJobs(db: D1Database, env: ProductEmailEnvir
 export async function handleProductEmailPublic(request: Request, db: D1Database, env: ProductEmailEnvironment, origin: string): Promise<Response | null> {
   const url = new URL(request.url);
   if (!["/product-email/subscribe", "/product-email/buttondown"].includes(url.pathname)) return null;
-  const reply = (data: object, status = 200) => Response.json(data, { status, headers: { "cache-control": "no-store" } });
+  const reply = (data: { error: string } | { ok: true; message?: string }, status = 200) => Response.json(data, { status, headers: { "cache-control": "no-store" } });
   if (url.origin !== origin) return reply({ error: "not_found" }, 404);
   if (request.method !== "POST") return reply({ error: "method_not_allowed" }, 405);
   if (env.GSV_PRODUCT_EMAIL_ENABLED !== "true") return reply({ error: "unavailable" }, 503);
