@@ -68,6 +68,9 @@ Create a Ship, reserve its handle, and give the person the resulting one-time
 activation link. They use that link to create their personal account and root
 password. Further Ships use this same administration flow.
 
+Administration timestamps use your device's timezone, including audit entries and
+run times. With JavaScript disabled, they use the labelled UTC fallback.
+
 To let people sign up themselves, enable `GSV_SIGNUP_ENABLED` and configure
 owner email delivery. They choose a handle and verify their email at
 `<admin-origin>/owner/signup/`, the configured public signup alias, or in

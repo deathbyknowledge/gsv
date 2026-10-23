@@ -6,7 +6,7 @@ import { InstallationAdminApi, readInstallationListQuery } from "./api";
 import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type ShipView } from "./installations-page";
 import { adminAuditPage } from "./audit-page";
 import type { AdminAuditRecorder, OperatorAuditResult, ShipInsight } from "./insight";
-import { adminErrorPage, adminStylesheet } from "./page";
+import { adminErrorPage, adminStylesheet, adminTimeScript } from "./page";
 import type { IssuedAdminInstallation } from "./service";
 import { InstallationDeletionHttp } from "../deletion-http";
 import type { AccountsDeletionRuntime } from "../deletion-runtime";
@@ -55,6 +55,7 @@ export class InstallationAdminHttp<
     let createFormInput: AdminCreateFormInput | undefined;
     try {
       if (url.pathname === "/admin/styles.css" && (request.method === "GET" || head)) return adminStylesheet(head);
+      if (url.pathname === "/admin/time.js" && (request.method === "GET" || head)) return adminTimeScript(head);
       if (["/admin", "/admin/", "/admin/installations", "/admin/installations/"].includes(url.pathname)
         && (request.method === "GET" || head)) {
         return adminInstallationsPage(await this.service.listInstallations(readInstallationListQuery(url)), undefined, head, 200, this.presentation);
