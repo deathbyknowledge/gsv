@@ -178,6 +178,8 @@ const responsibilities: ResponsibilityRecord[] = [
   { ...responsibilityBase, id: "mock-pricing", title: "Follow up on pricing with Mara", state: "waiting", blocker: "Waiting for Mara’s reply", details: { outcome: "Confirm the revised quote before Thursday." } },
   { ...responsibilityBase, id: "mock-backup", title: "Check that the studio backup finishes", state: "open", nextCheckAtMs: Date.now() + 2 * 3_600_000 },
   { ...responsibilityBase, id: "mock-intro", title: "Introduce Lena to Mara", state: "resolved", resolvedAtMs: at(0, 8, 6), resolution: { result: "Lena accepted the introduction." } },
+  /* a Kernel-made title with an unbreakable id, the shape that overflowed the inspector on phones */
+  { ...responsibilityBase, id: "mock-contact-message", title: "New contact message afc54bf9a9f7d2cd8b046e57f20096b1 for the owner", state: "resolved", resolvedAtMs: at(0, 7, 40), source: { kind: "event" as const, eventType: "federation.message.received", eventId: "contact:613d63df-f6a6-433a-9d18-c0dc189f628a" }, details: { outcome: "Notified twice about Esteve's Meta account requests; awaiting a decision on whether to reply." }, resolution: { result: "Replied on the owner's behalf." } },
 ];
 const scheduleBase = {
   ownerUid: OWNER.uid, creator: { kind: "user" as const, uid: OWNER.uid, username: OWNER.username },
