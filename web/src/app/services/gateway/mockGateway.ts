@@ -39,6 +39,7 @@ import {
   type AccountSummary,
   type AiTextContent,
   type ApproachSummary,
+  type ContactSendResult,
   type ContactSummary,
   type ConversationInboxEntry,
   type AiThinkingContent,
@@ -191,8 +192,9 @@ const maraThread: ConversationMessage[] = [{ id: "mara-1", conversationId: MARA_
   social: { threadId: "mara-thread", reference: { actor: MARA_ACTOR, messageId: "mara-1" }, provenance: { kind: "human" } },
   origin: { kind: "federation", contactId: MARA_CONTACT_ID, deliveryId: "mara-delivery-1" }, createdAt: at(0, 8, 12) }];
 const maraView = { readThroughSequence: 0, archived: false, revision: 1 };
-/* a retry with the same idempotency key replays the first answer, as the Kernel replays its outbox record */
-const maraSends = new Map<string, string>();
+/* a retry with the same idempotency key replays the first answer, as the Kernel replays its outbox record; the
+   in-flight promise is stored before the hash resolves so two overlapping retries cannot both append */
+const maraSends = new Map<string, Promise<ContactSendResult>>();
 function maraConversation(): ConversationSummary {
   return { id: MARA_CONVERSATION, kind: "contact", ownerUid: OWNER.uid, title: "Mara", latestSequence: maraThread.length, createdAt: at(3, 9, 0), updatedAt: maraThread.at(-1)!.createdAt };
 }
@@ -905,19 +907,20 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "contact.send": {
       const { contactId, text, idempotencyKey = crypto.randomUUID() } = z.object({ contactId: z.string(), text: z.string(), idempotencyKey: z.string().optional() }).parse(args);
       if (contactId !== MARA_CONTACT_ID) throw new Error(`Unexpected contact ${contactId}`);
-      const replay = maraSends.get(idempotencyKey);
-      if (replay) return respond(id, JSON.parse(replay));
+      let send = maraSends.get(idempotencyKey);
       /* the same id the client predicts for its pending bubble, so history replaces it instead of doubling it */
-      return contactSendMessageId(contactId, maraContact.generation, idempotencyKey).then((messageId) => {
-        const sequence = maraThread.length + 1;
-        maraThread.push({ id: messageId, conversationId: MARA_CONVERSATION, sequence, author: { kind: "user", uid: OWNER.uid }, text,
-          social: { threadId: "mara-thread", reference: { actor: { shipId: "mock-ship", subjectId: "owner" }, messageId }, provenance: { kind: "human" } },
-          origin: { kind: "client", clientId: "web" }, createdAt: Date.now() });
-        broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, latestSequence: sequence });
-        const result = { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" as const };
-        maraSends.set(idempotencyKey, JSON.stringify(result));
-        return respond(id, result);
-      });
+      if (!send) {
+        send = contactSendMessageId(contactId, maraContact.generation, idempotencyKey).then((messageId): ContactSendResult => {
+          const sequence = maraThread.length + 1;
+          maraThread.push({ id: messageId, conversationId: MARA_CONVERSATION, sequence, author: { kind: "user", uid: OWNER.uid }, text,
+            social: { threadId: "mara-thread", reference: { actor: { shipId: "mock-ship", subjectId: "owner" }, messageId }, provenance: { kind: "human" } },
+            origin: { kind: "client", clientId: "web" }, createdAt: Date.now() });
+          broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, latestSequence: sequence });
+          return { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" };
+        });
+        maraSends.set(idempotencyKey, send);
+      }
+      return send.then((result) => respond(id, result));
     }
     /* a message request sent from People: kept in this tab so the requests view can list it */
     case "approach.create": {
