@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TOOL_APPROVAL_POLICY } from "../process/approval";
+import type { KernelContext } from "./context";
 import { allowInOwnerApprovalPolicy, readOwnerApprovalPolicy } from "./approval-policy";
 
 function memoryConfig(entries: Record<string, string> = {}) {
   const values = new Map(Object.entries(entries));
   return {
     values,
+    // SAFETY: the owner approval policy only reads and writes ConfigStore keys.
     config: {
       get: (key: string) => values.get(key) ?? null,
       set: (key: string, value: string) => { values.set(key, value); },
-    } as unknown as Parameters<typeof readOwnerApprovalPolicy>[0],
+    } as KernelContext["config"],
   };
 }
 

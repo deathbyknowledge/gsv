@@ -679,7 +679,7 @@ describe("proc.hil", () => {
     });
     // The allow belongs to the owner, so their other processes, Crew included, stop asking too.
     const kernel = await getKernelPtr("inst_test");
-    const ownerPolicy = await runInDurableObject(kernel as unknown as DurableObjectStub<Kernel>, (instance: Kernel) =>
+    const ownerPolicy = await runInDurableObject(kernel, (instance: Kernel) =>
       instance.readProcessApprovalPolicy(pid));
     expect(JSON.parse(ownerPolicy!).rules[0]).toEqual({ match: "fs.read", target: "gsv", action: "auto" });
   });
@@ -687,7 +687,7 @@ describe("proc.hil", () => {
   it("lets an Always allow on one process cover the owner's other processes", async () => {
     const asksForReads = { default: "auto" as const, rules: [{ match: "fs.read", action: "ask" as const }] };
     const kernel = await getKernelPtr("inst_test");
-    await runInDurableObject(kernel as unknown as DurableObjectStub<Kernel>, (instance: Kernel) => {
+    await runInDurableObject(kernel, (instance: Kernel) => {
       instance.config.set("users/0/ai/tools/approval", JSON.stringify(asksForReads));
     });
     const readOnce = async (pid: string) => {

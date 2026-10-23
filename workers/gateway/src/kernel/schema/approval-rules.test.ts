@@ -11,7 +11,7 @@ describe("approval rules replacing code defaults", () => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();
       runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 72));
-      const saved: Record<string, string> = {
+      const saved = {
         "users/1000/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "shell.exec", target: "laptop", action: "ask" }] }),
         "users/1001/ai/tools/approval": JSON.stringify({ default: "ask", rules: [] }),
         "users/1002/ai/tools/approval": JSON.stringify({ default: "auto", rules: [
