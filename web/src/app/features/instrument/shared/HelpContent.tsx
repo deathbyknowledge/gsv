@@ -38,7 +38,9 @@ export function HelpContent({ connected, onSearch, onNavigate }: HelpContentProp
   const row = (kind: Parameters<typeof HelpIcon>[0]["kind"], title: TextKey, description: TextKey) => <>
     <HelpIcon kind={kind} /><span class="instrument-help-row-copy"><strong>{t(title)}</strong><small>{t(description)}</small></span><span class="instrument-help-chevron" aria-hidden="true">›</span>
   </>;
-  return <>
+  return <div class="instrument-help-content" onKeyDown={(event) => {
+    if (event.key === " " || event.key === "Enter") event.stopPropagation();
+  }}>
     <button type="button" class="instrument-help-search" disabled={!connected} aria-keyshortcuts="Control+K" onClick={onSearch}>
       <span>{t("shell.help.search")}</span><kbd>{shortcutLabel("Ctrl+K", platform)}</kbd>
     </button>
@@ -131,5 +133,5 @@ export function HelpContent({ connected, onSearch, onNavigate }: HelpContentProp
       <a href="mailto:hello@humansandmachin.es">{t("shell.help.support")}</a>
       <a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">{t("shell.help.discord")}</a>
     </footer>
-  </>;
+  </div>;
 }

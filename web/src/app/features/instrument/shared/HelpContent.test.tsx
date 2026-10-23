@@ -21,6 +21,15 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and the complete, 
   try {
     await root.render(<Harness />);
     const nodes = collectNodes(tree);
+    // SAFETY: Help's keyboard boundary only reads key and stops propagation; native activation remains enabled.
+    const content = nodes.find((node) => node.props.class === "instrument-help-content") as VNode<JSX.HTMLAttributes<HTMLDivElement>>;
+    for (const key of [" ", "Enter", "Tab", "Escape", "s"]) {
+      const stopPropagation = vi.fn();
+      const preventDefault = vi.fn();
+      await act(() => content.props.onKeyDown?.({ key, stopPropagation, preventDefault } as unknown as JSX.TargetedKeyboardEvent<HTMLDivElement>));
+      expect(stopPropagation).toHaveBeenCalledTimes(key === " " || key === "Enter" ? 1 : 0);
+      expect(preventDefault).not.toHaveBeenCalled();
+    }
     const links = nodes.filter((node) => node.type === "a");
     const hrefs = links.map((node) => node.props.href);
     expect(hrefs).toEqual(expect.arrayContaining([
