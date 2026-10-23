@@ -6,6 +6,7 @@ import { collectNodes, collectText, createTestRoot } from "../../../testing/test
 import { MediaPreviewProvider } from "../../../services/platform/MediaPreview";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { chatProcessMediaQueryKey } from "../../../services/chat/hooks/useChatProcesses";
+import { AttachmentPreview } from "./AttachmentPreview";
 import { ZenDraftPaste, ZenMedia } from "./ZenMedia";
 
 let root: ReturnType<typeof createTestRoot> | undefined;
@@ -28,15 +29,30 @@ async function links(desktop: boolean, type: "image" | "document", mimeType: str
   </QueryClientProvider></GatewayProvider>);
   // SAFETY: All matching nodes are anchor VNodes; the generic harness omits DOM-specific attributes.
   const anchors = collectNodes(tree).filter((node) => node.type === "a") as VNode<JSX.AnchorHTMLAttributes<HTMLAnchorElement>>[];
-  return { anchors, preview };
+  return { anchors, preview, nodes: () => collectNodes(tree) };
 }
 
 describe("attachment opening", () => {
-  it("keeps browser image previews as normal links", async () => {
-    const { anchors, preview } = await links(false, "image", "image/png");
-    expect(anchors[0].props.target).toBe("_blank");
-    expect(anchors[0].props.onClick).toBeUndefined();
+  it("opens browser images in the app without downloading or navigating", async () => {
+    const { anchors, preview, nodes } = await links(false, "image", "image/png");
+    // SAFETY: The anchor handler only uses Event.preventDefault.
+    const event = new Event("click", { cancelable: true }) as JSX.TargetedMouseEvent<HTMLAnchorElement>;
+    await act(() => { anchors[0].props.onClick?.(event); });
+    expect(event.defaultPrevented).toBe(true);
+    expect(nodes().some((node) => node.type === AttachmentPreview)).toBe(true);
     expect(preview).not.toHaveBeenCalled();
+    expect(anchors[1].props.download).toBe("attachment.png");
+  });
+
+  it.each(["text/plain", "text/markdown", "application/json", "application/pdf"])("opens %s from the filename and keeps download explicit", async (mimeType) => {
+    const { anchors, nodes } = await links(false, "document", mimeType);
+    const open = nodes().find((node) => node.type === "button");
+    expect(collectText(open)).toBe("attachment.png");
+    await act(() => open?.props.onClick?.());
+    expect(nodes().some((node) => node.type === AttachmentPreview)).toBe(true);
+    expect(anchors).toHaveLength(1);
+    expect(collectText(anchors[0])).toBe("download");
+    expect(anchors[0].props.download).toBe("attachment.png");
   });
 
   it("opens an image through the desktop viewer without navigating the webview", async () => {
@@ -57,7 +73,7 @@ describe("attachment opening", () => {
     expect(anchors[0].props.onClick).toBeUndefined();
   });
 
-  it.each([["image", "image/svg+xml"], ["document", "text/html"]] as const)("downloads %s %s without opening executable content", async (type, mimeType) => {
+  it.each([["image", "image/svg+xml"], ["document", "text/html"]] as const)("keeps %s %s download links non-executable", async (type, mimeType) => {
     const { anchors, preview } = await links(true, type, mimeType);
     for (const anchor of anchors) {
       expect(anchor.props.download).toBe("attachment.png");

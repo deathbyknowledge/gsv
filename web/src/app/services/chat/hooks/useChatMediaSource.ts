@@ -22,9 +22,11 @@ export function useChatMediaSource(descriptor: ChatMediaDescriptor, processId: s
     enabled: !resource && !inlineSource && key !== "" && (conversationId !== "" || processId !== ""),
   });
   const referenced = useChatResource({ ref: resource ?? null, enabled: Boolean(resource) });
-  const objectUrl = useMediaObjectUrl(referenced.data?.blob ?? stored.data?.blob);
+  const blob = referenced.data?.blob ?? stored.data?.blob;
+  const objectUrl = useMediaObjectUrl(blob);
   return {
     source: inlineSource || chatMediaSource({}, objectUrl),
+    blob: inlineSource ? undefined : blob,
     error: referenced.error ?? stored.error,
     available: Boolean(resource || inlineSource || key),
     retry: () => resource ? referenced.refetch() : stored.refetch(),
