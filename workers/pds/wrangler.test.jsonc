@@ -1,0 +1,26 @@
+{
+  "name": "gsv-pds-test",
+  "main": "test/worker.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REPOS",
+        "class_name": "TestRepoHost"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["TestRepoHost"]
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BLOBS",
+      "bucket_name": "gsv-pds-test-blobs"
+    }
+  ]
+}

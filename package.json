@@ -10,6 +10,7 @@
     "workers/installations",
     "workers/inference",
     "workers/instances",
+    "workers/pds",
     "web",
     "packages/*"
   ],

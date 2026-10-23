@@ -28,6 +28,7 @@ jobs:
       installations: ${{ steps.filter.outputs.installations }}
       inference: ${{ steps.filter.outputs.inference }}
       instances: ${{ steps.filter.outputs.instances }}
+      pds: ${{ steps.filter.outputs.pds }}
       deployment: ${{ steps.filter.outputs.deployment }}
       deletion_stack: ${{ steps.filter.outputs.deletion_stack }}
       adapters: ${{ steps.filter.outputs.adapters }}
@@ -151,6 +152,11 @@ jobs:
               - 'package-lock.json'
               - 'packages/gsv/**'
               - 'workers/installations/**'
+            pds:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'workers/pds/**'
             deployment:
               - '.github/workflows/ci.yml'
               - '.github/workflows/preview*.yml'
@@ -341,6 +347,7 @@ jobs:
       needs.changes.outputs.installations == 'true' ||
       needs.changes.outputs.inference == 'true' ||
       needs.changes.outputs.instances == 'true' ||
+      needs.changes.outputs.pds == 'true' ||
       needs.changes.outputs.deployment == 'true' ||
       needs.changes.outputs.source_review == 'true' ||
       needs.changes.outputs.deletion_stack == 'true'
@@ -412,6 +419,14 @@ jobs:
       - name: Test installation services
         if: needs.changes.outputs.installations == 'true'
         run: npm test --workspace @humansandmachines/gsv-installations
+
+      - name: Check PDS engine
+        if: needs.changes.outputs.pds == 'true'
+        run: npm run typecheck --workspace @humansandmachines/gsv-pds
+
+      - name: Test PDS engine
+        if: needs.changes.outputs.pds == 'true'
+        run: npm test --workspace @humansandmachines/gsv-pds
 
       - name: Check deployment package
         if: needs.changes.outputs.deployment == 'true'
