@@ -7,12 +7,13 @@ import { AppLink as SessionLink, useAppLocation as useSessionLocation, navigateA
 function browser() {
   let url = new URL("https://ship.example/");
   const events = new EventTarget();
+  let state: unknown = null;
   vi.stubGlobal("document", {});
-  const pushState = vi.fn((_state: null, _unused: string, destination: string) => { url = new URL(destination, url); });
-  const replaceState = vi.fn((_state: null, _unused: string, destination: string) => { url = new URL(destination, url); });
+  const pushState = vi.fn((next: unknown, _unused: string, destination: string) => { state = next; url = new URL(destination, url); });
+  const replaceState = vi.fn((next: unknown, _unused: string, destination: string) => { state = next; url = new URL(destination, url); });
   vi.stubGlobal("window", {
     get location() { return url; },
-    history: { pushState, replaceState },
+    history: { pushState, replaceState, get state() { return state; } },
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
     dispatchEvent: events.dispatchEvent.bind(events),
@@ -38,11 +39,11 @@ describe("session navigation", () => {
     function Probe() { current = useSessionLocation(); return null; }
     try {
       await root.render(<Probe />);
-      await act(() => navigateApp("/chat", { replace: true }));
-      expect(history.replaceState).toHaveBeenCalledWith(null, "", "https://ship.example/chat");
-      await act(() => navigateApp("/people"));
-      await act(() => navigateApp("/people?contact=first"));
-      await act(() => navigateApp("/people?contact=first"));
+      await act(() => { navigateApp("/chat", { replace: true }); });
+      expect(history.replaceState).toHaveBeenCalledWith({ gsvAppIndex: 0 }, "", "https://ship.example/chat");
+      await act(() => { navigateApp("/people"); });
+      await act(() => { navigateApp("/people?contact=first"); });
+      await act(() => { navigateApp("/people?contact=first"); });
       expect(history.pushState.mock.calls.map((call) => call[2])).toEqual([
         "https://ship.example/people", "https://ship.example/people?contact=first",
       ]);
@@ -65,7 +66,7 @@ describe("session navigation", () => {
       const event = click();
       await act(() => link.props.onClick(event));
       expect(event.preventDefault).toHaveBeenCalledOnce();
-      expect(history.pushState).toHaveBeenCalledWith(null, "", "https://ship.example/recover-member");
+      expect(history.pushState).toHaveBeenCalledWith({ gsvAppIndex: 1 }, "", "https://ship.example/recover-member");
       expect(current).toEqual({ pathname: "/recover-member", revision: 1 });
       await act(() => history.visit("/"));
       expect(current).toEqual({ pathname: "/", revision: 2 });

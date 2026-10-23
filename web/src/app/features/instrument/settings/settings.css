@@ -25,13 +25,15 @@
   .settings-logs .fleet-ledger .detail, .settings-logs .fleet-ledger .who { display: none; }
 }
 .settings h1 { font-size: 1.3rem; text-transform: lowercase; }
-.settings h2 { margin-top: 2.5rem; }
+.settings h2 { margin-top: 2.5rem; font-size: 1rem; font-weight: 500; }
 .settings p { line-height: 1.7; }
 .settings-intro { max-width: 65ch; color: var(--text-dim); margin-bottom: 2rem; font-family: var(--gsv-font-prose); font-size: 1rem; }
+.settings-intro a { text-decoration: underline; text-underline-offset: .2em; }
 .settings-muted, .settings small { color: var(--text-dim); }
+.settings p.settings-muted { max-width: 70ch; font-family: var(--gsv-font-prose); font-size: .9375rem; }
 .settings-error { color: var(--error); overflow-wrap: anywhere; }
 .settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
-.settings label { display: flex; flex-direction: column; align-items: stretch; gap: .65rem; margin-bottom: 1.5rem; max-width: 42rem; color: var(--text-dim); font-size: .8rem; }
+.settings label { display: flex; flex-direction: column; align-items: stretch; gap: .65rem; margin-bottom: 1.5rem; max-width: 42rem; color: var(--text); font-size: .875rem; }
 .settings input:not([type="checkbox"]):not([type="radio"]), .settings select, .settings textarea { border: 1px solid var(--border); background: var(--void); color: var(--text); padding: .7rem; font: inherit; border-radius: 0; min-width: 0; width: 100%; box-sizing: border-box; }
 .settings input:focus-visible, .settings select:focus-visible, .settings textarea:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .settings button:disabled, .settings select:disabled, .settings input:disabled { opacity: .45; cursor: not-allowed; }
@@ -39,6 +41,20 @@
 .settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; font-size: .75rem; color: var(--text-dim); }
 .settings-form { padding-bottom: 2rem; }
 .settings-check { flex-direction: row !important; align-items: center !important; }
+.settings-check input { width: 1rem; height: 1rem; margin: 0; flex: 0 0 auto; accent-color: var(--accent); }
+.settings-appearance { border-bottom: 1px solid var(--border); }
+.settings-appearance h2 { margin-top: 0; }
+.settings-preferences { min-height: 100%; }
+.settings-save-bar { position: sticky; bottom: 0; z-index: 3; margin-top: 1rem; padding: 1rem; border: 1px solid var(--border-raised); background: var(--panel); box-shadow: 0 -6px 20px color-mix(in srgb, var(--void) 65%, transparent); }
+.settings-save-bar .settings-actions { justify-content: flex-end; }
+.settings-save-bar [role="status"] { margin-right: auto; }
+.settings-save-bar .settings-error { margin-bottom: 0; font-size: .875rem; }
+.settings-standing .settings-check { margin: 0; max-width: none; gap: 1rem; align-items: flex-start !important; cursor: pointer; }
+.settings-standing .settings-check input { margin-top: .2rem; }
+.settings-standing .settings-check > span { display: grid; gap: .4rem; }
+.settings-standing .settings-check strong { color: var(--text); line-height: 1.5; }
+.settings-standing .settings-check small { max-width: 65ch; font: .9375rem/1.6 var(--gsv-font-prose); }
+.settings-standing .settings-list > li { padding-block: 1.5rem; }
 .settings-list { padding: 0; list-style: none; }
 .settings-list > li { display: flex; flex-direction: column; gap: .7rem; border-top: 1px solid var(--border); padding: 1.25rem 0; font-size: .8rem; overflow-wrap: anywhere; }
 .settings-list strong { font-weight: 500; }
@@ -86,6 +102,7 @@
 .settings-messenger { padding-bottom: 1rem; }
 .settings-messenger-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
 .settings-messenger-heading h2 { margin: 0; }
+.settings-coming-soon { display: inline-block; margin-left: .75rem; padding: .15rem .4rem; border: 1px solid var(--border); font-size: .65rem; font-weight: 400; vertical-align: middle; white-space: nowrap; }
 .settings-messenger-links { margin: 0; }
 .settings-messenger-status { display: inline-flex; align-items: center; gap: .5rem; font-size: .75rem; }
 .settings-messenger-status i { width: .4rem; height: .4rem; background: var(--text-dim); flex-shrink: 0; }

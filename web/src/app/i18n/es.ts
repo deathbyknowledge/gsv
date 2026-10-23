@@ -100,6 +100,15 @@ export const es = {
 
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (no disponible)",
+  "settings.preferences.leaveUnsaved": "Tienes preferencias sin guardar. ¿Salir sin guardar? Tus cambios se conservarán aquí.",
+  "settings.preferences.noChanges": "No hay cambios sin guardar",
+  "settings.preferences.unsaved": "Cambios sin guardar",
+  "settings.preferences.save": "Guardar cambios",
+  "settings.account.title": "Cuenta",
+  "settings.account.deleteTitle": "Eliminar tu cuenta",
+  "settings.account.deleteRequest": "Para eliminar tu cuenta, escribe a {email} y la eliminaremos manualmente por ti.",
+  "settings.account.deleteExplanation": "Ship sigue en acceso anticipado, así que aún no hemos añadido una opción para que elimines tu cuenta directamente.",
+
   "settings.preferences.title": "Preferencias",
   "settings.preferences.intro": "Valores predeterminados para {name}. Los ayudantes sin ajustes propios heredan estos valores.",
   "settings.preferences.loading": "Cargando preferencias…",
@@ -147,9 +156,12 @@ export const es = {
   "settings.reasoning.save": "guardar esfuerzo",
 
   // Settings: language, timezone and appearance
+  "settings.language.invalid": "Introduce un código de idioma válido, como es-MX.",
+  "settings.language.code": "Código de idioma",
+  "settings.language.custom": "Otro idioma…",
   "settings.language.label": "Idioma",
   "settings.language.placeholder": "Automático",
-  "settings.language.hint": "Ship empieza hablando en este idioma y la interfaz lo usa cuando hay traducción. Elige una sugerencia o introduce un código de idioma, como es-ES. Puedes pedirle a Ship que cambie de idioma cuando quieras.",
+  "settings.language.hint": "Ship empieza hablando en este idioma y la interfaz lo usa cuando hay traducción. Elige Otro idioma para introducir un código de idioma. Puedes pedirle a Ship que cambie cuando quieras.",
   "settings.language.save": "guardar idioma",
   "settings.language.useDevice": "usar el idioma de este dispositivo",
   "settings.timezone.label": "Zona horaria",
@@ -242,6 +254,7 @@ export const es = {
   "settings.instructions.gone": "Este archivo de instrucciones ya no está disponible.",
 
   // Settings: messengers
+  "settings.messengers.comingSoon": "Próximamente",
   "settings.messengers.title": "Mensajería",
   "settings.messengers.intro": "Elige dónde hablas con tu Ship.",
   "settings.messengers.telegram": "Habla con tu Ship desde Telegram.",
@@ -446,6 +459,7 @@ export const es = {
   "settings.recovery.setUp": "configurar recuperación",
 
   // Settings: logs
+  "settings.logs.intro": "Consulta qué ha hecho Ship, cuándo y si ha funcionado. Selecciona una entrada para ver los detalles.",
   "settings.logs.title": "Registros",
   "settings.logs.activity": "Actividad",
   "settings.logs.history": "Historial de llamadas al sistema",

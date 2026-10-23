@@ -24,6 +24,9 @@ to another Ship, redeeming the code moves that connection to this Ship.
 Send another message in the messenger after connecting to start talking to Ship.
 
 You can also connect through **Settings → Messengers**, using the steps below.
+WhatsApp appears first, followed by Telegram. Slack and Discord carry a small
+**Coming soon** label; actual connection controls still follow the deployment's
+discovered availability and the signed-in account's permissions.
 
 ## Telegram
 

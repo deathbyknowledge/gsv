@@ -13,7 +13,7 @@ export function ThemePreference() {
   const t = useT();
   const { preference, setPreference } = useColorTheme("light");
   const { showStars, setStars } = useStarsPreference();
-  return <div class="settings-form">
+  return <div class="settings-form settings-appearance">
     <h2>{t("settings.appearance.title")}</h2>
     <label>{t("settings.appearance.theme")}<select value={preference ?? ""} onChange={(event) => {
       const option = THEME_OPTIONS.find((candidate) => candidate.value === event.currentTarget.value);

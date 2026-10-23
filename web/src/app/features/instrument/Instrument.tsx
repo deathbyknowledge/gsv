@@ -192,15 +192,14 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
         return true;
       }
       if (reference) setFleetRequest({ reference });
-      navigateApp(visitedPaths.current[to] ?? DISTANCE_TO_PATH[to]);
-      return true;
+      return navigateApp(visitedPaths.current[to] ?? DISTANCE_TO_PATH[to]);
     },
     [distance, fleetDirty, t],
   );
 
   const openSearch = useCallback(() => {
     if (status.state !== "connected") return;
-    move("zen");
+    if (!move("zen")) return;
     setHelp(false);
     setSearchRequested(true);
   }, [move, status.state]);
@@ -390,8 +389,8 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
               if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
               event.preventDefault();
               if (memoryDirty && !window.confirm(t("shell.confirm.discardPage"))) return;
+              if (!navigateApp(memoryLinkHref(MANUAL_PAGE))) return;
               setSelectedMemoryPage({ ...MANUAL_PAGE });
-              navigateApp(memoryLinkHref(MANUAL_PAGE));
               setHelp(false);
             }}>{t("shell.help.manual")}</a>
             <p class="instrument-help-discord"><a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">{t("shell.help.discord")}</a></p>

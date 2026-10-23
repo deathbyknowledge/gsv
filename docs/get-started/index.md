@@ -81,7 +81,7 @@ The web app has five views:
 - **Work** lists your connections, then Ship and its helpers, with files opened from a connection.
 - **Memory** shows your personal knowledge pages.
 - **People** holds conversations, message requests and private contacts across Ships, plus your public profile.
-- **Settings** holds **Preferences** (models), **Standing responsibilities**, **Permissions**, **Instructions**, **Messengers**, **MCP servers** and **Logs** for actions and their outcomes. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
+- **Settings** holds **Preferences**, **Standing responsibilities**, **Permissions**, **Instructions**, **Messengers**, **MCP servers**, **Logs** for actions and their outcomes, and **Account**. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
 
 On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
@@ -136,6 +136,16 @@ more conversation on screen. Under **Settings → Preferences
 → Appearance**, turn off **Show stars** for a plain background. Both choices are remembered on this
 device; the star preference also applies to sign-in.
 The **?** Help panel links to the Ship manual in **Memory** and the community Discord at the bottom.
+
+Preferences starts with **Appearance**, which applies immediately on this device.
+Model order, reasoning, language and timezone share a **Save changes** bar that
+stays visible as you scroll. Language offers a dropdown and **Other language**
+for regional language codes. Unsaved preferences trigger a warning when leaving;
+if you leave, the draft stays available when you return. **Discard changes** resets it.
+
+To request account deletion, open **Settings → Account** and email
+[hello@humansandmachin.es](mailto:hello@humansandmachin.es). During early access,
+the team handles deletion manually; there is no self-service deletion button yet.
 
 On your first visit, after dismissing the welcome card, the empty chat shows a
 quiet, centered privacy message. It clears as soon as you or Ship starts the

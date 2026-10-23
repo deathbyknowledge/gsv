@@ -15,10 +15,10 @@ import { SettingsError, type SettingsSectionProps } from "./settingsShared";
 import { useT, type TextKey } from "../../../i18n/locale";
 
 const MESSENGERS: ReadonlyArray<{ id: ManagedMessengerId; name: string; blurb: TextKey }> = [
+  { id: "whatsapp", name: "WhatsApp", blurb: "settings.messengers.whatsapp" },
   { id: "telegram", name: "Telegram", blurb: "settings.messengers.telegram" },
   { id: "slack", name: "Slack", blurb: "settings.messengers.slack" },
   { id: "discord", name: "Discord", blurb: "settings.messengers.discord" },
-  { id: "whatsapp", name: "WhatsApp", blurb: "settings.messengers.whatsapp" },
 ];
 const STATUS_LABELS = {
   connected: "settings.messengers.status.connected",
@@ -64,7 +64,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
       const canConnect = connected && canPair && available && !unlink.isPending;
       return <section class="settings-messenger" key={id} aria-label={name}>
         <div class="settings-messenger-heading">
-          <h2>{name}</h2>
+          <h2>{name}{(id === "slack" || id === "discord") && <small class="settings-coming-soon">{t("settings.messengers.comingSoon")}</small>}</h2>
           <button class="settings-text-action" disabled={pairing === id ? unlink.isPending : !canConnect} onClick={() => { setRemoving(null); setPairing(pairing === id ? null : id); }}>
             {pairing === id ? t("settings.messengers.closeSetup") : links.length ? t("settings.messengers.connectAnother") : t("settings.messengers.connect", { name })}
           </button>
