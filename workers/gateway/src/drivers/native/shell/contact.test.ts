@@ -80,8 +80,12 @@ describe("contact connect", () => {
     vi.spyOn(profiles, "handleProfileResolve").mockResolvedValue({ profile });
     vi.spyOn(profiles, "ownerDisplayName").mockReturnValue("Owner Person");
     const create = vi.spyOn(admission, "handleApproachCreate").mockImplementation(async () => { throw new Error("reached create"); });
-    for (const state of ["declined", "withdrawn", "expired"] as const) {
-      const ended = approachRecord({ id: `approach:${state}`, state });
+    const overdue = (state: "preparing" | "pending") => {
+      const record = approachRecord({ id: `approach:overdue-${state}`, state });
+      record.summary.expiresAtMs = Date.now() - 1;
+      return record;
+    };
+    for (const ended of [...(["declined", "withdrawn", "expired"] as const).map((state) => approachRecord({ id: `approach:${state}`, state })), overdue("preparing"), overdue("pending")]) {
       const keys: string[] = [];
       const bash = shell(esteve, undefined, { byIdempotencyKey: (_uid, key) => { keys.push(key); return keys.length === 1 ? ended : null; } });
       expect((await bash.exec("contact connect @ada --message 'Hi Ada' --handling manual")).stderr).toContain("reached create");
