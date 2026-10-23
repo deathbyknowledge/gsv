@@ -934,8 +934,9 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { approach });
     }
     case "approach.list": {
-      const { direction } = z.object({ direction: z.enum(["incoming", "outgoing"]) }).parse(args);
-      return respond(id, { approaches: direction === "outgoing" ? approaches : [] });
+      const { direction, status = "active" } = z.object({ direction: z.enum(["incoming", "outgoing"]), status: z.enum(["active", "history"]).optional() }).parse(args);
+      const pending = (approach: ApproachSummary) => ["preparing", "pending", "accepting"].includes(approach.state);
+      return respond(id, { approaches: direction === "outgoing" ? approaches.filter((approach) => pending(approach) === (status === "active")) : [] });
     }
     case "profile.get": return respond(id, { profile: ownProfile });
     case "profile.update": {
