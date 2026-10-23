@@ -103,6 +103,8 @@ export type RunControlResult =
     delivery: RunDelivery;
     responsibilityAdmissionKey?: string;
     yieldError?: string;
+    /** The person already had this message, so it was not sent again. */
+    repeated?: boolean;
   }
   | {
     ok: false;

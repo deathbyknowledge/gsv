@@ -191,6 +191,11 @@ and stays visible while the Process continues working. The tool result identifie
 remaining work and confirms that the message was sent, so Ship can finish or defer the
 work and yield without sending the same reply again.
 
+The Process holds Ship to that. A repeat of the message is not sent again; it only asks to
+yield again. Each refused yield counts against the run's run-control attempts, the same
+limit a refused bare yield uses, so a run that keeps failing to handle the work ends with an
+error rather than looping.
+
 New Ship approval notifications use the same reply preference and authorized messenger fallback.
 Delegated Work retains its inherited approval route. An already queued adapter delivery keeps its
 chosen destination through retries; changing activity does not replay old notifications.
