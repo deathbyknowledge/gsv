@@ -152,8 +152,14 @@ describe("Ship reply preference", () => {
       shipReplies.recordClient(1000, web.id);
       expect(output.resolveRunRoute("ship", "followup", 1000)).toMatchObject({ kind: "connection", connectionId: "web" });
       await Promise.all(pending);
+      // A fallback route never acknowledged a message, so leaving it has nothing to stop.
+      expect(adapterSetActivity).not.toHaveBeenCalled();
+      // A run a message from this chat started stops its acknowledgement when Ship moves elsewhere.
+      runRoutes.setAdapterRoute({ processId: "ship", runId: "answered", uid: 1000, followsShip: true, destination, replyToId: "inbound-1" });
+      expect(output.resolveRunRoute("ship", "answered", 1000)).toMatchObject({ kind: "connection", connectionId: "web" });
+      await Promise.all(pending);
       expect(adapterSetActivity).toHaveBeenCalledExactlyOnceWith(
-        { installationId: "inst-replies" }, "managed", destination.surface, { kind: "typing", active: false, runId: "followup" },
+        { installationId: "inst-replies" }, "managed", destination.surface, { kind: "working", active: false, runId: "answered" },
       );
       shipReplies.recordAdapter(1000);
       expect(output.resolveRunRoute("ship", "followup", 1000)).toMatchObject({ kind: "adapter", destination });
@@ -166,10 +172,7 @@ describe("Ship reply preference", () => {
       fallbackDestination = null;
       expect(output.resolveRunRoute("ship", "followup", 1000)).toBeNull();
       await Promise.all(pending);
-      expect(adapterSetActivity).toHaveBeenCalledTimes(3);
-      expect(adapterSetActivity).toHaveBeenLastCalledWith(
-        { installationId: "inst-replies" }, "managed", { kind: "dm", id: "another-private" }, { kind: "typing", active: false, runId: "followup" },
-      );
+      expect(adapterSetActivity).toHaveBeenCalledTimes(1);
       for (const kind of ["dm", "group"] as const) {
         const exact = runRoutes.setAdapterRoute({ runId: kind, processId: "ship", uid: 1000, destination: { ...destination, surface: { kind, id: "explicit" } } });
         expect(output.resolveRunRoute("ship", kind, 1000)).toEqual(exact);

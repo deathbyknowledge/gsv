@@ -29,7 +29,7 @@ import {
   stableOpaqueId,
 } from "../shared/stable-id";
 import {
-  setAdapterActivityForKernel,
+  setAdapterRouteActivity,
 } from "./adapter-service";
 import type {
   ProcessMessageCommitArgs,
@@ -42,7 +42,7 @@ import type {
 import type { Kernel } from "./do";
 import { notifyProcessChanged } from "./process-notifications";
 import {
-  adapterTypingActivity,
+  adapterWorkingActivity,
 } from "./do-shared";
 type ConnectionMessageStreamPayload = {
   conversationId?: string;
@@ -121,13 +121,11 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
     if (route?.kind === "adapter" && (next?.kind !== "adapter"
       || JSON.stringify(route.destination) !== JSON.stringify(next.destination)
       || route.routeGeneration !== next.routeGeneration)) {
-      this.host.ctx.waitUntil(setAdapterActivityForKernel(
+      this.host.ctx.waitUntil(setAdapterRouteActivity(
         this.host.bindings,
         this.host.installationId,
-        route.destination.adapter,
-        route.destination.accountId,
-        route.destination.surface,
-        adapterTypingActivity(route, false),
+        route,
+        adapterWorkingActivity(route, false),
       ).catch(() => undefined));
     }
     return next;
@@ -211,13 +209,11 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
         }, 1);
       }
       this.host.runRoutes.delete(runId);
-      await setAdapterActivityForKernel(
+      await setAdapterRouteActivity(
         this.host.bindings,
         this.host.installationId,
-        route.destination.adapter,
-        route.destination.accountId,
-        route.destination.surface,
-        adapterTypingActivity(route, false),
+        route,
+        adapterWorkingActivity(route, false),
       ).catch(() => undefined);
       return;
     }
@@ -537,13 +533,11 @@ async deliverProcessMessageStream(
     if (!route) return;
     if (payload.phase === "silenced") {
       if (route.kind === "adapter") {
-        await setAdapterActivityForKernel(
+        await setAdapterRouteActivity(
           this.host.bindings,
           this.host.installationId,
-          route.destination.adapter,
-          route.destination.accountId,
-          route.destination.surface,
-          adapterTypingActivity(route, false),
+          route,
+          adapterWorkingActivity(route, false),
         ).catch(() => undefined);
       }
       return;
