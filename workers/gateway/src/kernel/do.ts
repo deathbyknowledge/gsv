@@ -69,6 +69,7 @@ import {
 } from "./routing";
 import { ShellSessionStore } from "./shell-sessions";
 import type { InstanceExecChange } from "@humansandmachines/gsv/services/instances";
+import type { PdsService, PublicRepository } from "@humansandmachines/gsv/services/pds";
 import { acquireInstances } from "./instance-service";
 import {
   ProcessRegistry,
@@ -2006,6 +2007,27 @@ function envWithInstallationResources(
           send: (...args) => retirement.write(() => queue.send(...args)),
           sendBatch: (...args) => retirement.write(() => queue.sendBatch(...args)),
           metrics: () => queue.metrics(),
+        };
+        return guarded;
+      }
+      if (property === "PDS") {
+        const pds = target.PDS;
+        if (!pds) return undefined;
+        const guarded: PdsService = {
+          getInstallation: async (installationId) => {
+            if (installationId !== retirement.installationId) throw new Error("Public repository identity mismatch");
+            retirement.assertActive();
+            const repository = await pds.getInstallation(installationId);
+            const scoped: PublicRepository = {
+              ensureAccount: (handle) => retirement.write(() => repository.ensureAccount(handle)),
+              account: () => repository.account(),
+              applyWrites: (writes) => retirement.write(() => repository.applyWrites(writes)),
+              uploadBlob: (body, size, mimeType) => retirement.write(() => repository.uploadBlob(body, size, mimeType)),
+              readBlob: (cid) => repository.readBlob(cid),
+              [Symbol.dispose]: () => repository[Symbol.dispose]?.(),
+            };
+            return scoped;
+          },
         };
         return guarded;
       }

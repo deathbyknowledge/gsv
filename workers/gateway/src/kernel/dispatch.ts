@@ -49,6 +49,7 @@ import {
   ProcessRequestError,
 } from "./proc-handlers";
 import { handleAccountCreate, handleAccountList } from "./agents";
+import { handleAtprotoBlobRead, handleAtprotoBlobUpload, handleAtprotoIdentity, handleAtprotoWrite } from "./atproto";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
 import { handleInstanceRequest } from "./sys/instance";
@@ -776,6 +777,22 @@ async function dispatchKernel(
       case "profile.get":
         data = handleProfileGet(ctx);
         break;
+      case "atproto.identity":
+        data = await handleAtprotoIdentity(ctx);
+        break;
+      case "atproto.write":
+        data = await handleAtprotoWrite(frame.args, ctx);
+        break;
+      case "atproto.blob.upload":
+        data = await handleAtprotoBlobUpload(frame.args, ctx, frame.body);
+        break;
+      case "atproto.blob.read":
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleAtprotoBlobRead(frame.args, ctx),
+        };
       case "approach.create":
         data = await handleApproachCreate(frame.args, ctx);
         break;

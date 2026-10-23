@@ -252,6 +252,16 @@ import type {
   SignalWatchResult,
 } from "./signal";
 import type {
+  AtprotoBlobReadArgs,
+  AtprotoBlobReadResult,
+  AtprotoBlobUploadArgs,
+  AtprotoBlobUploadResult,
+  AtprotoIdentityArgs,
+  AtprotoIdentityResult,
+  AtprotoWriteArgs,
+  AtprotoWriteResult,
+} from "./atproto";
+import type {
   MailSendArgs,
   MailSendResult,
   MailStatusArgs,
@@ -365,6 +375,11 @@ export type SyscallDomains = {
   "profile.publish": { args: ProfilePublishArgs; result: ProfilePublishResult };
   "profile.unpublish": { args: ProfileUnpublishArgs; result: ProfileUnpublishResult };
   "profile.resolve": { args: ProfileResolveArgs; result: ProfileResolveResult };
+
+  "atproto.identity": { args: AtprotoIdentityArgs; result: AtprotoIdentityResult };
+  "atproto.write": { args: AtprotoWriteArgs; result: AtprotoWriteResult };
+  "atproto.blob.upload": { args: AtprotoBlobUploadArgs; result: AtprotoBlobUploadResult };
+  "atproto.blob.read": { args: AtprotoBlobReadArgs; result: AtprotoBlobReadResult };
 
   "approach.create": { args: ApproachCreateArgs; result: ApproachResult };
   "approach.get": { args: ApproachGetArgs; result: ApproachResult };

@@ -16,6 +16,7 @@ The current contracts are:
 - `mail`: Gateway mail transport and operational mail inspection
 - `web-search`: optional provider-neutral search implementation for the `gsv` target
 - `instances`: optional provisioned browser targets, saved profiles and human browser control
+- `pds`: optional ATProto host for each installation's public repository
 - `adapters`: external messaging transport discovery and operations
 
 [Installation directory and onboarding](./installation-directory.md)
@@ -152,6 +153,15 @@ the provider's cancellation RPC. The Gateway defers that notification and
 disposes the acquired target; the service must enforce the supplied deadline.
 Connected providers can advertise `web.search` without this binding or a messaging
 adapter. See [Web search](../reference/web-search.md).
+
+## Open network
+
+An optional `PDS` binding hosts each installation's public ATProto repository.
+Its deployment-owned props carry the `kernel-publish` authority, and the Kernel
+asks only for its own installation; the PDS checks with Accounts that the
+installation is active. The Kernel owns who may publish, approval and the
+collections features reserve; the PDS owns signing, files and the firehose.
+See [The open network](./open-network.md).
 
 ## Cloud instances
 

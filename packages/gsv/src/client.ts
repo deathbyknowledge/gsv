@@ -218,6 +218,7 @@ export type GsvConversationNamespace = GsvClientNamespaces["conversation"];
 export type GsvContactNamespace = GsvClientNamespaces["contact"];
 export type GsvProfileNamespace = GsvClientNamespaces["profile"];
 export type GsvApproachNamespace = GsvClientNamespaces["approach"];
+export type GsvAtprotoNamespace = GsvClientNamespaces["atproto"];
 export type GsvFsNamespace = GsvClientNamespaces["fs"];
 export type GsvMailNamespace = GsvClientNamespaces["mail"];
 export type GsvNetNamespace = never;
@@ -292,6 +293,8 @@ const SYSCALL_NAMES = [
   "profile.publish",
   "profile.unpublish",
   "profile.resolve",
+  "atproto.identity",
+  "atproto.write",
   "approach.create",
   "approach.get",
   "approach.list",
@@ -477,6 +480,7 @@ export class GSVClient {
   declare readonly contact: GsvContactNamespace;
   declare readonly profile: GsvProfileNamespace;
   declare readonly approach: GsvApproachNamespace;
+  declare readonly atproto: GsvAtprotoNamespace;
   declare readonly fs: GsvFsNamespace;
   declare readonly mail: GsvMailNamespace;
   declare readonly proc: GsvProcNamespace;

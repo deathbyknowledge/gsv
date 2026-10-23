@@ -1102,6 +1102,74 @@ People reuses `conversation.history` and `conversation.search`; no separate soci
 or archive backfill exists. Contact conversations have no `handlerPid`. Other conversation kinds
 retain their ordinary handler requirement.
 
+## Open network: `atproto.*`
+
+A Ship can publish public records and files on the open network, the
+[AT Protocol](https://atproto.com) network that Bluesky and other apps read.
+The deployment's optional `PDS` service hosts one public repository per Ship;
+see [The open network](../architecture/open-network.md). Only what the person
+chooses to make public goes there. Messages, contacts and the rest of the Ship
+never do. Without the binding, these calls fail as unavailable.
+
+The Ship's identity comes with its profile. Its account is a `did:plc` whose
+handle is the Ship's hostname, for example `alice.ship.space`. The first write
+or upload creates it, and `atproto.identity` returns `null` until then. While
+the profile is private, writes and uploads are refused with a message naming
+People.
+
+Only the signed-in person and their Ship may publish. Other processes, Crew
+included, other accounts and machines are refused whatever their capabilities.
+When the Ship calls `atproto.write`, the person approves it first unless an
+approval rule allows it. The approval shows the handle the publish speaks as,
+the full address, every change and the files its records carry. The person
+writing directly is not asked. After approval the Kernel checks the profile
+again, so a profile made private meanwhile stops the publish.
+
+```ts
+type AtprotoSyscalls = {
+  "atproto.identity": {
+    args: Record<string, never>;
+    result: { identity: PublicRepositoryAccount | null };
+  };
+  "atproto.write": {
+    args: { writes: PublicRecordWrite[] };
+    result: {
+      commit: { cid: string; rev: string };
+      results: Array<{ uri: string; cid: string | null }>;
+    };
+  };
+  "atproto.blob.upload": {
+    args: { mimeType: string };
+    result: { blob: PublicBlobRef };
+  };
+  "atproto.blob.read": {
+    args: { cid: string };
+    result: { mimeType: string; size: number };
+  };
+};
+
+type PublicRepositoryAccount = { did: string; handle: string; host: string };
+type PublicRecordWrite =
+  | { action: "create"; collection: string; rkey?: string; record: JsonObject }
+  | { action: "put"; collection: string; rkey: string; record: JsonObject }
+  | { action: "delete"; collection: string; rkey: string };
+type PublicBlobRef = { $type: "blob"; ref: { $link: string }; mimeType: string; size: number };
+```
+
+`atproto.write` commits one to ten changes together, up to 64 KiB of JSON, and
+returns one result per change in order; a delete has no record CID. A
+collection is any valid NSID except one a Ship feature owns. Today that is
+`space.ship.profile`, the profile, which changes only in People. Ship's own
+lexicons use the `space.ship.*` namespace.
+
+`atproto.blob.upload` takes a file of any type, up to 48 MiB, as a request body
+of declared length, and streams it to the repository. Uploading does not ask:
+nothing serves the file until a published record references it, so put the
+returned `blob` in a record and publish that. An upload that no record
+references within six hours expires. `atproto.blob.read` returns one of the
+Ship's own files, including one no record references yet, as the response body.
+Approval previews use it.
+
 ## Processes: `proc.*`
 
 Requests forwarded to a Process preserve its protocol error code and retryability.

@@ -1,35 +1,19 @@
-import type { JsonObject } from "../protocol/json";
+import type {
+  PublicBlobRef,
+  PublicCommit,
+  PublicRecordWrite,
+  PublicRepositoryAccount,
+} from "../protocol/syscalls/atproto";
 
-/** One change to an installation's public repository; every write in a call lands in one signed commit. */
-export type PublicRecordWrite =
-  | { action: "create"; collection: string; rkey?: string; record: JsonObject }
-  | { action: "put"; collection: string; rkey: string; record: JsonObject }
-  | { action: "delete"; collection: string; rkey: string };
-
-export type PublicCommit = {
-  commit: { cid: string; rev: string };
-  /** One entry per write, in order; a delete has no record CID. */
-  results: Array<{ uri: string; cid: string | null }>;
-};
+export type {
+  PublicBlobRef,
+  PublicCommit,
+  PublicRecordWrite,
+  PublicRepositoryAccount,
+} from "../protocol/syscalls/atproto";
 
 /** Largest blob a repository accepts: as much as a message may attach. */
 export const PUBLIC_BLOB_MAX_BYTES = 48 * 1024 * 1024;
-
-/** A blob as a record references it once uploaded. */
-export type PublicBlobRef = {
-  $type: "blob";
-  ref: { $link: string };
-  mimeType: string;
-  size: number;
-};
-
-/** The installation's ATProto account. */
-export type PublicRepositoryAccount = {
-  did: string;
-  handle: string;
-  /** Origin of the host serving the repository's public reads. */
-  host: string;
-};
 
 /** One of the repository's blobs, public or still staged. */
 export type PublicBlob = {

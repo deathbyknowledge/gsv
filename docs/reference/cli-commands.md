@@ -154,6 +154,12 @@ contact revoke CONTACT_ID
 contact request list [--contact CONTACT_ID] [--all] [--json]
 contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]
 contact request update REQUEST_ID --state STATE [--revision N] [--details JSON] [--delivery-id ID]
+atproto identity
+atproto create COLLECTION [--rkey RKEY] (--json RECORD | --file PATH)
+atproto put COLLECTION RKEY (--json RECORD | --file PATH)
+atproto delete COLLECTION RKEY
+atproto apply (--json WRITES | --file PATH)
+atproto blob PATH [--mime TYPE]
 r12y list [--all] [--json]
 r12y show ID
 r12y create --title TITLE [--details JSON] [--parent ID] [--priority PRIORITY] [--due ISO] [--check ISO] [--blocker TEXT] [--dedupe KEY]
@@ -437,6 +443,23 @@ leaves the exchange unsettled, even if the recorded work state is completed.
 Resources attached with
 `message send --to contact:...` remain immutable references and are streamed by
 the receiving Ship only when opened.
+
+`atproto` publishes public records and files on the [open network](/architecture/open-network)
+under the Ship's address. It works for the signed-in person and their Ship;
+other processes are refused. Nothing publishes while the profile is private,
+and the person approves each of the Ship's writes unless a rule allows it. A record's `$type` defaults
+to its collection. `apply` commits up to ten writes together from a JSON array
+of [`atproto.write`](./syscalls.md#open-network-atproto) changes. To publish a
+picture, upload it with `atproto blob PATH`, which prints a `blob` reference,
+and put that reference in the record:
+
+```bash
+atproto blob trip.jpg
+atproto create space.ship.note --file note.json
+```
+
+`atproto identity` prints the Ship's DID and handle, or `null` before its first
+publish. `space.ship.profile` belongs to the profile; change it in People.
 
 Use `sched add --ship` when every firing should become one durable Ship
 responsibility. It works from top-level and process-backed shells. Use

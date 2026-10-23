@@ -269,6 +269,7 @@ function managedInferenceProbeConfig(): Unstable_RawConfig {
 export function createGatewayTestHarness(options: {
   workersAi?: boolean;
   instances?: boolean;
+  pds?: boolean;
   managedMailQueue?: string;
 } = {}): TestHarness {
   return createTestHarness({

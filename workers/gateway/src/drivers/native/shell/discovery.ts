@@ -4,6 +4,7 @@ import type { GsvFs } from "../../../fs/gsv-fs";
 import { hasCapability } from "../../../kernel/capabilities";
 import type { KernelContext } from "../../../kernel/context";
 import { principalOf, resolveCallerOwnerUid } from "../../../kernel/context";
+import { atprotoMissingRequirements } from "../../../kernel/atproto";
 import { managedMailAddressForOwner } from "../../../kernel/mailbox";
 import {
   collectFilesystemSkillDocuments,
@@ -78,6 +79,14 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]",
     "contact request update REQUEST_ID --state STATE [--revision N] [--details JSON] [--delivery-id ID]",
   ]),
+  atproto: command("Publish public records and files to the open network.", "Post or update something public under the Ship's address on the open network (ATProto), such as a note or a picture anyone can read. The person approves each publish unless they allowed it. Their profile changes in People, not here.", ["atproto", "bluesky", "open network", "public", "publish", "post", "record", "file", "picture", "pds"], [], [
+    "atproto identity",
+    "atproto create COLLECTION [--rkey RKEY] (--json RECORD | --file PATH)",
+    "atproto put COLLECTION RKEY (--json RECORD | --file PATH)",
+    "atproto delete COLLECTION RKEY",
+    "atproto apply (--json WRITES | --file PATH)",
+    "atproto blob PATH [--mime TYPE]",
+  ], ["atproto.write"]),
   mcp: command("Discover and call connected MCP integrations.", "Use an external connected service or search its available integration tools.", ["integration", "service", "connector", "api", "tools", "mcp"]),
   proc: command("Inspect, delegate to, message, and control GSV agent processes.", "Create a subagent, delegate a task, contact another agent, or inspect agent history and lifecycle.", ["agent", "subagent", "delegate", "process", "message", "history"]),
   r12y: command("Inspect and maintain durable unresolved responsibilities.", "Record work that must survive the current run, delegate it, defer it to a known wake condition, or close it with a durable outcome.", ["responsibility", "promise", "work", "task", "delegate", "waiting", "deadline", "outcome"], [], [
@@ -191,6 +200,7 @@ export class ShellDiscoveryCatalog {
         missing.push("managed mailbox");
       }
       if ((registered.name === "instance" || registered.name === "browser") && !this.ctx.env.INSTANCES) missing.push("configured instance service");
+      if (registered.name === "atproto") missing.push(...atprotoMissingRequirements(this.ctx));
       const entry: ShellDiscoveryEntry = {
         kind: "command",
         name: registered.name,

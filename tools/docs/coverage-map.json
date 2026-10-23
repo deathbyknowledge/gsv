@@ -474,6 +474,21 @@
       "manual": [
         "pages/devices-workplaces/cloud-browsers.md"
       ]
+    },
+    {
+      "id": "open-network",
+      "paths": [
+        "workers/pds/**",
+        "packages/gsv/src/services/pds.ts",
+        "packages/gsv/src/protocol/syscalls/atproto.ts",
+        "workers/gateway/src/kernel/atproto.ts",
+        "workers/gateway/src/drivers/native/shell/atproto.ts",
+        "workers/gateway/src/atproto-did.ts"
+      ],
+      "docs": [
+        "docs/architecture/open-network.md",
+        "docs/reference/syscalls.md"
+      ]
     }
   ]
 }

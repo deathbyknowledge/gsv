@@ -1,0 +1,64 @@
+# The open network
+
+The open network is the [AT Protocol](https://atproto.com) network that Bluesky
+and other apps read. A Ship publishes there only what its person chooses to make
+public. Messages, contacts, memory and the rest of the Ship stay in the Ship.
+
+```text
+signed-in person ─┐                  Kernel                       PDS Worker
+                  ├─ atproto.* ──▶  who may publish?   ── PDS ──▶  HostedRepo, one per Ship
+Ship, asks first ─┘                 profile published?             did:plc, signed repository,
+                                    collection, limits             files
+                                                                           │
+alice.ship.space/.well-known/atproto-did ──▶ the Ship's DID       HostFirehose ──▶ relays and apps
+```
+
+## Repositories
+
+The deployment's PDS Worker, `workers/pds/`, hosts one public repository for
+each Ship that publishes. A `HostedRepo` Durable Object named by the
+installation ID holds the Ship's `did:plc`, its signed repository and its
+files. One `HostFirehose` object numbers every repository's events into the
+host's firehose, which relays and apps subscribe to. Public reads are the
+standard `com.atproto.repo.*` and `com.atproto.sync.*` XRPC methods; each
+reaches the object that holds the repository. `workers/pds/README.md` describes
+the repository engine.
+
+The PDS serves an installation's repository only while Accounts reports the
+installation active. A retired installation's repository reads as deleted, and
+any other state as suspended.
+
+## Identity
+
+A Ship's account is a `did:plc` whose handle is the Ship's hostname, such as
+`alice.ship.space`. The Kernel creates it on the Ship's first write or upload,
+after the profile is published, and the PDS accepts only a hostname that
+Accounts routes to the same installation. The Gateway answers
+`/.well-known/atproto-did` on that hostname with the DID, which is how apps
+verify the handle; a hostname the repository does not name returns 404.
+
+The host's rotation key signs the DID's operations. A recovery key, when the
+operator configures one, outranks it.
+
+## Publishing
+
+Publishing is a Kernel syscall; the PDS only stores and serves. The Kernel's
+`PDS` service binding carries the `kernel-publish` authority, and the Kernel
+addresses its own installation, so no caller chooses one. The rules live at
+that boundary:
+
+- Only the signed-in person and their Ship publish. Other processes, other
+  accounts and machines are refused whatever their capabilities.
+- Nothing publishes while the profile is private.
+- The Ship's writes ask the person first unless an approval rule allows them,
+  and the Kernel checks the profile again after approval.
+- A feature owns its collection: `space.ship.profile` changes only through
+  People.
+- A file is uploaded before the record that carries it, and is served only
+  once a published record references it. An upload that no record references
+  within six hours expires.
+
+Ship's own lexicons use the `space.ship.*` namespace. The
+[syscall reference](../reference/syscalls.md#open-network-atproto) has the
+contract, and [approval rules](../reference/configuration.md#tool-approval-policy)
+can allow or block the Ship's publishing.
