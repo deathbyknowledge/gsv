@@ -28,6 +28,9 @@ spacing for a compact conversation overview. Older messages stay more readable
 in this mode. The size choice is stored on the current device.
 On devices that support hover, pointing at an older message restores its full
 brightness at every text size without changing the selected message or scroll position.
+The latest message and consecutive messages from the same sender stay fully bright
+when each adjacent pair is at most five minutes apart. A different sender or a longer
+gap ends the group; work receipts and internal notes do not split it.
 
 After the first welcome card is dismissed, the empty Ship chat shows centered,
 muted privacy copy behind the transcript. It clears when the owner writes or

@@ -628,6 +628,7 @@
   height: 1.1em;
 }
 .zen-moment.is-focus.is-older { opacity: 0.85; }
+.instrument .zen-moment.is-older.is-recent { opacity: 1; }
 @media (hover: hover) {
   .instrument .zen-moment.is-older:hover { opacity: 1; }
 }

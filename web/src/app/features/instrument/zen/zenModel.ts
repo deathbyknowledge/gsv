@@ -392,6 +392,21 @@ function isToolRow(row: ChatTranscriptRow): boolean {
   return row.role === "tool" || row.role === "toolResult";
 }
 
+/** Message indices in the latest same-sender group, newest first; work and notes are not messages. */
+export function latestMessageGroup(moments: readonly Moment[]): number[] {
+  const group: number[] = [];
+  let next: Moment | undefined;
+  for (let index = moments.length - 1; index >= 0; index--) {
+    const moment = moments[index]!;
+    if (moment.role === "note" || (moment.role === "ship" && !moment.text && !moment.media?.length && !moment.streaming)) continue;
+    if (next && (moment.role !== next.role || moment.timestamp === null || next.timestamp === null
+      || next.timestamp - moment.timestamp < 0 || next.timestamp - moment.timestamp > 5 * 60_000)) break;
+    group.push(index);
+    next = moment;
+  }
+  return group;
+}
+
 /**
  * Group a run's tool rows by the place they touched, in first-touch order.
  * The last activity of an active run is live while its latest call is unfinished.

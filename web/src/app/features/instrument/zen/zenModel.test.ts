@@ -12,6 +12,7 @@ import {
   answerHistorySnapshot,
   argumentThatMatters,
   awaitingFirstMessage,
+  latestMessageGroup,
   defaultPlace,
   formatSeconds,
   linkPlaceReferences,
@@ -1044,6 +1045,47 @@ describe("memoryPagesForMoment", () => {
     const value = moment([read("read", "/src/repos/owner/wiki/pages/example.md")]);
     expect(memoryPagesForMoment(value, [personal, { ...personal, id: "other" }])).toEqual([]);
     expect(memoryPagesForMoment(value, [personal, { ...personal, repo: "other/wiki" }])).toEqual([]);
+  });
+});
+
+describe("latestMessageGroup", () => {
+  const message = (role: Moment["role"], timestamp: number | null, extra: Partial<Moment> = {}): Moment =>
+    ({ id: `${role}-${timestamp}`, role, timestamp, text: "hello", streaming: false, thinking: false,
+      runId: null, activities: [], narration: "", ...extra });
+
+  it.each(["human", "ship"] as const)("keeps consecutive %s messages bright, including the five-minute boundary", (role) => {
+    expect(latestMessageGroup([message(role, 0), message(role, 300_000), message(role, 600_000)])).toEqual([2, 1, 0]);
+    expect(latestMessageGroup([message(role, 0), message(role, 300_001)])).toEqual([1]);
+  });
+
+  it("starts a new group when the sender changes", () => {
+    expect(latestMessageGroup([message("ship", 0), message("human", 1), message("ship", 2)])).toEqual([2]);
+    expect(latestMessageGroup([message("human", 0), message("ship", 1), message("human", 2)])).toEqual([2]);
+  });
+
+  it("ignores work and notes between messages and after the latest one", () => {
+    expect(latestMessageGroup([
+      message("ship", 0), message("note", 1), message("ship", 2, { text: "", thinking: true }),
+      message("ship", 3), message("ship", 4, { text: "" }),
+    ])).toEqual([3, 0]);
+  });
+
+  it("includes attachments and an incoming stream", () => {
+    expect(latestMessageGroup([
+      message("ship", 0, { text: "", media: [{ kind: "image" }] }),
+      message("ship", 1, { text: "", streaming: true }),
+    ])).toEqual([1, 0]);
+  });
+
+  it("does not infer proximity from missing or out-of-order timestamps", () => {
+    expect(latestMessageGroup([message("human", null), message("human", 1)])).toEqual([1]);
+    expect(latestMessageGroup([message("human", 1), message("human", null)])).toEqual([1]);
+    expect(latestMessageGroup([message("human", 2), message("human", 1)])).toEqual([1]);
+  });
+
+  it("has no bright messages when the transcript only contains work or notes", () => {
+    expect(latestMessageGroup([])).toEqual([]);
+    expect(latestMessageGroup([message("note", 0), message("ship", 1, { text: "", thinking: true })])).toEqual([]);
   });
 });
 

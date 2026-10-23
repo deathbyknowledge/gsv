@@ -175,6 +175,8 @@ Sending becomes available when the connection returns; your draft is not sent au
 The header stays above the scrolling content. Tap a message once to select it
 and show its timestamp and copy action.
 With a mouse, hovering over an older message brightens it immediately.
+Consecutive messages from the latest sender stay bright together when they are
+no more than five minutes apart.
 Scrolling selects the message nearest the center, switching to the first or latest message
 at either end. On phones, the down arrow on the right returns to the latest message.
 Text actions have a subtle underline. The **+** menu groups file and person references under
