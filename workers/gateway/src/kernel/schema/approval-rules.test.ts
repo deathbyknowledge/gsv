@@ -22,6 +22,12 @@ describe("approval rules replacing code defaults", () => {
           { match: "mail.send", target: "targets/*", action: "auto" }, { match: "sched.update", target: { route: "machine" }, action: "auto" },
         ] }),
         "users/1005/ai/tools/approval": "not json",
+        "users/1007/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "mail.send", action: "auto", when: { target: "device" } }] }),
+        "users/1008/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "mail.send", target: "*", action: "auto", when: { target: "laptop" } }] }),
+        "users/1009/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "mail.send", action: "auto", when: { target: "gateway" } }] }),
+        "users/1010/ai/tools/approval": JSON.stringify({ default: "auto", rules: [
+          { match: "mail.send", action: "maybe" }, { match: "mail.send", target: null, action: "auto" },
+        ] }),
         "config/ai/tools/approval": JSON.stringify({ default: "auto", rules: [] }),
         "users/1006/ai/models": JSON.stringify({ default: "auto", rules: [] }),
       };
@@ -47,6 +53,12 @@ describe("approval rules replacing code defaults", () => {
       expect(decide("users/1003/ai/tools/approval", "mail.send")).toBe("ask");
       expect(decide("users/1000/ai/tools/approval", "shell.exec")).toBe("auto");
       expect(stored["users/1005/ai/tools/approval"]).toBe("not json");
+      // Rules are read the way the runtime reads them: legacy `when.target`, and rules it drops.
+      expect(decide("users/1007/ai/tools/approval", "mail.send")).toBe("ask");
+      expect(decide("users/1008/ai/tools/approval", "mail.send")).toBe("ask");
+      expect(decide("users/1009/ai/tools/approval", "mail.send")).toBe("auto");
+      expect(decide("users/1009/ai/tools/approval", "sched.add")).toBe("ask");
+      expect(decide("users/1010/ai/tools/approval", "mail.send")).toBe("ask");
       expect(stored["users/1006/ai/models"]).toBe(saved["users/1006/ai/models"]);
     });
   });
