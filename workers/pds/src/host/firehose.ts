@@ -121,11 +121,15 @@ export class HostFirehose extends DurableObject<HostEnv> {
     return delivered;
   }
 
-  /** The repository a DID or handle names, if this host holds it. */
+  /**
+   * The repository a DID or handle names, if this host holds it. A handle names
+   * the newest repository that holds it, since a reset moves a handle to a new
+   * repository while the old one still holds data.
+   */
   async locate(identifier: string): Promise<HostedEntry | null> {
     const row = identifier.startsWith("did:")
       ? this.row("SELECT * FROM repos WHERE did = ?", identifier)
-      : this.row("SELECT * FROM repos WHERE handle = ?", identifier.toLowerCase());
+      : this.row("SELECT * FROM repos WHERE handle = ? ORDER BY rowid DESC LIMIT 1", identifier.toLowerCase());
     return row ? { ...repoState(row), name: row.name } : null;
   }
 

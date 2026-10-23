@@ -400,6 +400,18 @@ describe("host firehose", () => {
     expect(await firehose.locate(carol.did)).toEqual({ ...carol, name: "carol" });
     expect(await firehose.locate("nobody.ship.test")).toBeNull();
   });
+
+  it("finds a handle's newest repository, as when a reset moves the handle to a new installation", async () => {
+    const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
+    const retired = repoState("did:plc:dddddddddddddddddddddddd", "dana.ship.test");
+    const current = repoState("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "dana.ship.test");
+    await firehose.append("retired", retired, identityEvents(retired.did, 1, 1));
+    await firehose.append("current", current, identityEvents(current.did, 1, 1));
+    // Later events from the retired repository do not take the handle back.
+    await firehose.append("retired", retired, identityEvents(retired.did, 2, 2));
+    expect(await firehose.locate("DANA.ship.test")).toEqual({ ...current, name: "current" });
+    expect(await firehose.locate(retired.did)).toEqual({ ...retired, name: "retired" });
+  });
 });
 
 async function admitAll(): Promise<Admission> {
