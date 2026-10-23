@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApproachClaim, ApproachCreateArgs, PublicProfile } from "@humansandmachines/gsv/protocol";
+import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import { runInDurableObject } from "cloudflare:test";
 import type { Kernel } from "../do";
 import { testPeer } from "../../test-support/peers";
@@ -58,9 +59,13 @@ describe("authenticated first contact", () => {
       const pending = (await recipient.run((ctx) => ctx.approaches.get(request.id)))!;
       const remoteDocument = await recipient.run((ctx) => ctx.federationIdentity.ensure("https://recipient.example"));
       const remoteSubject = await recipient.run((ctx) => ctx.federation.subject(OWNER.uid));
+      const senderDocument = await sender.run((ctx) => ctx.federationIdentity.ensure("https://sender.example"));
+      const leakedAcceptance = { version: 1, domain: "gsv-federation/1/invite-accept", inviterShipId: senderDocument.shipId,
+        token: pending.setupToken, document: remoteDocument, subject: remoteSubject };
+      const leakedSignature = await recipient.run((ctx) => ctx.federationIdentity.sign(jsonValueSchema.parse(leakedAcceptance)));
       const leakedStatus = await sender.run(async (ctx) => {
         const response = await handleFederationHttpRequest(new Request("https://sender.example/_gsv/federation/v1/invites/accept", {
-          method: "POST", body: JSON.stringify({ version: 1, token: pending.setupToken, document: remoteDocument, subject: remoteSubject }),
+          method: "POST", body: JSON.stringify({ ...leakedAcceptance, signature: leakedSignature }),
         }), ctx);
         await response.arrayBuffer();
         return response.status;

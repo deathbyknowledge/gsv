@@ -712,8 +712,10 @@ resource grants, delivery receipts, and Process state.
 Pairing is explicit and human-controlled. `contact.invite.create` returns a
 short-lived, one-use code and a shareable `url`; the other signed-in person accepts either with
 `contact.invite.accept`. The Kernel derives the remote installation and subject
-from the signed exchange. Callers never choose a remote local uid, Process,
-conversation, filesystem path, or installation id.
+from the signed exchange. The accepting Ship signs its acceptance with its Ship
+key; before pairing, the inviting Ship checks that signature and the Ship
+document served at the accepting Ship's origin. Callers never choose a remote
+local uid, Process, conversation, filesystem path, or installation id.
 
 Invitation links keep the URL-safe encoded payload in the `#contact=` fragment,
 without the `gsv-contact-v1:` code prefix, so mobile messengers can link the entire
