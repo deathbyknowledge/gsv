@@ -13,7 +13,7 @@ import { localShipDocumentV2 } from "../federation/protocol";
 import { consumeLocalRateLimits, consumePublicRateLimits } from "../federation/limits";
 import { MAX_PUBLIC_JSON_BYTES } from "../federation/http";
 import { PublicFederationError } from "../federation/errors";
-import { authorizeNestedOperation } from "../tool-approval";
+import { authorizeNestedOperation, nestedToolOwner } from "../tool-approval";
 import { getConversationById } from "../../shared/utils";
 import { stableOpaqueId } from "../../shared/stable-id";
 import { approachFingerprint, approachLock, authenticateApproachPeer, sameActor, signApproachValue } from "./shared";
@@ -57,7 +57,9 @@ export async function handleApproachCreate(input: ApproachCreateArgs, ctx: Kerne
   // A message request reaches someone who is not a contact yet, so the Ship asks first
   // unless the owner's approval policy says otherwise. A replay of a request already sent does not ask again.
   if (!ctx.approaches.byIdempotencyKey(ownerUid, args.idempotencyKey)) {
-    await authorizeNestedOperation(ctx, "approach.create", jsonObjectSchema.parse(args), "ask");
+    // A direct process syscall carries no tool owner yet; derive it, as scheduling does, so the
+    // Ship's run policy applies however the request arrives. A signed-in human has none and is not asked.
+    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "approach.create", jsonObjectSchema.parse(args), "ask");
   }
   return await ctx.coordinateFederationContact(`approach-send:${ownerUid}:${args.idempotencyKey}`, () => createApproach(args, ownerUid, ctx));
 }

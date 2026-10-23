@@ -139,6 +139,22 @@ describe("authenticated first contact", () => {
     });
   });
 
+  it("asks before a direct Ship syscall sends a message request, deriving the run that owns it", async () => {
+    await withSpaces(async (sender, recipient, profile) => {
+      installTransport(sender, recipient, profile);
+      const procs = { get: (pid: string): Pick<ProcessRecord, "isPersonalController" | "ownerUid"> | null => ({ isPersonalController: pid === "proc:ship", ownerUid: OWNER.uid }) };
+      // SAFETY: a direct process syscall carries the process, run and request ids but no tool owner.
+      const asShipSyscall = (ctx: KernelContext) => ({ ...ctx, processId: "proc:ship", processRunId: "run:direct", requestId: "req:direct", procs } as KernelContext);
+      const authorize = vi.spyOn(transport, "sendFrameToProcess").mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: false } });
+      await expect(sender.run((ctx) => handleApproachCreate({ ...sendIntent(profile), shipHandlesMessages: false }, asShipSyscall(ctx)))).rejects.toThrow("not approved");
+      expect(authorize).toHaveBeenCalledWith(sender.installationId, "proc:ship", expect.objectContaining({
+        call: "proc.tool.authorize",
+        args: expect.objectContaining({ runId: "run:direct", requestId: "req:direct", syscall: "approach.create", defaultAction: "ask" }),
+      }));
+      expect(await sender.run((ctx) => ctx.approaches.list(OWNER.uid, { direction: "outgoing", limit: 10 }))).toEqual([]);
+    });
+  });
+
   it("requires key possession for the exact recipient, then fences a block", async () => {
     await withSpaces(async (sender, recipient, profile) => {
       installTransport(sender, recipient, profile);
