@@ -34,7 +34,7 @@
 .native-shortcut-recorder.is-listening { border-color: var(--accent); color: var(--accent); }
 .native-shortcut-field small { font-size: 11px; }
 
-.handsfree-status { position: absolute; right: 24px; bottom: calc(24px + var(--instrument-bottom-padding)); z-index: 25; width: min(360px, calc(100% - 48px)); max-height: 60%; overflow: auto; padding: 16px; border: 1px solid var(--border-raised); background: var(--panel); color: var(--text); box-shadow: 0 8px 28px #0003; font: 12px/1.5 var(--gsv-font-mono); }
+.handsfree-status { min-height: 0; overflow: auto; padding: 16px; border: 1px solid var(--border-raised); background: var(--panel); color: var(--text); box-shadow: 0 8px 28px #0003; font: 12px/1.5 var(--gsv-font-mono); }
 .handsfree-status header, .handsfree-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .handsfree-phase { margin-left: 10px; color: var(--text-dim); }
 .handsfree-status button, .handsfree-status summary { color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }

@@ -178,7 +178,7 @@ export async function abortChatProcess(
 }
 
 export async function decideChatHil(
-  client: ChatGsvClient,
+  client: { proc: Pick<GSVClient["proc"], "hil"> },
   args: ProcHilArgs,
 ): Promise<ChatHilDecisionResult> {
   return throwIfFailed<Extract<ProcHilResult, { ok: true }>>(

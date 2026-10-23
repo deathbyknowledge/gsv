@@ -60,11 +60,11 @@ export class ProcessHistorySync {
       if (!this.dropped) return;
       this.dropped = false;
       for (const entry of this.entries.values()) {
+        entry.observed = false;
+        if (entry.observers > 0) void this.observe(entry);
         if (entry.users === 0) continue;
         entry.epoch += 1;
         entry.snapshot = true;
-        entry.observed = false;
-        if (entry.observers > 0) void this.observe(entry);
         void this.read(entry.pid, entry.limit).catch(() => undefined);
       }
     });
@@ -94,6 +94,20 @@ export class ProcessHistorySync {
     return () => {
       entry.users -= 1;
       if (observe) entry.observers -= 1;
+      if (entry.observers === 0 && entry.observed) {
+        entry.observed = false;
+        void this.client.proc.unobserve({ pid }).catch(() => undefined);
+      }
+    };
+  }
+
+  /** Keeps a process's live signals flowing without a history reader, for app-wide prompts. */
+  watch(pid: string): () => void {
+    const entry = this.entry(pid, 0);
+    entry.observers += 1;
+    void this.observe(entry);
+    return () => {
+      entry.observers -= 1;
       if (entry.observers === 0 && entry.observed) {
         entry.observed = false;
         void this.client.proc.unobserve({ pid }).catch(() => undefined);

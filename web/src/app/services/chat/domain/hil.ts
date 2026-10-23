@@ -67,6 +67,11 @@ export function normalizeHilRequest<T>(value: T): ProcHilRequest | null {
   return normalized;
 }
 
+/** "Always allow" remembers a shell grant for one exact place; a wildcard target has no place to remember. */
+export function canAlwaysAllow(request: ProcHilRequest): boolean {
+  return request.syscall === "shell.exec" && !["*", "any", "device", "devices/*", "targets/*"].includes(request.target);
+}
+
 /** The sentence a person reads before deciding: the model's purpose, or one built from the request shape. */
 export function hilRequestSentence(request: ProcHilRequest, place: string): string {
   const text = normalizeCallPurpose(request.purpose) ?? describeCall(request, place);

@@ -218,6 +218,18 @@ describe("shared typed process history synchronization", () => {
     expect(h.current().runtime.rows).toEqual([]);
   });
 
+  it("keeps a watched process observed across reconnects without reading its history", async () => {
+    const h = harness([]);
+    const release = h.sync.watch("p");
+    await vi.waitFor(() => expect(h.client.proc.observe).toHaveBeenCalledOnce());
+    h.status({ state: "disconnected" } as never);
+    h.status({ state: "connected" } as never);
+    await vi.waitFor(() => expect(h.client.proc.observe).toHaveBeenCalledTimes(2));
+    expect(h.history).not.toHaveBeenCalled();
+    release();
+    expect(h.client.proc.unobserve).toHaveBeenCalledWith({ pid: "p" });
+  });
+
   it("reconciles changes missed while a surface was closed when it reopens", async () => {
     const h = harness([page([record(1)], 1), page([record(2)], 2)]);
     const close = h.sync.retain("p", 50, false);

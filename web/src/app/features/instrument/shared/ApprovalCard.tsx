@@ -2,7 +2,7 @@ import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import type { Ref } from "preact";
 import { Hint } from "../../../components/ui/Tooltip";
 import { useT } from "../../../i18n/locale";
-import { hilDetailLabel, hilRequestLine, hilRequestSentence } from "../../../services/chat/domain/hil";
+import { canAlwaysAllow, hilDetailLabel, hilRequestLine, hilRequestSentence } from "../../../services/chat/domain/hil";
 import { commandLine } from "./commandLine";
 import "./approvalCard.css";
 
@@ -54,7 +54,7 @@ export function ApprovalCard({ request, who, place, label, disabled = false, sho
         <button type="button" class="ibtn" disabled={disabled} onClick={() => { if (!disabled) onDecide("deny"); }}>
           {shortcuts ? <kbd>n</kbd> : null} {t("shell.approval.deny")}
         </button>
-        {request.syscall === "shell.exec" && !["*", "any", "device", "devices/*", "targets/*"].includes(request.target) ? (
+        {canAlwaysAllow(request) ? (
           <Hint text={t("shell.approval.alwaysAllowHint", { place })}>
             <button type="button" class="remember" disabled={disabled} onClick={() => { if (!disabled) onDecide("approve", true); }}>{t("shell.approval.alwaysAllow")}</button>
           </Hint>
