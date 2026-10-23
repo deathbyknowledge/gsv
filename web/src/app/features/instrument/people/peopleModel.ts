@@ -1,4 +1,4 @@
-import type { ApproachCreateArgs, ApproachSummary, PublicProfile, ContactSummary, ConversationInboxEntry } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName, type ApproachCreateArgs, type ApproachSummary, type PublicProfile, type ContactSummary, type ConversationInboxEntry } from "@humansandmachines/gsv/protocol";
 import { randomId } from "../../../services/ids";
 import { publicDeployment } from "../../../services/deployment";
 import { deploymentDomains, type PublicDeploymentConfig } from "@humansandmachines/gsv/services/deployment";
@@ -26,17 +26,32 @@ export function profileAddress(value: string, deployment: PublicDeploymentConfig
   try {
     const url = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`);
     if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) return null;
+    // A bare handle or host names the profile page it serves.
+    if (url.pathname === "/") url.pathname = "/profile";
     return url.href;
   } catch { return null; }
 }
 
-export function profileAddressLabel(origin: string, deployment: PublicDeploymentConfig = publicDeployment()): string {
-  const { hostname, host, port } = new URL(origin);
+/** A handle as People shows it: short for a Ship on this deployment's own domains, whole for one elsewhere. */
+export function handleLabel(handle: string, deployment: PublicDeploymentConfig = publicDeployment()): string {
   const domain = deploymentDomains(deployment)
     .sort((left, right) => right.length - left.length)
-    .find((candidate) => hostname === candidate || hostname.endsWith(`.${candidate}`));
-  const handle = domain ? hostname.slice(0, -(domain.length + 1)) : "";
-  return !port && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle) ? `@${handle}` : host;
+    .find((candidate) => handle === candidate || handle.endsWith(`.${candidate}`));
+  const short = domain ? handle.slice(0, -(domain.length + 1)) : "";
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(short) ? `@${short}` : handle;
+}
+
+/** A contact's profile page; only a handle that names their DID back leads to one. */
+export function contactProfileUrl(contact: Pick<ContactSummary, "remoteHandle">): string | null {
+  return contact.remoteHandle ? `https://${contact.remoteHandle}/profile` : null;
+}
+
+/** What People hands Ship when asked to help with a contact: who they are and, when known, where their profile is. */
+export function contactAsk(contact: ContactSummary, task: string): string {
+  const name = contactDisplayName(contact);
+  const profile = contactProfileUrl(contact);
+  const subject = profile ? `Help me with ${JSON.stringify(name)}'s Ship profile: ${profile}` : `Help me with my contact ${JSON.stringify(name)}.`;
+  return `${subject}\n\n${task.replaceAll("{name}", contact.remoteHandle ? `${name} (${contact.remoteHandle})` : name)}`;
 }
 
 export function approachSendIntent(draft: ApproachDraft): ApproachCreateArgs {
@@ -44,11 +59,10 @@ export function approachSendIntent(draft: ApproachDraft): ApproachCreateArgs {
   if (draft.shipHandlesMessages === null) throw new Error(t("people.handling.required"));
   const displayName = (draft.displayName ?? "").trim();
   const previous = draft.intent;
-  if (previous && previous.profileUrl === draft.profile.url && previous.profileRevision === draft.profile.revision
-    && previous.recipient.shipId === draft.profile.actor.shipId && previous.recipient.subjectId === draft.profile.actor.subjectId
+  if (previous && previous.did === draft.profile.did && previous.profileCid === draft.profile.cid
     && previous.displayName === displayName && previous.text === draft.text.trim()
     && previous.shipHandlesMessages === draft.shipHandlesMessages) return previous;
-  return { profileUrl: draft.profile.url, recipient: draft.profile.actor, profileRevision: draft.profile.revision,
+  return { did: draft.profile.did, profileCid: draft.profile.cid,
     displayName, text: draft.text.trim(), shipHandlesMessages: draft.shipHandlesMessages, idempotencyKey: randomId() };
 }
 
@@ -74,7 +88,7 @@ export function requestMayRetry(request: ApproachSummary): boolean {
 export function inboxPreview(contact: ContactSummary, entry?: ConversationInboxEntry): string {
   if (contact.blocked) return t("people.contactBlocked");
   if (contact.state === "revoked") return t("people.preview.ended");
-  if (!entry?.preview) return contact.preferences?.muted ? t("people.preview.muted") : new URL(contact.remoteOrigin).host;
+  if (!entry?.preview) return contact.preferences?.muted ? t("people.preview.muted") : contact.remoteHandle ? handleLabel(contact.remoteHandle) : "";
   const preview = entry.preview;
   return messagePreview(preview, preview.text || t("people.message.attachments", { count: preview.attachmentCount }));
 }

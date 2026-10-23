@@ -30,7 +30,6 @@ const labels = {
   "conversation.search": "fleet.ledger.conversationSearch",
   "conversation.send": "fleet.ledger.conversationSend",
   "conversation.media.read": "fleet.ledger.conversationMediaRead",
-  "contact.identity": "fleet.ledger.contactIdentity",
   "profile.get": "fleet.ledger.profileGet",
   "approach.create": "fleet.ledger.approachCreate",
   "approach.get": "fleet.ledger.approachGet",

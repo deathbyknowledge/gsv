@@ -183,14 +183,15 @@ const approaches: ApproachSummary[] = [];
 /* one contact with an unread message, so the chat shows a contact notice with its reply box */
 const MARA_CONTACT_ID = "mock-contact-mara";
 const MARA_CONVERSATION = "c-mara";
-const MARA_ACTOR = { shipId: "mock-mara", subjectId: "owner" };
-const maraContact: ContactSummary = { id: MARA_CONTACT_ID, ownerUid: OWNER.uid, state: "active", generation: "1", remoteShipId: MARA_ACTOR.shipId,
-  remoteSubject: { id: MARA_ACTOR.subjectId, displayName: "Mara" }, remoteOrigin: "https://mara.ship.space", conversationId: MARA_CONVERSATION,
+const MARA_DID = "did:plc:maraaaaaaaaaaaaaaaaaaaaa";
+const OWN_DID = "did:plc:esteveaaaaaaaaaaaaaaaaaa";
+const maraContact: ContactSummary = { id: MARA_CONTACT_ID, ownerUid: OWNER.uid, state: "active", generation: "1", remoteDid: MARA_DID,
+  remoteName: "Mara", remoteHandle: "mara.ship.space", conversationId: MARA_CONVERSATION,
   createdAtMs: at(3, 9, 0), updatedAtMs: at(0, 8, 12), lastReceivedAtMs: at(0, 8, 12) };
 const maraThread: ConversationMessage[] = [{ id: "mara-1", conversationId: MARA_CONVERSATION, sequence: 1,
-  author: { kind: "contact", contactId: MARA_CONTACT_ID, shipId: MARA_ACTOR.shipId, subjectId: MARA_ACTOR.subjectId, displayName: "Mara" },
+  author: { kind: "contact", contactId: MARA_CONTACT_ID, displayName: "Mara" },
   text: "Are we still on for the studio visit on Thursday? I can bring the revised quote.",
-  social: { threadId: "mara-thread", reference: { actor: MARA_ACTOR, messageId: "mara-1" }, provenance: { kind: "human" } },
+  social: { threadId: "mara-thread", reference: { did: MARA_DID, messageId: "mara-1" }, provenance: { kind: "human" } },
   origin: { kind: "federation", contactId: MARA_CONTACT_ID, deliveryId: "mara-delivery-1" }, createdAt: at(0, 8, 12) }];
 const maraView = { readThroughSequence: 0, archived: false, revision: 1 };
 /* a retry with the same idempotency key replays the first answer, as the Kernel replays its outbox record; the
@@ -935,7 +936,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
         send = contactSendMessageId(contactId, maraContact.generation, idempotencyKey).then((messageId): ContactSendResult => {
           const sequence = maraThread.length + 1;
           maraThread.push({ id: messageId, conversationId: MARA_CONVERSATION, sequence, author: { kind: "user", uid: OWNER.uid }, text,
-            social: { threadId: "mara-thread", reference: { actor: { shipId: "mock-ship", subjectId: "owner" }, messageId }, provenance: { kind: "human" } },
+            social: { threadId: "mara-thread", reference: { did: OWN_DID, messageId }, provenance: { kind: "human" } },
             origin: { kind: "client", clientId: "web" }, createdAt: Date.now() });
           broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, latestSequence: sequence });
           return { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" };
@@ -946,10 +947,10 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     /* a message request sent from People: kept in this tab so the requests view can list it */
     case "approach.create": {
-      const { displayName, recipient } = z.object({ displayName: z.string(), recipient: z.object({ shipId: z.string(), subjectId: z.string() }) }).parse(args);
+      const { displayName, did } = z.object({ displayName: z.string(), did: z.string() }).parse(args);
       const now = Date.now();
       const approach: ApproachSummary = { id: `mock-approach-${approaches.length + 1}`, direction: "outgoing",
-        reference: { actor: recipient, approachId: `mock-approach-${approaches.length + 1}` }, peer: recipient, displayName,
+        requestId: `mock-approach-${approaches.length + 1}`, peerDid: did, displayName,
         conversationId: `approach:${approaches.length + 1}`, state: "pending", revision: 1, delivery: "received",
         createdAtMs: now, updatedAtMs: now, expiresAtMs: now + 7 * 24 * 3_600_000 };
       approaches.push(approach);
@@ -977,11 +978,10 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { profile: ownProfile });
     }
     case "profile.resolve": {
-      const { url } = z.object({ url: z.string().url() }).parse(args);
-      const origin = new URL(url).origin;
-      return respond(id, { profile: { version: 1, origin, url: `${origin}/profile`, actor: { shipId: "mock-person", subjectId: "owner" },
-        displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests", representation: "human-and-ship", revision: 1,
-        publishedAtMs: Date.now() } });
+      const { address } = z.object({ address: z.string() }).parse(args);
+      const handle = /^https?:\/\//i.test(address) ? new URL(address).host : address.replace(/^@/, "");
+      return respond(id, { profile: { did: MARA_DID, handle, cid: "bafyreimockmara", url: `https://${handle}/profile`,
+        displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests" } });
     }
     case "atproto.blob.read": {
       const { cid } = z.object({ cid: z.string() }).parse(args);

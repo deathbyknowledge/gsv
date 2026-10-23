@@ -57,7 +57,7 @@ const messageSchema = z.object({
   author: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("user"), uid: z.number() }),
     z.object({ kind: z.literal("process"), pid: z.string(), uid: z.number() }),
-    z.object({ kind: z.literal("contact"), contactId: z.string(), shipId: z.string(), subjectId: z.string(), displayName: z.string() }),
+    z.object({ kind: z.literal("contact"), contactId: z.string(), displayName: z.string() }),
   ]),
   text: z.string(),
   social: z.optional(socialMessageMetadataSchema),
