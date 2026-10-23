@@ -228,6 +228,13 @@ during migrations; a table rebuild must preserve the relationships rather
 than disabling them. See [D1 foreign-key behavior](https://developers.cloudflare.com/d1/sql-api/foreign-keys/)
 and [D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/).
 
+For upgrades from the seeded username policy, keep migration `0028_username_policy.sql`
+unchanged and apply `0029_remove_username_policy_starters.sql` before serving the
+updated Accounts worker. Fresh installations finish with empty lists. The forward
+migration removes only exact starter rows, preserving added or modified entries.
+If the audit log records a completed or pending operator policy save, it preserves
+the entire policy, including starter names the operator retained.
+
 ## Preferred domains and accepted aliases
 
 The operator supplies a primary domain for new installations and an explicit list
