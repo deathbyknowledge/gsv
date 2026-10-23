@@ -73,10 +73,12 @@ A new Ship's profile is public from your first sign-in, named by your handle and
 open to message requests, so people can add you by handle. Choose your handle at the
 bottom of People to see your profile as others will: a **public** or **private**
 label, your handle with a button that copies your profile address, your bio, and
-who can start a conversation. An empty bio shows "Mystery space dweller." with a
-**complete bio** link. Choose **edit** to change it. **save** publishes your
-changes, and **save as draft** keeps them private, shown as **unpublished
-changes**, until you save. The profile can be open to message requests from
+who can start a conversation. An empty bio shows "Space cowboy." with a
+**complete bio** link. Choose **edit** to change it. On a private profile the main
+button is **publish**, which makes it public; on a public one it is **save**, which
+updates the public page. **save as draft** keeps changes private, shown as
+**unpublished changes**, and leaves the public page as it is. The note under the
+buttons says which applies. Who can see my profile? describes the live page. The profile can be open to message requests from
 anyone, or limited to people you invite.
 Your public address is `https://YOUR-SPACE/profile`. Existing published
 profile links still work. Drafts remain when you return to a conversation. The
