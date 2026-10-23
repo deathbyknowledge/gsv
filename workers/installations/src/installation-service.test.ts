@@ -39,10 +39,12 @@ it.each(["https://accounts.example.com", "https://owners.example.com"])("complet
   const service = new InstallationService(createExecutionContext(), { ...env,
     GSV_OWNER_ORIGIN_ALIASES: '["https://owners.example.com"]',
     GSV_SIGNUP_ENABLED: "true", GSV_OWNER_SIGNUP_ORIGIN: "https://join.example.com", GSV_OWNER_AUTH_SECRET: "synthetic-auth-secret-".repeat(4),
-    GSV_OWNER_EMAIL_FROM: "accounts@example.com", OWNER_EMAIL: {
+    GSV_OWNER_EMAIL_FROM: "login@ship.space", GSV_OWNER_EMAIL_REPLY_TO: "hello@humansandmachin.es", OWNER_EMAIL: {
       async send(message: EmailMessage | EmailMessageBuilder): Promise<EmailSendResult> {
         if (!("subject" in message)) throw new Error("Expected composed mail");
-        code = message.text?.match(/code is ([0-9]{6})\./)?.[1] ?? "";
+        expect(message).toMatchObject({ from: { email: "login@ship.space", name: "Ship" },
+          replyTo: "hello@humansandmachin.es", subject: "Your Ship sign-in code" });
+        code = message.text?.match(/^([0-9]{6})$/m)?.[1] ?? "";
         return { messageId: crypto.randomUUID() };
       },
     },

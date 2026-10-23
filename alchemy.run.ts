@@ -40,11 +40,13 @@ export default Alchemy.Stack("gsv", {
     ? { issuer: ownerIssuer, clientId: ownerClientId, clientSecret: ownerClientSecret } : undefined;
   const openRegistration = yield* Config.Boolean("GSV_SIGNUP_ENABLED").pipe(Config.withDefault(false));
   const ownerEmailFrom = Option.getOrUndefined(yield* Config.NonEmptyString("GSV_OWNER_EMAIL_FROM").pipe(Config.option));
+  const ownerEmailReplyTo = Option.getOrUndefined(yield* Config.NonEmptyString("GSV_OWNER_EMAIL_REPLY_TO").pipe(Config.option));
+  if (ownerEmailReplyTo && !ownerEmailFrom) throw new Error("Owner email reply-to requires GSV_OWNER_EMAIL_FROM");
   const ownerEmailRecipients = Option.getOrUndefined(yield* Config.NonEmptyString("GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS").pipe(Config.option));
   if (ownerEmailRecipients && !ownerEmailFrom) throw new Error("Owner email recipients require GSV_OWNER_EMAIL_FROM");
   const allowedRecipients = ownerEmailRecipients?.split(",").map((email) => email.trim()).filter(Boolean);
   if (allowedRecipients?.length === 0) throw new Error("Owner email recipient restriction must not be empty");
-  const ownerEmail = ownerEmailFrom ? { from: ownerEmailFrom, allowedRecipients,
+  const ownerEmail = ownerEmailFrom ? { from: ownerEmailFrom, replyTo: ownerEmailReplyTo, allowedRecipients,
     authSecret: yield* Alchemy.makeRandom("GsvOwnerAuthSecret", { bytes: 32 }),
   } : undefined;
   const configured = yield* Config.String("GSV_ADAPTERS").pipe(Config.withDefault(""));
