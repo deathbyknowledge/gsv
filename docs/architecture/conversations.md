@@ -287,8 +287,8 @@ native saves apply to the attachment blobs resolved by the authenticated fronten
 
 ## Search
 
-Chat opens conversation search from its header action or with `Ctrl+K` from any view.
-`/` in browse mode and `Ctrl/Cmd+F` in Chat remain available. People uses the same search
+Chat opens conversation search through **Help → Keyboard shortcuts → Search Chat**, or with `Ctrl+K` from any view.
+`/` in browse mode and `Ctrl/Cmd+F` in Chat remain available. The unmodified `w` key opens Work outside text fields; `f` is available for ordinary typing. People uses the same search
 dialog and syscall for the selected contact conversation. Selecting a result shows the
 original message and surrounding messages in the dialog, preserving the conversation position and
 any draft when the dialog closes.
