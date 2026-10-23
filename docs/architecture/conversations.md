@@ -32,6 +32,9 @@ The latest message and consecutive messages from the same sender stay fully brig
 when each adjacent pair is at most five minutes apart. A different sender or a longer
 gap ends the group; work receipts and internal notes do not split it. The latest
 owner message and its consecutive group remain bright after Ship replies.
+New Ship replies open fully, including replies delivered whole without streaming.
+Refreshing the loaded history keeps those replies open; fetching older messages
+does not automatically expand them.
 
 
 Chat and contact history mark the top scroll boundary with a lavender line only
@@ -66,7 +69,7 @@ states when relevant. Expand it to read the complete command, output and termina
 A very long message in Chat folds behind **read more** once it has finished arriving, and **show
 less** folds it again. Folding uses the rendered height at the current width and text size:
 messages up to eighteen line-heights remain whole; longer messages show twelve line-heights
-with a short fade at the end. A reply the user watched stream in stays open. Opening or folding
+with a short fade at the end. Newly received replies stay open, including messages delivered without streaming. Opening or folding
 keeps the reading position, and the message text itself is unchanged. Selected text uses a solid
 lavender highlight with contrasting text in both themes.
 Inside the prompt, selected text stays light on a stronger purple highlight. Selecting a range

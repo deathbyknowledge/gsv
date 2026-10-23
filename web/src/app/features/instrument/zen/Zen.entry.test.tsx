@@ -765,6 +765,42 @@ describe("Zen conversation entry", () => {
     } finally { await reopened.unmount(); }
   });
 
+  it.each([true, false])("opens a new whole Ship reply without a stream (directed=%s)", async (directed) => {
+    const zen = await mountedZen();
+    try {
+      const reply = message("process", "A long reply.\n".repeat(30));
+      await act(() => { for (const listener of signals) listener("message.committed", { message: reply, directed }); });
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe(reply.text));
+      expect(zen.props(ZenText).opened).toBe(true);
+      messages = [reply];
+      await zen.refreshHistory();
+      expect(zen.props(ZenText).opened).toBe(true);
+    } finally { await zen.unmount(); }
+  });
+
+  it("opens newly received replies without expanding older messages loaded later", async () => {
+    const existing = message("process", "Existing reply", 10);
+    messages = [existing];
+    const zen = await mountedZen();
+    try {
+      const reply = message("process", "A new long reply.\n".repeat(30), 11);
+      await act(() => { for (const listener of signals) listener("message.committed", { message: reply, directed: true }); });
+      await vi.waitFor(() => expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(2));
+      const old = message("process", "An older long reply.\n".repeat(30), 1);
+      messages = [old, existing, reply];
+      await zen.refreshHistory();
+      await vi.waitFor(() => expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(3));
+      const texts = zen.nodes().filter((node) => node.type === ZenText);
+      expect(texts.map((node) => {
+        // SAFETY: These nodes were selected by the exact ZenText component.
+        const props = node.props as Pick<ComponentProps<typeof ZenText>, "text" | "opened">;
+        return [props.text, props.opened];
+      })).toEqual([
+        [old.text, false], [existing.text, false], [reply.text, true],
+      ]);
+    } finally { await zen.unmount(); }
+  });
+
   it("shows existing messages immediately, including messages from Ship", async () => {
     messages = [message("process", "Your machine is online.")];
     const zen = await mountedZen();

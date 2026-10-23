@@ -654,6 +654,17 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     enabled: connected && Boolean(onMemory) && hasMemoryRead,
   });
 
+  const initialMessageSequence = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (ready && initialMessageSequence.current === null) {
+      initialMessageSequence.current = Math.max(0, ...conversation.rows.map((row) => row.conversationSequence ?? 0));
+    }
+  }, [ready, conversation.rows]);
+  const receivedMessages = useMemo(() => new Set(conversation.rows
+    .filter((row) => initialMessageSequence.current !== null
+      && row.role === "assistant" && (row.conversationSequence ?? 0) > initialMessageSequence.current)
+    .map((row) => row.id)), [conversation.rows, ready]);
+
   const seenMomentsRef = useRef<Set<string> | null>(null);
   const streamedMomentsRef = useRef<Set<string>>(new Set());
   /* the committed message lands under a new id, so a reply that streamed is also known by its run */
@@ -1027,7 +1038,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} onFold={pin} />
         ) : moment.text ? (
           <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0}
-            opened={streamed(moment)} onClick={onTextClick} onFold={pin} />
+            opened={streamed(moment) || receivedMessages.has(moment.id)} onClick={onTextClick} onFold={pin} />
         ) : moment.thinking || moment.streaming ? (
           <div class="text">{waking ? <WakingUp /> : null}<ThinkingMark tick={tick} /></div>
         ) : null}
@@ -1050,7 +1061,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
-    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed,
+    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed, receivedMessages,
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t, waking]);
 
   /* the status line */
