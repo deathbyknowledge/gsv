@@ -8,26 +8,27 @@ import { Permissions } from "./Permissions";
 import { MessengerConnections } from "./MessengerConnections";
 import { MessengerPairing } from "./Telegram";
 
-const service = vi.hoisted(() => ({ client: {}, config: vi.fn(), targets: vi.fn(), save: vi.fn(), connections: vi.fn() }));
-vi.mock("../../../services/gateway/GatewayProvider", () => ({ useGateway: () => ({ client: service.client, connected: true }) }));
-vi.mock("../../../services/system/consoleService", () => ({ loadConsoleConfig: service.config, loadConsoleTargets: service.targets, disconnectConsoleAdapterPairing: vi.fn() }));
-vi.mock("./permissionService", () => ({ saveApprovalPolicy: service.save }));
-vi.mock("./messengerConnectionsService", () => ({ loadMessengerConnections: service.connections, messengerConnectionStatus: () => "connected" }));
+import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
+import { settingsGatewayFixture } from "./settingsGatewayFixture";
+
 const account: ConsoleAccount = { uid: 1000, username: "owner", displayName: "Owner", relation: "self", runnable: false, gecos: "", capabilities: ["*"] };
-beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal("document", {}); service.targets.mockResolvedValue([]); service.save.mockResolvedValue({ ok: true }); });
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  vi.stubGlobal("document", {});
+  vi.stubGlobal("window", { location: new URL("https://ship.example/chat/settings") });
+});
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 async function mount(component: () => ComponentChildren) {
   const root = createTestRoot("Settings controls");
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   let tree: ComponentChildren;
   function Harness() { tree = component(); return null; }
-  await root.render(<QueryClientProvider client={cache}><Harness /></QueryClientProvider>);
+  await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
   return { nodes: () => collectNodes(tree), async close() { await root.unmount(); cache.clear(); } };
 }
 
 it("keeps Slack and Discord connection controls disabled even when their adapters support pairing", async () => {
-  service.connections.mockResolvedValue({ adapters: ["whatsapp", "telegram", "slack", "discord"].map((adapter) => ({ adapter, enabled: true, supportsPairing: true, canLink: true, accounts: [] })), links: [] });
+  settingsGatewayFixture();
   const screen = await mount(() => MessengerConnections({ account, active: true }));
   try {
     await vi.waitFor(() => expect(screen.nodes().filter((node) => node.props.class === "settings-messenger")).toHaveLength(4));
@@ -45,7 +46,7 @@ it("keeps Slack and Discord connection controls disabled even when their adapter
 
 it("reorders permission rules with arrows and removes a rule below its tool selector before saving", async () => {
   const rules = [{ match: "fs.*", action: "ask" }, { match: "web.*", action: "auto" }];
-  service.config.mockResolvedValue([{ key: "users/1000/ai/tools/approval", value: JSON.stringify({ default: "ask", rules }), redacted: false }]);
+  const gateway = settingsGatewayFixture([{ key: "users/1000/ai/tools/approval", value: JSON.stringify({ default: "ask", rules }), redacted: false }]);
   const screen = await mount(() => Permissions({ account, active: true, onDirty: () => {} }));
   try {
     await vi.waitFor(() => expect(screen.nodes().filter((node) => node.props.class === "settings-rule-tool")).toHaveLength(2));
@@ -58,7 +59,7 @@ it("reorders permission rules with arrows and removes a rule below its tool sele
     // SAFETY: The form's submit handler only requires preventDefault.
     const form = screen.nodes().find((node) => node.type === "form") as VNode<{ onSubmit: (event: { preventDefault: () => void }) => void }>;
     await act(() => form.props.onSubmit({ preventDefault: () => {} }));
-    await vi.waitFor(() => expect(service.save).toHaveBeenCalled());
-    expect(JSON.parse(service.save.mock.calls[0][3]).rules).toEqual([rules[0]]);
+    await vi.waitFor(() => expect(gateway.write).toHaveBeenCalledOnce());
+    expect(JSON.parse(gateway.write.mock.calls[0][0].value).rules).toEqual([rules[0]]);
   } finally { await screen.close(); }
 });

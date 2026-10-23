@@ -69,6 +69,7 @@ it.each([false, true])("hides stars across the app and sign-in with blocked stor
     await root.render(<><Appearance /><Backdrop /></>);
     expect(checkbox().props.checked).toBe(true);
     expect(stars()).toHaveLength(1);
+    // SAFETY: The checkbox handler reads only currentTarget.checked.
     await act(() => checkbox().props.onChange?.({ currentTarget: { checked: false } } as JSX.TargetedEvent<HTMLInputElement>));
     expect(checkbox().props.checked).toBe(false);
     expect(stars()).toHaveLength(0);
@@ -80,6 +81,7 @@ it.each([false, true])("hides stars across the app and sign-in with blocked stor
     expect(stars()).toHaveLength(0);
     await root.render(<><Appearance /><Backdrop /></>);
     expect(checkbox().props.checked).toBe(false);
+    // SAFETY: The checkbox handler reads only currentTarget.checked.
     await act(() => checkbox().props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>));
     expect(stars()).toHaveLength(1);
     if (!blocked) expect(stored.get("gsv.instrument.stars")).toBe("true");

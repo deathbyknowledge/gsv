@@ -2,18 +2,17 @@ import type { ComponentChildren } from "preact";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ConsoleAccount, ConsoleConfigEntry } from "../../../domain/system/consoleModels";
+import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { Language } from "./Language";
 import { Timezone } from "./Timezone";
 import { ThemePreference } from "./ThemePreference";
 import { Preferences } from "./Preferences";
 
-const service = vi.hoisted(() => ({ client: {}, loadConfig: vi.fn(), loadModels: vi.fn(), save: vi.fn() }));
-vi.mock("../../../services/gateway/GatewayProvider", () => ({ useGateway: () => ({ client: service.client, connected: true }) }));
-vi.mock("../../../services/system/consoleService", () => ({
-  loadConsoleConfig: service.loadConfig, loadConsoleModels: service.loadModels, saveConsoleConfigEntries: service.save,
-}));
+import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
+import { settingsGatewayFixture } from "./settingsGatewayFixture";
+
+let gateway: ReturnType<typeof settingsGatewayFixture>;
 const account: ConsoleAccount = { uid: 1000, username: "owner", displayName: "Owner", relation: "self", runnable: false, gecos: "", capabilities: ["sys.config.*"] };
 
 beforeEach(() => {
@@ -22,15 +21,9 @@ beforeEach(() => {
   vi.stubGlobal("window", Object.assign(new EventTarget(), {
     location: new URL("https://ship.example/chat/settings"), history: { state: { gsvAppIndex: 0 } }, confirm: vi.fn(() => false),
   }));
-  let config: ConsoleConfigEntry[] = [];
-  service.loadConfig.mockImplementation(async () => config);
-  service.loadModels.mockResolvedValue({ models: [], preferredModelId: null });
-  service.save.mockImplementation(async (_client, { entries }: { entries: { key: string; value: string }[] }) => {
-    config = [...config.filter((entry) => !entries.some((next) => next.key === entry.key)), ...entries.map((entry) => ({ ...entry, redacted: false }))];
-    return { ok: true, written: entries.length };
-  });
+  gateway = settingsGatewayFixture();
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 async function mount() {
   const root = createTestRoot("Shared preferences save");
@@ -38,7 +31,7 @@ async function mount() {
   const dirty = vi.fn();
   let tree: ComponentChildren;
   function Harness() { tree = Preferences({ account, active: true, onDirty: dirty }); return null; }
-  await root.render(<QueryClientProvider client={cache}><Harness /></QueryClientProvider>);
+  await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
   await vi.waitFor(() => expect(collectNodes(tree).some((node) => node.type === Language)).toBe(true));
   const nodes = () => collectNodes(tree);
   const save = () => nodes().find((node) => node.type === "button" && collectText(node.props.children) === "Save changes")!;
@@ -54,15 +47,15 @@ it("puts appearance first and saves language and timezone through one action", a
       screen.nodes().find((node) => node.type === Language)!.props.onChange!("pt-BR");
       screen.nodes().find((node) => node.type === Timezone)!.props.onChange!("Europe/Amsterdam");
     });
-    expect(service.save).not.toHaveBeenCalled();
+    expect(gateway.write).not.toHaveBeenCalled();
     expect(screen.save().props.disabled).toBe(false);
     expect(screen.dirty).toHaveBeenLastCalledWith(true);
     await act(async () => { await screen.save().props.onClick!(); });
     await vi.waitFor(() => expect(screen.dirty).toHaveBeenLastCalledWith(false));
-    expect(service.save).toHaveBeenCalledWith(service.client, { entries: [
+    expect(gateway.write.mock.calls.map(([entry]) => entry)).toEqual([
       { key: "users/1000/locale/language", value: "pt-BR" },
       { key: "users/1000/locale/timezone", value: "Europe/Amsterdam" },
-    ] });
+    ]);
     expect(screen.text()).toContain("saved");
   } finally { await screen.close(); }
 });
@@ -76,9 +69,9 @@ it("keeps every draft after a save failure and validates before any write", asyn
     });
     await act(async () => { await screen.save().props.onClick!(); });
     await vi.waitFor(() => expect(screen.nodes().some((node) => "error" in node.props && node.props.error instanceof Error)).toBe(true));
-    expect(service.save).not.toHaveBeenCalled();
+    expect(gateway.write).not.toHaveBeenCalled();
     await act(() => screen.nodes().find((node) => node.type === Timezone)!.props.onChange!("Europe/Amsterdam"));
-    service.save.mockRejectedValueOnce(new Error("Connection lost"));
+    gateway.write.mockRejectedValueOnce(new Error("Connection lost"));
     await act(async () => { await screen.save().props.onClick!(); });
     await vi.waitFor(() => expect(screen.save().props.disabled).toBe(false));
     expect(screen.nodes().find((node) => node.type === Language)!.props.value).toBe("es");

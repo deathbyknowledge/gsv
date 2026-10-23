@@ -1,16 +1,17 @@
+import type { AppHistoryState } from "./appNavigation";
 import type { JSX } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestRoot } from "../../testing/testHarness";
-import { AppLink as SessionLink, useAppLocation as useSessionLocation, navigateApp } from "./appNavigation";
+import { AppLink as SessionLink, useAppLocation as useSessionLocation, appHistoryIndex, navigateApp } from "./appNavigation";
 
 function browser() {
   let url = new URL("https://ship.example/");
   const events = new EventTarget();
-  let state: unknown = null;
+  let state: AppHistoryState | null = null;
   vi.stubGlobal("document", {});
-  const pushState = vi.fn((next: unknown, _unused: string, destination: string) => { state = next; url = new URL(destination, url); });
-  const replaceState = vi.fn((next: unknown, _unused: string, destination: string) => { state = next; url = new URL(destination, url); });
+  const pushState = vi.fn((next: AppHistoryState, _unused: string, destination: string) => { state = next; url = new URL(destination, url); });
+  const replaceState = vi.fn((next: AppHistoryState, _unused: string, destination: string) => { state = next; url = new URL(destination, url); });
   vi.stubGlobal("window", {
     get location() { return url; },
     history: { pushState, replaceState, get state() { return state; } },
@@ -32,6 +33,19 @@ function click(options: Partial<JSX.TargetedMouseEvent<HTMLAnchorElement>> = {})
 afterEach(() => vi.unstubAllGlobals());
 
 describe("session navigation", () => {
+  it.each([null, {}, { gsvAppIndex: "2" }, { gsvAppIndex: 1.5 }, { gsvAppIndex: Number.MAX_SAFE_INTEGER + 1 }])("rejects an invalid browser history index: %o", (state) => {
+    vi.stubGlobal("window", { history: { state } });
+    expect(appHistoryIndex()).toBeNull();
+  });
+
+  it("preserves other browser history state when replacing a destination", () => {
+    const history = browser();
+    history.replaceState({ gsvAppIndex: 3, scroll: { top: 120 } }, "", "https://ship.example/chat");
+    navigateApp("/people", { replace: true });
+    expect(history.replaceState).toHaveBeenLastCalledWith({ gsvAppIndex: 3, scroll: { top: 120 } }, "", "https://ship.example/people");
+    expect(appHistoryIndex()).toBe(3);
+  });
+
   it("records distinct app destinations while redirects and repeated selections do not add entries", async () => {
     const history = browser();
     const root = createTestRoot("App history");

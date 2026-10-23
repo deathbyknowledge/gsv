@@ -20,6 +20,7 @@ it("offers exactly English, Spanish and Portuguese and maps regional saved value
   }
   // SAFETY: These are Language's native fields; their handlers read currentTarget.value only.
   const select = () => collectNodes(tree).find((node) => node.type === "select") as VNode<JSX.SelectHTMLAttributes<HTMLSelectElement>>;
+  // SAFETY: The change handler reads only currentTarget.value.
   const change = (value: string) => act(() => select().props.onChange?.({ currentTarget: { value } } as JSX.TargetedEvent<HTMLSelectElement>));
   try {
     await root.render(<Harness />);

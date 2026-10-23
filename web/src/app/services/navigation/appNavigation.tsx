@@ -1,17 +1,23 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useLayoutEffect, useState } from "preact/hooks";
+import { z } from "zod";
 
 export const APP_NAVIGATION = "gsv-app-navigation";
 export const BEFORE_APP_NAVIGATION = "gsv-before-app-navigation";
 
+const appHistoryStateSchema = z.looseObject({ gsvAppIndex: z.number().int().safe() });
+const browserHistoryStateSchema = z.looseObject({});
+export type AppHistoryState = z.infer<typeof appHistoryStateSchema>;
+
 export function appHistoryIndex(): number | null {
-  const index = window.history.state?.gsvAppIndex;
-  return typeof index === "number" && Number.isSafeInteger(index) ? index : null;
+  const state = appHistoryStateSchema.safeParse(window.history.state);
+  return state.success ? state.data.gsvAppIndex : null;
 }
 
-function historyState(index: number) {
-  const state = window.history.state;
-  return { ...(state && typeof state === "object" ? state : {}), gsvAppIndex: index };
+function historyState(index: number): AppHistoryState {
+  const state = browserHistoryStateSchema.safeParse(window.history.state);
+  if (!state.success) return { gsvAppIndex: index };
+  return { ...state.data, gsvAppIndex: index };
 }
 
 export function useAppLocation() {

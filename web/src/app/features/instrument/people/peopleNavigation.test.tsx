@@ -1,3 +1,4 @@
+import type { AppHistoryState } from "../../../services/navigation/appNavigation";
 import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestRoot } from "../../../testing/testHarness";
@@ -22,9 +23,9 @@ describe("People destinations", () => {
   it("retains the inactive view and restores browser history without navigating or losing its selection", async () => {
     let url = new URL("https://ship.example/people?contact=first");
     const events = new EventTarget();
-    let state: unknown = null;
-    const pushState = vi.fn((next: unknown, _unused: string, destination: string) => { state = next; url = new URL(destination); });
-    const replaceState = vi.fn((next: unknown, _unused: string, destination: string) => { state = next; url = new URL(destination); });
+    let state: AppHistoryState | null = null;
+    const pushState = vi.fn((next: AppHistoryState, _unused: string, destination: string) => { state = next; url = new URL(destination); });
+    const replaceState = vi.fn((next: AppHistoryState, _unused: string, destination: string) => { state = next; url = new URL(destination); });
     vi.stubGlobal("document", {});
     vi.stubGlobal("window", {
       get location() { return url; }, history: { pushState, replaceState, get state() { return state; } },
