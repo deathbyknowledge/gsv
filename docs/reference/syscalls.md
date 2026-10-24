@@ -1089,7 +1089,8 @@ domain. The Kernel resolves the handle to a DID, checks that the DID document cl
 and reads the record from the repository the document names. `PublicProfile` returns the `did`,
 `handle`, record `cid`, `displayName`, `about`, `contactPolicy` and page `url`. A 404 means no public
 profile is available at that address; it does not establish whether the Ship exists or prevent a
-private invitation. A profile published as a signed document before profiles were records keeps its
+private invitation. A 503 means the host the document names doesn't serve repositories right now,
+so the profile can't be read yet. A profile published as a signed document before profiles were records keeps its
 published fields and is written as a record at its owner's next sign-in.
 A message request names the recipient's `did` and the `profileCid` of the record its sender read.
 The sender's Ship refuses to send it if that record has changed or no longer takes requests, and the

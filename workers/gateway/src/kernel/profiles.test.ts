@@ -493,6 +493,16 @@ describe("reading another Ship's profile", () => {
     });
   });
 
+  it("says a host that serves no repositories can't be read now, rather than that the profile is private", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx } = profileContext(storage);
+      network.hosts.set(new URL(TEST_PDS_URL).host, () => new Response("Not Found", { status: 404 }));
+      const unreachable = { name: "FederationHttpError", status: 503, message: "Couldn't read @alice.ship.test's profile: its open-network host answered 404. Try again later." };
+      await expect(handleProfileResolve({ address: "@alice" }, ctx)).rejects.toMatchObject(unreachable);
+      await expect(readPublicProfile(alice.did, ctx)).rejects.toMatchObject(unreachable);
+    });
+  });
+
   it("refuses a record that isn't the profile it asked for", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx } = profileContext(storage);

@@ -278,9 +278,14 @@ async function readProfileRecord(resolved: ResolvedDid, ctx: KernelContext): Pro
   url.search = new URLSearchParams({ repo: did, collection: SHIP_PROFILE_COLLECTION, rkey: SHIP_PROFILE_RKEY }).toString();
   const response = await fetchFederation(url.href, { headers: { accept: "application/json" }, signal: ctx.requestSignal }, ctx, RECORD_LOOKUP_TIMEOUT_MS);
   // A repository answers a record it doesn't hold, and a repository it doesn't serve, with a 400.
-  if (response.status === 400 || response.status === 404) {
+  if (response.status === 400) {
     await response.body?.cancel().catch(() => {});
     throw new FederationHttpError(404, NO_PUBLIC_PROFILE);
+  }
+  // A 404 comes from a host that serves no repositories at all, which says nothing about the profile.
+  if (response.status === 404) {
+    await response.body?.cancel().catch(() => {});
+    throw new FederationHttpError(503, `Couldn't read @${handle}'s profile: its open-network host answered 404. Try again later.`);
   }
   const found = recordResponseSchema.safeParse(await readFederationJson(response, ctx.requestSignal));
   if (!found.success || found.data.uri !== `at://${did}/${SHIP_PROFILE_COLLECTION}/${SHIP_PROFILE_RKEY}`) {
