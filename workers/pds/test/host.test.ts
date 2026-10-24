@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { encode } from "../src/cirrus/cbor-compat";
 import { BlobStore, type BlobRef } from "../src/cirrus/repo/blobs";
+import { Sequencer } from "../src/cirrus/repo/sequencer";
 import { FIREHOSE_NAME, HostFirehose, type OutboxEvent, type RepoState } from "../src/host/firehose";
 import { mintIdentity, registerGenesis } from "../src/host/identity";
 import { HostedRepo, MAX_BLOB_BYTES, type LexObject, type RepoWrite } from "../src/host/repo";
@@ -254,6 +255,22 @@ describe("hosted repository", () => {
     expect(await blobKeys(prefix)).toEqual([]);
 
     expect(await rejection(repo.applyWrites([note("again", "a deleted file", { file: blobField(first) })]))).toContain("BlobNotFound");
+  });
+
+  it("keeps a blob that a commit saved before its event failed still references", async () => {
+    const { name, repo, account } = await hostAccount();
+    const prefix = `${blobPrefix(name)}${account.did}/`;
+    const file = await upload(repo, "shared");
+    await repo.applyWrites([note("first", "with the file", { file: blobField(file) })]);
+    // The engine saves the next commit, then fails to sequence its event.
+    vi.spyOn(Sequencer.prototype, "sequenceCommit").mockRejectedValueOnce(new Error("Sequencer unavailable"));
+    const shared: RepoWrite = { action: "create", collection: NOTE, record: noteRecord("shares the file", { file: blobField(file) }) };
+    expect(await rejection(repo.applyWrites([shared]))).toContain("Sequencer unavailable");
+    const listed = await read(recordPage, xrpc("com.atproto.repo.listRecords", { repo: account.did, collection: NOTE }));
+    expect(listed.records.map((record) => record.value.text).sort()).toEqual(["shares the file", "with the file"]);
+
+    await repo.applyWrites([{ action: "delete", collection: NOTE, rkey: "first" }]);
+    expect(await blobKeys(prefix)).toEqual([`${prefix}${file.ref.$link}`]);
   });
 
   it("leaves no blob public when a write references one that was never uploaded", async () => {

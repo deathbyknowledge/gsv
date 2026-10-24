@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { CODEC_RAW, fromDigest, fromString as parseCid, toString as formatCid } from "@atcute/cid";
 import type { Service } from "@atcute/did-plc";
 import { isHandle, isNsid, isRecordKey } from "@atcute/lexicons/syntax";
+import { now as tidNow } from "@atcute/tid";
 import { BlockMap } from "@atproto/repo";
 import * as z from "zod/mini";
 import { BlobStore, extractJsonBlobCids, type BlobRef } from "../cirrus/repo/blobs";
@@ -129,6 +130,8 @@ type PreparedWrite = {
   write: EngineWrite;
   /** Blob CIDs the record references; null for a delete. */
   blobs: string[] | null;
+  /** The record's AT URI, known before the commit so a commit saved before a failure is still accounted for. */
+  uri: string;
 };
 
 /**
@@ -193,16 +196,11 @@ export class HostedRepo extends DurableObject<HostEnv> {
       } catch (error) {
         // A commit saved before the failure references these blobs, so they stay public.
         if ((await repo.storage.getRev()) === before) await unpublish(repo, promoted);
+        else await this.recordCommit(repo, prepared, promoted);
         throw error;
       }
-      const results = prepared.map((entry, index) => {
-        const result = committed.results[index];
-        return entry.blobs === null || !result?.uri || !result.cid
-          ? { uri: `at://${repo.account.did}/${entry.write.collection}/${entry.write.rkey ?? ""}`, cid: null }
-          : { uri: result.uri, cid: result.cid };
-      });
-      await this.updateBlobReferences(repo, prepared, results);
-      await this.unstage(repo, promoted.flatMap((cid) => this.stagedName(cid) ?? []));
+      await this.recordCommit(repo, prepared, promoted);
+      const results = prepared.map((entry, index) => ({ uri: entry.uri, cid: entry.blobs === null ? null : committed.results[index]?.cid ?? null }));
       return { commit: committed.commit, results };
     });
   }
@@ -674,23 +672,36 @@ export class HostedRepo extends DurableObject<HostEnv> {
         prepared.push({
           write: { $type: "com.atproto.repo.applyWrites#delete", collection: write.collection, rkey: write.rkey },
           blobs: null,
+          uri: recordUri(repo, write.collection, write.rkey),
         });
         continue;
       }
-      const { record, status } = validator.validate({ collection: write.collection, rkey: write.rkey, record: write.record });
-      const replaces = write.action === "put" && (await repo.engine.getRecord(write.collection, write.rkey)) !== null;
+      const rkey = write.rkey ?? await this.newRecordKey(repo, write.collection, prepared);
+      const { record, status } = validator.validate({ collection: write.collection, rkey, record: write.record });
+      const replaces = write.action === "put" && (await repo.engine.getRecord(write.collection, rkey)) !== null;
       prepared.push({
         write: {
           $type: replaces ? "com.atproto.repo.applyWrites#update" : "com.atproto.repo.applyWrites#create",
           collection: write.collection,
-          rkey: write.rkey,
+          rkey,
           value: record,
           validationStatus: status,
         },
         blobs: extractJsonBlobCids(record),
+        uri: recordUri(repo, write.collection, rkey),
       });
     }
     return prepared;
+  }
+
+  /** A TID record key that neither the repository nor this batch uses, chosen as the engine would choose one. */
+  private async newRecordKey(repo: OpenRepo, collection: string, batch: PreparedWrite[]): Promise<string> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const rkey = tidNow();
+      const uri = recordUri(repo, collection, rkey);
+      if (!batch.some((entry) => entry.uri === uri) && (await repo.engine.getRecord(collection, rkey)) === null) return rkey;
+    }
+    throw new Error(`Failed to allocate unique rkey for ${collection} after 5 attempts`);
   }
 
   /**
@@ -712,24 +723,24 @@ export class HostedRepo extends DurableObject<HostEnv> {
     return promoted;
   }
 
+  /** Accounts for a saved commit: its records' blob references, and the staged copies of the blobs it promoted. */
+  private async recordCommit(repo: OpenRepo, prepared: PreparedWrite[], promoted: string[]): Promise<void> {
+    await this.updateBlobReferences(repo, prepared);
+    await this.unstage(repo, promoted.flatMap((cid) => this.stagedName(cid) ?? []));
+  }
+
   /** Records which blobs each written record references and deletes blobs no record references any more. */
-  private async updateBlobReferences(
-    repo: OpenRepo,
-    prepared: PreparedWrite[],
-    results: CommitResult["results"],
-  ): Promise<void> {
+  private async updateBlobReferences(repo: OpenRepo, prepared: PreparedWrite[]): Promise<void> {
     const released = new Set<string>();
-    for (const [index, entry] of prepared.entries()) {
-      const uri = results[index]?.uri;
-      if (!uri) continue;
+    for (const entry of prepared) {
       for (const row of this.ctx.storage.sql.exec<{ blobCid: string }>(
         "SELECT blobCid FROM record_blob WHERE recordUri = ?",
-        uri,
+        entry.uri,
       )) {
         released.add(row.blobCid);
       }
-      repo.storage.removeRecordBlobs(uri);
-      repo.storage.addRecordBlobs(uri, entry.blobs ?? []);
+      repo.storage.removeRecordBlobs(entry.uri);
+      repo.storage.addRecordBlobs(entry.uri, entry.blobs ?? []);
     }
     for (const cid of released) {
       if (!repo.storage.isBlobReferenced(cid)) await repo.blobs.deleteBlob(cid);
@@ -794,6 +805,10 @@ async function repoState(repo: OpenRepo, retired: boolean): Promise<RepoState> {
     rev: await repo.storage.getRev(),
     head: head ? head.toString() : null,
   };
+}
+
+function recordUri(repo: OpenRepo, collection: string, rkey: string): string {
+  return `at://${repo.account.did}/${collection}/${rkey}`;
 }
 
 /** Deletes the public copies of blobs a failed write promoted; their staged uploads remain until they expire. */
