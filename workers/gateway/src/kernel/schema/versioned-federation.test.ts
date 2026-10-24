@@ -9,7 +9,7 @@ describe("contacts move to DIDs", () => {
   it("keeps each contact's conversation and parks its old Ship address until the move names its DID", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();
-      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 73));
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 74));
       sql.exec(`INSERT INTO federation_invites (
         invite_id, owner_uid, token_hash, issuing_ship_id, issuing_origin, state, expires_at, created_at
       ) VALUES ('invite:old', 1000, 'token:old', 'ship:local', 'https://local.example', 'issued', 9999999999999, 1)`);
@@ -66,7 +66,7 @@ describe("message requests move to DIDs", () => {
   it("parks each request that named a Ship address until the move names its DID, and takes new requests by DID", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();
-      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 75));
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 76));
       sql.exec(`INSERT INTO social_approaches (
         approach_id, owner_uid, direction, origin_ship_id, origin_subject_id, origin_id, remote_ship_id, remote_subject_id,
         remote_origin, remote_public_key_json, remote_display_name, local_display_name, conversation_id, contact_id, thread_id,

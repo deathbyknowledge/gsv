@@ -5,8 +5,8 @@ import type { SqlMigration } from "../../schema/runner";
  * signed document. A signed profile becomes the record it carries, without a CID
  * until the Kernel writes it to the Ship's repository at its owner's next sign-in.
  */
-export const KERNEL_V074_PROFILE_RECORDS: SqlMigration = {
-  id: 74,
+export const KERNEL_V075_PROFILE_RECORDS: SqlMigration = {
+  id: 75,
   name: "profile_records",
   statements: [
     `CREATE TABLE social_profile_avatars (
@@ -14,7 +14,7 @@ export const KERNEL_V074_PROFILE_RECORDS: SqlMigration = {
       mime_type TEXT NOT NULL,
       bytes BLOB NOT NULL
     )`,
-    `CREATE TABLE social_profiles_v074 (
+    `CREATE TABLE social_profiles_v075 (
       owner_uid INTEGER PRIMARY KEY,
       revision INTEGER NOT NULL,
       draft_json TEXT NOT NULL,
@@ -25,7 +25,7 @@ export const KERNEL_V074_PROFILE_RECORDS: SqlMigration = {
       CHECK ((published_json IS NULL) = (published_revision IS NULL)),
       CHECK (published_cid IS NULL OR published_json IS NOT NULL)
     )`,
-    `INSERT INTO social_profiles_v074 (owner_uid, revision, draft_json, published_revision, published_json)
+    `INSERT INTO social_profiles_v075 (owner_uid, revision, draft_json, published_revision, published_json)
       SELECT owner_uid, revision, json_remove(draft_json, '$.representation'),
         CASE WHEN published_json IS NULL THEN NULL ELSE published_revision END,
         CASE
@@ -42,6 +42,6 @@ export const KERNEL_V074_PROFILE_RECORDS: SqlMigration = {
         END
       FROM social_profiles`,
     "DROP TABLE social_profiles",
-    "ALTER TABLE social_profiles_v074 RENAME TO social_profiles",
+    "ALTER TABLE social_profiles_v075 RENAME TO social_profiles",
   ],
 };

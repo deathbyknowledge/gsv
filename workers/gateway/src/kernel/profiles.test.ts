@@ -17,7 +17,7 @@ import {
   publicProfileAvatar, publicProfileProjection, readPublicProfile,
 } from "./profiles";
 import { KERNEL_V059_PUBLIC_PROFILES } from "./schema/v059_public_profiles";
-import { KERNEL_V074_PROFILE_RECORDS } from "./schema/v074_profile_records";
+import { KERNEL_V075_PROFILE_RECORDS } from "./schema/v075_profile_records";
 import { DidDocumentStore } from "./ships/did-directory";
 import { ShipIdentity } from "./ships/identity";
 
@@ -338,7 +338,7 @@ describe("the default profile", () => {
 
   it("writes a profile signed before profiles were records to the repository at the next sign-in", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
-      // The profile tables as v073 left them: a published, signed profile and a draft edited since.
+      // The profile tables as v074 left them: a published, signed profile and a draft edited since.
       sql.exec("DROP TABLE social_profile_avatars");
       sql.exec("DROP TABLE social_profiles");
       sql.exec(KERNEL_V059_PUBLIC_PROFILES.statements[0]!);
@@ -350,7 +350,7 @@ describe("the default profile", () => {
       };
       sql.exec("INSERT INTO social_profiles (owner_uid, subject_id, revision, draft_json, published_revision, published_json) VALUES (?, ?, ?, ?, ?, ?)",
         OWNER.uid, "subject:local", 3, JSON.stringify({ ...DRAFT, about: "Private draft", representation: "human" }), 2, JSON.stringify(signed));
-      storage.transactionSync(() => { for (const statement of KERNEL_V074_PROFILE_RECORDS.statements) sql.exec(statement); });
+      storage.transactionSync(() => { for (const statement of KERNEL_V075_PROFILE_RECORDS.statements) sql.exec(statement); });
 
       const { ctx, repository } = profileContext(storage);
       const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: "Signed name", about: "Signed about", contactPolicy: "invitation" };
@@ -381,7 +381,7 @@ describe("the default profile", () => {
         JSON.stringify({ displayName: "Signed name", about: "", contactPolicy: "requests", representation: "human" }));
       sql.exec("INSERT INTO social_profiles (owner_uid, subject_id, revision, draft_json) VALUES (?, ?, ?, ?)",
         1001, "subject:other", 2, JSON.stringify({ ...DRAFT, representation: "ship" }));
-      storage.transactionSync(() => { for (const statement of KERNEL_V074_PROFILE_RECORDS.statements) sql.exec(statement); });
+      storage.transactionSync(() => { for (const statement of KERNEL_V075_PROFILE_RECORDS.statements) sql.exec(statement); });
       const profiles = new ProfileStore(storage);
       expect(profiles.pendingPublication(OWNER.uid)?.record).toEqual({ $type: "space.ship.profile", displayName: "Signed name", contactPolicy: "requests" });
       expect(profiles.draft(1001)).toEqual({ revision: 2, fields: DRAFT, avatar: null });

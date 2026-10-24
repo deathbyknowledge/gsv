@@ -147,6 +147,8 @@ export const runStateSchema = z.object({
   approvedReads: z.array(z.string()).optional(),
   terminalCommandFailures: z.number().optional(),
   terminalDeliveryFailures: z.number().optional(),
+  /** The message this run sent when the responsibilities refused its yield; a repeat of it only asks to yield again. */
+  blockedYieldText: z.string().optional(),
   config: aiConfigResultSchema.optional(),
   aiTextGenerateConfig: aiTextGenerateConfigSchema.optional(),
   tools: z.array(toolDefinitionSchema).optional(),

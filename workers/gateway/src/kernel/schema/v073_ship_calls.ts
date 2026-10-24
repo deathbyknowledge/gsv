@@ -1,7 +1,7 @@
 import type { SqlMigration } from "../../schema/runner";
 
-export const KERNEL_V072_SHIP_CALLS: SqlMigration = {
-  id: 72,
+export const KERNEL_V073_SHIP_CALLS: SqlMigration = {
+  id: 73,
   name: "ship_calls",
   statements: [
     `

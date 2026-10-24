@@ -6,8 +6,8 @@ import type { SqlMigration } from "../../schema/runner";
  * move fills in each DID; invitations and pairing attempts issued before DIDs
  * lapse. Release 2 drops the legacy tables once nothing is left to move.
  */
-export const KERNEL_V073_CONTACTS_BY_DID: SqlMigration = {
-  id: 73,
+export const KERNEL_V074_CONTACTS_BY_DID: SqlMigration = {
+  id: 74,
   name: "contacts_by_did",
   statements: [
     // Renamed tables keep their indexes' names, which the new tables reuse.
@@ -190,17 +190,17 @@ export const KERNEL_V073_CONTACTS_BY_DID: SqlMigration = {
     "CREATE INDEX federation_pairing_attempts_retention_idx ON federation_pairing_attempts (state, updated_at)",
 
     // A wait follows a reply to one of this Ship's own messages, so its author needs no column.
-    `CREATE TABLE federation_reply_waits_v073 (
+    `CREATE TABLE federation_reply_waits_v074 (
       contact_id TEXT NOT NULL,
       contact_generation TEXT NOT NULL,
       message_id TEXT NOT NULL,
       responsibility_id TEXT NOT NULL,
       PRIMARY KEY (contact_id, contact_generation, message_id)
     )`,
-    `INSERT INTO federation_reply_waits_v073 (contact_id, contact_generation, message_id, responsibility_id)
+    `INSERT INTO federation_reply_waits_v074 (contact_id, contact_generation, message_id, responsibility_id)
       SELECT contact_id, contact_generation, message_id, responsibility_id FROM federation_reply_waits`,
     "DROP TABLE federation_reply_waits",
-    "ALTER TABLE federation_reply_waits_v073 RENAME TO federation_reply_waits",
+    "ALTER TABLE federation_reply_waits_v074 RENAME TO federation_reply_waits",
     "CREATE INDEX federation_reply_wait_responsibility ON federation_reply_waits (responsibility_id)",
   ],
 };

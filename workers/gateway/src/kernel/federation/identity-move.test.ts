@@ -390,7 +390,7 @@ async function shipBeforeDids(
   await runInDurableObject(kernel, async (_instance: Kernel, state) => {
     await state.storage.deleteAlarm();
     await state.storage.deleteAll();
-    runSqlMigrations(state.storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 73));
+    runSqlMigrations(state.storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 74));
     seed(state.storage.sql);
     runKernelSqlMigrations(state.storage);
     if (options.identity !== false) {

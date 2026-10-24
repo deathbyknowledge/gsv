@@ -6,8 +6,8 @@ import type { SqlMigration } from "../../schema/runner";
  * a Ship by shipId and subject move to `social_approaches_legacy` until the
  * operator's move fills in each DID.
  */
-export const KERNEL_V075_MESSAGE_REQUESTS_BY_DID: SqlMigration = {
-  id: 75,
+export const KERNEL_V076_MESSAGE_REQUESTS_BY_DID: SqlMigration = {
+  id: 76,
   name: "message_requests_by_did",
   statements: [
     // The renamed table keeps its indexes' names, which the new table reuses.
