@@ -1,3 +1,5 @@
+import type { BufferEncoding, FileContent } from "just-bash";
+
 export function resolveUserPath(path: string, home: string, cwd: string): string {
   let resolved = path;
 
@@ -23,6 +25,30 @@ export function normalizePath(path: string): string {
     else segments.push(seg);
   }
   return "/" + segments.join("/");
+}
+
+/**
+ * The bytes a write means. The shell passes its byte buffers as latin1 strings
+ * with a "binary" encoding; encoding those as UTF-8 would double every byte
+ * from 0x80 up.
+ */
+export function fileContentBytes(
+  content: FileContent,
+  options?: { encoding?: BufferEncoding | null } | BufferEncoding | null,
+): Uint8Array {
+  if (content instanceof Uint8Array) return content;
+  const encoding = typeof options === "string" ? options : options?.encoding;
+  switch (encoding) {
+    case "binary":
+    case "latin1":
+      return Uint8Array.from(content, (char) => char.charCodeAt(0) & 0xff);
+    case "base64":
+      return Uint8Array.from(atob(content), (char) => char.charCodeAt(0));
+    case "hex":
+      return Uint8Array.from(content.match(/[0-9a-f]{2}/gi) ?? [], (pair) => parseInt(pair, 16));
+    default:
+      return new TextEncoder().encode(content);
+  }
 }
 
 export function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {

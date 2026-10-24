@@ -1093,6 +1093,34 @@ describe("native shell capability discovery", () => {
     expect(result.stderr).toBe("1+1 records in\n1+1 records out\n5 bytes copied\n");
   });
 
+  it("keeps every byte written through a redirection", async () => {
+    const everyByte = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==";
+    const result = await handleShellExec(
+      {
+        input: [
+          "cd \"$HOME\"",
+          `printf '%s' '${everyByte}' > all.b64`,
+          "base64 -d all.b64 > all.bin",
+          "base64 -d all.b64 >> twice.bin && base64 -d all.b64 >> twice.bin",
+          "cat all.bin > copy.bin",
+          "printf 'é' > accent.txt",
+          "wc -c < all.bin && wc -c < twice.bin && wc -c < copy.bin && wc -c < accent.txt",
+          "sha256sum all.bin twice.bin copy.bin",
+        ].join(" && "),
+      },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    const lines = result.stdout.trim().split("\n").map((line) => line.trim());
+    expect(lines.slice(0, 4)).toEqual(["256", "512", "256", "2"]);
+    expect(lines.slice(4).map((line) => line.split(/\s+/)[0])).toEqual([
+      "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+      "110009dcee21620b166f3abfecb5eff7a873be729d1c2d53822e7acc5f34eb9b",
+      "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+    ]);
+  });
+
   it("truncates the destination unless dd is told conv=notrunc", async () => {
     const result = await handleShellExec(
       {
