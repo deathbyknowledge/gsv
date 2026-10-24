@@ -155,6 +155,12 @@ remembers a denial.
 
 Chat owns the conversation. Dismissing the welcome card records the owner's choice and wakes Ship through its initial onboarding responsibility; a failed request leaves the card available to retry. Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
 
+After the first welcome card is dismissed, the empty Ship chat shows a centered,
+muted privacy message until either person starts the conversation. It never
+appears in helper conversations, over existing messages, or while history is
+loading or unavailable. The notice sits behind the transcript without intercepting
+pointer input.
+
 The composer puts send beside the draft and keeps one action row below: attachments
 and the current connection on the left, platform voice controls on the right.
 The current connection opens the existing connections and live-browser

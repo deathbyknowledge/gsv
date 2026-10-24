@@ -32,3 +32,13 @@
 .gsv-setup-actions { display: flex; justify-content: flex-end; gap: 16px; padding-top: 8px; }
 .gsv-setup-actions button:first-child:not(:only-child) { margin-right: auto; }
 .gsv-setup-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.gsv-setup-loading-dots { display: inline-flex; }
+.gsv-setup-loading-dots span { animation: gsv-setup-dot-one 1.6s steps(1) infinite; }
+.gsv-setup-loading-dots span:nth-child(2) { animation-name: gsv-setup-dot-two; }
+.gsv-setup-loading-dots span:nth-child(3) { animation-name: gsv-setup-dot-three; }
+@keyframes gsv-setup-dot-one { 0% { opacity: 1; } 75%, 100% { opacity: 0; } }
+@keyframes gsv-setup-dot-two { 0% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes gsv-setup-dot-three { 0% { opacity: 1; } 25%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .gsv-setup-loading-dots span { animation: none; }
+}
