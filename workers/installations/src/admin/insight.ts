@@ -66,16 +66,18 @@ export type AdminAuditRecorder = <T>(
 
 export type OperatorAuditPage = { events: OperatorAuditEvent[]; page: number; totalPages: number };
 
+type ShipSnapshotSource = Pick<OperatorGatewayService, "operatorShipSnapshot">;
+
 /** Everything the Ship page shows beyond the installation record. */
 export class ShipInsight {
   readonly audit: OperatorAuditLog;
-  private readonly gateway: OperatorGatewayService | undefined;
+  private readonly gateway: ShipSnapshotSource | undefined;
   private readonly mailDomain: string | undefined;
   private readonly timeoutMs: number;
 
   constructor(
     private readonly db: Pick<D1Database, "prepare">,
-    options: { gateway?: OperatorGatewayService; mailDomain?: string; timeoutMs?: number } = {},
+    options: { gateway?: ShipSnapshotSource; mailDomain?: string; timeoutMs?: number } = {},
   ) {
     this.audit = new OperatorAuditLog(db);
     this.gateway = options.gateway;

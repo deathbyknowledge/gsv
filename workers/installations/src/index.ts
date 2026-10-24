@@ -22,6 +22,8 @@ import { InstallationBootstrapService, parseOperatorAccessMode } from "./bootstr
 import { InstallationOperatorHttp, OperatorInstallationAdminAccess } from "./operator-http";
 import { createAccountsDeletionRuntime } from "./deletion-runtime";
 import { configuredDeletionEnvironment, type DeletionResourceEnvironment } from "./deletion-verifier";
+import { IdentityMoves } from "./identity-moves";
+import { IDENTITY_MOVE_NAVIGATION } from "./admin/identity-move-page";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
 
 export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment & OperatorEnvironment>
@@ -29,6 +31,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
   async scheduled(): Promise<void> {
     await cleanExpiredOwnerAuthentication(this.env);
     await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)).resumePending();
+    await new IdentityMoves(this.env.INSTALLATIONS_DB, this.env.OPERATOR_GATEWAY).resumePending();
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -52,9 +55,10 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
       teamDomain: this.env.GSV_ADMIN_ACCESS_TEAM_DOMAIN, audience: this.env.GSV_ADMIN_ACCESS_AUD,
     }));
     const api = new InstallationAdminHttp(administration, access, this.env.GSV_ADMIN_ORIGIN,
-      {},
+      { navigation: [IDENTITY_MOVE_NAVIGATION] },
       createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)),
       new ShipInsight(this.env.INSTALLATIONS_DB, { gateway: this.env.OPERATOR_GATEWAY, mailDomain: this.env.GSV_MAIL_DOMAIN }),
+      new IdentityMoves(this.env.INSTALLATIONS_DB, this.env.OPERATOR_GATEWAY),
     );
     const response = await api.handle(request);
     if (response) return response;
