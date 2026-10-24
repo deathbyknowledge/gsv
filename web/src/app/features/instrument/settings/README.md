@@ -8,7 +8,10 @@ survives reloads. Turning stars off stops their renderer and animation.
 
 Appearance is the first Preferences group and applies immediately. Model order,
 reasoning, language and timezone use one sticky Save changes bar. Language is a
-native select offering English, Spanish and Portuguese. The
+native select offering English, Spanish and Portuguese. Saved regional variants
+map to their supported base language; other saved tags remain visible as their
+own selected option, and an unset preference appears as Automatic. The selector
+does not present the interface's fallback as the saved account preference. The
 complete draft is validated before the existing per-key writes begin. Failed
 saves retain drafts and refresh server state so partially saved changes are not
 blindly rewritten. Save, discard and dirty status remain visible while scrolling.

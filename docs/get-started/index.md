@@ -127,6 +127,9 @@ The Settings sidebar highlights the section you're viewing.
 Preferences starts with **Appearance**, which applies immediately on this device.
 Model order, reasoning, language and timezone share a **Save changes** bar that
 stays visible as you scroll. Language offers English, Spanish and Portuguese.
+If another language is already saved, its language code stays selected until you
+choose a replacement. An unset preference appears as **Automatic**; the interface
+may use a supported device language without changing the saved preference.
 Unsaved preferences trigger a warning when leaving; if you leave, the draft stays
 available when you return. **Discard changes** resets it.
 

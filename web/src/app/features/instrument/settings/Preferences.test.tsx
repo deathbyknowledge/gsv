@@ -81,3 +81,28 @@ it("keeps every draft after a save failure and validates before any write", asyn
     await vi.waitFor(() => expect(screen.dirty).toHaveBeenLastCalledWith(false));
   } finally { await screen.close(); }
 });
+
+it("preserves an unsupported saved language until the owner explicitly replaces it", async () => {
+  gateway = settingsGatewayFixture([{ key: "users/1000/locale/language", value: "fr", redacted: false }]);
+  const screen = await mount();
+  const language = () => screen.nodes().find((node) => node.type === Language)!;
+  try {
+    expect(language().props.value).toBe("fr");
+    await act(() => screen.nodes().find((node) => node.type === Timezone)!.props.onChange!("Europe/Amsterdam"));
+    await act(async () => { await screen.save().props.onClick!(); });
+    await vi.waitFor(() => expect(screen.dirty).toHaveBeenLastCalledWith(false));
+    expect(gateway.write.mock.calls.map(([entry]) => entry)).toEqual([
+      { key: "users/1000/locale/timezone", value: "Europe/Amsterdam" },
+    ]);
+    expect(language().props.value).toBe("fr");
+    gateway.write.mockClear();
+    await act(() => language().props.onChange!("en"));
+    expect(screen.save().props.disabled).toBe(false);
+    await act(async () => { await screen.save().props.onClick!(); });
+    await vi.waitFor(() => expect(screen.dirty).toHaveBeenLastCalledWith(false));
+    expect(gateway.write.mock.calls.map(([entry]) => entry)).toEqual([
+      { key: "users/1000/locale/language", value: "en" },
+    ]);
+    expect(language().props.value).toBe("en");
+  } finally { await screen.close(); }
+});
