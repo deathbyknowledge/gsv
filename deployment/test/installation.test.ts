@@ -587,6 +587,14 @@ describe("open network host", () => {
       .toHaveProperty("pds", [{ kind: "r2", namespace: "pds-blobs" }]);
   });
 
+  it("leaves the PDS's logs to the operator's tail, as the Gateway's are", async () => {
+    const [multipart] = pdsResources;
+    await run(GsvDeployment({ ...input, pds, telemetry: { tailConsumers: ["test-tail"] },
+      deletion: { operatorResources: [...catalog, multipart] } }, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixturePds")?.props).toMatchObject({ tailConsumers: ["test-tail"],
+      observability: { logs: { invocationLogs: false, persist: false } } });
+  });
+
   it("refuses deletion admission whose catalog omits the PDS's logs or unfinished uploads", async () => {
     const [multipart, logs] = pdsResources;
     await expect(run(GsvDeployment({ ...input, pds, deletion: { operatorResources: [...catalog, multipart] } }, dependencies)))

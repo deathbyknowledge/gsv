@@ -154,8 +154,8 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       // GsvRuntime disables gateway persistence for its default tail-consumer setup; ripgit keeps its own default.
       if (observability || !props.telemetry) requireResource("cloudflare-workers-logs", props.names.gateway);
       requireResource("cloudflare-workers-logs", props.names.ripgit);
-      // Like ripgit, the PDS keeps its own default.
-      if (props.pds) requireResource("cloudflare-workers-logs", props.pds.workerName);
+      // The PDS's logs persist as the Gateway's do.
+      if (props.pds && (observability || !props.telemetry)) requireResource("cloudflare-workers-logs", props.pds.workerName);
     }
     // The public executor always exposes native Workers AI, whose text transport uses the account's `default` AI Gateway.
     requireResource("provider", "workers-ai");

@@ -189,10 +189,11 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
           // The PDS reaches only its PLC directory, over the public internet even on the deployment's own zone.
           compatibility: { ...compatibility, flags: [...compatibility.flags, "global_fetch_strictly_public"] },
           workersDev: false,
-          observability: props.observability ?? {
+          // Like the Gateway's, its logs go only to the operator's tail when there is one.
+          observability: props.observability ?? (props.telemetry ? telemetryProducerObservability : {
             enabled: true,
             logs: { enabled: true, invocationLogs: true },
-          },
+          }),
           tailConsumers: props.telemetry ? [...props.telemetry.tailConsumers] : undefined,
           env: pdsEnv,
         },
