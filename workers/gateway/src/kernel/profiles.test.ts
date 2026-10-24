@@ -219,6 +219,31 @@ describe("the profile picture", () => {
     });
   });
 
+  it("keeps the picture a publication shows when the draft's picture changes before the record lands", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
+      const held = holdNextCommit(repository);
+      const publishing = handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await vi.waitFor(() => expect(repository.applyWrites).toHaveBeenCalledOnce());
+      await handleProfileAvatarSet({ expectedRevision: 1, mimeType: "image/webp" }, ctx, bodyFromBytes(WEBP));
+      held.release();
+      await publishing;
+      expect(ctx.profiles.published(OWNER.uid)?.record.avatar?.ref.$link).toBe(PNG_CID);
+      expect(publicProfileAvatar(ctx)?.bytes).toEqual(PNG);
+
+      const next = holdNextCommit(repository);
+      const republishing = handleProfilePublish({ expectedRevision: 2 }, ctx);
+      await vi.waitFor(() => expect(repository.applyWrites).toHaveBeenCalledTimes(2));
+      handleProfileAvatarRemove({ expectedRevision: 2 }, ctx);
+      next.release();
+      await republishing;
+      expect(ctx.profiles.published(OWNER.uid)?.record.avatar?.ref.$link).toBe(WEBP_CID);
+      expect(publicProfileAvatar(ctx)?.bytes).toEqual(WEBP);
+      expect(ctx.profiles.avatar(PNG_CID)).toBeNull();
+    });
+  });
+
   it("publishes nothing when the repository names the picture differently", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);

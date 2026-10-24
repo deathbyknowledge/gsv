@@ -104,7 +104,7 @@ export async function publishPendingProfile(ownerUid: number, ctx: KernelContext
     // The owner may have published or unpublished it meanwhile.
     const pending = ctx.profiles.pendingPublication(ownerUid);
     if (!pending) return;
-    ctx.profiles.publish(ownerUid, pending.revision, await putProfileRecord(ctx, pending.record, null), pending.record);
+    ctx.profiles.publish(ownerUid, pending.revision, await putProfileRecord(ctx, pending.record, null), pending.record, null);
   });
   ctx.broadcastToUserUid(ownerUid, "profile.changed");
 }
@@ -192,7 +192,7 @@ async function publishProfileRevision(ownerUid: number, revision: number, ctx: K
     const record = profileRecord(draft.fields, avatar);
     const cid = await putProfileRecord(ctx, record, avatar);
     // The repository now holds this revision, so it is recorded even if the draft moved on meanwhile.
-    ctx.profiles.publish(ownerUid, revision, cid, record);
+    ctx.profiles.publish(ownerUid, revision, cid, record, avatar);
   });
 }
 

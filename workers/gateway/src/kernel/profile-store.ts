@@ -64,10 +64,7 @@ export class ProfileStore {
   setAvatar(ownerUid: number, expectedRevision: number, avatar: ProfileAvatarFile | null, initial: ProfileFields): void {
     this.storage.transactionSync(() => {
       const existing = this.requireEditable(ownerUid, expectedRevision);
-      if (avatar) {
-        this.sql.exec("INSERT OR IGNORE INTO social_profile_avatars (cid, mime_type, bytes) VALUES (?, ?, ?)",
-          avatar.cid, avatar.mimeType, avatar.bytes.slice().buffer);
-      }
+      if (avatar) this.keepAvatar(avatar);
       if (existing) {
         this.sql.exec("UPDATE social_profiles SET revision = revision + 1, draft_avatar_cid = ? WHERE owner_uid = ?", avatar?.cid ?? null, ownerUid);
       } else {
@@ -79,8 +76,10 @@ export class ProfileStore {
   }
 
   /** Records the record the Ship's repository now holds for `revision`, whatever the draft became meanwhile. */
-  publish(ownerUid: number, revision: number, cid: string, record: ShipProfileRecord): void {
+  publish(ownerUid: number, revision: number, cid: string, record: ShipProfileRecord, avatar: ProfileAvatarFile | null): void {
     this.storage.transactionSync(() => {
+      // The draft may have dropped the record's picture while the repository wrote it.
+      if (avatar) this.keepAvatar(avatar);
       this.sql.exec("UPDATE social_profiles SET published_revision = ?, published_json = ?, published_cid = ? WHERE owner_uid = ?",
         revision, JSON.stringify(record), cid, ownerUid);
       this.releaseAvatars();
@@ -146,6 +145,11 @@ export class ProfileStore {
   private avatarMetadata(cid: string): ProfileAvatar | null {
     const row = this.sql.exec<AvatarRow>("SELECT cid, mime_type, length(bytes) AS size FROM social_profile_avatars WHERE cid = ?", cid).toArray()[0];
     return row ? { cid: row.cid, mimeType: avatarMimeTypeSchema.parse(row.mime_type), size: row.size } : null;
+  }
+
+  private keepAvatar(avatar: ProfileAvatarFile): void {
+    this.sql.exec("INSERT OR IGNORE INTO social_profile_avatars (cid, mime_type, bytes) VALUES (?, ?, ?)",
+      avatar.cid, avatar.mimeType, avatar.bytes.slice().buffer);
   }
 
   /** Keeps only the pictures a draft or a published record shows. */
