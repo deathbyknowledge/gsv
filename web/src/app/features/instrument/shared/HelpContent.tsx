@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useT, type TextKey } from "../../../i18n/locale";
 import { shortcutLabel } from "../../../services/platform/shortcutKeys";
 import { memoryLinkHref } from "../memory/memoryLinks";
+import { publicDeployment } from "../../../services/deployment";
 
 export const HELP_MANUAL_PAGE = { db: "gsv-manual", path: "gsv-manual/index.md", fragment: "" };
 
@@ -29,6 +30,7 @@ function HelpIcon({ kind }: { kind: "talk" | "phone" | "memory" | "permissions" 
 
 export function HelpContent({ distance, connected, onClose, onSearch, onFeedback, onNavigate }: HelpContentProps) {
   const t = useT();
+  const { privacyUrl } = publicDeployment();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const shortcutsButton = useRef<HTMLButtonElement>(null);
   const backButton = useRef<HTMLButtonElement>(null);
@@ -154,7 +156,7 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
       <a class="instrument-help-row" href="/chat/settings?section=messengers" onClick={navigate}>{row("phone", "shell.help.whatsapp", "shell.help.whatsappHint")}</a>
       <a class="instrument-help-row" href="/memory" onClick={navigate}>{row("memory", "shell.help.memory", "shell.help.memoryHint")}</a>
       <a class="instrument-help-row" href="/chat/settings?section=permissions" onClick={navigate}>{row("permissions", "shell.help.permissions", "shell.help.permissionsHint")}</a>
-      <a class="instrument-help-row" href="https://ship.space/privacy" target="_blank" rel="noopener noreferrer">{row("privacy", "shell.help.privacy", "shell.help.privacyHint")}</a>
+      {privacyUrl && <a class="instrument-help-row" href={privacyUrl} target="_blank" rel="noopener noreferrer">{row("privacy", "shell.help.privacy", "shell.help.privacyHint")}</a>}
     </div>
     <button type="button" class="instrument-help-shortcuts" ref={shortcutsButton} onClick={() => showShortcuts(true)}>
       <span>{t("shell.help.shortcuts")}</span><span aria-hidden="true">›</span>

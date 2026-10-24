@@ -4,12 +4,14 @@ import { afterEach, expect, it, vi } from "vitest";
 import { collectNodes, createTestRoot, collectText } from "../../../testing/testHarness";
 import type { Distance } from "../Instrument";
 import { HelpContent } from "./HelpContent";
+import { bindSessionPresentation } from "../../../services/deployment";
 
 afterEach(() => vi.unstubAllGlobals());
 
 it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts relevant to the current screen on %s", async (platform) => {
   vi.stubGlobal("document", {});
   vi.stubGlobal("navigator", { platform });
+  const clearPresentation = bindSessionPresentation(() => ({ legacyDomains: [], privacyUrl: "https://operator.example/privacy" }));
   const root = createTestRoot("Help");
   const onNavigate = vi.fn();
   const onSearch = vi.fn();
@@ -35,8 +37,9 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts rele
     const hrefs = links.map((node) => node.props.href);
     expect(hrefs).toEqual(expect.arrayContaining([
       "/chat/settings?section=messengers", "/memory", "/chat/settings?section=permissions",
-      "https://ship.space/privacy", "mailto:hello@humansandmachin.es", "https://discord.gg/hy9ExJJFvn",
+      "https://operator.example/privacy", "mailto:hello@humansandmachin.es", "https://discord.gg/hy9ExJJFvn",
     ]));
+    expect(hrefs).not.toContain("https://ship.space/privacy");
     expect(hrefs.some((href) => href?.includes("gsv-manual") && href.startsWith("/memory"))).toBe(true);
     const disclosures = nodes.filter((node) => node.type === "details");
     expect(disclosures).toHaveLength(1);
@@ -94,5 +97,22 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts rele
     await act(() => back?.props.onClick?.());
     expect(collectText(tree)).toContain("Getting started");
     expect(collectText(tree)).not.toContain("Search Chat");
-  } finally { await root.unmount(); }
+  } finally { await root.unmount(); clearPresentation(); }
+});
+
+it("omits privacy when the connected operator has no policy, even if the host has one", async () => {
+  vi.stubGlobal("document", { getElementById: () => ({ textContent: JSON.stringify({ privacyUrl: "https://host.example/privacy" }) }) });
+  const clearPresentation = bindSessionPresentation(() => ({ legacyDomains: [] }));
+  const root = createTestRoot("Help without a privacy policy");
+  let tree: ComponentChildren;
+  function Harness() {
+    tree = HelpContent({ distance: "zen", connected: true, onClose: vi.fn(), onNavigate: vi.fn(), onSearch: vi.fn() });
+    return null;
+  }
+  try {
+    await root.render(<Harness />);
+    const links = collectNodes(tree).filter((node) => node.type === "a");
+    expect(links.some((node) => node.props.href?.includes("/privacy"))).toBe(false);
+    expect(links.some((node) => collectText(node).includes("Your information"))).toBe(false);
+  } finally { await root.unmount(); clearPresentation(); }
 });

@@ -153,8 +153,8 @@ Press **w** outside a text field to open Work.
 
 The **?** Help panel (also available in the mobile menu) introduces what Ship can
 help with. **Talking to Ship** expands example requests; the other getting-started
-rows open WhatsApp connections, Memory, Permissions and
-[Ship’s privacy policy](https://ship.space/privacy). **Keyboard shortcuts** replaces
+rows open WhatsApp connections, Memory, Permissions and your operator's privacy
+policy, when one is configured for your installation. **Keyboard shortcuts** replaces
 Help with Search Chat, general shortcuts and shortcuts for the current screen;
 **← Help** returns to getting started. Use **×** in the top-right corner to close
 either panel. **Need more help?** opens the existing
