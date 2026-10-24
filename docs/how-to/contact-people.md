@@ -181,6 +181,20 @@ The person offering work can cancel an unaccepted offer. The person receiving it
 
 An update takes effect locally before the other Ship confirms it. **Awaiting confirmation** keeps the request open, including a completion or cancellation. **Update not confirmed** means delivery failed; it does not claim the other person accepted that outcome. Older records can show **Confirmation unavailable**.
 
+## Contacts from before the open network
+
+If your Ship had contacts before your operator moved it to the open network,
+those contacts move too, so that each person is named by their DID. Your
+conversations and their messages stay. Until the move finishes, sending a
+message, inviting someone or sending a message request says "Your contacts are
+moving to the open network. Try again in a few minutes."
+
+A contact whose Ship is on another operator's deployment ends with the move.
+The conversation stays, marked ended; to keep talking, send them a new
+invitation or a message request. A message request the other person never
+received expires, and you can send it again. Invitation links created before
+the upgrade no longer work, so create a new one.
+
 ## Delivery
 
 Queued messages retry automatically with the same identity. A recoverable failure can be resumed through `contact.delivery.retry` by the signed-in person or their Ship. Retrying resends the stored message; it does not add another message to the conversation. Permanent refusals, revoked contacts and messages older than seven days cannot be retried.

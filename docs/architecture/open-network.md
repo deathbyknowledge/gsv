@@ -33,9 +33,9 @@ serves nothing for it until it is active again.
 ## Identity
 
 A Ship's account is a `did:plc` whose handle is the Ship's hostname, such as
-`alice.ship.space`. The Kernel creates it on the Ship's first write or upload,
-after the profile is published, and the PDS accepts only a hostname that
-Accounts routes to the same installation. The Gateway answers
+`alice.ship.space`. The Kernel creates it on the Ship's first outward act: a
+publish, an invitation, a message request or another call to a Ship. The PDS
+accepts only a hostname that Accounts routes to the same installation. The Gateway answers
 `/.well-known/atproto-did` on that hostname with the DID, which is how apps
 verify the handle; a hostname the repository does not name returns 404.
 
@@ -70,6 +70,40 @@ with 429 `RateLimitExceeded` and a `retry-after` header:
 - Checking a caller the Kernel has not seen before, or one whose signature
   fails against its cached key, means a directory lookup. A Ship makes at most
   60 lookups a minute.
+
+## Contacts from before DIDs
+
+Before the open network, Ships named each other's people by a Ship key and an
+account subject. The upgrade keeps those contacts, blocks, message requests and
+deliveries in separate tables, and the operator moves them to DIDs once, from
+Accounts, in two passes over every active or suspended Ship:
+
+```text
+Accounts: identity_moves, scheduled job          Gateway operator entrypoint → Kernel
+  survey ──────────────────────────────────▶  its person's old name and DID; the people its rows name
+  the operator reviews the totals and applies
+  move ──── its person and the DIDs it names ─▶  contact conversations, then one transaction for every row
+```
+
+- The survey gives a Ship with contacts its DID, and writes a profile published
+  before profiles were records to its repository. It changes no contact.
+- The move gives each conversation only the DIDs of its own two people, then
+  commits every row and deletes the old identity. A row naming someone without a
+  DID here ends: a person on another deployment, or a contact held by an account
+  other than the Ship's person. An outgoing message request its recipient never
+  received expires for its sender. Deliveries and requests in flight resume on
+  their own retry schedule.
+- Until its move, a Ship answers other Ships' calls with 503 and a five-minute
+  `retry-after`. It refuses new invitations, message requests and sends to a
+  contact from before DIDs with "Your contacts are moving to the open network.
+  Try again in a few minutes." A contact conversation keeps messages that name
+  people the old way out of its immutable archive until the move names them.
+- Repeating a finished move changes nothing. Accounts keeps each Ship's DID
+  and handle, the old identifiers its rows name, and the counts each pass
+  returned, never names or messages.
+
+[Move contacts to DIDs](../how-to/operate-gsv.md#move-contacts-to-dids) is the
+operator's procedure.
 
 ## Publishing
 
