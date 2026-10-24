@@ -5,7 +5,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 18px/1.6 "Host Grotesk", system-ui, sans-serif; }
 .public-profile { max-width: 680px; margin: 10vh auto; padding: 28px; overflow-wrap: anywhere; }
-header, footer { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; font: 11px/1.8 "Martian Mono", monospace; color: var(--muted); }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; font: 11px/1.8 "Martian Mono", monospace; color: var(--muted); }
 header { padding-bottom: 32px; border-bottom: 1px solid var(--line); }
 /* The ship.space wordmark: glyph colour, a soft glow in dark, and a brief colour-split glitch. */
 .wordmark { display: inline-block; color: var(--glyph); text-shadow: var(--glow); letter-spacing: .22em; font-size: 12px; font-weight: 500; }
@@ -13,18 +13,16 @@ a.wordmark { text-decoration: none; }
 a.wordmark:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .wordmark.is-glitch { text-shadow: 1px 0 0 rgba(255, 90, 160, .3), -1px 0 0 rgba(90, 200, 255, .28), 0 0 9px rgba(140, 120, 235, .55); transform: translateX(.6px); }
 .restricted { position: relative; display: flex; align-items: center; gap: 8px; margin: 32px 0 0; padding-block: 20px; border-block: 1px solid var(--line); color: var(--muted); }
+.avatar { display: block; width: 96px; height: 96px; margin-top: 40px; border: 1px solid var(--line); object-fit: cover; background: var(--panel); }
 .handle { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 40px 0 24px; }
+.avatar + .handle { margin-top: 20px; }
 h1 { font-size: clamp(32px, 7vw, 54px); line-height: 1.1; font-weight: 500; letter-spacing: -.035em; margin: 0; }
 .copy-status { color: var(--muted); font: 11px/1.8 "Martian Mono", monospace; }
 .about { white-space: pre-wrap; }
 .about.is-empty { color: var(--muted); }
-footer { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 20px; }
 a { color: var(--accent); text-underline-offset: 4px; }
 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
 @media (max-width: 480px) { .public-profile { margin: 4vh auto; padding: 24px; } }
-/* The signed document is for other Ships; keep its link quiet. */
-footer a.identity { color: var(--muted); text-decoration-color: var(--line); }
-footer a.identity:hover { color: var(--text); text-decoration-color: currentColor; }
 .connect { margin-top: 32px; border-block: 1px solid var(--line); padding-block: 20px; }
 .connect summary { color: var(--accent); cursor: pointer; list-style: none; }
 .connect summary::-webkit-details-marker { display: none; }
@@ -43,8 +41,6 @@ footer a.identity:hover { color: var(--text); text-decoration-color: currentColo
 .connect p, .connect noscript { font-size: 14px; color: var(--muted); }
 .connect .connect-error { color: var(--text); }
 .connect summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
-/* The request band's bottom rule doubles as the footer divider. */
-:is(.connect, .restricted) + footer { border-top: 0; margin-top: 0; }
 /* Icon buttons and the hint bubble follow the app's design system (IconButton ghost, Tooltip). */
 :is(.copy, .info) { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--label); cursor: pointer; transition: color .12s; }
 :is(.copy, .info):hover { color: var(--accent-bright); }
@@ -53,7 +49,5 @@ footer a.identity:hover { color: var(--text); text-decoration-color: currentColo
 .info-bubble { position: absolute; top: calc(100% - 10px); left: var(--bubble-x, 0); z-index: 1; width: max-content; max-width: min(300px, calc(100vw - 40px)); padding: 10px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font: 400 14px/1.6 "Host Grotesk", system-ui, sans-serif; letter-spacing: 0; text-align: left; box-shadow: 0 4px 12px color-mix(in srgb, var(--bg) 45%, transparent); visibility: hidden; opacity: 0; transition: opacity .12s; pointer-events: none; }
 .info-bubble::before { content: ""; position: absolute; top: -4px; left: var(--arrow-x, 16px); width: 7px; height: 7px; margin-left: -3.5px; border: 1px solid var(--line); border-bottom: none; border-right: none; background: var(--panel); transform: rotate(45deg); }
 [data-info-row] { position: relative; }
-.identity-row { display: inline-flex; align-items: center; gap: 6px; }
 /* Escape dismisses a hint even while its icon keeps hover or focus. */
 [data-info-row]:not(.is-dismissed):has(.info:hover, .info:focus) .info-bubble, [data-info-row].is-open .info-bubble { visibility: visible; opacity: 1; }
-footer .info-bubble { top: calc(100% + 10px); }

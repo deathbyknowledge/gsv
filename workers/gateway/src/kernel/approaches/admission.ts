@@ -1,31 +1,36 @@
 import type {
-  ApproachContent, ApproachCreateArgs, ApproachDecideArgs, ApproachEnvelope, ApproachGetArgs,
-  ApproachListArgs, ApproachListResult, ApproachReceipt, ApproachResult, ApproachRetryArgs, PublicProfile,
+  ApproachCreateArgs, ApproachDecideArgs, ApproachGetArgs, ApproachListArgs, ApproachListResult,
+  ApproachResult, ApproachRetryArgs, JsonValue, MessageRequestOutput, PublicProfile, SendMessageRequestInput,
 } from "@humansandmachines/gsv/protocol";
-import { actorRefSchema, approachContentSchema, jsonObjectSchema, jsonValueSchema } from "@humansandmachines/gsv/protocol";
+import { didSchema, jsonObjectSchema, profileContactPolicy, sendMessageRequestInputSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod/mini";
+import { ensureShipAccount } from "../atproto";
 import type { KernelContext } from "../context";
 import { APPROACH_LIFETIME_MS } from "../approach-store";
 import { contactHandlingChoice, requireContactCaller, requireContactHuman } from "../federation/authority";
-import { handleProfileResolve, profileOwnerActive } from "../profiles";
-import { canonicalJson, randomBase64Url, sha256Base64Url } from "../federation-crypto";
-import { localShipDocumentV2 } from "../federation/protocol";
-import { consumeLocalRateLimits, consumePublicRateLimits } from "../federation/limits";
+import { profileOwnerActive, readPublicProfile } from "../profiles";
+import { assertContactsMoved, consumeLocalRateLimits, consumePublicRateLimits } from "../federation/limits";
 import { MAX_PUBLIC_JSON_BYTES } from "../federation/http";
 import { PublicFederationError } from "../federation/errors";
+import { verifiedHandle } from "../ships/did-directory";
+import { ShipXrpcError } from "../ships/errors";
+import type { ShipCall } from "../ships/xrpc";
 import { authorizeNestedOperation, nestedToolOwner } from "../tool-approval";
 import { getConversationById } from "../../shared/utils";
 import { stableOpaqueId } from "../../shared/stable-id";
-import { approachFingerprint, approachLock, authenticateApproachPeer, sameActor, signApproachValue } from "./shared";
+import { approachFingerprint, approachLock, approachThreadId } from "./shared";
 
 const idSchema = z.string().check(z.minLength(1), z.maxLength(128));
 const revisionSchema = z.int().check(z.positive());
 const createSchema = z.strictObject({
-  profileUrl: z.string().check(z.maxLength(2048)), recipient: actorRefSchema, profileRevision: revisionSchema,
+  did: didSchema, profileCid: z.string().check(z.minLength(1), z.maxLength(128)),
   displayName: z.string().check(z.minLength(1), z.maxLength(80)),
   text: z.string().check(z.minLength(1), z.maxLength(32_768)), idempotencyKey: idSchema,
   shipHandlesMessages: z.optional(z.boolean()),
 });
+/** What a contact's Ship hears once its request is received; a repeated send hears it again. */
+const RECEIVED: MessageRequestOutput = { state: "received" };
+const UNAVAILABLE = "Message requests are unavailable";
 
 /** The owner's canonical Ship sees only the requests it may send; incoming requests are the human's to read and decide. */
 function requireOutgoingForProcess(direction: "incoming" | "outgoing", ctx: KernelContext): void {
@@ -54,66 +59,72 @@ export async function handleApproachCreate(input: ApproachCreateArgs, ctx: Kerne
   const ownerUid = requireContactCaller(ctx, true);
   const args = createSchema.parse(input);
   contactHandlingChoice(args.shipHandlesMessages, ctx);
+  assertContactsMoved(ctx);
   // A message request reaches someone who is not a contact yet, so the Ship asks first
   // unless the owner's approval policy says otherwise. A replay of a request already sent does not ask again.
   if (!ctx.approaches.byIdempotencyKey(ownerUid, args.idempotencyKey)) {
     // A direct process syscall carries no tool owner yet; derive it, as scheduling does, so the
     // Ship's run policy applies however the request arrives. A signed-in human has none and is not asked.
-    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "approach.create", jsonObjectSchema.parse(args), "ask");
+    const toolOwner = nestedToolOwner(ctx);
+    if (toolOwner) {
+      // The question names the person by handle, and a profile that has changed or closed is refused before anyone is asked.
+      const { handle } = await requestableProfile(args, ctx);
+      await authorizeNestedOperation({ ...ctx, toolOwner }, "approach.create", jsonObjectSchema.parse({ recipient: handle, ...args }), "ask");
+    }
   }
   return await ctx.coordinateFederationContact(`approach-send:${ownerUid}:${args.idempotencyKey}`, () => createApproach(args, ownerUid, ctx));
 }
 
-async function createApproach(args: ApproachCreateArgs, ownerUid: number, ctx: KernelContext): Promise<ApproachResult> {
+/** The recipient's profile as it stands now: the version its sender read, still open to requests. */
+async function requestableProfile(args: z.infer<typeof createSchema>, ctx: KernelContext): Promise<PublicProfile> {
+  const profile = await readPublicProfile(args.did, ctx);
+  if (profile.cid !== args.profileCid) throw new Error("This profile changed; review it again before sending");
+  if (profile.contactPolicy !== "requests") throw new Error("This person is not receiving new message requests");
+  return profile;
+}
+
+async function createApproach(args: z.infer<typeof createSchema>, ownerUid: number, ctx: KernelContext): Promise<ApproachResult> {
   if (!args.displayName.trim() || !args.text.trim()) throw new Error("Enter your display name and a message");
   const previous = ctx.approaches.byIdempotencyKey(ownerUid, args.idempotencyKey);
   if (previous) {
-    const content = { ...previous.metadata, recipient: args.recipient, profileRevision: args.profileRevision, displayName: args.displayName, text: args.text };
-    if (previous.fingerprint !== await approachFingerprint(content, previous.setupTokenHash)
-      || previous.shipHandlesMessages !== (args.shipHandlesMessages ?? false)
-      || new URL(args.profileUrl).origin !== previous.remoteOrigin) throw new Error("This send already has different content");
+    const content: SendMessageRequestInput = {
+      requestId: previous.summary.requestId, profileCid: args.profileCid, name: args.displayName, messageId: previous.messageId,
+      text: args.text, createdAtMs: previous.sentAtMs, expiresAtMs: previous.summary.expiresAtMs,
+    };
+    if (previous.fingerprint !== await approachFingerprint(content) || previous.summary.peerDid !== args.did
+      || previous.shipHandlesMessages !== (args.shipHandlesMessages ?? false)) throw new Error("This send already has different content");
     return { approach: previous.summary };
   }
-  const { profile } = await handleProfileResolve({ url: args.profileUrl }, ctx);
-  if (!sameActor(profile.actor, args.recipient) || profile.revision !== args.profileRevision) throw new Error("This profile changed; review it again before sending");
-  if (profile.contactPolicy !== "requests") throw new Error("This person is not receiving new message requests");
-  const document = await localShipDocumentV2(ctx);
-  if (document.shipId === profile.actor.shipId) throw new Error("Choose a person on another GSV");
-  const subject = ctx.federation.ensureSubject(ownerUid, args.displayName);
-  const existing = ctx.federation.getByRemote(ownerUid, profile.actor.shipId, profile.actor.subjectId);
-  if (existing?.state === "active") throw new Error("You already have a conversation with this person");
+  // Approval can take a while, so the request is checked against the profile as it stands once approved.
+  const profile = await requestableProfile(args, ctx);
+  // Sending a message request is one of the Ship's outward acts, so it creates the Ship's DID if need be.
+  const ship = await ensureShipAccount(ctx);
+  if (ship.did === profile.did) throw new Error("Choose a person on another Ship");
+  if (ctx.federation.getByRemote(ownerUid, profile.did)?.state === "active") throw new Error("You already have a conversation with this person");
   const now = Date.now();
-  const token = randomBase64Url(32);
-  const tokenHash = await sha256Base64Url(token);
-  const content: ApproachContent = approachContentSchema.parse({
-    reference: { actor: { shipId: document.shipId, subjectId: subject.id }, approachId: `approach:${crypto.randomUUID()}` },
-    recipient: profile.actor, profileRevision: profile.revision, displayName: args.displayName,
+  const content: SendMessageRequestInput = sendMessageRequestInputSchema.parse({
+    requestId: `request:${crypto.randomUUID()}`, profileCid: profile.cid, name: args.displayName,
     messageId: `msg:${crypto.randomUUID()}`, text: args.text, createdAtMs: now, expiresAtMs: now + APPROACH_LIFETIME_MS,
   });
-  const fingerprint = await approachFingerprint(content, tokenHash);
-  const threadId = `thread:${await sha256Base64Url(`federation-thread\n${token}`)}`;
   // Account for JSON escaping before committing a send that the peer cannot parse.
-  if (new TextEncoder().encode(JSON.stringify({ document, content, setup: { token } })).length + 1024 > MAX_PUBLIC_JSON_BYTES) {
+  if (new TextEncoder().encode(JSON.stringify(content)).length + 1024 > MAX_PUBLIC_JSON_BYTES) {
     throw new Error("This message exceeds the encoded request limit");
   }
+  const fingerprint = await approachFingerprint(content);
+  const threadId = await approachThreadId(ship.did, content.requestId);
   requireContactCaller(ctx, true);
   const prepared = ctx.federation.transaction(() => {
-    const peerContact = ctx.federation.getByRemote(ownerUid, profile.actor.shipId, profile.actor.subjectId);
+    const peerContact = ctx.federation.getByRemote(ownerUid, profile.did);
     if (peerContact?.state === "active") throw new Error("You already have a conversation with this person");
-    const record = ctx.approaches.prepare({
-      ownerUid, direction: "outgoing", peer: profile.actor, remoteOrigin: profile.origin, remotePublicKey: profile.publicKey,
+    return ctx.approaches.prepare({
+      ownerUid, direction: "outgoing", remoteDid: profile.did, remoteHandle: profile.handle,
       remoteDisplayName: profile.displayName, localDisplayName: args.displayName,
       shipHandlesMessages: args.shipHandlesMessages,
       conversationId: peerContact?.conversationId ?? `conv:${crypto.randomUUID()}`, contactId: peerContact?.id ?? `contact:${crypto.randomUUID()}`,
-      threadId, content, fingerprint, idempotencyKey: args.idempotencyKey, setupToken: token, setupTokenHash: tokenHash,
+      threadId, content, fingerprint, idempotencyKey: args.idempotencyKey,
     }, () => consumeLocalRateLimits(ctx, [
       { scope: `owner:${ownerUid}`, operation: "approach.outgoing.day", maximum: 10, windowMs: 86_400_000 },
     ], now, "Daily message request limit reached"));
-    if (!record.setupInviteId) {
-      const invitation = ctx.federation.createInvite({ ownerUid, tokenHash, issuingShipId: document.shipId, issuingOrigin: document.origin, expiresAtMs: content.expiresAtMs, purpose: "approach", now });
-      ctx.approaches.bindInvitation(record.summary.id, invitation.inviteId);
-    }
-    return ctx.approaches.get(record.summary.id)!;
   });
   await ctx.scheduleApproachMaintenance();
   ctx.broadcastToUserUid(ownerUid, "approach.changed");
@@ -130,12 +141,8 @@ export async function handleApproachDecide(args: ApproachDecideArgs, ctx: Kernel
   const existing = ctx.approaches.owned(id, ownerUid);
   const record = await ctx.coordinateFederationContact(approachLock(existing), () => ctx.federation.transaction(() => {
     requireContactHuman(ctx);
-    if (decision === "accept") return ctx.approaches.beginAcceptance(id, ownerUid, revision, `attempt:${crypto.randomUUID()}`, shipHandlesMessages);
-    const changed = ctx.approaches.decide(id, ownerUid, revision, decision === "decline" ? "declined" : "withdrawn");
-    if (changed.setupInviteId && ctx.federation.invite(changed.setupInviteId)?.state === "issued") {
-      ctx.federation.cancelInvite(changed.setupInviteId, ownerUid);
-    }
-    return changed;
+    if (decision === "accept") return ctx.approaches.beginAcceptance(id, ownerUid, revision, shipHandlesMessages);
+    return ctx.approaches.decide(id, ownerUid, revision, decision === "decline" ? "declined" : "withdrawn");
   }));
   await ctx.scheduleApproachMaintenance();
   ctx.broadcastToUserUid(ownerUid, "approach.changed");
@@ -152,66 +159,73 @@ export async function handleApproachRetry(args: ApproachRetryArgs, ctx: KernelCo
   return { approach: record.summary };
 }
 
-export async function receiveApproach(envelope: ApproachEnvelope, ctx: KernelContext): Promise<ApproachReceipt> {
-  const { content, document } = envelope;
-  const local = await localShipDocumentV2(ctx);
-  if (content.recipient.shipId !== local.shipId || document.shipId === local.shipId) throw new PublicFederationError(404, "Message requests are unavailable");
-  const ownerUid = ctx.federation.subjectOwner(content.recipient.subjectId);
-  if (ownerUid === null || !profileOwnerActive(ownerUid, ctx)) throw new PublicFederationError(404, "Message requests are unavailable");
-  const prior = ctx.approaches.byReference(ownerUid, content.reference);
-  await authenticateApproachPeer(envelope, content.reference.actor, ctx, prior ?? undefined);
-  const tokenHash = await sha256Base64Url(envelope.setup.token);
-  const fingerprint = await approachFingerprint(content, tokenHash);
-  let profile: PublicProfile | null = null;
-  if (!prior) {
-    const projection = ctx.profiles.published({ subjectId: content.recipient.subjectId });
-    if (!projection) throw new PublicFederationError(404, "Message requests are unavailable");
-    profile = projection.profile;
-  }
-  const peer = content.reference.actor;
-  const threadId = `thread:${await sha256Base64Url(`federation-thread\n${envelope.setup.token}`)}`;
-  const existing = ctx.federation.getByRemote(ownerUid, peer.shipId, peer.subjectId);
+/**
+ * `space.ship.sendMessageRequest`: someone who read this Ship's published
+ * profile asks to talk. The sender is the DID that signed the call, and the
+ * request must name the profile record the Ship publishes now.
+ */
+export async function receiveMessageRequest(call: ShipCall, ctx: KernelContext): Promise<JsonValue> {
+  consumeRequestIngress(ctx);
+  const content = sendMessageRequestInputSchema.parse(call.input);
+  const sender = call.caller;
+  if (sender === ctx.shipIdentity.current()) throw new ShipXrpcError(400, "InvalidRequest", "A Ship can't send itself a message request");
+  const published = ctx.profiles.page();
+  if (!published || !profileOwnerActive(published.ownerUid, ctx)) throw new PublicFederationError(404, UNAVAILABLE);
+  const ownerUid = published.ownerUid;
+  const prior = ctx.approaches.byRequest("incoming", sender, content.requestId);
+  if (prior && prior.ownerUid !== ownerUid) throw new PublicFederationError(404, UNAVAILABLE);
+  const fingerprint = await approachFingerprint(content);
+  const remoteHandle = prior ? prior.summary.peerHandle : await verifiedHandle(sender, ctx);
+  const threadId = await approachThreadId(sender, content.requestId);
+  const existing = ctx.federation.getByRemote(ownerUid, sender);
   const received = ctx.federation.transaction(() => ctx.approaches.prepare({
-    ownerUid, direction: "incoming", peer, remoteOrigin: document.origin, remotePublicKey: document.publicKey,
-    remoteDisplayName: content.displayName, localDisplayName: profile?.displayName ?? prior!.localDisplayName,
+    ownerUid, direction: "incoming", remoteDid: sender, ...(remoteHandle ? { remoteHandle } : undefined),
+    remoteDisplayName: content.name, localDisplayName: published.record.displayName,
     conversationId: prior?.summary.conversationId ?? existing?.conversationId ?? `conv:${crypto.randomUUID()}`,
     contactId: prior?.contactId ?? existing?.id ?? `contact:${crypto.randomUUID()}`, threadId, content, fingerprint,
-    setupToken: envelope.setup.token, setupTokenHash: tokenHash,
   }, () => {
-    const projection = ctx.profiles.published({ subjectId: content.recipient.subjectId });
-    if (!profile || !projection || !profileOwnerActive(ownerUid, ctx) || projection.revision !== profile.revision
-      || profile.contactPolicy !== "requests" || profile.revision !== content.profileRevision
-      || !sameActor(profile.actor, content.recipient) || existing?.state === "active") throw new PublicFederationError(404, "Message requests are unavailable");
-    if (existing && (existing.remoteOrigin !== document.origin
-      || canonicalJson(jsonValueSchema.parse(existing.remotePublicKey)) !== canonicalJson(jsonValueSchema.parse(document.publicKey)))) throw new PublicFederationError(403, "Message request authentication failed");
+    // Only a new request is checked against the profile; a repeat finds the one it sent.
+    const current = ctx.profiles.page();
+    if (!current || current.ownerUid !== ownerUid || !profileOwnerActive(ownerUid, ctx) || current.cid !== content.profileCid
+      || profileContactPolicy(current.record.contactPolicy) !== "requests" || existing?.state === "active") {
+      throw new PublicFederationError(404, UNAVAILABLE);
+    }
     consumePublicRateLimits(ctx, [
       { scope: `owner:${ownerUid}`, operation: "approach.incoming.hour", maximum: 60, windowMs: 3_600_000 },
       { scope: `owner:${ownerUid}`, operation: "approach.incoming.day", maximum: 100, windowMs: 86_400_000 },
       { scope: "installation", operation: "approach.incoming.day", maximum: 500, windowMs: 86_400_000 },
-      { scope: `approach:${ownerUid}:${peer.shipId}:${peer.subjectId}`, operation: "approach.pair.day", maximum: 5, windowMs: 86_400_000 },
+      { scope: `approach:${ownerUid}:${sender}`, operation: "approach.pair.day", maximum: 5, windowMs: 86_400_000 },
     ], Date.now(), "Message request limit reached");
   }));
   await ctx.scheduleApproachMaintenance();
   await ctx.coordinateFederationContact(approachLock(received), () => appendApproachMessage(received.summary.id, ctx));
-  return await signApproachValue({ version: 2, domain: "gsv-federation/2/approach-receipt", reference: content.reference, recipient: content.recipient, fingerprint } satisfies Omit<ApproachReceipt, "signature">, ctx);
+  return RECEIVED;
+}
+
+/** Every message-request method shares one installation-wide budget for calls. */
+export function consumeRequestIngress(ctx: KernelContext): void {
+  consumePublicRateLimits(ctx, [{ scope: "installation", operation: "approach.ingress", maximum: 120, windowMs: 60_000 }], Date.now(), "Message request limit reached");
 }
 
 export async function appendApproachMessage(id: string, ctx: KernelContext): Promise<void> {
   const record = ctx.approaches.get(id);
   if (!record || record.messageSequence !== null || record.summary.state !== "preparing") return;
   if (!record.pendingText) throw new Error("Message request append payload is unavailable");
-  const { summary, metadata } = record;
+  const { summary } = record;
+  // The request's first message is the sender's: the other person's for an incoming request, this Ship's for an outgoing one.
+  const senderDid = summary.direction === "incoming" ? summary.peerDid : ctx.shipIdentity.current();
+  if (!senderDid) throw new Error("This Ship has no DID for the request it sent");
   const conversation = ctx.conversations.ensureContact(record.ownerUid, summary.displayName, summary.conversationId);
   const established = ctx.federation.get(record.contactId);
   const stub = getConversationById(ctx.installationId, conversation.id);
   await stub.initialize({ ownerUid: record.ownerUid, kind: "contact", ...(established ? undefined : { intakeId: id }) });
   const message = await stub.append({
-    messageId: await stableOpaqueId("msg", [metadata.reference.actor.shipId, metadata.reference.actor.subjectId, metadata.messageId]),
+    messageId: await stableOpaqueId("msg", [senderDid, record.messageId]),
     idempotencyKey: `approach:${id}`, text: record.pendingText,
-    author: summary.direction === "incoming" ? { kind: "contact", contactId: record.contactId, shipId: summary.peer.shipId, subjectId: summary.peer.subjectId, displayName: summary.displayName } : { kind: "user", uid: record.ownerUid },
-    social: { reference: { actor: metadata.reference.actor, messageId: metadata.messageId }, threadId: record.threadId, provenance: { kind: "human" } },
-    origin: summary.direction === "incoming" ? { kind: "federation", contactId: record.contactId, deliveryId: metadata.reference.approachId } : { kind: "client" },
-    createdAt: metadata.createdAtMs,
+    author: summary.direction === "incoming" ? { kind: "contact", contactId: record.contactId, displayName: summary.displayName } : { kind: "user", uid: record.ownerUid },
+    social: { reference: { did: senderDid, messageId: record.messageId }, threadId: record.threadId, provenance: { kind: "human" } },
+    origin: summary.direction === "incoming" ? { kind: "federation", contactId: record.contactId, deliveryId: summary.requestId } : { kind: "client" },
+    createdAt: record.sentAtMs,
   });
   ctx.approaches.messageCommitted(id, message.message.sequence);
   ctx.conversations.recordContactMessage(message.message, true);

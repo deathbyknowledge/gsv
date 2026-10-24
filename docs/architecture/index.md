@@ -263,6 +263,8 @@ of chat integrations.
   contract used by Messages, Processes, adapters, Web, and Desktop.
 - [Telemetry](./telemetry.md) defines the optional provider-neutral event seam
   and its privacy boundary.
+- [The open network](./open-network.md) describes the public repository each
+  Ship can publish to, and the Kernel boundary that decides what is published.
 
 ## Deferred design proposals
 

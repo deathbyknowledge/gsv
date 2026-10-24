@@ -7,6 +7,7 @@ import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
 import type { WebSearchService } from "@humansandmachines/gsv/services/web-search";
 import type { FeedbackService } from "@humansandmachines/gsv/services/feedback";
 import type { InstancesService } from "@humansandmachines/gsv/services/instances";
+import type { PdsService } from "@humansandmachines/gsv/services/pds";
 
 /**
  * Deployment service contracts augment the generated platform bindings.
@@ -24,6 +25,9 @@ type GatewayDeploymentBindings = TelemetryEnvironment & {
   WEB_SEARCH?: WebSearchService;
   FEEDBACK?: FeedbackService;
   INSTANCES?: InstancesService;
+  PDS?: PdsService;
+  /** The did:plc directory other Ships' identities are read from; plc.directory unless the operator names another. */
+  PLC_URL?: string;
 };
 
 export type GatewayEnv = Omit<Env, "INFERENCE_EXECUTION"> & GatewayDeploymentBindings;

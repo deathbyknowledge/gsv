@@ -1,7 +1,7 @@
 import { z } from "zod/mini";
 import { jsonObjectSchema, type JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
-import type { ActorRef, FederationFeature, OriginMessageRef } from "../social";
+import { socialMessageMetadataSchema, type OriginMessageRef, type SocialMessageMetadata } from "../social";
 
 export const MAX_FEDERATION_MESSAGE_RESOURCES = 16;
 export const MAX_FEDERATION_MESSAGE_BYTES = 32 * 1024;
@@ -34,28 +34,6 @@ const federationMessageTextSchema = z.string()
     federationTextEncoder.encode(value).byteLength <= MAX_FEDERATION_MESSAGE_BYTES
   )));
 
-export type FederationPublicKey = {
-  kty: "EC";
-  crv: "P-256";
-  x: string;
-  y: string;
-};
-
-export type FederationShipDocument = {
-  version: 1;
-  shipId: string;
-  origin: string;
-  publicKey: FederationPublicKey;
-  protocols: ["gsv-federation/1"];
-  issuedAtMs: number;
-  signature: string;
-};
-
-export type FederationSubject = {
-  id: string;
-  displayName: string;
-};
-
 export type ContactState = "active" | "revoked";
 
 export type ContactPreferences = {
@@ -76,20 +54,24 @@ export type ContactPreferencesUpdateArgs = {
   patch: Partial<Pick<ContactPreferences, "saved" | "muted" | "shipHandlesMessages">>;
 };
 export type ContactPreferencesUpdateResult = { contact: ContactSummary };
-export type ContactBlock = { actor: ActorRef; displayName?: string; createdAtMs: number };
-export type ContactBlockSetArgs = { actor: ActorRef; blocked: boolean };
+/** A person this Ship refuses to hear from, by DID. */
+export type ContactBlock = { did: string; displayName?: string; createdAtMs: number };
+export type ContactBlockSetArgs = { did: string; blocked: boolean };
 export type ContactBlockSetResult = { block: ContactBlock | null };
-export type ContactBlockListArgs = { actor?: ActorRef; cursor?: ActorRef; limit?: number };
-export type ContactBlockListResult = { blocks: ContactBlock[]; nextCursor?: ActorRef };
+export type ContactBlockListArgs = { did?: string; cursor?: string; limit?: number };
+export type ContactBlockListResult = { blocks: ContactBlock[]; nextCursor?: string };
 
 export type ContactSummary = {
   id: string;
   ownerUid: number;
   state: ContactState;
   generation: string;
-  remoteShipId: string;
-  remoteSubject: FederationSubject;
-  remoteOrigin: string;
+  /** The other person's DID. A contact from before DIDs has none until the move names one, or for good if the move ended it. */
+  remoteDid?: string;
+  /** The name they gave when you connected. */
+  remoteName: string;
+  /** Their handle, shown only once it and their DID name each other. */
+  remoteHandle?: string;
   localAlias?: string;
   conversationId: string;
   createdAtMs: number;
@@ -97,15 +79,8 @@ export type ContactSummary = {
   revokedAtMs?: number;
   lastReceivedAtMs?: number;
   lastDeliveredAtMs?: number;
-  protocol?: { version: 1 | 2; features: FederationFeature[]; checkedAtMs: number };
   preferences?: ContactPreferences;
   blocked?: boolean;
-};
-
-export type ContactIdentityArgs = Record<string, never>;
-export type ContactIdentityResult = {
-  document: FederationShipDocument;
-  subject: FederationSubject;
 };
 
 export type ContactInviteCreateArgs = {
@@ -142,8 +117,7 @@ export type ContactInviteSummary = {
   cancelledAtMs?: number;
   acceptedAtMs?: number;
   contactId?: string;
-  remoteShipId?: string;
-  remoteSubjectId?: string;
+  remoteDid?: string;
 };
 
 export type ContactInviteListArgs = {
@@ -184,9 +158,9 @@ export type ContactAliasSetResult = {
 };
 
 export function contactDisplayName(
-  contact: Pick<ContactSummary, "localAlias" | "remoteSubject">,
+  contact: Pick<ContactSummary, "localAlias" | "remoteName">,
 ): string {
-  return contact.localAlias ?? contact.remoteSubject.displayName;
+  return contact.localAlias ?? contact.remoteName;
 }
 
 export type ContactRevokeArgs = {
@@ -336,6 +310,7 @@ export type FederationMessageDelivery = {
   threadId: string;
   text: string;
   resources?: FederationResourceDescriptor[];
+  social: SocialMessageMetadata;
 };
 
 export type FederationRequestDelivery = {
@@ -358,9 +333,9 @@ export type FederationRequestUpdateDelivery = {
   details?: JsonObject;
 };
 
+/** The sender removed the contact; the delivery's generation names which connection ended. */
 export type FederationContactRevokedDelivery = {
   kind: "contact.revoked";
-  generation: string;
 };
 
 export type FederationDeliveryPayload =
@@ -369,49 +344,8 @@ export type FederationDeliveryPayload =
   | FederationRequestUpdateDelivery
   | FederationContactRevokedDelivery;
 
-export type FederationDeliveryEnvelope = {
-  version: 1;
-  deliveryId: string;
-  senderShipId: string;
-  senderSubjectId: string;
-  recipientSubjectId: string;
-  generation: string;
-  timestampMs: number;
-  nonce: string;
-  payload: FederationDeliveryPayload;
-  signature: string;
-};
-
-export type FederationDeliveryReceipt = {
-  version: 1;
-  deliveryId: string;
-  signature: string;
-};
-
-export const federationPublicKeySchema = z.strictObject({
-  kty: z.literal("EC"),
-  crv: z.literal("P-256"),
-  x: z.string().check(z.minLength(1), z.maxLength(128)),
-  y: z.string().check(z.minLength(1), z.maxLength(128)),
-}) satisfies z.ZodMiniType<FederationPublicKey>;
-
 const federationResourceIdSchema = z.string()
   .check(z.regex(/^resource:[A-Za-z0-9_-]{1,119}$/));
-
-export const federationSubjectSchema = z.strictObject({
-  id: z.string().check(z.minLength(1), z.maxLength(128)),
-  displayName: z.string().check(z.minLength(1), z.maxLength(256)),
-}) satisfies z.ZodMiniType<FederationSubject>;
-
-export const federationShipDocumentSchema = z.strictObject({
-  version: z.literal(1),
-  shipId: z.string().check(z.minLength(1), z.maxLength(128)),
-  origin: z.string().check(z.minLength(1), z.maxLength(2_048)),
-  publicKey: federationPublicKeySchema,
-  protocols: z.tuple([z.literal("gsv-federation/1")]),
-  issuedAtMs: z.int().check(z.nonnegative()),
-  signature: z.string().check(z.minLength(1), z.maxLength(512)),
-}) satisfies z.ZodMiniType<FederationShipDocument>;
 
 export const federationResourceDescriptorSchema = z.strictObject({
   id: federationResourceIdSchema,
@@ -432,6 +366,7 @@ const federationMessageDeliverySchema = z.strictObject({
   resources: z.optional(
     z.array(federationResourceDescriptorSchema).check(z.maxLength(MAX_FEDERATION_MESSAGE_RESOURCES)),
   ),
+  social: socialMessageMetadataSchema,
 }).check(z.refine((value: FederationMessageDelivery) => (
   value.text.trim().length > 0 || (value.resources?.length ?? 0) > 0
 ))) satisfies z.ZodMiniType<FederationMessageDelivery>;
@@ -466,7 +401,6 @@ const federationRequestUpdateDeliverySchema = z.strictObject({
 
 const federationContactRevokedDeliverySchema = z.strictObject({
   kind: z.literal("contact.revoked"),
-  generation: z.string().check(z.minLength(1), z.maxLength(128)),
 }) satisfies z.ZodMiniType<FederationContactRevokedDelivery>;
 
 export const federationDeliveryPayloadSchema = z.discriminatedUnion("kind", [
@@ -475,22 +409,3 @@ export const federationDeliveryPayloadSchema = z.discriminatedUnion("kind", [
   federationRequestUpdateDeliverySchema,
   federationContactRevokedDeliverySchema,
 ]) satisfies z.ZodMiniType<FederationDeliveryPayload>;
-
-export const federationDeliveryEnvelopeSchema = z.strictObject({
-  version: z.literal(1),
-  deliveryId: z.string().check(z.minLength(1), z.maxLength(256)),
-  senderShipId: z.string().check(z.minLength(1), z.maxLength(128)),
-  senderSubjectId: z.string().check(z.minLength(1), z.maxLength(128)),
-  recipientSubjectId: z.string().check(z.minLength(1), z.maxLength(128)),
-  generation: z.string().check(z.minLength(1), z.maxLength(128)),
-  timestampMs: z.int().check(z.nonnegative()),
-  nonce: z.string().check(z.minLength(1), z.maxLength(128)),
-  payload: federationDeliveryPayloadSchema,
-  signature: z.string().check(z.minLength(1), z.maxLength(512)),
-}) satisfies z.ZodMiniType<FederationDeliveryEnvelope>;
-
-export const federationDeliveryReceiptSchema = z.strictObject({
-  version: z.literal(1),
-  deliveryId: z.string().check(z.minLength(1), z.maxLength(256)),
-  signature: z.string().check(z.minLength(1), z.maxLength(512)),
-}) satisfies z.ZodMiniType<FederationDeliveryReceipt>;

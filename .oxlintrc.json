@@ -19,6 +19,7 @@
     "**/worker-configuration.d.ts",
     "release/**",
     "workers/gateway/src/protocol/generated/**",
+    "workers/pds/src/cirrus/**",
     "tools/oxlint/anti-slop/**"
   ],
   "jsPlugins": [

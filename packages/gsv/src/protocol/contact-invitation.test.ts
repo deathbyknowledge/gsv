@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { contactInvitationDestination, contactInvitationUrl, encodeContactInvitation, parseContactInvitation } from "./contact-invitation";
+import { contactInvitationDestination, contactInvitationUrl, encodeContactInvitation, OutdatedContactInvitationError, parseContactInvitation } from "./contact-invitation";
 
-const invitation = { version: 1 as const, origin: "https://alice.example", shipId: "ship:alice",
-  subject: { id: "person:alice", displayName: "Alícia 宇" }, token: "fixture-token", expiresAtMs: 2_000_000_000_000 };
+const invitation = { version: 2 as const, did: "did:plc:aliceaaaaaaaaaaaaaaaaaaa", handle: "alice.example",
+  name: "Alícia 宇", token: "fixture-token", expiresAtMs: 2_000_000_000_000 };
 
 describe("contact invitation links", () => {
   it("preserves the original invitation through an Accounts chooser and recipient login", () => {
@@ -31,18 +31,33 @@ describe("contact invitation links", () => {
 
   it("keeps other fragment delimiters inside the contact value", () => {
     const payload = "invalid&onboarding=other+#fragment%3A";
-    const url = new URL(contactInvitationUrl(`gsv-contact-v1:${payload}`, "https://accounts.example/?resume=1"));
+    const url = new URL(contactInvitationUrl(`gsv-contact-v2:${payload}`, "https://accounts.example/?resume=1"));
     expect([...new URLSearchParams(url.hash.slice(1))]).toEqual([["contact", payload]]);
     expect(url.search).toBe("?resume=1");
   });
 
   it("rejects broken invitations and non-space destinations", () => {
-    for (const value of ["", "gsv-contact-v1:%%%", "gsv-contact-v1:e30", "e30", "https://example.com/#contact=e30", "https://example.com/?contact=secret", "x".repeat(12_001)]) {
+    for (const value of ["", "gsv-contact-v2:%%%", "gsv-contact-v2:e30", "e30", "https://example.com/#contact=e30", "https://example.com/?contact=secret", "x".repeat(12_001)]) {
       expect(() => parseContactInvitation(value)).toThrow("invitation");
     }
     for (const origin of ["javascript:alert(1)", "http://example.com", "https://user:password@example.com", "https://example.com/path", "https://example.com#other"]) {
       expect(() => contactInvitationDestination(origin, "code")).toThrow("space address");
     }
     expect(new URL(contactInvitationDestination("http://bob.localhost:8976", encodeContactInvitation(invitation))).pathname).toBe("/people");
+  });
+
+  it("asks for a new invitation when a code predates DIDs", () => {
+    const old = { version: 1, origin: "https://alice.example", shipId: "ship:alice",
+      subject: { id: "person:alice", displayName: "Alicia" }, token: "fixture-token", expiresAtMs: 2_000_000_000_000 };
+    const payload = btoa(JSON.stringify(old)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    for (const value of [`gsv-contact-v1:${payload}`, payload, `https://accounts.example/#contact=${payload}`]) {
+      expect(() => parseContactInvitation(value)).toThrow(OutdatedContactInvitationError);
+      expect(() => parseContactInvitation(value)).toThrow("This invitation is from before an update. Ask for a new one.");
+    }
+  });
+
+  it("refuses an invitation that names something other than a DID", () => {
+    const code = encodeContactInvitation({ ...invitation, did: "ship:alice" });
+    expect(() => parseContactInvitation(code)).toThrow("This invitation is not valid");
   });
 });

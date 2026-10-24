@@ -232,11 +232,10 @@ async handleSysConnect(
         ownerUid,
         kind: "ship",
       });
-      try {
-        await ensureDefaultProfile(ownerUid, ctx);
-      } catch (error) {
-        console.warn("[Kernel] Failed to publish the default profile:", exceptionDiagnostics(error));
-      }
+      // Publishing waits on the open-network host and its directory, which sign-in doesn't.
+      ctx.defer(ensureDefaultProfile(ownerUid, ctx).catch((cause: unknown) => {
+        console.warn("[Kernel] Failed to publish the default profile:", exceptionDiagnostics(cause));
+      }));
     }
 
     if (ctx.auth.credentialEpoch(outcome.peer.principal.account.uid) !== credentialEpoch

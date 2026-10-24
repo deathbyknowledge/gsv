@@ -42,11 +42,28 @@ export type GsvRuntimeServices = {
   extraBindings?: Cloudflare.Workers.WorkerBindingProps;
 };
 
+/** The ATProto host that holds each Ship's DID and public repository. */
+export type GsvPdsProps = {
+  workerName: string;
+  bucketName: string;
+  workerBundle: string;
+  /** The PDS's public origin, which every Ship's DID names as its repository host. */
+  origin: string;
+  /** The did:plc directory the PDS registers Ships' DIDs with and the Gateway reads every DID from. */
+  plcUrl: string;
+  /** Hex secp256k1 key that signs the PDS's directory operations. */
+  rotationKey: Cloudflare.Workers.WorkerBindingProps[string];
+  /** did:key of an offline key that outranks the rotation key in every new DID. */
+  recoveryKey?: Cloudflare.Workers.WorkerBindingProps[string];
+};
+
 export type GsvRuntimeProps = {
   logicalPrefix: string;
   names: GsvRuntimeNames;
   paths: GsvRuntimePaths;
   services: GsvRuntimeServices;
+  /** Without a PDS, Ships have no DID and stay off the open network. */
+  pds?: GsvPdsProps;
   /** Only explicit disposable deployments may delete owned resources; omission retains them. */
   allowResourceDeletion?: boolean;
   compatibility?: typeof GSV_WORKER_COMPATIBILITY;
@@ -101,6 +118,7 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
         throw new Error(`Adapter ${adapter.id} requires an owned lifecycle before multi-space deployment`);
       }
     }
+    if (props.pds) assertGsvPds(props.pds);
     const storageResource = Cloudflare.R2.Bucket(
       `${props.logicalPrefix}Storage`,
       {
@@ -148,6 +166,43 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
     if (props.services.webSearch) serviceBindings.WEB_SEARCH = props.services.webSearch;
     if (props.services.instances) serviceBindings.INSTANCES = props.services.instances;
     if (props.services.feedback) serviceBindings.FEEDBACK = props.services.feedback;
+    let pds: Cloudflare.Workers.Worker | undefined;
+    if (props.pds) {
+      const blobs = Cloudflare.R2.Bucket(`${props.logicalPrefix}PdsBlobs`, { name: props.pds.bucketName })
+        .pipe(retain(props.allowResourceDeletion !== true));
+      const pdsEnv: Cloudflare.Workers.WorkerBindingProps = {
+        REPOS: Cloudflare.DurableObject("REPOS", { className: "HostedRepo" }),
+        FIREHOSE: Cloudflare.DurableObject("FIREHOSE", { className: "HostFirehose" }),
+        BLOBS: blobs,
+        INSTALLATION_DIRECTORY: directory,
+        PDS_ORIGIN: props.pds.origin,
+        PLC_URL: props.pds.plcUrl,
+        PLC_ROTATION_KEY: props.pds.rotationKey,
+      };
+      if (props.pds.recoveryKey) pdsEnv.PLC_RECOVERY_KEY = props.pds.recoveryKey;
+      pds = yield* Cloudflare.Worker(
+        `${props.logicalPrefix}Pds`,
+        {
+          name: props.pds.workerName,
+          main: props.pds.workerBundle,
+          bundle: false,
+          // The PDS reaches only its PLC directory, over the public internet even on the deployment's own zone.
+          compatibility: { ...compatibility, flags: [...compatibility.flags, "global_fetch_strictly_public"] },
+          workersDev: false,
+          // Like the Gateway's, its logs go only to the operator's tail when there is one.
+          observability: props.observability ?? (props.telemetry ? telemetryProducerObservability : {
+            enabled: true,
+            logs: { enabled: true, invocationLogs: true },
+          }),
+          tailConsumers: props.telemetry ? [...props.telemetry.tailConsumers] : undefined,
+          env: pdsEnv,
+        },
+      ).pipe(retain(props.allowResourceDeletion !== true));
+      // Only the Kernel's binding may publish.
+      serviceBindings.PDS = Cloudflare.WorkerEntrypoint(pds, {
+        entrypoint: "PdsPublisherEntrypoint", props: { authority: "kernel-publish" },
+      });
+    }
     const gatewayEnv: Cloudflare.Workers.WorkerBindingProps = {
       KERNEL: Cloudflare.DurableObject("KERNEL", {
         className: "Kernel",
@@ -161,11 +216,15 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
       STORAGE: storageResource,
       RIPGIT: ripgitWorker,
       LOADER: Cloudflare.WorkerLoader(),
+      // The Gateway's rough budget for each source of Ship-to-Ship calls to each Ship.
+      SHIP_CALLS: Cloudflare.RateLimit("SHIP_CALLS", { namespaceId: "7001", simple: { limit: 250, period: 10 } }),
       ...serviceBindings,
       ...adapterGatewayBindings(adapters),
       ...props.services?.extraBindings,
     };
     if (props.telemetry) gatewayEnv.GSV_TELEMETRY_ENABLED = "1";
+    // A Ship reads every DID from the directory its PDS registers them with.
+    if (props.pds) gatewayEnv.PLC_URL = props.pds.plcUrl;
     const gatewayWorker = Cloudflare.Worker(
       `${props.logicalPrefix}Gateway`,
       {
@@ -232,10 +291,32 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
       bindings: [{ type: "service", name: "DELETION_OWNER_GATEWAY", service: props.names.gateway,
         entrypoint: "GatewayLifecycleEntrypoint", props: { authority: "installation-deletion" } }],
     });
+    if (props.pds) {
+      yield* directory.bind(`${props.logicalPrefix}DirectoryPdsDeletionBinding`, {
+        bindings: [{ type: "service", name: "DELETION_OWNER_PDS", service: props.pds.workerName,
+          entrypoint: "PdsLifecycleEntrypoint", props: { authority: "installation-deletion" } }],
+      });
+    }
     yield* directory.bind(`${props.logicalPrefix}DirectoryOperatorGatewayBinding`, {
       bindings: [{ type: "service", name: "OPERATOR_GATEWAY", service: props.names.gateway,
         entrypoint: "OperatorGatewayEntrypoint", props: { authority: "installation-operator" } }],
     });
-    return { storage, ripgit, gateway };
+    return { storage, ripgit, gateway, pds };
   });
+};
+
+/** Every Ship's DID names the PDS's origin, and other Ships read that DID from the PLC directory. */
+export const assertGsvPds = (pds: GsvPdsProps): void => {
+  if (!isHttpsOrigin(pds.origin) || !isHttpsOrigin(pds.plcUrl)) {
+    throw new Error("The PDS requires HTTPS origins for itself and its PLC directory");
+  }
+};
+
+const isHttpsOrigin = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === value;
+  } catch {
+    return false;
+  }
 };

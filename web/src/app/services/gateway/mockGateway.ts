@@ -26,6 +26,7 @@
  *   /reply     a plain reply is committed (finishing an open step first)
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
+ *   /approve-publish   a publish to the open network carrying a picture; y/n decides
  *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
  *   anything else is committed as your message and answered briefly a second later
  */
@@ -127,7 +128,7 @@ const SHIP = { pid: "p-ship", uid: 1001, username: "ship", home: "/home/ship" };
 const PROFILE_URL = `https://${OWNER.username}.ship.space/profile`;
 /** The owner's own profile, public by default with an empty bio, editable in memory. */
 let ownProfile: ProfileState = {
-  revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests", representation: "human" }, published: { url: PROFILE_URL, revision: 1, contactPolicy: "requests" }, handle: OWNER.username,
+  revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests" }, published: { url: PROFILE_URL, cid: "bafyreimockprofile1", revision: 1, contactPolicy: "requests" }, handle: OWNER.username,
 };
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
@@ -184,14 +185,15 @@ const approaches: ApproachSummary[] = [];
 /* one contact with an unread message, so the chat shows a contact notice with its reply box */
 const MARA_CONTACT_ID = "mock-contact-mara";
 const MARA_CONVERSATION = "c-mara";
-const MARA_ACTOR = { shipId: "mock-mara", subjectId: "owner" };
-const maraContact: ContactSummary = { id: MARA_CONTACT_ID, ownerUid: OWNER.uid, state: "active", generation: "1", remoteShipId: MARA_ACTOR.shipId,
-  remoteSubject: { id: MARA_ACTOR.subjectId, displayName: "Mara" }, remoteOrigin: "https://mara.ship.space", conversationId: MARA_CONVERSATION,
+const MARA_DID = "did:plc:maraaaaaaaaaaaaaaaaaaaaa";
+const OWN_DID = "did:plc:esteveaaaaaaaaaaaaaaaaaa";
+const maraContact: ContactSummary = { id: MARA_CONTACT_ID, ownerUid: OWNER.uid, state: "active", generation: "1", remoteDid: MARA_DID,
+  remoteName: "Mara", remoteHandle: "mara.ship.space", conversationId: MARA_CONVERSATION,
   createdAtMs: at(3, 9, 0), updatedAtMs: at(0, 8, 12), lastReceivedAtMs: at(0, 8, 12) };
 const maraThread: ConversationMessage[] = [{ id: "mara-1", conversationId: MARA_CONVERSATION, sequence: 1,
-  author: { kind: "contact", contactId: MARA_CONTACT_ID, shipId: MARA_ACTOR.shipId, subjectId: MARA_ACTOR.subjectId, displayName: "Mara" },
+  author: { kind: "contact", contactId: MARA_CONTACT_ID, displayName: "Mara" },
   text: "Are we still on for the studio visit on Thursday? I can bring the revised quote.",
-  social: { threadId: "mara-thread", reference: { actor: MARA_ACTOR, messageId: "mara-1" }, provenance: { kind: "human" } },
+  social: { threadId: "mara-thread", reference: { did: MARA_DID, messageId: "mara-1" }, provenance: { kind: "human" } },
   origin: { kind: "federation", contactId: MARA_CONTACT_ID, deliveryId: "mara-delivery-1" }, createdAt: at(0, 8, 12) }];
 const maraView = { readThroughSequence: 0, archived: false, revision: 1 };
 /* a retry with the same idempotency key replays the first answer, as the Kernel replays its outbox record; the
@@ -238,7 +240,7 @@ type Step = {
   thought: string;
   place: "studio" | "gsv";
   tool: "Shell" | "Read" | "Write" | "Search" | "mail.send";
-  syscall: "shell.exec" | "fs.read" | "fs.write" | "fs.search" | "mail.send";
+  syscall: "shell.exec" | "fs.read" | "fs.write" | "fs.search" | "mail.send" | "atproto.write";
   args: JsonObject;
   purpose?: string;
   /** How long the tool runs, before a little jitter. */
@@ -286,6 +288,10 @@ const RUN_LONG_REPLY = [
   "There is no routine for cache cleaning yet. I can clear caches older than a week tonight and add a weekly clean next to the backup entry, which should keep the drive under 80%. Say the word.",
 ].join("\n\n");
 
+/** The picture a mock publish carries; small enough to arrive in one frame. */
+const PUBLISHED_PICTURE = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160"><rect width="240" height="160" fill="#1d2b3a"/><circle cx="182" cy="44" r="18" fill="#ffd24d"/><path d="M0 160 72 70l46 54 34-38 88 74Z" fill="#7a8fa6"/></svg>';
+const PUBLISHED_PICTURE_CID = "bafkreimockpicture";
+
 const GRANOLA_COMMAND = "pgrep -fl Granola 2>/dev/null; echo \"---\"; osascript -e 'tell application \"System Events\" to tell process \"Granola\" to get name of every window' 2>&1 | head -5";
 
 function approvalFor(trigger: string): ApprovalScenario | null {
@@ -311,6 +317,21 @@ function approvalFor(trigger: string): ApprovalScenario | null {
         ms: 900, output: { ok: true, messageId: "mock-mail-1" },
       },
       approved: "Sent Mike the contract follow-up.", denied: "Not sent. The draft is still here if you want to change it.",
+    };
+  }
+  if (trigger === "/approve-publish") {
+    const record = {
+      $type: "space.ship.note", text: "Back from the coast. The light at six was something else.",
+      picture: { $type: "blob", ref: { $link: PUBLISHED_PICTURE_CID }, mimeType: "image/svg+xml", size: PUBLISHED_PICTURE.length },
+    };
+    return {
+      step: {
+        think: "", thought: "Ask before publishing the note publicly.", place: "gsv", tool: "Shell", syscall: "atproto.write",
+        purpose: "publish your trip photo with a short note",
+        args: { handle: "esteve", address: "esteve.ship.space", writes: [{ action: "create", collection: "space.ship.note", record }] },
+        ms: 900, output: { commit: { cid: "bafymockcommit", rev: "3mockrev" }, results: [{ uri: "at://did:plc:mock/space.ship.note/3mockrev", cid: "bafymockrecord" }] },
+      },
+      approved: "Published your note with the photo.", denied: "Not published. Nothing went to the open network.",
     };
   }
   if (trigger === "/approve-file") {
@@ -922,7 +943,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
         send = contactSendMessageId(contactId, maraContact.generation, idempotencyKey).then((messageId): ContactSendResult => {
           const sequence = maraThread.length + 1;
           maraThread.push({ id: messageId, conversationId: MARA_CONVERSATION, sequence, author: { kind: "user", uid: OWNER.uid }, text,
-            social: { threadId: "mara-thread", reference: { actor: { shipId: "mock-ship", subjectId: "owner" }, messageId }, provenance: { kind: "human" } },
+            social: { threadId: "mara-thread", reference: { did: OWN_DID, messageId }, provenance: { kind: "human" } },
             origin: { kind: "client", clientId: "web" }, createdAt: Date.now() });
           broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, latestSequence: sequence });
           return { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" };
@@ -933,10 +954,10 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     /* a message request sent from People: kept in this tab so the requests view can list it */
     case "approach.create": {
-      const { displayName, recipient } = z.object({ displayName: z.string(), recipient: z.object({ shipId: z.string(), subjectId: z.string() }) }).parse(args);
+      const { displayName, did } = z.object({ displayName: z.string(), did: z.string() }).parse(args);
       const now = Date.now();
       const approach: ApproachSummary = { id: `mock-approach-${approaches.length + 1}`, direction: "outgoing",
-        reference: { actor: recipient, approachId: `mock-approach-${approaches.length + 1}` }, peer: recipient, displayName,
+        requestId: `mock-approach-${approaches.length + 1}`, peerDid: did, displayName,
         conversationId: `approach:${approaches.length + 1}`, state: "pending", revision: 1, delivery: "received",
         createdAtMs: now, updatedAtMs: now, expiresAtMs: now + 7 * 24 * 3_600_000 };
       approaches.push(approach);
@@ -950,13 +971,13 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "profile.get": return respond(id, { profile: ownProfile });
     case "profile.update": {
       const { draft } = z.object({ expectedRevision: z.number(), draft: z.object({
-        displayName: z.string(), about: z.string(), contactPolicy: z.enum(["requests", "invitation", "closed"]), representation: z.enum(["human", "human-and-ship"]),
+        displayName: z.string(), about: z.string(), contactPolicy: z.enum(["requests", "invitation", "closed"]),
       }) }).parse(args);
       ownProfile = { ...ownProfile, revision: ownProfile.revision + 1, draft };
       return respond(id, { profile: ownProfile });
     }
     case "profile.publish": {
-      ownProfile = { ...ownProfile, published: { url: PROFILE_URL, revision: ownProfile.revision, contactPolicy: ownProfile.draft.contactPolicy } };
+      ownProfile = { ...ownProfile, published: { url: PROFILE_URL, cid: `bafyreimockprofile${ownProfile.revision}`, revision: ownProfile.revision, contactPolicy: ownProfile.draft.contactPolicy } };
       return respond(id, { profile: ownProfile });
     }
     case "profile.unpublish": {
@@ -964,11 +985,16 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { profile: ownProfile });
     }
     case "profile.resolve": {
-      const { url } = z.object({ url: z.string().url() }).parse(args);
-      const origin = new URL(url).origin;
-      return respond(id, { profile: { version: 1, origin, url: `${origin}/profile`, actor: { shipId: "mock-person", subjectId: "owner" },
-        displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests", representation: "human-and-ship", revision: 1,
-        publishedAtMs: Date.now() } });
+      const { address } = z.object({ address: z.string() }).parse(args);
+      const handle = /^https?:\/\//i.test(address) ? new URL(address).host : address.replace(/^@/, "");
+      return respond(id, { profile: { did: MARA_DID, handle, cid: "bafyreimockmara", url: `https://${handle}/profile`,
+        displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests" } });
+    }
+    case "atproto.blob.read": {
+      const { cid } = z.object({ cid: z.string() }).parse(args);
+      return cid === PUBLISHED_PICTURE_CID
+        ? socket.textResponse(id, { mimeType: "image/svg+xml", size: PUBLISHED_PICTURE.length }, PUBLISHED_PICTURE)
+        : refuse(id, 404, `No file with CID ${cid} on this Ship`);
     }
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });

@@ -6,8 +6,10 @@ import type {
   ConversationSearchArgs,
   ConversationSearchResult,
   ConversationMessage,
+  ConversationMessageAuthor,
   ResourceBlock,
   OriginMessageRef,
+  SocialMessageMetadata,
 } from "@humansandmachines/gsv/protocol";
 import { resourceBlockSchema, socialMessageMetadataSchema, originMessageRefSchema } from "@humansandmachines/gsv/protocol";
 import { createInstallationStorage } from "../installation/storage";
@@ -23,6 +25,7 @@ import {
   type ConversationAppendInput,
   type ConversationAppendResult,
   type ConversationArchiveSegment,
+  type SocialBeforeDids,
 } from "./store";
 
 const HOT_MESSAGE_LIMIT = 1_000;
@@ -36,6 +39,20 @@ export type ConversationInitializeInput = {
 };
 
 type ConversationIntake = { id: string; ownerUid: number; promoted: boolean; discarded: boolean };
+
+export type ConversationMoveInput = {
+  /** People named the old way, with their DIDs. */
+  people: { shipId: string; subjectId: string; did: string }[];
+  /** Appends the Kernel may still make for deliveries from before the move. */
+  idempotencyKeys: string[];
+};
+export type ConversationMoveResult = {
+  /** Messages whose origin details now name their author by DID. */
+  moved: number;
+  /** Messages that lost their origin details, because their author has no DID here. */
+  ended: number;
+  appended: { idempotencyKey: string; sequence: number }[];
+};
 const INTAKE_KEY = "conversation:intake";
 
 export type ConversationHistoryInput = {
@@ -167,7 +184,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
     this.ctx.storage.kv.put(INTAKE_KEY, { ...intake, discarded: true });
     await Promise.allSettled([this.appendTransition, this.archiveTransition]);
     this.ctx.storage.transactionSync(() => {
-      for (const table of ["messages", "message_receipts", "message_origins", "message_search"]) {
+      for (const table of ["messages", "message_receipts", "message_origins", "message_origins_legacy", "message_search"]) {
         this.ctx.storage.sql.exec(`DELETE FROM ${table}`);
       }
     });
@@ -223,6 +240,25 @@ export class Conversation extends DurableObject<GatewayEnv> {
   resolveOrigin(reference: OriginMessageRef, threadId: string) {
     this.assertAvailable();
     return this.store.resolveOrigin(originMessageRefSchema.parse(reference), threadId);
+  }
+
+  /**
+   * The operator's move to DIDs: names the people in this conversation's
+   * origin details by DID. Also reports which of the Kernel's pending appends
+   * already reached a message, so a delivery received or sent just before the
+   * move isn't appended a second time.
+   */
+  async moveToDids(input: ConversationMoveInput): Promise<ConversationMoveResult> {
+    this.retirement.assertActive();
+    const dids = new Map(input.people.map((person) => [`${person.shipId} ${person.subjectId}`, person.did]));
+    const result = this.ctx.storage.transactionSync(() => this.store.moveOriginsToDids(
+      (person) => dids.get(`${person.shipId} ${person.subjectId}`),
+    ));
+    const appended = input.idempotencyKeys.flatMap((idempotencyKey) => {
+      const receipt = this.store.receipt(idempotencyKey);
+      return receipt ? [{ idempotencyKey, sequence: receipt.sequence }] : [];
+    });
+    return { ...result, appended };
   }
 
   async readMedia(input: { key: string }): Promise<ConversationMediaRead> {
@@ -358,6 +394,8 @@ export class Conversation extends DurableObject<GatewayEnv> {
   private async archiveIfNeeded(): Promise<void> {
     if (this.retirement.state || this.ctx.storage.kv.get<ConversationIntake>(INTAKE_KEY)?.discarded) return;
     while (this.store.hotCount() > HOT_MESSAGE_LIMIT) {
+      // An archive is immutable, so origin details from before DIDs stay hot until the move names them.
+      if (this.store.awaitingMove()) return;
       const messages = this.store.oldestHot(ARCHIVE_SEGMENT_SIZE);
       if (messages.length === 0) return;
       const bytes = new TextEncoder().encode(JSON.stringify(messages));
@@ -456,8 +494,32 @@ export class Conversation extends DurableObject<GatewayEnv> {
     // SAFETY: archive rows are written from ConversationMessage values and the count was verified above.
     // Older local archives may carry the withdrawn request field. Keep their bytes/checksum
     // untouched, but never return that field through the ordinary conversation contract.
-    return parsed.map(({ action: _retiredAction, ...message }: ConversationMessage & { action?: unknown }) => message);
+    return parsed.map(({ action: _retiredAction, ...message }: ArchivedMessage) => withoutShipIds(message));
   }
+}
+
+/** A message as the release that archived its segment wrote it. */
+export type ArchivedMessage = Omit<ConversationMessage, "author" | "social"> & {
+  author: ConversationMessageAuthor | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
+  social?: SocialMessageMetadata | SocialBeforeDids;
+  action?: unknown;
+};
+
+/**
+ * Messages archived before DIDs named a contact's Ship by shipId and subject,
+ * which the current contract has no place for.
+ */
+function withoutShipIds({ author, social, ...message }: Omit<ArchivedMessage, "action">): ConversationMessage {
+  const current: ConversationMessage = {
+    ...message,
+    author: author.kind === "contact" ? { kind: "contact", contactId: author.contactId, displayName: author.displayName } : author,
+  };
+  if (social && !isBeforeDids(social)) current.social = social;
+  return current;
+}
+
+function isBeforeDids(social: SocialMessageMetadata | SocialBeforeDids): social is SocialBeforeDids {
+  return "actor" in social.reference;
 }
 
 function validateFederationResource(input: ResourceBlock, target: string): ResourceBlock {

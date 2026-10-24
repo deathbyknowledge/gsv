@@ -93,6 +93,10 @@ const FILE_LINES = new Map<string, TextKey>([
 
 export function hilRequestLine(request: ProcHilRequest): HilRequestLine | null {
   switch (request.syscall) {
+    case "atproto.write": {
+      const publication = hilPublication(request);
+      return publication ? { lead: "none", text: publication.changes.map((change) => change.record).join(" · ") } : null;
+    }
     case "shell.exec": {
       const command = argText(request, "input") ?? argText(request, "command");
       return command ? { lead: "prompt", text: command } : null;
@@ -132,6 +136,66 @@ export function hilRequestLine(request: ProcHilRequest): HilRequestLine | null {
       return { lead: "place", text: [name, ...args].join(" ") };
     }
   }
+}
+
+/** A file a published record references, as the Ship uploaded it. */
+export type HilPublishedFile = { cid: string; mimeType: string; size: number };
+
+/** A publish to the open network: the Ship's handle and address, each change, and the files the records reference. */
+export type HilPublication = {
+  handle: string;
+  address: string;
+  changes: Array<{ action: "create" | "put" | "delete"; record: string }>;
+  files: HilPublishedFile[];
+};
+
+const publicationSchema = z.object({
+  handle: z.string().min(1),
+  address: z.string().min(1),
+  writes: z.array(z.object({
+    action: z.enum(["create", "put", "delete"]),
+    collection: z.string().min(1),
+    rkey: z.string().optional(),
+    record: hilWireValueSchema.optional(),
+  })).min(1),
+});
+const blobSchema = z.object({
+  $type: z.literal("blob"),
+  ref: z.object({ $link: z.string().min(1) }),
+  mimeType: z.string(),
+  size: z.number().int().nonnegative(),
+});
+
+export function hilPublication(request: ProcHilRequest): HilPublication | null {
+  if (request.syscall !== "atproto.write") return null;
+  const parsed = publicationSchema.safeParse(request.args);
+  if (!parsed.success) return null;
+  const files = new Map<string, HilPublishedFile>();
+  for (const write of parsed.data.writes) collectFiles(write.record, files);
+  return {
+    handle: parsed.data.handle,
+    address: parsed.data.address,
+    changes: parsed.data.writes.map((write) => ({
+      action: write.action,
+      record: write.rkey ? `${write.collection}/${write.rkey}` : write.collection,
+    })),
+    files: [...files.values()],
+  };
+}
+
+function collectFiles(value: HilWireValue | undefined, files: Map<string, HilPublishedFile>): void {
+  const blob = blobSchema.safeParse(value);
+  if (blob.success) {
+    files.set(blob.data.ref.$link, { cid: blob.data.ref.$link, mimeType: blob.data.mimeType, size: blob.data.size });
+  } else if (Array.isArray(value)) {
+    for (const item of value) collectFiles(item, files);
+  } else if (isHilWireRecord(value)) {
+    for (const item of Object.values(value)) collectFiles(item, files);
+  }
+}
+
+function isHilWireRecord(value: HilWireValue | undefined): value is HilWireRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function plainToolName(toolName: string): string {

@@ -1,172 +1,123 @@
-import type {
-  ApproachClaim, ApproachClaimReceipt, ApproachConfirmation, ApproachConnectedReceipt, ApproachWithdrawal,
+import type { AcceptMessageRequestOutput, JsonValue, MessageRequestOutput } from "@humansandmachines/gsv/protocol";
+import {
+  ACCEPT_MESSAGE_REQUEST, acceptMessageRequestInputSchema, acceptMessageRequestOutputSchema, withdrawMessageRequestInputSchema,
 } from "@humansandmachines/gsv/protocol";
-import { approachClaimReceiptSchema, approachConnectedReceiptSchema, jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type { ApproachRecord } from "../approach-store";
-import { deriveContactSecret, randomBase64Url, sha256Base64Url } from "../federation-crypto";
+import { ensureContactConversation } from "../federation";
+import { randomBase64Url } from "../federation-crypto";
 import { activateFederationContact } from "../federation/pairing";
 import { assertContactCapacity } from "../federation/limits";
-import { localShipDocumentV2 } from "../federation/protocol";
-import { fetchFederationJson } from "../federation/http";
 import { PublicFederationError } from "../federation/errors";
-import { getConversationById } from "../../shared/utils";
-import {
-  APPROACH_CLAIM_PATH, APPROACH_CONFIRM_PATH, approachLock, authenticateApproachPeer,
-  requireApproachAvailable, sameActor, sameApproach, signApproachValue, verifyApproachValue,
-} from "./shared";
+import { isCurrentFederationContact } from "../federation/resources";
+import { personName } from "../profiles";
+import { callShipProcedure, type ShipCall } from "../ships/xrpc";
+import { consumeRequestIngress } from "./admission";
+import { approachLock, requireApproachAvailable, requireApproachContact } from "./shared";
 
-export async function claimApproach(input: ApproachClaim, ctx: KernelContext): Promise<ApproachClaimReceipt> {
-  const tokenHash = await sha256Base64Url(input.token);
-  const invitation = ctx.federation.inviteByTokenHash(tokenHash);
-  const record = invitation ? ctx.approaches.boundInvitation(invitation.inviteId) : null;
-  if (!record || invitation?.purpose !== "approach" || record.summary.direction !== "outgoing"
-    || !sameApproach(record.summary.reference, input.reference) || !sameActor(record.metadata.recipient, input.recipient)) {
-    throw new PublicFederationError(404, "Message request is unavailable");
-  }
-  await authenticateApproachPeer(input, input.recipient, ctx, record);
-  const sharedSecret = await deriveContactSecret(input.token, input.reference.actor.shipId, input.recipient.shipId);
+const UNAVAILABLE = "Message request is unavailable";
+
+/**
+ * `space.ship.acceptMessageRequest`: the person a request went to accepts it.
+ * Only the DID the request went to finds it; this Ship, its sender's, makes
+ * the connection and answers with it, and a repeated acceptance hears the same.
+ */
+export async function acceptMessageRequest(call: ShipCall, ctx: KernelContext): Promise<JsonValue> {
+  consumeRequestIngress(ctx);
+  const input = acceptMessageRequestInputSchema.parse(call.input);
+  const record = ctx.approaches.byRequest("outgoing", call.caller, input.requestId);
+  if (!record) throw new PublicFederationError(404, UNAVAILABLE);
   const generation = `generation:${randomBase64Url(24)}`;
-  const proposed = await signApproachValue({
-    version: 2, domain: "gsv-federation/2/approach-claimed", reference: input.reference, recipient: input.recipient,
-    attemptId: input.attemptId, generation, threadId: record.threadId,
-  } satisfies Omit<ApproachClaimReceipt, "signature">, ctx);
-  const result = await ctx.coordinateFederationContact(approachLock(record), () => ctx.federation.transaction(() => {
+  const { contact, changed } = await ctx.coordinateFederationContact(approachLock(record), () => ctx.federation.transaction(() => {
     const current = requireApproachAvailable(record, ctx);
-    if (current.generation) {
-      if (current.pairingAttemptId !== input.attemptId || !current.claimReceipt) throw new PublicFederationError(409, "Message request acceptance changed");
-      requireApproachContact(current, ctx);
-      return approachClaimReceiptSchema.parse(current.claimReceipt);
+    if (current.generation) return { contact: requireApproachContact(current, ctx), changed: false };
+    if (current.summary.state !== "pending" || current.summary.expiresAtMs <= Date.now()) {
+      throw new PublicFederationError(410, "Message request is no longer available");
     }
-    const invite = ctx.federation.inviteByTokenHash(tokenHash);
-    if (!invite || invite.state !== "issued" || invite.expiresAtMs <= Date.now()) throw new PublicFederationError(410, "Message request is no longer available");
-    assertContactCapacity(current.ownerUid, current.summary.peer.shipId, current.summary.peer.subjectId, ctx, true);
-    const existing = ctx.federation.getByRemote(current.ownerUid, current.summary.peer.shipId, current.summary.peer.subjectId);
-    if (existing?.state === "active") throw new PublicFederationError(409, "A newer connection is already active");
+    assertContactCapacity(current.ownerUid, current.summary.peerDid, ctx, true);
+    if (ctx.federation.getByRemote(current.ownerUid, current.summary.peerDid)?.state === "active") {
+      throw new PublicFederationError(409, "A newer connection is already active");
+    }
     const contact = activateFederationContact({
-      ownerUid: current.ownerUid, remoteShipId: current.summary.peer.shipId,
-      remoteSubject: { id: current.summary.peer.subjectId, displayName: current.summary.displayName },
-      remoteOrigin: current.remoteOrigin, remotePublicKey: current.remotePublicKey,
-      sharedSecret, generation, threadId: current.threadId,
+      ownerUid: current.ownerUid, remoteDid: current.summary.peerDid, remoteName: input.name,
+      ...(current.summary.peerHandle ? { remoteHandle: current.summary.peerHandle } : undefined),
+      generation, threadId: current.threadId,
       preferredContactId: current.contactId, preferredConversationId: current.summary.conversationId, saved: false,
       shipHandlesMessages: current.shipHandlesMessages,
     }, ctx);
-    if (contact.id !== current.contactId || contact.conversationId !== current.summary.conversationId) throw new PublicFederationError(409, "Message request conversation changed");
-    const receipt = jsonObjectSchema.parse(proposed);
-    if (!ctx.federation.acceptInvite({ tokenHash, remoteShipId: input.recipient.shipId, remoteSubjectId: input.recipient.subjectId,
-      contactId: contact.id, generation, threadId: current.threadId, response: receipt })) throw new PublicFederationError(409, "Message request was already decided");
-    ctx.federation.setProtocol(contact.id, generation, { version: 2, features: input.document.features, checkedAtMs: Date.now() });
-    ctx.approaches.commitClaim(current.summary.id, input.attemptId, generation, receipt);
-    return proposed;
+    if (contact.id !== current.contactId || contact.conversationId !== current.summary.conversationId) {
+      throw new PublicFederationError(409, "Message request conversation changed");
+    }
+    ctx.approaches.accept(current.summary.id, generation);
+    return { contact, changed: true };
   }));
-  await promoteApproachConversation(record, ctx);
-  ctx.broadcastToUserUid(record.ownerUid, "contact.changed");
-  ctx.broadcastToUserUid(record.ownerUid, "approach.changed");
-  return result;
+  if (changed) {
+    ctx.broadcastToUserUid(contact.ownerUid, "contact.changed");
+    ctx.broadcastToUserUid(contact.ownerUid, "approach.changed");
+  }
+  await ensureContactConversation(contact, ctx);
+  await ctx.reconcileResponsibilityWake(contact.ownerUid);
+  if (!isCurrentFederationContact(contact.id, contact.generation, ctx)) {
+    throw new PublicFederationError(410, "This connection has been replaced or removed");
+  }
+  const output: AcceptMessageRequestOutput = { generation: contact.generation, threadId: contact.threadId };
+  return output;
 }
 
+/**
+ * Makes the connection a person accepted: the sender's Ship names its
+ * generation, and this Ship records it. The caller holds the request's lock.
+ */
 export async function acceptApproach(record: ApproachRecord, ctx: KernelContext): Promise<void> {
   const current = requireApproachAvailable(record, ctx);
-  if (current.summary.direction !== "incoming" || current.summary.state !== "accepting" || !current.setupToken || !current.pairingAttemptId) return;
-  const document = await localShipDocumentV2(ctx);
-  const claim: ApproachClaim = await signApproachValue({
-    version: 2, domain: "gsv-federation/2/approach-claim", document, reference: current.summary.reference,
-    recipient: current.metadata.recipient, attemptId: current.pairingAttemptId, token: current.setupToken,
-  } satisfies Omit<ApproachClaim, "signature">, ctx);
-  const response = approachClaimReceiptSchema.parse(await fetchFederationJson(`${current.remoteOrigin}${APPROACH_CLAIM_PATH}`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(claim),
-  }, ctx));
-  await verifyApproachValue(response, current.remotePublicKey);
-  if (!sameApproach(response.reference, current.summary.reference) || !sameActor(response.recipient, current.metadata.recipient)
-    || response.attemptId !== current.pairingAttemptId || response.threadId !== current.threadId) throw new Error("Message request acceptance does not match your decision");
-  const secret = await deriveContactSecret(current.setupToken, response.reference.actor.shipId, response.recipient.shipId);
-  ctx.federation.transaction(() => {
+  if (current.summary.direction !== "incoming" || current.summary.state !== "accepting") return;
+  assertContactCapacity(current.ownerUid, current.summary.peerDid, ctx);
+  const accepted = acceptMessageRequestOutputSchema.parse(await callShipProcedure(
+    current.summary.peerDid,
+    ACCEPT_MESSAGE_REQUEST,
+    { requestId: current.summary.requestId, name: personName(current.ownerUid, ctx) },
+    ctx,
+  ));
+  if (accepted.threadId !== current.threadId) throw new Error("Message request acceptance does not match your decision");
+  const contact = ctx.federation.transaction(() => {
     const owned = requireApproachAvailable(current, ctx);
     if (owned.generation) {
-      if (owned.generation !== response.generation) throw new Error("Message request acceptance changed");
-      requireApproachContact(owned, ctx);
-      return;
+      if (owned.generation !== accepted.generation) throw new Error("Message request acceptance changed");
+      return requireApproachContact(owned, ctx);
     }
-    if (owned.summary.state !== "accepting" || owned.pairingAttemptId !== response.attemptId) throw new Error("Message request decision changed");
-    assertContactCapacity(owned.ownerUid, owned.summary.peer.shipId, owned.summary.peer.subjectId, ctx);
-    const existing = ctx.federation.getByRemote(owned.ownerUid, owned.summary.peer.shipId, owned.summary.peer.subjectId);
-    if (existing?.state === "active") throw new Error("A newer connection is already active");
-    const contact = activateFederationContact({
-      ownerUid: owned.ownerUid, remoteShipId: owned.summary.peer.shipId,
-      remoteSubject: { id: owned.summary.peer.subjectId, displayName: owned.summary.displayName },
-      remoteOrigin: owned.remoteOrigin, remotePublicKey: owned.remotePublicKey, sharedSecret: secret,
-      generation: response.generation, threadId: owned.threadId,
+    if (owned.summary.state !== "accepting") throw new Error("Message request decision changed");
+    assertContactCapacity(owned.ownerUid, owned.summary.peerDid, ctx);
+    if (ctx.federation.getByRemote(owned.ownerUid, owned.summary.peerDid)?.state === "active") {
+      throw new Error("A newer connection is already active");
+    }
+    const activated = activateFederationContact({
+      ownerUid: owned.ownerUid, remoteDid: owned.summary.peerDid, remoteName: owned.summary.displayName,
+      ...(owned.summary.peerHandle ? { remoteHandle: owned.summary.peerHandle } : undefined),
+      generation: accepted.generation, threadId: owned.threadId,
       preferredContactId: owned.contactId, preferredConversationId: owned.summary.conversationId, saved: false,
       shipHandlesMessages: owned.shipHandlesMessages,
     }, ctx);
-    if (contact.id !== owned.contactId || contact.conversationId !== owned.summary.conversationId) throw new Error("Message request conversation changed");
-    ctx.federation.setProtocol(contact.id, contact.generation, { version: 2, features: ["messages", "approaches"], checkedAtMs: Date.now() });
-    ctx.approaches.commitClaim(owned.summary.id, response.attemptId, response.generation, jsonObjectSchema.parse(response));
+    if (activated.id !== owned.contactId || activated.conversationId !== owned.summary.conversationId) {
+      throw new Error("Message request conversation changed");
+    }
+    ctx.approaches.accept(owned.summary.id, accepted.generation);
+    return activated;
   });
   ctx.broadcastToUserUid(current.ownerUid, "contact.changed");
   ctx.broadcastToUserUid(current.ownerUid, "approach.changed");
+  await ensureContactConversation(contact, ctx);
+  await ctx.reconcileResponsibilityWake(contact.ownerUid);
 }
 
-export async function confirmApproach(input: ApproachConfirmation, ctx: KernelContext): Promise<ApproachConnectedReceipt> {
-  const ownerUid = ctx.federation.subjectOwner(input.reference.actor.subjectId);
-  const record = ownerUid === null ? null : ctx.approaches.byReference(ownerUid, input.reference);
-  if (!record || record.summary.direction !== "outgoing" || !sameActor(record.metadata.recipient, input.recipient)) throw new PublicFederationError(404, "Message request is unavailable");
-  await authenticateApproachPeer(input, input.recipient, ctx, record);
-  await ctx.coordinateFederationContact(approachLock(record), () => ctx.federation.transaction(() => {
-    const current = requireApproachAvailable(record, ctx);
-    if (current.generation !== input.generation || current.pairingAttemptId !== input.attemptId) throw new PublicFederationError(409, "Message request acceptance changed");
-    requireApproachContact(current, ctx);
-    ctx.approaches.confirmed(current.summary.id, input.generation);
-  }));
-  ctx.broadcastToUserUid(record.ownerUid, "approach.changed");
-  await ctx.scheduleApproachMaintenance();
-  return await signApproachValue({ version: 2, domain: "gsv-federation/2/approach-connected", reference: input.reference,
-    recipient: input.recipient, attemptId: input.attemptId, generation: input.generation } satisfies Omit<ApproachConnectedReceipt, "signature">, ctx);
-}
-
-export async function deliverApproachConfirmation(record: ApproachRecord, ctx: KernelContext): Promise<void> {
-  const current = requireApproachAvailable(record, ctx);
-  if (current.summary.direction !== "incoming" || current.summary.state !== "accepted" || !current.generation || !current.pairingAttemptId) return;
-  requireApproachContact(current, ctx);
-  await promoteApproachConversation(current, ctx);
-  const document = await localShipDocumentV2(ctx);
-  const packet: ApproachConfirmation = await signApproachValue({
-    version: 2, domain: "gsv-federation/2/approach-confirmation", document, reference: current.summary.reference,
-    recipient: current.metadata.recipient, generation: current.generation, attemptId: current.pairingAttemptId,
-  } satisfies Omit<ApproachConfirmation, "signature">, ctx);
-  const receipt = approachConnectedReceiptSchema.parse(await fetchFederationJson(`${current.remoteOrigin}${APPROACH_CONFIRM_PATH}`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(packet),
-  }, ctx));
-  await verifyApproachValue(receipt, current.remotePublicKey);
-  if (!sameApproach(receipt.reference, current.summary.reference) || !sameActor(receipt.recipient, current.metadata.recipient)
-    || receipt.generation !== current.generation || receipt.attemptId !== current.pairingAttemptId) throw new Error("Message request confirmation changed");
-  requireApproachContact(requireApproachAvailable(current, ctx), ctx);
-  ctx.approaches.confirmed(current.summary.id, current.generation);
-  ctx.broadcastToUserUid(current.ownerUid, "approach.changed");
-}
-
-export async function withdrawApproach(input: ApproachWithdrawal, ctx: KernelContext): Promise<{ received: true }> {
-  const ownerUid = ctx.federation.subjectOwner(input.recipient.subjectId);
-  const record = ownerUid === null ? null : ctx.approaches.byReference(ownerUid, input.reference);
-  if (!record || record.summary.direction !== "incoming" || !sameActor(record.metadata.recipient, input.recipient)) throw new PublicFederationError(404, "Message request is unavailable");
-  await authenticateApproachPeer(input, input.reference.actor, ctx, record);
+/** `space.ship.withdrawMessageRequest`: the sender takes back a request; only its DID finds it. */
+export async function withdrawMessageRequest(call: ShipCall, ctx: KernelContext): Promise<JsonValue> {
+  consumeRequestIngress(ctx);
+  const input = withdrawMessageRequestInputSchema.parse(call.input);
+  const record = ctx.approaches.byRequest("incoming", call.caller, input.requestId);
+  if (!record) throw new PublicFederationError(404, UNAVAILABLE);
   await ctx.coordinateFederationContact(approachLock(record), () => ctx.approaches.withdrawnRemotely(record.summary.id));
   ctx.broadcastToUserUid(record.ownerUid, "approach.changed");
   await ctx.scheduleApproachMaintenance();
-  return { received: true };
-}
-
-function requireApproachContact(record: ApproachRecord, ctx: KernelContext) {
-  const contact = ctx.federation.get(record.contactId);
-  if (!contact || contact.ownerUid !== record.ownerUid || contact.state !== "active" || contact.generation !== record.generation
-    || contact.conversationId !== record.summary.conversationId || contact.threadId !== record.threadId) {
-    throw new PublicFederationError(410, "This connection has been replaced or removed");
-  }
-  return contact;
-}
-
-async function promoteApproachConversation(record: ApproachRecord, ctx: KernelContext): Promise<void> {
-  requireApproachContact(requireApproachAvailable(record, ctx), ctx);
-  await getConversationById(ctx.installationId, record.summary.conversationId).initialize({ ownerUid: record.ownerUid, kind: "contact" });
-  requireApproachContact(requireApproachAvailable(record, ctx), ctx);
+  const output: MessageRequestOutput = { state: "received" };
+  return output;
 }

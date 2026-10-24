@@ -1,0 +1,32 @@
+{
+  "name": "gsv-pds-test",
+  "main": "test/worker.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "REPOS", "class_name": "HostedRepo" },
+      { "name": "FIREHOSE", "class_name": "HostFirehose" },
+      { "name": "ENGINE", "class_name": "TestRepoHost" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["TestRepoHost", "HostedRepo", "HostFirehose"]
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BLOBS",
+      "bucket_name": "gsv-pds-test-blobs"
+    }
+  ],
+  "vars": {
+    "PDS_ORIGIN": "https://pds.test",
+    "PLC_URL": "https://plc.test"
+  },
+  "secrets": {
+    "required": ["PLC_ROTATION_KEY"]
+  }
+}

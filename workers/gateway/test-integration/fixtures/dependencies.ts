@@ -1,5 +1,8 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 export { IntegrationInstances } from "./instances";
+export { IntegrationPds } from "./pds";
+export { NetworkPds } from "./network-pds";
+import { serveNetworkRecord } from "./network-pds";
 import { z } from "zod";
 import {
   adapterSendArgsSchema,
@@ -429,7 +432,8 @@ export default class TestDependencies
   }
 
   async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
-    if (hostname === "localhost" || hostname === "127.0.0.1") {
+    // The default installation also answers at its Ship's address, on whatever domain the test gives it.
+    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname.startsWith("default.")) {
       return { found: true, installationId: INTEGRATION_INSTALLATION_ID, handle: "default", canonicalOrigin: await this.integrationState().getDefaultOrigin(), state: await this.integrationState().getInstallationState("default") };
     }
     const handle = hostname.endsWith(".gsv.space")
@@ -534,6 +538,11 @@ export default class TestDependencies
         input.frame,
       );
       return Response.json(response);
+    }
+
+    // The test network's repository host, for the Ships whose PDS is NetworkPds.
+    if (url.pathname === "/xrpc/com.atproto.repo.getRecord" && request.method === "GET") {
+      return serveNetworkRecord(request);
     }
 
     if (url.pathname === "/__test/outbound" && request.method === "GET") {

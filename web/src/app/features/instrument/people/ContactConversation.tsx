@@ -141,7 +141,7 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
       <input type="file" multiple hidden ref={fileInput} onChange={(event) => { addFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
       {draft.media.length > 0 && <ul class="zen-draft-attachments">{draft.media.map((file) => <ZenDraftAttachment key={file.id} attachment={file} disabled={disabled} onRemove={() => onDraft({ media: draft.media.filter((item) => item.id !== file.id), error: null })} />)}</ul>}
       <div class="zen-compose-line">
-        <PromptLine place={{ id: contact.id, label: contact.remoteSubject.displayName, online: connected }} showPlace={false} dir="" commands={false}
+        <PromptLine place={{ id: contact.id, label: contact.remoteName, online: connected }} showPlace={false} dir="" commands={false}
           ariaLabel={t("people.composer.label")} placeholder={t("people.composer.placeholder")} value={draft.text} disabled={!maySend} allowEmpty={draft.media.length > 0}
           onInput={(text) => onDraft({ text, error: null, status: null })} onFiles={addFiles}
           onKeyIntercept={(event) => { if (event.key === "Enter" && !event.shiftKey && event.repeat) { event.preventDefault(); return true; } return false; }}
@@ -163,5 +163,5 @@ export function ContactConversation({ contact, account, draft, onDraft, onSend, 
 }
 
 function sameReference(value: OriginMessageRef | undefined, expected: OriginMessageRef): boolean {
-  return !!value && value.messageId === expected.messageId && value.actor.shipId === expected.actor.shipId && value.actor.subjectId === expected.actor.subjectId;
+  return !!value && value.messageId === expected.messageId && value.did === expected.did;
 }

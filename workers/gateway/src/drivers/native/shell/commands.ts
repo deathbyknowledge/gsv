@@ -6,6 +6,7 @@ import type { NetFetchDeviceTransport } from "../../../kernel/net";
 import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { FsDeviceTransport } from "../fs";
+import { buildAtprotoCommand } from "./atproto";
 import { buildCodeModeCommand } from "./codemode";
 import { buildContactCommand } from "./contact";
 import { buildCoreCommands } from "./core";
@@ -61,6 +62,7 @@ export function buildCustomCommands(
   const crontab = buildCrontabCommand(fs, ctx);
   const codemode = buildCodeModeCommand(fs, identity, ctx, options?.request);
   const contact = buildContactCommand(ctx);
+  const atproto = buildAtprotoCommand(fs, ctx);
   const mcp = buildMcpCommand(ctx);
   const skills = buildSkillsCommand(fs, ctx, identity);
   const wiki = buildWikiCommand(ctx);
@@ -97,6 +99,7 @@ export function buildCustomCommands(
     crontab,
     codemode,
     contact,
+    atproto,
     mcp,
     proc,
     ...rgitCommands,

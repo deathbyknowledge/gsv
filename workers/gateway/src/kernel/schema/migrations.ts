@@ -6,6 +6,10 @@ import { KERNEL_V069_SINGLE_HUMAN_SPACE } from "./v069_single_human_space";
 import { KERNEL_V070_PRESERVE_SYSTEM_CONTEXT_OVERRIDES } from "./v070_preserve_system_context_overrides";
 import { KERNEL_V071_SHIP_EVENTS } from "./v071_ship_events";
 import { KERNEL_V072_BACK_OFF_RECOVERY_WAKES } from "./v072_back_off_recovery_wakes";
+import { KERNEL_V073_SHIP_CALLS } from "./v073_ship_calls";
+import { KERNEL_V074_CONTACTS_BY_DID } from "./v074_contacts_by_did";
+import { KERNEL_V075_PROFILE_RECORDS } from "./v075_profile_records";
+import { KERNEL_V076_MESSAGE_REQUESTS_BY_DID } from "./v076_message_requests_by_did";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -196,6 +200,10 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V070_PRESERVE_SYSTEM_CONTEXT_OVERRIDES,
   KERNEL_V071_SHIP_EVENTS,
   KERNEL_V072_BACK_OFF_RECOVERY_WAKES,
+  KERNEL_V073_SHIP_CALLS,
+  KERNEL_V074_CONTACTS_BY_DID,
+  KERNEL_V075_PROFILE_RECORDS,
+  KERNEL_V076_MESSAGE_REQUESTS_BY_DID,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

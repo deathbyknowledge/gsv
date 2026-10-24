@@ -1,4 +1,10 @@
-import type { OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
+import type {
+  OperatorIdentityMove,
+  OperatorIdentitySurvey,
+  OperatorPersonDid,
+  OperatorShipSnapshot,
+} from "@humansandmachines/gsv/services/operator";
+import { IdentityMoveStore, moveIdentities, surveyIdentityMove } from "./federation/identity-move";
 import { buildOperatorShipSnapshot } from "./operator-snapshot";
 import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
@@ -69,6 +75,7 @@ import {
 } from "./routing";
 import { ShellSessionStore } from "./shell-sessions";
 import type { InstanceExecChange } from "@humansandmachines/gsv/services/instances";
+import type { PdsService, PublicRepository } from "@humansandmachines/gsv/services/pds";
 import { acquireInstances } from "./instance-service";
 import {
   ProcessRegistry,
@@ -121,15 +128,17 @@ import {
   recordAdapterStatusTransition,
 } from "./lifecycle-responsibilities";
 import { FederationStore } from "./federation-store";
-import { ProfileStore, type PublicProfileLocator, type PublicProfileProjection } from "./profile-store";
+import { ProfileStore, type ProfileAvatarFile } from "./profile-store";
 import { ApproachStore } from "./approach-store";
-import { resolveSpacePublicProfile } from "./profiles";
+import { publicProfileAvatar, publicProfileProjection, type PublicProfileProjection } from "./profiles";
 import { processApproachMaintenance } from "./approaches/runtime";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
-import { FederationIdentity } from "./federation-crypto";
+import { DidDocumentStore } from "./ships/did-directory";
+import { ShipCallNonces } from "./ships/auth";
+import { ShipIdentity } from "./ships/identity";
+import { SHIP_METHODS } from "./ships/methods";
+import { handleShipXrpc, isShipXrpcPath } from "./ships/xrpc";
 import {
-  handleFederationHttpRequest,
-  isFederationPublicPath,
   MAX_FEDERATION_RECOVERABLE_INBOX,
   MAX_FEDERATION_RECOVERABLE_OUTBOX,
 } from "./federation";
@@ -449,7 +458,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly federation: FederationStore;
   readonly profiles: ProfileStore;
   readonly approaches: ApproachStore;
-  readonly federationIdentity: FederationIdentity;
+  readonly shipIdentity: ShipIdentity;
+  readonly didDocuments: DidDocumentStore;
+  readonly shipCallNonces: ShipCallNonces;
   readonly oauth: OAuthStore;
   readonly mcpServers: McpServerStore;
   readonly connections = new Map<string, KernelConnection<ConnectionState>>();
@@ -550,7 +561,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);
-    this.federationIdentity = new FederationIdentity(ctx.storage);
+    this.shipIdentity = new ShipIdentity(ctx.storage);
+    this.didDocuments = new DidDocumentStore(sql);
+    this.shipCallNonces = new ShipCallNonces(sql);
 
     this.oauth = new OAuthStore(sql);
 
@@ -592,27 +605,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       for (const pending of this.mailboxes.pendingOutboundEnqueues()) {
         await this.scheduleManagedOutboundEnqueue(pending.outboundId, pending.nextAt ?? Date.now() + outboundEnqueueRetryDelay(1));
       }
-      for (const delivery of this.federation.recoverableOutbox(
-        MAX_FEDERATION_RECOVERABLE_OUTBOX,
-      )) {
-        await this.federationRuntime.scheduleFederationDelivery(
-          delivery.deliveryId,
-          delivery.nextAttemptAtMs ?? Date.now(),
-          true,
-        );
-      }
-      for (const inbox of this.federation.recoverableInbox(
-        MAX_FEDERATION_RECOVERABLE_INBOX,
-      )) {
-        await this.federationRuntime.scheduleFederationInbox(
-          inbox.contactId,
-          inbox.contactGeneration,
-          inbox.deliveryId,
-          Date.now(),
-          true,
-        );
-      }
-      await this.scheduleApproachMaintenance();
+      await this.scheduleFederationRecovery();
       // every start of the Kernel makes sure the ledger's daily housekeeping is pending
       await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     });
@@ -750,16 +743,47 @@ export class Kernel extends DurableObject<GatewayEnv> {
     } finally { service[Symbol.dispose]?.(); }
   }
 
-  async getPublicProfileProjection(locator: PublicProfileLocator): Promise<PublicProfileProjection | null> {
+  /** The published profile the public page renders. */
+  async getPublicProfile(): Promise<PublicProfileProjection | null> {
     this.retirement.assertActive();
     const gate = await this.onboarding.managedWorkGate();
     if (!gate.allowed) return null;
     this.retirement.assertActive();
-    const ctx = this.buildKernelContext({});
-    const projection = await resolveSpacePublicProfile(locator, ctx);
+    return publicProfileProjection(this.buildKernelContext({}));
+  }
+
+  /** The published profile's picture, served from the Ship's own host. */
+  async getPublicProfileAvatar(): Promise<ProfileAvatarFile | null> {
     this.retirement.assertActive();
-    const handle = ctx.installationIdentity?.handle;
-    return projection && handle ? { ...projection, handle } : projection;
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) return null;
+    this.retirement.assertActive();
+    return publicProfileAvatar(this.buildKernelContext({}));
+  }
+
+  /** Schedules the deliveries and message requests a restart, or the move to DIDs, left waiting. */
+  private async scheduleFederationRecovery(): Promise<void> {
+    for (const delivery of this.federation.recoverableOutbox(
+      MAX_FEDERATION_RECOVERABLE_OUTBOX,
+    )) {
+      await this.federationRuntime.scheduleFederationDelivery(
+        delivery.deliveryId,
+        delivery.nextAttemptAtMs ?? Date.now(),
+        true,
+      );
+    }
+    for (const inbox of this.federation.recoverableInbox(
+      MAX_FEDERATION_RECOVERABLE_INBOX,
+    )) {
+      await this.federationRuntime.scheduleFederationInbox(
+        inbox.contactId,
+        inbox.contactGeneration,
+        inbox.deliveryId,
+        Date.now(),
+        true,
+      );
+    }
+    await this.scheduleApproachMaintenance();
   }
 
   async scheduleApproachMaintenance(runningTaskId?: string): Promise<void> {
@@ -788,6 +812,20 @@ export class Kernel extends DurableObject<GatewayEnv> {
     });
   }
 
+  /** Before the move to DIDs, through the Accounts-bound operator entrypoint. */
+  async operatorIdentitySurvey(active: boolean): Promise<OperatorIdentitySurvey> {
+    this.retirement.assertActive();
+    return await surveyIdentityMove(this.buildKernelContext({}), new IdentityMoveStore(this.ctx.storage), active);
+  }
+
+  /** The move to DIDs, through the Accounts-bound operator entrypoint; the deliveries and requests it moved resume. */
+  async operatorIdentityMove(people: OperatorPersonDid[]): Promise<OperatorIdentityMove> {
+    this.retirement.assertActive();
+    const move = await moveIdentities(this.buildKernelContext({}), new IdentityMoveStore(this.ctx.storage), people);
+    await this.scheduleFederationRecovery();
+    return move;
+  }
+
   async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {
     const gate = await this.onboarding.managedWorkGate({ fresh: true });
     if (!gate.allowed) throw new Error("This Ship is unavailable");
@@ -812,8 +850,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
   async onRequest(request: Request): Promise<Response> {
     this.retirement.assertActive();
     const url = new URL(request.url);
-    if (isFederationPublicPath(url.pathname)) {
-      return await handleFederationHttpRequest(request, this.buildKernelContext({}));
+    if (isShipXrpcPath(url.pathname)) {
+      return await handleShipXrpc(request, this.buildKernelContext({}), SHIP_METHODS);
     }
     if (url.pathname !== "/oauth/callback" || request.method !== "GET") {
       return new Response("Not Found", { status: 404 });
@@ -1605,7 +1643,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
       welcome: this.welcome,
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
-      federationIdentity: this.federationIdentity,
+      shipIdentity: this.shipIdentity,
+      didDocuments: this.didDocuments,
+      shipCallNonces: this.shipCallNonces,
       profiles: this.profiles,
       approaches: this.approaches,
       scheduleApproachMaintenance: () => this.scheduleApproachMaintenance(),
@@ -2006,6 +2046,28 @@ function envWithInstallationResources(
           send: (...args) => retirement.write(() => queue.send(...args)),
           sendBatch: (...args) => retirement.write(() => queue.sendBatch(...args)),
           metrics: () => queue.metrics(),
+        };
+        return guarded;
+      }
+      if (property === "PDS") {
+        const pds = target.PDS;
+        if (!pds) return undefined;
+        const guarded: PdsService = {
+          getInstallation: async (installationId) => {
+            if (installationId !== retirement.installationId) throw new Error("Public repository identity mismatch");
+            retirement.assertActive();
+            const repository = await pds.getInstallation(installationId);
+            const scoped: PublicRepository = {
+              ensureAccount: (handle) => retirement.write(() => repository.ensureAccount(handle)),
+              account: () => repository.account(),
+              serviceAuth: (request) => retirement.write(() => repository.serviceAuth(request)),
+              applyWrites: (writes) => retirement.write(() => repository.applyWrites(writes)),
+              uploadBlob: (body, size, mimeType) => retirement.write(() => repository.uploadBlob(body, size, mimeType)),
+              readBlob: (cid) => repository.readBlob(cid),
+              [Symbol.dispose]: () => repository[Symbol.dispose]?.(),
+            };
+            return scoped;
+          },
         };
         return guarded;
       }

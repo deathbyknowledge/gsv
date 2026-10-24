@@ -88,6 +88,25 @@ describe("managed installation routing integration", () => {
     ]);
   });
 
+  it("resolves a hostname as the ATProto handle its installation's public repository names", async () => {
+    const managed = harness.getWorker("gsv-managed");
+    const first = await managed.fetch("https://first.gsv.space/.well-known/atproto-did");
+    expect(first.status).toBe(200);
+    expect(await first.text()).toBe("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa");
+
+    const unclaimed = [
+      // The repository's handle is another hostname.
+      managed.fetch("https://second.gsv.space/.well-known/atproto-did"),
+      managed.fetch("https://suspended.gsv.space/.well-known/atproto-did"),
+      // A deployment without a PDS does not fall through to the web app.
+      harness.getWorker("gsv").fetch("https://first.gsv.space/.well-known/atproto-did"),
+    ];
+    for (const response of await Promise.all(unclaimed)) {
+      expect(response.status).toBe(404);
+      expect(await response.text()).toBe("Not Found");
+    }
+  });
+
   it("routes two accepted hostnames to independently initialized Kernels", async () => {
     for (const handle of ["first", "second"]) {
       const response = await harness.getWorker("gsv-managed").fetch(

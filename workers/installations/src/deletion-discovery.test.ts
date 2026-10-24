@@ -30,6 +30,21 @@ describe("Accounts deletion discovery routing", () => {
     expect(instances.inspectInstallationDeletion).toHaveBeenCalledWith({ ...request, resources: [request.resources[6], request.resources[7]] });
   });
 
+  it("routes a PDS's repository and host objects to the PDS by their namespaces", async () => {
+    const pds = owner(); const telegram = owner();
+    const repositories = "b".repeat(32); const host = "c".repeat(32);
+    const request: InstallationDeletionInspection = { installationId: "retired-space", resources: [
+      { kind: "pds-repository", namespaceId: repositories, objectId: "1".repeat(64) },
+      { kind: "pds-host", namespaceId: host, objectId: "2".repeat(64) },
+    ] };
+    const result = await inspectDeletionResources(request, { owners: { pds, telegram }, namespaces: {
+      [repositories]: { ownerId: "pds", kind: "pds-repository" }, [host]: { ownerId: "pds", kind: "pds-host" },
+    } });
+    expect(result.observations).toEqual(request.resources.map((resource) => ({ ...resource, outcome: "empty" })));
+    expect(pds.inspectInstallationDeletion).toHaveBeenCalledWith(request);
+    expect(telegram.inspectInstallationDeletion).not.toHaveBeenCalled();
+  });
+
   it("rejects absent or wrong namespace mappings before any owner is contacted", async () => {
     const gateway = owner(); const telegram = owner();
     const request: InstallationDeletionInspection = { installationId: "space", resources: [

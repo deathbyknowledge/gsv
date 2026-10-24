@@ -14,6 +14,7 @@ import { ConversationSearch } from "../shared/ConversationSearch";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_CONTACTS_KEY as CONTACTS_KEY } from "../wire/queryKeys";
 import { PEOPLE_IDEAS } from "./PeopleWelcome";
+import { handleLabel } from "./peopleModel";
 import { useDismissOnOutsideClick } from "../shared/useDismissOnOutsideClick";
 import { useT } from "../../../i18n/locale";
 
@@ -112,9 +113,9 @@ export function ContactInspector({ contact, account, draft, onDraft, onSend, onR
     {active && searchOpen && <ConversationSearch conversationId={contact.conversationId} timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone} onClose={() => setSearchOpen(false)} />}
     <FleetDialog open={active && detailsOpen} title={name} onClose={() => setDetailsOpen(false)}>
       <div class="people-contact-details">
-        <p class="people-contact-origin">{new URL(contact.remoteOrigin).host}</p>
+        {contact.remoteHandle && <p class="people-contact-origin">{handleLabel(contact.remoteHandle)}</p>}
         <form class="people-name-field" onSubmit={(event) => { event.preventDefault(); if (mayRename && nameChanged && !save.isPending) save.mutate(alias.trim()); }}>
-          <label>{t("people.contact.name")}<input value={alias} placeholder={contact.remoteSubject.displayName} disabled={!mayRename || save.isPending} onInput={(event) => setAliasDraft(event.currentTarget.value)} /></label>
+          <label>{t("people.contact.name")}<input value={alias} placeholder={contact.remoteName} disabled={!mayRename || save.isPending} onInput={(event) => setAliasDraft(event.currentTarget.value)} /></label>
           {nameChanged && <button type="submit" class="people-action" disabled={!mayRename || save.isPending}>{save.isPending ? t("common.saving") : t("people.contact.save")}</button>}
         </form>
         {save.error && <p class="people-error" role="alert">{save.error.message}</p>}

@@ -54,6 +54,8 @@ const CAPABILITY_LABELS = new Map(Object.entries({
   "net.fetch": "approval.match.netFetch",
   // Mail
   "mail.send": "approval.match.mailSend",
+  // The open network
+  "atproto.write": "approval.match.atprotoWrite",
   // Web search
   "web.search": "approval.match.webSearch",
   // Repositories

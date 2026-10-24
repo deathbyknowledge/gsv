@@ -1,10 +1,11 @@
 import type { ApproachSummary } from "../approaches";
-import type { ActorRef } from "../social";
 
 export type ApproachCreateArgs = {
-  profileUrl: string;
-  recipient: ActorRef;
-  profileRevision: number;
+  /** The recipient's DID, from the profile its sender read. */
+  did: string;
+  /** The CID of that profile record; the request names the version its sender read. */
+  profileCid: string;
+  /** The sender's name, as the recipient will see it. */
   displayName: string;
   text: string;
   idempotencyKey: string;

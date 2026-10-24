@@ -1,7 +1,4 @@
-import type { FederationShipDocument } from "@humansandmachines/gsv/protocol";
-import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
-import { canonicalJson } from "../federation-crypto";
 import type {
   FederationContactRecord,
   FederationPairingAttemptRecord,
@@ -14,11 +11,7 @@ export function activateFederationContact(
   activation: Parameters<FederationStore["activateContact"]>[0],
   ctx: KernelContext,
 ): FederationContactRecord {
-  const existing = ctx.federation.getByRemote(
-    activation.ownerUid,
-    activation.remoteShipId,
-    activation.remoteSubject.id,
-  );
+  const existing = ctx.federation.getByRemote(activation.ownerUid, activation.remoteDid);
   const superseded = existing && existing.generation !== activation.generation
     ? ctx.federation.listRequests(activation.ownerUid, existing.id)
     : [];
@@ -48,26 +41,12 @@ export function revokeFederationContact(
 
 export function assertPairingAttemptIdentity(
   attempt: FederationPairingAttemptRecord,
-  expected: {
-    ownerUid: number;
-    expiresAtMs: number;
-    remoteShipId: string;
-    remoteSubjectId: string;
-    remoteOrigin: string;
-    remotePublicKey?: FederationShipDocument["publicKey"];
-  },
+  expected: { ownerUid: number; expiresAtMs: number; remoteDid: string },
 ): void {
   if (
     attempt.ownerUid !== expected.ownerUid
     || attempt.expiresAtMs !== expected.expiresAtMs
-    || attempt.remoteShipId !== expected.remoteShipId
-    || attempt.remoteSubjectId !== expected.remoteSubjectId
-    || attempt.remoteOrigin !== expected.remoteOrigin
-    || (
-      expected.remotePublicKey
-      && canonicalJson(jsonValueSchema.parse(attempt.remotePublicKey))
-        !== canonicalJson(jsonValueSchema.parse(expected.remotePublicKey))
-    )
+    || attempt.remoteDid !== expected.remoteDid
   ) {
     throw new Error("Contact pairing attempt identity changed");
   }
@@ -94,11 +73,7 @@ export function requireCommittedPairingContact(
     || contact.state !== "active"
     || contact.generation !== attempt.generation
     || contact.threadId !== attempt.threadId
-    || contact.remoteShipId !== attempt.remoteShipId
-    || contact.remoteSubject.id !== attempt.remoteSubjectId
-    || contact.remoteOrigin !== attempt.remoteOrigin
-    || canonicalJson(jsonValueSchema.parse(contact.remotePublicKey))
-      !== canonicalJson(jsonValueSchema.parse(attempt.remotePublicKey))
+    || contact.remoteDid !== attempt.remoteDid
   ) {
     throw new Error("Contact pairing attempt was superseded");
   }
