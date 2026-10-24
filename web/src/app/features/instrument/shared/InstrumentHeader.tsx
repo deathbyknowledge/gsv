@@ -1,6 +1,7 @@
 import type { RefObject } from "preact";
 import type { Distance } from "../Instrument";
 import { useT, type TextKey } from "../../../i18n/locale";
+import { Hint } from "../../../components/ui/Tooltip";
 import { Wordmark } from "./Wordmark";
 import { PlatformIdentity } from "../../../services/platform/PlatformIdentity";
 import { Feedback } from "./Feedback";
@@ -9,6 +10,7 @@ type InstrumentHeaderProps = {
   distance: Distance;
   onNavigate: (distance: Distance) => void;
   peopleWaiting?: boolean;
+  feedbackRequest?: number;
   helper: boolean;
   /** Back to the ship's own conversation. */
   onShip: () => void;
@@ -30,7 +32,7 @@ const VIEW_LABELS = {
   settings: "shell.nav.settings",
 } satisfies Record<Exclude<Distance, "zen">, TextKey>;
 
-export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, onShip, help, onHelp, helpButtonRef,
+export function InstrumentHeader({ distance, onNavigate, peopleWaiting, feedbackRequest, helper, onShip, help, onHelp, helpButtonRef,
   navigationOpen, onNavigationToggle, navigationButtonRef, navigationRef }: InstrumentHeaderProps) {
   const t = useT();
   return (
@@ -40,7 +42,7 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, 
           <Wordmark />
         </button>
         {distance !== "zen" && <span class="instrument-current-view">{t(VIEW_LABELS[distance])}</span>}
-        <Feedback view={distance} />
+        <Feedback view={distance} openRequest={feedbackRequest} />
         <PlatformIdentity />
         {helper && <span class="instrument-helper">{t("shell.header.helper")} · <button type="button" onClick={onShip}>{t("shell.header.backToShip")}</button></span>}
       </div>
@@ -50,23 +52,35 @@ export function InstrumentHeader({ distance, onNavigate, peopleWaiting, helper, 
         {distance !== "people" && peopleWaiting && <span class="instrument-people-waiting" aria-label={t("shell.header.unread")}>•</span>}
       </button>
       <nav id="instrument-navigation" class="keys" aria-label={t("shell.header.views")} ref={navigationRef} data-open={navigationOpen}>
-        <button type="button" aria-current={distance === "zen" ? "page" : undefined} aria-keyshortcuts="c" onClick={() => onNavigate("zen")}>
-          <kbd>c</kbd><span class="view-label">chat</span>
-        </button>
-        <button type="button" aria-current={distance === "fleet" ? "page" : undefined} aria-keyshortcuts="f" onClick={() => onNavigate("fleet")}>
-          <kbd>f</kbd><span class="view-label">{t("shell.nav.work")}</span>
-        </button>
-        <button type="button" aria-current={distance === "memory" ? "page" : undefined} aria-keyshortcuts="m" onClick={() => onNavigate("memory")}>
-          <kbd>m</kbd><span class="view-label">{t("shell.nav.memory")}</span>
-        </button>
-        <button type="button" aria-current={distance === "people" ? "page" : undefined} aria-keyshortcuts="p" onClick={() => onNavigate("people")}>
-          <kbd>p</kbd><span class="view-label">{t("shell.nav.people")}</span>
-          {distance !== "people" && peopleWaiting && <span class="instrument-people-waiting" aria-label={t("shell.header.unread")}>•</span>}
-        </button>
-        <button type="button" aria-current={distance === "settings" ? "page" : undefined} aria-keyshortcuts="s" onClick={() => onNavigate("settings")}>
-          <kbd>s</kbd><span class="view-label">{t("shell.nav.settings")}</span>
-        </button>
-        <button type="button" ref={helpButtonRef} aria-expanded={help} aria-controls="instrument-help" onClick={onHelp}><kbd>?</kbd>{t("shell.nav.help")}</button>
+        <Hint text={t("shell.nav.zenHint")} position="bottom">
+          <button type="button" aria-current={distance === "zen" ? "page" : undefined} aria-keyshortcuts="c" onClick={() => onNavigate("zen")}>
+            <kbd>c</kbd><span class="view-label">chat</span>
+          </button>
+        </Hint>
+        <Hint text={t("shell.nav.fleetHint")} position="bottom">
+          <button type="button" aria-current={distance === "fleet" ? "page" : undefined} aria-keyshortcuts="w" onClick={() => onNavigate("fleet")}>
+            <kbd>w</kbd><span class="view-label">{t("shell.nav.work")}</span>
+          </button>
+        </Hint>
+        <Hint text={t("shell.nav.memoryHint")} position="bottom">
+          <button type="button" aria-current={distance === "memory" ? "page" : undefined} aria-keyshortcuts="m" onClick={() => onNavigate("memory")}>
+            <kbd>m</kbd><span class="view-label">{t("shell.nav.memory")}</span>
+          </button>
+        </Hint>
+        <Hint text={t("shell.nav.peopleHint")} position="bottom">
+          <button type="button" aria-current={distance === "people" ? "page" : undefined} aria-keyshortcuts="p" onClick={() => onNavigate("people")}>
+            <kbd>p</kbd><span class="view-label">{t("shell.nav.people")}</span>
+            {distance !== "people" && peopleWaiting && <span class="instrument-people-waiting" aria-label={t("shell.header.unread")}>•</span>}
+          </button>
+        </Hint>
+        <Hint text={t("shell.nav.settingsHint")} position="bottom">
+          <button type="button" aria-current={distance === "settings" ? "page" : undefined} aria-keyshortcuts="s" onClick={() => onNavigate("settings")}>
+            <kbd>s</kbd><span class="view-label">{t("shell.nav.settings")}</span>
+          </button>
+        </Hint>
+        <Hint text={t("shell.nav.helpHint")} position="bottom">
+          <button type="button" ref={helpButtonRef} aria-expanded={help} aria-controls="instrument-help" aria-keyshortcuts="?" onClick={onHelp}><kbd>?</kbd>{t("shell.nav.help")}</button>
+        </Hint>
       </nav>
     </header>
   );

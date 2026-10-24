@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SHELL_KEYS } from "../shared/shellKeys";
 import type { ConversationMessage, ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
 import { conversationMessageRow } from "../../../services/chat/domain/conversations";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
@@ -1228,15 +1229,15 @@ describe("conversation attachments", () => {
 });
 
 describe("startsWriting", () => {
-  const claimed = new Set(["j", "k", "g", "G", "o", "c", "f", "m", "p", "s", "l", "x", "?"]);
+  const claimed = new Set(["j", "k", "g", "G", "o", ...SHELL_KEYS]);
   const press = (key: string, held: Partial<Omit<KeyPress, "key">> = {}): KeyPress => ({ key, ctrlKey: false, metaKey: false, altKey: false, ...held });
 
   it("starts on a plain printable character, capitals and symbols included", () => {
-    for (const key of ["a", "A", "1", "@", "$", "/", ",", "z", "\u00e9", "\ud83d\ude00"]) expect(startsWriting(press(key), claimed)).toBe(true);
+    for (const key of ["a", "f", "A", "1", "@", "$", "/", ",", "z", "\u00e9", "\ud83d\ude00"]) expect(startsWriting(press(key), claimed)).toBe(true);
   });
 
   it("leaves claimed shortcut keys to their owners", () => {
-    for (const key of ["j", "G", "?", "c", "f", "m", "p", "s"]) expect(startsWriting(press(key), claimed)).toBe(false);
+    for (const key of ["j", "G", "?", "c", "w", "m", "p", "s"]) expect(startsWriting(press(key), claimed)).toBe(false);
   });
 
   it("ignores command modifiers, whitespace and named keys", () => {

@@ -1,3 +1,4 @@
+import { FEEDBACK_FEATURE } from "@humansandmachines/gsv/services/feedback";
 import type { ActivityRequest } from "./zen/chatContextModel";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useColorTheme } from "../../components/ui/useColorTheme";
@@ -12,6 +13,7 @@ import { useConsoleAccounts } from "../../services/system/useConsoleData";
 import { Fleet, type FleetProps } from "./fleet/Fleet";
 import { BrowserControlProvider, BrowserControlOverlay } from "./browser/BrowserControl";
 import { Memory } from "./memory/Memory";
+import { memoryLinkHref } from "./memory/memoryLinks";
 import { Settings } from "./settings/Settings";
 import { People } from "./people/People";
 import { peoplePath, readPeopleRoute } from "./people/peopleNavigation";
@@ -19,6 +21,7 @@ import { usePeopleActivity } from "./people/usePeopleActivity";
 import type { FleetReference } from "./fleet/fleetModel";
 import { WireSync } from "./wire/WireSync";
 import { replaceLegacyChatPath, type MemoryPageRef } from "./shared/navigation";
+import { HelpContent, HELP_MANUAL_PAGE } from "./shared/HelpContent";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
 import { WelcomeCard } from "./shared/WelcomeCard";
 import { SHELL_KEYS } from "./shared/shellKeys";
@@ -88,7 +91,7 @@ export function Instrument({ initialPath }: { initialPath: string }) {
 function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string; handsfreeDirty: boolean }) {
   const t = useT();
   const viewportRef = useInstrumentViewport();
-  const { service: session } = useSession();
+  const { service: session, snapshot } = useSession();
   const { client, status } = useGateway();
   useEffect(() => {
     if (status.state !== "connected") return;
@@ -124,6 +127,8 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const [help, setHelp] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [searchRequested, setSearchRequested] = useState(false);
+  const [feedbackRequest, setFeedbackRequest] = useState(0);
+  const feedbackAvailable = snapshot.server?.features?.includes(FEEDBACK_FEATURE) || import.meta.env.VITE_GSV_PREVIEW === "true";
   const helpRef = useRef<HTMLElement>(null);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const navigationRef = useRef<HTMLElement>(null);
@@ -203,17 +208,23 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
     setSearchRequested(true);
   }, [move, status.state]);
 
+  const closeHelp = useCallback(() => {
+    setHelp(false);
+    const button = helpButtonRef.current;
+    (button?.getClientRects().length ? button : navigationButtonRef.current)?.focus();
+  }, []);
+
   useLayoutEffect(() => {
     if (!help) return;
     const dismissHelp = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      setHelp(false);
+      closeHelp();
     };
     window.addEventListener("keydown", dismissHelp, true);
     return () => window.removeEventListener("keydown", dismissHelp, true);
-  }, [help]);
+  }, [help, closeHelp]);
   /* a press anywhere else closes the keys; the panel and its button do not */
   useDismissOnOutsideClick(help, () => [helpRef.current, helpButtonRef.current], () => setHelp(false));
 
@@ -251,7 +262,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
         event.preventDefault();
         move("zen");
       }
-      if (event.key === "f") {
+      if (event.key === "w") {
         event.preventDefault();
         move("fleet");
       }
@@ -292,7 +303,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       <div class="instrument-viewport">
       <div class="instrument-scaled">
       <HandsfreeStatus />
-      <InstrumentHeader distance={distance} onNavigate={(to) => {
+      <InstrumentHeader distance={distance} feedbackRequest={feedbackRequest} onNavigate={(to) => {
         if (move(to) && navigationOpen) navigationButtonRef.current?.focus();
       }} peopleWaiting={peopleActivity.conversations.length > 0 || peopleActivity.requests.length > 0}
         helper={distance === "zen" && zenPid !== null}
@@ -310,79 +321,23 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
       <WelcomeCard onOpenChange={setWelcomeOpen} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label={t("shell.help.label")} ref={helpRef}>
-          <button type="button" class="instrument-help-search" disabled={status.state !== "connected"} aria-keyshortcuts="Control+K" onClick={openSearch}>
-            <span>{t("shell.help.search")}</span><kbd>Ctrl+K</kbd>
-          </button>
-          <h4>{t("shell.help.views")}</h4>
-          <p>{t("shell.help.viewsHint")}</p>
-          <dl>
-            <dt>c</dt><dd>Chat</dd>
-            <dt>f</dt><dd>{t("shell.help.work")}</dd>
-            <dt>m</dt><dd>{t("shell.help.memory")}</dd>
-            <dt>p</dt><dd>{t("shell.help.people")}</dd>
-            <dt>s</dt><dd>{t("settings.title")}</dd>
-            <dt>l</dt><dd>{t("shell.help.theme")}</dd>
-            <dt>x</dt><dd>{t("shell.help.textSize")}</dd>
-            <dt>?</dt><dd>{t("shell.help.toggle")}</dd>
-            <dt>Esc</dt><dd>{t("shell.help.closePanel")}</dd>
-          </dl>
-          {distance === "zen" && <>
-            <h4>{t("shell.help.chatBrowse")}</h4>
-            <dl>
-              <dt>j / k</dt><dd>{t("shell.help.nextPrevious")}</dd>
-              <dt>gg / G</dt><dd>{t("shell.help.history")}</dd>
-              <dt>o</dt><dd>{t("shell.help.activity")}</dd>
-              <dt>/</dt><dd>{t("shell.help.browseSearch")}</dd>
-              <dt>y / n</dt><dd>{t("shell.help.approve")}</dd>
-              <dt>{t("shell.help.otherKeys")}</dt><dd>{t("shell.help.startWriting")}</dd>
-            </dl>
-            <h4>{t("shell.help.chatInput")}</h4>
-            <dl>
-              <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.send")}</dd>
-              <dt>Esc</dt><dd>{t("shell.help.returnToBrowse")}</dd>
-              <dt>↑</dt><dd>{t("shell.help.recall")}</dd>
-              <dt>{t("shell.help.placeSyntax")}</dt><dd>{t("shell.help.chooseTarget")}</dd>
-              <dt>{t("shell.help.commandSyntax")}</dt><dd>{t("shell.help.runCommand")}</dd>
-            </dl>
-          </>}
-          {distance === "memory" && <>
-            <h4>{t("shell.help.memory")}</h4>
-            <dl>
-              <dt>j / ↓</dt><dd>{t("shell.help.nextItem")}</dd>
-              <dt>k / ↑</dt><dd>{t("shell.help.previousItem")}</dd>
-              <dt>{t("shell.keys.spaceOrEnter")}</dt><dd>{t("shell.help.openPage")}</dd>
-              <dt>/</dt><dd>{t("shell.help.pageSearch")}</dd>
-              <dt>e</dt><dd>{t("shell.help.editPage")}</dd>
-              <dt>{t("shell.keys.save")}</dt><dd>{t("shell.help.savePage")}</dd>
-              <dt>Esc</dt><dd>{t("shell.help.leaveSearch")}</dd>
-            </dl>
-          </>}
-          {distance === "fleet" && <>
-            <h4>{t("shell.help.work")}</h4>
-            <dl>
-              <dt>j / ↓</dt><dd>{t("shell.help.nextRow")}</dd>
-              <dt>k / ↑</dt><dd>{t("shell.help.previousRow")}</dd>
-              <dt>{t("shell.keys.spaceOrEnter")}</dt><dd>{t("shell.help.openItem")}</dd>
-              <dt>Esc</dt><dd>{t("shell.help.closeInspector")}</dd>
-              <dt>/</dt><dd>{t("shell.help.commandPrompt")}</dd>
-            </dl>
-            <h4>{t("shell.help.expandedFile")}</h4>
-            <dl>
-              <dt>{t("shell.keys.save")}</dt><dd>{t("shell.help.saveFile")}</dd>
-              <dt>Esc</dt><dd>{t("shell.help.returnToFleet")}</dd>
-            </dl>
-            <h4>{t("shell.help.contactMessages")}</h4>
-            <dl>
-              <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.sendMessage")}</dd>
-            </dl>
-          </>}
-          {distance === "settings" && <>
-            <h4>{t("settings.title")}</h4>
-            <dl>
-              <dt>{t("shell.keys.tab")}</dt><dd>{t("shell.help.moveControls")}</dd>
-              <dt>{t("shell.keys.enterOrSpace")}</dt><dd>{t("shell.help.activate")}</dd>
-            </dl>
-          </>}
+          <HelpContent distance={distance} connected={status.state === "connected"} onClose={closeHelp} onSearch={openSearch} onFeedback={feedbackAvailable ? () => {
+            setHelp(false);
+            setFeedbackRequest((request) => request + 1);
+          } : undefined} onNavigate={(href) => {
+            if (href === "/memory") {
+              if (move("memory")) setHelp(false);
+              return;
+            }
+            const manual = href === memoryLinkHref(HELP_MANUAL_PAGE);
+            if (manual && memoryDirty && !window.confirm(t("shell.confirm.discardPage"))) return;
+            if (distance === "fleet" && fleetDirty && !window.confirm(t("shell.confirm.discardFleetEdits"))) return;
+            const destination = new URL(href, window.location.href).href;
+            navigateApp(href);
+            if (window.location.href !== destination) return;
+            if (manual) setSelectedMemoryPage({ ...HELP_MANUAL_PAGE });
+            setHelp(false);
+          }} />
         </aside>
       ) : null}
       <div class="distance" data-view={distance} ref={scrollEdgesRef}>
