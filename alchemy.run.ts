@@ -5,6 +5,7 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import { GsvAdapterWorker, GsvDeployment, gsvDeploymentManifestSchema, type GsvAdapterBinding } from "./deployment/src/index.ts";
 import { operatorResourceCatalogSchema } from "./workers/installations/src/operator-resource-contracts.ts";
 import { configuredDomainAliases, configuredOriginAliases, deploymentPresentation } from "./packages/gsv/src/services/deployment.ts";
@@ -72,10 +73,24 @@ export default Alchemy.Stack("gsv", {
   const apiKey = Option.getOrUndefined(yield* Config.Redacted("GSV_INFERENCE_API_KEY").pipe(Config.option));
   const catalogPath = Option.getOrUndefined(yield* Config.String("GSV_DELETION_CATALOG_FILE").pipe(Config.option));
   const deletion = catalogPath ? { operatorResources: operatorResourceCatalogSchema.parse(JSON.parse(readFileSync(catalogPath, "utf8"))) } : undefined;
+  // The rotation key enables the PDS. It signs every Ship's DID, so the operator generates and keeps it.
+  const plcRotationKey = Option.getOrUndefined(yield* Config.Redacted("GSV_PLC_ROTATION_KEY").pipe(Config.option));
+  const plcRecoveryKey = Option.getOrUndefined(yield* Config.Redacted("GSV_PLC_RECOVERY_KEY").pipe(Config.option));
+  if (plcRotationKey && !/^[0-9a-f]{64}$/.test(Redacted.value(plcRotationKey))) {
+    throw new Error("GSV_PLC_ROTATION_KEY must be a secp256k1 private key in 64 lowercase hex characters");
+  }
+  if (plcRecoveryKey && (!plcRotationKey || !Redacted.value(plcRecoveryKey).startsWith("did:key:"))) {
+    throw new Error("GSV_PLC_RECOVERY_KEY must be a did:key, and requires GSV_PLC_ROTATION_KEY");
+  }
+  const pds = plcRotationKey ? {
+    workerName: `${prefix}-pds`, bucketName: `${prefix}-pds-blobs`, workerBundle: manifest.runtime.pdsBundle,
+    origin: `https://pds.${domain}`, plcUrl: yield* Config.String("GSV_PLC_URL").pipe(Config.withDefault("https://plc.directory")),
+    rotationKey: plcRotationKey, recoveryKey: plcRecoveryKey,
+  } : undefined;
   const deployment = yield* GsvDeployment({ logicalPrefix: "Gsv", domain, adminOrigin, access, routing: { zoneId },
     domainAliases, presentation, operatorUpdates,
     allowResourceDeletion,
-    deletion,
+    deletion, pds,
     names: { gateway: prefix, ripgit: `${prefix}-ripgit`, storageBucket: `${prefix}-storage` }, paths: manifest.runtime,
     services: { adapters },
     installations: { workerName: `${prefix}-installations`, databaseName: `${prefix}-installations`,
@@ -92,5 +107,6 @@ export default Alchemy.Stack("gsv", {
   });
   return { gateway: deployment.gateway.workerName, administration: adminOrigin, accessMode,
     installationDatabase: deployment.database?.databaseId,
-    storageBucket: deployment.storage.bucketName, adapters: adapters.map((adapter) => adapter.worker.workerName) };
+    storageBucket: deployment.storage.bucketName, pds: deployment.pds?.workerName,
+    adapters: adapters.map((adapter) => adapter.worker.workerName) };
 }));

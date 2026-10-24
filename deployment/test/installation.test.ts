@@ -516,3 +516,65 @@ describe("public operator composition", () => {
     expect(await run(Output.evaluate(complete?.bindings.find((entry) => entry.name === "DELETION_RESOURCE_SCOPES")?.json, {}))).toHaveProperty("telegram", []);
   });
 });
+
+describe("open network host", () => {
+  const pds = { workerName: "pds", bucketName: "pds-blobs", workerBundle: "pds.js", origin: "https://pds.example.com",
+    plcUrl: "https://plc.example.com", rotationKey: Redacted.make("synthetic-rotation-key"), recoveryKey: Redacted.make("did:key:zRecovery") };
+
+  it("deploys the PDS at its reserved hostname and gives only the Kernel its publishing authority", async () => {
+    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds }, dependencies));
+    const host = recorded.workers.find((worker) => worker.id === "FixturePds")!;
+    expect(host.props).toMatchObject({ name: "pds", main: "pds.js", bundle: false, workersDev: false,
+      compatibility: { flags: expect.arrayContaining(["nodejs_compat", "global_fetch_strictly_public"]) } });
+    const env = host.props.env!;
+    expect(env.REPOS).toEqual({ binding: "REPOS", className: "HostedRepo" });
+    expect(env.FIREHOSE).toEqual({ binding: "FIREHOSE", className: "HostFirehose" });
+    if (!Effect.isEffect(env.BLOBS)) throw new Error("Expected the PDS's own bucket");
+    expect(await run(env.BLOBS)).toEqual({ bucketName: "pds-blobs" });
+    expect(env).toMatchObject({ PDS_ORIGIN: pds.origin, PLC_URL: pds.plcUrl,
+      PLC_ROTATION_KEY: pds.rotationKey, PLC_RECOVERY_KEY: pds.recoveryKey, INSTALLATION_DIRECTORY: { workerName: "directory" } });
+    const gateway = recorded.workers.find((worker) => worker.id === "FixtureGateway")!.props.env!;
+    expect(gateway.PDS).toEqual({ worker: "pds", options: { entrypoint: "PdsPublisherEntrypoint", props: { authority: "kernel-publish" } } });
+    expect(gateway.PLC_URL).toBe(pds.plcUrl);
+    for (const worker of recorded.workers.filter((worker) => worker.id !== "FixturePds")) {
+      expect(worker.props.env).not.toHaveProperty("PLC_ROTATION_KEY");
+      if (worker.id !== "FixtureGateway") expect(worker.props.env).not.toHaveProperty("PDS");
+    }
+    expect(recorded.routes).toContainEqual({ id: "FixturePdsRoute", zoneId: "zone", pattern: "pds.example.com/*", script: "pds" });
+  });
+
+  it("runs no PDS unless the operator configures one", async () => {
+    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" } }, dependencies));
+    expect(recorded.workers.map((worker) => worker.id)).not.toContain("FixturePds");
+    const gateway = recorded.workers.find((worker) => worker.id === "FixtureGateway")!.props.env!;
+    expect(gateway).not.toHaveProperty("PDS");
+    expect(gateway).not.toHaveProperty("PLC_URL");
+    expect(recorded.routes.map((route) => route.pattern)).not.toContain("pds.example.com/*");
+  });
+
+  it.each([
+    { label: "another hostname", change: { origin: "https://repos.example.com" }, error: "pds.<domain>" },
+    { label: "an HTTP origin", change: { origin: "http://pds.example.com" }, error: "HTTPS origins" },
+    { label: "a directory with a path", change: { plcUrl: "https://plc.example.com/v1" }, error: "HTTPS origins" },
+  ])("refuses a PDS at $label before allocating resources", async ({ change, error }) => {
+    await expect(run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds: { ...pds, ...change } }, dependencies)))
+      .rejects.toThrow(error);
+    expect(recorded.workers).toEqual([]);
+    expect(recorded.databases).toEqual([]);
+  });
+
+  it("refuses deletion admission that could not remove Ships' repositories and DIDs", async () => {
+    await expect(run(GsvDeployment({ ...input, pds, deletion: { operatorResources: catalog } }, dependencies)))
+      .rejects.toThrow("no deletion owner");
+    expect(recorded.workers).toEqual([]);
+  });
+
+  it("refuses an invalid PDS in a runtime composed without GsvDeployment", async () => {
+    const directory = await run(dependencies.Cloudflare.Worker("Directory", { name: "directory", main: "directory.js" }));
+    const executor = await run(dependencies.Cloudflare.Worker("Inference", { name: "inference", main: "inference.js" }));
+    recorded.workers.length = 0;
+    await expect(run(GsvRuntime({ ...input, pds: { ...pds, plcUrl: "http://plc.example.com" },
+      services: { installationDirectory: directory, inferenceExecution: executor } }, dependencies))).rejects.toThrow("HTTPS origins");
+    expect(recorded.workers).toEqual([]);
+  });
+});

@@ -18,8 +18,13 @@ only a handle that Accounts routes to the same installation, and its DID names
 that hostname as the `#ship` service other Ships call. The Kernel gets
 service-auth tokens only for `space.ship.*` methods addressed to another Ship's
 `#ship` service. Public reads serve an active installation's repository; a
-retired one reads as deleted and any other state as suspended. Nothing deploys
-the worker yet.
+retired one reads as deleted and any other state as suspended.
+
+The operator composition in `deployment/src/runtime.ts` deploys the worker
+when the operator configures a PLC rotation key. `npm run deployment:build`
+bundles it from `wrangler.jsonc`, and the composition supplies its origins,
+Accounts binding, PLC keys and `pds.<domain>` route;
+`docs/architecture/open-network.md` describes the deployment.
 
 ## Repository engine
 

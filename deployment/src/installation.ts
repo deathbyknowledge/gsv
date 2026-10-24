@@ -3,7 +3,7 @@ import { configuredOriginAliases, deploymentPresentationSchema, type PublicDeplo
 import { operatorUpdateCatalogSchema, type OperatorUpdateCatalog } from "../../packages/gsv/src/services/operator-updates.ts";
 import * as Output from "alchemy/Output";
 import { operatorResourceCatalogSchema, type OperatorResourceCatalog } from "../../workers/installations/src/operator-resource-contracts.ts";
-import { GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
+import { assertGsvPds, GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
 import { GsvDeletionDiscoveryBindings, GsvDeletionResourceBindings, gsvAdapterDeletionNamespaces, type GsvDeletionNamespace, type GsvDeletionResourceScopes } from "./deletion-bindings.ts";
 
 export type GsvOperatorAccess = { kind: "operator" } | {
@@ -103,6 +103,16 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   if (domain.hostname !== props.domain || domain.pathname !== "/" || admin.origin !== props.adminOrigin
     || admin.protocol !== "https:" || !admin.hostname.endsWith(`.${props.domain}`)) {
     throw new Error("Deployment requires a base domain and an HTTPS administration origin below it");
+  }
+  if (props.pds) {
+    assertGsvPds(props.pds);
+    // Accounts reserves the pds handle, so no Ship can claim the PDS's hostname.
+    if (props.routing && new URL(props.pds.origin).hostname !== `pds.${props.domain}`) {
+      throw new Error("When the deployment owns routing, the PDS must be at pds.<domain>");
+    }
+    if (props.deletion) {
+      throw new Error("The PDS has no deletion owner yet, so deletion admission would leave Ships' repositories and DIDs behind");
+    }
   }
   const signup = props.installations.ownerSignupOrigin ? new URL(props.installations.ownerSignupOrigin) : undefined;
   if (signup && (signup.origin !== props.installations.ownerSignupOrigin || signup.protocol !== "https:"
@@ -285,6 +295,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     if (signup && signup.hostname !== admin.hostname) {
       yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}InstallationsSignupRoute`, {
         zoneId: props.routing.zoneId, pattern: `${signup.hostname}/*`, script: directory.workerName,
+      }).pipe(retain(props.allowResourceDeletion !== true));
+    }
+    if (runtime.pds) {
+      yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}PdsRoute`, {
+        zoneId: props.routing.zoneId, pattern: `pds.${props.domain}/*`, script: runtime.pds.workerName,
       }).pipe(retain(props.allowResourceDeletion !== true));
     }
     yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}GatewayRoute`, {

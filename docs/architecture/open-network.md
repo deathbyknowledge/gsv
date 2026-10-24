@@ -113,3 +113,25 @@ from any Ship, so a reader ignores fields it doesn't know and reads an unknown
 contact policy as closed. The
 [profile syscalls](../reference/syscalls.md#public-profiles-and-first-messages)
 have the record's limits.
+
+## Deployment
+
+The operator composition runs the PDS once the operator gives it a PLC
+rotation key; without one, Ships have no DID and stay off the open network. The
+PDS serves at `pds.<domain>` through a route more specific than the Gateway's
+wildcard, and Accounts reserves the `pds` handle, so no Ship can claim that
+hostname. Only the Gateway's `PDS` binding carries the `kernel-publish`
+authority.
+
+The Gateway's `PLC_URL` names the same did:plc directory the PDS registers DIDs
+with, so a Ship reads other Ships' DIDs from where its own is registered. The
+PDS reaches only that directory, over the public internet even when the
+directory runs on the deployment's own zone.
+
+The PDS has no deletion owner yet. A deployment that admits installation
+deletion refuses to run it, because deleting an installation would leave its
+repository, files and DID behind.
+
+A pull request preview runs the PDS only against a disposable directory that
+its workflow names, with a rotation key generated for that preview. It never
+registers DIDs with `plc.directory`, which keeps every DID it accepts.

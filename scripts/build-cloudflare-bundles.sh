@@ -38,7 +38,7 @@ echo "==> Bundling workers with wrangler --dry-run"
 rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}/gateway/worker"
 mkdir -p "${DIST_DIR}/ripgit/worker"
-mkdir -p "${DIST_DIR}/installations/worker" "${DIST_DIR}/inference/worker"
+mkdir -p "${DIST_DIR}/installations/worker" "${DIST_DIR}/inference/worker" "${DIST_DIR}/pds/worker"
 for row in "${ADAPTER_ROWS[@]}"; do
   IFS=$'\t' read -r _adapter_id _display_name component _source_dir _wrangler_config _dev_state <<< "${row}"
   mkdir -p "${DIST_DIR}/${component}/worker"
@@ -55,7 +55,7 @@ node "${ROOT_DIR}/scripts/normalize-worker-text-modules.mjs" "${DIST_DIR}/gatewa
   cd "${ROOT_DIR}/workers/ripgit"
   npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/ripgit/worker"
 )
-for component in installations inference; do
+for component in installations inference pds; do
   (
     cd "${ROOT_DIR}/workers/${component}"
     npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/${component}/worker"
