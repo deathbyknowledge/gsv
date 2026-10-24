@@ -7,12 +7,16 @@ import { deliver, getAttachment } from "../federation";
 import { acceptInvitation } from "../federation/invitations";
 import type { ShipMethods } from "./xrpc";
 
-/** The Ship methods this Ship serves, by NSID. */
+/**
+ * The Ship methods this Ship serves, by NSID. Making contact takes a caller
+ * only a few calls a minute; deliveries and reads get twice what one contact's
+ * own limits allow, which leaves room for retries.
+ */
 export const SHIP_METHODS: ShipMethods = new Map([
-  [ACCEPT_INVITATION, { type: "procedure", handle: acceptInvitation }],
-  [DELIVER, { type: "procedure", handle: deliver }],
-  [GET_ATTACHMENT, { type: "query", handle: getAttachment }],
-  [SEND_MESSAGE_REQUEST, { type: "procedure", handle: receiveMessageRequest }],
-  [ACCEPT_MESSAGE_REQUEST, { type: "procedure", handle: acceptMessageRequest }],
-  [WITHDRAW_MESSAGE_REQUEST, { type: "procedure", handle: withdrawMessageRequest }],
+  [ACCEPT_INVITATION, { type: "procedure", callsPerMinute: 10, handle: acceptInvitation }],
+  [DELIVER, { type: "procedure", callsPerMinute: 120, handle: deliver }],
+  [GET_ATTACHMENT, { type: "query", callsPerMinute: 480, handle: getAttachment }],
+  [SEND_MESSAGE_REQUEST, { type: "procedure", callsPerMinute: 10, handle: receiveMessageRequest }],
+  [ACCEPT_MESSAGE_REQUEST, { type: "procedure", callsPerMinute: 10, handle: acceptMessageRequest }],
+  [WITHDRAW_MESSAGE_REQUEST, { type: "procedure", callsPerMinute: 10, handle: withdrawMessageRequest }],
 ]);

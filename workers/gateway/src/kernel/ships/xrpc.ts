@@ -7,6 +7,7 @@ import type { KernelContext } from "../context";
 import { FederationActorBlockedError } from "../federation-store";
 import { PublicFederationError } from "../federation/errors";
 import { fetchFederation, MAX_PUBLIC_JSON_BYTES, readFederationBody, readFederationJson } from "../federation/http";
+import { consumePublicRateLimits } from "../federation/limits";
 import { authenticateShipCall, SHIP_SERVICE_FRAGMENT } from "./auth";
 import { resolveDid } from "./did-directory";
 import { ShipCallError, ShipXrpcError } from "./errors";
@@ -39,6 +40,8 @@ export type ShipCall = {
 /** A procedure answers JSON; a query may stream bytes. */
 export type ShipMethod = {
   type: "procedure" | "query";
+  /** How many calls each caller may make a minute. */
+  callsPerMinute: number;
   handle(call: ShipCall, ctx: KernelContext): Promise<JsonValue | Response>;
 };
 
@@ -62,6 +65,10 @@ export async function handleShipXrpc(request: Request, ctx: KernelContext, metho
       throw new ShipXrpcError(503, "TemporarilyUnavailable", "This Ship is moving its contacts to the open network", MOVE_RETRY_MS);
     }
     const caller = await authenticateShipCall(request, nsid, ctx);
+    // Counted only once the signature verifies, so nobody can spend another Ship's budget.
+    consumePublicRateLimits(ctx, [{
+      scope: `caller:${caller}`, operation: nsid, maximum: method.callsPerMinute, windowMs: 60_000,
+    }], Date.now(), `Too many ${nsid} calls; try again shortly`);
     const input = method.type === "procedure" ? await procedureInput(request) : undefined;
     const output = await method.handle({ caller, input, params: url.searchParams }, { ...ctx, requestSignal: request.signal });
     return output instanceof Response ? output : Response.json(output);
@@ -149,13 +156,13 @@ async function procedureInput(request: Request): Promise<JsonValue | undefined> 
 }
 
 function failure(cause: unknown): Response {
-  if (cause instanceof ShipXrpcError) return errorResponse(cause);
+  if (cause instanceof ShipXrpcError) return xrpcErrorResponse(cause);
   if (cause instanceof PublicFederationError && ERRORS_BY_STATUS.has(cause.status)) {
-    return errorResponse(new ShipXrpcError(cause.status, ERRORS_BY_STATUS.get(cause.status) ?? "InvalidRequest", cause.message, cause.retryAfterMs));
+    return xrpcErrorResponse(new ShipXrpcError(cause.status, ERRORS_BY_STATUS.get(cause.status) ?? "InvalidRequest", cause.message, cause.retryAfterMs));
   }
   // A blocked caller learns nothing it couldn't learn from a missing record.
-  if (cause instanceof FederationActorBlockedError) return errorResponse(new ShipXrpcError(404, "NotFound", "Not found"));
-  if (cause instanceof ApproachAdmissionError) return errorResponse(approachRefusal(cause));
+  if (cause instanceof FederationActorBlockedError) return xrpcErrorResponse(new ShipXrpcError(404, "NotFound", "Not found"));
+  if (cause instanceof ApproachAdmissionError) return xrpcErrorResponse(approachRefusal(cause));
   // Method input schemas come from the SDK's zod/mini build, which shares the core error trait.
   if (cause instanceof z.core.$ZodError) {
     return Response.json({ error: "InvalidRequest", message: z.prettifyError(cause) }, { status: 400 });
@@ -172,7 +179,8 @@ function approachRefusal(cause: ApproachAdmissionError): ShipXrpcError {
   return new ShipXrpcError(404, "NotFound", "Message requests are unavailable");
 }
 
-function errorResponse(error: ShipXrpcError): Response {
+/** The XRPC error a caller reads, with when to retry if it may. */
+export function xrpcErrorResponse(error: ShipXrpcError): Response {
   return Response.json({ error: error.error, message: error.message }, {
     status: error.status,
     headers: error.retryAfterMs === undefined ? undefined : { "retry-after": String(Math.max(1, Math.ceil(error.retryAfterMs / 1_000))) },

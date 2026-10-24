@@ -141,11 +141,11 @@ describe("resolving DIDs", () => {
 describe("serving Ship methods", () => {
   const received: ShipCall[] = [];
   const METHODS: ShipMethods = new Map([
-    ["space.ship.echo", { type: "procedure", handle: async (call) => {
+    ["space.ship.echo", { type: "procedure", callsPerMinute: 3, handle: async (call) => {
       received.push(call);
       return { caller: call.caller, input: call.input ?? null };
     } }],
-    ["space.ship.peek", { type: "query", handle: async (call) => new Response(`peeked ${call.params.get("id")}`) }],
+    ["space.ship.peek", { type: "query", callsPerMinute: 3, handle: async (call) => new Response(`peeked ${call.params.get("id")}`) }],
   ]);
 
   beforeEach(() => {
@@ -245,6 +245,30 @@ describe("serving Ship methods", () => {
       expect(statuses.slice(0, 60).every((status) => status === 401)).toBe(true);
       expect(statuses.at(-1)).toBe(429);
     }, bob);
+  });
+
+  it("gives each caller its own budget for each method", async () => {
+    const [alice, bob, carol] = [await network.account("alice.ship.test"), await network.account("bob.ship.test"), await network.account("carol.ship.test")];
+    vi.useFakeTimers({ now: new Date("2026-10-24T12:00:30Z"), toFake: ["Date"] });
+    try {
+      await withShip(async ({ ctx }) => {
+        const echo = async (caller: TestDidAccount) => await handleShipXrpc(post("space.ship.echo", await serviceAuthToken(caller, bob, "space.ship.echo")), ctx, METHODS);
+        for (let call = 0; call < 3; call++) expect((await echo(alice)).status).toBe(200);
+        const refused = await echo(alice);
+        expect([refused.status, refused.headers.get("retry-after"), (await refused.json<{ error: string }>()).error]).toEqual([429, "30", "RateLimitExceeded"]);
+        expect((await echo(carol)).status).toBe(200);
+        const peek = new Request("https://bob.ship.test/xrpc/space.ship.peek?id=1", {
+          headers: { authorization: `Bearer ${await serviceAuthToken(alice, bob, "space.ship.peek")}` },
+        });
+        expect((await handleShipXrpc(peek, ctx, METHODS)).status).toBe(200);
+        // A call refused for its budget never reaches its method.
+        expect(received.map((call) => call.caller)).toEqual([alice.did, alice.did, alice.did, carol.did]);
+        vi.setSystemTime(new Date("2026-10-24T12:01:00Z"));
+        expect((await echo(alice)).status).toBe(200);
+      }, bob);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refuses every call before its first outward act gives it a DID", async () => {

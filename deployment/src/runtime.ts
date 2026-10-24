@@ -161,6 +161,8 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
       STORAGE: storageResource,
       RIPGIT: ripgitWorker,
       LOADER: Cloudflare.WorkerLoader(),
+      // The Gateway's rough budget for each source of Ship-to-Ship calls to each Ship.
+      SHIP_CALLS: Cloudflare.RateLimit("SHIP_CALLS", { namespaceId: "7001", simple: { limit: 250, period: 10 } }),
       ...serviceBindings,
       ...adapterGatewayBindings(adapters),
       ...props.services?.extraBindings,

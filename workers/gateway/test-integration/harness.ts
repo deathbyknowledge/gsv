@@ -94,6 +94,7 @@ export function integrationGatewayConfig(options: {
         }
       : undefined,
     assets: config.assets,
+    ratelimits: config.ratelimits,
     // CodeMode is an optional paid capability in production. Keep its loader
     // test-only while exercising that runtime boundary in integration tests.
     worker_loaders: [{ binding: "LOADER" }],

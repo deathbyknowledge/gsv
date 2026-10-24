@@ -98,6 +98,12 @@ describe("public operator composition", () => {
     expect(accounts).not.toHaveProperty("GSV_OPERATOR_UPDATES");
   });
 
+  it("gives the Gateway its budget for calls between Ships", async () => {
+    await run(GsvDeployment(input, dependencies));
+    const gateway = recorded.workers.find((worker) => worker.id === "FixtureGateway")!.props.env!;
+    expect(gateway.SHIP_CALLS).toMatchObject({ name: "SHIP_CALLS", namespaceId: "7001", simple: { limit: 250, period: 10 } });
+  });
+
   it("routes a configured signup alias to Accounts alongside the administration hostname", async () => {
     await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, installations: {
       ...input.installations, ownerSignupOrigin: "https://join.example.com",

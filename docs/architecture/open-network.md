@@ -48,6 +48,27 @@ once.
 The host's rotation key signs the DID's operations. A recovery key, when the
 operator configures one, outranks it.
 
+## Calls between Ships
+
+Ships call each other's `space.ship.*` XRPC methods on the hostname that the
+DID document's `#ship` service names, each call with its own service-auth
+token. Three budgets bound what callers can make a Ship do. Each refuses a call
+with 429 `RateLimitExceeded` and a `retry-after` header:
+
+- The Gateway counts each source's calls to each Ship before any reach the
+  Kernel, 250 in 10 seconds at each Cloudflare location (the `SHIP_CALLS`
+  rate-limit binding, namespace 7001). A source is the caller's address.
+  Workers on other Cloudflare zones all call from one address, so for them it
+  is also the zone Cloudflare names in `cf-worker`.
+- Once a call's signature verifies, the Kernel counts it against the caller
+  DID's budget for that method: 10 a minute for each step of making contact
+  (accepting an invitation; sending, accepting or withdrawing a message
+  request), 120 deliveries and 480 attachment reads. A contact's own delivery
+  and read limits still apply within those.
+- Checking a caller the Kernel has not seen before, or one whose signature
+  fails against its cached key, means a directory lookup. A Ship makes at most
+  60 lookups a minute.
+
 ## Publishing
 
 Publishing is a Kernel syscall; the PDS only stores and serves. The Kernel's

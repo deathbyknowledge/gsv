@@ -52,6 +52,7 @@ import * as z from "zod/mini";
 import type { ServicePeerProfile } from "./kernel/peer";
 import { isShipXrpcPath } from "./kernel/ships/xrpc";
 import { matchPublicProfilePath, servePublicProfileRequest } from "./public-profiles";
+import { limitShipCalls } from "./ship-call-limit";
 import type { GatewayEnv } from "./runtime-env";
 import { DEPLOYMENT_PRESENTATION_PATH, deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
 
@@ -120,6 +121,9 @@ export default {
       const fs = createPublicAssetFileSystem({ STORAGE: storage });
       return servePublicAssetRequest(request, fs, publicAssetMatch);
     }
+    // A flood of calls to a Ship stops here, before it reaches the Kernel.
+    const shipCallsLimited = federationPath && await limitShipCalls(request, env.SHIP_CALLS, route.identity.installationId);
+    if (shipCallsLimited) return shipCallsLimited;
     const kernelDO = await getKernelByInstallationId(
       env.KERNEL,
       route.identity.installationId,
