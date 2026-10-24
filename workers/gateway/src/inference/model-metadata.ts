@@ -7,7 +7,11 @@ const CACHE_TTL_MS = 60_000;
 const CACHE_MAX_ENTRIES = 64;
 const LOOKUP_TIMEOUT_MS = 10_000;
 
-/** One Kernel's metadata only. Never caches credentials, admission or in-flight RPCs. */
+/**
+ * One Kernel's metadata only. Never caches credentials, admission or in-flight RPCs.
+ * The context window only paces compaction, so a failed or slow lookup answers with
+ * the last known value, however old, or unknown, and never fails the run.
+ */
 export class ModelMetadataResolver {
   private readonly cache = new Map<string, { value: number | null; expiresAt: number }>();
 
@@ -33,7 +37,6 @@ export class ModelMetadataResolver {
         outcome = "ok";
         return cached.value;
       }
-      this.cache.delete(key);
       timeout = setTimeout(() => controller.abort(
         new TimeoutError(`Model metadata resolution timed out after ${timeoutMs}ms`),
       ), timeoutMs);
@@ -43,6 +46,7 @@ export class ModelMetadataResolver {
         const rpc = pending as typeof pending & { [Symbol.dispose]?: () => void };
         try { rpc[Symbol.dispose]?.(); } catch { /* Timeout remains terminal if disposal fails. */ }
       } });
+      this.cache.delete(key);
       if (this.cache.size >= CACHE_MAX_ENTRIES) {
         const oldest = this.cache.keys().next();
         if (!oldest.done) this.cache.delete(oldest.value);
@@ -50,6 +54,11 @@ export class ModelMetadataResolver {
       this.cache.set(key, { value: metadata.contextWindowTokens, expiresAt: startedAt + CACHE_TTL_MS });
       outcome = "ok";
       return metadata.contextWindowTokens;
+    } catch (error) {
+      // Classification only: service errors can carry private detail. The lookup
+      // id joins this line to its telemetry record.
+      console.warn(`[AI] Model metadata lookup ${lookup.lookupId} failed: ${error instanceof Error ? error.name : "Error"}`);
+      return cached?.value ?? null;
     } finally {
       clearTimeout(timeout);
       emitTelemetry(this.env, {

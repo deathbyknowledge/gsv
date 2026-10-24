@@ -194,11 +194,10 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
       key: "users/1000/ai/models",
       value: JSON.stringify({ version: 1, models: [{
         id: "failure-fixture",
-        name: "Unavailable metadata",
-        provider: "custom",
-        model: "integration-metadata-error",
-        baseUrl: "https://fixture.invalid",
-        providerStyle: "openai-chat-completions",
+        name: "Disconnected ChatGPT account",
+        provider: "openai-codex",
+        model: "gpt-5.5",
+        oauthAccountKey: "disconnected",
         transportTarget: "gsv",
       }] }),
     });
@@ -224,8 +223,8 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
       .parse(await ok(owner, "conversation.history", { conversationId: conversation.id }));
     expect(history.messages.some((message) => message.text === notice)).toBe(false);
     const processHistory = JSON.stringify(await ok(owner, "proc.history", { pid: ship.pid, format: 2 }));
-    expect(processHistory).toContain("Fixture model metadata unavailable");
-    expect(JSON.stringify(wires)).not.toContain("Fixture model metadata unavailable");
+    expect(processHistory).toContain("The selected ChatGPT account is not connected");
+    expect(JSON.stringify(wires)).not.toContain("The selected ChatGPT account is not connected");
     expect((await messages("telegram")).filter((row) => row.body.text === notice)).toHaveLength(1);
   });
 
