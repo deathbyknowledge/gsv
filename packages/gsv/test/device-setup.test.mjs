@@ -46,7 +46,8 @@ test("Windows setup resolves script URLs and directories without losing query pa
   }
 });
 
-test("extension download uses the project release asset for the selected release", () => {
-  assert.equal(browserExtensionDownloadUrl("v0.7.0"), "https://github.com/deathbyknowledge/gsv/releases/download/v0.7.0/gsv-browser-extension.zip");
-  assert.equal(browserExtensionDownloadUrl("dev"), "https://github.com/deathbyknowledge/gsv/releases/download/dev/gsv-browser-extension.zip");
+test("extension download uses ship.space with the selected release", () => {
+  assert.equal(browserExtensionDownloadUrl("v0.7.0"), "https://ship.space/browser?release=v0.7.0");
+  assert.equal(browserExtensionDownloadUrl("dev"), "https://ship.space/browser?release=dev");
+  assert.equal(browserExtensionDownloadUrl("unexpected"), "https://ship.space/browser?release=dev");
 });
