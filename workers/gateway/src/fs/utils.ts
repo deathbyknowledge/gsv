@@ -1,4 +1,5 @@
 import type { BufferEncoding, FileContent } from "just-bash";
+import { z } from "zod";
 
 export function resolveUserPath(path: string, home: string, cwd: string): string {
   let resolved = path;
@@ -27,6 +28,9 @@ export function normalizePath(path: string): string {
   return "/" + segments.join("/");
 }
 
+const bufferEncodingSchema = z.enum(["utf8", "utf-8", "ascii", "binary", "base64", "hex", "latin1"]) satisfies z.ZodType<BufferEncoding>;
+const encodingOptionsSchema = z.object({ encoding: bufferEncodingSchema.nullish() });
+
 /**
  * The bytes a write means. The shell passes its byte buffers as latin1 strings
  * with a "binary" encoding; encoding those as UTF-8 would double every byte
@@ -37,7 +41,7 @@ export function fileContentBytes(
   options?: { encoding?: BufferEncoding | null } | BufferEncoding | null,
 ): Uint8Array {
   if (content instanceof Uint8Array) return content;
-  const encoding = typeof options === "string" ? options : options?.encoding;
+  const encoding = bufferEncodingSchema.safeParse(options).data ?? encodingOptionsSchema.safeParse(options).data?.encoding;
   switch (encoding) {
     case "binary":
     case "latin1":
