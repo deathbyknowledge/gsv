@@ -42,7 +42,7 @@ import { ProcessMediaMountBackend } from "./backends/process-media";
 import { isProcessMediaPath } from "../shared/process-media-path";
 import { isAccountHomeReservedPath } from "./backends/account-home";
 import { isProcessSourcePath } from "./backends/process-sources";
-import { normalizePath } from "./utils";
+import { fileContentBytes, normalizePath } from "./utils";
 import { bindStreamToAbort } from "../shared/streams";
 
 const MAX_SYMLINK_DEPTH = 16;
@@ -134,7 +134,7 @@ export class GsvFs implements IFileSystem {
 
   async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
-    await this.backendForPath(p).writeFile(p, content, options);
+    await this.backendForPath(p).writeFile(p, fileContentBytes(content, options), options);
   }
 
   async writeFileStream(
@@ -166,7 +166,7 @@ export class GsvFs implements IFileSystem {
 
   async appendFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void> {
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
-    await this.backendForPath(p).appendFile(p, content, options);
+    await this.backendForPath(p).appendFile(p, fileContentBytes(content, options), options);
   }
 
   async exists(path: string): Promise<boolean> {
