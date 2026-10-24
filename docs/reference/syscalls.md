@@ -711,13 +711,18 @@ resource grants, delivery receipts, and Process state.
 
 Pairing is explicit and human-controlled. `contact.invite.create` returns a
 short-lived, one-use code and a shareable `url`; the other signed-in person accepts either with
-`contact.invite.accept`. The Kernel derives the remote installation and subject
-from the signed exchange. Callers never choose a remote local uid, Process,
-conversation, filesystem path, or installation id.
+`contact.invite.accept`. The code names the inviting Ship's DID, and the
+accepting Ship checks that the code's handle resolves to that DID. The
+acceptance is a Ship call signed with the accepting Ship's key, so the inviting
+Ship makes the Ship that signed it the contact, whatever name it gives. Callers
+never choose a remote local uid, Process, conversation, filesystem path, or
+installation id.
 
 Invitation links keep the URL-safe encoded payload in the `#contact=` fragment,
-without the `gsv-contact-v1:` code prefix, so mobile messengers can link the entire
-address. Existing prefixed codes and links still identify the same invitation.
+without the `gsv-contact-v2:` code prefix, so mobile messengers can link the entire
+address. Prefixed codes and links identify the same invitation. A code from
+before DIDs, with the `gsv-contact-v1:` prefix, is refused with a request for a
+new invitation.
 
 Trust changes may be initiated by the signed-in human or by that owner's exact
 canonical Ship Process. Delegated work Processes and remote callers cannot

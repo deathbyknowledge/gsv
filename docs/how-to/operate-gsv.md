@@ -20,6 +20,7 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_ACCESS_MODE` | `operator` or `access`; defaults to `operator`. |
 | `GSV_ACCESS_TEAM_DOMAIN`, `GSV_ACCESS_AUDIENCE` | Required for Cloudflare Access mode. |
 | `GSV_OWNER_EMAIL_FROM` | Verified sending address for native email-code owner sign-in, My Ships and recovery. |
+| `GSV_OWNER_EMAIL_REPLY_TO` | Optional reply address for owner verification mail; defaults to the sender when omitted. |
 | `GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS` | Optional comma-separated recipient restriction for owner verification mail, useful on staging. |
 | `GSV_OWNER_OIDC_ISSUER`, `GSV_OWNER_OIDC_CLIENT_ID`, `GSV_OWNER_OIDC_CLIENT_SECRET` | Optional owner identity provider for account linking and root recovery; issuer and client ID must be supplied together. |
 | `GSV_ADAPTERS` | Comma-separated operator-enabled adapter IDs; empty by default. |
@@ -39,6 +40,21 @@ provider execution uses the same public service either way.
 Isolated deployments attached to pull requests use the same public stack,
 normal onboarding and included inference, with explicit disposable resources.
 Their workflow is described in the repository's engineering notes.
+
+Owner verification emails include a large, selectable six-digit code and its
+remaining lifetime in minutes, with a plain-text alternative. A resend keeps
+the original expiry and shows the remaining time. The sender display name is
+Ship. To send from `login@ship.space` and direct replies to the support inbox,
+configure:
+
+```sh
+GSV_OWNER_EMAIL_FROM=login@ship.space
+GSV_OWNER_EMAIL_REPLY_TO=hello@humansandmachin.es
+```
+
+The sender domain must be enabled for Cloudflare Email Sending in the deployment
+account. A sender profile picture is configured with the mail provider or through
+domain branding such as BIMI; it is separate from the email template.
 
 Build and review the deployment before applying it:
 
@@ -71,6 +87,15 @@ credential saved during bootstrap. In `access` mode, open
 Create a Ship, reserve its handle, and give the person the resulting one-time
 activation link. They use that link to create their personal account and root
 password. Further Ships use this same administration flow.
+
+Open **Signup** in administration (`<admin-origin>/admin/signup`) to edit the
+reserved and blocked username lists. Both lists start empty; add the names you
+want to reserve or block, then save. Reserved names can be assigned to
+operator-controlled Ships through administration; blocked names cannot be assigned
+to any new Ship. Save changes to apply them immediately. Matching ignores case,
+accents and separators, but checks the whole name. Existing Ships and unfinished
+activations keep their names. See the [username policy](../architecture/installation-directory.md#open-registration)
+for matching rules and terms that require contextual review.
 
 Administration timestamps use your device's timezone, including audit entries and
 run times. With JavaScript disabled, they use the labelled UTC fallback.

@@ -63,6 +63,19 @@ describe("mock gateway", () => {
     expect(mockGatewayRequested()).toBe(true);
   });
 
+  it("transcribes voice without losing the contact fixtures", async () => {
+    const client = await connectedClient();
+    const transcript = await client.request("ai.transcription.create", { pid: "p-ship", audio: { mimeType: "audio/webm" }, mode: "transcribe" });
+    expect(transcript.data).toEqual({
+      text: "Can you check the studio backup and tell me if it finished",
+      language: "en", duration: 3.2, provider: "mock", model: "mock-transcribe",
+    });
+    const contacts = await client.request("contact.list", {});
+    expect(contacts.data.contacts).toHaveLength(1);
+    const inbox = await client.request("conversation.inbox", {});
+    expect(inbox.data.entries).toHaveLength(1);
+  });
+
   it("lets the owner choose a language, kept in this browser, and refuses other config", async () => {
     const client = await connectedClient();
     const accounts = z.object({ accounts: z.array(z.object({ relation: z.string(), capabilities: z.array(z.string()).optional() })) })

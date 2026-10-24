@@ -160,6 +160,34 @@ delivery and again during verification, and rejects new Space allocations before
 reservation. Existing credentials can still sign in and admitted setups can resume.
 The managed composition uses this to prevent GSV mailboxes from registering more Spaces.
 
+Operators manage reserved and blocked public usernames at **Administration → Signup**
+(`/admin/signup`). Accounts stores both lists; edits take effect immediately without
+redeployment. Enter one name per line or separate entries with commas (up to 500
+per list). Each form field accepts up to 16,000 characters; both lists can be saved
+together at that size, including accented names. Reserved names are available only
+for operator-controlled installations created through administration. Blocked names
+are unavailable for all new allocations,
+including operator creation, and take precedence over reserved entries.
+Configured service hostnames and built-in routes remain protected.
+
+Policy matching compares the **entire** name after lowercasing, Unicode NFKD accent
+removal, and removal of hyphens, underscores, dots and whitespace. Both candidates
+and list entries use this comparison. It never changes stored usernames, syntax
+rules or uniqueness: an ordinary `alice-smith` remains distinct from `alicesmith`.
+Both lists start empty. Operators add their own entries in administration and
+can add targeted spelling evasions as encountered. Context-dependent terms should
+be assessed when reported rather than automatically blocked solely for an
+ambiguous meaning.
+
+Availability reports both categories as unavailable to signup. Accounts checks
+policy atomically when reserving a new installation, preventing direct creation
+or concurrent list edits from bypassing the check. Existing installations, admitted
+setup retries and resets retain their handles. There is no public handle rename
+or new-installation import path today; any such path must enforce this same policy
+before assigning a new public handle, without using its normalization for uniqueness.
+Only authenticated operators can edit the lists, with same-origin mutation checks
+and an audit event when operator auditing is configured.
+
 Contact invitations remain entirely Kernel-owned. The browser carries a pending
 contact link through signup and local setup, then presents the normal acceptance
 and message-handling choice. Creating, cancelling or accepting a contact invitation
@@ -202,6 +230,13 @@ Shipped migration files are immutable. Cloudflare D1 enforces foreign keys
 during migrations; a table rebuild must preserve the relationships rather
 than disabling them. See [D1 foreign-key behavior](https://developers.cloudflare.com/d1/sql-api/foreign-keys/)
 and [D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/).
+
+For upgrades from the seeded username policy, keep migration `0028_username_policy.sql`
+unchanged and apply `0029_remove_username_policy_starters.sql` before serving the
+updated Accounts worker. Fresh installations finish with empty lists. The forward
+migration removes only exact starter rows, preserving added or modified entries.
+If the audit log records a completed or pending operator policy save, it preserves
+the entire policy, including starter names the operator retained.
 
 ## Preferred domains and accepted aliases
 

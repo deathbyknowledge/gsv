@@ -44,7 +44,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     migrationsDirectory: string;
     ownerIdentity?: { issuer: string; clientId: string; clientSecret?: Cloudflare.Workers.WorkerBindingProps[string] };
     /** Accounts sends owner codes independently of installation-scoped mail. The operator owns the verified sender and stable secret. */
-    ownerEmail?: { from: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
+    ownerEmail?: { from: string; replyTo?: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
     ownerSignupOrigin?: string;
     openRegistration?: boolean;
     ownerOriginAliases?: string[];
@@ -201,6 +201,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
         allowedSenderAddresses: [owner.from], allowedDestinationAddresses: owner.allowedRecipients,
       });
       bindings.GSV_OWNER_EMAIL_FROM = owner.from;
+      if (owner.replyTo) bindings.GSV_OWNER_EMAIL_REPLY_TO = owner.replyTo;
       bindings.GSV_OWNER_AUTH_SECRET = owner.authSecret;
     }
     if (props.telemetry) bindings.GSV_TELEMETRY_ENABLED = "1";

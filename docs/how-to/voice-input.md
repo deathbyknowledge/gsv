@@ -1,7 +1,9 @@
 # Use Voice Input
 
-Chat can turn speech into a draft in both the web app and Desktop. You review the
-text before sending it.
+Chat can turn speech into a message in both the web app and Desktop. While you
+record, both offer the same three choices: **send** delivers what you said
+straight away, **pause** stops and keeps the words in the prompt for editing or
+more dictation, and **cancel** discards them.
 
 ## Record in the web app
 
@@ -9,17 +11,19 @@ text before sending it.
 2. Choose **record** in the action row below the prompt, beside the attachment
    and connection controls, and allow microphone access when your browser asks.
 3. The prompt becomes a live waveform that responds to your voice. Speak, then
-   choose **stop**. A recording stops automatically after five minutes.
-4. Wait for **transcribing…**. The text appears at the current cursor in your
-   draft, keeping text you have already typed. Edit it and choose **send** or
-   press Enter.
+   choose **send** or press Enter to transcribe and send straight away. The
+   transcript joins any text you had already typed and goes out as one message.
+4. To review first, choose **pause** instead. After **transcribing…**, the text
+   appears at the current cursor in your draft, keeping text you have already
+   typed. Edit it or record more, then choose **send** or press Enter. A
+   recording stops automatically after five minutes.
 
 Your existing draft is preserved underneath the recording surface and returns
-after transcription or cancellation. Pressing Enter during recording stops the recording;
-it does not send the transcript. Sending becomes available once transcription
-finishes. **cancel** or Escape discards the recording or pending transcription
-and keeps your typed draft. You can start recording while the connections list is
-still loading; loading it does not interrupt voice input at Ship's home.
+after transcription or cancellation. If a message cannot be sent, for example
+while you are offline, the transcript stays in the prompt. **cancel** or Escape
+discards the recording or pending transcription and keeps your typed draft. You
+can start recording while the connections list is still loading; loading it does not
+interrupt voice input at Ship's home.
 Switching conversations or connections discards pending voice input. A late result
 cannot enter another conversation. If the connection drops or the tab is hidden,
 capture stops and the audio stays in the tab. Return to Chat and choose **retry
@@ -44,10 +48,11 @@ your Ship.
 ## Dictate on Desktop
 
 Desktop's **voice** control uses its local transcription helper. Choose **listen**
-to dictate, and choose **pause** to stop while
-keeping the draft. Enter finishes the current segment, sends it, and keeps
-listening. Editing dictated text stops dictation so later partials cannot undo
-your correction.
+to dictate; the words appear in the prompt as you speak. Choose **send** to
+deliver what you dictated and stop listening, **pause** to stop while keeping
+the words in the prompt for editing or more dictation, or **cancel** to discard
+them. Enter finishes the current segment, sends it, and keeps listening. Editing
+dictated text stops dictation so later partials cannot undo your correction.
 
 Open **Settings → Voice**, or **voice settings** from the recording panel, to
 choose your microphone, voice shortcuts and spoken replies. This section

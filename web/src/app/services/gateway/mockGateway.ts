@@ -27,6 +27,7 @@
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
  *   /approve-publish   a publish to the open network carrying a picture; y/n decides
+ *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
  *   anything else is committed as your message and answered briefly a second later
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
@@ -61,6 +62,7 @@ import {
   type ScheduleRecord,
   type SysLedgerLine,
   type SysTargetSummary,
+  type AiTranscriptionCreateResult,
   type SysTokenCreateResult,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
@@ -911,6 +913,11 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       const input = sendArgs.parse(args);
       const sent = receive(input.text);
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
+    }
+    case "ai.transcription.create": {
+      // The audio body is dropped (bodies are not carried here); the transcript is a fixture.
+      const transcript: AiTranscriptionCreateResult = { text: "Can you check the studio backup and tell me if it finished", language: "en", duration: 3.2, provider: "mock", model: "mock-transcribe" };
+      return respond(id, transcript);
     }
     case "contact.list": return respond(id, { contacts: fresh ? [] : [maraContact] });
     case "conversation.inbox": {

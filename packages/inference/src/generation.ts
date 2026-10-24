@@ -257,12 +257,16 @@ async function* streamInferenceGeneration(
           attempt.result = result;
           attempt.failure = failure;
           attempt.completedAt = Date.now();
-          const retryableBeforeOutput = event.type === "error"
+          const failedBeforeOutput = event.type === "error"
             && event.reason === "error"
             && !attempt.outputExposed
-            && !signal.aborted
-            && failure?.retryable === true;
-          if (retryableBeforeOutput && index + 1 < routing.models.length) {
+            && !signal.aborted;
+          const retryableBeforeOutput = failedBeforeOutput && failure?.retryable === true;
+          // Billing and authentication refuse the operator's provider account, not this
+          // request, so another route can still serve it. Retrying the same route cannot.
+          const accountRefused = failedBeforeOutput
+            && (failure?.kind === "billing" || failure?.kind === "authentication");
+          if ((retryableBeforeOutput || accountRefused) && index + 1 < routing.models.length) {
             index += 1;
             retries = 0;
             break;

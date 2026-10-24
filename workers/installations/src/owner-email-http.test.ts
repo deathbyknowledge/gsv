@@ -48,7 +48,8 @@ async function fixture() {
   const mail: SendEmail = { send };
   const gateway = { authorizeRootRecovery: vi.fn(async () => ({ authorized: true as const })),
     confirmOwnerLinkAuthorization: vi.fn(async () => ({ authorized: true as const })) };
-  const makeHttp = () => new InstallationOwnerEmailHttp(auth, owners, mail, "accounts@example.com", gateway, ORIGIN);
+  const makeHttp = () => new InstallationOwnerEmailHttp(auth, owners, mail,
+    { from: "login@ship.space", replyTo: "hello@humansandmachin.es" }, gateway, ORIGIN);
   let http = makeHttp();
   const request = async (path: string, cookies: Cookies, form?: Form, origin: string | null = ORIGIN, acceptCookies = true): Promise<Response> => {
     const headers = new Headers({ cookie: cookieHeader(cookies), "cf-connecting-ip": `fixture-${suffix}` });
@@ -73,7 +74,7 @@ async function fixture() {
     return { ...await formFields(response), email, ...extra };
   };
   const code = (index = delivered.length - 1): string => {
-    const match = delivered[index]?.text?.match(/code is ([0-9]{6})\./);
+    const match = delivered[index]?.text?.match(/^([0-9]{6})$/m);
     if (!match) throw new Error("Expected a captured verification code");
     return match[1];
   };
@@ -111,6 +112,10 @@ describe("native owner email HTTP", () => {
     expect(codePage.headers.get("referrer-policy")).toBe("same-origin");
     expect((await f.request("/owner/login", cookies, form)).status).toBe(200);
     expect(f.send).toHaveBeenCalledTimes(1);
+    expect(f.delivered[0]).toMatchObject({ from: { email: "login@ship.space", name: "Ship" },
+      replyTo: "hello@humansandmachin.es", subject: "Your Ship sign-in code",
+      text: `Enter this code in Ship to continue:\n\n${f.code()}\n\nThis code expires in 10 minutes. Don’t share it with anyone.\n\nIf you didn’t request this code, you can ignore this email.\n\nShip` });
+    expect(f.delivered[0].html).toContain(`>${f.code()}</strong>`);
     expect(cookies.has(SESSION)).toBe(false);
     const verify = { ...form, code: f.code() };
     const lost = await f.request("/owner/verify", cookies, verify, ORIGIN, false);
@@ -270,12 +275,15 @@ describe("native owner email HTTP", () => {
     f.advance();
     expect((await f.request("/owner/resend", cookies, form)).status).toBe(200);
     expect(f.delivered).toHaveLength(1);
+    expect(f.delivered[0].text).toContain("This code expires in 9 minutes.");
     expect((await f.request("/owner/login", cookies, form)).status).toBe(200);
     expect(f.send).toHaveBeenCalledTimes(2);
     f.advance();
     expect((await f.request("/owner/resend", cookies, form)).status).toBe(200);
     expect(f.send).toHaveBeenCalledTimes(3);
     expect(f.delivered).toHaveLength(2);
+    expect(f.delivered[1].text).toContain("This code expires in 8 minutes.");
+    expect(f.code(1)).toBe(f.code(0));
     expect((await f.request("/owner/verify", cookies, { ...form, code: f.code() })).status).toBe(303);
   });
 });

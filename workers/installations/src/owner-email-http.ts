@@ -5,6 +5,7 @@ import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } f
 import { InstallationOwnerStore } from "./owner-store";
 import { sha256Hex } from "./tokens";
 import { sendOwnerVerification } from "./owner-verification";
+import type { OwnerEmailSender } from "./owner-verification-email";
 
 type Purpose = "login" | "link" | "recover";
 type ChallengeForm = { challengeId: string; purpose: Purpose; ownerAttemptId?: string; email: string };
@@ -14,7 +15,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Accounts authenticates owners independently of any space or its messaging configuration. */
 export class InstallationOwnerEmailHttp {
   constructor(private readonly auth: InstallationOwnerAuthStore, private readonly owners: InstallationOwnerStore,
-    private readonly mail: SendEmail, private readonly from: string,
+    private readonly mail: SendEmail, private readonly sender: OwnerEmailSender,
     private readonly gateway: InstallationRecoveryGatewayService, private readonly origin: string,
     private readonly existingIdentityProvider = false) {}
 
@@ -84,7 +85,7 @@ export class InstallationOwnerEmailHttp {
 
   private async sendCode(challenge: ChallengeForm, browserSecret: string, ip: string, resend: boolean): Promise<Response> {
     try {
-      const issued = await sendOwnerVerification(this.auth, this.mail, this.from, { ...challenge, browserSecret, ip, resend });
+      const issued = await sendOwnerVerification(this.auth, this.mail, this.sender, { ...challenge, browserSecret, ip, resend });
       if (issued.deliveryStatus === "failed" && issued.attemptedDelivery) return codePage(challenge, "We could not send the code. Wait a minute, then try sending it again.", 503);
       if (issued.deliveryStatus !== "sent") return codePage(challenge, "Sending is still pending. Wait a minute before trying again.", 202);
       return codePage(challenge, `Check your email for a six-digit code. It expires at ${new Date(issued.expiresAt).toUTCString()}.`);
