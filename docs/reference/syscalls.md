@@ -1157,9 +1157,10 @@ see [The open network](../architecture/open-network.md). Only what the person
 chooses to make public goes there. Messages, contacts and the rest of the Ship
 never do. Without the binding, these calls fail as unavailable.
 
-The Ship's identity comes with its profile. Its account is a `did:plc` whose
-handle is the Ship's hostname, for example `alice.ship.space`. The first write
-or upload creates it, and `atproto.identity` returns `null` until then. While
+A Ship's account is a `did:plc` whose handle is the Ship's hostname, for
+example `alice.ship.space`. The Ship's first outward act creates it: a publish,
+an invitation, a message request or another call to a Ship.
+`atproto.identity` returns `null` until then. While
 the profile is private, writes and uploads are refused with a message naming
 People.
 
