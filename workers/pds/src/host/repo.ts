@@ -12,7 +12,7 @@ import { getBlocksCar, getRecordProofCar, getRepoCar } from "../cirrus/repo/sync
 import { validator } from "../cirrus/validation";
 import type { HostEnv } from "./env";
 import { FIREHOSE_NAME, type OutboxEvent, type RepoState } from "./firehose";
-import { didDocument, mintIdentity, registerGenesis, type RepoIdentity } from "./identity";
+import { didDocument, mintIdentity, registerGenesis, tombstoneIdentity, type RepoIdentity } from "./identity";
 import { migrate } from "./schema";
 import { signServiceAuth, type ServiceAuthRequest } from "./service-auth";
 import { parseQuery, repositoryParameter, XRPC_PREFIX, XrpcError } from "./xrpc";
@@ -37,10 +37,35 @@ export type CommitResult = {
 
 export type HostedAccount = { did: string; handle: string };
 
+/** A deletion of this repository. It stays after erasure, so the object never holds another account. */
+export type Retirement = {
+  /** The deletion that retired the repository; it never changes. */
+  operation: string;
+  /** The object's name, which the host directory and deletion discovery know it by. */
+  name: string;
+  phase: "quiescing" | "quiesced" | "erasing" | "erased";
+  /** When the phase last changed. */
+  updatedAt: number;
+  /** Whether the host firehose has the account's deletion event. */
+  announced: boolean;
+  /** The DID still to tombstone in the directory, if any. */
+  did: RepoIdentity["did"] | null;
+};
+
+/** What a deletion has left to do in this repository. */
+export type RetirementStatus = {
+  retirement: Retirement | null;
+  /** Whether the object still holds the account's repository, files and host entries. */
+  account: boolean;
+  /** Whether the directory still resolves the account's DID. */
+  identity: boolean;
+};
+
 /** Largest blob the host stages. */
 export const MAX_BLOB_BYTES = 48 * 1024 * 1024;
 
 const ACCOUNT_KEY = "account";
+const RETIREMENT_KEY = "retirement";
 const DELIVERED_KEY = "firehose.delivered";
 const FAILURES_KEY = "firehose.failures";
 const DELIVERY_BATCH = 100;
@@ -49,6 +74,10 @@ const KEEP_DELIVERED = 100;
 const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 5 * 60_000;
 const STAGED_BLOB_TTL_MS = 6 * 60 * 60_000;
+/** Files one erasure call deletes, the most one R2 delete takes. */
+const ERASE_BATCH = 1_000;
+/** Stored values one delete call removes. */
+const DELETE_BATCH = 128;
 const EVENT_TYPES = ["commit", "identity", "sync", "account"] as const;
 
 const MIGRATIONS = [{
@@ -117,6 +146,8 @@ type PreparedWrite = {
 export class HostedRepo extends DurableObject<HostEnv> {
   private opened: OpenRepo | null = null;
   private queue: Promise<void> = Promise.resolve();
+  /** Uploads this instance is still storing; a deletion waits for them. */
+  private uploads = 0;
 
   /**
    * Creates the account's DID, naming any other services it offers, and its
@@ -125,6 +156,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
   async create(handle: string, blobPrefix: string, services: Record<string, Service> = {}): Promise<HostedAccount> {
     if (!isHandle(handle)) throw new Error(`InvalidHandle: ${handle} is not a handle`);
     return this.serialize(async () => {
+      await this.requireLive();
       // Handles compare without case; the host keeps the lowercase form.
       const repo = this.open(await this.provision(handle.toLowerCase(), blobPrefix, services));
       // The first access commits the empty repository; activation then announces
@@ -142,6 +174,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
 
   /** Signs a service-auth token for one call from this account to another service. */
   async serviceAuth(request: ServiceAuthRequest): Promise<string> {
+    await this.requireLive();
     const repo = await this.requireRepo();
     if (!await repo.storage.getActive()) throw new Error(`RepoDeactivated: ${repo.account.did} cannot sign calls`);
     return signServiceAuth(repo.account.did, repo.account.signingKey, request);
@@ -150,6 +183,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
   /** Applies writes in one signed commit after validating records and the blobs they reference. */
   async applyWrites(writes: RepoWrite[]): Promise<CommitResult> {
     return this.write(async (repo) => {
+      await this.requireLive();
       const prepared = await this.prepare(repo, writes);
       const promoted = await this.promote(repo, prepared);
       const before = await repo.storage.getRev();
@@ -188,29 +222,43 @@ export class HostedRepo extends DurableObject<HostEnv> {
       throw error;
     }
     // The staged copy is recorded before any byte is stored, so it expires even if the upload never finishes.
-    const name = await this.write(async () => {
-      const staged = `upload-${crypto.randomUUID()}`;
-      const expiresAt = Date.now() + STAGED_BLOB_TTL_MS;
-      this.ctx.storage.sql.exec("INSERT INTO staged_blobs (name, cid, expires_at) VALUES (?, NULL, ?)", staged, expiresAt);
-      await this.alarmBy(expiresAt);
-      return staged;
-    });
-    const repo = await this.requireRepo();
-    const hashing = hashed(body, size);
-    await repo.blobs.putStaged(name, hashing.stream, mimeType);
-    const cid = formatCid(fromDigest(CODEC_RAW, new Uint8Array(await hashing.digest)));
-    return this.write(async (repo) => {
-      const expiresAt = Date.now() + STAGED_BLOB_TTL_MS;
-      if (this.stagedName(cid) !== null || await repo.blobs.hasBlob(cid)) {
-        // The same bytes are already staged or public; that copy serves this upload too.
-        await this.unstage(repo, [name]);
-        this.ctx.storage.sql.exec("UPDATE staged_blobs SET expires_at = MAX(expires_at, ?) WHERE cid = ?", expiresAt, cid);
-      } else {
-        this.ctx.storage.sql.exec("UPDATE staged_blobs SET cid = ?, expires_at = ? WHERE name = ?", cid, expiresAt, name);
-      }
-      await this.alarmBy(expiresAt);
-      return { $type: "blob", ref: { $link: cid }, mimeType, size };
-    });
+    let name: string;
+    try {
+      name = await this.write(async () => {
+        await this.requireLive();
+        const staged = `upload-${crypto.randomUUID()}`;
+        const expiresAt = Date.now() + STAGED_BLOB_TTL_MS;
+        this.ctx.storage.sql.exec("INSERT INTO staged_blobs (name, cid, expires_at) VALUES (?, NULL, ?)", staged, expiresAt);
+        await this.alarmBy(expiresAt);
+        // Counted within the write, so a deletion queued behind it waits for these bytes.
+        this.uploads += 1;
+        return staged;
+      });
+    } catch (error) {
+      await body.cancel(error).catch(() => {});
+      throw error;
+    }
+    try {
+      const repo = await this.requireRepo();
+      const hashing = hashed(body, size);
+      await repo.blobs.putStaged(name, hashing.stream, mimeType);
+      const cid = formatCid(fromDigest(CODEC_RAW, new Uint8Array(await hashing.digest)));
+      return await this.write(async (repo) => {
+        await this.requireLive();
+        const expiresAt = Date.now() + STAGED_BLOB_TTL_MS;
+        if (this.stagedName(cid) !== null || await repo.blobs.hasBlob(cid)) {
+          // The same bytes are already staged or public; that copy serves this upload too.
+          await this.unstage(repo, [name]);
+          this.ctx.storage.sql.exec("UPDATE staged_blobs SET expires_at = MAX(expires_at, ?) WHERE cid = ?", expiresAt, cid);
+        } else {
+          this.ctx.storage.sql.exec("UPDATE staged_blobs SET cid = ?, expires_at = ? WHERE name = ?", cid, expiresAt, name);
+        }
+        await this.alarmBy(expiresAt);
+        return { $type: "blob", ref: { $link: cid }, mimeType, size };
+      });
+    } finally {
+      this.uploads -= 1;
+    }
   }
 
   /** One of this repository's blobs, public or still staged, for its owner to look at before publishing. */
@@ -225,7 +273,69 @@ export class HostedRepo extends DurableObject<HostEnv> {
 
   async state(): Promise<RepoState | null> {
     const repo = await this.readable();
-    return repo ? repoState(repo) : null;
+    return repo ? repoState(repo, await this.retired()) : null;
+  }
+
+  /**
+   * Starts deleting this repository: it refuses every later write, tells the
+   * host firehose the account is deleted, and waits for uploads already
+   * storing their bytes. Repeating it continues the same deletion.
+   */
+  async retire(operation: string): Promise<RetirementStatus> {
+    return this.serialize(async () => {
+      await this.quiesce(operation);
+      return this.retirementStatus(operation);
+    });
+  }
+
+  /**
+   * Erases a retired repository's files, host entries and storage, then
+   * tombstones its DID. A call that leaves files makes progress and returns;
+   * the next continues. The deletion's record stays.
+   */
+  async erase(operation: string): Promise<RetirementStatus> {
+    return this.serialize(async () => {
+      let retirement = await this.storedRetirement(operation);
+      if (!retirement) throw new Error("RepoNotRetired: a repository's deletion must quiesce first");
+      if (retirement.phase === "quiescing") retirement = await this.quiesce(operation);
+      if (retirement.phase === "quiescing" || retirement.phase === "erased") return this.retirementStatus(operation);
+      if (retirement.phase === "quiesced") retirement = await this.saveRetirement({ ...retirement, phase: "erasing", updatedAt: Date.now() });
+      const account = await this.ctx.storage.get<StoredAccount>(ACCOUNT_KEY);
+      if (account) {
+        // Public and staged copies both sit under the account's own prefix.
+        const listed = await this.env.BLOBS.list({ prefix: `${account.blobPrefix}${account.did}/`, limit: ERASE_BATCH });
+        if (listed.objects.length > 0) await this.env.BLOBS.delete(listed.objects.map((object) => object.key));
+        if (listed.truncated) return this.retirementStatus(operation);
+        await this.env.FIREHOSE.getByName(FIREHOSE_NAME).eraseRepository(account.name);
+        await this.eraseStorage();
+      }
+      if (retirement.did) {
+        await tombstoneIdentity(this.env, retirement.did);
+        retirement = await this.saveRetirement({ ...retirement, did: null });
+      }
+      await this.saveRetirement({ ...retirement, phase: "erased", updatedAt: Date.now() });
+      return this.retirementStatus(operation);
+    });
+  }
+
+  /** What the named deletion has left to do here; another deletion is refused. */
+  async retirementStatus(operation: string): Promise<RetirementStatus> {
+    const retirement = await this.storedRetirement(operation);
+    const account = (await this.ctx.storage.get<StoredAccount>(ACCOUNT_KEY)) !== undefined;
+    return { retirement, account, identity: retirement ? retirement.did !== null : account };
+  }
+
+  /**
+   * For deletion discovery: the name of the installation this object belongs
+   * to, and whether it holds anything more than a deletion's record. An object
+   * holding something it cannot name has no name.
+   */
+  async holding(): Promise<{ name: string | null; holds: boolean }> {
+    const account = await this.ctx.storage.get<StoredAccount>(ACCOUNT_KEY);
+    if (account) return { name: account.name, holds: true };
+    const retirement = await this.ctx.storage.get<Retirement>(RETIREMENT_KEY);
+    if (retirement) return { name: retirement.name, holds: (await this.ctx.storage.list({ limit: 2 })).size > 1 || this.tables().length > 0 };
+    return { name: null, holds: (await this.ctx.storage.list({ limit: 1 })).size > 0 || this.tables().length > 0 };
   }
 
   /** Serves this repository's XRPC reads; the host front door routes each one to the object holding the repository. */
@@ -250,6 +360,9 @@ export class HostedRepo extends DurableObject<HostEnv> {
   override async alarm(): Promise<void> {
     const account = await this.storedAccount();
     if (!account) return;
+    // A quiesced deletion has delivered the account's last event, and erasure removes its files.
+    const retirement = await this.ctx.storage.get<Retirement>(RETIREMENT_KEY);
+    if (retirement && retirement.phase !== "quiescing") return;
     const repo = this.open(account);
     await this.write(async () => this.expireStagedBlobs(repo, Date.now()));
     let retryAt: number | null = null;
@@ -394,6 +507,73 @@ export class HostedRepo extends DurableObject<HostEnv> {
   private async storedAccount(): Promise<StoredAccount | null> {
     const account = await this.ctx.storage.get<StoredAccount>(ACCOUNT_KEY);
     return account?.registered ? account : null;
+  }
+
+  private async retired(): Promise<boolean> {
+    return (await this.ctx.storage.get<Retirement>(RETIREMENT_KEY)) !== undefined;
+  }
+
+  private async requireLive(): Promise<void> {
+    if (await this.retired()) throw new Error("RepoDeleted: this repository's installation is being deleted");
+  }
+
+  /** The deletion under way, which must be the one asked for. */
+  private async storedRetirement(operation: string): Promise<Retirement | null> {
+    const retirement = (await this.ctx.storage.get<Retirement>(RETIREMENT_KEY)) ?? null;
+    if (retirement && retirement.operation !== operation) {
+      throw new Error("RepoConflict: another deletion of this repository is under way, and a deletion's operation is immutable");
+    }
+    return retirement;
+  }
+
+  private async saveRetirement(retirement: Retirement): Promise<Retirement> {
+    await this.ctx.storage.put(RETIREMENT_KEY, retirement);
+    return retirement;
+  }
+
+  /** Records the deletion, then announces it once no upload is still storing bytes. */
+  private async quiesce(operation: string): Promise<Retirement> {
+    let retirement = await this.storedRetirement(operation);
+    if (!retirement) {
+      const name = this.ctx.id.name;
+      if (!name) throw new Error("A hosted repository must be addressed by name");
+      const account = await this.ctx.storage.get<StoredAccount>(ACCOUNT_KEY);
+      retirement = await this.saveRetirement({
+        operation, name, phase: "quiescing", updatedAt: Date.now(), announced: false, did: account?.did ?? null,
+      });
+    }
+    if (retirement.phase !== "quiescing" || this.uploads > 0) return retirement;
+    const account = await this.storedAccount();
+    if (account) {
+      const repo = this.open(account);
+      if (!retirement.announced) {
+        await repo.storage.setActive(false);
+        await repo.sequencer.sequenceAccount({ did: account.did, active: false, status: "deleted" });
+        retirement = await this.saveRetirement({ ...retirement, announced: true });
+      }
+      // Relays hear of the deletion before anything is erased.
+      await this.deliver(repo);
+    }
+    return this.saveRetirement({ ...retirement, phase: "quiesced", updatedAt: Date.now() });
+  }
+
+  /** Drops the repository's tables and every stored value but the deletion's record. */
+  private async eraseStorage(): Promise<void> {
+    await this.ctx.storage.deleteAlarm();
+    this.ctx.storage.transactionSync(() => {
+      for (const name of this.tables()) this.ctx.storage.sql.exec(`DROP TABLE "${name}"`);
+    });
+    const keys = [...(await this.ctx.storage.list()).keys()].filter((key) => key !== RETIREMENT_KEY);
+    for (let start = 0; start < keys.length; start += DELETE_BATCH) {
+      await this.ctx.storage.delete(keys.slice(start, start + DELETE_BATCH));
+    }
+    this.opened = null;
+  }
+
+  /** Tables the repository created; the platform's own begin with an underscore or sqlite_. */
+  private tables(): string[] {
+    return this.ctx.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").toArray()
+      .map((table) => table.name).filter((name) => !name.startsWith("_") && !name.startsWith("sqlite_"));
   }
 
   private open(account: StoredAccount): OpenRepo {
@@ -591,7 +771,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
         DELIVERY_BATCH,
       ).toArray().map((row): OutboxEvent => ({ seq: row.seq, type: eventType(row.event_type), payload: new Uint8Array(row.payload) }));
       if (events.length === 0) return;
-      delivered = await firehose.append(repo.account.name, await repoState(repo), events);
+      delivered = await firehose.append(repo.account.name, await repoState(repo, await this.retired()), events);
       await this.ctx.storage.put(DELIVERED_KEY, delivered);
       this.ctx.storage.sql.exec("DELETE FROM firehose_events WHERE seq <= ?", delivered - KEEP_DELIVERED);
     }
@@ -603,14 +783,14 @@ export class HostedRepo extends DurableObject<HostEnv> {
   }
 }
 
-async function repoState(repo: OpenRepo): Promise<RepoState> {
+async function repoState(repo: OpenRepo, retired: boolean): Promise<RepoState> {
   const active = await repo.storage.getActive();
   const head = await repo.storage.getRoot();
   return {
     did: repo.account.did,
     handle: repo.account.handle,
     active,
-    status: active ? null : "deactivated",
+    status: active ? null : retired ? "deleted" : "deactivated",
     rev: await repo.storage.getRev(),
     head: head ? head.toString() : null,
   };

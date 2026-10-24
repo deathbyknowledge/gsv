@@ -144,6 +144,33 @@ export class HostFirehose extends DurableObject<HostEnv> {
     return { repos: page.map(repoState), cursor: rows.length > limit ? page.at(-1)?.did : undefined };
   }
 
+  /** Whether the host holds a repository's directory entry, by the name of the object that holds it. */
+  async inspectRepository(name: string): Promise<"identified" | "unrelated" | "empty"> {
+    if (this.row("SELECT * FROM repos WHERE name = ?", name)) return "identified";
+    const held = this.ctx.storage.sql.exec<{ held: number }>(
+      "SELECT EXISTS (SELECT 1 FROM repos) OR EXISTS (SELECT 1 FROM events) AS held",
+    ).one().held;
+    return held ? "unrelated" : "empty";
+  }
+
+  /**
+   * Forgets a deleted repository: its directory entry and every event it
+   * published but the last, its deletion, which a relay replaying the
+   * firehose still needs until the event ages out.
+   */
+  async eraseRepository(name: string): Promise<void> {
+    const hosted = this.row("SELECT * FROM repos WHERE name = ?", name);
+    if (!hosted) return;
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec(
+        "DELETE FROM events WHERE did = ? AND seq < (SELECT MAX(seq) FROM events WHERE did = ?)",
+        hosted.did,
+        hosted.did,
+      );
+      this.ctx.storage.sql.exec("DELETE FROM repos WHERE did = ?", hosted.did);
+    });
+  }
+
   async healthCheck(): Promise<{ ok: true }> {
     this.ctx.storage.sql.exec("SELECT 1").toArray();
     return { ok: true };

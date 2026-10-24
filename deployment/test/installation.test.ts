@@ -22,7 +22,7 @@ const recordedCloudflare = {
     return Effect.succeed({ workerName: props.name ?? id, url: `https://${id}.invalid`,
       durableObjectNamespaces: { Kernel: "1".repeat(32), Process: "2".repeat(32), Conversation: "3".repeat(32),
         Repository: "4".repeat(32), InferenceExecutor: "5".repeat(32), TelegramInstallation: "6".repeat(32), WebSearchInstallation: "7".repeat(32),
-        InstanceCoordinator: "8".repeat(32), ComputerInstance: "9".repeat(32) },
+        InstanceCoordinator: "8".repeat(32), ComputerInstance: "9".repeat(32), HostedRepo: "a".repeat(32), HostFirehose: "b".repeat(32) },
       bind(bindingId: string, input: Omit<RecordedBinding, "id">) { recorded.bindings.push({ id: bindingId, ...input }); return Effect.void; } });
   },
   D1: { Database(_id: string, props: typeof recorded.databases[number]) { recorded.databases.push(props); return Effect.succeed({ databaseId: "fixture-database" }); } },
@@ -567,10 +567,35 @@ describe("open network host", () => {
     expect(recorded.databases).toEqual([]);
   });
 
-  it("refuses deletion admission that could not remove Ships' repositories and DIDs", async () => {
-    await expect(run(GsvDeployment({ ...input, pds, deletion: { operatorResources: catalog } }, dependencies)))
-      .rejects.toThrow("no deletion owner");
+  const pdsResources: OperatorResourceCatalog = [
+    { id: "pds-multipart", kind: "r2", namespace: "pds-blobs", source: "cloudflare-r2-multipart", scope: "installation", disposition: "live" },
+    { id: "pds-logs", kind: "logs", namespace: "pds", source: "cloudflare-workers-logs", scope: "installation", disposition: "retained" },
+  ];
+
+  it("lets Accounts delete each Ship's repository, host entries, files and DID through the PDS", async () => {
+    await run(GsvDeployment({ ...input, pds, deletion: { operatorResources: [...catalog, ...pdsResources] } }, dependencies));
+    expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryPdsDeletionBinding", bindings: [{ type: "service",
+      name: "DELETION_OWNER_PDS", service: "pds", entrypoint: "PdsLifecycleEntrypoint",
+      props: { authority: "installation-deletion" } }] });
+    const discovery = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionDiscoveryBinding");
+    expect(await run(Output.evaluate(discovery?.bindings[0].json, {}))).toMatchObject({
+      ["a".repeat(32)]: { ownerId: "pds", kind: "pds-repository" },
+      ["b".repeat(32)]: { ownerId: "pds", kind: "pds-host" },
+    });
+    const resources = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionResourcesBinding");
+    expect(await run(Output.evaluate(resources?.bindings.find((entry) => entry.name === "DELETION_RESOURCE_SCOPES")?.json, {})))
+      .toHaveProperty("pds", [{ kind: "r2", namespace: "pds-blobs" }]);
+  });
+
+  it("refuses deletion admission whose catalog omits the PDS's logs or unfinished uploads", async () => {
+    const [multipart, logs] = pdsResources;
+    await expect(run(GsvDeployment({ ...input, pds, deletion: { operatorResources: [...catalog, multipart] } }, dependencies)))
+      .rejects.toThrow(/cloudflare-workers-logs scope/);
     expect(recorded.workers).toEqual([]);
+    await run(GsvDeployment({ ...input, pds, deletion: { operatorResources: [...catalog, logs] } }, dependencies));
+    const resources = recorded.bindings.find((binding) => binding.id === "FixtureDirectoryDeletionResourcesBinding");
+    await expect(run(Output.evaluate(resources?.bindings.find((entry) => entry.name === "DELETION_RESOURCE_SCOPES")?.json, {})))
+      .rejects.toThrow(/multipart uploads/);
   });
 
   it("refuses an invalid PDS in a runtime composed without GsvDeployment", async () => {

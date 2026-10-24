@@ -4,6 +4,7 @@ import {
   PlcClient,
   PlcClientError,
   signOperation,
+  signTombstone,
   validateIncomingOp,
   type DidPlcString,
   type Operation,
@@ -74,6 +75,38 @@ export async function registerGenesis(env: HostEnv, identity: RepoIdentity): Pro
     if (!(error instanceof PlcClientError)) throw error;
     const logged = await plc.getOperationLog(identity.did).catch(() => null);
     if (logged?.at(0)?.sig !== identity.genesis.sig) throw error;
+  }
+}
+
+/**
+ * Tombstones a DID so the directory stops resolving it. The directory keeps
+ * the DID's operation log, which names its handle and host. A DID the
+ * directory never logged, one already tombstoned, and one whose rotation keys
+ * no longer include the host's need nothing.
+ */
+export async function tombstoneIdentity(env: HostEnv, did: DidPlcString): Promise<void> {
+  const plc = new PlcClient({ serviceUrl: env.PLC_URL });
+  const last = await lastEntry(plc, did);
+  if (!last || last.operation.type === "plc_tombstone") return;
+  const rotation = await Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY));
+  const hostKey = await rotation.exportPublicKey("did");
+  if (last.operation.type !== "plc_operation" || !last.operation.rotationKeys.includes(hostKey)) return;
+  const tombstone = await signTombstone({ type: "plc_tombstone", prev: last.cid }, rotation);
+  try {
+    await plc.submitOperation(did, tombstone);
+  } catch (error) {
+    if (!(error instanceof PlcClientError)) throw error;
+    if ((await lastEntry(plc, did))?.operation.type !== "plc_tombstone") throw error;
+  }
+}
+
+/** The DID's latest operation that is still in force, or null if the directory never logged the DID. */
+async function lastEntry(plc: PlcClient, did: DidPlcString) {
+  try {
+    return (await plc.getAuditLog(did)).filter((entry) => !entry.nullified).at(-1) ?? null;
+  } catch (error) {
+    if (error instanceof PlcClientError && error.status === 404) return null;
+    throw error;
   }
 }
 

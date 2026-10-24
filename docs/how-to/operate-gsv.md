@@ -221,10 +221,11 @@ and dead-letter queues where applicable. Queues and unfinished uploads are live
 resources. Current bindings and default-provider settings cannot establish the
 complete history of destinations, including people's own provider accounts.
 Leave the catalog unset while that inventory is unresolved; deletion admission
-fails closed. A configured catalog declares scope, not successful cleanup. The
-open-network host has no deletion owner yet, so a deployment that runs it
-refuses a catalog: deletion would leave Ships' public repositories and DIDs
-behind.
+fails closed. A configured catalog declares scope, not successful cleanup. A
+deployment that runs the open-network host also catalogs its bucket's
+unfinished uploads and, when they persist, its Worker's logs. Deleting an
+installation then deletes its Ship's public account and tombstones its DID,
+which can't be undone; see [the open network](../architecture/open-network.md#deletion).
 
 Deleting an installation is a resumable operation. Accounts verifies the resource
 inventory before cleanup starts, every owning service reports its own erasure

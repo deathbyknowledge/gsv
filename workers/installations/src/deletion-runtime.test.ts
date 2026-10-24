@@ -92,6 +92,36 @@ describe("Accounts deletion runtime", () => {
     expect(await state.accounts.resolveInstallation(state.second.installationId)).toMatchObject({ state: "active" });
   });
 
+  it("deletes a Ship's public repository and host entries without requiring adapter inventory imports", async () => {
+    const state = await fixture();
+    const pds = new ExternalOwner();
+    const erase = vi.spyOn(pds, "eraseInstallation");
+    const gateway: InstallationDeletionDiscoveryService = {
+      inspectInstallationDeletion: vi.fn(),
+      importInstallationDeletionInventory: vi.fn(async (input) => ({ installationId: input.installationId,
+        discoverySha256: input.discoverySha256, outcome: "verified" as const, verifiedAt: state.manifest.capturedAt })),
+    };
+    const repositories = "c".repeat(32);
+    const host = "d".repeat(32);
+    state.manifest.owners.push({ id: "pds", resources: [
+      { kind: "durable-object", namespace: repositories, resourceId: "c".repeat(64), name: state.old.installationId },
+      { kind: "durable-object", namespace: host, resourceId: "d".repeat(64), name: "host" },
+      { kind: "r2", namespace: "pds-blobs", resourceId: `installations/${state.old.installationId}/` },
+    ], evidence: [{ id: "pds-scan", reference: "test://scan/pds", sha256: "c".repeat(64), capturedAt: state.manifest.capturedAt }] });
+    const runtime = new AccountsDeletionRuntime(state.db, { ...state.owners, pds }, state.resolver, 20, () => state.manifest.capturedAt,
+      { gateway, namespaces: { [repositories]: { ownerId: "pds", kind: "pds-repository" }, [host]: { ownerId: "pds", kind: "pds-host" } } });
+    await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: state.old.handle });
+    const registered = await runtime.registerInventory(state.old.installationId, state.manifest);
+    expect(await runtime.importInventory(state.old.installationId, {
+      installationId: state.old.installationId, discoverySha256: registered.sha256, resources: [],
+    })).toMatchObject({ outcome: "verified" });
+    await runtime.begin(state.old.installationId, { operationId: state.operationId, inventorySha256: registered.sha256 });
+    let status = await runtime.status(state.old.installationId);
+    for (let attempt = 0; attempt < 15 && status.phase !== "live-erased"; attempt++) status = await runtime.retry(state.old.installationId);
+    expect(status.phase).toBe("live-erased");
+    expect(erase).toHaveBeenCalledWith({ version: 1, operationId: state.operationId, installationId: state.old.installationId });
+  });
+
   it("drains owner verification records in bounded batches while retaining global owner access", async () => {
     const f = await fixture();
     const attempt = await f.db.prepare("SELECT id FROM installation_owner_attempts WHERE installation_id = ? LIMIT 1")

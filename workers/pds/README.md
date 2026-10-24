@@ -19,6 +19,10 @@ that hostname as the `#ship` service other Ships call. The Kernel gets
 service-auth tokens only for `space.ship.*` methods addressed to another Ship's
 `#ship` service. Public reads serve an active installation's repository; a
 retired one reads as deleted and any other state as suspended.
+`PdsLifecycleEntrypoint` deletes a retired installation's account for Accounts
+when the binding carries the `installation-deletion` authority: the repository
+announces the deletion to relays, then erases its files, its host entries and
+its storage, and tombstones its DID. It keeps only a record of the deletion.
 
 The operator composition in `deployment/src/runtime.ts` deploys the worker
 when the operator configures a PLC rotation key. `npm run deployment:build`
@@ -101,6 +105,8 @@ before any record publishes it.
 The GSV tests use an in-memory Accounts directory. They cover the publishing
 authority, installations that are not active, the handles a new account may
 take, the installation's blob prefix, and how each installation state reads.
+The deletion tests cover the deletion authority, what quiescing refuses and
+announces, resumable erasure, the DID tombstone, and deletion discovery.
 
 ## Smoke check
 

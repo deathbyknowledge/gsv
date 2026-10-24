@@ -98,6 +98,6 @@ function didDocument(did: string, state: ReturnType<typeof normalizeOp>): PlcDoc
   };
 }
 
-function isDidPlc(value: string): value is DidPlcString {
+export function isDidPlc(value: string): value is DidPlcString {
   return value.startsWith("did:plc:");
 }

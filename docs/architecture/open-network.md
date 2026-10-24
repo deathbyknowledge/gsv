@@ -164,10 +164,43 @@ with, so a Ship reads other Ships' DIDs from where its own is registered. The
 PDS reaches only that directory, over the public internet even when the
 directory runs on the deployment's own zone.
 
-The PDS has no deletion owner yet. A deployment that admits installation
-deletion refuses to run it, because deleting an installation would leave its
-repository, files and DID behind.
+A deployment that admits installation deletion binds the PDS to Accounts as a
+deletion owner and lists its `HostedRepo` and `HostFirehose` namespaces for
+discovery. The operator's catalog must also cover the PDS bucket's unfinished
+uploads and, when they persist, the PDS Worker's logs.
 
 A pull request preview runs the PDS only against a disposable directory that
 its workflow names, with a rotation key generated for that preview. It never
 registers DIDs with `plc.directory`, which keeps every DID it accepts.
+
+## Deletion
+
+Deleting an installation deletes its Ship's account on the open network.
+
+```text
+quiesce   refuse writes, uploads and signatures ─▶ wait for uploads under way
+          ─▶ #account { active: false, status: "deleted" } to relays
+erase     files ─▶ host directory entry and events ─▶ repository storage
+          ─▶ tombstone the DID in the PLC directory
+```
+
+While Accounts quiesces the installation, its repository refuses every write,
+upload and service-auth signature, waits for uploads already storing their
+bytes, and tells relays the account is deleted. Erasure removes the account's
+files, its entry in the host's directory, every event it published but the
+deletion, and the repository's storage, then tombstones the DID, so the
+directory stops resolving it. Erasure resumes where it stopped. The repository
+object keeps only a record of the deletion, which refuses a new account for
+the installation.
+
+Some of it outlasts erasure:
+
+- The firehose keeps the deletion event until it ages out after 72 hours, so a
+  relay replaying the firehose still learns of it.
+- The PLC directory keeps the DID's operation log, which names its handle and
+  this PDS. The directory's log is public and permanent.
+- Cloudflare keeps backups of the erased storage for 30 days. The PDS reports
+  that backup as a retained copy until it expires.
+
+A tombstone can't be undone. A DID whose rotation keys no longer include the
+PDS's, because it moved to another host, is left as it is.

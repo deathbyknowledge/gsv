@@ -4,7 +4,7 @@ import { operatorUpdateCatalogSchema, type OperatorUpdateCatalog } from "../../p
 import * as Output from "alchemy/Output";
 import { operatorResourceCatalogSchema, type OperatorResourceCatalog } from "../../workers/installations/src/operator-resource-contracts.ts";
 import { assertGsvPds, GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
-import { GsvDeletionDiscoveryBindings, GsvDeletionResourceBindings, gsvAdapterDeletionNamespaces, type GsvDeletionNamespace, type GsvDeletionResourceScopes } from "./deletion-bindings.ts";
+import { GsvDeletionDiscoveryBindings, GsvDeletionResourceBindings, gsvAdapterDeletionNamespaces, gsvPdsDeletionNamespaces, type GsvDeletionNamespace, type GsvDeletionResourceScopes } from "./deletion-bindings.ts";
 
 export type GsvOperatorAccess = { kind: "operator" } | {
   kind: "cloudflare-access"; teamDomain: string; audience: string | Output.Output<string>;
@@ -110,9 +110,6 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     if (props.routing && new URL(props.pds.origin).hostname !== `pds.${props.domain}`) {
       throw new Error("When the deployment owns routing, the PDS must be at pds.<domain>");
     }
-    if (props.deletion) {
-      throw new Error("The PDS has no deletion owner yet, so deletion admission would leave Ships' repositories and DIDs behind");
-    }
   }
   const signup = props.installations.ownerSignupOrigin ? new URL(props.installations.ownerSignupOrigin) : undefined;
   if (signup && (signup.origin !== props.installations.ownerSignupOrigin || signup.protocol !== "https:"
@@ -157,6 +154,8 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       // GsvRuntime disables gateway persistence for its default tail-consumer setup; ripgit keeps its own default.
       if (observability || !props.telemetry) requireResource("cloudflare-workers-logs", props.names.gateway);
       requireResource("cloudflare-workers-logs", props.names.ripgit);
+      // Like ripgit, the PDS keeps its own default.
+      if (props.pds) requireResource("cloudflare-workers-logs", props.pds.workerName);
     }
     // The public executor always exposes native Workers AI, whose text transport uses the account's `default` AI Gateway.
     requireResource("provider", "workers-ai");
@@ -272,6 +271,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     ...(webSearchLifecycle?.namespaces.map((namespace) => ({ ...namespace, ownerId: "web-search", worker: webSearchLifecycle.worker })) ?? []),
     ...(instancesLifecycle?.namespaces.map(namespace => ({ ...namespace, ownerId: "instances", worker: instancesLifecycle.worker })) ?? []),
     ...gsvAdapterDeletionNamespaces(props.services?.adapters ?? []),
+    ...(runtime.pds ? gsvPdsDeletionNamespaces(runtime.pds) : []),
   ]);
   if (catalog && database) {
     const adapters = props.services?.adapters ?? [];
@@ -279,10 +279,12 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       .pipe(Output.map(([databaseId, ...adapterNames]): GsvDeletionResourceScopes => {
         // Supplied adapter Workers own their observability; their persisted-log scope must be explicitly declared.
         for (const name of adapterNames) requireResource("cloudflare-workers-logs", name);
-        return { accounts: [{ kind: "d1", namespace: databaseId }],
+        const scopes: GsvDeletionResourceScopes = { accounts: [{ kind: "d1", namespace: databaseId }],
           gateway: [{ kind: "r2", namespace: props.names.storageBucket }], inference: [],
           ...Object.fromEntries(adapters.map((adapter) => [adapter.id, []])),
         };
+        if (props.pds) scopes.pds = [{ kind: "r2", namespace: props.pds.bucketName }];
+        return scopes;
       }));
     yield* GsvDeletionResourceBindings(`${props.logicalPrefix}DirectoryDeletionResourcesBinding`, directory, scopes, catalog);
   }

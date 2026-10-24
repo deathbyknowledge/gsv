@@ -204,13 +204,16 @@ policy copying and disablement remain service-owned.
 Pending deletion means data remains stored. Accounts durably coordinates
 quiesce and erase operations across the captured resource inventory, including
 pending resets inherited from an older source. Kernel, Process, Conversation,
-R2, ripgit, adapters, mail, inference and cloud instances report their own cleanup receipts.
+R2, ripgit, adapters, mail, inference, cloud instances and the open-network host report their own cleanup receipts.
 Instance coordinators are installation-owned resources in discovery and deletion;
 they do not require adapter peer-inventory import. Their lifecycle owner stops
 browsers and erases profiles and temporary files before confirming live erasure.
 Cloud computer objects also appear as `instance-computer` resources. Their owner
 destroys the container before confirming erasure or releasing its reservation;
 late start and health completions cannot reactivate a retired object.
+The open-network host's repository objects and its one host object need no
+import either. Its owner tells relays the account is deleted and tombstones the
+Ship's DID; see [deletion on the open network](open-network.md#deletion).
 Missing inventory or owner evidence prevents a claim of completed erasure.
 Stale work cannot recreate data after its owner has retired the identity.
 

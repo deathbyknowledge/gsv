@@ -184,6 +184,7 @@ jobs:
               - 'workers/gateway/**'
               - 'workers/adapters/email/**'
               - 'workers/ripgit/**'
+              - 'workers/pds/**'
               - 'scripts/worker-build.sh'
             adapters:
               - '.github/workflows/ci.yml'

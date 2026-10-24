@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createPairingCredential, createPairingSecret } from "@humansandmachines/gsv/protocol/pairing";
 import type { SysPairRedeemArgs } from "@humansandmachines/gsv/protocol/syscalls/pairing";
 import { z } from "zod";
-import { deletionStackHarness, NAMESPACES, SCOPES, STACK } from "./fixtures/deletion-stack-harness.ts";
+import { deletionStackHarness, NAMESPACES, SCOPES, serveTestPlc, STACK } from "./fixtures/deletion-stack-harness.ts";
 import { administerOperatorBootstrap } from "../src/operator-bootstrap.ts";
 import { captureInstallationDeletionObjects, deletionCaptureEpochSchema, deletionCaptureInspectionResultSchema } from "../src/installation-deletion-capture.ts";
 import type { MigrationD1Row } from "../src/installation-migration-d1.ts";
@@ -18,6 +18,10 @@ const rpcSchema = z.object({ type: z.literal("res"), id: z.string(), ok: z.boole
 const createdSchema = z.object({ installation: z.object({ installationId: z.string() }), onboarding: z.object({ onboardingUrl: z.string() }) });
 type AdminHeaders = { origin: string; "content-type": string; authorization?: string };
 type ResourceNamespace = { getByName(name: string): { inspectInstallationResource(): Promise<{ name?: string; empty: boolean }> } };
+type PdsEnvironment = { BLOBS: R2Bucket;
+  REPOS: { getByName(name: string): { holding(): Promise<{ name: string | null; holds: boolean }> } };
+  FIREHOSE: { getByName(name: string): { locate(identifier: string): Promise<{ active: boolean; status: string | null } | null> } } };
+const identitySchema = z.object({ identity: z.object({ did: z.string() }).nullable() });
 type ClaimRedemption = { id: string; secret: string; proof: string; password: string };
 type PendingClaims = { pairing: SysPairRedeemArgs; recovery: ClaimRedemption;
   authorization: Parameters<InstallationRecoveryGatewayService["authorizeRootRecovery"]>[0] };
@@ -30,13 +34,19 @@ const password = "local-acceptance-fixture-password";
 describe("public multi-worker deletion acceptance", () => {
   let harness: Harness;
   let operatorToken: string;
+  let plc: ReturnType<typeof serveTestPlc>;
   const sockets: Socket[] = [];
   beforeAll(async () => {
+    plc = serveTestPlc();
     harness = deletionStackHarness();
     await harness.listen();
     await harness.getWorker(STACK.accounts).applyD1Migrations("INSTALLATIONS_DB");
   });
-  afterAll(async () => { for (const socket of sockets) if (socket.readyState === 1) socket.close(1000, "test complete"); await harness?.close(); });
+  afterAll(async () => {
+    for (const socket of sockets) if (socket.readyState === 1) socket.close(1000, "test complete");
+    await harness?.close();
+    vi.restoreAllMocks();
+  });
 
   async function post(path: string, body: Json, authenticated = true) {
     const headers: AdminHeaders = { origin, "content-type": "application/json" };
@@ -100,6 +110,17 @@ describe("public multi-worker deletion acceptance", () => {
     }
     const pidA = await populate(socketA, "first-space");
     await populate(socketB, "second-space");
+    const pds = harness.getWorker<PdsEnvironment>(STACK.pds);
+    const dids = new Map<string, string>();
+    for (const [installationId, socket] of [[a.installationId, socketA], [b.installation.installationId, socketB]] as const) {
+      // Signing in publishes the person's profile, which gives the Ship its DID.
+      await until(async () => identitySchema.parse(await ok(socket, "atproto.identity", {})).identity !== null);
+      const did = identitySchema.parse(await ok(socket, "atproto.identity", {})).identity!.did;
+      dids.set(installationId, did);
+      await (await pds.getEnv()).BLOBS.put(`installations/${installationId}/${did}/staged/fixture`, "fixture upload");
+    }
+    const didA = dids.get(a.installationId)!;
+    const didB = dids.get(b.installation.installationId)!;
     for (const socket of [socketA, socketB]) {
       expect(await ok(socket, "sys.browser.profile.create", { requestId: "saved-browser", label: "Saved browser" }))
         .toMatchObject({ profile: { ownerUid: 1000, state: "active" } });
@@ -232,20 +253,27 @@ describe("public multi-worker deletion acceptance", () => {
     });
     const receipts = (await db.prepare("SELECT owner_id, receipt_json FROM installation_deletion_owners WHERE operation_id = ?")
       .bind("delete-retired-first").all<{ owner_id: string; receipt_json: string }>()).results;
-    expect(receipts.map((receipt) => receipt.owner_id).sort()).toEqual(["accounts", "gateway", "inference", "instances", "mail"]);
+    expect(receipts.map((receipt) => receipt.owner_id).sort()).toEqual(["accounts", "gateway", "inference", "instances", "mail", "pds"]);
     for (const receipt of receipts) expect(JSON.parse(receipt.receipt_json)).toMatchObject({ phase: "live-erased", pendingResources: 0, outcome: "retention-pending" });
     expect((await storage.list({ prefix: `installations/${a.installationId}/` })).objects).toEqual([]);
     const { PROFILES: remainingProfiles } = await harness.getWorker<{ PROFILES: R2Bucket }>(STACK.instances).getEnv();
     expect((await remainingProfiles.list({ prefix: `${a.installationId}/` })).objects).toEqual([]);
     expect((await remainingProfiles.list({ prefix: `${b.installation.installationId}/` })).objects).toHaveLength(1);
     expect(await ok(socketB, "sys.browser.profile.list", {})).toMatchObject({ profiles: [{ state: "active" }] });
+    const pdsEnvironment = await pds.getEnv();
+    expect(plc.operations(didA).at(-1)).toMatchObject({ type: "plc_tombstone" });
+    expect(plc.operations(didB).at(-1)).toMatchObject({ type: "plc_operation" });
+    expect((await pdsEnvironment.BLOBS.list({ prefix: `installations/${a.installationId}/` })).objects).toEqual([]);
+    expect((await pdsEnvironment.BLOBS.list({ prefix: `installations/${b.installation.installationId}/` })).objects).toHaveLength(1);
+    expect(await pdsEnvironment.FIREHOSE.getByName("host").locate(didB)).toMatchObject({ active: true, status: null });
+    expect(identitySchema.parse(await ok(socketB, "atproto.identity", {})).identity?.did).toBe(didB);
     expect(await db.prepare("SELECT id FROM installations WHERE id = ?").bind(a.installationId).first()).toBeNull();
     const replay = await harness.getWorker(STACK.evidence).fetch("https://fixture.invalid/replay", {
       method: "POST", body: JSON.stringify({ installationId: a.installationId }),
     });
     expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({ late: expect.stringMatching(/retired|not active/i),
-      inference: expect.stringMatching(/not active/i), mail: "Mail installation is unavailable" });
+      inference: expect.stringMatching(/not active/i), mail: "Mail installation is unavailable", pds: expect.stringMatching(/RepoDeleted/) });
     const gatewayNamespaces = await harness.getWorker<{ KERNEL: ResourceNamespace; PROCESS: ResourceNamespace; CONVERSATION: ResourceNamespace }>(STACK.gateway).getEnv();
     for (const resource of capture.resources) {
       const namespace = NAMESPACES.find((namespace) => namespace.namespaceId === resource.namespace)!;
@@ -260,6 +288,15 @@ describe("public multi-worker deletion acceptance", () => {
       if (["kernel", "process", "conversation"].includes(namespace.kind)) {
         const binding = namespace.kind === "kernel" ? gatewayNamespaces.KERNEL : namespace.kind === "process" ? gatewayNamespaces.PROCESS : gatewayNamespaces.CONVERSATION;
         expect(await binding.getByName(resource.name).inspectInstallationResource()).toMatchObject({ empty: true, name: resource.name });
+        continue;
+      }
+      if (namespace.kind === "pds-repository") {
+        // Only the deletion's record remains, and it refuses a new account (the replay above).
+        expect(await pdsEnvironment.REPOS.getByName(resource.name).holding()).toEqual({ name: resource.name, holds: false });
+        continue;
+      }
+      if (namespace.kind === "pds-host") {
+        expect(await pdsEnvironment.FIREHOSE.getByName(resource.name).locate(didA)).toBeNull();
         continue;
       }
       const sql = await harness.getWorker(namespace.worker).getDurableObjectStorage(namespace.binding, { id: resource.resourceId });
