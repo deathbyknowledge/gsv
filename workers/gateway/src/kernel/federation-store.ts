@@ -235,7 +235,7 @@ const conversationMessageOriginSchema = z.discriminatedUnion("kind", [
   }),
 ]) satisfies z.ZodType<ConversationMessageOrigin>;
 
-const federationOutboxLocalMessageSchema = z.strictObject({
+export const federationOutboxLocalMessageSchema = z.strictObject({
   messageId: z.string(),
   text: z.string(),
   social: socialMessageMetadataSchema,
@@ -247,7 +247,7 @@ const federationOutboxLocalMessageSchema = z.strictObject({
   createdAtMs: z.number().int().nonnegative(),
 }) satisfies z.ZodType<FederationOutboxLocalMessage>;
 
-const federationMessagePreparationSchema = z.strictObject({
+export const federationMessagePreparationSchema = z.strictObject({
   kind: z.literal("message"),
   messageId: z.string(),
   threadId: z.string(),

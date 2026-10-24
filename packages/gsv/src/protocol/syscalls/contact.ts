@@ -66,7 +66,7 @@ export type ContactSummary = {
   ownerUid: number;
   state: ContactState;
   generation: string;
-  /** The other person's DID; absent only while this Ship moves its contacts to DIDs. */
+  /** The other person's DID. A contact from before DIDs has none until the move names one, or for good if the move ended it. */
   remoteDid?: string;
   /** The name they gave when you connected. */
   remoteName: string;

@@ -171,12 +171,12 @@ export async function deleteProfileRecord(ctx: KernelContext): Promise<void> {
   });
 }
 
-/** The Ship's DID, created under its address by the first outward act: a publish, an invitation or a message request. */
 /** The Ship's account on the open network: its DID and the handle that names it; its first outward act creates them. */
 export async function ensureShipAccount(ctx: KernelContext): Promise<PublicRepositoryAccount> {
   return await withRepository(ctx, async (repository) => await ensureIdentity(repository, shipHostname(ctx), ctx));
 }
 
+/** The Ship's DID, created under its address by the first outward act: a publish, an invitation or a message request. */
 export async function ensureShipDid(ctx: KernelContext): Promise<string> {
   return ctx.shipIdentity.current() ?? await withRepository(ctx, async (repository) => (await ensureIdentity(repository, shipHostname(ctx), ctx)).did);
 }

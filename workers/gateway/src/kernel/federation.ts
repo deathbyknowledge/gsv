@@ -26,6 +26,7 @@ import type {
   ConversationMessageOrigin,
   DeliverInput,
   DeliverOutput,
+  FederationDeliveryPayload,
   FederationRequestDelivery,
   FsCopyEndpoint,
   FsReadArgs,
@@ -936,7 +937,7 @@ export async function deliver(call: ShipCall, ctx: KernelContext): Promise<Deliv
     }
     throw new PublicFederationError(404, "Contact not found");
   }
-  const payloadHash = await sha256Base64Url(canonicalJson(jsonValue(payload)));
+  const payloadHash = await federationPayloadHash(payload);
   await ctx.coordinateFederationInbound(
     `${contact.id}:${generation}:${deliveryId}`,
     async () => await ctx.coordinateFederationContact(contact.id, async () => {
@@ -1701,4 +1702,9 @@ function parseResourceSize(value: string | null): number {
 
 function jsonValue<Value>(value: Value): JsonValue {
   return jsonValueSchema.parse(value);
+}
+
+/** What a repeated delivery must match: its payload exactly as its sender's Ship sent it. */
+export async function federationPayloadHash(payload: FederationDeliveryPayload): Promise<string> {
+  return await sha256Base64Url(canonicalJson(jsonValue(payload)));
 }

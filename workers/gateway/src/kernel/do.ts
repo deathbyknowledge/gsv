@@ -1,4 +1,10 @@
-import type { OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
+import type {
+  OperatorIdentityMove,
+  OperatorIdentitySurvey,
+  OperatorPersonDid,
+  OperatorShipSnapshot,
+} from "@humansandmachines/gsv/services/operator";
+import { IdentityMoveStore, moveIdentities, surveyIdentityMove } from "./federation/identity-move";
 import { buildOperatorShipSnapshot } from "./operator-snapshot";
 import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
@@ -599,27 +605,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       for (const pending of this.mailboxes.pendingOutboundEnqueues()) {
         await this.scheduleManagedOutboundEnqueue(pending.outboundId, pending.nextAt ?? Date.now() + outboundEnqueueRetryDelay(1));
       }
-      for (const delivery of this.federation.recoverableOutbox(
-        MAX_FEDERATION_RECOVERABLE_OUTBOX,
-      )) {
-        await this.federationRuntime.scheduleFederationDelivery(
-          delivery.deliveryId,
-          delivery.nextAttemptAtMs ?? Date.now(),
-          true,
-        );
-      }
-      for (const inbox of this.federation.recoverableInbox(
-        MAX_FEDERATION_RECOVERABLE_INBOX,
-      )) {
-        await this.federationRuntime.scheduleFederationInbox(
-          inbox.contactId,
-          inbox.contactGeneration,
-          inbox.deliveryId,
-          Date.now(),
-          true,
-        );
-      }
-      await this.scheduleApproachMaintenance();
+      await this.scheduleFederationRecovery();
       // every start of the Kernel makes sure the ledger's daily housekeeping is pending
       await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     });
@@ -775,6 +761,31 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return publicProfileAvatar(this.buildKernelContext({}));
   }
 
+  /** Schedules the deliveries and message requests a restart, or the move to DIDs, left waiting. */
+  private async scheduleFederationRecovery(): Promise<void> {
+    for (const delivery of this.federation.recoverableOutbox(
+      MAX_FEDERATION_RECOVERABLE_OUTBOX,
+    )) {
+      await this.federationRuntime.scheduleFederationDelivery(
+        delivery.deliveryId,
+        delivery.nextAttemptAtMs ?? Date.now(),
+        true,
+      );
+    }
+    for (const inbox of this.federation.recoverableInbox(
+      MAX_FEDERATION_RECOVERABLE_INBOX,
+    )) {
+      await this.federationRuntime.scheduleFederationInbox(
+        inbox.contactId,
+        inbox.contactGeneration,
+        inbox.deliveryId,
+        Date.now(),
+        true,
+      );
+    }
+    await this.scheduleApproachMaintenance();
+  }
+
   async scheduleApproachMaintenance(runningTaskId?: string): Promise<void> {
     await this.federationRuntime.coordinateFederationContact("approach-maintenance-schedule", async () => {
       const due = this.approaches.nextWake();
@@ -799,6 +810,20 @@ export class Kernel extends DurableObject<GatewayEnv> {
       shipSummary: async (pid) => await (await getProcessByPid(pid, this.installationId)).operatorRunSummary(runLimit),
       now: () => Date.now(),
     });
+  }
+
+  /** Before the move to DIDs, through the Accounts-bound operator entrypoint. */
+  async operatorIdentitySurvey(active: boolean): Promise<OperatorIdentitySurvey> {
+    this.retirement.assertActive();
+    return await surveyIdentityMove(this.buildKernelContext({}), new IdentityMoveStore(this.ctx.storage), active);
+  }
+
+  /** The move to DIDs, through the Accounts-bound operator entrypoint; the deliveries and requests it moved resume. */
+  async operatorIdentityMove(people: OperatorPersonDid[]): Promise<OperatorIdentityMove> {
+    this.retirement.assertActive();
+    const move = await moveIdentities(this.buildKernelContext({}), new IdentityMoveStore(this.ctx.storage), people);
+    await this.scheduleFederationRecovery();
+    return move;
   }
 
   async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {

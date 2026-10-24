@@ -97,16 +97,20 @@ export async function ensureDefaultProfile(ownerUid: number, ctx: KernelContext)
   }
 }
 
+/** Writes a profile published before profiles were records to the Ship's repository, as it was published. */
+export async function publishPendingProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
+  if (!ctx.profiles.pendingPublication(ownerUid)) return;
+  await ctx.profiles.exclusive(async () => {
+    // The owner may have published or unpublished it meanwhile.
+    const pending = ctx.profiles.pendingPublication(ownerUid);
+    if (!pending) return;
+    ctx.profiles.publish(ownerUid, pending.revision, await putProfileRecord(ctx, pending.record, null), pending.record);
+  });
+  ctx.broadcastToUserUid(ownerUid, "profile.changed");
+}
+
 async function applyDefaultProfile(ownerUid: number, key: string, ctx: KernelContext): Promise<void> {
-  if (ctx.profiles.pendingPublication(ownerUid)) {
-    await ctx.profiles.exclusive(async () => {
-      // The owner may have published or unpublished it meanwhile.
-      const pending = ctx.profiles.pendingPublication(ownerUid);
-      if (!pending) return;
-      ctx.profiles.publish(ownerUid, pending.revision, await putProfileRecord(ctx, pending.record, null), pending.record);
-    });
-    ctx.broadcastToUserUid(ownerUid, "profile.changed");
-  }
+  await publishPendingProfile(ownerUid, ctx);
   const applied = ctx.config.getExplicit(key);
   if (applied === "1") return;
   const existing = ctx.profiles.draft(ownerUid);
