@@ -47,6 +47,7 @@ export function Logs({ account, onProcess }: { account: ConsoleAccount; onProces
 
   return <section class="settings-logs" aria-label={t("settings.logs.title")}>
     <div class="settings-logs-heading"><h1>{t("settings.logs.title")}</h1>{allowed && <button type="button" class="settings-text-action" aria-pressed={technical} onClick={() => setTechnical((value) => !value)}>{t("settings.logs.raw")}</button>}</div>
+    <p class="settings-intro">{t("settings.logs.intro")}</p>
     {!allowed ? <p class="settings-muted">{t("settings.logs.noAccess")}</p> : <>
       {query.error && <p class="settings-error" role="alert">{t("settings.logs.failed", { error: query.error.message })}</p>}
       {query.isPending && connected && <LoadingState variant="panel">{t("settings.logs.loading")}</LoadingState>}

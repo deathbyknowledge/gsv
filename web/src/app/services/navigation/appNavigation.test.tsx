@@ -1,18 +1,20 @@
+import type { AppHistoryState } from "./appNavigation";
 import type { JSX } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestRoot } from "../../testing/testHarness";
-import { AppLink as SessionLink, useAppLocation as useSessionLocation, navigateApp } from "./appNavigation";
+import { AppLink as SessionLink, useAppLocation as useSessionLocation, appHistoryIndex, navigateApp } from "./appNavigation";
 
 function browser() {
   let url = new URL("https://ship.example/");
   const events = new EventTarget();
+  let state: AppHistoryState | null = null;
   vi.stubGlobal("document", {});
-  const pushState = vi.fn((_state: null, _unused: string, destination: string) => { url = new URL(destination, url); });
-  const replaceState = vi.fn((_state: null, _unused: string, destination: string) => { url = new URL(destination, url); });
+  const pushState = vi.fn((next: AppHistoryState, _unused: string, destination: string) => { state = next; url = new URL(destination, url); });
+  const replaceState = vi.fn((next: AppHistoryState, _unused: string, destination: string) => { state = next; url = new URL(destination, url); });
   vi.stubGlobal("window", {
     get location() { return url; },
-    history: { pushState, replaceState },
+    history: { pushState, replaceState, get state() { return state; } },
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
     dispatchEvent: events.dispatchEvent.bind(events),
@@ -31,6 +33,19 @@ function click(options: Partial<JSX.TargetedMouseEvent<HTMLAnchorElement>> = {})
 afterEach(() => vi.unstubAllGlobals());
 
 describe("session navigation", () => {
+  it.each([null, {}, { gsvAppIndex: "2" }, { gsvAppIndex: 1.5 }, { gsvAppIndex: Number.MAX_SAFE_INTEGER + 1 }])("rejects an invalid browser history index: %o", (state) => {
+    vi.stubGlobal("window", { history: { state } });
+    expect(appHistoryIndex()).toBeNull();
+  });
+
+  it("preserves other browser history state when replacing a destination", () => {
+    const history = browser();
+    history.replaceState({ gsvAppIndex: 3, scroll: { top: 120 } }, "", "https://ship.example/chat");
+    navigateApp("/people", { replace: true });
+    expect(history.replaceState).toHaveBeenLastCalledWith({ gsvAppIndex: 3, scroll: { top: 120 } }, "", "https://ship.example/people");
+    expect(appHistoryIndex()).toBe(3);
+  });
+
   it("records distinct app destinations while redirects and repeated selections do not add entries", async () => {
     const history = browser();
     const root = createTestRoot("App history");
@@ -38,11 +53,11 @@ describe("session navigation", () => {
     function Probe() { current = useSessionLocation(); return null; }
     try {
       await root.render(<Probe />);
-      await act(() => navigateApp("/chat", { replace: true }));
-      expect(history.replaceState).toHaveBeenCalledWith(null, "", "https://ship.example/chat");
-      await act(() => navigateApp("/people"));
-      await act(() => navigateApp("/people?contact=first"));
-      await act(() => navigateApp("/people?contact=first"));
+      await act(() => { navigateApp("/chat", { replace: true }); });
+      expect(history.replaceState).toHaveBeenCalledWith({ gsvAppIndex: 0 }, "", "https://ship.example/chat");
+      await act(() => { navigateApp("/people"); });
+      await act(() => { navigateApp("/people?contact=first"); });
+      await act(() => { navigateApp("/people?contact=first"); });
       expect(history.pushState.mock.calls.map((call) => call[2])).toEqual([
         "https://ship.example/people", "https://ship.example/people?contact=first",
       ]);
@@ -65,7 +80,7 @@ describe("session navigation", () => {
       const event = click();
       await act(() => link.props.onClick(event));
       expect(event.preventDefault).toHaveBeenCalledOnce();
-      expect(history.pushState).toHaveBeenCalledWith(null, "", "https://ship.example/recover-member");
+      expect(history.pushState).toHaveBeenCalledWith({ gsvAppIndex: 1 }, "", "https://ship.example/recover-member");
       expect(current).toEqual({ pathname: "/recover-member", revision: 1 });
       await act(() => history.visit("/"));
       expect(current).toEqual({ pathname: "/", revision: 2 });

@@ -105,6 +105,15 @@ export const ptBR = {
 
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (indisponível)",
+  "settings.preferences.leaveUnsaved": "Você tem preferências não salvas. Sair sem salvar? Suas alterações serão mantidas aqui.",
+  "settings.preferences.noChanges": "Nenhuma alteração pendente",
+  "settings.preferences.unsaved": "Alterações não salvas",
+  "settings.preferences.save": "Salvar alterações",
+  "settings.account.title": "Conta",
+  "settings.account.deleteTitle": "Excluir sua conta",
+  "settings.account.deleteRequest": "Para excluir sua conta, envie um e-mail para {email} e faremos a exclusão manualmente para você.",
+  "settings.account.deleteExplanation": "O Ship ainda está em acesso antecipado, por isso ainda não adicionamos uma opção para você excluir sua conta por conta própria.",
+
   "settings.preferences.title": "Preferências",
   "settings.preferences.intro": "Padrões para {name}. Ajudantes sem configurações próprias herdam os seus padrões.",
   "settings.preferences.loading": "Carregando preferências…",
@@ -152,9 +161,12 @@ export const ptBR = {
   "settings.reasoning.save": "salvar esforço",
 
   // Settings: language, timezone and appearance
+  "settings.language.invalid": "Digite um código de idioma válido, como pt-BR.",
+  "settings.language.code": "Código do idioma",
+  "settings.language.custom": "Outro idioma…",
   "settings.language.label": "Idioma",
   "settings.language.placeholder": "Automático",
-  "settings.language.hint": "O Ship começa neste idioma, e a interface o usa quando há uma tradução disponível. Escolha uma sugestão ou digite um código de idioma, como pt-BR. Você pode pedir ao Ship para mudar de idioma a qualquer momento.",
+  "settings.language.hint": "O Ship e a interface usam este idioma. Você pode pedir ao Ship para mudar a qualquer momento.",
   "settings.language.save": "salvar idioma",
   "settings.language.useDevice": "usar o idioma deste dispositivo",
   "settings.timezone.label": "Fuso horário",
@@ -168,6 +180,7 @@ export const ptBR = {
   "settings.appearance.system": "Igual ao sistema",
   "settings.appearance.light": "Claro",
   "settings.appearance.dark": "Escuro",
+  "settings.appearance.showStars": "Mostrar estrelas",
   "settings.appearance.hint": "Salvo apenas neste dispositivo, não na sua conta. Pressione a tecla l fora de um campo de texto para alternar entre claro e escuro.",
 
   // Settings: standing responsibilities
@@ -200,6 +213,7 @@ export const ptBR = {
   "settings.permissions.ruleTarget": "Destino da regra {number}",
   "settings.permissions.action": "Ação",
   "settings.permissions.ruleAction": "Ação da regra {number}",
+  "settings.permissions.moveDown": "mover para baixo",
   "settings.permissions.moveUp": "mover para cima",
   "settings.permissions.addRule": "adicionar regra",
   "settings.permissions.save": "salvar política",
@@ -246,6 +260,7 @@ export const ptBR = {
   "settings.instructions.gone": "Este arquivo de instruções não está mais disponível.",
 
   // Settings: messengers
+  "settings.messengers.comingSoon": "Em breve",
   "settings.messengers.title": "Apps de mensagem",
   "settings.messengers.intro": "Escolha onde você conversa com seu Ship.",
   "settings.messengers.telegram": "Converse com seu Ship pelo Telegram.",
@@ -450,6 +465,7 @@ export const ptBR = {
   "settings.recovery.setUp": "configurar recuperação",
 
   // Settings: logs
+  "settings.logs.intro": "Veja o que o Ship fez, quando aconteceu e se deu certo. Selecione um registro para ver os detalhes.",
   "settings.logs.title": "Registros",
   "settings.logs.activity": "Atividade",
   "settings.logs.history": "Histórico de chamadas de sistema",
@@ -1244,7 +1260,7 @@ export const ptBR = {
   "shell.help.label": "Ajuda",
   "shell.help.search": "Pesquisar no Chat",
   "shell.help.views": "Visualizações e aparência",
-  "shell.help.viewsHint": "Os atalhos de navegação funcionam fora dos campos de texto e dos formulários de ativação.",
+  "shell.help.viewsHint": "Os atalhos de navegação funcionam quando você não está digitando ou configurando uma conexão ou modelo de IA. Acesse Configurações para desativar as estrelas de fundo.",
   "shell.help.memory": "Memória",
   "shell.help.people": "Contatos",
   "shell.help.theme": "Alternar entre claro e escuro",
