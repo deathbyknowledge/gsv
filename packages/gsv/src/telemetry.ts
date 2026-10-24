@@ -74,6 +74,17 @@ export const inferenceFailureStageSchema = z.enum([
   "lifecycle",
 ]);
 
+/** The setup steps a Ship runs after its setup request is accepted. */
+export const installationSetupStepSchema = z.enum([
+  "bootstrap-system",
+  "write-auth-state",
+  "write-system-config",
+  "write-ai-config",
+  "issue-machine-token",
+  "ensure-home-layout",
+  "provision-personal-agent",
+]);
+
 export const telemetryComponentSchema = z.enum([
   "gateway",
   "accounts",
@@ -328,7 +339,8 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
     properties: z.strictObject({
       diagnosticId: z.string().check(z.uuid()),
       outcome: z.literal("failed"),
-      stage: z.enum(["authorization", "recovery", "activation"]),
+      stage: z.enum(["authorization", "recovery", "activation", "setup"]),
+      step: z.optional(installationSetupStepSchema),
       errorType: telemetryErrorTypeSchema,
       durationMs: nonNegativeIntegerSchema,
     }),
@@ -465,6 +477,7 @@ export const telemetryRecordSchema = z.strictObject({
 }).check(z.refine((record) => telemetryEventComponents[record.event.name].some((component) => component === record.component)));
 
 export type TelemetryComponent = z.infer<typeof telemetryComponentSchema>;
+export type InstallationSetupStep = z.infer<typeof installationSetupStepSchema>;
 export type TelemetryEvent = z.infer<typeof telemetryEventSchema>;
 export type TelemetryRecord = z.infer<typeof telemetryRecordSchema>;
 export type InferenceWorkload = z.infer<typeof inferenceWorkloadSchema>;

@@ -105,10 +105,16 @@ can leave the seam disabled or attach a consumer for their own backend.
 
 If an Accounts call fails during setup authorization, activation, or recovery,
 Gateway emits `installation.setup.failed` with a diagnostic ID, the stage,
-an allowed error type, and duration. The response includes that ID. The latest
-cause is retained only in the Kernel's private `managed_setup_failure` KV record, bounded to
-8,192 characters for operator inspection; exception text never enters the response or
-telemetry.
+an allowed error type, and duration. A setup step that fails after the request is
+accepted, such as a filesystem write while the home is laid out, emits the same event
+with the `setup` stage and the step's name. Either way, the response includes the
+diagnostic ID. The person can retry a failed step with the same credentials: a step
+before the account is written runs again, and once the account exists the retry
+provisions the personal agent and machine token again and sign-in lays out the home.
+A refused request, such as an invalid username, is answered with its reason and
+records nothing. The latest cause is retained only in the Kernel's private
+`managed_setup_failure` KV record, bounded to 8,192 characters for operator
+inspection; exception text never enters the response or telemetry.
 
 The component allowlist includes Gateway, Accounts, Inference, Search and Mail.
 Event ownership is validated as well as the producing Worker: a mail producer

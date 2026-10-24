@@ -66,6 +66,14 @@ describe("telemetry contract", () => {
       assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, ...extra } } }));
     }
   });
+  it("names the setup step a failed setup stopped at, from a closed list", () => {
+    const event = {
+      stream: "operational", name: "installation.setup.failed",
+      properties: { diagnosticId: "11111111-1111-4111-8111-111111111111", stage: "setup", step: "ensure-home-layout", outcome: "failed", errorType: "Error", durationMs: 12 },
+    };
+    assert.ok(telemetryRecordSchema.safeParse(createTelemetryRecord({ ...INPUT, event })).success);
+    assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, step: "ripgit apply 'alice/home'" } } }));
+  });
   it("allows correlated metadata timings only from the three lookup owners", () => {
     const event = {
       stream: "operational", name: "inference.metadata.finished",

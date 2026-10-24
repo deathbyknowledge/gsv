@@ -76,6 +76,62 @@ describe.each(["authorization", "pending-recovery", "recovery", "activation"] as
   );
 });
 
+describe("a failed setup step", () => {
+  async function setUp(rejection: Error) {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const put = vi.fn();
+    const sendError = vi.fn();
+    const identity = { installationId: "inst_setup_step", handle: "setup", canonicalOrigin: "https://setup.example" };
+    // SAFETY: setup reads only these Kernel boundaries before the stubbed account creation.
+    const host = {} as Kernel;
+    Object.assign(host, {
+      env: { GSV_TELEMETRY_ENABLED: true, INSTALLATION_DIRECTORY: {
+        authorizeInstallationOnboarding: vi.fn().mockResolvedValue({ ok: true, claimId: "claim", installation: identity }),
+      } },
+      installationId: identity.installationId, installationIdentity: identity,
+      auth: { isSetupMode: () => true },
+      ctx: { storage: { kv: { put } } },
+      transport: { sendError },
+    });
+    vi.spyOn(setup, "handleSysSetup").mockRejectedValue(rejection);
+    // SAFETY: This rejection path only forwards the connection and never reads setup context.
+    const connection = {} as KernelConnection<KernelConnectionState>;
+    // SAFETY: Account creation is stubbed.
+    await new ManagedOnboarding(host).handleManagedSysSetup(connection, {
+      type: "req", id: "setup-request", call: "sys.setup",
+      args: { username: "owner", password: "private-password", onboardingToken: "private-setup-token" },
+    }, {} as KernelContext);
+    return { log, put, sendError, connection };
+  }
+
+  it("retains a step's cause privately and exports only its closed metadata", async () => {
+    const { log, put, sendError, connection } = await setUp(
+      new setup.SetupStepError("provision-personal-agent", new TypeError("private ripgit detail")));
+    const failures = put.mock.calls.filter(([key]) => key === MANAGED_SETUP_FAILURE_KEY);
+    expect(failures).toHaveLength(1);
+    const diagnostic = failures[0][1];
+    expect(diagnostic).toMatchObject({ stage: "setup", step: "provision-personal-agent", cause: expect.stringContaining("private ripgit detail") });
+    expect(sendError).toHaveBeenCalledExactlyOnceWith(connection, "setup-request", 503,
+      "Installation setup did not finish. Try again.", { diagnosticId: diagnostic.diagnosticId });
+    expect(log).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      component: "gateway", installationId: "inst_setup_step",
+      event: { stream: "operational", name: "installation.setup.failed", properties: {
+        stage: "setup", step: "provision-personal-agent", diagnosticId: diagnostic.diagnosticId,
+        outcome: "failed", errorType: "TypeError", durationMs: expect.any(Number),
+      } },
+    }));
+    expect(JSON.stringify(log.mock.calls)).not.toContain("private");
+    expect(JSON.stringify(sendError.mock.calls)).not.toContain("private");
+  });
+
+  it("answers a refused request with its reason and records no failure", async () => {
+    const { log, put, sendError, connection } = await setUp(new Error("User already exists: owner"));
+    expect(sendError).toHaveBeenCalledExactlyOnceWith(connection, "setup-request", 400, "User already exists: owner");
+    expect(put).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+  });
+});
+
 describe("managed work gate", () => {
   it("reuses a recent Accounts confirmation until a lifecycle change invalidates it", async () => {
     let state: "active" | "retained" = "active";

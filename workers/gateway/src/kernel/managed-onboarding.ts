@@ -14,6 +14,7 @@ import type {
 import {
   handleSysSetup as handleKernelSetup,
   recoverCompletedSysSetup,
+  SetupStepError,
 } from "./sys/setup";
 import {
   handleSysSetupAssist,
@@ -31,7 +32,7 @@ import {
   type KernelConnectionState as ConnectionState,
 } from "./connection";
 import type { Kernel } from "./do";
-import { emitTelemetry, telemetryErrorTypeSchema } from "@humansandmachines/gsv/telemetry";
+import { emitTelemetry, telemetryErrorTypeSchema, type InstallationSetupStep, type TelemetryEvent } from "@humansandmachines/gsv/telemetry";
 import {
   MANAGED_ONBOARDING_COMPLETION_KEY,
   MANAGED_SETUP_FAILURE_KEY,
@@ -40,6 +41,10 @@ import type {
   PendingManagedOnboardingCompletion,
 } from "./do-shared";
 
+
+type SetupFailureProperties = Extract<TelemetryEvent, { name: "installation.setup.failed" }>["properties"];
+/** The latest setup failure's cause, kept privately for the operator. */
+type SetupFailureRecord = Pick<SetupFailureProperties, "diagnosticId" | "stage" | "step"> & { recordedAt: number; cause: string };
 
 export class ManagedOnboarding {
   private gate?: ManagedInstallationGate;
@@ -184,6 +189,10 @@ async handleManagedSysSetup(
           this.pendingManagedOnboarding,
         );
       } catch (error) {
+        if (error instanceof SetupStepError) {
+          this.reportSetupFailure(connection, frame.id, error.cause, "setup", startedAt, error.step);
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         this.host.transport.sendError(connection, frame.id, 400, message);
         return;
@@ -214,20 +223,27 @@ async handleManagedSysSetup(
   }
 
 private reportSetupFailure(connection: KernelConnection<ConnectionState>, requestId: string, cause: unknown,
-    stage: "authorization" | "recovery" | "activation", startedAt: number): void {
+    stage: "authorization" | "recovery" | "activation" | "setup", startedAt: number, step?: InstallationSetupStep): void {
     const diagnosticId = crypto.randomUUID();
     const errorType = telemetryErrorTypeSchema.safeParse(cause instanceof Error ? cause.name : undefined).data ?? "unknown";
-    this.host.ctx.storage.kv.put(MANAGED_SETUP_FAILURE_KEY, {
+    const failure: SetupFailureRecord = {
       diagnosticId, stage, recordedAt: Date.now(),
       cause: (cause instanceof Error ? cause.stack ?? cause.message : String(cause)).slice(0, 8192),
-    });
+    };
+    const properties: SetupFailureProperties = { diagnosticId, stage, outcome: "failed", errorType, durationMs: Math.max(0, Date.now() - startedAt) };
+    if (step) {
+      failure.step = step;
+      properties.step = step;
+    }
+    this.host.ctx.storage.kv.put(MANAGED_SETUP_FAILURE_KEY, failure);
     emitTelemetry(this.host.env, {
       installationId: this.host.installationId, component: "gateway",
-      event: { stream: "operational", name: "installation.setup.failed",
-        properties: { diagnosticId, stage, outcome: "failed", errorType, durationMs: Math.max(0, Date.now() - startedAt) } },
+      event: { stream: "operational", name: "installation.setup.failed", properties },
     });
+    // The person can retry a failed step with the same credentials; see recoverCompletedSysSetup.
     this.host.transport.sendError(connection, requestId, 503,
-      stage === "activation" ? "Installation setup could not be activated" : "Installation setup is unavailable", { diagnosticId });
+      stage === "activation" ? "Installation setup could not be activated"
+        : stage === "setup" ? "Installation setup did not finish. Try again." : "Installation setup is unavailable", { diagnosticId });
   }
 
 private async sendSetupRecoveryError(connection: KernelConnection<ConnectionState>, requestId: string, startedAt: number): Promise<void> {
