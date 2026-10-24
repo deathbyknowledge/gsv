@@ -15,7 +15,8 @@ const MAX_LIST_LIMIT = 500;
 const DEFAULT_CHANGE_LIMIT = 100;
 const MAX_CHANGE_LIMIT = 500;
 const DEFAULT_WAKE_BATCH_LIMIT = 25;
-const RESPONSIBILITY_WAKE_RETRY_MS = 5 * 60_000;
+/** How long each recovery wake waits while Ship leaves the work untouched; the last repeats. */
+const RESPONSIBILITY_WAKE_RETRY_MS = [5 * 60_000, 15 * 60_000, 60 * 60_000, 6 * 60 * 60_000];
 const DEFAULT_WAITING_CHECK_MS = 24 * 60 * 60_000;
 
 type ResponsibilityRow = {
@@ -41,6 +42,7 @@ type ResponsibilityRow = {
   resolution_json: string | null;
   change_pending: number;
   wake_retry_at: number | null;
+  wake_retry_count: number;
   revision: number;
   created_at: number;
   updated_at: number;
@@ -544,7 +546,7 @@ export class ResponsibilityStore {
           assignee_kind = ?, assignee_pid = ?, state = ?, priority = ?,
           due_at = ?, due_woken_at = ?, next_check_at = ?, check_woken_at = ?,
           blocker = ?, lease_expires_at = ?, lease_woken_at = ?, resolution_json = ?,
-          change_pending = ?, wake_retry_at = NULL, revision = ?, updated_at = ?, resolved_at = ?
+          change_pending = ?, wake_retry_at = NULL, wake_retry_count = 0, revision = ?, updated_at = ?, resolved_at = ?
          WHERE owner_uid = ? AND responsibility_id = ?`,
         next.parentId ?? null,
         next.title,
@@ -622,7 +624,7 @@ export class ResponsibilityStore {
           `UPDATE responsibilities SET
              assignee_kind = 'ship', assignee_pid = NULL, state = 'open',
              lease_expires_at = NULL, lease_woken_at = NULL,
-             change_pending = 1, wake_retry_at = NULL, revision = ?, updated_at = ?
+             change_pending = 1, wake_retry_at = NULL, wake_retry_count = 0, revision = ?, updated_at = ?
            WHERE owner_uid = ? AND responsibility_id = ?`,
           revision,
           input.now,
@@ -784,6 +786,8 @@ export class ResponsibilityStore {
       if (rows.length === 0) return;
 
       for (const row of rows) {
+        const requiresAction = responsibilityRequiresAction(recordFromRow(row), now);
+        const retries = requiresAction && wakesOnlyToRetry(row, now) ? row.wake_retry_count + 1 : 0;
         this.storage.sql.exec(
           `UPDATE responsibilities SET
              change_pending = 0,
@@ -799,14 +803,14 @@ export class ResponsibilityStore {
                WHEN lease_expires_at IS NOT NULL AND lease_expires_at <= ? THEN lease_expires_at
                ELSE lease_woken_at
              END,
-             wake_retry_at = ?
+             wake_retry_at = ?,
+             wake_retry_count = ?
            WHERE owner_uid = ? AND responsibility_id = ?`,
           now,
           now,
           now,
-          responsibilityRequiresAction(recordFromRow(row), now)
-            ? now + RESPONSIBILITY_WAKE_RETRY_MS
-            : null,
+          requiresAction ? recoveryWakeAt(retries, now) : null,
+          retries,
           ownerUid,
           row.responsibility_id,
         );
@@ -858,8 +862,8 @@ export class ResponsibilityStore {
   markEventDelivered(ownerUid: number, ids: string[], now: number): void {
     for (const record of this.recordsByIds(ownerUid, ids)) {
       this.storage.sql.exec(
-        "UPDATE responsibilities SET wake_retry_at = ? WHERE owner_uid = ? AND responsibility_id = ?",
-        responsibilityRequiresAction(record, now) ? now + RESPONSIBILITY_WAKE_RETRY_MS : null,
+        "UPDATE responsibilities SET wake_retry_at = ?, wake_retry_count = 0 WHERE owner_uid = ? AND responsibility_id = ?",
+        responsibilityRequiresAction(record, now) ? recoveryWakeAt(0, now) : null,
         ownerUid,
         record.id,
       );
@@ -1066,6 +1070,19 @@ function shouldMarkChangePending(
   if (announced) return 0;
   if (!observedByShip) return 1;
   return responsibilityRequiresAction(responsibility, now) ? 1 : 0;
+}
+
+/** A row waking with no change, check, deadline or lease of its own is retrying work Ship left untouched. */
+function wakesOnlyToRetry(row: ResponsibilityRow, now: number): boolean {
+  const due = (at: number | null, wokenAt: number | null) => at !== null && at <= now && wokenAt !== at;
+  return row.change_pending === 0
+    && !due(row.next_check_at, row.check_woken_at)
+    && !due(row.due_at, row.due_woken_at)
+    && !due(row.lease_expires_at, row.lease_woken_at);
+}
+
+function recoveryWakeAt(retries: number, now: number): number {
+  return now + RESPONSIBILITY_WAKE_RETRY_MS[Math.min(retries, RESPONSIBILITY_WAKE_RETRY_MS.length - 1)]!;
 }
 
 function assignNullable<
