@@ -95,7 +95,8 @@ GSV currently projects these environments:
   owner's current instance atomically, including during provisioning. Explicit
   separate starts create another target. Each instance keeps its own lifetime
   and terminal identity; saved login state belongs to the account across
-  successive ordinary instances.
+  successive ordinary instances. Target listings include active instances
+  only; a finished one remains reachable by exact target ID.
 - Slack projects a personally authorized workspace as a service-backed
   target implementing `fs.read`, `fs.search`, and `shell.exec`. Its read-only
   filesystem exposes conversations, exact messages, bounded history and thread
