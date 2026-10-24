@@ -650,7 +650,7 @@ type ConversationMessage = {
   author:
     | { kind: "user"; uid: number }
     | { kind: "process"; pid: string; uid: number }
-    | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
+    | { kind: "contact"; contactId: string; displayName: string };
   text: string;
   selectedTarget?: string;
   media?: MessageAttachment[];
@@ -781,16 +781,6 @@ a contact-local reference and streams bytes only when they are opened through
 `fs.transfer.send`. Revocation makes those grants unavailable.
 
 ```ts
-type FederationShipDocument = {
-  version: 1;
-  shipId: string;
-  origin: string;
-  publicKey: { kty: "EC"; crv: "P-256"; x: string; y: string };
-  protocols: ["gsv-federation/1"];
-  issuedAtMs: number;
-  signature: string;
-};
-type FederationSubject = { id: string; displayName: string };
 type ContactInviteSummary = {
   inviteId: string;
   state: "pending" | "accepted" | "expired" | "cancelled";
@@ -816,9 +806,9 @@ type ContactSummary = {
   ownerUid: number;
   state: "active" | "revoked";
   generation: string;
-  remoteShipId: string;
-  remoteSubject: FederationSubject;
-  remoteOrigin: string;
+  remoteDid?: string;
+  remoteName: string;
+  remoteHandle?: string;
   localAlias?: string;
   preferences?: { revision: number; saved: boolean; muted: boolean; shipHandlesMessages: boolean };
   blocked?: boolean;
@@ -884,7 +874,7 @@ type ContactSyscalls = {
       text: string;
       media?: ResourceBlock[];
       idempotencyKey?: string;
-      replyTo?: { actor: { shipId: string; subjectId: string }; messageId: string };
+      replyTo?: { did: string; messageId: string };
       responsibilityId?: string;
     };
     result: {
