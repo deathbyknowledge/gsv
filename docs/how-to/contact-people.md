@@ -69,24 +69,29 @@ name, choose who handles new messages, then send a first message.
 They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same
 conversation, opens it directly, and enables further messages and attachments.
 
-A new Ship's profile is public from your first sign-in, named by your handle and
-open to message requests, so people can add you by handle. Choose your handle at the
-bottom of People to see your profile as others will: a **public** or **private**
-label, your handle with a button that copies your profile address, your bio, and
-who can start a conversation. An empty bio shows "Space cowboy." with a
-**complete bio** link. Choose **edit** to change it. On a private profile the main
+A new Ship's profile is public on the open network from your first sign-in, named
+by your handle and open to message requests, so people can add you by handle. Choose
+your handle at the bottom of People to see your profile as others will: a **public**
+or **private** label, your picture, your handle with a button that copies your
+profile address, your bio, and who can start a conversation. An empty bio shows
+"Space cowboy." with a **complete bio** link. While the profile is public, a note
+there says who can see it and how to make it private, until you choose **got it**.
+Choose **edit** to change it. **choose picture** takes a PNG, JPEG or WebP image,
+which Ship crops to a square of at most 512 pixels; like the rest of the profile,
+it becomes public when you publish. On a private profile the main
 button is **publish**, which makes it public; on a public one it is **save**, which
 updates the public page. **save as draft** keeps changes private, shown as
 **unpublished changes**, and leaves the public page as it is. The note under the
 buttons says which applies. Who can see my profile? describes the live page. The profile can be open to message requests from
 anyone, or limited to people you invite.
-Your public address is `https://YOUR-SPACE/profile`. Existing published
-profile links still work. Drafts remain when you return to a conversation. The
-public page shows your handle, your bio, and either a form where visitors enter
+Your public address is `https://YOUR-SPACE/profile`, and older `/@name` profile
+links open it. Drafts remain when you return to a conversation. The
+public page shows your picture, your handle, your bio, and either a form where visitors enter
 their own handle to message you from their Ship, or a note that message requests
-are restricted. Its Ship wordmark links to the operator's site, and its
-**Ship to Ship profile** link opens the signed copy other Ships use to check the
-profile is genuine. Unpublishing removes the page and keeps it private until you publish again;
+are restricted. Its Ship wordmark links to the operator's site. The page asks
+search engines not to list it. Other Ships and open-network apps read the same
+profile from your Ship's public record. Unpublishing removes the page and the
+record and keeps the profile private until you publish again;
 existing contacts and conversations remain. People who already viewed it may
 retain copies. A Ship whose owner already saved, published or unpublished a profile
 keeps it exactly as it was; only a Ship with no saved profile gets the public default.
@@ -175,6 +180,20 @@ Open **details → Work requests** in the conversation to inspect shared work.
 The person offering work can cancel an unaccepted offer. The person receiving it can accept or reject it, then start, complete or cancel accepted work. Ship shows only the actions available to your side.
 
 An update takes effect locally before the other Ship confirms it. **Awaiting confirmation** keeps the request open, including a completion or cancellation. **Update not confirmed** means delivery failed; it does not claim the other person accepted that outcome. Older records can show **Confirmation unavailable**.
+
+## Contacts from before the open network
+
+If your Ship had contacts before your operator moved it to the open network,
+those contacts move too, so that each person is named by their DID. Your
+conversations and their messages stay. Until the move finishes, sending a
+message, inviting someone or sending a message request says "Your contacts are
+moving to the open network. Try again in a few minutes."
+
+A contact whose Ship is on another operator's deployment ends with the move.
+The conversation stays, marked ended; to keep talking, send them a new
+invitation or a message request. A message request the other person never
+received expires, and you can send it again. Invitation links created before
+the upgrade no longer work, so create a new one.
 
 ## Delivery
 

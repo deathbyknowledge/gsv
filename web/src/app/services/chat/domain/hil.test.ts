@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { approvalAnswer, hilDetailLabel, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
+import type { JsonObject } from "@humansandmachines/gsv/protocol";
+import { approvalAnswer, hilDetailLabel, hilPublication, hilRequestLine, hilRequestSentence, normalizeHilRequest } from "./hil";
 import { describeCall } from "./callDescription";
 
 const BASE_REQUEST = {
@@ -115,5 +116,38 @@ describe("typed approval answers", () => {
     ["yes!!", null],
   ] as const)("reads %j as %s", (text, decision) => {
     expect(approvalAnswer(text)).toBe(decision);
+  });
+});
+
+describe("publishing to the open network", () => {
+  const publish = (args: JsonObject) => ({ ...BASE_REQUEST, syscall: "atproto.write", target: "gsv", args });
+  const file = (cid: string, mimeType = "image/png") => ({ $type: "blob", ref: { $link: cid }, mimeType, size: 10 });
+
+  it("finds every file the records carry once, however deep", () => {
+    const publication = hilPublication(publish({
+      handle: "alice",
+      address: "alice.ship.space",
+      writes: [
+        { action: "create", collection: "space.ship.post", record: { $type: "space.ship.post", cover: file("a"), gallery: [file("b"), { nested: file("a") }] } },
+        { action: "put", collection: "space.ship.post", rkey: "pinned", record: { $type: "space.ship.post", clip: file("c", "video/mp4") } },
+      ],
+    }));
+    expect(publication).toEqual({
+      handle: "alice",
+      address: "alice.ship.space",
+      changes: [{ action: "create", record: "space.ship.post" }, { action: "put", record: "space.ship.post/pinned" }],
+      files: [
+        { cid: "a", mimeType: "image/png", size: 10 },
+        { cid: "b", mimeType: "image/png", size: 10 },
+        { cid: "c", mimeType: "video/mp4", size: 10 },
+      ],
+    });
+  });
+
+  it("reads only a publish it can show in full", () => {
+    expect(hilPublication({ ...publish({ handle: "alice", address: "alice.ship.space", writes: [] }) })).toBeNull();
+    expect(hilPublication(publish({ address: "alice.ship.space", writes: [{ action: "delete", collection: "a.b.c", rkey: "x" }] }))).toBeNull();
+    expect(hilPublication({ ...BASE_REQUEST, target: "gsv" })).toBeNull();
+    expect(describeCall({ toolName: "Shell", syscall: "atproto.write" })).toBe("publish to the open network");
   });
 });

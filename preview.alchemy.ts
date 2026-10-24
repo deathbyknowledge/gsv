@@ -40,6 +40,13 @@ export default Alchemy.Stack(`gsv-previews-${repositoryId}`, {
   ) === "true";
   const model = (yield* Config.String("GSV_PREVIEW_INFERENCE_MODEL").pipe(Config.withDefault(""))) || "@cf/zai-org/glm-5.3-flash";
   z.string().regex(/^@cf\/[a-z0-9._/-]+$/).parse(model);
+  // A preview runs the PDS only against a disposable directory: plc.directory would keep every PR's DIDs forever.
+  const plcUrl = yield* Config.String("GSV_PREVIEW_PLC_URL").pipe(Config.withDefault(""));
+  if (plcUrl && new URL(plcUrl).hostname === "plc.directory") throw new Error("Previews must not register DIDs with plc.directory");
+  const pds = plcUrl ? {
+    workerName: `${prefix}-pds`, bucketName: `${prefix}-pds-blobs`, workerBundle: runtime.pdsBundle,
+    origin: `https://pds.${domain}`, plcUrl, rotationKey: yield* Alchemy.makeRandom("PreviewPlcRotationKey", { bytes: 32 }),
+  } : undefined;
 
   const policy = yield* Cloudflare.Access.Policy("PreviewAccessPolicy", {
     name: `${prefix}-company`, decision: "allow", sessionDuration: "24h",
@@ -57,7 +64,7 @@ export default Alchemy.Stack(`gsv-previews-${repositoryId}`, {
   const deployment = yield* GsvDeployment({
     logicalPrefix: "Preview", allowResourceDeletion, domain, adminOrigin,
     access: { kind: "cloudflare-access", teamDomain, audience: application.aud },
-    routing: { zoneId },
+    routing: { zoneId }, pds,
     names: { gateway: prefix, ripgit: `${prefix}-ripgit`, storageBucket: `${prefix}-storage` },
     paths: runtime,
     observability: { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: false } },

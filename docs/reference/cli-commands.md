@@ -141,7 +141,6 @@ message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
 message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]
-contact identity
 contact find @HANDLE|ADDRESS
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
@@ -154,6 +153,12 @@ contact revoke CONTACT_ID
 contact request list [--contact CONTACT_ID] [--all] [--json]
 contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]
 contact request update REQUEST_ID --state STATE [--revision N] [--details JSON] [--delivery-id ID]
+atproto identity
+atproto create COLLECTION [--rkey RKEY] (--json RECORD | --file PATH)
+atproto put COLLECTION RKEY (--json RECORD | --file PATH)
+atproto delete COLLECTION RKEY
+atproto apply (--json WRITES | --file PATH)
+atproto blob PATH [--mime TYPE]
 r12y list [--all] [--json]
 r12y show ID
 r12y create --title TITLE [--details JSON] [--parent ID] [--priority PRIORITY] [--due ISO] [--check ISO] [--blocker TEXT] [--dedupe KEY]
@@ -381,8 +386,10 @@ exists: the address may be mistyped, the Ship elsewhere, or the profile private.
 Private invitations work without a published profile or an existing contact.
 `contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]`
 sends that profile a first message request, which the person accepts or declines
-in People. The signed-in human or their canonical Ship may send it; repeating the
-same request returns the existing one.
+in People. The request names the version of the profile it read, so their Ship
+refuses it if they change their profile or stop taking requests before it arrives.
+The signed-in human or their canonical Ship may send it; repeating the same request
+returns the existing one.
 `contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
 the other person accepts either while signed in to their own Ship. The default
 lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
@@ -437,6 +444,23 @@ leaves the exchange unsettled, even if the recorded work state is completed.
 Resources attached with
 `message send --to contact:...` remain immutable references and are streamed by
 the receiving Ship only when opened.
+
+`atproto` publishes public records and files on the [open network](/architecture/open-network)
+under the Ship's address. It works for the signed-in person and their Ship;
+other processes are refused. Nothing publishes while the profile is private,
+and the person approves each of the Ship's writes unless a rule allows it. A record's `$type` defaults
+to its collection. `apply` commits up to ten writes together from a JSON array
+of [`atproto.write`](./syscalls.md#open-network-atproto) changes. To publish a
+picture, upload it with `atproto blob PATH`, which prints a `blob` reference,
+and put that reference in the record:
+
+```bash
+atproto blob trip.jpg
+atproto create space.ship.note --file note.json
+```
+
+`atproto identity` prints the Ship's DID and handle, or `null` until the Ship
+first publishes, invites or contacts someone. `space.ship.profile` belongs to the profile; change it in People.
 
 Use `sched add --ship` when every firing should become one durable Ship
 responsibility. It works from top-level and process-backed shells. Use

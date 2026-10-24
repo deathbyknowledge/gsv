@@ -67,7 +67,7 @@ describe("owner welcome", () => {
     let tree: ComponentChildren;
     function Harness() {
       tree = OwnerWelcomeScreen({ ready: true, resume: true, chooseSpace: true, initialStep: "email", load: async () => client,
-        onConnect: connect, invitation: { name: "Alice", origin: "alice.example.com" }, compact: true });
+        onConnect: connect, invitation: { name: "Alice", handle: "alice.example.com" }, compact: true });
       return null;
     }
     try {

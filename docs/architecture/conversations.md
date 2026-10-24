@@ -253,8 +253,9 @@ Object:
   segment in installation-scoped R2.
 - SQLite retains the segment index and idempotency receipts, so history paging and retried appends
   remain stable across the hot/archive boundary.
-- Contact messages retain authenticated origin, authorship and reply references. Their origin index
-  maps an immutable remote message identity to the local sequence even after archival.
+- Contact messages retain authenticated origin, authorship and reply references. The origin names
+  the sending Ship by its DID, and the origin index maps that DID and the immutable remote message
+  identity to the local sequence even after archival.
 - Conversation messages store immutable resource references. The Process retains an exact source
   revision in the run-as agent archive before committing it, so the bytes remain readable after
   temporary Process cleanup without a second conversation-owned copy.

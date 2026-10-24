@@ -40,13 +40,13 @@ export function MessageRequest({ request, account, onOpen }: {
   }, onSuccess: refresh });
   const retry = useMutation({ mutationFn: () => client.approach.retry({ approachId: request.id, expectedRevision: request.revision }), onSuccess: refresh });
   const blockedQuery = useQuery({
-    queryKey: [...INSTRUMENT_CONTACT_BLOCKS_KEY, request.peer], enabled: allowed("contact.block.list"),
-    queryFn: () => client.contact.block.list({ actor: request.peer }),
+    queryKey: [...INSTRUMENT_CONTACT_BLOCKS_KEY, request.peerDid], enabled: allowed("contact.block.list"),
+    queryFn: () => client.contact.block.list({ did: request.peerDid }),
   });
   const blocked = !!blockedQuery.data?.blocks.length;
   const canBlock = allowed("contact.block.set") && !!blockedQuery.data;
   const block = useMutation({
-    mutationFn: () => client.contact.block.set({ actor: request.peer, blocked: !blocked }),
+    mutationFn: () => client.contact.block.set({ did: request.peerDid, blocked: !blocked }),
     onSuccess: async () => { setBlockConfirm(false); await Promise.all([refresh(), cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACT_BLOCKS_KEY })]); },
   });
   const pending = decide.isPending || retry.isPending || block.isPending;
@@ -75,7 +75,7 @@ export function MessageRequest({ request, account, onOpen }: {
     {request.contactId && request.state === "accepted" && <button class="ibtn is-primary" onClick={() => onOpen(request.contactId!)}>{t("people.request.openConversation")}</button>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
     <details class="people-identity"><summary>{t("people.connection.title")}</summary>
-      <dl><dt>{t("people.request.shipIdentity")}</dt><dd>{request.peer.shipId}</dd><dt>{t("people.request.personIdentity")}</dt><dd>{request.peer.subjectId}</dd></dl>
+      <dl>{request.peerHandle && <><dt>{t("people.request.handle")}</dt><dd>{request.peerHandle}</dd></>}<dt>{t("people.request.identity")}</dt><dd>{request.peerDid}</dd></dl>
       {blockConfirm ? <div class="people-decision"><p>{t(blocked ? "people.connection.confirmUnblock" : "people.request.confirmBlock")}</p><div class="people-actions"><button class="people-action is-danger" disabled={!canBlock || pending} onClick={() => block.mutate()}>{t(blocked ? "people.unblock" : "people.block")}</button><button class="people-action" disabled={pending} onClick={() => setBlockConfirm(false)}>{t("common.cancel")}</button></div></div>
         : <button class="people-action is-danger" disabled={!canBlock || pending} onClick={() => setBlockConfirm(true)}>{t(blocked ? "people.request.unblockPerson" : "people.request.blockPerson")}</button>}
     </details>

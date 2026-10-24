@@ -12,6 +12,8 @@ import { adminErrorPage, adminStylesheet, adminTimeScript } from "./page";
 import type { IssuedAdminInstallation } from "./service";
 import { InstallationDeletionHttp } from "../deletion-http";
 import type { AccountsDeletionRuntime } from "../deletion-runtime";
+import type { IdentityMoves } from "../identity-moves";
+import { IdentityMoveHttp } from "./identity-move-http";
 
 type AdminCreateFormInput = { operationId: string; handle: string };
 type AdminService<Detail extends AdminInstallation, Summary extends AdminInstallationSummary> = {
@@ -32,6 +34,7 @@ export class InstallationAdminHttp<
 > {
   private readonly api: InstallationAdminApi;
   private readonly deletion: InstallationDeletionHttp | undefined;
+  private readonly identityMove: IdentityMoveHttp | undefined;
 
   constructor(
     private readonly service: AdminService<Detail, Summary>,
@@ -40,10 +43,12 @@ export class InstallationAdminHttp<
     private readonly presentation: InstallationAdminPresentation<Detail, Summary> = {},
     deletion?: AccountsDeletionRuntime,
     private readonly insight?: ShipInsight,
+    identityMoves?: IdentityMoves,
   ) {
     const audited: AdminAuditRecorder = (request, action, mutation, describe) => this.audited(request, action, mutation, describe);
     this.api = new InstallationAdminApi(service, access, origin, audited);
     this.deletion = deletion ? new InstallationDeletionHttp(deletion, access, origin, audited) : undefined;
+    this.identityMove = identityMoves ? new IdentityMoveHttp(identityMoves, access, origin, audited, presentation.navigation) : undefined;
   }
 
   async handle(request: Request): Promise<Response | null> {
@@ -51,6 +56,8 @@ export class InstallationAdminHttp<
     if (url.pathname !== "/admin" && !url.pathname.startsWith("/admin/")) return null;
     const deletionResponse = await this.deletion?.handle(request);
     if (deletionResponse) return deletionResponse;
+    const identityMoveResponse = await this.identityMove?.handle(request);
+    if (identityMoveResponse) return identityMoveResponse;
     const response = await this.api.handle(request);
     if (response) return response;
     if (!await this.access.allows(request)) return adminText("Forbidden", 403);

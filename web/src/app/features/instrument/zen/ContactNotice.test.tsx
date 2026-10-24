@@ -8,17 +8,17 @@ afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlo
 
 function message(sequence: number, text: string, byShip = false): ContactNoticeMessage {
   return { id: `message:${sequence}`, conversationId: "conversation:ada", sequence, text, createdAt: sequence, media: [],
-    author: { kind: "contact", contactId: "contact:ada", shipId: "ship:ada", subjectId: "subject:ada", displayName: "Ada Lovelace" },
+    author: { kind: "contact", contactId: "contact:ada", displayName: "Ada Lovelace" },
     origin: { kind: "federation", contactId: "contact:ada", deliveryId: `delivery:${sequence}` },
-    social: { threadId: "thread:ada", reference: { actor: { shipId: "ship:ada", subjectId: "subject:ada" }, messageId: `origin:${sequence}` }, provenance: byShip ? { kind: "process", processId: "proc:ada" } : { kind: "human" } } };
+    social: { threadId: "thread:ada", reference: { did: "did:plc:adaaaaaaaaaaaaaaaaaaaaaa", messageId: `origin:${sequence}` }, provenance: byShip ? { kind: "process", processId: "proc:ada" } : { kind: "human" } } };
 }
 const notice: ContactNotice = {
   contactId: "contact:ada", conversationId: "conversation:ada", displayName: "Ada Lovelace",
   messages: [message(1, "hey — free to look at the release notes before i send them out?")],
 };
 const contact: ContactSummary = {
-  id: notice.contactId, ownerUid: 1000, state: "active", generation: "generation:one", remoteShipId: "ship:ada",
-  remoteSubject: { id: "subject:ada", displayName: "Ada Lovelace" }, remoteOrigin: "https://ada.example",
+  id: notice.contactId, ownerUid: 1000, state: "active", generation: "generation:one", remoteDid: "did:plc:adaaaaaaaaaaaaaaaaaaaaaa",
+  remoteName: "Ada Lovelace", remoteHandle: "ada.example",
   conversationId: notice.conversationId, localAlias: "Ada", createdAtMs: 1, updatedAtMs: 1,
 };
 

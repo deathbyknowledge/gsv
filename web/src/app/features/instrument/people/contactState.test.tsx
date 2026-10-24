@@ -16,16 +16,16 @@ import { usePeopleActivity } from "./usePeopleActivity";
 
 const viewer: ConsoleAccount = { uid: 1000, username: "person", displayName: "Person", relation: "self", runnable: false, gecos: "", capabilities: ["*"] };
 const conversation = { id: "conversation:ada", ownerUid: 1000, title: "Ada", kind: "contact" as const, createdAt: 1, updatedAt: 41, latestSequence: 41 };
-const contact = { id: "contact:ada", conversationId: conversation.id, ownerUid: 1000, state: "active", remoteSubject: { displayName: "Ada" } };
+const contact = { id: "contact:ada", conversationId: conversation.id, ownerUid: 1000, state: "active", remoteName: "Ada" };
 let messages: ConversationMessage[];
 let readThrough: number;
 let failRead: boolean;
 
 function message(sequence: number): ConversationMessage {
   return { id: `message:${sequence}`, conversationId: conversation.id, sequence, text: `Message ${sequence}`, createdAt: sequence,
-    author: { kind: "contact", contactId: contact.id, shipId: "ship:ada", subjectId: "subject:ada", displayName: "Ada" },
+    author: { kind: "contact", contactId: contact.id, displayName: "Ada" },
     origin: { kind: "federation", contactId: contact.id, deliveryId: `delivery:${sequence}` },
-    social: { threadId: "thread:ada", reference: { actor: { shipId: "ship:ada", subjectId: "subject:ada" }, messageId: `remote:${sequence}` }, provenance: { kind: "human" } } };
+    social: { threadId: "thread:ada", reference: { did: "did:plc:adaaaaaaaaaaaaaaaaaaaaaa", messageId: `remote:${sequence}` }, provenance: { kind: "human" } } };
 }
 
 function entry(): ConversationInboxEntry {

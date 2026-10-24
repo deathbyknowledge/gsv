@@ -20,7 +20,7 @@ type Props = {
   addressPanel?: (options: { disabled: boolean; connect(origin: string): Promise<void> }) => ComponentChildren;
   initialStep?: "welcome" | "claim" | "email";
   chooseSpace?: boolean;
-  invitation?: { name?: string; origin?: string };
+  invitation?: { name?: string; handle?: string };
   compact?: boolean;
   /** Domain shown after the handle before Accounts has stated it; the signed-in session's domain wins. */
   spaceDomain?: string;
@@ -222,7 +222,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       {step === "code" && <p class="desktop-welcome-lede">{t("session.welcome.codeSent", { email: flow?.state.challenge?.email ?? "" })}</p>}
       <form key={step} class="gsv-login-fields" onSubmit={submit} aria-busy={busy}>
         {step === "invitation" && <div class="desktop-welcome-invitation">
-          {invitation?.origin && <p class="desktop-welcome-detail">{invitation.origin}</p>}
+          {invitation?.handle && <p class="desktop-welcome-detail">{invitation.handle}</p>}
           <p>{t("session.welcome.invitationPrompt")}</p>
         </div>}
         {step === "claim" && <div class="desktop-welcome-identity">

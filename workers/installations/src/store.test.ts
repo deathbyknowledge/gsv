@@ -167,7 +167,7 @@ describe("account directory", () => {
 
   it("keeps published product hostnames unavailable as installation handles", async () => {
     const principalId = await createVerifiedPrincipal("reserved_names");
-    for (const handle of ["deploy", "docs", "install", "staging", "www"]) {
+    for (const handle of ["deploy", "docs", "install", "pds", "staging", "www"]) {
       await expect(store().reserveInstallation({
         principalId,
         operationId: `op_reserved_${handle}`,

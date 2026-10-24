@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
-import { assertFederationDestination, fetchFederationJson } from "./http";
+import { assertFederationDestination, fetchFederation, readFederationJson } from "./http";
 
 describe("federation HTTP destination boundary", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -13,7 +13,7 @@ describe("federation HTTP destination boundary", () => {
     "https://user:pass@remote.example", "https://remote.example/#fragment",
   ])("refuses nonpublic destination %s before fetching", async (url) => {
     const fetch = vi.spyOn(globalThis, "fetch");
-    await expect(fetchFederationJson(url, { method: "GET" }, context())).rejects.toThrow();
+    await expect(fetchFederation(url, { method: "GET" }, context())).rejects.toThrow();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -24,7 +24,8 @@ describe("federation HTTP destination boundary", () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(new ReadableStream({ cancel }), {
       status: 302, headers: { location: "https://127.0.0.1/private" },
     }));
-    await expect(fetchFederationJson("https://remote.example/ship", { method: "GET" }, context())).rejects.toThrow("302");
+    const response = await fetchFederation("https://remote.example/ship", { method: "GET" }, context());
+    await expect(readFederationJson(response)).rejects.toThrow("302");
     expect(fetch).toHaveBeenCalledExactlyOnceWith("https://remote.example/ship", expect.objectContaining({ redirect: "manual", signal: expect.any(AbortSignal) }));
     expect(cancel).toHaveBeenCalledOnce();
   });
@@ -32,10 +33,10 @@ describe("federation HTTP destination boundary", () => {
   it("requires both the explicit development setting and a local installation for loopback", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
     const url = "http://peer.localhost:8788/ship";
-    await expect(fetchFederationJson(url, {}, context("https://space.example", true))).rejects.toThrow();
-    await expect(fetchFederationJson(url, {}, context("http://local.localhost:8787"))).rejects.toThrow();
+    await expect(fetchFederation(url, {}, context("https://space.example", true))).rejects.toThrow();
+    await expect(fetchFederation(url, {}, context("http://local.localhost:8787"))).rejects.toThrow();
     expect(fetch).not.toHaveBeenCalled();
-    await expect(fetchFederationJson(url, {}, context("http://local.localhost:8787", true))).resolves.toEqual({ ok: true });
+    await expect(readFederationJson(await fetchFederation(url, {}, context("http://local.localhost:8787", true)))).resolves.toEqual({ ok: true });
     expect(() => assertFederationDestination("https://192.168.1.2", true)).toThrow();
   });
 });

@@ -81,14 +81,15 @@ describe("human message delivery recovery", () => {
 function fixture(storage: DurableObjectStorage, createdAt = Date.now()) {
   const store = new FederationStore(storage);
   const contact = store.activateContact({
-    ownerUid: OWNER.uid, remoteShipId: "ship:remote", remoteSubject: { id: "subject:remote", displayName: "Remote" },
-    remoteOrigin: "https://remote.example", remotePublicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" },
-    sharedSecret: "secret", generation: "generation:one", threadId: "thread:one",
+    ownerUid: OWNER.uid, remoteDid: "did:plc:remoteaaaaaaaaaaaaaaaaaa", remoteName: "Remote",
+    generation: "generation:one", threadId: "thread:one",
   });
   const deliveryId = "delivery:one";
   store.enqueue({ deliveryId, ownerUid: OWNER.uid, contactId: contact.id, contactGeneration: contact.generation,
     idempotencyKey: "intent:one", fingerprint: "fingerprint:one", now: createdAt,
-    payload: { kind: "message", messageId: "message:one", threadId: contact.threadId, text: "Approved message" } });
+    payload: { kind: "message", messageId: "message:one", threadId: contact.threadId, text: "Approved message", social: {
+      threadId: contact.threadId, reference: { did: "did:plc:localaaaaaaaaaaaaaaaaaaa", messageId: "message:one" }, provenance: { kind: "human" },
+    } } });
   const context = {
     peer: testPeer({ kind: "human", account: OWNER, calls: ["contact.*"] }), callerOwnerUid: OWNER.uid,
     connection: {}, federation: store, broadcastToUserUid: vi.fn(), scheduleFederationDelivery: vi.fn(async () => {}),

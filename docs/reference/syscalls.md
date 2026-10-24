@@ -650,7 +650,7 @@ type ConversationMessage = {
   author:
     | { kind: "user"; uid: number }
     | { kind: "process"; pid: string; uid: number }
-    | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
+    | { kind: "contact"; contactId: string; displayName: string };
   text: string;
   selectedTarget?: string;
   media?: MessageAttachment[];
@@ -711,15 +711,18 @@ resource grants, delivery receipts, and Process state.
 
 Pairing is explicit and human-controlled. `contact.invite.create` returns a
 short-lived, one-use code and a shareable `url`; the other signed-in person accepts either with
-`contact.invite.accept`. The Kernel derives the remote installation and subject
-from the signed exchange. The accepting Ship signs its acceptance with its Ship
-key; before pairing, the inviting Ship checks that signature and the Ship
-document served at the accepting Ship's origin. Callers never choose a remote
-local uid, Process, conversation, filesystem path, or installation id.
+`contact.invite.accept`. The code names the inviting Ship's DID, and the
+accepting Ship checks that the code's handle resolves to that DID. The
+acceptance is a Ship call signed with the accepting Ship's key, so the inviting
+Ship makes the Ship that signed it the contact, whatever name it gives. Callers
+never choose a remote local uid, Process, conversation, filesystem path, or
+installation id.
 
 Invitation links keep the URL-safe encoded payload in the `#contact=` fragment,
-without the `gsv-contact-v1:` code prefix, so mobile messengers can link the entire
-address. Existing prefixed codes and links still identify the same invitation.
+without the `gsv-contact-v2:` code prefix, so mobile messengers can link the entire
+address. Prefixed codes and links identify the same invitation. A code from
+before DIDs, with the `gsv-contact-v1:` prefix, is refused with a request for a
+new invitation.
 
 Trust changes may be initiated by the signed-in human or by that owner's exact
 canonical Ship Process. Delegated work Processes and remote callers cannot
@@ -738,7 +741,6 @@ never supplied by the remote person, and activation admits no Ship work itself.
 
 | Syscall | Behavior |
 |---|---|
-| `contact.identity` | Returns this installation's signed Ship document and the caller's local federation subject. |
 | `contact.invite.create` | Creates a one-use pairing code and shareable link, with an optional expiry of up to seven days. |
 | `contact.invite.accept` | Accepts a link or code, verifies and consumes the remote invite, creates both contact records, and ensures the local Contact conversation. |
 | `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
@@ -746,8 +748,8 @@ never supplied by the remote person, and activation admits no Ship work itself.
 | `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
 | `contact.preferences.update` | Owner or canonical Ship, revision-checked changes to saved, muted and standing Ship handling preferences. |
-| `contact.block.set` | Human-only block or unblock of one remote actor; blocking also ends its active connection and pending first-contact requests. |
-| `contact.block.list` | Reads private blocks, optionally filtered by `actor`, with cursor paging. |
+| `contact.block.set` | Human-only block or unblock of one person, named by their DID; blocking also ends their active connection and pending message requests. |
+| `contact.block.list` | Reads private blocks, optionally filtered by `did`, with cursor paging. |
 | `contact.notice.dismiss` | Dismisses the one-time notice that global contact auto-wake has been retired. |
 | `contact.revoke` | Revokes the local relationship immediately, withdraws its resource grants, terminates pending deliveries, and durably notifies the other Ship. |
 | `contact.send` | Commits one local Contact message and queues an authenticated delivery. Reusing an `idempotencyKey` with the same input returns the same logical delivery; changed input is rejected. |
@@ -779,16 +781,6 @@ a contact-local reference and streams bytes only when they are opened through
 `fs.transfer.send`. Revocation makes those grants unavailable.
 
 ```ts
-type FederationShipDocument = {
-  version: 1;
-  shipId: string;
-  origin: string;
-  publicKey: { kty: "EC"; crv: "P-256"; x: string; y: string };
-  protocols: ["gsv-federation/1"];
-  issuedAtMs: number;
-  signature: string;
-};
-type FederationSubject = { id: string; displayName: string };
 type ContactInviteSummary = {
   inviteId: string;
   state: "pending" | "accepted" | "expired" | "cancelled";
@@ -814,9 +806,9 @@ type ContactSummary = {
   ownerUid: number;
   state: "active" | "revoked";
   generation: string;
-  remoteShipId: string;
-  remoteSubject: FederationSubject;
-  remoteOrigin: string;
+  remoteDid?: string;
+  remoteName: string;
+  remoteHandle?: string;
   localAlias?: string;
   preferences?: { revision: number; saved: boolean; muted: boolean; shipHandlesMessages: boolean };
   blocked?: boolean;
@@ -848,10 +840,6 @@ type ContactRequestRecord = {
   updatedAtMs: number;
 };
 type ContactSyscalls = {
-  "contact.identity": {
-    args: Record<string, never>;
-    result: { document: FederationShipDocument; subject: FederationSubject };
-  };
   "contact.invite.create": {
     args: { expiresInSeconds?: number };
     result: { inviteId: string; code: string; url?: string; expiresAtMs: number };
@@ -886,7 +874,7 @@ type ContactSyscalls = {
       text: string;
       media?: ResourceBlock[];
       idempotencyKey?: string;
-      replyTo?: { actor: { shipId: string; subjectId: string }; messageId: string };
+      replyTo?: { did: string; messageId: string };
       responsibilityId?: string;
     };
     result: {
@@ -940,12 +928,12 @@ type ContactSyscalls = {
     result: { contact: ContactSummary };
   };
   "contact.block.set": {
-    args: { actor: ActorRef; blocked: boolean };
+    args: { did: string; blocked: boolean };
     result: { block: ContactBlock | null };
   };
   "contact.block.list": {
-    args: { actor?: ActorRef; cursor?: ActorRef; limit?: number };
-    result: { blocks: ContactBlock[]; nextCursor?: ActorRef };
+    args: { did?: string; cursor?: string; limit?: number };
+    result: { blocks: ContactBlock[]; nextCursor?: string };
   };
   "contact.notice.dismiss": {
     args: Record<string, never>;
@@ -982,13 +970,14 @@ metadata. Each queued delivery retains the wire version chosen when it was creat
 
 ### Public profiles and first messages
 
-Each space has one owner-authenticated profile at `https://SPACE/profile`. The Kernel publishes
-it by default on the owner's first sign-in, named by the Ship's handle with `contactPolicy: "requests"`,
+Each space has one owner-authenticated profile, published as the Ship's `space.ship.profile` record
+(record key `self`) in its [open-network repository](#open-network-atproto). The Gateway renders that
+record as the page at `https://SPACE/profile`, and older `/@name` links redirect there. The Kernel publishes
+the profile by default on the owner's first sign-in, named by the Ship's handle with `contactPolicy: "requests"`,
 only when the owner has no saved profile, and applies that default once, so a saved draft or an explicit
-unpublish stays private. Reading the
-address with `Accept: application/json` returns its signed document. Publication is atomic;
-draft changes stay private until the next explicit publish. No public alias is required. Profile
-mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
+unpublish stays private. Without the `PDS` service nothing publishes, and the default waits for it.
+Draft changes stay private until the next explicit publish, which writes the record; unpublishing
+deletes it. Profile mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
 may resolve a profile and create, read, list and retry outgoing message requests (`approach.create`,
 `approach.get`, `approach.list`, `approach.retry`) on their behalf. A Ship's `approach.create` asks the
 owner first unless an approval rule matches it, and a replay of a request already sent does not ask again. Incoming requests, publishing a
@@ -1014,17 +1003,29 @@ type ProfileAndApproachSyscalls = {
     result: { profile: ProfileState };
   };
   "profile.resolve": {
-    args: { url: string };
+    args: { address: string };
     result: { profile: PublicProfile };
+  };
+  "profile.avatar.set": {
+    args: { expectedRevision: number; mimeType: "image/png" | "image/jpeg" | "image/webp" };
+    result: { profile: ProfileState };
+  };
+  "profile.avatar.remove": {
+    args: { expectedRevision: number };
+    result: { profile: ProfileState };
+  };
+  "profile.avatar.read": {
+    args: { cid: string };
+    result: ProfileAvatar;
   };
   "approach.create": {
     args: {
-      profileUrl: string;
-      recipient: ActorRef;
-      profileRevision: number;
+      did: string;
+      profileCid: string;
       displayName: string;
       text: string;
       idempotencyKey: string;
+      shipHandlesMessages?: boolean;
     };
     result: { approach: ApproachSummary };
   };
@@ -1042,7 +1043,7 @@ type ProfileAndApproachSyscalls = {
     result: { approach: ApproachSummary };
   };
   "approach.decide": {
-    args: { approachId: string; expectedRevision: number; decision: "accept" | "decline" | "withdraw" };
+    args: { approachId: string; expectedRevision: number; decision: "accept" | "decline" | "withdraw"; shipHandlesMessages?: boolean };
     result: { approach: ApproachSummary };
   };
   "approach.retry": {
@@ -1052,24 +1053,58 @@ type ProfileAndApproachSyscalls = {
 };
 ```
 
-`ProfileFields` contains `displayName`, `about`, `contactPolicy`
-(`requests`, `invitation` or `closed`) and `representation` (`human` or `human-and-ship`).
-Clients no longer display `representation`; whether a Ship replies is chosen for each contact.
-`ProfileState` returns those fields as `draft`, its canonical `url`, a revision, optional published URL/revision, and the space's recorded `handle` when the installation has one. Clients name the profile by that handle rather than parsing it from the URL.
-New signed documents use version 3 and domain `gsv-federation/3/profile`; federation
-transport remains v2. Readers also verify legacy v2 documents. On upgrade, the
-Kernel re-signs only the previously published snapshot at `/profile`, retaining
-the old published alias for links. Legacy HTML links redirect; JSON requests return
-the signed document directly. Concurrent unpublishing fences this conversion.
-`profile.resolve` reads a published profile, verifies the signed identity and checks
-existing contact pins. A 404 means no public profile is available at that address;
-it does not establish whether the Ship exists or prevent a private invitation.
-Creating a first message binds it to the exact recipient and profile revision the sender reviewed.
+`ProfileFields` contains `displayName` (1 to 80 characters), `about` (up to 2,048) and
+`contactPolicy` (`requests`, `invitation` or `closed`). `ProfileState` returns those fields as
+`draft`, the draft's picture as `avatar` (`{ cid, mimeType, size }`), its canonical `url`, a
+revision, and the space's recorded `handle` when the installation has one. Clients name the profile
+by that handle rather than parsing it from the URL. While the record exists, `published` gives the
+page `url`, the record's `cid`, the live `contactPolicy` and the draft `revision` the record was
+written from. A later draft revision is an unpublished change; publishing it again also retries a
+publish that failed after the draft was saved.
 
-First-contact messages expire after 30 days and accept text only, up to 32 KiB. Acceptance promotes
-the same conversation and first message through a durable, peer-bound pairing operation. Neither
-arrival nor acceptance starts Ship. Declining is private. Blocking denies future requests from that
-actor independently of whether a contact was ever accepted. Unblocking does not revive an old request.
+`profile.avatar.set` replaces the draft's picture with its request body: a PNG, JPEG or WebP of at
+most 1 MB, of declared length, whose bytes match its type. `profile.avatar.remove` removes the
+picture. Both advance the draft revision, and the picture becomes public with the next publish.
+`profile.avatar.read` returns the draft's or the published picture as the response body, for the
+owner's editor.
+
+```ts
+type ShipProfileRecord = {
+  $type: "space.ship.profile";
+  displayName: string; // 1 to 80 graphemes, at most 640 bytes
+  about?: string; // up to 2,048 graphemes and 20,480 bytes; absent when empty
+  avatar?: { $type: "blob"; ref: { $link: string }; mimeType: "image/png" | "image/jpeg" | "image/webp"; size: number };
+  contactPolicy: string; // requests, invitation or closed
+};
+```
+
+Readers ignore record fields they don't know and read an unknown `contactPolicy` as `closed`.
+The page shows the record's picture from the Ship's own host at `/profile/avatar`, served as a
+sandboxed image, and asks search engines not to index either. The page has no JSON form; other
+Ships read the record.
+
+`profile.resolve` takes a handle, with or without its `@`, or a profile link. A bare handle is on
+the Ship's own domain, and one on the operator's older domain names the same Ship on its primary
+domain. The Kernel resolves the handle to a DID, checks that the DID document claims the handle,
+and reads the record from the repository the document names. `PublicProfile` returns the `did`,
+`handle`, record `cid`, `displayName`, `about`, `contactPolicy` and page `url`. A 404 means no public
+profile is available at that address; it does not establish whether the Ship exists or prevent a
+private invitation. A 503 means the host the document names doesn't serve repositories right now,
+so the profile can't be read yet. A profile published as a signed document before profiles were records keeps its
+published fields and is written as a record at its owner's next sign-in.
+A message request names the recipient's `did` and the `profileCid` of the record its sender read.
+The sender's Ship refuses to send it if that record has changed or no longer takes requests, and the
+recipient's Ship refuses it on arrival for the same reasons, so a person never receives a request
+against a profile they have since changed. The approval a Ship asks for names the recipient's handle.
+
+Message requests expire after 30 days and accept text only, up to 32 KiB. Ships exchange them
+with Ship-to-Ship calls signed by each Ship's DID: only the DID a request went to can accept it, and
+only its sender can withdraw it. Acceptance makes the contact on the sender's Ship, then on the
+recipient's, and promotes the same conversation and first message; the recipient's Ship asks again
+until both hold the same connection. Neither arrival nor acceptance starts Ship. Declining is private.
+Blocking denies future requests from that DID whether or not a contact was ever accepted, and a
+blocked sender hears the same refusal as a profile closed to requests. Unblocking does not revive an
+old request.
 
 ### Private conversation inbox
 
@@ -1103,6 +1138,75 @@ conversation unless muted. These states and preview changes never send a read re
 People reuses `conversation.history` and `conversation.search`; no separate social search index
 or archive backfill exists. Contact conversations have no `handlerPid`. Other conversation kinds
 retain their ordinary handler requirement.
+
+## Open network: `atproto.*`
+
+A Ship can publish public records and files on the open network, the
+[AT Protocol](https://atproto.com) network that Bluesky and other apps read.
+The deployment's optional `PDS` service hosts one public repository per Ship;
+see [The open network](../architecture/open-network.md). Only what the person
+chooses to make public goes there. Messages, contacts and the rest of the Ship
+never do. Without the binding, these calls fail as unavailable.
+
+A Ship's account is a `did:plc` whose handle is the Ship's hostname, for
+example `alice.ship.space`. The Ship's first outward act creates it: a publish,
+an invitation, a message request or another call to a Ship.
+`atproto.identity` returns `null` until then. While
+the profile is private, writes and uploads are refused with a message naming
+People.
+
+Only the signed-in person and their Ship may publish. Other processes, Crew
+included, other accounts and machines are refused whatever their capabilities.
+When the Ship calls `atproto.write`, the person approves it first unless an
+approval rule allows it. The approval shows the handle the publish speaks as,
+the full address, every change and the files its records carry. The person
+writing directly is not asked. After approval the Kernel checks the profile
+again, so a profile made private meanwhile stops the publish.
+
+```ts
+type AtprotoSyscalls = {
+  "atproto.identity": {
+    args: Record<string, never>;
+    result: { identity: PublicRepositoryAccount | null };
+  };
+  "atproto.write": {
+    args: { writes: PublicRecordWrite[] };
+    result: {
+      commit: { cid: string; rev: string };
+      results: Array<{ uri: string; cid: string | null }>;
+    };
+  };
+  "atproto.blob.upload": {
+    args: { mimeType: string };
+    result: { blob: PublicBlobRef };
+  };
+  "atproto.blob.read": {
+    args: { cid: string };
+    result: { mimeType: string; size: number };
+  };
+};
+
+type PublicRepositoryAccount = { did: string; handle: string; host: string };
+type PublicRecordWrite =
+  | { action: "create"; collection: string; rkey?: string; record: JsonObject }
+  | { action: "put"; collection: string; rkey: string; record: JsonObject }
+  | { action: "delete"; collection: string; rkey: string };
+type PublicBlobRef = { $type: "blob"; ref: { $link: string }; mimeType: string; size: number };
+```
+
+`atproto.write` commits one to ten changes together, up to 64 KiB of JSON, and
+returns one result per change in order; a delete has no record CID. A
+collection is any valid NSID except one a Ship feature owns. Today that is
+`space.ship.profile`, the profile, which changes only in People. Ship's own
+lexicons use the `space.ship.*` namespace.
+
+`atproto.blob.upload` takes a file of any type, up to 48 MiB, as a request body
+of declared length, and streams it to the repository. Uploading does not ask:
+nothing serves the file until a published record references it, so put the
+returned `blob` in a record and publish that. An upload that no record
+references within six hours expires. `atproto.blob.read` returns one of the
+Ship's own files, including one no record references yet, as the response body.
+Approval previews use it.
 
 ## Processes: `proc.*`
 

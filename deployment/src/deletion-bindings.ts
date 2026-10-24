@@ -21,6 +21,14 @@ export function gsvAdapterDeletionNamespaces(adapters: readonly GsvAdapterBindin
   });
 }
 
+/** Each Ship's repository has its own object; the host's one firehose object lists every repository. */
+export function gsvPdsDeletionNamespaces(worker: Cloudflare.Workers.Worker): GsvDeletionNamespace[] {
+  return [
+    { ownerId: "pds", worker, className: "HostedRepo", kind: "pds-repository" },
+    { ownerId: "pds", worker, className: "HostFirehose", kind: "pds-host" },
+  ];
+}
+
 /** Physical namespace IDs come from the adopted Worker outputs, never operator-entered IDs. */
 export function GsvDeletionDiscoveryBindings(
   logicalId: string,

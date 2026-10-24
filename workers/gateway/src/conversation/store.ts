@@ -8,7 +8,8 @@ import type {
   SocialMessageMetadata,
   OriginMessageRef,
 } from "@humansandmachines/gsv/protocol";
-import { socialMessageMetadataSchema } from "@humansandmachines/gsv/protocol";
+import { socialMessageMetadataSchema, socialMessageProvenanceSchema } from "@humansandmachines/gsv/protocol";
+import { z } from "zod/mini";
 
 const SEARCH_STORAGE_BUDGET_BYTES = 6_000_000_000;
 
@@ -53,6 +54,24 @@ export type ConversationAppendResult = {
   message: ConversationMessage;
   created: boolean;
 };
+
+const idBeforeDids = z.string().check(z.minLength(1), z.maxLength(256));
+/** A message as its author's Ship named it before DIDs: by shipId, and its person by subject. */
+const originBeforeDidsSchema = z.strictObject({
+  actor: z.strictObject({ shipId: idBeforeDids, subjectId: idBeforeDids }),
+  messageId: idBeforeDids,
+});
+/** Origin details from before DIDs. */
+export const socialBeforeDidsSchema = z.strictObject({
+  threadId: idBeforeDids,
+  reference: originBeforeDidsSchema,
+  provenance: socialMessageProvenanceSchema,
+  replyTo: z.optional(originBeforeDidsSchema),
+});
+export type SocialBeforeDids = z.infer<typeof socialBeforeDidsSchema>;
+
+/** The DID of a person named the old way, or undefined when they have none here. */
+export type DidOf = (person: { shipId: string; subjectId: string }) => string | undefined;
 
 export type ConversationArchiveSegment = {
   segmentId: string;
@@ -145,10 +164,9 @@ export class ConversationStore {
     const message = toMessage(meta.conversation_id, row);
     if (input.social) {
       this.sql.exec(`INSERT INTO message_origins
-        (ship_id, subject_id, origin_message_id, thread_id, message_id, sequence)
-        VALUES (?, ?, ?, ?, ?, ?)`,
-      input.social.reference.actor.shipId, input.social.reference.actor.subjectId,
-      input.social.reference.messageId, input.social.threadId, message.id, message.sequence);
+        (did, origin_message_id, thread_id, message_id, sequence)
+        VALUES (?, ?, ?, ?, ?)`,
+      input.social.reference.did, input.social.reference.messageId, input.social.threadId, message.id, message.sequence);
     }
     this.sql.exec(
       `INSERT INTO message_receipts
@@ -214,10 +232,52 @@ export class ConversationStore {
   resolveOrigin(reference: OriginMessageRef, threadId: string): { messageId: string; sequence: number } | null {
     const row = this.sql.exec<{ message_id: string; sequence: number }>(
       `SELECT message_id, sequence FROM message_origins
-       WHERE ship_id = ? AND subject_id = ? AND origin_message_id = ? AND thread_id = ?`,
-      reference.actor.shipId, reference.actor.subjectId, reference.messageId, threadId,
+       WHERE did = ? AND origin_message_id = ? AND thread_id = ?`,
+      reference.did, reference.messageId, threadId,
     ).toArray()[0];
     return row ? { messageId: row.message_id, sequence: row.sequence } : null;
+  }
+
+  /** Whether hot messages still hold origin details from before DIDs, which the move names. */
+  awaitingMove(): boolean {
+    return this.sql.exec("SELECT 1 FROM messages WHERE legacy_social_json IS NOT NULL LIMIT 1").toArray().length > 0;
+  }
+
+  /**
+   * Names the authors in origin details from before DIDs by DID. Details that
+   * name someone without one are dropped: the message stays, but a reply can
+   * no longer point to it. Returns how many messages kept their details.
+   */
+  moveOriginsToDids(didOf: DidOf) {
+    let moved = 0;
+    let ended = 0;
+    const messages = this.sql.exec<{ sequence: number; legacy_social_json: string }>(
+      "SELECT sequence, legacy_social_json FROM messages WHERE legacy_social_json IS NOT NULL",
+    ).toArray();
+    for (const row of messages) {
+      const social = socialWithDids(socialBeforeDidsSchema.parse(JSON.parse(row.legacy_social_json)), didOf);
+      this.sql.exec(
+        "UPDATE messages SET social_json = ?, legacy_social_json = NULL WHERE sequence = ?",
+        social ? JSON.stringify(social) : null,
+        row.sequence,
+      );
+      if (social) moved += 1;
+      else ended += 1;
+    }
+    const origins = this.sql.exec<{
+      ship_id: string; subject_id: string; origin_message_id: string; thread_id: string; message_id: string; sequence: number;
+    }>("SELECT ship_id, subject_id, origin_message_id, thread_id, message_id, sequence FROM message_origins_legacy").toArray();
+    for (const origin of origins) {
+      const did = didOf({ shipId: origin.ship_id, subjectId: origin.subject_id });
+      if (!did) continue;
+      this.sql.exec(
+        `INSERT INTO message_origins (did, origin_message_id, thread_id, message_id, sequence)
+         VALUES (?, ?, ?, ?, ?)`,
+        did, origin.origin_message_id, origin.thread_id, origin.message_id, origin.sequence,
+      );
+    }
+    this.sql.exec("DELETE FROM message_origins_legacy");
+    return { moved, ended };
   }
 
   listHot(beforeSequence: number, limit: number): ConversationMessage[] {
@@ -378,4 +438,17 @@ function toMessage(conversationId: string, row: MessageRow): ConversationMessage
   if (row.run_id) message.runId = row.run_id;
   if (row.social_json) message.social = socialMessageMetadataSchema.parse(JSON.parse(row.social_json));
   return message;
+}
+
+/** Origin details naming their author by DID, or null when the author has none; a reply to someone without one loses its link. */
+function socialWithDids(social: SocialBeforeDids, didOf: DidOf): SocialMessageMetadata | null {
+  const author = didOf(social.reference.actor);
+  if (!author) return null;
+  const repliedTo = social.replyTo ? didOf(social.replyTo.actor) : undefined;
+  return socialMessageMetadataSchema.parse({
+    threadId: social.threadId,
+    reference: { did: author, messageId: social.reference.messageId },
+    provenance: social.provenance,
+    ...(social.replyTo && repliedTo ? { replyTo: { did: repliedTo, messageId: social.replyTo.messageId } } : undefined),
+  });
 }

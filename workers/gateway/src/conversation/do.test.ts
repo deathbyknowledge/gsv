@@ -2,8 +2,8 @@ import { env } from "cloudflare:workers";
 import { createInstallationStorage } from "../installation/storage";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import type { Conversation } from "./do";
-import type { SocialMessageMetadata } from "@humansandmachines/gsv/protocol";
+import type { ArchivedMessage, Conversation } from "./do";
+import type { ConversationMessage, SocialMessageMetadata } from "@humansandmachines/gsv/protocol";
 import { getConversationById } from "../shared/utils";
 import { ConversationStore } from "./store";
 
@@ -22,6 +22,23 @@ function message(sequence: number) {
     runId: `run:${sequence}`,
     createdAt: 1_700_000_000_000 + sequence,
   };
+}
+
+/** Archives `message` as one segment holding `stored`, the shape an older release wrote. */
+async function archiveAs(stub: ReturnType<typeof conversation>, message: ConversationMessage, stored: ArchivedMessage) {
+  const bytes = new TextEncoder().encode(JSON.stringify([stored]));
+  const checksum = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+    .map((value) => value.toString(16).padStart(2, "0")).join("");
+  const compressed = await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+  const key = `conversations/${encodeURIComponent(message.conversationId)}/segments/legacy.json.gz`;
+  await createInstallationStorage(env.STORAGE, "inst_test").put(key, compressed, { customMetadata: { checksum } });
+  await runInDurableObject(stub, (_instance: Conversation, state) => {
+    state.storage.transactionSync(() => new ConversationStore(state.storage.sql).commitArchive({
+      segmentId: "legacy", fromSequence: message.sequence, toSequence: message.sequence, messageCount: 1,
+      objectKey: key, checksum, createdAt: message.createdAt,
+    }, [message]));
+  });
+  return { key, compressed, checksum };
 }
 
 describe("Conversation Durable Object", () => {
@@ -121,7 +138,7 @@ describe("Conversation Durable Object", () => {
     const stub = conversation("archive");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
     const social: SocialMessageMetadata = {
-      threadId: "thread:one", reference: { actor: { shipId: "ship:one", subjectId: "subject:one" }, messageId: "origin:one" },
+      threadId: "thread:one", reference: { did: "did:plc:oneaaaaaaaaaaaaaaaaaaaaa", messageId: "origin:one" },
       provenance: { kind: "human" },
     };
     await runInDurableObject(stub, async (instance: Conversation) => {
@@ -181,20 +198,8 @@ describe("Conversation Durable Object", () => {
     await stub.initialize({ ownerUid: 1000, kind: "ship" });
     const input = { ...message(1), text: "Help me create a routine.\n\nOnly on Mondays.", selectedTarget: "gsv" };
     const appended = await stub.append(input);
-    const legacy = { ...appended.message, action: { kind: "routine.create", note: "Only on Mondays." } };
-    const bytes = new TextEncoder().encode(JSON.stringify([legacy]));
-    const checksum = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
-      .map((value) => value.toString(16).padStart(2, "0")).join("");
-    const compressed = await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+    const { key, compressed, checksum } = await archiveAs(stub, appended.message, { ...appended.message, action: { kind: "routine.create", note: "Only on Mondays." } });
     const storage = createInstallationStorage(env.STORAGE, "inst_test");
-    const key = `conversations/${encodeURIComponent(appended.message.conversationId)}/segments/legacy.json.gz`;
-    await storage.put(key, compressed, { customMetadata: { checksum } });
-    await runInDurableObject(stub, (_instance: Conversation, state) => {
-      state.storage.transactionSync(() => new ConversationStore(state.storage.sql).commitArchive({
-        segmentId: "legacy", fromSequence: 1, toSequence: 1, messageCount: 1,
-        objectKey: key, checksum, createdAt: input.createdAt,
-      }, [appended.message]));
-    });
 
     const history = await stub.history();
     expect(history.messages).toEqual([appended.message]);
@@ -203,6 +208,97 @@ describe("Conversation Durable Object", () => {
     expect(await stub.append(input)).toEqual({ created: false, message: appended.message });
     expect(await (await storage.get(key))!.arrayBuffer()).toEqual(compressed);
     expect((await storage.head(key))?.customMetadata?.checksum).toBe(checksum);
+  });
+
+  it("reads a contact's archive from before DIDs without its Ship's ids", async () => {
+    const stub = conversation("archive-before-dids");
+    await stub.initialize({ ownerUid: 1000, kind: "contact" });
+    const author = { kind: "contact" as const, contactId: "contact:mara", displayName: "Mara" };
+    const appended = await stub.append({ ...message(1), author, text: "Before the move" });
+    await archiveAs(stub, appended.message, {
+      ...appended.message,
+      author: { ...author, shipId: "ship:mara", subjectId: "subject:mara" },
+      social: {
+        threadId: "thread:mara", reference: { actor: { shipId: "ship:mara", subjectId: "subject:mara" }, messageId: "origin:mara" },
+        provenance: { kind: "human" },
+      },
+    });
+    expect((await stub.history()).messages).toEqual([appended.message]);
+  });
+
+  it("keeps origin details from before DIDs hot until the move names them", async () => {
+    const stub = conversation("awaiting-move");
+    await stub.initialize({ ownerUid: 1000, kind: "contact" });
+    const segments = () => runInDurableObject(stub, (_instance: Conversation, state) =>
+      state.storage.sql.exec("SELECT segment_id FROM archive_segments").toArray().length);
+    await runInDurableObject(stub, (_instance: Conversation, state) => {
+      for (let sequence = 1; sequence <= 1_001; sequence++) {
+        state.storage.sql.exec(`INSERT INTO messages (message_id, idempotency_key, author_json, text, origin_json, created_at, legacy_social_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`, `msg:${sequence}`, `input:${sequence}`, JSON.stringify(message(sequence).author), `message ${sequence}`,
+        JSON.stringify({ kind: "client" }), sequence, sequence === 1 ? "{\"reference\":{\"actor\":{}}}" : null);
+      }
+    });
+    await stub.compact();
+    expect(await segments()).toBe(0);
+    await runInDurableObject(stub, (_instance: Conversation, state) => {
+      state.storage.sql.exec("UPDATE messages SET legacy_social_json = NULL");
+    });
+    await stub.compact();
+    expect(await segments()).toBe(1);
+  });
+
+  it("names the people in origin details from before DIDs by DID, and reports appends that already reached a message", async () => {
+    const stub = conversation("move-to-dids");
+    await stub.initialize({ ownerUid: 1000, kind: "contact" });
+    const mara = { shipId: "ship:mara", subjectId: "subject:mara" };
+    const own = { shipId: "ship:own", subjectId: "subject:own" };
+    const elsewhere = { shipId: "ship:elsewhere", subjectId: "subject:elsewhere" };
+    const maraDid = `did:plc:${"m".repeat(24)}`;
+    const ownDid = `did:plc:${"o".repeat(24)}`;
+    const before = [
+      { origin: mara, messageId: "origin:mara", provenance: { kind: "human" } },
+      { origin: own, messageId: "origin:own-1", provenance: { kind: "process", processId: "proc:test" }, replyTo: mara, replyToId: "origin:mara" },
+      { origin: own, messageId: "origin:own-2", provenance: { kind: "human" }, replyTo: elsewhere, replyToId: "origin:elsewhere" },
+      { origin: elsewhere, messageId: "origin:elsewhere", provenance: { kind: "human" } },
+    ];
+    for (const [index] of before.entries()) await stub.append(message(index + 1));
+    await runInDurableObject(stub, (_instance: Conversation, state) => {
+      for (const [index, entry] of before.entries()) {
+        const sequence = index + 1;
+        state.storage.sql.exec("UPDATE messages SET legacy_social_json = ? WHERE sequence = ?", JSON.stringify({
+          threadId: "thread:mara",
+          reference: { actor: entry.origin, messageId: entry.messageId },
+          provenance: entry.provenance,
+          ...(entry.replyTo ? { replyTo: { actor: entry.replyTo, messageId: entry.replyToId } } : undefined),
+        }), sequence);
+        state.storage.sql.exec(`INSERT INTO message_origins_legacy (ship_id, subject_id, origin_message_id, thread_id, message_id, sequence)
+          VALUES (?, ?, ?, ?, ?, ?)`, entry.origin.shipId, entry.origin.subjectId, entry.messageId, "thread:mara", `msg:${sequence}`, sequence);
+      }
+    });
+    const people = [{ ...mara, did: maraDid }, { ...own, did: ownDid }];
+
+    expect(await stub.moveToDids({ people, idempotencyKeys: ["input:1", "federation:not-appended"] }))
+      .toEqual({ moved: 3, ended: 1, appended: [{ idempotencyKey: "input:1", sequence: 1 }] });
+    expect((await stub.history()).messages.map((entry) => entry.social)).toEqual([
+      { threadId: "thread:mara", reference: { did: maraDid, messageId: "origin:mara" }, provenance: { kind: "human" } },
+      {
+        threadId: "thread:mara", reference: { did: ownDid, messageId: "origin:own-1" },
+        provenance: { kind: "process", processId: "proc:test" }, replyTo: { did: maraDid, messageId: "origin:mara" },
+      },
+      { threadId: "thread:mara", reference: { did: ownDid, messageId: "origin:own-2" }, provenance: { kind: "human" } },
+      undefined,
+    ]);
+    expect(await stub.resolveOrigin({ did: maraDid, messageId: "origin:mara" }, "thread:mara")).toEqual({ messageId: "msg:1", sequence: 1 });
+    expect(await stub.resolveOrigin({ did: ownDid, messageId: "origin:own-2" }, "thread:mara")).toEqual({ messageId: "msg:3", sequence: 3 });
+    await runInDurableObject(stub, (_instance: Conversation, state) => {
+      expect(state.storage.sql.exec("SELECT did FROM message_origins ORDER BY sequence").toArray().map((row) => row.did))
+        .toEqual([maraDid, ownDid, ownDid]);
+      expect(state.storage.sql.exec("SELECT 1 FROM message_origins_legacy").toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT 1 FROM messages WHERE legacy_social_json IS NOT NULL").toArray()).toEqual([]);
+    });
+
+    expect(await stub.moveToDids({ people, idempotencyKeys: ["input:1"] }))
+      .toEqual({ moved: 0, ended: 0, appended: [{ idempotencyKey: "input:1", sequence: 1 }] });
   });
 
   it("keeps legacy conversation-owned media readable", async () => {

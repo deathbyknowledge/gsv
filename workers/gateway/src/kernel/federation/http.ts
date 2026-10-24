@@ -13,11 +13,16 @@ export async function readFederationBody(body: BinaryBody, limit: number, signal
   } finally { clearTimeout(timer); }
 }
 
-export async function fetchFederation(url: string, init: RequestInit, ctx: KernelContext, timeoutMs = 30_000): Promise<Response> {
+/** Refuses a destination a Ship may not reach: anything but a public HTTPS host, outside local development. */
+export function assertFederationTarget(url: string, ctx: KernelContext): void {
   const localOrigin = ctx.installationIdentity?.canonicalOrigin;
   const allowLocal = ctx.env.GSV_FEDERATION_LOCAL_DEVELOPMENT === "1"
     && !!localOrigin && isLoopbackHost(new URL(localOrigin).hostname);
   assertFederationDestination(url, allowLocal);
+}
+
+export async function fetchFederation(url: string, init: RequestInit, ctx: KernelContext, timeoutMs = 30_000): Promise<Response> {
+  assertFederationTarget(url, ctx);
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(new Error("Federation request timed out")), timeoutMs);
   const signal = init.signal ? AbortSignal.any([init.signal, timeout.signal]) : timeout.signal;
@@ -39,11 +44,6 @@ export async function fetchFederation(url: string, init: RequestInit, ctx: Kerne
     async cancel(reason) { try { await reader.cancel(reason); } finally { finish(); } },
   }, { highWaterMark: 0 });
   return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
-}
-
-export async function fetchFederationJson(url: string, init: RequestInit, ctx: KernelContext): Promise<JsonValue> {
-  const response = await fetchFederation(url, init, ctx);
-  return readFederationJson(response, init.signal ?? undefined);
 }
 
 export async function readFederationJson(response: Response, signal?: AbortSignal): Promise<JsonValue> {

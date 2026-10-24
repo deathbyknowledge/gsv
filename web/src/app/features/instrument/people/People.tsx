@@ -19,7 +19,7 @@ import { Profile } from "./Profile";
 import { NewConversation } from "./NewConversation";
 import { MessageRequest } from "./MessageRequest";
 import { BlockedPeople } from "./BlockedPeople";
-import { approachStatus, emptyApproachDraft, inboxPreview } from "./peopleModel";
+import { approachStatus, contactAsk, emptyApproachDraft, inboxPreview } from "./peopleModel";
 import { usePeopleRoute, type PeopleRoute } from "./peopleNavigation";
 import { navigateApp } from "../../../services/navigation/appNavigation";
 import { useT } from "../../../i18n/locale";
@@ -97,7 +97,7 @@ export function People({ onDirtyChange, onAsk }: {
   });
   const selectedContact = contacts.find((contact) => contact.id === inboxContact.current);
   const visible = contacts.filter((contact) => (view === "contacts" ? contact.preferences?.saved !== false : inboxByContact.has(contact.id))
-    && `${contactDisplayName(contact)} ${contact.remoteSubject.displayName} ${contact.remoteOrigin}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))
+    && `${contactDisplayName(contact)} ${contact.remoteName} ${contact.remoteHandle ?? ""}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))
     .sort((a, b) => view === "contacts" ? contactDisplayName(a).localeCompare(contactDisplayName(b)) : (inboxByContact.get(b.id)?.conversation.updatedAt ?? 0) - (inboxByContact.get(a.id)?.conversation.updatedAt ?? 0));
   const items = requests.data?.pages.flatMap((page) => page.approaches) ?? [];
   const hasSelection = view === "profile" || (view === "requests" ? !!requestId : view === "inbox" && !!contactId);
@@ -178,7 +178,7 @@ export function People({ onDirtyChange, onAsk }: {
     <section class="people-detail" ref={detail} tabIndex={-1} aria-label={t(view === "profile" ? "people.profile.title" : "people.selected")}>
       {hasSelection && view !== "profile" && !(view === "inbox" && selectedContact) && <button class="people-action people-back" disabled={busy} onClick={() => { open({ view: view === "requests" ? "requests" : "inbox", contactId: null, requestId: null }); }}>{t(view === "requests" ? "people.back.requests" : "people.back.conversations")}</button>}
       <RetainedView active={active && view === "inbox"}>
-        {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} onBack={() => open({ contactId: null })} idea={chosenIdea?.contactId === selectedContact.id ? chosenIdea.index : null} onAsk={(task) => onAsk(`Help me with ${JSON.stringify(contactDisplayName(selectedContact))}'s Ship profile: ${selectedContact.remoteOrigin}/profile\n\n${task.replaceAll("{name}", `${contactDisplayName(selectedContact)} (${new URL(selectedContact.remoteOrigin).host})`)}`)} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
+        {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} onBack={() => open({ contactId: null })} idea={chosenIdea?.contactId === selectedContact.id ? chosenIdea.index : null} onAsk={(task) => onAsk(contactAsk(selectedContact, task))} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
           : contactId ? contactsQuery.isFetching ? <LoadingState variant="panel">{t("people.inbox.opening")}</LoadingState> : <p class="people-note">{t("people.inbox.unavailable")}</p>
           : firstVisit ? <PeopleWelcome idea={idea} onIdea={setIdea} disabled={busy || !connected || !mayStart} onConnect={() => { setChosenIdea({ index: idea, contactId: null }); setDialog("invitation"); }} />
           : <div class="people-empty"><h2>{t("people.inbox.resume")}</h2><p>{t("people.inbox.resumeHint")}</p><button class="people-action" disabled={busy || !connected || !mayStart} onClick={() => setDialog("invitation")}>{t("people.connect.prompt")}</button></div>}

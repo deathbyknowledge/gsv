@@ -29,6 +29,7 @@ import {
   cancelBinaryBody,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame, FrameError } from "./protocol/frames";
+import { ATPROTO_DID_PATH, serveAtprotoDid } from "./atproto-did";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
   createPublicAssetFileSystem,
@@ -49,8 +50,9 @@ import { createInstallationRipgit } from "./installation/ripgit";
 import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
 import * as z from "zod/mini";
 import type { ServicePeerProfile } from "./kernel/peer";
-import { isFederationPublicPath } from "./kernel/federation";
+import { isShipXrpcPath } from "./kernel/ships/xrpc";
 import { matchPublicProfilePath, servePublicProfileRequest } from "./public-profiles";
+import { limitShipCalls } from "./ship-call-limit";
 import type { GatewayEnv } from "./runtime-env";
 import { DEPLOYMENT_PRESENTATION_PATH, deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
 
@@ -73,7 +75,8 @@ export default {
     const publicAssetMatch = matchPublicAssetPath(url.pathname);
     const gitMatch = matchGitPath(request);
     const websocketRequest = url.pathname === "/ws" && isWebSocketRequest(request);
-    const federationPath = isFederationPublicPath(url.pathname);
+    // Ship-to-Ship calls reach only an existing Ship; they never provision one.
+    const federationPath = isShipXrpcPath(url.pathname);
     const profilePath = matchPublicProfilePath(url.pathname);
     const browserAssetRequest = (
       request.method === "GET" || request.method === "HEAD"
@@ -83,6 +86,7 @@ export default {
       && url.pathname !== "/ws"
       && url.pathname !== "/oauth/callback"
       && url.pathname !== "/.well-known/oauth-client/gsv.json"
+      && url.pathname !== ATPROTO_DID_PATH
       && !federationPath
       && !profilePath;
 
@@ -108,11 +112,18 @@ export default {
       });
     }
 
+    if (url.pathname === ATPROTO_DID_PATH) {
+      return serveAtprotoDid(request, env.PDS, route.identity.installationId);
+    }
+
     if (publicAssetMatch) {
       const storage = createInstallationStorage(env.STORAGE, route.identity.installationId);
       const fs = createPublicAssetFileSystem({ STORAGE: storage });
       return servePublicAssetRequest(request, fs, publicAssetMatch);
     }
+    // A flood of calls to a Ship stops here, before it reaches the Kernel.
+    const shipCallsLimited = federationPath && await limitShipCalls(request, env.SHIP_CALLS, route.identity.installationId);
+    if (shipCallsLimited) return shipCallsLimited;
     const kernelDO = await getKernelByInstallationId(
       env.KERNEL,
       route.identity.installationId,
@@ -128,8 +139,10 @@ export default {
 
     if (profilePath) {
       const { primaryDomain } = deploymentPresentation(env.GSV_PUBLIC_CONFIG);
-      return servePublicProfileRequest(request, profilePath,
-        (locator) => kernelDO.getPublicProfileProjection(locator), primaryDomain ? `https://${primaryDomain}` : undefined);
+      return servePublicProfileRequest(request, profilePath, {
+        page: () => kernelDO.getPublicProfile(),
+        avatar: () => kernelDO.getPublicProfileAvatar(),
+      }, primaryDomain ? `https://${primaryDomain}` : undefined);
     }
 
     if (federationPath) {

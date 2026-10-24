@@ -2,7 +2,8 @@
 
 One operator deployment serves multiple isolated installations. The public
 composition includes the installation directory, administration, Gateway,
-storage, ripgit and inference execution. Each installation keeps its own Kernel,
+storage, ripgit and inference execution, and the open-network host once it is
+configured. Each installation keeps its own Kernel,
 accounts, credentials, processes and data. H&M funding or billing services are
 optional operator integrations.
 
@@ -26,6 +27,9 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_INFERENCE_PROVIDER`, `GSV_INFERENCE_MODEL` | Operator default provider and model. |
 | `GSV_INFERENCE_API_KEY`, `GSV_INFERENCE_BASE_URL` | Optional operator provider credentials and endpoint. |
 | `GSV_DELETION_CATALOG_FILE` | Path to a JSON array declaring current and historical external resources for deletion; see below. |
+| `GSV_PLC_ROTATION_KEY` | Runs the [open-network host](../architecture/open-network.md#deployment) at `pds.<domain>`. The secp256k1 private key, as 64 lowercase hex characters, that signs every Ship's DID operations; generate it once and keep it secret. |
+| `GSV_PLC_RECOVERY_KEY` | Optional `did:key` of an offline key that outranks the rotation key in every new DID. |
+| `GSV_PLC_URL` | The did:plc directory the host registers DIDs with and Ships read them from; defaults to `https://plc.directory`. |
 
 Optional inference ceilings are `GSV_INFERENCE_MONTHLY_REQUESTS`,
 `GSV_INFERENCE_MONTHLY_OUTPUT_TOKENS`, `GSV_INFERENCE_MAX_OUTPUT_TOKENS` and
@@ -60,9 +64,9 @@ npx alchemy plan --stage operator
 npx alchemy deploy --stage operator --yes
 ```
 
-The release manifest is version 3 and includes the installation directory Worker,
-its public migrations and the inference Worker alongside Gateway, web assets,
-ripgit and adapter bundles. A version 1 singleton bundle is not accepted by this
+The release manifest is version 4 and includes the installation directory Worker,
+its public migrations, the inference Worker and the open-network host alongside
+Gateway, web assets, ripgit and adapter bundles. A version 1 singleton bundle is not accepted by this
 composition. Existing singleton deployments require an explicit migration before
 upgrading; existing multi-installation operators must preserve their physical
 resource identities and complete the directory migration ownership handoff.
@@ -157,6 +161,43 @@ error is marked "Returned an error". If the outcome could not be written after
 the change ran, the change is still reported as done and its entry reads
 "Outcome not recorded"; check the Ship's current state.
 
+## Move contacts to DIDs {#move-contacts-to-dids}
+
+Ships from before the open network name the people in their contacts by an
+older Ship identity. After you deploy this release, each of those Ships holds
+its contacts until you move them to DIDs. Until then, its person sees "Your
+contacts are moving to the open network. Try again in a few minutes." when
+they message a contact, invite someone or send a message request. Calls from
+other Ships wait and retry. A Ship with no contacts from before has nothing to
+move.
+
+Open **Contacts move** in administration, at `<admin-origin>/admin/identity-move`:
+
+1. **Survey every Ship.** Accounts asks each active or suspended Ship, a few
+   each minute, how other Ships knew its person and who its own contacts are. A
+   Ship with contacts gets its DID, and a profile it published in the old
+   format is written to its repository. No contact changes, so you can survey
+   again until you apply.
+2. **Review the totals.** The page counts the people the Ships name, how many
+   have a DID on this deployment, and how many don't: people on another
+   deployment, or whose Ship is gone. A Ship that doesn't answer is tried again
+   after 1, 5 and 15 minutes, then hourly, and listed with its last error.
+3. **Apply the move.** Once every Ship has answered, type `move` to confirm.
+   Each Ship then names its people by DID, a few Ships each minute, and resumes
+   the deliveries and message requests that were waiting. A contact with
+   someone who has no DID here ends, so the two people must connect again;
+   contacts held by an account other than the Ship's person, such as root, end
+   too. A message request its recipient never received expires, and its sender
+   sees that. Applying can't be undone, and the Ships can't be surveyed again
+   afterwards.
+
+The audit log records each survey and apply, with the reason you give.
+`<admin-origin>/admin/api/identity-move` returns the same status as JSON; POST
+to `/survey`, or to `/apply` with `{"confirm":"move"}`. The move needs
+Accounts' `OPERATOR_GATEWAY` binding. Accounts keeps each Ship's DID and
+handle, the old identifiers its contacts name, and counts, never names or
+messages.
+
 ## Connect services and verify cleanup
 
 Enabled adapters require their application secrets declared in the adapter
@@ -180,7 +221,11 @@ and dead-letter queues where applicable. Queues and unfinished uploads are live
 resources. Current bindings and default-provider settings cannot establish the
 complete history of destinations, including people's own provider accounts.
 Leave the catalog unset while that inventory is unresolved; deletion admission
-fails closed. A configured catalog declares scope, not successful cleanup.
+fails closed. A configured catalog declares scope, not successful cleanup. A
+deployment that runs the open-network host also catalogs its bucket's
+unfinished uploads and, when they persist, its Worker's logs. Deleting an
+installation then deletes its Ship's public account and tombstones its DID,
+which can't be undone; see [the open network](../architecture/open-network.md#deletion).
 
 Deleting an installation is a resumable operation. Accounts verifies the resource
 inventory before cleanup starts, every owning service reports its own erasure

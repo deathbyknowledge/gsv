@@ -1,25 +1,29 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { federationDeliveryEnvelopeSchema, federationDeliveryEnvelopeV2Schema } from "../dist/protocol.js";
+import { deliverInputSchema } from "../dist/protocol.js";
 
-const envelope = {
-  version: 2, domain: "gsv-federation/2/delivery", deliveryId: "delivery:one",
-  senderShipId: "ship:alice", senderSubjectId: "subject:alice", recipientSubjectId: "subject:bob",
-  generation: "generation:one", timestampMs: 1, nonce: "nonce", signature: "signature",
+const ALICE = "did:plc:aliceaaaaaaaaaaaaaaaaaaa";
+const delivery = {
+  deliveryId: "delivery:one",
+  generation: "generation:one",
   payload: {
     kind: "message", messageId: "message:one", threadId: "thread:one", text: "Hello",
-    social: {
-      threadId: "thread:one", reference: { actor: { shipId: "ship:alice", subjectId: "subject:alice" }, messageId: "message:one" },
-      provenance: { kind: "human" },
-    },
+    social: { threadId: "thread:one", reference: { did: ALICE, messageId: "message:one" }, provenance: { kind: "human" } },
   },
 };
 
-test("v2 cannot masquerade as v1 or omit provenance", () => {
-  assert.equal(federationDeliveryEnvelopeV2Schema.safeParse(envelope).success, true);
-  assert.equal(federationDeliveryEnvelopeSchema.safeParse(envelope).success, false);
-  assert.equal(federationDeliveryEnvelopeV2Schema.safeParse({ ...envelope, domain: "gsv-federation/2/receipt" }).success, false);
-  const { social, ...payload } = envelope.payload;
-  assert.equal(federationDeliveryEnvelopeV2Schema.safeParse({ ...envelope, payload }).success, false);
-  assert.equal(federationDeliveryEnvelopeV2Schema.safeParse({ ...envelope, payload: { ...payload, social: { ...social, provenance: { kind: "approved" } } } }).success, false);
+test("a delivered message names its author by DID and says who wrote it", () => {
+  assert.equal(deliverInputSchema.safeParse(delivery).success, true);
+  const { social, ...payload } = delivery.payload;
+  assert.equal(deliverInputSchema.safeParse({ ...delivery, payload }).success, false);
+  assert.equal(deliverInputSchema.safeParse({ ...delivery, payload: { ...payload, social: { ...social, provenance: { kind: "approved" } } } }).success, false);
+  const actor = { shipId: "ship:alice", subjectId: "subject:alice" };
+  assert.equal(deliverInputSchema.safeParse({ ...delivery, payload: { ...payload, social: { ...social, reference: { actor, messageId: "message:one" } } } }).success, false);
+  assert.equal(deliverInputSchema.safeParse({ ...delivery, payload: { ...payload, social: { ...social, reference: { did: "ship:alice", messageId: "message:one" } } } }).success, false);
+});
+
+test("a delivery carries no sender identity of its own", () => {
+  assert.equal(deliverInputSchema.safeParse({ ...delivery, senderDid: ALICE }).success, false);
+  assert.equal(deliverInputSchema.safeParse({ ...delivery, payload: { kind: "contact.revoked" } }).success, true);
+  assert.equal(deliverInputSchema.safeParse({ ...delivery, payload: { kind: "contact.revoked", generation: "generation:one" } }).success, false);
 });
