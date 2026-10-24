@@ -105,7 +105,11 @@ can leave the seam disabled or attach a consumer for their own backend.
 
 If an Accounts call fails during setup authorization, activation, or recovery,
 Gateway emits `installation.setup.failed` with a diagnostic ID, the stage,
-an allowed error type, and duration. The response includes that ID. The latest
+an allowed error type, and duration. A setup step that fails after the request is
+accepted, such as a filesystem write while the home is laid out, emits the same event
+with the `setup` stage and the step's name; retrying with the same credentials finishes
+setup. Either way, the response includes the diagnostic ID. A refused request, such as
+an invalid username, is answered with its reason and records nothing. The latest
 cause is retained only in the Kernel's private `managed_setup_failure` KV record, bounded to
 8,192 characters for operator inspection; exception text never enters the response or
 telemetry.

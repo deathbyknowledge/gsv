@@ -9,7 +9,7 @@ const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 const handleSysBootstrapMock = vi.spyOn(bootstrap, "handleSysBootstrap");
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 
-import { handleSysSetup, recoverCompletedSysSetup } from "./setup";
+import { handleSysSetup, recoverCompletedSysSetup, SetupStepError } from "./setup";
 
 function createCtx(overrides?: {
   setupMode?: boolean;
@@ -497,5 +497,19 @@ describe("handleSysSetup", () => {
     });
     expect(ensurePersonalControllerMock).toHaveBeenCalledTimes(2);
     expect(initialize).toHaveBeenCalledTimes(2);
+  });
+
+  it("names the step a setup stopped at and keeps its cause, while a refusal stays plain", async () => {
+    const { ctx } = createCtx();
+    const cause = new Error("INTERNAL SERVER ERROR");
+    getConversationByIdMock.mockReturnValue({ initialize: vi.fn().mockRejectedValue(cause) });
+
+    await expect(handleSysSetup({ username: "alice", password: "password-123" }, ctx))
+      .rejects.toMatchObject({ name: "SetupStepError", step: "provision-personal-agent", message: "INTERNAL SERVER ERROR", cause });
+    await expect(recoverCompletedSysSetup({ username: "alice", password: "password-123" }, ctx))
+      .rejects.toMatchObject({ name: "SetupStepError", step: "provision-personal-agent", cause });
+    const refusal = recoverCompletedSysSetup({ username: "alice", password: "wrong-password" }, ctx);
+    await expect(refusal).rejects.toThrow("Installation setup credentials do not match");
+    await expect(refusal).rejects.not.toBeInstanceOf(SetupStepError);
   });
 });
