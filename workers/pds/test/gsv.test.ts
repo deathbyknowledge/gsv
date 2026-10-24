@@ -78,11 +78,10 @@ describe("publishing for an installation", () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it("refuses an installation Accounts does not report active, without addressing its repository", async () => {
+  it("refuses an installation Accounts reports neither active nor restricted, without addressing its repository", async () => {
     const before = await listDurableObjectIds(env.REPOS);
     const refused = [
       `inst_${crypto.randomUUID()}`,
-      accounts.add("restricted").installationId,
       accounts.add("provisioning").installationId,
       accounts.add("retained").installationId,
     ];
@@ -114,6 +113,23 @@ describe("publishing for an installation", () => {
     expect(plc.operations(account.did)).toHaveLength(1);
     expect(await repository.account()).toEqual(account);
     expect(await env.REPOS.getByName(ship.installationId).account()).toEqual({ did: account.did, handle: account.handle });
+  });
+
+  it("gives a restricted installation its DID but publishes and signs nothing for it", async () => {
+    const ship = accounts.add("restricted");
+    const repository = await publisher().getInstallation(ship.installationId);
+    const account = await repository.ensureAccount(ship.handle);
+    expect(account).toEqual({ did: expect.stringMatching(/^did:plc:/), handle: ship.handle, host: env.PDS_ORIGIN });
+    expect(await repository.account()).toEqual(account);
+    const refusal = "active installation";
+    expect(await rejection(repository.serviceAuth({ aud: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb#ship", lxm: "space.ship.deliver" }))).toContain(refusal);
+    expect(await rejection(repository.applyWrites([{
+      action: "put", collection: NOTE, rkey: "self",
+      record: { $type: NOTE, text: "hello", createdAt: "2026-10-23T00:00:00.000Z" },
+    }]))).toContain(refusal);
+    expect(await rejection(upload(repository, "avatar"))).toContain(refusal);
+    expect(await rejection(repository.readBlob("bafkreie5737gdxlw5i64vzichcalba3z2v5n6icifvx5xytvske7mr3hpm"))).toContain(refusal);
+    expect(await admitInstallation(accounts, ship.installationId)).toBe("suspended");
   });
 
   it("signs only Ship methods addressed to another Ship's service", async () => {

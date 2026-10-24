@@ -159,8 +159,9 @@ adapter. See [Web search](../reference/web-search.md).
 An optional `PDS` binding hosts each installation's public ATProto repository.
 Its deployment-owned props carry the `kernel-publish` authority, and the Kernel
 asks only for its own installation; the PDS checks with Accounts that the
-installation is active. The Kernel owns who may publish, approval and the
-collections features reserve; the PDS owns signing, files and the firehose.
+installation is active, and gives a restricted one only its DID. The Kernel
+owns who may publish, approval and the collections features reserve; the PDS
+owns signing, files and the firehose.
 See [The open network](./open-network.md).
 
 ## Cloud instances

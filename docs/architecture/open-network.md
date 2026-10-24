@@ -26,7 +26,9 @@ the repository engine.
 
 The PDS serves an installation's repository only while Accounts reports the
 installation active. A retired installation's repository reads as deleted, and
-any other state as suspended.
+any other state as suspended. A restricted installation keeps its identity, so
+the PDS still creates its DID when the Kernel asks, but signs, publishes and
+serves nothing for it until it is active again.
 
 ## Identity
 
