@@ -240,7 +240,7 @@ private reportSetupFailure(connection: KernelConnection<ConnectionState>, reques
       installationId: this.host.installationId, component: "gateway",
       event: { stream: "operational", name: "installation.setup.failed", properties },
     });
-    // A setup whose step failed resumes when the person retries with the same credentials.
+    // The person can retry a failed step with the same credentials; see recoverCompletedSysSetup.
     this.host.transport.sendError(connection, requestId, 503,
       stage === "activation" ? "Installation setup could not be activated"
         : stage === "setup" ? "Installation setup did not finish. Try again." : "Installation setup is unavailable", { diagnosticId });
