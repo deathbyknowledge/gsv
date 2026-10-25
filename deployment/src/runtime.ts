@@ -219,7 +219,7 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
           // Once the operator has published the lexicons, a deploy's changes follow within ten minutes.
           // The same schedule tells relays of the host's new events.
           crons: props.pds.lexiconHandle || relays.length > 0 ? ["*/10 * * * *"] : undefined,
-          // The PDS reaches only its PLC directory, over the public internet even on the deployment's own zone.
+          // The PDS reaches only its PLC directory and the relays it names, over the public internet even on the deployment's own zone.
           compatibility: { ...compatibility, flags: [...compatibility.flags, "global_fetch_strictly_public"] },
           workersDev: false,
           // Like the Gateway's, its logs go only to the operator's tail when there is one.
