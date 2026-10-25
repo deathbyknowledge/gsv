@@ -1,8 +1,18 @@
 import type { InstallationDirectoryService, InstallationState } from "@humansandmachines/gsv/services/directory";
 import { XrpcError, type Admission } from "../host/xrpc";
+import { LEXICON_REPOSITORY } from "./lexicons";
 
 /** States in which Accounts is retiring an installation and its data. */
 const RETIRED: ReadonlySet<InstallationState> = new Set(["retained", "deleting", "deleted"]);
+
+/**
+ * Whether the deployment serves a repository's public reads, by the name of
+ * the object that holds it. The lexicon account belongs to the deployment
+ * rather than an installation, so Accounts isn't asked about it.
+ */
+export async function admitRepository(directory: InstallationDirectoryService, name: string): Promise<Admission> {
+  return name === LEXICON_REPOSITORY ? "active" : admitInstallation(directory, name);
+}
 
 /**
  * Whether Accounts admits public reads of an installation's repository, by the

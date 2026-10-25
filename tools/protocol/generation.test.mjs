@@ -8,6 +8,7 @@ import { test } from "node:test";
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 const generatedPaths = [
   "packages/gsv/src/protocol/generated/ship-lexicons.ts",
+  "workers/pds/src/gsv/generated/ship-lexicons.ts",
   "workers/gateway/src/protocol/generated/wire-frame-schema.js",
   "host/crates/gateway-client/src/protocol/generated.rs",
 ];

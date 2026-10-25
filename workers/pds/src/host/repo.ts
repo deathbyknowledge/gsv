@@ -3,7 +3,8 @@ import { CODEC_RAW, fromDigest, fromString as parseCid, toString as formatCid } 
 import type { Service } from "@atcute/did-plc";
 import { isHandle, isNsid, isRecordKey, parseCanonicalResourceUri } from "@atcute/lexicons/syntax";
 import { now as tidNow } from "@atcute/tid";
-import { BlockMap } from "@atproto/repo";
+import { jsonToLex } from "@atproto/lex-json";
+import { BlockMap, cidForRecord } from "@atproto/repo";
 import * as z from "zod/mini";
 import { BlobStore, extractJsonBlobCids, type BlobRef } from "../cirrus/repo/blobs";
 import { RepoEngine } from "../cirrus/repo/engine";
@@ -39,6 +40,9 @@ export type CommitResult = {
   /** One entry per write, in order; a delete has no record CID. */
   results: Array<{ uri: string; cid: string | null }>;
 };
+
+/** A record to store under a key of one collection. */
+export type RecordPut = { rkey: string; record: LexObject };
 
 /** A hosted account; `status` is set while its host has taken it down. */
 export type HostedAccount = { did: string; handle: string; status?: "takendown" };
@@ -205,23 +209,34 @@ export class HostedRepo extends DurableObject<HostEnv> {
   async applyWrites(writes: RepoWrite[]): Promise<CommitResult> {
     return this.write(async (repo) => {
       await this.requireLive();
-      refuseTakendown(repo);
-      const prepared = await this.prepare(repo, writes);
-      const promoted = await this.promote(repo, prepared);
-      const before = await repo.storage.getRev();
-      let committed: Awaited<ReturnType<RepoEngine["applyWrites"]>>;
-      try {
-        committed = await repo.engine.applyWrites(prepared.map((entry) => entry.write));
-      } catch (error) {
-        // A commit saved before the failure references these blobs, so they stay public.
-        if ((await repo.storage.getRev()) === before) await unpublish(repo, promoted);
-        else await this.recordCommit(repo, prepared, promoted);
-        throw error;
-      }
-      await this.recordCommit(repo, prepared, promoted);
-      const results = prepared.map((entry, index) => ({ uri: entry.uri, cid: entry.blobs === null ? null : committed.results[index]?.cid ?? null }));
-      return { commit: committed.commit, results };
+      return this.commit(repo, writes);
     });
+  }
+
+  /**
+   * Puts each record whose stored value differs from the one given, in one
+   * signed commit, and leaves the others as they are; it deletes nothing.
+   * Returns the keys it wrote.
+   */
+  async putChangedRecords(collection: string, records: readonly RecordPut[]): Promise<string[]> {
+    return this.write(async (repo) => {
+      await this.requireLive();
+      const changed = await this.changes(repo, collection, records);
+      const writes = records.filter(({ rkey }) => changed.includes(rkey)).map(({ rkey, record }): RepoWrite => ({ action: "put", collection, rkey, record }));
+      if (writes.length > 0) await this.commit(repo, writes);
+      return changed;
+    });
+  }
+
+  /** The keys of the given records that aren't stored as given. */
+  async changedRecords(collection: string, records: readonly RecordPut[]): Promise<string[]> {
+    return this.changes(await this.requireRepo(), collection, records);
+  }
+
+  /** The collections the repository holds records in. */
+  async collections(): Promise<string[]> {
+    const repo = await this.readable();
+    return repo ? (await repo.engine.describeRepo()).collections : [];
   }
 
   /**
@@ -777,6 +792,37 @@ export class HostedRepo extends DurableObject<HostEnv> {
       if (applying && !(await repo.blobs.hasBlob(subject.cid))) throw new Error(`BlobNotFound: Blob not found: ${subject.cid}`);
     }
     return subjectKey(subject);
+  }
+
+  private async commit(repo: OpenRepo, writes: RepoWrite[]): Promise<CommitResult> {
+    refuseTakendown(repo);
+    const prepared = await this.prepare(repo, writes);
+    const promoted = await this.promote(repo, prepared);
+    const before = await repo.storage.getRev();
+    let committed: Awaited<ReturnType<RepoEngine["applyWrites"]>>;
+    try {
+      committed = await repo.engine.applyWrites(prepared.map((entry) => entry.write));
+    } catch (error) {
+      // A commit saved before the failure references these blobs, so they stay public.
+      if ((await repo.storage.getRev()) === before) await unpublish(repo, promoted);
+      else await this.recordCommit(repo, prepared, promoted);
+      throw error;
+    }
+    await this.recordCommit(repo, prepared, promoted);
+    const results = prepared.map((entry, index) => ({ uri: entry.uri, cid: entry.blobs === null ? null : committed.results[index]?.cid ?? null }));
+    return { commit: committed.commit, results };
+  }
+
+  /** Compares each record's CID, as the engine would store it, with the stored record's. */
+  private async changes(repo: OpenRepo, collection: string, records: readonly RecordPut[]): Promise<string[]> {
+    const changed: string[] = [];
+    for (const { rkey, record } of records) {
+      validator.validate({ collection, rkey, record });
+      const stored = await repo.engine.getRecord(collection, rkey);
+      const cid = await cidForRecord(jsonToLex({ ...record, $type: collection }));
+      if (stored?.cid !== cid.toString()) changed.push(rkey);
+    }
+    return changed;
   }
 
   private async prepare(repo: OpenRepo, writes: RepoWrite[]): Promise<PreparedWrite[]> {
