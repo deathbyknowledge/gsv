@@ -16,6 +16,7 @@ import {
   registerGenesis,
   signNextOperation,
   submitNextOperation,
+  tombstoneIdentity,
   withOwnerRecoveryKey,
   type IdentityState,
   type RepoIdentity,
@@ -29,6 +30,7 @@ const PAPER = "did:key:zQ3shPaperKeyOfTheOperator";
 const HOST = "did:key:zQ3shHostKeyOfTheOperator";
 const FIRST = "did:key:zDnaeFirstOwnerKey";
 const SECOND = "did:key:zDnaeSecondOwnerKey";
+const ELSEWHERE = { type: "AtprotoPersonalDataServer", endpoint: "https://pds.elsewhere.test" };
 
 let plc: FakePlcDirectory;
 
@@ -193,6 +195,58 @@ describe("an owner's recovery key", () => {
   });
 });
 
+describe("a log that keeps the operations an undo nullified", () => {
+  it("no longer counts the host's latest operation once an undo nullifies it", async () => {
+    const identity = await registered("forked.ship.test");
+    const owner = await P256PrivateKeyExportable.createKeypair();
+    const ownerDid = await owner.exportPublicKey("did");
+    const added = await signNextOperation(env, identity.did, await genesisHead(identity.genesis), (state) => ({
+      ...state, rotationKeys: withOwnerRecoveryKey(state.rotationKeys, null, ownerDid),
+    }));
+    await submitNextOperation(env, identity.did, added);
+    const removed = await signNextOperation(env, identity.did, added, (state) => ({
+      ...state, rotationKeys: withOwnerRecoveryKey(state.rotationKeys, ownerDid, null),
+    }));
+    plc.loseNextResponse();
+    expect(await rejection(submitNextOperation(env, identity.did, removed))).toContain("Network connection lost");
+
+    // The owner's key builds on the addition, which nullifies the removal the directory logged.
+    plc.elapse(HOUR_MS);
+    await submitAs(identity.did, added, stateOf(added.operation), owner);
+    const undo = await head(identity.did);
+    expect(await nullified(identity.did)).toEqual([removed.cid]);
+
+    // The retry finds the removal no longer in force, and the tombstone follows the undo.
+    expect(await rejection(submitNextOperation(env, identity.did, removed))).toContain("IdentityChanged");
+    await tombstoneIdentity(env, identity.did);
+    expect(plc.operations(identity.did).at(-1)).toMatchObject({ type: "plc_tombstone", prev: undo.cid });
+  });
+
+  it("tombstones the paper key's repair of a leaked key's move, and the paper key can undo that tombstone", async () => {
+    const paper = await Secp256k1PrivateKeyExportable.createKeypair();
+    const withPaper = { ...env, PLC_RECOVERY_KEY: await paper.exportPublicKey("did") };
+    const identity = await mintIdentity(withPaper, "repaired.ship.test");
+    await registerGenesis(withPaper, identity);
+    const known = await genesisHead(identity.genesis);
+    const moved = { ...stateOf(identity.genesis), services: { ...identity.genesis.services, atproto_pds: ELSEWHERE } };
+    await submitAs(identity.did, known, moved, await hostKeypair());
+    const leaked = await head(identity.did);
+
+    // Within 72 hours the paper key builds on the genesis, which nullifies the move.
+    plc.elapse(HOUR_MS);
+    await submitAs(identity.did, known, stateOf(identity.genesis), paper);
+    const repair = await head(identity.did);
+    expect(await nullified(identity.did)).toEqual([leaked.cid]);
+
+    // The repair names this host again, so the tombstone follows it; the paper key still outranks the host's.
+    await tombstoneIdentity(withPaper, identity.did);
+    const tombstone = await head(identity.did);
+    expect(tombstone.operation).toMatchObject({ type: "plc_tombstone", prev: repair.cid });
+    await submitAs(identity.did, repair, stateOf(identity.genesis), paper);
+    expect(await nullified(identity.did)).toEqual([leaked.cid, tombstone.cid]);
+  });
+});
+
 async function registered(handle: string, services: Parameters<typeof mintIdentity>[2] = {}): Promise<RepoIdentity> {
   const identity = await mintIdentity(env, handle, services);
   await registerGenesis(env, identity);
@@ -222,6 +276,18 @@ async function hostRotationKey(): Promise<DidKeyString> {
 
 function auditLog(did: DidPlcString) {
   return new PlcClient({ serviceUrl: env.PLC_URL }).getAuditLog(did);
+}
+
+/** The entry in force at the head of the DID's log. */
+async function head(did: DidPlcString) {
+  const entry = (await auditLog(did)).filter((logged) => !logged.nullified).at(-1);
+  if (!entry) throw new Error(`Expected a log for ${did}`);
+  return entry;
+}
+
+/** The CIDs of the operations in the DID's audit log that a later one nullified, oldest first. */
+async function nullified(did: DidPlcString): Promise<string[]> {
+  return (await auditLog(did)).filter((entry) => entry.nullified).map((entry) => entry.cid);
 }
 
 function lastRotationKeys(did: string): DidKeyString[] {

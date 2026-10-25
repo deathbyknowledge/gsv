@@ -112,7 +112,8 @@ exported CAR file against the signing key, stage blobs in R2, delete them and
 keep them under a key prefix.
 
 The host tests register did:plc identities with an in-memory PLC directory
-that applies plc.directory's log rules, and read every frame from the host
+that applies plc.directory's log rules and, like it, keeps an operation an undo
+nullified in the audit log, flagged. They read every frame from the host
 firehose as a relay does. They cover a lost directory response, writes that
 overlap while blob storage is slow, a head that no event announced, delivery
 retries with backoff, the blob lifecycle, cursor replay and retention, and the
@@ -121,7 +122,8 @@ identity tests move the directory's clock to check PLC's 72-hour window. They
 cover a change signed on the head of the DID's log with every other field
 carried forward, a head that moved, PLC's rotation-key limits, and an owner's
 recovery key: its rank, replacement, removal, a lost response, and what each
-key can undo.
+key can undo. With an undone operation in the log, a retry and a tombstone
+follow the operations in force, and the paper key can still undo the tombstone.
 
 The relay tests answer `requestCrawl` as the reference relay does, checking the
 host's `describeServer` through the worker before accepting. They cover asking

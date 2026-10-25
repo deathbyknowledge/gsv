@@ -12,9 +12,12 @@ import {
 /**
  * An in-memory did:plc directory. It accepts an operation only when the log
  * rules plc.directory applies would, and serves logs and documents in its format.
+ * Like plc.directory, it keeps an operation a later one nullified in the audit
+ * log, flagged, and leaves it out of everything else it serves.
  * The Gateway's tests use it too, so it imports nothing from the PDS.
  */
 export class FakePlcDirectory {
+  /** Each DID's audit log in the order the directory logged it. */
   private readonly logs = new Map<string, IndexedEntryWithSigner[]>();
   private dropNextResponse = false;
   private elapsedMs = 0;
@@ -29,9 +32,9 @@ export class FakePlcDirectory {
     this.elapsedMs += ms;
   }
 
-  /** The operations a DID's log holds, genesis first. */
+  /** The operations in force in a DID's log, genesis first. */
   operations(did: string): CompatibleOperationOrTombstone[] {
-    return (this.logs.get(did) ?? []).map((entry) => entry.operation);
+    return this.inForce(did).map((entry) => entry.operation);
   }
 
   async handle(request: Request): Promise<Response> {
@@ -43,9 +46,10 @@ export class FakePlcDirectory {
       return this.submit(did, await request.json<CompatibleOperationOrTombstone>());
     }
     const log = this.logs.get(did);
-    const last = log?.at(-1)?.operation;
+    const operations = this.operations(did);
+    const last = operations.at(-1);
     if (!log || !last) return Response.json({ message: `DID not registered: ${did}` }, { status: 404 });
-    if (path === "log") return Response.json(log.map((entry) => entry.operation));
+    if (path === "log") return Response.json(operations);
     if (path === "log/audit") return Response.json(log.map(({ allowedSigners: _allowed, signedBy: _signer, ...entry }) => entry));
     if (path !== "") return Response.json({ message: "Not found" }, { status: 404 });
     if (last.type === "plc_tombstone") return Response.json({ message: `DID not available: ${did}` }, { status: 404 });
@@ -54,14 +58,17 @@ export class FakePlcDirectory {
 
   private async submit(did: DidPlcString, operation: CompatibleOperationOrTombstone): Promise<Response> {
     try {
-      const { ops } = await processIndexedEntry(did, this.logs.get(did) ?? [], {
+      const { nullified, ops } = await processIndexedEntry(did, this.inForce(did), {
         did,
         operation,
         cid: toString(await create(CODEC_DCBOR, encode(operation))),
         nullified: false,
         createdAt: new Date(Date.now() + this.elapsedMs).toISOString(),
       });
-      this.logs.set(did, ops);
+      const disputed = new Set(nullified.map((entry) => entry.cid));
+      const logged = (this.logs.get(did) ?? []).map((entry) => (disputed.has(entry.cid) ? { ...entry, nullified: true } : entry));
+      // The canonical log processIndexedEntry returns ends with the new entry.
+      this.logs.set(did, [...logged, ...ops.slice(-1)]);
     } catch (error) {
       return Response.json({ message: error instanceof Error ? error.message : String(error) }, { status: 400 });
     }
@@ -70,6 +77,11 @@ export class FakePlcDirectory {
       throw new TypeError("Network connection lost.");
     }
     return new Response(null, { status: 200 });
+  }
+
+  /** The entries in force in a DID's audit log: every one no later entry nullified. */
+  private inForce(did: string): IndexedEntryWithSigner[] {
+    return (this.logs.get(did) ?? []).filter((entry) => !entry.nullified);
   }
 }
 
