@@ -509,6 +509,7 @@
       "docs": [
         "docs/how-to/recovery-sheet.md",
         "docs/architecture/open-network.md",
+        "docs/architecture/installation-directory.md",
         "docs/reference/syscalls.md"
       ],
       "manual": [
