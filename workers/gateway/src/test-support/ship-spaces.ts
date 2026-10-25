@@ -144,6 +144,10 @@ function testPds(network: TestShipNetwork, space: TestSpace, identity: ShipIdent
     },
     readBlob: async () => null,
     takedowns: async () => [],
+    ownerRecoveryKey: async () => ({ ownerRecoveryKey: null, pending: false }),
+    setOwnerRecoveryKey: async () => {
+      throw new Error("This test space keeps no recovery sheets");
+    },
   };
   return { getInstallation: async () => repository };
 }

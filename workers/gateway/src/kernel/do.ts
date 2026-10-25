@@ -130,6 +130,7 @@ import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { DidDocumentStore } from "./ships/did-directory";
 import { ShipCallNonces } from "./ships/auth";
 import { ShipIdentity } from "./ships/identity";
+import { RecoverySheetStore } from "./recovery-sheet";
 import { SHIP_METHODS } from "./ships/methods";
 import { handleShipXrpc, isShipXrpcPath } from "./ships/xrpc";
 import {
@@ -455,6 +456,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly profiles: ProfileStore;
   readonly approaches: ApproachStore;
   readonly shipIdentity: ShipIdentity;
+  readonly recoverySheet: RecoverySheetStore;
   readonly didDocuments: DidDocumentStore;
   readonly shipCallNonces: ShipCallNonces;
   readonly oauth: OAuthStore;
@@ -558,6 +560,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.profiles = new ProfileStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);
     this.shipIdentity = new ShipIdentity(ctx.storage);
+    this.recoverySheet = new RecoverySheetStore(ctx.storage);
     this.didDocuments = new DidDocumentStore(sql);
     this.shipCallNonces = new ShipCallNonces(sql);
 
@@ -1621,6 +1624,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
       shipIdentity: this.shipIdentity,
+      recoverySheet: this.recoverySheet,
       didDocuments: this.didDocuments,
       shipCallNonces: this.shipCallNonces,
       profiles: this.profiles,
@@ -2042,6 +2046,8 @@ function envWithInstallationResources(
               uploadBlob: (body, size, mimeType) => retirement.write(() => repository.uploadBlob(body, size, mimeType)),
               readBlob: (cid) => repository.readBlob(cid),
               takedowns: () => repository.takedowns(),
+              ownerRecoveryKey: () => repository.ownerRecoveryKey(),
+              setOwnerRecoveryKey: (key) => retirement.write(() => repository.setOwnerRecoveryKey(key)),
               [Symbol.dispose]: () => repository[Symbol.dispose]?.(),
             };
             return scoped;

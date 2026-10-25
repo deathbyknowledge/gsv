@@ -52,6 +52,14 @@ class NetworkRepository extends RpcTarget implements PublicRepository {
     return account ? publicAccount(account) : null;
   }
 
+  async ownerRecoveryKey(): Promise<{ ownerRecoveryKey: string | null; pending: boolean } | null> {
+    return ACCOUNTS.has(this.installationId) ? { ownerRecoveryKey: null, pending: false } : null;
+  }
+
+  async setOwnerRecoveryKey(): Promise<{ ownerRecoveryKey: string | null }> {
+    throw new Error("This network keeps no recovery sheets");
+  }
+
   async serviceAuth(request: ShipServiceAuthRequest): Promise<string> {
     const account = this.requireAccount();
     return await signServiceAuth(account.did, account.signingHex, request);

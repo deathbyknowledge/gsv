@@ -263,7 +263,7 @@ async function ensureIdentity(repository: PublicRepository, hostname: string, ct
   return account;
 }
 
-async function withRepository<T>(ctx: KernelContext, use: (repository: PublicRepository) => Promise<T>): Promise<T> {
+export async function withRepository<T>(ctx: KernelContext, use: (repository: PublicRepository) => Promise<T>): Promise<T> {
   const pds = ctx.env.PDS;
   if (!pds) throw new Error("Publishing to the open network isn't available on this deployment");
   const repository = await raceWithAbort(pds.getInstallation(ctx.installationId), ctx.requestSignal, {

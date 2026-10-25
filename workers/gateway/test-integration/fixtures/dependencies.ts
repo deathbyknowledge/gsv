@@ -3,6 +3,7 @@ export { IntegrationInstances } from "./instances";
 export { IntegrationPds } from "./pds";
 export { NetworkPds } from "./network-pds";
 export { IntegrationRequestReports } from "./request-reports";
+export { IntegrationOwnerConfirmations } from "./owner-confirmations";
 import { eraseNetworkIdentities, serveNetworkRecord } from "./network-pds";
 import { filedRequestReports } from "./request-reports";
 import { z } from "zod";

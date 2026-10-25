@@ -119,6 +119,7 @@ export function integrationGatewayConfig(options: {
       { binding: "RIPGIT", service: DEPENDENCY_WORKER },
       { binding: "INSTALLATION_DIRECTORY", service: options.managedServices?.accounts ?? DEPENDENCY_WORKER },
       { binding: "REQUEST_REPORTS", service: DEPENDENCY_WORKER, entrypoint: "IntegrationRequestReports" },
+      { binding: "INSTALLATION_OWNER_CONFIRMATIONS", service: DEPENDENCY_WORKER, entrypoint: "IntegrationOwnerConfirmations" },
     ].filter((binding) => options.workersAi !== false || binding.binding !== "AI"),
   };
 }

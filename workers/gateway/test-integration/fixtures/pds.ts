@@ -19,6 +19,7 @@ const ACCOUNTS = new Map<string, PublicRepositoryAccount>([
 const COMMITS = new Map<string, PublicRecordWrite[][]>();
 const BLOBS = new Map<string, { bytes: Uint8Array<ArrayBuffer>; mimeType: string }>();
 const TAKEDOWNS = new Map<string, PublicTakedown[]>();
+const RECOVERY_KEYS = new Map<string, string | null>();
 
 class IntegrationRepository extends RpcTarget implements PublicRepository {
   constructor(private readonly installationId: string) { super(); }
@@ -35,6 +36,17 @@ class IntegrationRepository extends RpcTarget implements PublicRepository {
     return (await this.takedowns()).some(({ subject }) => subject.$type === "com.atproto.admin.defs#repoRef")
       ? { ...account, status: "takendown" }
       : account;
+  }
+
+  async ownerRecoveryKey(): Promise<{ ownerRecoveryKey: string | null; pending: boolean } | null> {
+    if (!ACCOUNTS.has(this.installationId)) return null;
+    return { ownerRecoveryKey: RECOVERY_KEYS.get(this.installationId) ?? null, pending: false };
+  }
+
+  async setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: string | null }> {
+    if (!ACCOUNTS.has(this.installationId)) throw new Error("This repository has no account");
+    RECOVERY_KEYS.set(this.installationId, key);
+    return { ownerRecoveryKey: key };
   }
 
   async serviceAuth(): Promise<string> {

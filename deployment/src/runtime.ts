@@ -181,6 +181,10 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
     serviceBindings.REQUEST_REPORTS = Cloudflare.WorkerEntrypoint(directory, {
       entrypoint: "RequestReportsEntrypoint", props: { authority: "kernel-report" },
     });
+    // Only the Kernel's binding may email its owner a code for a change and check it.
+    serviceBindings.INSTALLATION_OWNER_CONFIRMATIONS = Cloudflare.WorkerEntrypoint(directory, {
+      entrypoint: "OwnerConfirmationsEntrypoint", props: { authority: "kernel-owner-confirmation" },
+    });
     if (props.services?.entitlements) {
       serviceBindings.ENTITLEMENTS = props.services.entitlements;
     }

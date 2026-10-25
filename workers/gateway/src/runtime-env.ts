@@ -9,6 +9,7 @@ import type { FeedbackService } from "@humansandmachines/gsv/services/feedback";
 import type { InstancesService } from "@humansandmachines/gsv/services/instances";
 import type { PdsService } from "@humansandmachines/gsv/services/pds";
 import type { RequestReportService } from "@humansandmachines/gsv/services/reports";
+import type { InstallationOwnerConfirmationService } from "@humansandmachines/gsv/services/owner-confirmations";
 
 /**
  * Deployment service contracts augment the generated platform bindings.
@@ -22,6 +23,8 @@ type GatewayDeploymentBindings = TelemetryEnvironment & {
   INSTALLATION_OWNERSHIP?: InstallationOwnershipService;
   /** Accounts' queue of the message requests people report to their operator. */
   REQUEST_REPORTS?: RequestReportService;
+  /** Accounts' emailed codes and notices for changes the installation's owner confirms. */
+  INSTALLATION_OWNER_CONFIRMATIONS?: InstallationOwnerConfirmationService;
   INFERENCE_EXECUTION: InferenceExecutionService;
   MANAGED_INFERENCE_INSTALLATIONS?: DurableObjectNamespace;
   MANAGED_MAIL_OUTBOUND?: Queue<ManagedOutboundMailCommand>;

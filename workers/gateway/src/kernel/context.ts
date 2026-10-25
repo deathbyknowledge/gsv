@@ -45,6 +45,7 @@ import type { FederationStore } from "./federation-store";
 import type { DidDocumentStore } from "./ships/did-directory";
 import type { ShipCallNonces } from "./ships/auth";
 import type { ShipIdentity } from "./ships/identity";
+import type { RecoverySheetStore } from "./recovery-sheet";
 import type { ProfileStore } from "./profile-store";
 import type { ApproachStore } from "./approach-store";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
@@ -89,6 +90,7 @@ export type KernelContext = {
   federation: FederationStore;
   /** This Ship's own DID, once its first outward act has created one. */
   shipIdentity: ShipIdentity;
+  recoverySheet: RecoverySheetStore;
   /** Other accounts' DID documents, cached. */
   didDocuments: DidDocumentStore;
   /** Nonces of the service-auth tokens this Ship accepted. */
