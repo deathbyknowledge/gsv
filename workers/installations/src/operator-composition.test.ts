@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 import type { RequestReportSubmission } from "@humansandmachines/gsv/services/reports";
 import { ShipTakedowns } from "@humansandmachines/gsv-installations/admin/takedowns";
+import {
+  forgetOwnerConfirmations,
+  OWNER_CONFIRMATION_WINDOW_MS,
+  OwnerConfirmations,
+} from "@humansandmachines/gsv-installations/owner-confirmations";
 import { fileKernelReport, RequestReports } from "@humansandmachines/gsv-installations/request-reports";
 import { AccountStore } from "./store";
 
@@ -15,6 +20,16 @@ describe("an operator's own Accounts Worker", () => {
     await expect(fileKernelReport(operatorDb, undefined, input)).rejects.toThrow("report authority");
     const { reportId } = await fileKernelReport(operatorDb, { authority: "kernel-report" }, input);
     expect(await new RequestReports(operatorDb).get(reportId)).toMatchObject({ installationId: input.installationId, closed: null });
+  });
+
+  it("keeps the owner's confirmation codes on its own database, and forgets them once they can't be used", async () => {
+    const operatorDb = env.INSTALLATIONS_DB;
+    const { installationId } = await submission(operatorDb);
+    const subject = { installationId, purpose: "recovery-sheet" as const, subjectHash: "0".repeat(64) };
+    const issued = await new OwnerConfirmations(operatorDb, "operator-confirmation-secret-0123456789").issue(subject, 1_000);
+    if (issued.status !== "issued") throw new Error("Expected a code");
+    await forgetOwnerConfirmations(operatorDb, 1_000 + OWNER_CONFIRMATION_WINDOW_MS);
+    expect(await operatorDb.prepare("SELECT COUNT(*) AS kept FROM owner_confirmations WHERE id = ?").bind(issued.id).first("kept")).toBe(0);
   });
 
   it("reads a Ship's takedowns from the deployment's PDS", async () => {

@@ -81,7 +81,7 @@ The web app has five views:
 - **Work** lists your connections, then Ship and its helpers, with files opened from a connection.
 - **Memory** shows your personal knowledge pages.
 - **People** holds conversations, message requests and private contacts across Ships, plus your public profile.
-- **Settings** holds **Preferences** (models), **Standing responsibilities**, **Permissions**, **Instructions**, **Messengers**, **MCP servers** and **Logs** for actions and their outcomes. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
+- **Settings** holds **Preferences** (models), **Standing responsibilities**, **Permissions**, **Instructions**, **Messengers**, **MCP servers** and **Logs** for actions and their outcomes. **Recovery sheet** appears once your Ship has its identity on the open network, for the [paper that keeps that identity yours](../how-to/recovery-sheet.md). The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
 
 On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view

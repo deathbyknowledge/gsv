@@ -19,8 +19,8 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_ALLOW_RESOURCE_DELETION` | Explicit physical resource deletion opt-in; defaults to `false`, including in CI. |
 | `GSV_ACCESS_MODE` | `operator` or `access`; defaults to `operator`. |
 | `GSV_ACCESS_TEAM_DOMAIN`, `GSV_ACCESS_AUDIENCE` | Required for Cloudflare Access mode. |
-| `GSV_OWNER_EMAIL_FROM` | Verified sending address for native email-code owner sign-in, My Ships and recovery. |
-| `GSV_OWNER_EMAIL_REPLY_TO` | Optional reply address for owner verification mail; defaults to the sender when omitted. |
+| `GSV_OWNER_EMAIL_FROM` | Verified sending address for native email-code owner sign-in, My Ships, recovery, and the codes and notices for [recovery sheet](recovery-sheet.md) changes. Without it, a Ship's password alone confirms a sheet change. |
+| `GSV_OWNER_EMAIL_REPLY_TO` | Optional reply address for owner verification mail; defaults to the sender when omitted. An owner who didn't make a recovery sheet change replies here. |
 | `GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS` | Optional comma-separated recipient restriction for owner verification mail, useful on staging. |
 | `GSV_OWNER_OIDC_ISSUER`, `GSV_OWNER_OIDC_CLIENT_ID`, `GSV_OWNER_OIDC_CLIENT_SECRET` | Optional owner identity provider for account linking and root recovery; issuer and client ID must be supplied together. |
 | `GSV_ADAPTERS` | Comma-separated operator-enabled adapter IDs; empty by default. |
