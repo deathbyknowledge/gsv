@@ -48,7 +48,22 @@ carries a fresh `jti`, so a receiver that remembers them accepts each token
 once.
 
 The host's rotation key signs the DID's operations. A recovery key, when the
-operator configures one, outranks it.
+operator configures one, outranks it. An owner's recovery key, which the PDS
+can list for the Ship's person, ranks first, above both. Within 72 hours of an
+operation, a key that the operation before it ranks above the key that signed
+it can undo it, by signing another operation on that one. The owner's key can
+therefore undo what the host or the operator signs, and neither can undo what
+it signs. PLC allows one to five rotation keys, each listed once, and verifies
+only P-256 and secp256k1 keys. The PDS changes no owner's key while the account
+is taken down or being deleted, and no syscall reaches it yet.
+
+Every change after the genesis goes through one function. It signs the next
+operation on the head of the DID's log that the PDS last recorded, and carries
+forward every field the change leaves alone. The PDS keeps the signed operation
+until the directory has it, so a retry after a lost response submits the same
+operation instead of signing another. A log that has moved past the recorded
+head means someone else changed the identity, and the PDS signs nothing on it:
+the change fails with `IdentityChanged`.
 
 ## Calls between Ships
 
@@ -496,8 +511,11 @@ Some of it outlasts erasure:
 - Cloudflare keeps backups of the erased storage for 30 days. The PDS reports
   that backup as a retained copy until it expires.
 
-A tombstone can't be undone. A DID whose rotation keys no longer include the
-PDS's, because it moved to another host, is left as it is.
+A tombstone ends the identity wherever it's hosted. Only a key ranked above
+this PDS's, such as the owner's recovery key or the operator's, can undo one,
+and only within 72 hours. Erasure therefore leaves alone a DID that has moved to
+another host: one whose `#atproto_pds` names another PDS, or whose rotation keys
+no longer include this PDS's.
 
 ## When a contact's Ship is gone
 

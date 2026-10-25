@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { CODEC_RAW, fromDigest, fromString as parseCid, toString as formatCid } from "@atcute/cid";
+import type { DidKeyString } from "@atcute/crypto";
 import type { Service } from "@atcute/did-plc";
 import { isHandle, isNsid, isRecordKey, parseCanonicalResourceUri } from "@atcute/lexicons/syntax";
 import { now as tidNow } from "@atcute/tid";
@@ -15,7 +16,19 @@ import { getBlocksCar, getRecordProofCar, getRepoCar } from "../cirrus/repo/sync
 import { validator } from "../cirrus/validation";
 import type { HostEnv } from "./env";
 import { FIREHOSE_NAME, type OutboxEvent, type RepoHead, type RepoState } from "./firehose";
-import { didDocument, mintIdentity, registerGenesis, tombstoneIdentity, type RepoIdentity } from "./identity";
+import {
+  didDocument,
+  genesisHead,
+  mintIdentity,
+  parseOwnerRecoveryKey,
+  registerGenesis,
+  signNextOperation,
+  submitNextOperation,
+  tombstoneIdentity,
+  withOwnerRecoveryKey,
+  type IdentityHead,
+  type RepoIdentity,
+} from "./identity";
 import {
   REPO_BLOB_REF, REPO_REF, STRONG_REF, subjectKey, Takedowns,
   type ModerationSubject, type SubjectStatus, type SubjectStatusQuery, type SubjectStatusUpdate, type Takedown,
@@ -132,7 +145,12 @@ type StoredAccount = RepoIdentity & {
   blobPrefix: string;
   /** Whether the PLC directory accepted the genesis operation. */
   registered: boolean;
+  /** The last operation the host signed for the DID after its genesis; absent until it signs one. */
+  identity?: IdentityUpdate;
 };
+
+/** An operation the host signed for an account's DID, the owner's recovery key it lists, and whether the directory accepted it. */
+type IdentityUpdate = { head: IdentityHead; ownerRecoveryKey: DidKeyString | null; accepted: boolean };
 
 type OpenRepo = {
   account: StoredAccount;
@@ -204,6 +222,33 @@ export class HostedRepo extends DurableObject<HostEnv> {
     refuseTakendown(repo);
     if (!await repo.storage.getActive()) throw new Error(`RepoDeactivated: ${repo.account.did} cannot sign calls`);
     return signServiceAuth(repo.account.did, repo.account.signingKey, request);
+  }
+
+  /**
+   * Lists the account owner's recovery key first among its DID's rotation
+   * keys, in place of any earlier one, or removes it given null. The host's
+   * rotation key signs the change on the operation the host last recorded; an
+   * identity changed elsewhere since gets none.
+   */
+  async setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: DidKeyString | null }> {
+    const next = key === null ? null : parseOwnerRecoveryKey(key);
+    return this.serialize(async () => {
+      await this.requireLive();
+      const repo = await this.requireRepo();
+      refuseTakendown(repo);
+      const account = await this.acceptIdentity(repo.account);
+      const known = account.identity ?? { head: await genesisHead(account.genesis), ownerRecoveryKey: null, accepted: true };
+      if (next === known.ownerRecoveryKey) return { ownerRecoveryKey: next };
+      if (next !== null && known.head.operation.rotationKeys.includes(next)) {
+        throw new Error("InvalidRecoveryKey: the identity already lists that key");
+      }
+      const head = await signNextOperation(this.env, account.did, known.head, (state) => ({
+        ...state,
+        rotationKeys: withOwnerRecoveryKey(state.rotationKeys, known.ownerRecoveryKey, next),
+      }));
+      await this.acceptIdentity(await this.saveAccount({ ...account, identity: { head, ownerRecoveryKey: next, accepted: false } }));
+      return { ownerRecoveryKey: next };
+    });
   }
 
   /** Applies writes in one signed commit after validating records and the blobs they reference. */
@@ -618,6 +663,19 @@ export class HostedRepo extends DurableObject<HostEnv> {
       account = { ...account, registered: true };
       await this.ctx.storage.put(ACCOUNT_KEY, account);
     }
+    return account;
+  }
+
+  /** The account once the directory has the last operation the host signed for its DID, submitted again after a lost response. */
+  private async acceptIdentity(account: StoredAccount): Promise<StoredAccount> {
+    if (!account.identity || account.identity.accepted) return account;
+    await submitNextOperation(this.env, account.did, account.identity.head);
+    return this.saveAccount({ ...account, identity: { ...account.identity, accepted: true } });
+  }
+
+  private async saveAccount(account: StoredAccount): Promise<StoredAccount> {
+    await this.ctx.storage.put(ACCOUNT_KEY, account);
+    if (this.opened) this.opened.account = account;
     return account;
   }
 
