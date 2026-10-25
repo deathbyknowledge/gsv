@@ -78,8 +78,9 @@ profile address, your bio, and who can start a conversation. An empty bio shows
 "Space cowboy." with a **complete bio** link. While the profile is public, a note
 there says who can see it and how to make it private, until you choose **got it**.
 The note says that Bluesky and other apps can show your profile and that any app
-or search engine can save it and make it searchable; if you chose **got it**
-before the note said so, it shows once more.
+or search engine can save it and make it searchable. In that note and in the
+notes by **publish** and **unpublish**, hover over, focus or tap **open network**
+to read what a public profile there means.
 Choose **edit** to change it. **choose picture** takes a PNG, JPEG or WebP image,
 which Ship crops to a square of at most 512 pixels and saves as a JPEG, or as a
 PNG when it has transparency, so Bluesky can show it; like the rest of the profile,

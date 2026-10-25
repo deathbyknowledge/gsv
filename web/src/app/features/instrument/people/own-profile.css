@@ -14,3 +14,7 @@
 .people-profile-takedowns li { padding-top: 12px; border-top: 1px solid var(--border); }
 .people-profile-takedowns strong { color: var(--text-title); font: 500 14px/1.5 var(--gsv-font-prose); overflow-wrap: anywhere; }
 .people-profile-takedowns p { margin: 4px 0 0; }
+/* "open network" reads as part of its sentence, underlined like other hinted text. */
+.people-term .gsv-tt { font-family: inherit; }
+.people-term-label { border-bottom: 1px dashed var(--primary-hi); cursor: help; }
+.people-term-label:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
