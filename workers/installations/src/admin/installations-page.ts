@@ -8,6 +8,7 @@ import { RESET_CONSEQUENCES, type IssuedAdminInstallation } from "./service";
 import type { AdminNavigationItem } from "./page";
 import type { OperatorRun, OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
 import type { OperatorAuditEvent, ShipContext, ShipHealth } from "./insight";
+import { takedownSubjectKey, takedownSubjectKind, type ShipOpenNetwork, type TakedownSubjectKind } from "./takedowns";
 import {
   adminPageResponse,
   auditTable,
@@ -22,7 +23,7 @@ import {
 } from "./page";
 
 /** What the Ship page shows beyond the installation record; absent when no insight is configured. */
-export type ShipView = { context: ShipContext; health: ShipHealth };
+export type ShipView = { context: ShipContext; health: ShipHealth; openNetwork?: ShipOpenNetwork };
 
 const SLOW_STEP_MS = 60_000;
 
@@ -135,6 +136,7 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
         ${provisioningPanel(installation, installationPath)}
         ${lifecyclePanel(installation, installationPath)}
         ${resetPanel(installation, installationPath)}
+        ${ship?.openNetwork ? takedownPanel(ship.openNetwork, installationPath) : ""}
       </div>
     </section>`,
   });
@@ -329,6 +331,42 @@ function resetPanel(
       ${reasonField(true)}
       <label><span>Type ${escapeHtml(installation.handle)} to confirm</span><input name="confirmHandle" required autocomplete="off" value=""></label>
       <button class="danger" type="submit">Reset and issue activation link</button>
+    </form>
+  </section>`;
+}
+
+const SUBJECT_LABELS = { account: "Whole account", record: "Record", blob: "File" } satisfies Record<TakedownSubjectKind, string>;
+
+/** What the Ship publishes on the open network that its host has taken down, and the form that takes more down. */
+function takedownPanel(network: ShipOpenNetwork, installationPath: string): string {
+  const heading = `<p class="eyebrow">OPEN NETWORK</p><h2>Takedowns</h2>`;
+  if (network.kind === "unavailable") {
+    return `<section class="panel" id="takedowns">${heading}<p>The Ship's open-network host could not be read: <strong>${escapeHtml(network.reason)}</strong>.</p></section>`;
+  }
+  if (network.kind === "none") {
+    return `<section class="panel" id="takedowns">${heading}<p>This Ship has no repository on the open network yet; it gets one with its first published profile or Ship-to-Ship call.</p></section>`;
+  }
+  const { did, handle, takedowns } = network.repository;
+  const rows = takedowns.map(({ subject, reason, at, ref }) => `<tr>
+      <td><strong>${SUBJECT_LABELS[takedownSubjectKind(subject)]}</strong><small class="select-all">${escapeHtml(takedownSubjectKey(subject))}</small></td>
+      <td>${reason ? escapeHtml(reason) : "—"}</td>
+      <td>${formatDate(at)}<small>${escapeHtml(ref)}</small></td>
+      <td><form method="post" action="${installationPath}/takedowns/restore"><input type="hidden" name="subject" value="${escapeHtml(takedownSubjectKey(subject))}">
+        ${reasonField()}
+        <div class="form-actions"><button class="secondary" type="submit">Restore</button></div></form></td>
+    </tr>`).join("");
+  return `<section class="panel danger-zone" id="takedowns">${heading}
+    <p>Readers on the open network stop seeing what you take down. While its account is down, the Ship can't publish or call other Ships. Its person sees each takedown in People, with your reason.</p>
+    <dl class="definition-list"><dt>DID</dt><dd class="select-all">${escapeHtml(did)}</dd><dt>Handle</dt><dd>${escapeHtml(handle)}</dd></dl>
+    ${takedowns.length
+      ? `<div class="table-wrap"><table class="audit"><thead><tr><th>Taken down</th><th>Reason</th><th>Since</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : "<p>Nothing is taken down.</p>"}
+    <form class="stack" method="post" action="${installationPath}/takedowns">
+      <label><span>Take down</span><select name="subject">${Object.entries(SUBJECT_LABELS).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label>
+      <label><span>Record AT URI, for a record</span><input name="uri" maxlength="2048" autocomplete="off" placeholder="at://${escapeHtml(did)}/space.ship.profile/self" value=""></label>
+      <label><span>File CID, for a file</span><input name="cid" maxlength="128" autocomplete="off" placeholder="bafkrei…" value=""></label>
+      <label><span>Reason (required; the Ship's person reads it)</span><input name="reason" required maxlength="500" autocomplete="off" value=""></label>
+      <div class="form-actions"><button class="danger" type="submit">Take down</button></div>
     </form>
   </section>`;
 }

@@ -577,6 +577,13 @@ describe("open network host", () => {
     }
   });
 
+  it("lets only Accounts' operator binding take down and restore what the PDS serves", async () => {
+    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds }, dependencies));
+    const moderation = recorded.bindings.filter((binding) => binding.bindings.some((entry) => entry.entrypoint === "PdsModerationEntrypoint"));
+    expect(moderation).toEqual([{ id: "FixtureDirectoryPdsModerationBinding", bindings: [{ type: "service",
+      name: "PDS_MODERATION", service: "pds", entrypoint: "PdsModerationEntrypoint", props: { authority: "operator-moderation" } }] }]);
+  });
+
   it("runs no PDS unless the operator configures one", async () => {
     await run(GsvDeployment({ ...input, routing: { zoneId: "zone" } }, dependencies));
     expect(recorded.workers.map((worker) => worker.id)).not.toContain("FixturePds");
@@ -584,6 +591,7 @@ describe("open network host", () => {
     expect(gateway).not.toHaveProperty("PDS");
     expect(gateway).not.toHaveProperty("PLC_URL");
     expect(recorded.routes.map((route) => route.pattern)).not.toContain("pds.example.com/*");
+    expect(recorded.bindings.flatMap((binding) => binding.bindings).map((entry) => entry.name)).not.toContain("PDS_MODERATION");
   });
 
   it.each([
