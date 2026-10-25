@@ -28,3 +28,4 @@ CREATE INDEX request_reports_open ON request_reports (reported_at DESC) WHERE cl
 CREATE INDEX request_reports_closed ON request_reports (closed_at DESC) WHERE closed_at IS NOT NULL;
 CREATE INDEX request_reports_sender ON request_reports (sender_did) WHERE closed_at IS NULL;
 CREATE INDEX request_reports_messages ON request_reports (closed_at) WHERE message_text IS NOT NULL;
+CREATE INDEX operator_audit_events_report ON operator_audit_events (json_extract(detail_json, '$.report'));
