@@ -227,11 +227,6 @@ export class HostFirehose extends DurableObject<HostEnv> {
     return due;
   }
 
-  /** The relays the host remembers asking. */
-  async relays(): Promise<string[]> {
-    return Object.keys(this.relayRequests());
-  }
-
   /** Accepts a com.atproto.sync.subscribeRepos WebSocket and replays from its cursor. */
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -382,13 +377,11 @@ export class HostFirehose extends DurableObject<HostEnv> {
 /**
  * Has the host's firehose ask each relay the deployment names to crawl it,
  * when a request to that relay is due. With none named, the firehose forgets
- * the relays it remembers, and has nothing to do once it remembers none.
+ * the relays it knew.
  */
 export async function announceToRelays(env: HostEnv): Promise<void> {
   const relays = [...new Set((env.PDS_RELAYS ?? "").split(",").map((relay) => relay.trim()).filter(Boolean))];
-  const firehose = env.FIREHOSE.getByName(FIREHOSE_NAME);
-  if (relays.length === 0 && (await firehose.relays()).length === 0) return;
-  await firehose.announce(relays, new URL(env.PDS_ORIGIN).host);
+  await env.FIREHOSE.getByName(FIREHOSE_NAME).announce(relays, new URL(env.PDS_ORIGIN).host);
 }
 
 /** Encodes an outbox event as a subscribeRepos frame that carries the host's sequence number. */

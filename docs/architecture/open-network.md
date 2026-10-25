@@ -348,12 +348,12 @@ them are due:
 The firehose keeps each relay's last answer, and writes that record only when
 an answer changes it. It forgets a relay at the first run after the deployment
 stops naming it, so a relay named again after that is asked at once and
-introduced to the host's accounts again. While the deployment names no relay,
-each run only reads which relays the firehose remembers, to find one to
-forget. The schedule runs while the deployment names a relay or a lexicon
-account. A relay that refuses or can't be reached is a warning in the PDS
-Worker's logs that names the relay and, for a refusal, the HTTP status and the
-XRPC error. The request carries only the host's hostname.
+introduced to the host's accounts again. With no relay named, a run writes
+only to forget the relays the firehose still remembers, so the runs after that
+write nothing. The schedule runs while the deployment names a relay or a
+lexicon account. A relay that refuses or can't be reached is a warning in the
+PDS Worker's logs that names the relay and, for a refusal, the HTTP status and
+the XRPC error. The request carries only the host's hostname.
 
 A relay checks every event as sync 1.1 describes, and a Ship's repository sends
 what it needs: `#identity`, `#account` and `#sync` when the account is created,

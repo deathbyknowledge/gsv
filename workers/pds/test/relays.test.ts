@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { encode } from "../src/cirrus/cbor-compat";
 import type { PdsEnv } from "../src/gsv/env";
-import { FIREHOSE_NAME, HostFirehose } from "../src/host/firehose";
+import { FIREHOSE_NAME, type HostFirehose } from "../src/host/firehose";
 import { REPO_REF } from "../src/host/moderation";
 import type { RelayRequest } from "../src/host/relays";
 import { HostedRepo, type RepoWrite } from "../src/host/repo";
@@ -120,25 +120,25 @@ describe("announcing the host to relays", () => {
     expect([kept.requests, dropped.requests]).toEqual([[HOST, HOST], [HOST, HOST]]);
   });
 
-  it("writes what it keeps of the relays only when that changes, and only reads it while the deployment names no relay", async () => {
+  it("writes what it keeps of the relays only when that changes, and nothing while the deployment names no relay", async () => {
     const quiet = relay("https://relay-h.test");
     const host = env.FIREHOSE.getByName(FIREHOSE_NAME);
     await scheduled(quiet.origin);
     await scheduled(quiet.origin);
     const writes = await kvWrites(host);
-    const announce = vi.spyOn(HostFirehose.prototype, "announce");
     // A relay that has accepted and heard the introduction isn't due again until the host changes and twenty minutes pass.
     await scheduled(quiet.origin);
     await scheduled(quiet.origin);
     expect(writes).not.toHaveBeenCalled();
 
-    // Dropping the last relay forgets it once; after that, a run with none named only reads what the firehose keeps.
+    // Dropping the last relay forgets it in one write; after that, a run with none named writes nothing.
     await scheduled(undefined);
-    await scheduled(undefined);
-    await scheduled("");
-    expect(announce).toHaveBeenCalledTimes(3);
     expect(writes).toHaveBeenCalledTimes(1);
     expect(await requested(host)).toEqual({});
+    writes.mockClear();
+    await scheduled(undefined);
+    await scheduled("");
+    expect(writes).not.toHaveBeenCalled();
     expect(quiet.requests).toEqual([HOST]);
   });
 
