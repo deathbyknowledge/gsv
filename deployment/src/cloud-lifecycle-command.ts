@@ -127,7 +127,7 @@ export function cloudLifecycleDependencies(input: { configuration: LifecycleConf
       try { await client.requestOnce(wsUrl(gateway.origin), "sys.setup", { ...gateway.credentials, onboardingToken: token, agentName: "algo" }); }
       finally { client.disconnect(); }
     },
-    async retire(id, operationId, confirmHandle) { await admin(`/${encodeURIComponent(id)}/deletion/retire`, { operationId, confirmHandle }); },
+    async retire(id, operationId, confirmHandle) { await admin(`/${encodeURIComponent(id)}/deletion/retire`, { operationId, confirmHandle, reason: "cloud lifecycle acceptance" }); },
     async deletion(action, id, operationId, inventorySha256) {
       const suffix = `/${encodeURIComponent(id)}/deletion${action === "deletion-retry" ? "/retry" : ""}`;
       return lifecycleDeletionSchema.parse(await admin(suffix, action === "deletion-status" ? undefined

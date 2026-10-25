@@ -321,6 +321,7 @@ function resetPanel(
   }
   const operationId = `reset_${crypto.randomUUID()}`;
   return `<section class="panel danger-zone"><p class="eyebrow">FRESH SHIP</p><h2>Reset ${escapeHtml(installation.handle)}</h2>
+    <p><strong>If the person only lost access, don't reset.</strong> Recovery keeps their Ship, contacts and DID: they sign in to My Ships with the owner email under Ship details and choose Recover your Ship, which resets the administrator password.</p>
     <p>Before you confirm, this is what a reset does:</p>
     <ul class="consequences">${RESET_CONSEQUENCES.map((consequence) => `<li>${escapeHtml(consequence)}</li>`).join("")}</ul>
     <form class="form-actions" method="post" action="${installationPath}/reset">

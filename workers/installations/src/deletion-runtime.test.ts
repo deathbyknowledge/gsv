@@ -174,7 +174,7 @@ describe("Accounts deletion runtime", () => {
     const post = (suffix: string, body: JsonValue) => http.handle(new Request(url + suffix, {
       method: "POST", headers: { origin: "https://admin.example.com", "content-type": "application/json" }, body: JSON.stringify(body),
     }));
-    expect((await post("/retire", { operationId: state.operationId, confirmHandle: state.old.handle }))?.status).toBe(200);
+    expect((await post("/retire", { operationId: state.operationId, confirmHandle: state.old.handle, reason: "owner asked" }))?.status).toBe(200);
     expect((await state.accounts.resolveInstallation(state.old.installationId))).toMatchObject({ found: true, state: "retained" });
     const registered = z.object({ sha256: z.string() }).parse(await (await post("/inventory", state.manifest))!.json());
     expect((await post("", { operationId: state.operationId, inventorySha256: registered.sha256 }))?.status).toBe(201);
@@ -207,10 +207,40 @@ describe("Accounts deletion runtime", () => {
     expect(await state.db.prepare("SELECT * FROM installation_reset_operations WHERE previous_installation_id = ?").bind(state.old.installationId).first()).toBeNull();
   });
 
+  it("retires a space only once its operator types the handle and gives a reason, and says what retiring does", async () => {
+    const state = await fixture();
+    const audited: { name: string; installationId?: string; reason?: string | null }[] = [];
+    const http = new InstallationDeletionHttp(state.makeRuntime(), { allows: async () => true }, "https://admin.example.com",
+      async (_request, action, mutation) => { audited.push(action); return await mutation(); });
+    const post = (body: JsonValue) => http.handle(new Request(`https://admin.example.com/admin/api/installations/${state.old.installationId}/deletion/retire`, {
+      method: "POST", headers: { origin: "https://admin.example.com", "content-type": "application/json" }, body: JSON.stringify(body),
+    }));
+    const statesConsequences = expect.arrayContaining([
+      expect.stringContaining("nothing replaces it"),
+      expect.stringContaining("public profile and records"),
+      expect.stringContaining("contacts end"),
+    ]);
+    for (const [body, error] of [
+      [{ operationId: state.operationId, confirmHandle: state.old.handle }, "request reason is required"],
+      [{ operationId: state.operationId, confirmHandle: state.old.handle, reason: "  " }, "request reason is required"],
+      [{ operationId: state.operationId, reason: "owner asked" }, "confirmHandle is required"],
+    ] as const) {
+      const refused = await post(body);
+      expect(refused?.status).toBe(400);
+      await expect(refused?.json()).resolves.toEqual({ error, consequences: statesConsequences });
+    }
+    expect(audited).toEqual([]);
+    expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "active" });
+
+    expect((await post({ operationId: state.operationId, confirmHandle: state.old.handle, reason: "owner asked" }))?.status).toBe(200);
+    expect(audited).toEqual([{ name: "ship.deletion.retire", installationId: state.old.installationId, reason: "owner asked" }]);
+    expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "retained" });
+  });
+
   it("denies unauthenticated and cross-origin administration without retiring the space", async () => {
     const state = await fixture();
     const url = `https://admin.example.com/admin/api/installations/${state.old.installationId}/deletion/retire`;
-    const input = { operationId: state.operationId, confirmHandle: state.old.handle };
+    const input = { operationId: state.operationId, confirmHandle: state.old.handle, reason: "owner asked" };
     for (const [allowed, origin] of [[false, "https://admin.example.com"], [true, "https://evil.example.com"]] as const) {
       const api = new InstallationDeletionHttp(state.makeRuntime(), { allows: async () => allowed }, "https://admin.example.com");
       expect((await api.handle(new Request(url, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(input) })))?.status).toBe(403);

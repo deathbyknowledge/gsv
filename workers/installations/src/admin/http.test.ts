@@ -82,7 +82,7 @@ it("runs fresh installation administration through the public screens without co
   expect((await env.INSTALLATIONS_DB.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'managed_inference_%'").all()).results).toEqual([]);
 });
 
-it("says what a reset does before the operator confirms it, and resets nothing without a reason", async () => {
+it("points to recovery and says what a reset does before the operator confirms one, and resets nothing without a reason", async () => {
   const { onboarding, service, http } = stack();
   const created = await service.create({ operationId: "create_cautious", handle: "cautious" });
   const installationId = created.installation.installationId;
@@ -98,6 +98,10 @@ it("says what a reset does before the operator confirms it, and resets nothing w
     expect(panel.indexOf(consequence)).toBeLessThan(confirmation);
   }
   expect(panel.slice(0, confirmation)).toMatch(/<input name="reason" required/);
+  // A person who only lost access recovers their Ship instead, which keeps it.
+  expect(panel.indexOf("Recover your Ship")).toBeGreaterThan(-1);
+  expect(panel.indexOf("Recover your Ship")).toBeLessThan(panel.indexOf("a new identity on the open network"));
+  expect(panel).toContain("keeps their Ship, contacts and DID");
 
   const reset = vi.spyOn(service, "resetInstallation");
   for (const [values, error] of [

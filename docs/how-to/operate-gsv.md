@@ -123,8 +123,14 @@ verification mail is independent of a Ship's messaging adapters.
 ## Reset a Ship {#reset-a-ship}
 
 A reset gives the same person a fresh Ship under the same handle, and it can't
-be undone. The **Reset** panel on the Ship's administration page says what it
-does before you confirm:
+be undone. If the person only lost access, don't reset: recovery keeps their
+Ship, contacts and DID. They sign in to **My Ships** at `<admin-origin>/owner/login`
+with the owner email that the Ship's page shows, and choose **Recover your
+Ship** to reset the administrator password. A Ship whose owner isn't linked
+can't be recovered this way.
+
+The **Reset** panel on the Ship's administration page says this first, then
+what a reset does before you confirm:
 
 - The person gets a new Ship at the same address and can't return to the old
   one. They set it up again from a new activation link, and sessions, devices,
@@ -175,8 +181,8 @@ works.
 Accounts records every operator change in an audit log: creating a Ship,
 reissuing its setup link, suspending, reactivating, resetting, and each
 deletion step. Each entry names the operator and the action, plus any reason
-the operator gave. Suspending and reactivating take an optional reason, and a
-reset requires one. A Ship's
+the operator gave. Suspending and reactivating take an optional reason;
+resetting or retiring a Ship requires one. A Ship's
 page lists its recent entries, and `<admin-origin>/admin/audit` lists every
 entry. Entries outlive the Ship they describe. They name it only by Ship ID and
 hold no owner data.
@@ -252,6 +258,10 @@ deployment that runs the open-network host also catalogs its bucket's
 unfinished uploads and, when they persist, its Worker's logs. Deleting an
 installation then deletes its Ship's public account and tombstones its DID,
 which can't be undone; see [the open network](../architecture/open-network.md#deletion).
+
+Retiring a Ship, the first step of deleting it, stops it for good with nothing
+in its place. Like a reset, it needs the Ship's handle typed as confirmation
+and a reason; without either, Accounts refuses it and says what retiring does.
 
 Deleting an installation is a resumable operation. Accounts verifies the resource
 inventory before cleanup starts, every owning service reports its own erasure
