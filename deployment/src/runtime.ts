@@ -60,6 +60,13 @@ export type GsvPdsProps = {
   /** The operator's privacy policy and terms of service, as HTTPS URLs. */
   privacyPolicyUrl?: string;
   termsOfServiceUrl?: string;
+  /**
+   * Handle of the deployment's account that publishes Ship's lexicons, such as
+   * lexicons.ship.space. Deploying never creates the account, because the PLC
+   * directory keeps its DID for good: the operator does, with
+   * `npm run pds:lexicons -- create`.
+   */
+  lexiconHandle?: string;
 };
 
 export type GsvRuntimeProps = {
@@ -190,12 +197,15 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
       if (props.pds.contactEmail) pdsEnv.PDS_CONTACT_EMAIL = props.pds.contactEmail;
       if (props.pds.privacyPolicyUrl) pdsEnv.PDS_PRIVACY_POLICY_URL = props.pds.privacyPolicyUrl;
       if (props.pds.termsOfServiceUrl) pdsEnv.PDS_TERMS_OF_SERVICE_URL = props.pds.termsOfServiceUrl;
+      if (props.pds.lexiconHandle) pdsEnv.PDS_LEXICON_HANDLE = props.pds.lexiconHandle;
       pds = yield* Cloudflare.Worker(
         `${props.logicalPrefix}Pds`,
         {
           name: props.pds.workerName,
           main: props.pds.workerBundle,
           bundle: false,
+          // Once the operator has published the lexicons, a deploy's changes follow within ten minutes.
+          crons: props.pds.lexiconHandle ? ["*/10 * * * *"] : undefined,
           // The PDS reaches only its PLC directory, over the public internet even on the deployment's own zone.
           compatibility: { ...compatibility, flags: [...compatibility.flags, "global_fetch_strictly_public"] },
           workersDev: false,
@@ -330,6 +340,10 @@ export const assertGsvPds = (pds: GsvPdsProps): void => {
   }
   if ([pds.privacyPolicyUrl, pds.termsOfServiceUrl].some((url) => url !== undefined && !isHttpsUrl(url))) {
     throw new Error("The PDS privacy policy and terms of service must be HTTPS URLs");
+  }
+  if (pds.lexiconHandle !== undefined
+    && !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(pds.lexiconHandle)) {
+    throw new Error("The PDS lexicon handle must be a lowercase domain name");
   }
 };
 

@@ -28,8 +28,9 @@ const rotationKey = process.env[values["key-env"]] ?? "";
 if (!/^[0-9a-f]{64}$/.test(rotationKey)) fail(`${values["key-env"]} must hold the PDS's PLC rotation key, as 64 lowercase hex characters`);
 
 const token = await signOperatorToken(rotationKey, { aud: origin.origin, act: action, handle: values.handle });
-const response = await fetch(`${origin.origin}/operator/lexicons`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
-const body = await response.json();
+const response = await fetch(`${origin.origin}/operator/lexicons`, { method: "POST", headers: { Authorization: `Bearer ${token}` } })
+  .catch((error) => fail(`Could not reach ${origin.origin}: ${error.message}`));
+const body = await response.json().catch(() => fail(`${origin.origin} answered ${response.status}, not as a PDS`));
 if (!response.ok) fail(`${body.error}: ${body.message}`);
 process.stdout.write(`${JSON.stringify(body, null, 2)}\n`);
 if (body.account) {
