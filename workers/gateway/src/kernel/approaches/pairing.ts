@@ -1,4 +1,4 @@
-import type { AcceptMessageRequestOutput, JsonValue, MessageRequestOutput } from "@humansandmachines/gsv/protocol";
+import type { AcceptMessageRequestOutput, JsonValue, WithdrawMessageRequestOutput } from "@humansandmachines/gsv/protocol";
 import {
   ACCEPT_MESSAGE_REQUEST, acceptMessageRequestInputSchema, acceptMessageRequestOutputSchema, withdrawMessageRequestInputSchema,
 } from "@humansandmachines/gsv/protocol";
@@ -118,6 +118,6 @@ export async function withdrawMessageRequest(call: ShipCall, ctx: KernelContext)
   await ctx.coordinateFederationContact(approachLock(record), () => ctx.approaches.withdrawnRemotely(record.summary.id));
   ctx.broadcastToUserUid(record.ownerUid, "approach.changed");
   await ctx.scheduleApproachMaintenance();
-  const output: MessageRequestOutput = { state: "received" };
+  const output: WithdrawMessageRequestOutput = { state: "received" };
   return output;
 }

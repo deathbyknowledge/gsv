@@ -1,5 +1,5 @@
 import { z } from "zod/mini";
-import type { PublicBlobRef } from "./atproto";
+import { PROFILE_AVATAR_MIME_TYPES } from "../generated/ship-lexicons";
 
 /** What visitors may do: send a message request, ask for an invitation, or nothing. */
 export type ProfileContactPolicy = "requests" | "invitation" | "closed";
@@ -11,8 +11,7 @@ export type ProfileFields = {
 };
 
 /** A profile picture is a PNG, JPEG or WebP of at most 1 MB. */
-export const PROFILE_AVATAR_MAX_BYTES = 1_000_000;
-export const PROFILE_AVATAR_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+export { PROFILE_AVATAR_MAX_BYTES, PROFILE_AVATAR_MIME_TYPES } from "../generated/ship-lexicons";
 export type ProfileAvatarMimeType = (typeof PROFILE_AVATAR_MIME_TYPES)[number];
 
 /** A profile picture, named by the CID of its bytes. */
@@ -78,43 +77,13 @@ export const profileFieldsSchema = z.strictObject({
 }) satisfies z.ZodMiniType<ProfileFields>;
 
 /** Where a Ship keeps its public profile: one record in its repository. */
-export const SHIP_PROFILE_COLLECTION = "space.ship.profile";
-export const SHIP_PROFILE_RKEY = "self";
+export { SHIP_PROFILE_COLLECTION, SHIP_PROFILE_RKEY } from "../generated/ship-lexicons";
 
 /** A Ship's public profile as its `space.ship.profile` record holds it. */
-export type ShipProfileRecord = {
-  $type: "space.ship.profile";
-  displayName: string;
-  about?: string;
-  avatar?: PublicBlobRef;
-  /** Known values are requests, invitation and closed; a Ship reads any other value as closed. */
-  contactPolicy: string;
-};
-
-const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-/** Text within the lexicon's limits: graphemes, as people count characters, and UTF-8 bytes. */
-function recordText(minGraphemes: number, maxGraphemes: number, maxBytes: number) {
-  return z.string().check(z.refine((value) => {
-    if (new TextEncoder().encode(value).byteLength > maxBytes) return false;
-    const count = [...graphemes.segment(value)].length;
-    return count >= minGraphemes && count <= maxGraphemes;
-  }, `must be ${minGraphemes ? `${minGraphemes} to ` : "at most "}${maxGraphemes} characters`));
-}
+export type { ShipProfileRecord } from "../generated/ship-lexicons";
 
 /** Records come from any Ship, so fields a later version adds are ignored rather than refused. */
-export const shipProfileRecordSchema = z.object({
-  $type: z.literal(SHIP_PROFILE_COLLECTION),
-  displayName: recordText(1, 80, 640),
-  about: z.optional(recordText(0, 2_048, 20_480)),
-  avatar: z.optional(z.object({
-    $type: z.literal("blob"),
-    ref: z.object({ $link: z.string().check(z.minLength(1), z.maxLength(128)) }),
-    mimeType: z.enum(PROFILE_AVATAR_MIME_TYPES),
-    size: z.int().check(z.positive(), z.lte(PROFILE_AVATAR_MAX_BYTES)),
-  })),
-  contactPolicy: z.string().check(z.maxLength(64)),
-}) satisfies z.ZodMiniType<ShipProfileRecord>;
+export { shipProfileRecordSchema } from "../generated/ship-lexicons";
 
 /** What a record's contact policy lets visitors do; a value this Ship doesn't know reads as closed. */
 export function profileContactPolicy(value: string): ProfileContactPolicy {

@@ -1,38 +1,22 @@
 import { z } from "zod/mini";
-import { jsonObjectSchema, type JsonObject } from "../json";
+import {
+  deliverPayloadSchema,
+  deliverResourceSchema,
+  type DeliverMessage,
+  type DeliverPayload,
+  type DeliverRequest,
+  type DeliverResource,
+} from "../generated/ship-lexicons";
+import type { JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
-import { socialMessageMetadataSchema, type OriginMessageRef, type SocialMessageMetadata } from "../social";
+import type { OriginMessageRef } from "../social";
 
 export const MAX_FEDERATION_MESSAGE_RESOURCES = 16;
 export const MAX_FEDERATION_MESSAGE_BYTES = 32 * 1024;
 export const MAX_FEDERATION_RESOURCE_BYTES = 48 * 1024 * 1024;
 export const MAX_FEDERATION_MESSAGE_RESOURCE_BYTES = 48 * 1024 * 1024;
-export const MAX_FEDERATION_REQUEST_KIND_BYTES = 128;
 export const MAX_FEDERATION_REQUEST_TITLE_BYTES = 1_024;
 export const MAX_FEDERATION_REQUEST_DETAILS_BYTES = 32 * 1024;
-
-const federationTextEncoder = new TextEncoder();
-const federationRequestKindSchema = z.string().check(
-  z.maxLength(MAX_FEDERATION_REQUEST_KIND_BYTES),
-  z.regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/i),
-);
-const federationRequestTitleSchema = z.string()
-  .check(z.minLength(1), z.maxLength(MAX_FEDERATION_REQUEST_TITLE_BYTES))
-  .check(z.refine((value: string) => (
-    value.trim().length > 0
-      && federationTextEncoder.encode(value).byteLength <= MAX_FEDERATION_REQUEST_TITLE_BYTES
-  )));
-const federationRequestDetailsSchema = jsonObjectSchema.check(
-  z.refine((value: JsonObject) => (
-    federationTextEncoder.encode(JSON.stringify(value)).byteLength
-      <= MAX_FEDERATION_REQUEST_DETAILS_BYTES
-  )),
-);
-const federationMessageTextSchema = z.string()
-  .check(z.maxLength(MAX_FEDERATION_MESSAGE_BYTES))
-  .check(z.refine((value: string) => (
-    federationTextEncoder.encode(value).byteLength <= MAX_FEDERATION_MESSAGE_BYTES
-  )));
 
 export type ContactState = "active" | "revoked";
 
@@ -293,119 +277,10 @@ export type ContactRequestUpdateResult = {
   deliveryId: string;
 };
 
-export type FederationResourceDescriptor = {
-  id: string;
-  revision: string;
-  contentType: string;
-  size: number;
-  mediaType?: "image" | "audio" | "video" | "document";
-  filename?: string;
-  duration?: number;
-  transcription?: string;
-};
-
-export type FederationMessageDelivery = {
-  kind: "message";
-  messageId: string;
-  threadId: string;
-  text: string;
-  resources?: FederationResourceDescriptor[];
-  social: SocialMessageMetadata;
-};
-
-export type FederationRequestDelivery = {
-  kind: "request";
-  request: {
-    id: string;
-    kind: string;
-    title: string;
-    details?: JsonObject;
-    state: "offered";
-    revision: 1;
-  };
-};
-
-export type FederationRequestUpdateDelivery = {
-  kind: "request.update";
-  requestId: string;
-  expectedRevision: number;
-  state: Exclude<ContactRequestState, "offered">;
-  details?: JsonObject;
-};
-
-/** The sender removed the contact; the delivery's generation names which connection ended. */
-export type FederationContactRevokedDelivery = {
-  kind: "contact.revoked";
-};
-
-export type FederationDeliveryPayload =
-  | FederationMessageDelivery
-  | FederationRequestDelivery
-  | FederationRequestUpdateDelivery
-  | FederationContactRevokedDelivery;
-
-const federationResourceIdSchema = z.string()
-  .check(z.regex(/^resource:[A-Za-z0-9_-]{1,119}$/));
-
-export const federationResourceDescriptorSchema = z.strictObject({
-  id: federationResourceIdSchema,
-  revision: z.string().check(z.minLength(1), z.maxLength(1_024)),
-  contentType: z.string().check(z.minLength(1), z.maxLength(256)),
-  size: z.int().check(z.nonnegative(), z.maximum(MAX_FEDERATION_RESOURCE_BYTES)),
-  mediaType: z.optional(z.enum(["image", "audio", "video", "document"])),
-  filename: z.optional(z.string().check(z.maxLength(1_024))),
-  duration: z.optional(z.number().check(z.nonnegative())),
-  transcription: z.optional(z.string().check(z.maxLength(32_768))),
-}) satisfies z.ZodMiniType<FederationResourceDescriptor>;
-
-const federationMessageDeliverySchema = z.strictObject({
-  kind: z.literal("message"),
-  messageId: z.string().check(z.minLength(1), z.maxLength(256)),
-  threadId: z.string().check(z.minLength(1), z.maxLength(128)),
-  text: federationMessageTextSchema,
-  resources: z.optional(
-    z.array(federationResourceDescriptorSchema).check(z.maxLength(MAX_FEDERATION_MESSAGE_RESOURCES)),
-  ),
-  social: socialMessageMetadataSchema,
-}).check(z.refine((value: FederationMessageDelivery) => (
-  value.text.trim().length > 0 || (value.resources?.length ?? 0) > 0
-))) satisfies z.ZodMiniType<FederationMessageDelivery>;
-
-const federationRequestDeliverySchema = z.strictObject({
-  kind: z.literal("request"),
-  request: z.strictObject({
-    id: z.string().check(z.minLength(1), z.maxLength(256)),
-    kind: federationRequestKindSchema,
-    title: federationRequestTitleSchema,
-    details: z.optional(federationRequestDetailsSchema),
-    state: z.literal("offered"),
-    revision: z.literal(1),
-  }),
-}) satisfies z.ZodMiniType<FederationRequestDelivery>;
-
-const contactRequestStateSchema = z.enum([
-  "accepted",
-  "rejected",
-  "active",
-  "completed",
-  "cancelled",
-]);
-
-const federationRequestUpdateDeliverySchema = z.strictObject({
-  kind: z.literal("request.update"),
-  requestId: z.string().check(z.minLength(1), z.maxLength(256)),
-  expectedRevision: z.int().check(z.positive()),
-  state: contactRequestStateSchema,
-  details: z.optional(federationRequestDetailsSchema),
-}) satisfies z.ZodMiniType<FederationRequestUpdateDelivery>;
-
-const federationContactRevokedDeliverySchema = z.strictObject({
-  kind: z.literal("contact.revoked"),
-}) satisfies z.ZodMiniType<FederationContactRevokedDelivery>;
-
-export const federationDeliveryPayloadSchema = z.discriminatedUnion("kind", [
-  federationMessageDeliverySchema,
-  federationRequestDeliverySchema,
-  federationRequestUpdateDeliverySchema,
-  federationContactRevokedDeliverySchema,
-]) satisfies z.ZodMiniType<FederationDeliveryPayload>;
+/* The payloads space.ship.deliver carries, as its lexicon defines them. */
+export type FederationResourceDescriptor = DeliverResource;
+export type FederationMessageDelivery = DeliverMessage;
+export type FederationRequestDelivery = DeliverRequest;
+export type FederationDeliveryPayload = DeliverPayload;
+export const federationResourceDescriptorSchema = deliverResourceSchema;
+export const federationDeliveryPayloadSchema = deliverPayloadSchema;

@@ -1,4 +1,5 @@
 import type { JsonObject } from "../json";
+import type { LexiconBlob } from "../lexicon";
 
 /** One change to an installation's public repository; every write in a call lands in one signed commit. */
 export type PublicRecordWrite =
@@ -13,12 +14,7 @@ export type PublicCommit = {
 };
 
 /** A blob as a record references it once uploaded. */
-export type PublicBlobRef = {
-  $type: "blob";
-  ref: { $link: string };
-  mimeType: string;
-  size: number;
-};
+export type PublicBlobRef = LexiconBlob;
 
 /** The installation's ATProto account. */
 export type PublicRepositoryAccount = {

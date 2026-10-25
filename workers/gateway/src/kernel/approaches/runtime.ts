@@ -1,5 +1,5 @@
 import type { SendMessageRequestInput } from "@humansandmachines/gsv/protocol";
-import { messageRequestOutputSchema, SEND_MESSAGE_REQUEST, WITHDRAW_MESSAGE_REQUEST } from "@humansandmachines/gsv/protocol";
+import { SEND_MESSAGE_REQUEST, sendMessageRequestOutputSchema, WITHDRAW_MESSAGE_REQUEST } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type { ApproachRecord } from "../approach-store";
 import { APPROACH_RECEIPT_MS } from "../approach-store";
@@ -53,7 +53,7 @@ async function deliverApproach(record: ApproachRecord, ctx: KernelContext): Prom
     requestId: current.summary.requestId, profileCid: current.profileCid, name: current.localDisplayName,
     messageId: current.messageId, text: current.pendingText, createdAtMs: current.sentAtMs, expiresAtMs: current.summary.expiresAtMs,
   };
-  messageRequestOutputSchema.parse(await callShipProcedure(current.summary.peerDid, SEND_MESSAGE_REQUEST, input, ctx));
+  sendMessageRequestOutputSchema.parse(await callShipProcedure(current.summary.peerDid, SEND_MESSAGE_REQUEST, input, ctx));
   requireApproachAvailable(current, ctx);
   ctx.approaches.deliveryReceived(current.summary.id, current.summary.revision);
   ctx.broadcastToUserUid(current.ownerUid, "approach.changed");

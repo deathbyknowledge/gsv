@@ -28,7 +28,7 @@ import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 
 /** Collections a Ship feature publishes itself, and where the person changes them instead. */
 const FEATURE_COLLECTIONS = new Map([
-  ["space.ship.profile", "space.ship.profile is your profile; change it in People"],
+  [SHIP_PROFILE_COLLECTION, `${SHIP_PROFILE_COLLECTION} is your profile; change it in People`],
 ]);
 
 /** One approval covers the whole batch, so it stays small enough to show in full. */

@@ -7,6 +7,7 @@ import { test } from "node:test";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 const generatedPaths = [
+  "packages/gsv/src/protocol/generated/ship-lexicons.ts",
   "workers/gateway/src/protocol/generated/wire-frame-schema.js",
   "host/crates/gateway-client/src/protocol/generated.rs",
 ];
@@ -14,7 +15,7 @@ const generatedPaths = [
 test("protocol generation is stable with shared worktree dependencies", async (context) => {
   const worktree = await mkdtemp(join(tmpdir(), "gsv-protocol-worktree-"));
   context.after(() => rm(worktree, { recursive: true, force: true }));
-  for (const path of ["package.json", "packages/gsv/src", "packages/gsv/tsconfig.json", "tools/protocol"]) {
+  for (const path of ["package.json", "lexicons", "packages/gsv/src", "packages/gsv/tsconfig.json", "tools/protocol"]) {
     const destination = join(worktree, path);
     await mkdir(dirname(destination), { recursive: true });
     await cp(join(repositoryRoot, path), destination, { recursive: true });

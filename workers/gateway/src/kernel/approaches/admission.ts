@@ -1,6 +1,6 @@
 import type {
   ApproachCreateArgs, ApproachDecideArgs, ApproachGetArgs, ApproachListArgs, ApproachListResult,
-  ApproachResult, ApproachRetryArgs, JsonValue, MessageRequestOutput, PublicProfile, SendMessageRequestInput,
+  ApproachResult, ApproachRetryArgs, JsonValue, PublicProfile, SendMessageRequestInput, SendMessageRequestOutput,
 } from "@humansandmachines/gsv/protocol";
 import { didSchema, jsonObjectSchema, profileContactPolicy, sendMessageRequestInputSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod/mini";
@@ -29,7 +29,7 @@ const createSchema = z.strictObject({
   shipHandlesMessages: z.optional(z.boolean()),
 });
 /** What a contact's Ship hears once its request is received; a repeated send hears it again. */
-const RECEIVED: MessageRequestOutput = { state: "received" };
+const RECEIVED: SendMessageRequestOutput = { state: "received" };
 const UNAVAILABLE = "Message requests are unavailable";
 
 /** The owner's canonical Ship sees only the requests it may send; incoming requests are the human's to read and decide. */
