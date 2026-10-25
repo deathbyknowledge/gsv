@@ -5,6 +5,20 @@ import { raceWithAbort } from "./shared/abort";
 export const ATPROTO_DID_PATH = "/.well-known/atproto-did";
 
 const LOOKUP_TIMEOUT_MS = 5_000;
+/** How long a DID the host gave answers its hostname before the host is asked again; a takedown shows within it. */
+const DID_CONFIRMATION_MS = 60_000;
+/** Hostnames one isolate remembers DIDs for; the oldest answer gives way first. */
+const REMEMBERED_HANDLES = 1_024;
+
+type RememberedDid = { installationId: string; did: string; confirmedAt: number };
+
+/**
+ * Each isolate's answers, per PDS binding. Only a DID the host gave for the
+ * hostname is remembered: a hostname with no account, another handle's or a
+ * taken-down account's, or one the host could not answer for, is asked about
+ * on every request, so a new account resolves at once.
+ */
+const rememberedDids = new WeakMap<PdsService, Map<string, RememberedDid>>();
 
 /**
  * Resolves the request's hostname as an ATProto handle: the DID of the
@@ -20,6 +34,17 @@ export async function serveAtprotoDid(
     return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET, HEAD", "cache-control": "no-store" } });
   }
   if (!pds) return notFound();
+  const hostname = new URL(request.url).hostname;
+  let dids = rememberedDids.get(pds);
+  if (!dids) {
+    dids = new Map();
+    rememberedDids.set(pds, dids);
+  }
+  const remembered = dids.get(hostname);
+  if (remembered?.installationId === installationId && Date.now() - remembered.confirmedAt < DID_CONFIRMATION_MS) {
+    return didResponse(request, remembered.did);
+  }
+  const askedAt = Date.now();
   let account: PublicRepositoryAccount | null;
   try {
     const signal = AbortSignal.timeout(LOOKUP_TIMEOUT_MS);
@@ -35,9 +60,19 @@ export async function serveAtprotoDid(
     console.error("[Gateway] Public repository lookup failed:", exceptionDiagnostics(error));
     return new Response("Public repository unavailable", { status: 503, headers: { "cache-control": "no-store" } });
   }
+  dids.delete(hostname);
   // A host claims no handle for an account it has taken down, as Bluesky's PDS answers.
-  if (!account || account.status === "takendown" || account.handle !== new URL(request.url).hostname) return notFound();
-  return new Response(request.method === "HEAD" ? null : account.did, {
+  if (!account || account.status === "takendown" || account.handle !== hostname) return notFound();
+  dids.set(hostname, { installationId, did: account.did, confirmedAt: askedAt });
+  for (const oldest of dids.keys()) {
+    if (dids.size <= REMEMBERED_HANDLES) break;
+    dids.delete(oldest);
+  }
+  return didResponse(request, account.did);
+}
+
+function didResponse(request: Request, did: string): Response {
+  return new Response(request.method === "HEAD" ? null : did, {
     headers: {
       "content-type": "text/plain; charset=utf-8",
       "cache-control": "no-store",

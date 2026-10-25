@@ -63,7 +63,11 @@ A Ship's account is a `did:plc` whose handle is the Ship's hostname, such as
 publish, an invitation, a message request or another call to a Ship. The PDS
 accepts only a hostname that Accounts routes to the same installation. The Gateway answers
 `/.well-known/atproto-did` on that hostname with the DID, which is how apps
-verify the handle; a hostname the repository does not name returns 404.
+verify the handle; a hostname the repository does not name returns 404. Each
+Gateway isolate answers a hostname for a minute from the DID the PDS last gave
+for it, so a takedown or a handle moving away shows within a minute; a
+hostname the PDS gave no DID for is asked about every time, so a new account
+resolves at once.
 
 The DID document names two services: `#atproto_pds`, the PDS that holds the
 repository, and `#ship`, the Ship's hostname, where other Ships reach it. The
@@ -274,7 +278,8 @@ read it serves:
 
 - An account taken down answers repository reads with `RepoTakendown` and
   reads as `takendown` in `getRepoStatus` and `listRepos`. Relays receive an
-  `#account` event saying so. The PDS refuses the Ship's writes, uploads and
+  `#account` event saying so, and the Ship's hostname stops naming the DID
+  within a minute. The PDS refuses the Ship's writes, uploads and
   service-auth signatures, so the Ship publishes nothing and can't call other
   Ships. The Kernel takes that refusal as final: a message, message request or
   acceptance it was sending fails at once instead of retrying, and its person
