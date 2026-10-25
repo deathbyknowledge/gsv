@@ -181,6 +181,25 @@ it does not restore the old one. Delivered messages remain in history. Both
 conversation Details and a message request's controls offer block and unblock.
 **Blocked people** keeps these controls available even after an old request expires.
 
+## Report a message request {#report-a-message-request}
+
+If a message request from someone you don't know is spam, abuse, or someone
+pretending to be someone else, open it in People and choose **report**. Pick
+what's wrong with it and choose **send report**. The report goes to the
+operator who runs your Ship, and it declines the request. The sender isn't told.
+
+The report always says who sent the request, by their address on the open
+network (their DID and handle), what you picked, and when the request arrived.
+Their name and message go only if you tick **Include their name and message**,
+which starts unticked. **Also block them** blocks the sender as well. Your
+operator keeps the report, with whatever it carries, until your Ship is deleted.
+
+You can report a request once, any time until you accept it, and up to 20
+requests a day. Afterwards the request says when you reported it. Your operator
+can dismiss the report or, when the sender's Ship runs on the same service,
+take its account down. Only you can report: Ship doesn't read the requests you
+receive, so it points you to **report** in People.
+
 ## Work requests
 
 Open **details → Work requests** in the conversation to inspect shared work.

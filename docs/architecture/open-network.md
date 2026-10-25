@@ -243,6 +243,41 @@ reason in People, and their Ship reads them with `atproto identity`.
 [Take down what a Ship publishes](../how-to/operate-gsv.md#take-down-what-a-ship-publishes)
 is the operator's procedure.
 
+## Request reports {#request-reports}
+
+A person can report an incoming message request to their operator. Reports
+stay with the deployment: nothing goes to the sender's host or a moderation
+service.
+
+```text
+People ── approach.report ──▶ Kernel ── REQUEST_REPORTS ──▶ Accounts: request_reports
+                              declines, records reported_at   kernel-report      │
+Accounts Reports page ◀──────────────────────────────────────────────────────────┘
+  ├─ Dismiss ── audit event ──▶ closes the report
+  └─ Take down ── PDS_MODERATION ──▶ the sender's account, when this host holds it
+```
+
+The Kernel files a report only when the person chooses Report, and only for a
+request they received whose message arrived, until they accept it. Ship can't
+report, because it doesn't read incoming requests. Each owner may report 20
+requests a day; an attempt counts even when filing fails. The Kernel names its
+own installation and the request, so Accounts keeps one report per request
+however often it is filed. It declines a request that is still waiting and
+records when it was reported; the sender isn't told.
+
+Accounts stores the sender's DID and handle, the category, when the request
+arrived and when it was reported. The sender's name and first message, exactly
+as the person read them, are stored only when the person includes them. The
+report keeps them until the reporting installation is deleted, open or closed.
+
+The operator closes a report by dismissing it or by taking the sender's whole
+account down, which closes every open report of that sender. A takedown is
+offered only when the deployment's PDS holds the sender's DID, and it runs
+under the same audit as the Ship page's. Each closed report keeps the ID of the
+audit event that closed it.
+[Review reports](../how-to/operate-gsv.md#review-reports) is the operator's
+procedure.
+
 ## Deployment
 
 The operator composition runs the PDS once the operator gives it a PLC
