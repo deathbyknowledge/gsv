@@ -227,6 +227,20 @@ describe("a contact whose Ship is gone", () => {
     expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("revoked");
   });
 
+  it.each<[string, string | null]>([
+    ["serves its Ship elsewhere", "https://elsewhere.ship.test"],
+    ["isn't a Ship", null],
+  ])("keeps the contact when its address misroutes a call and names another account that %s", async (_holder, endpoint) => {
+    // Bob's host refuses one token by mistake, and its hostname is also the handle of an account that serves no Ship there.
+    const { ship: _ship, ...services } = bob.account.services;
+    const other = await network.account(bob.hostname, endpoint ? { ...services, ship: { type: "ShipService", endpoint } } : services);
+    network.hosts.set(bob.hostname, (request) => new URL(request.url).pathname === "/.well-known/atproto-did"
+      ? new Response(other.did)
+      : Response.json({ error: "BadJwtAudience", message: "The token is addressed to another service" }, { status: 401 }));
+    expect(await send(alice, bob, { text: "Hello?" })).toBe("terminal");
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
+  });
+
   it("keeps the contact while the directory can't be reached, and ends it once the directory answers", async () => {
     await testSpace(network, "bob");
     network.plcReachable = false;

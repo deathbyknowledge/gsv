@@ -213,9 +213,10 @@ failure proves that the other Ship is gone for good. Two signals prove it:
 - The contact's DID has a verified PLC history that ends in a tombstone, as
   erasure leaves a deleted or reset space's DID.
 - The address that the DID's document names refused a token addressed to that
-  DID, and the address now names another DID whose document claims it. After
-  an operator reset, the address reaches the person's new Ship, which has a new
-  DID.
+  DID, and the address now names another DID whose document claims it and
+  serves its own Ship there. After an operator reset, the address reaches the
+  person's new Ship, which has a new DID. A host that misroutes a token proves
+  nothing when the account its hostname names serves no Ship at that address.
 
 A refused delivery makes the Ship read the DID's document from the directory
 again before it judges, so a Ship that moved is reached at its new address

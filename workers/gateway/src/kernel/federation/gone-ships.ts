@@ -48,10 +48,10 @@ export async function endContactIfShipGone(contact: FederationContactRecord, fai
  * Whether a failed call proves that a DID's Ship is gone. Two signals do: the
  * DID's verified history ends in a tombstone, or the address its document
  * names refused a token addressed to it and now names another DID, checked
- * both ways. The document is read again first, so a Ship that moved is found
- * at its new address. A directory outage, a timeout, a server error or a rate
- * limit proves nothing, and neither does a document without a Ship service,
- * which its owner can restore.
+ * both ways, that serves its own Ship there. The document is read again first,
+ * so a Ship that moved is found at its new address. A directory outage, a
+ * timeout, a server error or a rate limit proves nothing, and neither does a
+ * document without a Ship service, which its owner can restore.
  */
 async function shipGone(did: string, failure: Error, ctx: KernelContext): Promise<boolean> {
   if (failure instanceof DidDeactivatedError) return true;
@@ -65,10 +65,14 @@ async function shipGone(did: string, failure: Error, ctx: KernelContext): Promis
     throw error;
   }
   if (failure.error !== "BadJwtAudience" || !current.shipEndpoint) return false;
+  const address = new URL(current.shipEndpoint);
+  let holder: ResolvedDid;
   try {
-    return (await resolveHandle(new URL(current.shipEndpoint).hostname, ctx)).did !== did;
+    holder = await resolveHandle(address.hostname, ctx);
   } catch (error) {
     if (error instanceof DidNotResolvedError || error instanceof DidDirectoryUnavailableError) return false;
     throw error;
   }
+  // A shared host can misroute one token, and its hostname can be another account's handle.
+  return holder.did !== did && holder.shipEndpoint !== null && new URL(holder.shipEndpoint).origin === address.origin;
 }
