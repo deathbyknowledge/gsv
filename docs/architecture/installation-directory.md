@@ -40,6 +40,13 @@ Adapters resolve a durable, generation-fenced identity link; background work
 uses its stored installation identity. Passing an arbitrary id through a
 service call is not a replacement for those admission checks.
 
+An operator that runs its own Accounts Worker composes it from
+`@humansandmachines/gsv-installations`. Besides the methods above, that Worker
+exports a `RequestReportsEntrypoint` that files through `fileKernelReport` on
+its own database, runs `RequestReports.forgetClosedMessages()` on its cron, and
+gives `InstallationAdminHttp` its `ShipTakedowns` and `RequestReports`, so the
+operator admin has its Takedowns panel and Reports queue.
+
 ## Resolution and admission
 
 Directory resolution and permission to perform work are separate results.
