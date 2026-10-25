@@ -8,6 +8,7 @@ import {
   type InstallationResourceObservation,
 } from "@humansandmachines/gsv/services/lifecycle-discovery";
 import { z } from "zod";
+import { ripgitFailureStatus } from "../fs/ripgit/client";
 import type { GatewayEnv } from "../runtime-env";
 import { conversationDurableObjectName, parseConversationDurableObjectName, parseProcessDurableObjectName, processDurableObjectName } from "./routing";
 import { parseInstallationId } from "./identity";
@@ -34,7 +35,7 @@ export class GatewayDeletionDiscovery {
         const response = await this.env.RIPGIT.fetch("https://ripgit.invalid/.gsv/discovery/inspect", {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(resource),
         });
-        if (!response.ok) { await response.body?.cancel(); throw new Error("Ripgit discovery failed"); }
+        if (!response.ok) throw new Error(`Ripgit discovery failed (${await ripgitFailureStatus(response)})`);
         evidence = ripgitInspectionSchema.parse(await response.json());
       } else {
         const namespace = resource.kind === "kernel" ? this.env.KERNEL : resource.kind === "process" ? this.env.PROCESS : this.env.CONVERSATION;
@@ -100,7 +101,7 @@ export class GatewayDeletionDiscovery {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ installationId: request.installationId, names: repositories.map((resource) => resource.name) }),
       });
-      if (!response.ok) { await response.body?.cancel(); throw new Error("Ripgit inventory import failed"); }
+      if (!response.ok) throw new Error(`Ripgit inventory import failed (${await ripgitFailureStatus(response)})`);
       await response.body?.cancel();
     }
     return kernel.completeInstallationResourceInventoryBatch({ discoverySha256: request.discoverySha256, cursor: batch.cursor });

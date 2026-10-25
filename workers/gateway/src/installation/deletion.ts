@@ -3,6 +3,7 @@ import {
   type InstallationDeletionReceipt,
   type InstallationDeletionRequest,
 } from "@humansandmachines/gsv/services/lifecycle";
+import { ripgitFailureStatus } from "../fs/ripgit/client";
 import type { Kernel } from "../kernel/do";
 import { conversationDurableObjectName, processDurableObjectName } from "./routing";
 import { RESOURCE_IDENTITY_KEY, VERIFIED_INVENTORY_KEY, type ResourceRetirement } from "./retirement";
@@ -135,10 +136,7 @@ export class GatewayDeletion {
     const response = await this.host.env.RIPGIT.fetch(`https://ripgit.invalid/.gsv/installation/${action}`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
     });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new Error(`Ripgit retirement failed (${response.status})`);
-    }
+    if (!response.ok) throw new Error(`Ripgit retirement failed (${await ripgitFailureStatus(response)})`);
     const receipt = ripgitProgressSchema.parse(await response.json());
     if (receipt.installationId !== input.installationId || receipt.operationId !== input.operationId) throw new Error("Ripgit retirement receipt mismatch");
     return receipt;

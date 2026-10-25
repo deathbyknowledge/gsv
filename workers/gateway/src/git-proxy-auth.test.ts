@@ -32,6 +32,7 @@ const ACCOUNTS = new Map<string, { credential: string; writes: Set<string> }>([
 
 let authorizeCalls: AuthorizeGitHttpInput[] = [];
 let ripgitCalls: RipgitCall[] = [];
+let ripgitAnswer: () => Response;
 let restoreKernel: (() => void) | undefined;
 let restoreRipgit: (() => void) | undefined;
 
@@ -74,6 +75,7 @@ function fakeAuthorizeGitHttp(input: AuthorizeGitHttpInput) {
 beforeEach(() => {
   authorizeCalls = [];
   ripgitCalls = [];
+  ripgitAnswer = () => new Response("ripgit-reached", { status: 200 });
 
   const ensureInstallationIdentity = vi.fn(async () => {});
   const authorizeGitHttp = vi.fn(async (input: AuthorizeGitHttpInput) =>
@@ -93,7 +95,7 @@ beforeEach(() => {
         path: new URL(request.url).pathname,
         actor: request.headers.get("x-ripgit-actor-name"),
       });
-      return Promise.resolve(new Response("ripgit-reached", { status: 200 }));
+      return Promise.resolve(ripgitAnswer());
     },
   };
   const previous = Object.getOwnPropertyDescriptor(env, "RIPGIT");
@@ -248,5 +250,43 @@ describe("public git proxy write authorization", () => {
       expect(response.status).toBe(403);
       expect(authorizeCalls.at(-1)?.write).toBe(true);
     });
+  });
+});
+
+describe("public git proxy failures", () => {
+  const diagnosticId = "0b8f5f2e-4b9a-4c1e-9d3a-6f2b8c7d1e0a";
+
+  async function clone(): Promise<Response> {
+    return gateway.fetch(new Request("http://localhost/git/root/gsv-manual/info/refs?service=git-upload-pack"), env);
+  }
+
+  it("shows an outside caller only the kind and reference of an unexpected ripgit failure", async () => {
+    ripgitAnswer = () => Response.json({
+      error: "InternalError", kind: "repository", diagnosticId, message: "blob missing for drafts/salary-review.md",
+    }, { status: 500 });
+
+    const response = await clone();
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await response.text()).toBe(`Repository request failed (repository error, reference ${diagnosticId})`);
+  });
+
+  it("gives an unstructured backend failure a generic answer", async () => {
+    ripgitAnswer = () => new Response("panicked at src/store.rs: drafts/salary-review.md", { status: 502 });
+
+    const response = await clone();
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).toBe("Repository request failed");
+  });
+
+  it("passes a refusal through unchanged", async () => {
+    ripgitAnswer = () => new Response("Repository not found", { status: 404 });
+
+    const response = await clone();
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Repository not found");
   });
 });
