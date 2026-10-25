@@ -351,8 +351,8 @@ describe("reporting a message request", () => {
   });
 
   it("includes the longest message a request can carry, in any script", async () => {
-    // The Kernel keeps a request of at most 32,768 UTF-8 bytes, whichever way the request came.
-    const text = `${"語".repeat(10_922)}ok`;
+    // A request carries at most 32,768 UTF-16 code units, whichever way it came, and 語 takes three UTF-8 bytes.
+    const text = "語".repeat(32_768);
     await alice.run(async (ctx) => {
       await handleApproachCreate({ ...request(profile), text }, held(ctx));
       await processApproachMaintenance(held(ctx));
