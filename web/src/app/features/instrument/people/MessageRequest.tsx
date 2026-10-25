@@ -7,8 +7,9 @@ import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_APPROACHES_KEY, INSTRUMENT_CONTACT_BLOCKS_KEY, instrumentContactConversationKey } from "../wire/queryKeys";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { approachStatus, requestMayRetry } from "./peopleModel";
+import { approachStatus, requestMayReport, requestMayRetry } from "./peopleModel";
 import { ContactHandlingChoice } from "./ContactHandlingChoice";
+import { ReportRequest } from "./ReportRequest";
 import { useT } from "../../../i18n/locale";
 
 export function MessageRequest({ request, account, shipTakenDown, onOpen }: {
@@ -18,6 +19,7 @@ export function MessageRequest({ request, account, shipTakenDown, onOpen }: {
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [blockConfirm, setBlockConfirm] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const [shipHandlesMessages, setShipHandlesMessages] = useState<boolean | null>(null);
   const opened = useRef(request.state === "accepted");
   useEffect(() => {
@@ -71,6 +73,11 @@ export function MessageRequest({ request, account, shipTakenDown, onOpen }: {
       <p class="people-note">{t("people.request.waiting")}</p>
       <button class="people-action" disabled={!allowed("approach.decide") || pending} onClick={() => decide.mutate("withdraw")}>{t("people.request.withdraw")}</button>
     </div>}
+    {request.reportedAtMs !== undefined && <p class="people-note">{t("people.report.reported", { date: new Date(request.reportedAtMs).toLocaleDateString(undefined, { dateStyle: "medium" }) })}</p>}
+    {requestMayReport(request) && allowed("approach.report") && (reporting
+      ? <ReportRequest request={request} canBlock={canBlock && !blocked} onClose={() => setReporting(false)}
+        onReported={(alsoBlock) => { setReporting(false); if (alsoBlock) block.mutate(); }} />
+      : <div class="people-decision"><button class="people-action is-danger" disabled={pending} onClick={() => setReporting(true)}>{t("people.report.open")}</button></div>)}
     {requestMayRetry(request) && <div class="people-decision"><button class="ibtn" disabled={!allowed("approach.retry") || pending} onClick={() => retry.mutate()}>{t(retry.isPending ? "people.retrying" : "people.retry")}</button></div>}
     {request.contactId && request.state === "accepted" && <button class="ibtn is-primary" onClick={() => onOpen(request.contactId!)}>{t("people.request.openConversation")}</button>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
