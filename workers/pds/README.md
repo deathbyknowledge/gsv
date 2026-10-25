@@ -116,7 +116,12 @@ that applies plc.directory's log rules, and read every frame from the host
 firehose as a relay does. They cover a lost directory response, writes that
 overlap while blob storage is slow, a head that no event announced, delivery
 retries with backoff, the blob lifecycle, cursor replay and retention, and the
-XRPC reads, including an unknown DID that must not address any object.
+XRPC reads, including an unknown DID that must not address any object. The
+identity tests move the directory's clock to check PLC's 72-hour window. They
+cover a change signed on the head of the DID's log with every other field
+carried forward, a head that moved, PLC's rotation-key limits, and an owner's
+recovery key: its rank, replacement, removal, a lost response, and what each
+key can undo.
 
 The relay tests answer `requestCrawl` as the reference relay does, checking the
 host's `describeServer` through the worker before accepting. They cover asking

@@ -1,3 +1,5 @@
+import { encode } from "@atcute/cbor";
+import { CODEC_DCBOR, create, toString } from "@atcute/cid";
 import { parseDidKey, Secp256k1PrivateKey, Secp256k1PrivateKeyExportable, type DidKeyString } from "@atcute/crypto";
 import {
   deriveDidFromGenesisOp,
@@ -9,9 +11,20 @@ import {
   type DidPlcString,
   type Operation,
   type Service,
+  type UnsignedOperation,
 } from "@atcute/did-plc";
 import { fromBase16 } from "@atcute/multibase";
 import type { HostEnv } from "./env";
+
+/** PLC's limit on an identity's rotation keys; the validator the host uses allows ten, so the host checks five itself. */
+export const MAX_ROTATION_KEYS = 5;
+
+/**
+ * Where an owner's recovery key ranks among an identity's rotation keys: first,
+ * above the operator's paper key and the host's key. Neither can then undo what
+ * the owner's key signs, and for 72 hours it can undo what either of them signs.
+ */
+const OWNER_RECOVERY_KEY_RANK = 0;
 
 /** A hosted account's did:plc, handle and repository signing key. */
 export type RepoIdentity = {
@@ -24,6 +37,19 @@ export type RepoIdentity = {
   /** Signed genesis operation the DID derives from. */
   genesis: Operation;
 };
+
+/** A DID's operation in force at the head of its log, with the CID the operation after it names as `prev`. */
+export type IdentityHead = { cid: string; operation: Operation };
+
+/** What an operation states about an identity: every field an update carries forward or changes. */
+export type IdentityState = Omit<UnsignedOperation, "type" | "prev">;
+
+/** The directory's log has moved past the head the host recorded, so someone else changed the identity. */
+export class IdentityChangedError extends Error {
+  constructor(did: string) {
+    super(`IdentityChanged: ${did} has changed in its directory since this host last signed for it`);
+  }
+}
 
 /** The DID document a did:plc directory serves for a hosted account. */
 export type DidDocument = {
@@ -42,7 +68,7 @@ export type DidDocument = {
  */
 export async function mintIdentity(env: HostEnv, handle: string, services: Record<string, Service> = {}): Promise<RepoIdentity> {
   const signing = await Secp256k1PrivateKeyExportable.createKeypair();
-  const rotation = await Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY));
+  const rotation = await hostRotationKey(env);
   const hostKey = await rotation.exportPublicKey("did");
   const signingDidKey = await signing.exportPublicKey("did");
   const genesis = await signOperation({
@@ -78,6 +104,70 @@ export async function registerGenesis(env: HostEnv, identity: RepoIdentity): Pro
   }
 }
 
+/** The head an identity's genesis operation makes. */
+export async function genesisHead(genesis: Operation): Promise<IdentityHead> {
+  return { cid: await operationCid(genesis), operation: genesis };
+}
+
+/**
+ * Signs, with the host's rotation key, the operation that follows `known`,
+ * the head the host recorded for the DID. `change` receives every field
+ * `known` states and returns the next state. Rotation keys follow PLC's rules:
+ * one to five did:keys of the kinds it verifies, none listed twice. A log that
+ * has moved past `known` means someone else changed the identity, and the host
+ * builds nothing on it.
+ */
+export async function signNextOperation(
+  env: HostEnv,
+  did: DidPlcString,
+  known: IdentityHead,
+  change: (state: IdentityState) => IdentityState,
+): Promise<IdentityHead> {
+  const head = await lastEntry(new PlcClient({ serviceUrl: env.PLC_URL }), did);
+  if (head?.cid !== known.cid) throw new IdentityChangedError(did);
+  const { type: _type, prev: _prev, sig: _sig, ...state } = known.operation;
+  const next = change(state);
+  checkRotationKeys(next.rotationKeys);
+  const operation = await signOperation({ ...next, type: "plc_operation", prev: known.cid }, await hostRotationKey(env));
+  validateIncomingOp(operation);
+  return { cid: await operationCid(operation), operation };
+}
+
+/**
+ * Submits an operation `signNextOperation` signed, and returns once the
+ * directory has it in force. A retry after a submission whose response was
+ * lost finds it there and succeeds. A log that has moved past the operation it
+ * follows to anything else means someone else changed the identity.
+ */
+export async function submitNextOperation(env: HostEnv, did: DidPlcString, next: IdentityHead): Promise<void> {
+  const plc = new PlcClient({ serviceUrl: env.PLC_URL });
+  const inForce = await entriesInForce(plc, did);
+  if (inForce.some((entry) => entry.cid === next.cid)) return;
+  if (inForce.at(-1)?.cid !== next.operation.prev) throw new IdentityChangedError(did);
+  try {
+    await plc.submitOperation(did, next.operation);
+  } catch (error) {
+    if (!(error instanceof PlcClientError)) throw error;
+    if (!(await entriesInForce(plc, did)).some((entry) => entry.cid === next.cid)) throw error;
+  }
+}
+
+/**
+ * The rotation keys with the owner's recovery key `next` at its rank in place
+ * of `previous`. A null `previous` adds `next`, and a null `next` removes
+ * `previous`. The operator's keys keep their order.
+ */
+export function withOwnerRecoveryKey(rotationKeys: readonly DidKeyString[], previous: DidKeyString | null, next: DidKeyString | null): DidKeyString[] {
+  const operators = rotationKeys.filter((key) => key !== previous);
+  return next === null ? operators : operators.toSpliced(OWNER_RECOVERY_KEY_RANK, 0, next);
+}
+
+/** An owner's recovery key: a did:key of a kind PLC verifies, P-256 or secp256k1. */
+export function parseOwnerRecoveryKey(value: string): DidKeyString {
+  if (!isDidKey(value) || !isVerifiable(value)) throw new Error("InvalidRecoveryKey: a recovery key is a P-256 or secp256k1 did:key");
+  return value;
+}
+
 /**
  * Tombstones a DID so the directory stops resolving it. The directory keeps
  * the DID's operation log, which names its handle and host. A DID the
@@ -89,7 +179,7 @@ export async function tombstoneIdentity(env: HostEnv, did: DidPlcString): Promis
   const plc = new PlcClient({ serviceUrl: env.PLC_URL });
   const last = await lastEntry(plc, did);
   if (!last || last.operation.type === "plc_tombstone") return;
-  const rotation = await Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY));
+  const rotation = await hostRotationKey(env);
   const hostKey = await rotation.exportPublicKey("did");
   if (last.operation.type !== "plc_operation" || !last.operation.rotationKeys.includes(hostKey)) return;
   if (!namesHost(last.operation, env.PDS_ORIGIN)) return;
@@ -104,18 +194,42 @@ export async function tombstoneIdentity(env: HostEnv, did: DidPlcString): Promis
 
 /** The DID's latest operation that is still in force, or null if the directory never logged the DID. */
 async function lastEntry(plc: PlcClient, did: DidPlcString) {
+  return (await entriesInForce(plc, did)).at(-1) ?? null;
+}
+
+/** The DID's operations that are still in force, genesis first; none if the directory never logged the DID. */
+async function entriesInForce(plc: PlcClient, did: DidPlcString) {
   try {
-    return (await plc.getAuditLog(did)).filter((entry) => !entry.nullified).at(-1) ?? null;
+    return (await plc.getAuditLog(did)).filter((entry) => !entry.nullified);
   } catch (error) {
-    if (error instanceof PlcClientError && error.status === 404) return null;
+    if (error instanceof PlcClientError && error.status === 404) return [];
     throw error;
   }
+}
+
+/** The CID a directory names an operation by, which the operation after it gives as `prev`. */
+async function operationCid(operation: Operation): Promise<string> {
+  return toString(await create(CODEC_DCBOR, encode(operation)));
+}
+
+function hostRotationKey(env: HostEnv): Promise<Secp256k1PrivateKey> {
+  return Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY));
 }
 
 /** Whether an operation names this host as the identity's PDS. */
 function namesHost(operation: Operation, origin: string): boolean {
   const endpoint = operation.services.atproto_pds?.endpoint;
   return endpoint !== undefined && URL.parse(endpoint)?.origin === new URL(origin).origin;
+}
+
+function checkRotationKeys(keys: readonly string[]): void {
+  if (keys.length === 0 || keys.length > MAX_ROTATION_KEYS) {
+    throw new Error(`InvalidRotationKeys: an identity lists one to ${MAX_ROTATION_KEYS} rotation keys`);
+  }
+  if (new Set(keys).size !== keys.length) throw new Error("InvalidRotationKeys: an identity lists each rotation key once");
+  for (const key of keys) {
+    if (!isDidKey(key) || !isVerifiable(key)) throw new Error(`InvalidRotationKeys: PLC can't verify ${key}`);
+  }
 }
 
 /** The DID document a directory derives from the identity's genesis operation. */
@@ -147,4 +261,14 @@ function recoveryKey(value: string): DidKeyString {
 
 function isDidKey(value: string): value is DidKeyString {
   return value.startsWith("did:key:");
+}
+
+/** Whether a did:key is one of the kinds PLC verifies: P-256 or secp256k1. */
+function isVerifiable(key: DidKeyString): boolean {
+  try {
+    parseDidKey(key);
+    return true;
+  } catch {
+    return false;
+  }
 }

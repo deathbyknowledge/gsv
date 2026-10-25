@@ -17,10 +17,16 @@ import {
 export class FakePlcDirectory {
   private readonly logs = new Map<string, IndexedEntryWithSigner[]>();
   private dropNextResponse = false;
+  private elapsedMs = 0;
 
   /** Logs the next valid operation but fails its response, as a dropped connection does. */
   loseNextResponse(): void {
     this.dropNextResponse = true;
+  }
+
+  /** Moves the directory's clock on, so the operations it logs next carry a later time. */
+  elapse(ms: number): void {
+    this.elapsedMs += ms;
   }
 
   /** The operations a DID's log holds, genesis first. */
@@ -53,7 +59,7 @@ export class FakePlcDirectory {
         operation,
         cid: toString(await create(CODEC_DCBOR, encode(operation))),
         nullified: false,
-        createdAt: new Date().toISOString(),
+        createdAt: new Date(Date.now() + this.elapsedMs).toISOString(),
       });
       this.logs.set(did, ops);
     } catch (error) {
