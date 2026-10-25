@@ -342,6 +342,11 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
       bindings: [{ type: "service", name: "OPERATOR_GATEWAY", service: props.names.gateway,
         entrypoint: "OperatorGatewayEntrypoint", props: { authority: "installation-operator" } }],
     });
+    // Accounts tells each Ship's Kernel of its changes of state through this, so Kernels needn't ask.
+    yield* directory.bind(`${props.logicalPrefix}DirectoryAdmissionGatewayBinding`, {
+      bindings: [{ type: "service", name: "ADMISSION_GATEWAY", service: props.names.gateway,
+        entrypoint: "GatewayAdmissionEntrypoint", props: { authority: "installation-admission" } }],
+    });
     return { storage, ripgit, gateway, pds };
   });
 };
