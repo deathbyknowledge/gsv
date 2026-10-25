@@ -1,0 +1,24 @@
+{
+  "lexicon": 1,
+  "id": "space.ship.getAttachment",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "A file a delivered message references; the response body carries it. The attachment's size and revision come back beside its body, in the ship-attachment-size and ship-attachment-revision headers.",
+      "parameters": {
+        "type": "params",
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The file's id from space.ship.deliver#resource: resource: followed by 1 to 119 letters, digits, hyphens or underscores.",
+            "maxLength": 128
+          }
+        }
+      },
+      "output": {
+        "encoding": "*/*"
+      }
+    }
+  }
+}

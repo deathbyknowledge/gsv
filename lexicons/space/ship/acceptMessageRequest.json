@@ -1,0 +1,51 @@
+{
+  "lexicon": 1,
+  "id": "space.ship.acceptMessageRequest",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "The person a request went to accepts it; the caller, its recipient, becomes the sender's contact. Only the DID the request went to finds it, and a repeated acceptance hears the same answer.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["requestId", "name"],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "name": {
+              "type": "string",
+              "description": "The accepting person's name, as the sender will see it. At most 256 UTF-16 code units.",
+              "minLength": 1,
+              "maxLength": 768,
+              "maxGraphemes": 256
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["generation", "threadId"],
+          "properties": {
+            "generation": {
+              "type": "string",
+              "description": "The connection; each delivery names it.",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        }
+      }
+    }
+  }
+}

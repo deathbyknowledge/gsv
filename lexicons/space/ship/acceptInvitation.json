@@ -1,0 +1,60 @@
+{
+  "lexicon": 1,
+  "id": "space.ship.acceptInvitation",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "The caller accepts an invitation this Ship issued, and becomes its contact.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["token", "name"],
+          "properties": {
+            "token": {
+              "type": "string",
+              "description": "The secret the invitation carries.",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "name": {
+              "type": "string",
+              "description": "The accepting person's name, as the inviter will see it. At most 256 UTF-16 code units.",
+              "minLength": 1,
+              "maxLength": 768,
+              "maxGraphemes": 256
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "description": "The inviter's name comes back, since a private profile has no record to read it from.",
+          "required": ["name", "generation", "threadId"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The inviter's name. At most 256 UTF-16 code units.",
+              "minLength": 1,
+              "maxLength": 768,
+              "maxGraphemes": 256
+            },
+            "generation": {
+              "type": "string",
+              "description": "The connection; each delivery names it.",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        }
+      }
+    }
+  }
+}
