@@ -29,6 +29,26 @@ describe("durable first-contact records", () => {
     });
   }, 30_000);
 
+  it("keeps pending text within its 64 MiB budget when every request is as long as a request can be", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const requests = new ApproachStore(storage);
+      const baseline = sql.databaseSize;
+      // 語 takes three UTF-8 bytes, so the longest request in it is 96 KiB, and 682 of those fill the budget.
+      const longest = (ownerUid: number): PrepareApproach => {
+        const input = incoming(ownerUid);
+        return { ...input, content: { ...input.content, text: "語".repeat(32_768) } };
+      };
+      for (let index = 0; index < 682; index++) {
+        requests.prepare(longest(1000 + Math.floor(index / 250)), () => {});
+        if (index % 50 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(() => requests.prepare(longest(1003), () => {})).toThrow("capacity");
+      // A short request still fits, so the text ran out rather than the count.
+      expect(requests.prepare(incoming(1003), () => {}).summary.state).toBe("preparing");
+      expect(sql.databaseSize - baseline).toBeLessThan(96 * 1024 * 1024);
+    });
+  }, 30_000);
+
   it("retains an in-flight acceptance through the receipt grace window and preserves accepted history across blocking", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const requests = new ApproachStore(storage);
@@ -123,11 +143,14 @@ describe("durable first-contact records", () => {
     });
   });
 
-  it("bounds UTF-8 bytes and expiry, and retains the first outcome on a repeated decision", async () => {
+  it("bounds text in UTF-16 code units and expiry, and retains the first outcome on a repeated decision", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const requests = new ApproachStore(storage);
       const input = incoming();
-      expect(() => requests.prepare({ ...input, content: { ...input.content, text: "🪐".repeat(8193) } }, () => {})).toThrow("text limit");
+      // Each planet is two UTF-16 code units and four UTF-8 bytes.
+      expect(() => requests.prepare({ ...input, content: { ...input.content, text: "🪐".repeat(16_385) } }, () => {})).toThrow("text limit");
+      const longest = incoming();
+      expect(requests.prepare({ ...longest, content: { ...longest.content, text: "🪐".repeat(16_384) } }, () => {}).pendingText).toHaveLength(32_768);
       expect(() => requests.prepare({ ...input, content: { ...input.content, expiresAtMs: Date.now() - 1 } }, () => {})).toThrow("expiry");
       const prepared = requests.prepare(input, () => {});
       requests.messageCommitted(prepared.summary.id, 1);
