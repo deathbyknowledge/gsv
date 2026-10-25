@@ -170,6 +170,26 @@ describe("deleting an installation's public account", () => {
     expect(plc.operations(did).map((operation) => operation.type)).toEqual(["plc_operation", "plc_operation"]);
   });
 
+  it("leaves a DID that names another host, though it still lists the host's key", async () => {
+    const ship = accounts.add();
+    const { did } = await (await publisher().getInstallation(ship.installationId)).ensureAccount(ship.handle);
+    if (!isDidPlc(did)) throw new Error(`Expected a did:plc, not ${did}`);
+    const client = new PlcClient({ serviceUrl: env.PLC_URL });
+    const [genesis] = await client.getAuditLog(did);
+    if (!genesis || genesis.operation.type !== "plc_operation") throw new Error("Expected the DID's genesis operation");
+    const host = await Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY));
+    const { sig: _sig, ...state } = genesis.operation;
+    // The identity moved to another host and kept this host's key among its rotation keys.
+    const elsewhere = { type: "AtprotoPersonalDataServer", endpoint: "https://pds.elsewhere.test" };
+    await client.submitOperation(did, await signOperation({ ...state, prev: genesis.cid, services: { ...state.services, atproto_pds: elsewhere } }, host));
+    accounts.setState(ship.installationId, "retained");
+    const request = deletion(ship.installationId);
+
+    await lifecycle().quiesceInstallation(request);
+    expect(await lifecycle().eraseInstallation(request)).toMatchObject({ phase: "live-erased", pendingResources: 0 });
+    expect(plc.operations(did).map((operation) => operation.type)).toEqual(["plc_operation", "plc_operation"]);
+  });
+
   it("finds each installation's repository, and the host's entries for it, for deletion discovery", async () => {
     const ship = accounts.add();
     const other = accounts.add();

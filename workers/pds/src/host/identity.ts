@@ -82,7 +82,8 @@ export async function registerGenesis(env: HostEnv, identity: RepoIdentity): Pro
  * Tombstones a DID so the directory stops resolving it. The directory keeps
  * the DID's operation log, which names its handle and host. A DID the
  * directory never logged, one already tombstoned, and one whose rotation keys
- * no longer include the host's need nothing.
+ * no longer include the host's need nothing. Nor does one that names another
+ * host as its PDS: it has moved there, and a tombstone would end it.
  */
 export async function tombstoneIdentity(env: HostEnv, did: DidPlcString): Promise<void> {
   const plc = new PlcClient({ serviceUrl: env.PLC_URL });
@@ -91,6 +92,7 @@ export async function tombstoneIdentity(env: HostEnv, did: DidPlcString): Promis
   const rotation = await Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY));
   const hostKey = await rotation.exportPublicKey("did");
   if (last.operation.type !== "plc_operation" || !last.operation.rotationKeys.includes(hostKey)) return;
+  if (!namesHost(last.operation, env.PDS_ORIGIN)) return;
   const tombstone = await signTombstone({ type: "plc_tombstone", prev: last.cid }, rotation);
   try {
     await plc.submitOperation(did, tombstone);
@@ -108,6 +110,12 @@ async function lastEntry(plc: PlcClient, did: DidPlcString) {
     if (error instanceof PlcClientError && error.status === 404) return null;
     throw error;
   }
+}
+
+/** Whether an operation names this host as the identity's PDS. */
+function namesHost(operation: Operation, origin: string): boolean {
+  const endpoint = operation.services.atproto_pds?.endpoint;
+  return endpoint !== undefined && URL.parse(endpoint)?.origin === new URL(origin).origin;
 }
 
 /** The DID document a directory derives from the identity's genesis operation. */
