@@ -4,7 +4,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { z } from "zod";
-import { SHIP_LEXICON_IMPORTS, SHIP_LEXICON_RULES } from "./ship-lexicon-rules.mjs";
+import { SHIP_LEXICON_CONSTANTS, SHIP_LEXICON_IMPORTS, SHIP_LEXICON_LIMITS, SHIP_LEXICON_RULES } from "./ship-lexicon-rules.mjs";
 
 /**
  * Emit the SDK's validators and types for the lexicons under lexicons/. Each
@@ -20,7 +20,8 @@ import { SHIP_LEXICON_IMPORTS, SHIP_LEXICON_RULES } from "./ship-lexicon-rules.m
  *   - a blob is exactly {$type, ref, mimeType, size}, within accept and maxSize.
  * Objects in a method lexicon refuse fields their lexicon doesn't declare, as
  * Ships always have; a record's objects ignore them, since records come from
- * any Ship. ship-lexicon-rules.mjs adds what Lexicon can't say.
+ * any Ship. ship-lexicon-rules.mjs adds what Lexicon can't say, and names the
+ * limits code checks before it sends.
  *
  * With --check, the output must be current and no other source may write a
  * space.ship NSID: code takes it from the generated module.
@@ -126,6 +127,7 @@ const lexiconType = z.strictObject({
 });
 
 const PRIMARY_TYPES = new Set(["query", "procedure", "record"]);
+const SHIP = { rules: SHIP_LEXICON_RULES, imports: SHIP_LEXICON_IMPORTS, limits: SHIP_LEXICON_LIMITS, constants: SHIP_LEXICON_CONSTANTS };
 
 /** Every lexicon under `root`, as `{ path, document }` with `path` relative to the root. */
 export function readLexiconFiles(root = lexiconRoot) {
@@ -143,8 +145,8 @@ export function readLexiconFiles(root = lexiconRoot) {
   return files;
 }
 
-/** The generated module for these lexicons, as TypeScript source. */
-export function generateShipLexicons(files, rules = SHIP_LEXICON_RULES, ruleImports = SHIP_LEXICON_IMPORTS) {
+/** The generated module for these lexicons, as TypeScript source, under Ship's rules unless it's given others. */
+export function generateShipLexicons(files, { rules = {}, imports = {}, limits = {}, constants = {} } = SHIP) {
   const lexicons = files.map(({ path, document }) => readLexicon(path, document));
   const definitions = new Map();
   for (const lexicon of lexicons) {
@@ -152,23 +154,39 @@ export function generateShipLexicons(files, rules = SHIP_LEXICON_RULES, ruleImpo
       definitions.set(`${lexicon.id}#${name}`, { lexicon, name, definition });
     }
   }
-  const state = { rules, usedRules: new Set(), helpers: new Set(), json: new Set(), names: new Map(), units: new Map(), order: [] };
+  const limitNames = new Map();
+  for (const [name, field] of Object.entries(limits)) {
+    if (limitNames.has(field)) throw new Error(`${limitNames.get(field)} and ${name} both name the limit of ${field}`);
+    limitNames.set(field, name);
+  }
+  const state = {
+    rules,
+    usedRules: new Set(),
+    limits: limitNames,
+    usedLimits: new Set(),
+    helpers: new Set(),
+    json: new Set(),
+    names: new Map(),
+    units: new Map(),
+    order: [],
+  };
   const generator = { definitions, state };
 
-  const constants = [];
+  const nsids = [];
   for (const lexicon of lexicons) {
     const main = lexicon.defs.main;
-    constants.push(...docComment(main.description, ""));
+    nsids.push(...docComment(main.description, ""));
     if (main.type === "record") {
       const base = `SHIP_${screaming(lexicon.name)}`;
-      constants.push(`export const ${claim(state, `${base}_COLLECTION`, lexicon.id)} = ${JSON.stringify(lexicon.id)};`);
+      nsids.push(`export const ${claim(state, `${base}_COLLECTION`, lexicon.id)} = ${JSON.stringify(lexicon.id)};`);
       if (main.key.startsWith("literal:")) {
-        constants.push(`export const ${claim(state, `${base}_RKEY`, lexicon.id)} = ${JSON.stringify(main.key.slice("literal:".length))};`);
+        nsids.push(`export const ${claim(state, `${base}_RKEY`, lexicon.id)} = ${JSON.stringify(main.key.slice("literal:".length))};`);
       }
     } else {
-      constants.push(`export const ${claim(state, screaming(lexicon.name), lexicon.id)} = ${JSON.stringify(lexicon.id)};`);
+      nsids.push(`export const ${claim(state, screaming(lexicon.name), lexicon.id)} = ${JSON.stringify(lexicon.id)};`);
     }
   }
+  const ruleConstants = Object.entries(constants).map(([name, value]) => `export const ${claim(state, name, "the rules")} = ${number(value)};`);
 
   for (const lexicon of lexicons) {
     for (const name of Object.keys(lexicon.defs)) {
@@ -182,21 +200,32 @@ export function generateShipLexicons(files, rules = SHIP_LEXICON_RULES, ruleImpo
       if (!state.usedRules.has(`${key} ${field}`)) throw new Error(`The rule for ${key} ${field} names nothing in the lexicons`);
     }
   }
+  for (const [field, name] of limitNames) {
+    if (!state.usedLimits.has(name)) {
+      throw new Error(`${name} names ${field}, which isn't a string or array with a maxLength, or an integer with a maximum`);
+    }
+  }
+  const units = state.order.map((key) => state.units.get(key));
+  for (const name of Object.keys(constants)) {
+    if (!units.some((code) => new RegExp(`\\b${name}\\b`).test(code))) throw new Error(`No rule uses ${name}`);
+  }
 
-  const body = [constants.join("\n"), ...state.order.map((key) => state.units.get(key))].join("\n\n");
-  const imports = ['import { z } from "zod/mini";'];
-  const named = new Map(Object.entries(ruleImports).map(([module, names]) => [module, names.filter((name) => new RegExp(`\\b${name}\\b`).test(body))]));
+  const blocks = [nsids.join("\n")];
+  if (ruleConstants.length > 0) blocks.push(ruleConstants.join("\n"));
+  const body = [...blocks, ...units].join("\n\n");
+  const importLines = ['import { z } from "zod/mini";'];
+  const named = new Map(Object.entries(imports).map(([module, names]) => [module, names.filter((name) => new RegExp(`\\b${name}\\b`).test(body))]));
   named.set("../json", [...new Set([...(named.get("../json") ?? []), ...state.json])]);
   named.set("../lexicon", [...new Set([...(named.get("../lexicon") ?? []), ...state.helpers])]);
   for (const [module, names] of [...named].sort(([a], [b]) => a.localeCompare(b))) {
     if (names.length === 0) continue;
     const sorted = names.sort((a, b) => a.replace(/^type /, "").localeCompare(b.replace(/^type /, "")));
-    imports.push(`import { ${sorted.join(", ")} } from ${JSON.stringify(module)};`);
+    importLines.push(`import { ${sorted.join(", ")} } from ${JSON.stringify(module)};`);
   }
   return [
     "// Generated by tools/protocol/generate-ship-lexicons.mjs from lexicons/ and",
     "// tools/protocol/ship-lexicon-rules.mjs. Do not edit by hand.",
-    imports.join("\n"),
+    importLines.join("\n"),
     "",
     body,
     "",
@@ -317,6 +346,7 @@ function emitObject(generator, { key, lexicon, object, typeName, description: te
         lexicon,
         path,
         constantPrefix: `${screaming(lexicon.name)}${definitionName === "main" ? "" : `_${screaming(definitionName)}`}_${screaming(name)}`,
+        limit: state.limits.get(path),
       });
     }
     if (rule?.check) field = { ...field, checks: [...field.checks, ...rule.check] };
@@ -354,24 +384,26 @@ function fieldCode(generator, definition, context) {
       if (definition.const !== undefined) return plain(JSON.stringify(definition.const), `z.literal(${JSON.stringify(definition.const)})`);
       if (definition.enum) return plain(definition.enum.map((value) => JSON.stringify(value)).join(" | "), `z.enum(${list(definition.enum)})`);
       const checks = [];
+      const constants = [];
       if (definition.minLength === 1) checks.push("z.minLength(1)");
-      else if (definition.minLength) checks.push(helper(state, "utf8MinLength", definition.minLength));
-      if (definition.maxLength !== undefined) checks.push(helper(state, "utf8MaxLength", definition.maxLength));
-      if (definition.minGraphemes) checks.push(helper(state, "minGraphemes", definition.minGraphemes));
-      if (definition.maxGraphemes !== undefined) checks.push(helper(state, "maxGraphemes", definition.maxGraphemes));
+      else if (definition.minLength) checks.push(helper(state, "utf8MinLength", number(definition.minLength)));
+      if (definition.maxLength !== undefined) checks.push(helper(state, "utf8MaxLength", upperLimit(state, context, definition.maxLength, constants)));
+      if (definition.minGraphemes) checks.push(helper(state, "minGraphemes", number(definition.minGraphemes)));
+      if (definition.maxGraphemes !== undefined) checks.push(helper(state, "maxGraphemes", number(definition.maxGraphemes)));
       if (definition.format) {
         state.helpers.add("stringFormat");
         checks.push(`stringFormat(${JSON.stringify(definition.format)})`);
       }
-      return plain("string", "z.string()", checks);
+      return { ...plain("string", "z.string()", checks), constants };
     }
     case "integer": {
       if (definition.const !== undefined) return plain(String(definition.const), `z.literal(${definition.const})`);
       if (definition.enum) return plain(definition.enum.join(" | "), `z.literal(${list(definition.enum)})`);
       const checks = [];
+      const constants = [];
       if (definition.minimum !== undefined) checks.push(`z.gte(${number(definition.minimum)})`);
-      if (definition.maximum !== undefined) checks.push(`z.lte(${number(definition.maximum)})`);
-      return plain("number", "z.int()", checks);
+      if (definition.maximum !== undefined) checks.push(`z.lte(${upperLimit(state, context, definition.maximum, constants)})`);
+      return { ...plain("number", "z.int()", checks), constants };
     }
     case "boolean":
       return definition.const === undefined
@@ -390,12 +422,13 @@ function fieldCode(generator, definition, context) {
     case "union":
       return unionCode(generator, definition, context);
     case "array": {
-      const item = fieldCode(generator, definition.items, { ...context, path: `${context.path}[]` });
+      const item = fieldCode(generator, definition.items, { ...context, path: `${context.path}[]`, limit: undefined });
       const checks = [];
+      const constants = [...item.constants];
       if (definition.minLength) checks.push(`z.minLength(${number(definition.minLength)})`);
-      if (definition.maxLength !== undefined) checks.push(`z.maxLength(${number(definition.maxLength)})`);
+      if (definition.maxLength !== undefined) checks.push(`z.maxLength(${upperLimit(state, context, definition.maxLength, constants)})`);
       const type = item.type.includes("|") ? `(${item.type})[]` : `${item.type}[]`;
-      return { type, base: `z.array(${render(item)})`, checks, deps: item.deps, constants: item.constants };
+      return { type, base: `z.array(${render(item)})`, checks, deps: item.deps, constants };
     }
     case "object":
       throw new Error(`${context.path}: name a nested object as a definition and refer to it`);
@@ -521,9 +554,17 @@ function render(field) {
   return field.checks.length ? `${field.base}.check(${field.checks.join(", ")})` : field.base;
 }
 
-function helper(state, name, limit) {
+function helper(state, name, argument) {
   state.helpers.add(name);
-  return `${name}(${number(limit)})`;
+  return `${name}(${argument})`;
+}
+
+/** A field's upper limit, exported under the name SHIP_LEXICON_LIMITS gives it, if any, so code can check it too. */
+function upperLimit(state, context, value, constants) {
+  if (!context.limit) return number(value);
+  state.usedLimits.add(context.limit);
+  constants.push(`export const ${claim(state, context.limit, context.path)} = ${number(value)};`);
+  return context.limit;
 }
 
 /** Claims an exported name once; two lexicons can't generate the same one. */

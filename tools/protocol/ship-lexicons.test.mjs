@@ -48,7 +48,7 @@ test("a keyword Lexicon doesn't define fails both the official round trip and th
     main: procedure({ type: "object", properties: { name: { type: "string", maxlength: 4 } } }),
   });
   assert.notDeepEqual(officialRoundTrip(typo), typo);
-  assert.throws(() => generateShipLexicons([file(typo)], {}, {}), /maxlength/);
+  assert.throws(() => generateShipLexicons([file(typo)], {}), /maxlength/);
 });
 
 const THING = fixture("test.fixture.thing", {
@@ -112,8 +112,9 @@ const NOTE = fixture("test.fixture.note", {
   embed: { type: "object", properties: { alt: { type: "string" } } },
 });
 const FIXTURES = [THING, COMMON, NOTE];
-const fixtureSource = generateShipLexicons(FIXTURES.map(file), {}, {});
-const official = new Lexicons(FIXTURES);
+const fixtureSource = generateShipLexicons(FIXTURES.map(file), {});
+// Lexicons rewrites the references in the documents it holds, so it holds copies.
+const official = new Lexicons(structuredClone(FIXTURES));
 const generated = await load(fixtureSource);
 
 const BLOB = { $type: "blob", ref: { $link: RAW_CID }, mimeType: "image/png", size: 10 };
@@ -224,6 +225,27 @@ test("each lexicon names its constants, and a record its collection and literal 
   assert.equal("THING_PICTURE_MAX_BYTES" in generated, false);
 });
 
+test("a named limit and a rule's constant are exported, and the schemas check against them", async () => {
+  const input = "test.fixture.thing#main.input";
+  const source = generateShipLexicons(FIXTURES.map(file), {
+    rules: { [input]: { maybe: { check: ["z.maxLength(MAX_MAYBE)"], why: "A rule that uses a constant." } } },
+    limits: { MAX_BYTES: `${input} bytes`, MAX_COUNT: `${input} count`, MAX_TAGS: `${input} tags` },
+    constants: { MAX_MAYBE: 5 },
+  });
+  for (const check of ["utf8MaxLength(MAX_BYTES)", "z.lte(MAX_COUNT)", "z.maxLength(MAX_TAGS)", "z.maxLength(MAX_MAYBE)"]) {
+    assert.ok(source.includes(check), check);
+  }
+  const named = await load(source);
+  assert.deepEqual([named.MAX_BYTES, named.MAX_COUNT, named.MAX_TAGS, named.MAX_MAYBE], [4, 3, 2, 5]);
+  const cases = [
+    [{ bytes: "éé" }, "accept"], [{ bytes: "ééé" }, "refuse"], [{ count: 3 }, "accept"], [{ count: 4 }, "refuse"],
+    [{ tags: ["a", "b"] }, "accept"], [{ tags: ["a", "b", "c"] }, "refuse"], [{ maybe: "abcde" }, "accept"], [{ maybe: "abcdef" }, "refuse"],
+  ];
+  for (const [input, expected] of cases) {
+    assert.equal(verdict(named.thingInputSchema, { bytes: "ab", ...input }), expected, JSON.stringify(input));
+  }
+});
+
 test("generated types type-check against their schemas", () => {
   const diagnostics = typeCheck(fixtureSource);
   assert.deepEqual(diagnostics, []);
@@ -254,13 +276,18 @@ test("the generator refuses what it can't map", () => {
       b: { type: "object", properties: { a: { type: "ref", ref: "#a" } } },
     }), {}, /refer to each other/],
     ["two lexicons generating one name", [file(fixture("test.one.thing", { main: object({}) })), file(fixture("test.two.thing", { main: object({}) }))], {}, /both generate THING/],
-    ["a rule for an object no lexicon has", one({ main: object({}) }), { "test.fixture.missing#main.input": { name: { check: ["z.maxLength(1)"], why: "x" } } }, /names nothing in the lexicons/],
-    ["a rule for a field the lexicon doesn't declare", one({ main: object({}) }), { "test.fixture.thing#main.input": { name: { check: ["z.maxLength(1)"], why: "x" } } }, /names a field the lexicon doesn't declare/],
-    ["a rule adding a field the lexicon declares", one({ main: object({ name: { type: "string" } }) }), { "test.fixture.thing#main.input": { name: { add: { type: "string", schema: "z.string()" }, why: "x" } } }, /a rule adds only a field Lexicon can't declare/],
-    ["a kind union on a field that isn't unknown", one({ main: object({ name: { type: "string" } }) }), { "test.fixture.thing#main.input": { name: { kindUnion: ["#a"], name: "payload", why: "x" } } }, /must be unknown to hold a kind union/],
+    ["a rule for an object no lexicon has", one({ main: object({}) }), { rules: { "test.fixture.missing#main.input": { name: { check: ["z.maxLength(1)"], why: "x" } } } }, /names nothing in the lexicons/],
+    ["a rule for a field the lexicon doesn't declare", one({ main: object({}) }), { rules: { "test.fixture.thing#main.input": { name: { check: ["z.maxLength(1)"], why: "x" } } } }, /names a field the lexicon doesn't declare/],
+    ["a rule adding a field the lexicon declares", one({ main: object({ name: { type: "string" } }) }), { rules: { "test.fixture.thing#main.input": { name: { add: { type: "string", schema: "z.string()" }, why: "x" } } } }, /a rule adds only a field Lexicon can't declare/],
+    ["a kind union on a field that isn't unknown", one({ main: object({ name: { type: "string" } }) }), { rules: { "test.fixture.thing#main.input": { name: { kindUnion: ["#a"], name: "payload", why: "x" } } } }, /must be unknown to hold a kind union/],
+    ["a limit for a field the lexicon doesn't declare", one({ main: object({}) }), { limits: { MAX_NAME: "test.fixture.thing#main.input name" } }, /MAX_NAME names test.fixture.thing#main.input name, which isn't/],
+    ["a limit for a field without a maximum", one({ main: object({ flag: { type: "boolean" } }) }), { limits: { MAX_FLAG: "test.fixture.thing#main.input flag" } }, /MAX_FLAG names test.fixture.thing#main.input flag, which isn't/],
+    ["two names for one limit", one({ main: object({ name: { type: "string", maxLength: 1 } }) }), { limits: { MAX_A: "test.fixture.thing#main.input name", MAX_B: "test.fixture.thing#main.input name" } }, /MAX_A and MAX_B both name the limit/],
+    ["a limit named as a lexicon is", one({ main: object({ name: { type: "string", maxLength: 1 } }) }), { limits: { THING: "test.fixture.thing#main.input name" } }, /both generate THING/],
+    ["a constant no rule uses", one({ main: object({}) }), { constants: { MAX_UNUSED: 1 } }, /No rule uses MAX_UNUSED/],
   ];
-  for (const [what, files, rules, message] of cases) {
-    assert.throws(() => generateShipLexicons(files, rules, {}), message, what);
+  for (const [what, files, options, message] of cases) {
+    assert.throws(() => generateShipLexicons(files, options), message, what);
   }
 });
 

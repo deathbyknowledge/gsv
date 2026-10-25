@@ -16,7 +16,7 @@
 
 const UTF16 = "Ships count this limit in UTF-16 code units.";
 const RESOURCE_ID = "z.regex(/^resource:[A-Za-z0-9_-]{1,119}$/)";
-const DETAILS = "z.refine((details) => utf8Length(JSON.stringify(details)) <= 32_768, \"Must be at most 32 KiB as JSON\")";
+const DETAILS = "z.refine((details) => utf8Length(JSON.stringify(details)) <= MAX_FEDERATION_REQUEST_DETAILS_BYTES, \"Must be at most 32 KiB as JSON\")";
 const NO_PATTERN = "Lexicon has no pattern.";
 const NO_KIND_UNION = "Lexicon unions are chosen by $type; these are chosen by kind.";
 
@@ -24,6 +24,23 @@ const NO_KIND_UNION = "Lexicon unions are chosen by $type; these are chosen by k
 export const SHIP_LEXICON_IMPORTS = {
   "../did": ["DID_PATTERN"],
   "../lexicon": ["utf8Length"],
+};
+
+/** Values the rules' code uses by name. The generated module exports each. */
+export const SHIP_LEXICON_CONSTANTS = {
+  MAX_FEDERATION_REQUEST_DETAILS_BYTES: 32_768,
+};
+
+/**
+ * Limits a Ship checks before it sends, by the field they limit: a string's or
+ * an array's maxLength, or an integer's maximum. The generated module exports
+ * each under its name, and the field's schema checks against that constant.
+ */
+export const SHIP_LEXICON_LIMITS = {
+  MAX_FEDERATION_MESSAGE_BYTES: "space.ship.deliver#message text",
+  MAX_FEDERATION_MESSAGE_RESOURCES: "space.ship.deliver#message resources",
+  MAX_FEDERATION_RESOURCE_BYTES: "space.ship.deliver#resource size",
+  MAX_FEDERATION_REQUEST_TITLE_BYTES: "space.ship.deliver#requestOffer title",
 };
 
 export const SHIP_LEXICON_RULES = {

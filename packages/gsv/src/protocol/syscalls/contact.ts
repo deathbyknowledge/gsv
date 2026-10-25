@@ -11,12 +11,15 @@ import type { JsonObject } from "../json";
 import type { ResourceBlock } from "../resource";
 import type { OriginMessageRef } from "../social";
 
-export const MAX_FEDERATION_MESSAGE_RESOURCES = 16;
-export const MAX_FEDERATION_MESSAGE_BYTES = 32 * 1024;
-export const MAX_FEDERATION_RESOURCE_BYTES = 48 * 1024 * 1024;
+export {
+  MAX_FEDERATION_MESSAGE_RESOURCES,
+  MAX_FEDERATION_MESSAGE_BYTES,
+  MAX_FEDERATION_RESOURCE_BYTES,
+  MAX_FEDERATION_REQUEST_TITLE_BYTES,
+  MAX_FEDERATION_REQUEST_DETAILS_BYTES,
+} from "../generated/ship-lexicons";
+/** A message's files together, which no lexicon keyword can limit. */
 export const MAX_FEDERATION_MESSAGE_RESOURCE_BYTES = 48 * 1024 * 1024;
-export const MAX_FEDERATION_REQUEST_TITLE_BYTES = 1_024;
-export const MAX_FEDERATION_REQUEST_DETAILS_BYTES = 32 * 1024;
 
 export type ContactState = "active" | "revoked";
 

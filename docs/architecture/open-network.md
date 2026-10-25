@@ -76,13 +76,14 @@ with 429 `RateLimitExceeded` and a `retry-after` header:
 Each `space.ship.*` method and record is defined by a Lexicon v1 document in
 `lexicons/space/ship/`, one file per NSID: the six methods Ships call on each
 other and the `space.ship.profile` record. The lexicons are the contract. The
-SDK's NSID constants, validators and types are generated from them, and the
-Kernel and web import those from `packages/gsv/src/protocol/generated/ship-lexicons.ts`.
+SDK's NSID constants, validators and types are generated from them, as are the
+limits a Ship checks before it sends, and the Kernel and web import those from
+`packages/gsv/src/protocol/generated/ship-lexicons.ts`.
 
 ```text
 lexicons/space/ship/*.json ────────────┐
                                        ├─ npm run protocol:generate ─▶ generated/ship-lexicons.ts
-tools/protocol/ship-lexicon-rules.mjs ─┘                                NSIDs, zod/mini validators, types
+tools/protocol/ship-lexicon-rules.mjs ─┘                                NSIDs, limits, zod/mini validators, types
 ```
 
 The validators read Lexicon as its specification does. String lengths count
@@ -99,6 +100,11 @@ filenames and transcriptions count UTF-16 code units. Resource IDs and request
 kinds follow patterns. A delivery's payload is chosen by its `kind` rather than
 a `$type`. A file's duration is a fractional number of seconds. A request's
 details are at most 32 KiB as JSON.
+
+The rules file also names the limits a Ship checks before it sends, such as
+`MAX_FEDERATION_MESSAGE_BYTES`, the most UTF-8 bytes a message's text may hold.
+Each is the lexicon's own `maxLength` or `maximum`, or the number a rule checks,
+so the sender's check and the receiver's can't drift apart.
 
 To change a lexicon:
 

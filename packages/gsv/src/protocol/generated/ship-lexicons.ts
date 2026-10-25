@@ -21,6 +21,8 @@ export const SEND_MESSAGE_REQUEST = "space.ship.sendMessageRequest";
 /** The sender withdraws a request it sent. Only its DID finds it. */
 export const WITHDRAW_MESSAGE_REQUEST = "space.ship.withdrawMessageRequest";
 
+export const MAX_FEDERATION_REQUEST_DETAILS_BYTES = 32_768;
+
 export type AcceptInvitationInput = {
   /** The secret the invitation carries. */
   token: string;
@@ -69,6 +71,7 @@ export const acceptMessageRequestOutputSchema = z.strictObject({
   threadId: z.string().check(z.minLength(1), utf8MaxLength(128)),
 }) satisfies z.ZodMiniType<AcceptMessageRequestOutput>;
 
+export const MAX_FEDERATION_RESOURCE_BYTES = 50_331_648;
 /** A file a message carries, which space.ship.getAttachment reads. Audio and video may also carry a duration, a non-negative JSON number of seconds, which Lexicon can't declare. */
 export type DeliverResource = {
   /** resource: followed by 1 to 119 letters, digits, hyphens or underscores. */
@@ -89,7 +92,7 @@ export const deliverResourceSchema = z.strictObject({
   id: z.string().check(utf8MaxLength(128), z.regex(/^resource:[A-Za-z0-9_-]{1,119}$/)),
   revision: z.string().check(z.minLength(1), utf8MaxLength(1_024)),
   contentType: z.string().check(z.minLength(1), utf8MaxLength(256)),
-  size: z.int().check(z.gte(0), z.lte(50_331_648)),
+  size: z.int().check(z.gte(0), z.lte(MAX_FEDERATION_RESOURCE_BYTES)),
   mediaType: z.optional(z.enum(["image", "audio", "video", "document"])),
   // Ships count this limit in UTF-16 code units.
   filename: z.optional(z.string().check(utf8MaxLength(3_072), maxGraphemes(1_024), z.maxLength(1_024))),
@@ -153,6 +156,8 @@ export const deliverSocialSchema = z.strictObject({
   replyTo: z.optional(deliverMessageRefSchema),
 }) satisfies z.ZodMiniType<DeliverSocial>;
 
+export const MAX_FEDERATION_MESSAGE_BYTES = 32_768;
+export const MAX_FEDERATION_MESSAGE_RESOURCES = 16;
 /** A message in the contact's conversation. It carries text, files, or both. */
 export type DeliverMessage = {
   kind: "message";
@@ -167,14 +172,15 @@ export const deliverMessageSchema = z.strictObject({
   kind: z.literal("message"),
   messageId: z.string().check(z.minLength(1), utf8MaxLength(256)),
   threadId: z.string().check(z.minLength(1), utf8MaxLength(128)),
-  text: z.string().check(utf8MaxLength(32_768)),
-  resources: z.optional(z.array(deliverResourceSchema).check(z.maxLength(16))),
+  text: z.string().check(utf8MaxLength(MAX_FEDERATION_MESSAGE_BYTES)),
+  resources: z.optional(z.array(deliverResourceSchema).check(z.maxLength(MAX_FEDERATION_MESSAGE_RESOURCES))),
   social: deliverSocialSchema,
 }).check(
   // Lexicon can't make one field required only when another is empty.
   z.refine((message) => message.text.trim().length > 0 || (message.resources?.length ?? 0) > 0, "A message needs text or a file"),
 ) satisfies z.ZodMiniType<DeliverMessage>;
 
+export const MAX_FEDERATION_REQUEST_TITLE_BYTES = 1_024;
 export type DeliverRequestOffer = {
   id: string;
   /** Segments of letters and digits joined by a dot, hyphen or underscore, starting with a letter. */
@@ -191,9 +197,9 @@ export const deliverRequestOfferSchema = z.strictObject({
   // Lexicon has no pattern.
   kind: z.string().check(z.minLength(1), utf8MaxLength(128), z.regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/i)),
   // Lexicon has no pattern.
-  title: z.string().check(z.minLength(1), utf8MaxLength(1_024), z.refine((title) => title.trim().length > 0, "Must be more than whitespace")),
+  title: z.string().check(z.minLength(1), utf8MaxLength(MAX_FEDERATION_REQUEST_TITLE_BYTES), z.refine((title) => title.trim().length > 0, "Must be more than whitespace")),
   // Lexicon can't limit an object's encoded size.
-  details: z.optional(jsonObjectSchema.check(z.refine((details) => utf8Length(JSON.stringify(details)) <= 32_768, "Must be at most 32 KiB as JSON"))),
+  details: z.optional(jsonObjectSchema.check(z.refine((details) => utf8Length(JSON.stringify(details)) <= MAX_FEDERATION_REQUEST_DETAILS_BYTES, "Must be at most 32 KiB as JSON"))),
   state: z.literal("offered"),
   revision: z.literal(1),
 }) satisfies z.ZodMiniType<DeliverRequestOffer>;
@@ -223,7 +229,7 @@ export const deliverRequestUpdateSchema = z.strictObject({
   expectedRevision: z.int().check(z.gte(1)),
   state: z.enum(["accepted", "rejected", "active", "completed", "cancelled"]),
   // Lexicon can't limit an object's encoded size.
-  details: z.optional(jsonObjectSchema.check(z.refine((details) => utf8Length(JSON.stringify(details)) <= 32_768, "Must be at most 32 KiB as JSON"))),
+  details: z.optional(jsonObjectSchema.check(z.refine((details) => utf8Length(JSON.stringify(details)) <= MAX_FEDERATION_REQUEST_DETAILS_BYTES, "Must be at most 32 KiB as JSON"))),
 }) satisfies z.ZodMiniType<DeliverRequestUpdate>;
 
 /** The sender removed the contact; the delivery's generation names which connection ended. */
