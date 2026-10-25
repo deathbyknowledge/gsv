@@ -195,9 +195,10 @@ Queued messages retry automatically with the same identity. A recoverable failur
 
 A contact ends on its own when the other person's Ship is gone for good: their
 space was deleted, or reset so that their address now reaches a new Ship. Your
-Ship notices when a message to them fails. The conversation stays, marked
-ended, and messages still waiting fail. To keep talking, send them a new
-invitation or a message request. A slow or unreachable Ship never ends a
-contact; its messages keep retrying.
+Ship notices when a message to them fails, or when you open your conversation
+with them. Opening never waits for the check, and each contact is checked at
+most once an hour. The conversation stays, marked ended, and messages still
+waiting fail. To keep talking, send them a new invitation or a message request.
+A slow or unreachable Ship never ends a contact; its messages keep retrying.
 
 See the [contact commands](/reference/cli-commands) and [contact syscalls](/reference/syscalls) for delivery inspection and automation.

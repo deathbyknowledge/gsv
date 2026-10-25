@@ -191,27 +191,37 @@ PDS's, because it moved to another host, is left as it is.
 
 ## When a contact's Ship is gone
 
-A Ship ends a contact on its own side when a delivery to it fails and the
-failure proves that the other Ship is gone for good. Two signals prove it:
+A Ship ends a contact on its own side once it can prove that the other Ship is
+gone for good. Two signals prove it:
 
 - The contact's DID has a verified PLC history that ends in a tombstone, as
   erasure leaves a deleted or reset space's DID.
-- The address that the DID's document names refused a token addressed to that
-  DID, and the address now names another DID whose document claims it and
-  serves its own Ship there. After an operator reset, the address reaches the
-  person's new Ship, which has a new DID. A host that misroutes a token proves
-  nothing when the account its hostname names serves no Ship at that address.
+- The address that the DID's document names now names another DID whose
+  document claims it and serves its own Ship there. After an operator reset,
+  the address reaches the person's new Ship, which has a new DID.
 
-A refused delivery makes the Ship read the DID's document from the directory
-again before it judges, so a Ship that moved is reached at its new address
-instead. Nothing else ends a contact: an unreachable directory, a timeout, a
-server error and a rate limit leave the delivery on its retry schedule, and any
-other refusal fails only that delivery. A document that no longer names a
-`#ship` service ends nothing either. The DID still names the same person, who
-can make it a Ship again, while an ended contact needs a new invitation.
+The Ship looks for these signals only when its person messages, opens or lists
+contacts. Nothing scans contacts in the background.
+
+| When | What the Ship checks |
+|---|---|
+| A delivery to the contact is refused | It reads the DID's document from the directory again. A tombstone ends the contact. A takeover counts only if the address refused a token addressed to that DID. A host that misroutes a token proves nothing when the account its hostname names serves no Ship at that address. |
+| The person, or their Ship, reads the contact's conversation or deliveries | It checks after the read has answered, at most once an hour for each contact. It reads the DID's document again if its copy is an hour old, and resolves the address the document names as a handle. Before a takeover ends the contact, it reads the document again, in case the Ship moved. An ended contact is broadcast as `contact.changed`. |
+| The person lists their contacts | It makes no lookup. It ends only the contacts whose DIDs its directory cache already knows were deactivated. |
+
+The directory cache keeps a tombstone it reads in place of the DID's document,
+so a contact can end on what an earlier lookup found. Like a document, the
+tombstone is read again a day later if the DID is still in use.
+
+Each check reads the DID's document before it judges a takeover, so a Ship that
+moved is reached at its new address instead. Nothing else ends a contact. An
+unreachable directory, a timeout, a server error and a rate limit leave a
+delivery on its retry schedule, and any other refusal fails only that delivery.
+A document that no longer names a `#ship` service ends nothing either. The DID
+still names the same person, who can make it a Ship again, while an ended
+contact needs a new invitation.
 
 Ending sends nothing to the other Ship. The contact is marked ended, its pending
 deliveries fail, its open work requests are cancelled, and its conversation
 keeps every message. The two people connect again with a new invitation or a
-message request. A Ship notices only when it next delivers something to that
-contact.
+message request.
