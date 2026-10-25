@@ -589,6 +589,42 @@ describe("Ship-to-Ship integration", () => {
     await first.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { shipHandlesMessages: false } });
   });
 
+  it("reports a stranger's message request to the operator and declines it without telling its sender", async () => {
+    // The two people are strangers again, so the first can send another request.
+    for (const client of [first, second]) {
+      const contacts = (await client.contact.list({ includeRevoked: true })).contacts;
+      for (const contact of contacts.filter((entry) => entry.state === "active")) await client.contact.revoke({ contactId: contact.id });
+    }
+    const profile = (await first.profile.resolve({ address: SECOND_HANDLE })).profile;
+    const text = "An unwanted first-contact message";
+    const sent = (await first.approach.create({
+      did: profile.did, profileCid: profile.cid, displayName: "First person", text, idempotencyKey: "integration-reported-approach",
+    })).approach;
+    const received = await poll(async () => (await second.approach.list({ direction: "incoming", status: "active" })).approaches
+      .find((entry) => entry.state === "pending") ?? null, "reported request");
+
+    const { approach } = await second.approach.report({ approachId: received.id, category: "harassment", includeMessage: true });
+    expect(approach).toMatchObject({ id: received.id, state: "declined", reportedAtMs: expect.any(Number) });
+    const filed = await reportsFiled(secondHarness);
+    expect(filed).toEqual([{
+      installationId: "inst_integration_default", requestKey: received.id,
+      sender: { did: received.peerDid, handle: FIRST_HANDLE }, category: "harassment", receivedAtMs: received.createdAtMs,
+      message: { displayName: "First person", text }, reportId: expect.stringMatching(/^report_/), reportedAtMs: approach.reportedAtMs,
+    }]);
+    // Reporting it again files nothing new, and the ledger keeps the person's choice but not the message.
+    expect((await second.approach.report({ approachId: received.id, category: "spam", includeMessage: false })).approach).toEqual(approach);
+    expect(await reportsFiled(secondHarness)).toHaveLength(1);
+    const { lines } = await second.sys.ledger.list({ callPrefix: "approach.report", limit: 10 });
+    expect(lines.map((line) => JSON.parse(line.args))).toContainEqual({ approachId: received.id, category: "harassment", includeMessage: true });
+    expect(JSON.stringify(lines)).not.toContain(text);
+    // As with any decline, the sender's request still waits.
+    expect((await first.approach.get({ approachId: sent.id })).approach).toMatchObject({ state: "pending", delivery: "received" });
+    // The two people connect again for the tests that follow.
+    const invite = await first.contact.invite.create({ expiresInSeconds: 300 });
+    await second.contact.invite.accept({ code: invite.code });
+    await waitForContact(first, profile.did);
+  });
+
   it("keeps a contact while the directory can't be reached, and ends it once a reset Ship holds its address", async () => {
     const contact = await waitForContact(first);
     // An operator resets the second space: its address reaches a new Ship, which makes its own DID at sign-in.
@@ -660,6 +696,13 @@ describe("Ship-to-Ship integration", () => {
     expect((await first.contact.delivery.get({ deliveryId: sent.deliveryId })).delivery).toMatchObject({ state: "failed", lastError: "Contact was revoked" });
   });
 });
+
+async function reportsFiled(harness: TestHarness): Promise<unknown[]> {
+  const response = await harness.getWorker("gsv-test-dependencies").fetch("http://gsv-test-dependencies/__test/request-reports");
+  const reports: unknown = await response.json();
+  if (!Array.isArray(reports)) throw new Error("The operator's queue answered with no list of reports");
+  return reports;
+}
 
 function loopbackOrigin(value: URL): URL {
   const url = new URL(value);

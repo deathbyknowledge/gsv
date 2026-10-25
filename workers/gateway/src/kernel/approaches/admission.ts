@@ -1,12 +1,14 @@
 import type {
-  ApproachCreateArgs, ApproachDecideArgs, ApproachGetArgs, ApproachListArgs, ApproachListResult,
+  ApproachCreateArgs, ApproachDecideArgs, ApproachGetArgs, ApproachListArgs, ApproachListResult, ApproachReportArgs,
   ApproachResult, ApproachRetryArgs, JsonValue, PublicProfile, SendMessageRequestInput, SendMessageRequestOutput,
 } from "@humansandmachines/gsv/protocol";
-import { didSchema, jsonObjectSchema, profileContactPolicy, sendMessageRequestInputSchema } from "@humansandmachines/gsv/protocol";
+import { didSchema, jsonObjectSchema, profileContactPolicy, REQUEST_REPORT_CATEGORIES, sendMessageRequestInputSchema } from "@humansandmachines/gsv/protocol";
+import type { RequestReportReceipt, RequestReportService, RequestReportSubmission } from "@humansandmachines/gsv/services/reports";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { z } from "zod/mini";
 import { ensureShipAccount } from "../atproto";
 import type { KernelContext } from "../context";
-import { APPROACH_LIFETIME_MS } from "../approach-store";
+import { APPROACH_LIFETIME_MS, type ApproachRecord } from "../approach-store";
 import { contactHandlingChoice, requireContactCaller, requireContactHuman } from "../federation/authority";
 import { profileOwnerActive, readPublicProfile } from "../profiles";
 import { consumeLocalRateLimits, consumePublicRateLimits } from "../federation/limits";
@@ -16,6 +18,7 @@ import { verifiedHandle } from "../ships/did-directory";
 import { ShipXrpcError } from "../ships/errors";
 import type { ShipCall } from "../ships/xrpc";
 import { authorizeNestedOperation, nestedToolOwner } from "../tool-approval";
+import { raceWithAbort } from "../../shared/abort";
 import { getConversationById } from "../../shared/utils";
 import { stableOpaqueId } from "../../shared/stable-id";
 import { approachFingerprint, approachLock, approachThreadId } from "./shared";
@@ -28,6 +31,9 @@ const createSchema = z.strictObject({
   text: z.string().check(z.minLength(1), z.maxLength(32_768)), idempotencyKey: idSchema,
   shipHandlesMessages: z.optional(z.boolean()),
 });
+const reportSchema = z.strictObject({ approachId: idSchema, category: z.enum(REQUEST_REPORT_CATEGORIES), includeMessage: z.boolean() });
+/** How long the person waits for the operator's queue before they're asked to try again. */
+const REPORT_TIMEOUT_MS = 10_000;
 /** What a contact's Ship hears once its request is received; a repeated send hears it again. */
 const RECEIVED: SendMessageRequestOutput = { state: "received" };
 const UNAVAILABLE = "Message requests are unavailable";
@@ -146,6 +152,67 @@ export async function handleApproachDecide(args: ApproachDecideArgs, ctx: Kernel
   await ctx.scheduleApproachMaintenance();
   ctx.broadcastToUserUid(ownerUid, "approach.changed");
   return { approach: record.summary };
+}
+
+/**
+ * Reports a message request the person received to their operator, and
+ * declines it privately if it is still waiting for them. The report names the
+ * sender by DID and handle, with the category and when the request arrived;
+ * the sender's name and message go only when the person includes them.
+ */
+export async function handleApproachReport(args: ApproachReportArgs, ctx: KernelContext): Promise<ApproachResult> {
+  const ownerUid = requireContactHuman(ctx);
+  const input = reportSchema.parse(args);
+  const existing = ctx.approaches.owned(input.approachId, ownerUid);
+  const record = await ctx.coordinateFederationContact(approachLock(existing), async () => {
+    const current = ctx.approaches.owned(input.approachId, ownerUid);
+    const { summary } = current;
+    if (summary.reportedAtMs !== undefined) return current;
+    if (summary.direction !== "incoming") throw new Error("Only a message request you received can be reported");
+    if (summary.state === "accepting" || summary.state === "accepted") throw new Error("A message request you accepted can't be reported");
+    if (summary.messageSequence === undefined) throw new Error("This message request hasn't arrived yet");
+    const reports = ctx.env.REQUEST_REPORTS;
+    if (!reports) throw new Error("Reporting is not available here");
+    const submission: RequestReportSubmission = {
+      installationId: ctx.installationId, requestKey: summary.id,
+      sender: summary.peerHandle ? { did: summary.peerDid, handle: summary.peerHandle } : { did: summary.peerDid },
+      category: input.category, receivedAtMs: summary.createdAtMs,
+    };
+    if (input.includeMessage) submission.message = { displayName: summary.displayName, text: await firstMessageText(current, ctx) };
+    consumeLocalRateLimits(ctx, [
+      { scope: `owner:${ownerUid}`, operation: "approach.report.day", maximum: 20, windowMs: 86_400_000 },
+    ], Date.now(), "Daily report limit reached");
+    const receipt = await fileReport(reports, submission, ctx);
+    requireContactHuman(ctx);
+    return ctx.approaches.reported(summary.id, ownerUid, receipt.reportedAtMs);
+  });
+  await ctx.scheduleApproachMaintenance();
+  ctx.broadcastToUserUid(ownerUid, "approach.changed");
+  return { approach: record.summary };
+}
+
+/** The request's first message, as the person read it in People. */
+async function firstMessageText(record: ApproachRecord, ctx: KernelContext): Promise<string> {
+  const sequence = record.messageSequence;
+  const history = sequence === null ? null
+    : await getConversationById(ctx.installationId, record.summary.conversationId).history({ beforeSequence: sequence + 1, limit: 1 });
+  const text = history?.messages.find((message) => message.sequence === sequence)?.text;
+  if (!text) throw new Error("This message request's message is no longer available");
+  return text;
+}
+
+/** Files the report in the operator's queue, which keeps one per request however often it is filed. */
+async function fileReport(reports: RequestReportService, submission: RequestReportSubmission, ctx: KernelContext): Promise<RequestReportReceipt> {
+  const deadline = AbortSignal.timeout(REPORT_TIMEOUT_MS);
+  const signal = ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, deadline]) : deadline;
+  signal.throwIfAborted();
+  try {
+    return await raceWithAbort(reports.submitRequestReport(submission), signal);
+  } catch (error) {
+    ctx.requestSignal?.throwIfAborted();
+    console.warn("[Kernel] Request report not filed:", exceptionDiagnostics(error));
+    throw new Error("Your report couldn't be sent; try again");
+  }
 }
 
 export async function handleApproachRetry(args: ApproachRetryArgs, ctx: KernelContext): Promise<ApproachResult> {

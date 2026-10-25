@@ -76,6 +76,7 @@
 	"services": [
 		{ "binding": "INSTALLATION_DIRECTORY", "service": "gsv-installations" },
 		{ "binding": "INSTALLATION_OWNERSHIP", "service": "gsv-installations", "entrypoint": "InstallationOwnershipEntrypoint", "props": { "authority": "kernel-owner-link" } },
+		{ "binding": "REQUEST_REPORTS", "service": "gsv-installations", "entrypoint": "RequestReportsEntrypoint", "props": { "authority": "kernel-report" } },
 		{ "binding": "INFERENCE_EXECUTION", "service": "gsv-inference" },
 		{ "binding": "RIPGIT", "service": "ripgit" }
 	],
