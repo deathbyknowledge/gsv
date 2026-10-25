@@ -2,7 +2,7 @@ import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 export { IntegrationInstances } from "./instances";
 export { IntegrationPds } from "./pds";
 export { NetworkPds } from "./network-pds";
-import { serveNetworkRecord } from "./network-pds";
+import { eraseNetworkIdentities, serveNetworkRecord } from "./network-pds";
 import { z } from "zod";
 import {
   adapterSendArgsSchema,
@@ -543,6 +543,11 @@ export default class TestDependencies
     // The test network's repository host, for the Ships whose PDS is NetworkPds.
     if (url.pathname === "/xrpc/com.atproto.repo.getRecord" && request.method === "GET") {
       return serveNetworkRecord(request);
+    }
+
+    if (url.pathname === "/__test/erase-identity" && request.method === "POST") {
+      await eraseNetworkIdentities();
+      return new Response(null, { status: 204 });
     }
 
     if (url.pathname === "/__test/outbound" && request.method === "GET") {

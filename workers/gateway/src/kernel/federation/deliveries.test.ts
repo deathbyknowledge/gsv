@@ -196,6 +196,97 @@ describe("deliveries between Ships", () => {
   });
 });
 
+describe("a contact whose Ship is gone", () => {
+  it("ends once the Ship's space is deleted and its DID tombstoned, failing what waited and keeping the conversation", async () => {
+    expect(await send(alice, bob, { text: "See you on Friday" })).toBe("delivered");
+    // Bob's space is deleted: his address serves nothing, then erasure tombstones his DID.
+    network.hosts.set(bob.hostname, () => new Response("Not Found", { status: 404 }));
+    await network.deactivate(bob.account);
+    const waiting = await queue(alice, bob, "Are you still coming?");
+    expect(await send(alice, bob, { text: "Hello?" })).toBe("terminal");
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("revoked");
+    expect(await alice.run((ctx) => ctx.federation.outbox(waiting))).toMatchObject({ state: "terminal", lastError: "Contact was revoked" });
+    // Nothing is sent to a Ship that is gone, and the conversation stays.
+    expect(await alice.run((ctx) => ctx.federation.recoverableOutbox(100))).toEqual([]);
+    expect((await conversation(alice, bob)).map((message) => message.text)).toContain("See you on Friday");
+  });
+
+  it("ends once the directory reports its DID deactivated", async () => {
+    await network.deactivate(bob.account);
+    // A daily refresh found the tombstone and dropped the copy Alice's Ship kept.
+    await alice.run((ctx) => ctx.didDocuments.delete(bob.account.did));
+    expect(await send(alice, bob, { text: "Hello?" })).toBe("terminal");
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("revoked");
+  });
+
+  it("ends once another Ship holds its address and refuses a call addressed to it", async () => {
+    // An operator resets Bob's space: his address serves a new Ship with its own DID, and his old DID still names the address.
+    const successor = await testSpace(network, "bob");
+    expect(successor.account.did).not.toBe(bob.account.did);
+    expect(await send(alice, bob, { text: "Hello?" })).toBe("terminal");
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("revoked");
+  });
+
+  it.each<[string, string | null]>([
+    ["serves its Ship elsewhere", "https://elsewhere.ship.test"],
+    ["isn't a Ship", null],
+  ])("keeps the contact when its address misroutes a call and names another account that %s", async (_holder, endpoint) => {
+    // Bob's host refuses one token by mistake, and its hostname is also the handle of an account that serves no Ship there.
+    const { ship: _ship, ...services } = bob.account.services;
+    const other = await network.account(bob.hostname, endpoint ? { ...services, ship: { type: "ShipService", endpoint } } : services);
+    network.hosts.set(bob.hostname, (request) => new URL(request.url).pathname === "/.well-known/atproto-did"
+      ? new Response(other.did)
+      : Response.json({ error: "BadJwtAudience", message: "The token is addressed to another service" }, { status: 401 }));
+    expect(await send(alice, bob, { text: "Hello?" })).toBe("terminal");
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
+  });
+
+  it("keeps the contact while the directory can't be reached, and ends it once the directory answers", async () => {
+    await testSpace(network, "bob");
+    network.plcReachable = false;
+    expect(await send(alice, bob, { text: "Hello?" })).toBe("terminal");
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
+    network.plcReachable = true;
+    expect(await send(alice, bob, { text: "Anyone there?" })).toBe("terminal");
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("revoked");
+  });
+
+  it("keeps the contact when its Ship moved before another took the old address, and reaches the new one", async () => {
+    const serveBob = network.hosts.get(bob.hostname);
+    if (!serveBob) throw new Error("Bob's Ship has no host");
+    network.hosts.set("bob-moved.ship.test", serveBob);
+    await network.setServices(bob.account, { ...bob.account.services, ship: { type: "ShipService", endpoint: "https://bob-moved.ship.test" } });
+    await testSpace(network, "bob");
+    // Alice's Ship calls the address it knew; the refusal sends it to the directory, which names the new one.
+    expect(await send(alice, bob, { text: "Hello?" })).toBe("terminal");
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
+    expect(await send(alice, bob, { text: "Found you" })).toBe("delivered");
+  });
+
+  it("keeps the contact when its DID no longer names a Ship service", async () => {
+    // Bob takes his account elsewhere; the DID is still his, and he can make it a Ship again.
+    const { ship: _ship, ...services } = bob.account.services;
+    await network.setServices(bob.account, services);
+    network.hosts.set(bob.hostname, () => new Response("Not Found", { status: 404 }));
+    expect(await send(alice, bob, { text: "Hello?" })).toBe("terminal");
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
+  });
+
+  it.each<[string, () => Response]>([
+    ["a timeout", () => { throw new DOMException("The operation timed out", "TimeoutError"); }],
+    ["a server error", () => Response.json({ error: "InternalServerError", message: "Try again" }, { status: 500 })],
+    ["a rate limit", () => Response.json({ error: "RateLimitExceeded", message: "Slow down" }, { status: 429 })],
+  ])("keeps the contact and tries again after %s", async (_failure, answer) => {
+    network.hosts.set(bob.hostname, answer);
+    const deliveryId = await queue(alice, bob, "Hello?");
+    const retries: string[] = [];
+    await alice.run((ctx) => processFederationDelivery(deliveryId, held(ctx, retries)));
+    expect(await alice.run((ctx) => ctx.federation.outbox(deliveryId))).toMatchObject({ state: "pending", attemptCount: 1 });
+    expect(retries).toEqual([deliveryId]);
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
+  });
+});
+
 /** Connects two spaces' people through an invitation. */
 async function connect(inviter: TestSpace, acceptor: TestSpace): Promise<void> {
   const { code } = await inviter.run((ctx) => handleContactInviteCreate({}, ctx));
@@ -220,6 +311,11 @@ async function send(from: TestSpace, to: TestSpace, args: Omit<ContactSendArgs, 
     await processFederationDelivery(deliveryId, held(ctx));
     return ctx.federation.outbox(deliveryId)?.state;
   });
+}
+
+/** Queues a message to a contact without delivering it, returning its delivery. */
+async function queue(from: TestSpace, to: TestSpace, text: string): Promise<string> {
+  return await from.run(async (ctx) => (await handleContactSend({ contactId: contactFor(ctx, to).id, text, idempotencyKey: crypto.randomUUID() }, held(ctx))).deliveryId);
 }
 
 /** Delivers everything a space has waiting, as its delivery alarms would. */

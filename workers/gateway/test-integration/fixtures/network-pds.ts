@@ -1,5 +1,5 @@
 import { Secp256k1PrivateKeyExportable } from "@atcute/crypto";
-import { deriveDidFromGenesisOp, signOperation } from "@atcute/did-plc";
+import { deriveDidFromGenesisOp, signOperation, signTombstone } from "@atcute/did-plc";
 import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { signServiceAuth } from "@humansandmachines/gsv-pds/src/host/service-auth";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
@@ -16,7 +16,7 @@ import type {
 /** The test network's DID directory, which the integration test serves. */
 const PLC_URL = "https://plc.test";
 
-type NetworkAccount = PublicRepositoryAccount & { signingHex: string };
+type NetworkAccount = PublicRepositoryAccount & { signingHex: string; rotation: Secp256k1PrivateKeyExportable };
 
 const ACCOUNTS = new Map<string, NetworkAccount>();
 const CREATING = new Map<string, Promise<NetworkAccount>>();
@@ -96,6 +96,21 @@ export class NetworkPds extends WorkerEntrypoint {
   }
 }
 
+/** Tombstones every DID this host registered, as erasing a deleted space's repository does. */
+export async function eraseNetworkIdentities(): Promise<void> {
+  for (const account of ACCOUNTS.values()) {
+    const log = await (await fetch(`${PLC_URL}/${account.did}/log/audit`)).json<{ cid: string }[]>();
+    const prev = log.at(-1)?.cid;
+    if (!prev) throw new Error(`${account.did} has no operations`);
+    const response = await fetch(`${PLC_URL}/${account.did}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(await signTombstone({ type: "plc_tombstone", prev }, account.rotation)),
+    });
+    if (!response.ok) throw new Error(`The test directory refused the tombstone for ${account.did}: ${await response.text()}`);
+  }
+}
+
 /** Answers `com.atproto.repo.getRecord` as a repository host does, with a 400 for a record it doesn't hold. */
 export function serveNetworkRecord(request: Request): Response {
   const params = new URL(request.url).searchParams;
@@ -127,7 +142,7 @@ async function registerAccount(handle: string): Promise<NetworkAccount> {
     body: JSON.stringify(genesis),
   });
   if (!response.ok) throw new Error(`The test directory refused ${did}: ${await response.text()}`);
-  return { did, handle, host, signingHex: await signing.exportPrivateKey("rawHex") };
+  return { did, handle, host, signingHex: await signing.exportPrivateKey("rawHex"), rotation };
 }
 
 function publicAccount({ did, handle, host }: NetworkAccount): PublicRepositoryAccount {

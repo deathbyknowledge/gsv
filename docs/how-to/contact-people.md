@@ -199,4 +199,11 @@ the upgrade no longer work, so create a new one.
 
 Queued messages retry automatically with the same identity. A recoverable failure can be resumed through `contact.delivery.retry` by the signed-in person or their Ship. Retrying resends the stored message; it does not add another message to the conversation. Permanent refusals, revoked contacts and messages older than seven days cannot be retried.
 
+A contact ends on its own when the other person's Ship is gone for good: their
+space was deleted, or reset so that their address now reaches a new Ship. Your
+Ship notices when a message to them fails. The conversation stays, marked
+ended, and messages still waiting fail. To keep talking, send them a new
+invitation or a message request. A slow or unreachable Ship never ends a
+contact; its messages keep retrying.
+
 See the [contact commands](/reference/cli-commands) and [contact syscalls](/reference/syscalls) for delivery inspection and automation.

@@ -204,3 +204,30 @@ Some of it outlasts erasure:
 
 A tombstone can't be undone. A DID whose rotation keys no longer include the
 PDS's, because it moved to another host, is left as it is.
+
+## When a contact's Ship is gone
+
+A Ship ends a contact on its own side when a delivery to it fails and the
+failure proves that the other Ship is gone for good. Two signals prove it:
+
+- The contact's DID has a verified PLC history that ends in a tombstone, as
+  erasure leaves a deleted or reset space's DID.
+- The address that the DID's document names refused a token addressed to that
+  DID, and the address now names another DID whose document claims it and
+  serves its own Ship there. After an operator reset, the address reaches the
+  person's new Ship, which has a new DID. A host that misroutes a token proves
+  nothing when the account its hostname names serves no Ship at that address.
+
+A refused delivery makes the Ship read the DID's document from the directory
+again before it judges, so a Ship that moved is reached at its new address
+instead. Nothing else ends a contact: an unreachable directory, a timeout, a
+server error and a rate limit leave the delivery on its retry schedule, and any
+other refusal fails only that delivery. A document that no longer names a
+`#ship` service ends nothing either. The DID still names the same person, who
+can make it a Ship again, while an ended contact needs a new invitation.
+
+Ending sends nothing to the other Ship. The contact is marked ended, its pending
+deliveries fail, its open work requests are cancelled, and its conversation
+keeps every message. The two people connect again with a new invitation or a
+message request. A Ship notices only when it next delivers something to that
+contact.

@@ -89,6 +89,7 @@ import { revokeFederationContact } from "./federation/pairing";
 import { contactSummary, requireContactCaller, requireContactHuman, requireOwnedContact, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
 import { bindContactReply, admitContactMessage } from "./federation/attention";
 import { PublicFederationError } from "./federation/errors";
+import { endContactIfShipGone } from "./federation/gone-ships";
 import { ShipXrpcError } from "./ships/errors";
 import { callShip, callShipProcedure, type ShipCall } from "./ships/xrpc";
 import {
@@ -672,6 +673,7 @@ export async function processFederationDelivery(
     }
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
+    if (await endContactIfShipGone(contact, failure, ctx)) return;
     await recordFederationOutboxFailure(record, failure, ctx);
   }
 }

@@ -19,7 +19,7 @@ import type { KernelContext } from "../context";
 import type { Kernel } from "../do";
 import { FederationStore } from "../federation-store";
 import { ShipCallNonces } from "./auth";
-import { DidDirectoryUnavailableError, DidDocumentStore, DidNotResolvedError, isDidCached, resolveDid, resolveHandle } from "./did-directory";
+import { DidDeactivatedError, DidDirectoryUnavailableError, DidDocumentStore, DidNotResolvedError, isDidCached, resolveDid, resolveHandle } from "./did-directory";
 import { ShipIdentity } from "./identity";
 import { callShip, handleShipXrpc, type ShipCall, type ShipMethods } from "./xrpc";
 
@@ -74,8 +74,23 @@ describe("resolving DIDs", () => {
     await withShip(async ({ ctx }) => {
       await resolveDid(alice.did, ctx);
       await network.deactivate(alice);
-      await expect(resolveDid(alice.did, ctx, { refresh: true })).rejects.toThrow(/deactivated/);
+      await expect(resolveDid(alice.did, ctx, { refresh: true })).rejects.toThrow(DidDeactivatedError);
       expect(isDidCached(alice.did, ctx)).toBe(false);
+    });
+  });
+
+  it("deactivates a DID only by a tombstone its own history verifies", async () => {
+    const alice = await network.account("alice.ship.test");
+    const bob = await network.account("bob.ship.test");
+    await network.deactivate(bob);
+    const aliceLog = await (await network.auditLog(alice.did)).json<{ cid: string }[]>();
+    const bobLog = await (await network.auditLog(bob.did)).json<{ cid: string }[]>();
+    await withShip(async ({ ctx }) => {
+      // A directory that splices Bob's tombstone into Alice's history can't deactivate her.
+      vi.mocked(fetch).mockResolvedValueOnce(Response.json([...aliceLog, bobLog.at(-1)]));
+      const refusal = await resolveDid(alice.did, ctx).catch((cause: unknown) => cause);
+      expect(refusal).toBeInstanceOf(DidNotResolvedError);
+      expect(refusal).not.toBeInstanceOf(DidDeactivatedError);
     });
   });
 
