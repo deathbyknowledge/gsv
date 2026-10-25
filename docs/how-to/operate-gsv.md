@@ -30,6 +30,8 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_PLC_ROTATION_KEY` | Runs the [open-network host](../architecture/open-network.md#deployment) at `pds.<domain>`. The secp256k1 private key, as 64 lowercase hex characters, that signs every Ship's DID operations; generate it once and keep it secret. |
 | `GSV_PLC_RECOVERY_KEY` | Optional `did:key` of an offline key that outranks the rotation key in every new DID. |
 | `GSV_PLC_URL` | The did:plc directory the host registers DIDs with and Ships read them from; defaults to `https://plc.directory`. |
+| `GSV_PDS_CONTACT_EMAIL` | Optional public address where relays and other services can reach you about the host. The host's `describeServer` answer names it. |
+| `GSV_PDS_PRIVACY_POLICY_URL`, `GSV_PDS_TERMS_OF_SERVICE_URL` | Optional HTTPS links to your privacy policy and terms of service, which `describeServer` lists. |
 
 Optional inference ceilings are `GSV_INFERENCE_MONTHLY_REQUESTS`,
 `GSV_INFERENCE_MONTHLY_OUTPUT_TOKENS`, `GSV_INFERENCE_MAX_OUTPUT_TOKENS` and

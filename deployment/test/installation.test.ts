@@ -559,6 +559,24 @@ describe("open network host", () => {
     expect(recorded.routes).toContainEqual({ id: "FixturePdsRoute", zoneId: "zone", pattern: "pds.example.com/*", script: "pds" });
   });
 
+  it("tells the network the operator's contact and policies when the operator gives them", async () => {
+    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds: { ...pds, contactEmail: "hello@example.com",
+      privacyPolicyUrl: "https://example.com/privacy", termsOfServiceUrl: "https://example.com/terms" } }, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixturePds")!.props.env).toMatchObject({
+      PDS_CONTACT_EMAIL: "hello@example.com",
+      PDS_PRIVACY_POLICY_URL: "https://example.com/privacy",
+      PDS_TERMS_OF_SERVICE_URL: "https://example.com/terms",
+    });
+  });
+
+  it("names no contact or policies the operator didn't give", async () => {
+    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds }, dependencies));
+    const env = recorded.workers.find((worker) => worker.id === "FixturePds")!.props.env!;
+    for (const name of ["PDS_CONTACT_EMAIL", "PDS_PRIVACY_POLICY_URL", "PDS_TERMS_OF_SERVICE_URL"]) {
+      expect(env).not.toHaveProperty(name);
+    }
+  });
+
   it("runs no PDS unless the operator configures one", async () => {
     await run(GsvDeployment({ ...input, routing: { zoneId: "zone" } }, dependencies));
     expect(recorded.workers.map((worker) => worker.id)).not.toContain("FixturePds");
@@ -572,6 +590,9 @@ describe("open network host", () => {
     { label: "another hostname", change: { origin: "https://repos.example.com" }, error: "pds.<domain>" },
     { label: "an HTTP origin", change: { origin: "http://pds.example.com" }, error: "HTTPS origins" },
     { label: "a directory with a path", change: { plcUrl: "https://plc.example.com/v1" }, error: "HTTPS origins" },
+    { label: "a contact that isn't an email address", change: { contactEmail: "hello" }, error: "contact email" },
+    { label: "an HTTP privacy policy", change: { privacyPolicyUrl: "http://example.com/privacy" }, error: "HTTPS URLs" },
+    { label: "terms that aren't a URL", change: { termsOfServiceUrl: "terms" }, error: "HTTPS URLs" },
   ])("refuses a PDS at $label before allocating resources", async ({ change, error }) => {
     await expect(run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds: { ...pds, ...change } }, dependencies)))
       .rejects.toThrow(error);

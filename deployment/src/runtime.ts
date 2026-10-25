@@ -55,6 +55,11 @@ export type GsvPdsProps = {
   rotationKey: Cloudflare.Workers.WorkerBindingProps[string];
   /** did:key of an offline key that outranks the rotation key in every new DID. */
   recoveryKey?: Cloudflare.Workers.WorkerBindingProps[string];
+  /** Public address where relays and other services can reach the operator. */
+  contactEmail?: string;
+  /** The operator's privacy policy and terms of service, as HTTPS URLs. */
+  privacyPolicyUrl?: string;
+  termsOfServiceUrl?: string;
 };
 
 export type GsvRuntimeProps = {
@@ -182,6 +187,9 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
         PLC_ROTATION_KEY: props.pds.rotationKey,
       };
       if (props.pds.recoveryKey) pdsEnv.PLC_RECOVERY_KEY = props.pds.recoveryKey;
+      if (props.pds.contactEmail) pdsEnv.PDS_CONTACT_EMAIL = props.pds.contactEmail;
+      if (props.pds.privacyPolicyUrl) pdsEnv.PDS_PRIVACY_POLICY_URL = props.pds.privacyPolicyUrl;
+      if (props.pds.termsOfServiceUrl) pdsEnv.PDS_TERMS_OF_SERVICE_URL = props.pds.termsOfServiceUrl;
       pds = yield* Cloudflare.Worker(
         `${props.logicalPrefix}Pds`,
         {
@@ -311,6 +319,20 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
 export const assertGsvPds = (pds: GsvPdsProps): void => {
   if (!isHttpsOrigin(pds.origin) || !isHttpsOrigin(pds.plcUrl)) {
     throw new Error("The PDS requires HTTPS origins for itself and its PLC directory");
+  }
+  if (pds.contactEmail !== undefined && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(pds.contactEmail)) {
+    throw new Error("The PDS contact email must be an email address");
+  }
+  if ([pds.privacyPolicyUrl, pds.termsOfServiceUrl].some((url) => url !== undefined && !isHttpsUrl(url))) {
+    throw new Error("The PDS privacy policy and terms of service must be HTTPS URLs");
+  }
+};
+
+const isHttpsUrl = (value: string): boolean => {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
   }
 };
 

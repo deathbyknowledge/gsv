@@ -14,4 +14,9 @@ export interface HostEnv {
   PLC_ROTATION_KEY: string;
   /** did:key of an offline recovery key, ranked above the rotation key in every new DID. */
   PLC_RECOVERY_KEY?: string;
+  /** Public address where the network can reach the host's operator, named by describeServer. */
+  PDS_CONTACT_EMAIL?: string;
+  /** The operator's privacy policy and terms of service, linked from describeServer. */
+  PDS_PRIVACY_POLICY_URL?: string;
+  PDS_TERMS_OF_SERVICE_URL?: string;
 }

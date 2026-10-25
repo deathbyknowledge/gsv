@@ -436,6 +436,21 @@ describe("host XRPC", () => {
       .toBe("InvalidRequest");
   });
 
+  it("names its operator's contact and policies when the deployment gives them", async () => {
+    const operated = {
+      ...env,
+      PDS_CONTACT_EMAIL: "hello@operator.example",
+      PDS_PRIVACY_POLICY_URL: "https://operator.example/privacy",
+      PDS_TERMS_OF_SERVICE_URL: "https://operator.example/terms",
+    };
+    const server = await handleXrpc(new Request("https://pds.test/xrpc/com.atproto.server.describeServer"), operated, admitAll);
+    expect(await server.json()).toEqual({
+      did: "did:web:pds.test", availableUserDomains: [], inviteCodeRequired: true,
+      links: { privacyPolicy: "https://operator.example/privacy", termsOfService: "https://operator.example/terms" },
+      contact: { email: "hello@operator.example" },
+    });
+  });
+
   it("serves host methods with CORS and streams the firehose", async () => {
     const { account } = await hostAccount();
     const server = await xrpc("com.atproto.server.describeServer", {});
