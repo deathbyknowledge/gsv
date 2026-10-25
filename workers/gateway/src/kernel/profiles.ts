@@ -46,7 +46,7 @@ const PROFILE_RECORD_PATH = `/${SHIP_PROFILE_COLLECTION}/${SHIP_PROFILE_RKEY}`;
 const MIRROR_RECORD_PATH = `/${BLUESKY_PROFILE_COLLECTION}/${BLUESKY_PROFILE_RKEY}`;
 /** Invitation codes, acceptances and message requests carry names of at most this many characters. */
 const MAX_PERSON_NAME_LENGTH = 256;
-/** Sign-in publishes in the background; this bounds how long it waits on the open-network host. */
+/** Sign-in and using the Ship from any surface publish in the background; this bounds how long either waits on the open-network host. */
 const BACKGROUND_PUBLISH_TIMEOUT_MS = 60_000;
 
 export function handleProfileGet(ctx: KernelContext): ProfileGetResult {
@@ -116,7 +116,7 @@ export async function ensurePublishedProfile(ownerUid: number, ctx: KernelContex
 
 /** Publishes away from the caller, within the time the open-network host gets for it. */
 async function publishInBackground(ctx: KernelContext, publish: (background: KernelContext) => Promise<void>): Promise<void> {
-  // The timer ends with the publish; one left pending would hold the Kernel awake after sign-in.
+  // The timer ends with the publish; one left pending would hold the Kernel awake after the sign-in or message that started it.
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(new Error("The open-network host took too long to publish the profile")), BACKGROUND_PUBLISH_TIMEOUT_MS);
   try {
