@@ -11,6 +11,7 @@ import {
   ownerConfirmationCheckResultSchema,
   ownerConfirmationRequestResultSchema,
   type OwnerConfirmationChange,
+  type OwnerNoticeUndo,
 } from "@humansandmachines/gsv/services/owner-confirmations";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { z } from "zod";
@@ -116,7 +117,7 @@ export async function handleRecoverySet(
     }
     // The host's work, once accepted, finishes even if the person goes away. It
     // also finishes a confirmed change the directory hasn't taken yet.
-    await repository.setOwnerRecoveryKey(key);
+    const { operatorCanUndo } = await repository.setOwnerRecoveryKey(key);
     // A retry finishing an earlier call's change announces it, unless that call did.
     const from = changing ? listed.ownerRecoveryKey : ctx.recoverySheet.made()?.key ?? null;
     if (from !== key) {
@@ -125,6 +126,7 @@ export async function handleRecoverySet(
       try {
         await confirmations.notifyOwner({
           installationId: ctx.installationId, purpose: "recovery-sheet", change: changeOf(from, key), ship: account.handle, sheetCode,
+          undo: undoneBy(operatorCanUndo, from),
         });
       } catch (error) {
         // The change stands, and Settings shows it.
@@ -163,6 +165,16 @@ async function sheetView(listed: ListedKey, ctx: KernelContext): Promise<Recover
 function changeOf(from: string | null, to: string | null): OwnerConfirmationChange {
   if (to === null) return "removed";
   return from === null ? "made" : "replaced";
+}
+
+/**
+ * Who can still undo a change the host's key signed, so its notice promises
+ * no more than that: the operator's recovery key, where the identity lists it
+ * above the host's, or else the sheet listed before the change.
+ */
+function undoneBy(operatorCanUndo: boolean, from: string | null): OwnerNoticeUndo {
+  if (operatorCanUndo) return "operator";
+  return from === null ? "none" : "previous-sheet";
 }
 
 /** Names exactly what a change does, so its code confirms that change and no other. */

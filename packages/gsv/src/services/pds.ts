@@ -64,8 +64,11 @@ export interface PublicRepository {
    * the identity's rotation keys in place of any earlier one, or removes it
    * given null. The host's rotation key signs the change. It refuses while the
    * installation can't publish, and an identity changed elsewhere gets none.
+   * `operatorCanUndo` says whether the operator's recovery key can undo the
+   * change for the directory's 72 hours: only when the identity lists it above
+   * the host's key.
    */
-  setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: string | null }>;
+  setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: string | null; operatorCanUndo: boolean }>;
   [Symbol.dispose]?(): void;
 }
 

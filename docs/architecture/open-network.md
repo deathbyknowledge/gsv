@@ -140,7 +140,10 @@ is configured list it. Without it, nothing can undo a first sheet that someone
 else made. After each change Accounts emails the owner its sheet code, from
 `GSV_OWNER_EMAIL_FROM` with replies to `GSV_OWNER_EMAIL_REPLY_TO`, so a change
 the owner didn't make reaches the operator while its recovery key can still
-undo it.
+undo it. The host says whether the operation before the change lists the
+operator's key above its own, and only then does the email promise that a reply
+within 3 days gets the change undone. Otherwise it asks for a reply straight
+away, and says the previous sheet can still undo the change when there was one.
 
 A reset gives the Ship a new identity, and the sheet stays with the old one. A
 deletion's tombstone is an operation like any other, so the sheet can undo it

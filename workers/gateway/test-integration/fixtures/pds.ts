@@ -43,10 +43,11 @@ class IntegrationRepository extends RpcTarget implements PublicRepository {
     return { ownerRecoveryKey: RECOVERY_KEYS.get(this.installationId) ?? null, pending: false };
   }
 
-  async setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: string | null }> {
+  async setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: string | null; operatorCanUndo: boolean }> {
     if (!ACCOUNTS.has(this.installationId)) throw new Error("This repository has no account");
     RECOVERY_KEYS.set(this.installationId, key);
-    return { ownerRecoveryKey: key };
+    // Like a host without the operator's recovery key.
+    return { ownerRecoveryKey: key, operatorCanUndo: false };
   }
 
   async serviceAuth(): Promise<string> {

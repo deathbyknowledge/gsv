@@ -34,7 +34,7 @@ describe("the recovery sheet", () => {
       expect(await listed(runtime)).toEqual({ ownerRecoveryKey: SHEET, pending: false });
       expect(await runtime.client.atproto.recovery.get({})).toEqual({ available: true, identity, sheet });
       const { INSTALLATION_OWNER_CONFIRMATIONS } = await runtime.harness.getWorker<FixtureBindings>("gsv").getEnv();
-      expect(await INSTALLATION_OWNER_CONFIRMATIONS.notices()).toEqual([expect.objectContaining({ change: "made", sheetCode: "E35-BAN" })]);
+      expect(await INSTALLATION_OWNER_CONFIRMATIONS.notices()).toEqual([expect.objectContaining({ change: "made", sheetCode: "E35-BAN", undo: "none" })]);
     } finally { await runtime.close(); }
   });
 

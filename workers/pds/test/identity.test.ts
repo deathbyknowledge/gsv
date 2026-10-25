@@ -13,6 +13,7 @@ import {
   genesisHead,
   MAX_ROTATION_KEYS,
   mintIdentity,
+  operatorCanUndo,
   registerGenesis,
   signNextOperation,
   submitNextOperation,
@@ -100,13 +101,13 @@ describe("an owner's recovery key", () => {
     const first = await ownerKey("p256");
     const second = await ownerKey("secp256k1");
 
-    expect(await repo.setOwnerRecoveryKey(first)).toEqual({ ownerRecoveryKey: first });
+    expect(await repo.setOwnerRecoveryKey(first)).toEqual({ ownerRecoveryKey: first, operatorCanUndo: false });
     expect(lastRotationKeys(did)).toEqual([first, host]);
-    expect(await repo.setOwnerRecoveryKey(second)).toEqual({ ownerRecoveryKey: second });
+    expect(await repo.setOwnerRecoveryKey(second)).toEqual({ ownerRecoveryKey: second, operatorCanUndo: false });
     expect(lastRotationKeys(did)).toEqual([second, host]);
     // Asking for the key the identity already lists signs nothing.
-    expect(await repo.setOwnerRecoveryKey(second)).toEqual({ ownerRecoveryKey: second });
-    expect(await repo.setOwnerRecoveryKey(null)).toEqual({ ownerRecoveryKey: null });
+    expect(await repo.setOwnerRecoveryKey(second)).toEqual({ ownerRecoveryKey: second, operatorCanUndo: false });
+    expect(await repo.setOwnerRecoveryKey(null)).toEqual({ ownerRecoveryKey: null, operatorCanUndo: false });
     expect(lastRotationKeys(did)).toEqual([host]);
     expect(plc.operations(did)).toHaveLength(4);
   });
@@ -143,7 +144,7 @@ describe("an owner's recovery key", () => {
     plc.loseNextResponse();
     expect(await rejection(repo.setOwnerRecoveryKey(owner))).toContain("Network connection lost");
 
-    expect(await repo.setOwnerRecoveryKey(owner)).toEqual({ ownerRecoveryKey: owner });
+    expect(await repo.setOwnerRecoveryKey(owner)).toEqual({ ownerRecoveryKey: owner, operatorCanUndo: false });
     expect(plc.operations(did)).toHaveLength(2);
   });
 
@@ -174,6 +175,19 @@ describe("an owner's recovery key", () => {
     plc.elapse(73 * HOUR_MS);
     expect(await rejection(submitAs(did, added, stateOf(added.operation), owner))).toContain("dispute");
     expect(lastRotationKeys(did)).toEqual([await hostRotationKey()]);
+  });
+
+  it("is said to be undoable by the operator's paper key only where the identity lists that key above the host's", async () => {
+    const host = await hostRotationKey();
+    const withPaper = { ...env, PLC_RECOVERY_KEY: PAPER };
+    expect(await operatorCanUndo(withPaper, [FIRST, PAPER, host])).toBe(true);
+    expect(await operatorCanUndo(withPaper, [PAPER, host])).toBe(true);
+    // A DID created before the operator configured the key doesn't list it.
+    expect(await operatorCanUndo(withPaper, [FIRST, host])).toBe(false);
+    // Ranked below the host's key, the paper key can't undo what the host's key signs.
+    expect(await operatorCanUndo(withPaper, [FIRST, host, PAPER])).toBe(false);
+    // Without a configured key, no listed key is the operator's.
+    expect(await operatorCanUndo(env, [FIRST, PAPER, host])).toBe(false);
   });
 
   it("can be undone, within 72 hours of its addition, by the operator's paper key", async () => {

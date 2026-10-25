@@ -162,6 +162,17 @@ export function withOwnerRecoveryKey(rotationKeys: readonly DidKeyString[], prev
   return next === null ? operators : operators.toSpliced(OWNER_RECOVERY_KEY_RANK, 0, next);
 }
 
+/**
+ * Whether the operator's recovery key can undo, for 72 hours, an operation
+ * the host's key signs after one that lists `rotationKeys`: the directory
+ * lets only a key ranked above the signer undo it. A DID created before the
+ * operator configured the key doesn't list it.
+ */
+export async function operatorCanUndo(env: HostEnv, rotationKeys: readonly DidKeyString[]): Promise<boolean> {
+  const operator = rotationKeys.findIndex((key) => key === env.PLC_RECOVERY_KEY);
+  return operator >= 0 && operator < rotationKeys.indexOf(await (await hostRotationKey(env)).exportPublicKey("did"));
+}
+
 /** An owner's recovery key: a did:key of a kind PLC verifies, P-256 or secp256k1. */
 export function parseOwnerRecoveryKey(value: string): DidKeyString {
   if (!isDidKey(value) || !isVerifiable(value)) throw new Error("InvalidRecoveryKey: a recovery key is a P-256 or secp256k1 did:key");

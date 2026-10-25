@@ -44,6 +44,8 @@ make the change, reply to that email straight away. For 3 days, a host that
 keeps a recovery key can undo the change, and so can your previous sheet, if you
 had one. Operators set up that key, `GSV_PLC_RECOVERY_KEY`, when they
 [run Ship](operate-gsv.md); only identities created while it's set list it.
+The email says who can still undo the change. It promises an undo from your
+host only when your Ship's identity lists your host's key.
 
 ## Make a new sheet, or remove it
 

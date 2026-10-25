@@ -1305,7 +1305,7 @@ codes use one up. The password is paced with
 [signing in](websocket-protocol.md#sys-connect), counted for the person and the
 address their session signed in from; while a wait applies, the password isn't
 checked and the call answers `attempts` until `retryAt`. Each change is then
-emailed to the person with its sheet code.
+emailed to the person with its sheet code and who can still undo it.
 
 The password alone makes the change only when the deployment's Accounts sends
 no email at all. When Accounts is pacing codes, can't reach the person or

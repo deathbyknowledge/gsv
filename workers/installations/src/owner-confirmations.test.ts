@@ -1,7 +1,7 @@
 import { createExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { OwnerConfirmationRequest } from "@humansandmachines/gsv/services/owner-confirmations";
+import type { OwnerConfirmationRequest, OwnerNotice } from "@humansandmachines/gsv/services/owner-confirmations";
 import {
   forgetOwnerConfirmations,
   OWNER_CONFIRMATION_RESEND_MS,
@@ -156,8 +156,19 @@ describe("the Kernel's confirmation binding", () => {
       "The recovery sheet for @ada.ship.test was removed",
     ]);
     expect(mail.sent[0]!.text).toMatch(/^On \d{1,2} [A-Z][a-z]+ \d{4} at \d{2}:\d{2} UTC, someone signed in to your Ship made a recovery sheet with sheet code K7Q-P2M\./);
-    expect(mail.sent[0]!.text).toContain("If it wasn’t, reply within 3 days and we’ll undo it.");
     expect(mail.sent.every((message) => message.to === ship.email)).toBe(true);
+  });
+
+  it.each([
+    ["the operator's key can undo it", "operator", "If it was you, there’s nothing to do. If it wasn’t, reply within 3 days and we’ll undo it."],
+    ["only the previous sheet can", "previous-sheet", "If it was you, there’s nothing to do. If it wasn’t, reply straight away. For 3 days, your previous sheet can still undo it."],
+    ["nothing can", "none", "If it was you, there’s nothing to do. If it wasn’t, reply straight away."],
+  ] as const)("promises to undo a change only when %s", async (_, undo, advice) => {
+    const ship = await activeShip();
+    const mail = mailbox();
+    await entrypoint("kernel-owner-confirmation", mail).notifyOwner(notice(ship.installationId, "replaced", undo));
+    expect(mail.sent[0]!.text?.split("\n\n")[1]).toBe(advice);
+    expect(mail.sent[0]!.html).toContain(advice);
   });
 
   it.each([undefined, "kernel-report"])("refuses a binding whose authority is %s", async (authority) => {
@@ -208,8 +219,8 @@ function request(installationId: string): OwnerConfirmationRequest {
   return { ...subject(installationId), change: "made", ship: "ada.ship.test" };
 }
 
-function notice(installationId: string, change: "made" | "replaced" | "removed") {
-  return { installationId, purpose: "recovery-sheet" as const, change, ship: "ada.ship.test", sheetCode: "K7Q-P2M" };
+function notice(installationId: string, change: "made" | "replaced" | "removed", undo: OwnerNotice["undo"] = "operator"): OwnerNotice {
+  return { installationId, purpose: "recovery-sheet", change, ship: "ada.ship.test", sheetCode: "K7Q-P2M", undo };
 }
 
 async function activeShip(verified = true): Promise<{ installationId: string; email: string }> {
