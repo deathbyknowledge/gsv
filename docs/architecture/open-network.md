@@ -268,13 +268,16 @@ records when it was reported; the sender isn't told.
 Accounts stores the sender's DID and handle, the category, when the request
 arrived and when it was reported. The sender's name and first message, exactly
 as the person read them, are stored only when the person includes them. The
-report keeps them until the reporting installation is deleted, open or closed.
+Accounts cron erases them 90 days after the report closes; the rest of the
+report stays until the reporting installation is deleted.
 
 The operator closes a report by dismissing it or by taking the sender's whole
 account down, which closes every open report of that sender. A takedown is
 offered only when the deployment's PDS holds the sender's DID, and it runs
-under the same audit as the Ship page's. Each closed report keeps the ID of the
-audit event that closed it.
+under the same audit as the Ship page's. An operator action names its report
+in its audit detail from the moment it is written, so the report's trail lists
+every action on it, failed attempts included. Each closed report also keeps
+the ID of the audit event that closed it.
 [Review reports](../how-to/operate-gsv.md#review-reports) is the operator's
 procedure.
 

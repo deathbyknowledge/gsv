@@ -192,7 +192,8 @@ The report always says who sent the request, by their address on the open
 network (their DID and handle), what you picked, and when the request arrived.
 Their name and message go only if you tick **Include their name and message**,
 which starts unticked. **Also block them** blocks the sender as well. Your
-operator keeps the report, with whatever it carries, until your Ship is deleted.
+operator keeps the report until your Ship is deleted, except their name and
+message, which go 90 days after your operator closes the report.
 
 You can report a request once, any time until you accept it, and up to 20
 requests a day. Afterwards the request says when you reported it. Your operator

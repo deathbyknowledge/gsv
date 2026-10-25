@@ -264,8 +264,9 @@ know. **Reports** in Accounts lists the open reports, newest first, and the
 closed ones with how each closed. A report names the Ship whose person reported
 it, and the sender by DID and handle, with what the person picked and when the
 request arrived and was reported. The sender's name and message are there only
-when the person chose to include them. Accounts keeps each report, open or
-closed, until the reporting Ship is deleted, and forwards none to other hosts.
+when the person chose to include them. Accounts erases the name and message
+90 days after the report closes, keeps the rest until the reporting Ship is
+deleted, and forwards no report to other hosts.
 
 Open a report to act on it:
 
@@ -278,8 +279,9 @@ Open a report to act on it:
 - **Dismiss** closes the report without acting on the sender, with an
   optional reason for the audit log.
 
-Both actions run under the operator audit log, and each closed report shows
-the audit event that closed it. Reports need Gateway's `REQUEST_REPORTS`
+Both actions run under the operator audit log. A report's trail lists every
+audit event that names it, including a takedown that failed, so you can see
+what was tried before it closed. Reports need Gateway's `REQUEST_REPORTS`
 binding, which the composition adds; see
 [request reports](../architecture/open-network.md#request-reports).
 
