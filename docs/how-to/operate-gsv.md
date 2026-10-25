@@ -32,6 +32,7 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_PLC_URL` | The did:plc directory the host registers DIDs with and Ships read them from; defaults to `https://plc.directory`. |
 | `GSV_PDS_CONTACT_EMAIL` | Optional public address where relays and other services can reach you about the host. The host's `describeServer` answer names it. |
 | `GSV_PDS_PRIVACY_POLICY_URL`, `GSV_PDS_TERMS_OF_SERVICE_URL` | Optional HTTPS links to your privacy policy and terms of service, which `describeServer` lists. |
+| `GSV_PDS_LEXICON_HANDLE` | Optional handle of the [account that publishes Ship's lexicons](../architecture/open-network.md#the-lexicon-account), such as `lexicons.<domain>`. Deploying never creates that account; see [Publish the lexicons](#publish-the-lexicons). |
 
 Optional inference ceilings are `GSV_INFERENCE_MONTHLY_REQUESTS`,
 `GSV_INFERENCE_MONTHLY_OUTPUT_TOKENS`, `GSV_INFERENCE_MAX_OUTPUT_TOKENS` and
@@ -79,6 +80,35 @@ It prints a one-time link only to your local controlling terminal. The link
 creates the first Ship and its activation link. Further Ships
 are created explicitly in administration. Ordinary redeployments do not create
 Ships or rotate credentials.
+
+### Publish the lexicons
+
+A deployment with `GSV_PDS_LEXICON_HANDLE` publishes Ship's lexicons from an
+account of its own once you create it. Creating it registers a DID with the PLC
+directory for good, so each step is yours to run, once, with
+`GSV_PLC_ROTATION_KEY` in your environment:
+
+1. Create the account. The command prints the DNS record that verifies its
+   handle.
+
+   ```sh
+   npm run pds:lexicons -- create --pds https://pds.<domain> --handle lexicons.<domain>
+   ```
+
+2. Add the `_atproto.lexicons.<domain>` TXT record it printed.
+3. Publish. Every lexicon becomes a public record in the account's repository,
+   which relays copy.
+
+   ```sh
+   npm run pds:lexicons -- publish --pds https://pds.<domain>
+   ```
+
+4. Only for the deployment that speaks for `space.ship`, add the
+   `_lexicon.ship.space` TXT record `did=<the account's DID>`.
+
+After the first publish, each deployment's changed lexicons go out within ten
+minutes. `npm run pds:lexicons -- status --pds https://pds.<domain>` shows the
+account and the lexicons waiting to go out.
 
 ## Give someone a Ship {#give-someone-a-space}
 

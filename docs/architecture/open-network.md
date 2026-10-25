@@ -120,11 +120,14 @@ To change a lexicon:
    fields still refuse them, so a sender can't count on a new method field
    reaching a Ship until those Ships are gone. No limit can tighten, no field
    can become required, and a method's new error must be declared.
-2. Run `npm run protocol:generate` and commit the regenerated module with the
-   lexicon.
-3. `npm run protocol:check` fails while the generated module is stale. It also
+2. Run `npm run protocol:generate` and commit the regenerated modules with the
+   lexicon. It also writes the PDS's copy of each document, in
+   `workers/pds/src/gsv/generated/ship-lexicons.ts`.
+3. `npm run protocol:check` fails while a generated module is stale. It also
    fails when code writes a `space.ship` NSID as a string, so import the
    generated constant instead.
+4. Once the deployment is out, [the lexicon account](#the-lexicon-account)
+   publishes the changed lexicon within ten minutes.
 
 ## Contacts from before DIDs
 
@@ -266,6 +269,51 @@ uploads and, when they persist, the PDS Worker's logs.
 A pull request preview runs the PDS only against a disposable directory that
 its workflow names, with a rotation key generated for that preview. It never
 registers DIDs with `plc.directory`, which keeps every DID it accepts.
+
+## The lexicon account
+
+The lexicons are published on the network, so another implementation can
+resolve a `space.ship` NSID to its schema. Resolution reads the `_lexicon` TXT
+record of the NSID's authority domain, which for every `space.ship.*` NSID is
+`_lexicon.ship.space`. Its `did=` value names the account whose repository
+holds each lexicon as a `com.atproto.lexicon.schema` record keyed by its NSID.
+
+```text
+_lexicon.ship.space           TXT "did=did:plc:…"   the account that speaks for space.ship.*
+_atproto.lexicons.ship.space  TXT "did=did:plc:…"   that account's handle
+did:plc:… ─▶ pds.ship.space ─▶ com.atproto.lexicon.schema/space.ship.sendMessage, …
+```
+
+That account belongs to the deployment, not to a Ship: it has a DID, a handle
+and a repository on the deployment's PDS, and no installation, Kernel or
+person. The operator names its handle with `GSV_PDS_LEXICON_HANDLE`, which is
+`lexicons.ship.space` in production and `lexicons.staging.ship.space` on
+staging. Accounts reserves the `lexicons` handle, so no Ship can claim it, and
+a deployment refuses a handle one label below one of its domains unless it is
+`lexicons.<domain>`. The handle verifies by its `_atproto.<handle>` TXT
+record; HTTP on that hostname answers with the Gateway's 404. Only
+production's DID goes in `_lexicon.ship.space`, so staging's account never
+speaks for `space.ship`.
+
+The PDS holds the account in a `HostedRepo` object named `operator/lexicons`.
+No installation ID can match that name, so the Kernel's binding can't address
+it, deletion discovery reads it as holding no installation's data, and its
+public reads don't ask Accounts.
+
+Creating the account registers its DID with the PLC directory, which keeps it
+for good, so deploying never creates it. The operator does, once for each
+deployment, with `npm run pds:lexicons -- create`. Each request the command
+sends is a token that the host's PLC rotation key signs for the PDS's origin
+and that lasts a minute, so only whoever holds the key that registers every
+Ship's DID can create the account or publish. `create` refuses a handle other
+than the deployment's, a handle Accounts routes to a Ship, and a second account
+once the deployment has one; repeating it answers with the account it made.
+
+The first publish is the operator's too, with `npm run pds:lexicons --
+publish`. After it, the PDS checks every ten minutes and publishes, in one
+commit, each lexicon whose record differs from the deployed release's. It never
+deletes a record, so a lexicon a later release drops stays published.
+`npm run pds:lexicons -- status` lists the lexicons waiting to go out.
 
 ## Deletion
 
