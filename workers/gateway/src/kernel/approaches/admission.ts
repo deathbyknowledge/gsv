@@ -9,7 +9,7 @@ import type { KernelContext } from "../context";
 import { APPROACH_LIFETIME_MS } from "../approach-store";
 import { contactHandlingChoice, requireContactCaller, requireContactHuman } from "../federation/authority";
 import { profileOwnerActive, readPublicProfile } from "../profiles";
-import { assertContactsMoved, consumeLocalRateLimits, consumePublicRateLimits } from "../federation/limits";
+import { consumeLocalRateLimits, consumePublicRateLimits } from "../federation/limits";
 import { MAX_PUBLIC_JSON_BYTES } from "../federation/http";
 import { PublicFederationError } from "../federation/errors";
 import { verifiedHandle } from "../ships/did-directory";
@@ -59,7 +59,6 @@ export async function handleApproachCreate(input: ApproachCreateArgs, ctx: Kerne
   const ownerUid = requireContactCaller(ctx, true);
   const args = createSchema.parse(input);
   contactHandlingChoice(args.shipHandlesMessages, ctx);
-  assertContactsMoved(ctx);
   // A message request reaches someone who is not a contact yet, so the Ship asks first
   // unless the owner's approval policy says otherwise. A replay of a request already sent does not ask again.
   if (!ctx.approaches.byIdempotencyKey(ownerUid, args.idempotencyKey)) {

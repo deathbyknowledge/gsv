@@ -167,20 +167,6 @@ describe("invitations", () => {
       ? { status: 200, body: before, invite: "accepted" }
       : { status: 404, invite: "issued" });
   });
-
-  it("waits while contacts move to DIDs, telling callers to retry", async () => {
-    const { code } = await alice.run((ctx) => handleContactInviteCreate({}, ctx));
-    await alice.run((ctx, storage) => {
-      storage.sql.exec(`INSERT INTO federation_actor_blocks_legacy (owner_uid, ship_id, subject_id, display_name, created_at)
-        VALUES (?, 'ship:old', 'subject:old', 'Old', 1)`, SPACE_OWNER_UID);
-      expect(ctx.federation.awaitingMove()).toBe(true);
-    });
-    await expect(alice.run((ctx) => handleContactInviteCreate({}, ctx))).rejects.toThrow("Your contacts are moving to the open network");
-    const { token } = parseContactInvitation(code).invitation;
-    const response = await callAcceptInvitation(bob.account, alice, { token, name: "Bob" });
-    expect([response.status, response.headers.get("retry-after"), (await response.json<{ error: string }>()).error])
-      .toEqual([503, "300", "TemporarilyUnavailable"]);
-  });
 });
 
 /** Connects two spaces' people through an invitation. */

@@ -33,7 +33,6 @@ import { isTerminalFederationError } from "./delivery";
 import { FederationHttpError } from "./errors";
 import {
   assertContactCapacity,
-  assertContactsMoved,
   consumeLocalRateLimits,
   pruneFederationState,
   RECEIPT_RETENTION_MS,
@@ -67,7 +66,6 @@ export async function handleContactInviteCreate(
 ): Promise<ContactInviteCreateResult> {
   const ownerUid = requireContactCaller(ctx, true);
   const shipHandlesMessages = contactHandlingChoice(args.shipHandlesMessages, ctx);
-  assertContactsMoved(ctx);
   const now = Date.now();
   pruneFederationState(ctx, now);
   const expiresInSeconds = args.expiresInSeconds ?? DEFAULT_INVITE_LIFETIME_MS / 1_000;
@@ -142,7 +140,6 @@ export async function handleContactInviteAccept(
   ctx.requestSignal?.throwIfAborted();
   const ownerUid = requireContactCaller(ctx, true);
   contactHandlingChoice(args.shipHandlesMessages, ctx);
-  assertContactsMoved(ctx);
   const now = Date.now();
   pruneFederationState(ctx, now);
   const { invitation } = parseContactInvitation(args.code);

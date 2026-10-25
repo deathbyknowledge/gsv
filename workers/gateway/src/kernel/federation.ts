@@ -26,7 +26,6 @@ import type {
   ConversationMessageOrigin,
   DeliverInput,
   DeliverOutput,
-  FederationDeliveryPayload,
   FederationRequestDelivery,
   FsCopyEndpoint,
   FsReadArgs,
@@ -86,7 +85,15 @@ import {
 } from "./federation-store";
 import { canonicalJson, sha256Base64Url } from "./federation-crypto";
 import { revokeFederationContact } from "./federation/pairing";
-import { contactSummary, requireContactCaller, requireContactHuman, requireOwnedContact, requireOwnedActiveContact, requireOwnedActiveContactGeneration } from "./federation/authority";
+import {
+  assertContactReachable,
+  contactSummary,
+  requireContactCaller,
+  requireContactHuman,
+  requireOwnedContact,
+  requireOwnedActiveContact,
+  requireOwnedActiveContactGeneration,
+} from "./federation/authority";
 import { bindContactReply, admitContactMessage } from "./federation/attention";
 import { PublicFederationError } from "./federation/errors";
 import { ShipXrpcError } from "./ships/errors";
@@ -102,7 +109,6 @@ import {
   rearmPendingDelivery,
 } from "./federation/delivery";
 import {
-  assertContactReachable,
   assertInboundCapacity,
   assertOutboundCapacity,
   assertRequestCapacity,
@@ -937,7 +943,7 @@ export async function deliver(call: ShipCall, ctx: KernelContext): Promise<Deliv
     }
     throw new PublicFederationError(404, "Contact not found");
   }
-  const payloadHash = await federationPayloadHash(payload);
+  const payloadHash = await sha256Base64Url(canonicalJson(jsonValue(payload)));
   await ctx.coordinateFederationInbound(
     `${contact.id}:${generation}:${deliveryId}`,
     async () => await ctx.coordinateFederationContact(contact.id, async () => {
@@ -1702,9 +1708,4 @@ function parseResourceSize(value: string | null): number {
 
 function jsonValue<Value>(value: Value): JsonValue {
   return jsonValueSchema.parse(value);
-}
-
-/** What a repeated delivery must match: its payload exactly as its sender's Ship sent it. */
-export async function federationPayloadHash(payload: FederationDeliveryPayload): Promise<string> {
-  return await sha256Base64Url(canonicalJson(jsonValue(payload)));
 }

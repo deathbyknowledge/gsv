@@ -119,8 +119,8 @@ function listContacts(args: string[], ctx: KernelContext): ExecResult {
       contact.id,
       contact.state,
       contactDisplayName(contact),
-      // A contact names no DID only while the Ship moves its contacts to DIDs.
-      contact.remoteHandle ? `@${contact.remoteHandle}` : contact.remoteDid ?? "(moving)",
+      // Only a contact that ended before DIDs names none.
+      contact.remoteHandle ? `@${contact.remoteHandle}` : contact.remoteDid ?? "(before DIDs)",
     ].join("\t"));
   }
   if (result.contacts.length === 0) lines.push("(none)");

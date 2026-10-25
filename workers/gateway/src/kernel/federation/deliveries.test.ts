@@ -70,25 +70,6 @@ describe("deliveries between Ships", () => {
     expect(await bob.run((ctx) => contactFor(ctx, alice).state)).toBe("revoked");
   });
 
-  it("tells the other Ship about a removal it missed while moving its contacts", async () => {
-    await bob.run((_ctx, storage) => {
-      storage.sql.exec(`INSERT INTO federation_actor_blocks_legacy (owner_uid, ship_id, subject_id, display_name, created_at)
-        VALUES (?, 'ship:old', 'subject:old', 'Old', 1)`, SPACE_OWNER_UID);
-    });
-    const scheduled: string[] = [];
-    await alice.run(async (ctx) => void await handleContactRevoke({ contactId: contactFor(ctx, bob).id }, held(ctx, scheduled)));
-    const [deliveryId] = scheduled;
-    const retries: string[] = [];
-    await alice.run((ctx) => processFederationDelivery(deliveryId, held(ctx, retries)));
-    expect(await alice.run((ctx) => ctx.federation.outbox(deliveryId))).toMatchObject({ state: "pending", attemptCount: 1 });
-    expect(retries).toEqual([deliveryId]);
-
-    // Bob's Ship finishes moving and hears of the removal when Alice's Ship tries again.
-    await bob.run((_ctx, storage) => void storage.sql.exec("DELETE FROM federation_actor_blocks_legacy"));
-    await alice.run((ctx) => processFederationDelivery(deliveryId, held(ctx)));
-    expect(await bob.run((ctx) => contactFor(ctx, alice).state)).toBe("revoked");
-  });
-
   it("doesn't deliver a message once its contact is replaced while the message is saved", async () => {
     const deliveryId = await alice.run(async (ctx) => {
       const { deliveryId } = await handleContactSend({ contactId: contactFor(ctx, bob).id, text: "For the old connection", idempotencyKey: "replaced" }, held(ctx));
@@ -111,30 +92,6 @@ describe("deliveries between Ships", () => {
       const contact = contactFor(ctx, alice);
       return ctx.federation.inbox(contact.id, contact.generation, deliveryId);
     })).toBeNull();
-  });
-
-  it("keeps a message for later while the other Ship moves its contacts, and gives up once it refuses", async () => {
-    await bob.run((_ctx, storage) => {
-      storage.sql.exec(`INSERT INTO federation_actor_blocks_legacy (owner_uid, ship_id, subject_id, display_name, created_at)
-        VALUES (?, 'ship:old', 'subject:old', 'Old', 1)`, SPACE_OWNER_UID);
-    });
-    const retries: string[] = [];
-    const deliveryId = await alice.run(async (ctx) => {
-      const { deliveryId } = await handleContactSend({ contactId: contactFor(ctx, bob).id, text: "Are you there?", idempotencyKey: "moving" }, held(ctx));
-      await processFederationDelivery(deliveryId, held(ctx, retries));
-      return deliveryId;
-    });
-    expect(await alice.run((ctx) => ctx.federation.outbox(deliveryId))).toMatchObject({ state: "pending", attemptCount: 1 });
-    expect(retries).toEqual([deliveryId]);
-
-    // Bob's Ship finishes moving, but Bob has removed Alice by the time she tries again.
-    await bob.run(async (ctx, storage) => {
-      storage.sql.exec("DELETE FROM federation_actor_blocks_legacy");
-      await handleContactRevoke({ contactId: contactFor(ctx, alice).id }, held(ctx));
-    });
-    await alice.run((ctx) => processFederationDelivery(deliveryId, held(ctx, retries)));
-    expect(await alice.run((ctx) => ctx.federation.outbox(deliveryId))).toMatchObject({ state: "terminal", attemptCount: 2 });
-    expect(retries).toEqual([deliveryId]);
   });
 
   it("lets a contact read an attachment, and no one else, while they're connected", async () => {
