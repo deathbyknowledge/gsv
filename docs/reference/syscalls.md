@@ -1103,7 +1103,7 @@ The sender's Ship refuses to send it if that record has changed or no longer tak
 recipient's Ship refuses it on arrival for the same reasons, so a person never receives a request
 against a profile they have since changed. The approval a Ship asks for names the recipient's handle.
 
-Message requests expire after 30 days and accept text only, up to 32 KiB. Ships exchange them
+Message requests expire after 30 days and accept text only, up to 32,768 UTF-16 code units. Ships exchange them
 with Ship-to-Ship calls signed by each Ship's DID: only the DID a request went to can accept it, and
 only its sender can withdraw it. Acceptance makes the contact on the sender's Ship, then on the
 recipient's, and promotes the same conversation and first message; the recipient's Ship asks again
