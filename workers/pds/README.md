@@ -30,6 +30,18 @@ records and blobs for Accounts' operator pages when the binding carries the
 repository keeps its takedowns in `src/host/moderation.ts`, and every read the
 host serves honours them.
 
+The deployment's lexicon account publishes each `lexicons/` document as a
+`com.atproto.lexicon.schema` record. Its object is named `operator/lexicons`,
+which no installation ID can match, so neither binding reaches it and public
+reads serve it without asking Accounts. `src/gsv/operator.ts` answers the
+operator's `npm run pds:lexicons` command at `POST /operator/lexicons`, and
+only a short-lived token signed with the host's PLC rotation key opens it:
+`create` registers the account for the handle the deployment configures, and
+`publish` writes each lexicon whose record changed. Once the operator has
+published, the worker's schedule publishes a deploy's changes. The documents
+are the files in `lexicons/`, which `src/gsv/generated/ship-lexicons.ts`
+imports; `npm run protocol:generate` writes that list.
+
 The operator composition in `deployment/src/runtime.ts` deploys the worker
 when the operator configures a PLC rotation key. `npm run deployment:build`
 bundles it from `wrangler.jsonc`, and the composition supplies its origins,
@@ -112,7 +124,11 @@ The GSV tests use an in-memory Accounts directory. They cover the publishing
 authority, installations that are not active, the handles a new account may
 take, the installation's blob prefix, and how each installation state reads.
 The deletion tests cover the deletion authority, what quiescing refuses and
-announces, resumable erasure, the DID tombstone, and deletion discovery.
+announces, resumable erasure, the DID tombstone, and deletion discovery. The
+lexicon tests cover the operator's token, creating the account once, the
+handles it refuses, publishing only what changed and never deleting, the
+schedule, publishing held while the account is taken down, and how public
+reads, the Kernel's binding and deletion discovery see the account.
 
 ## Smoke check
 

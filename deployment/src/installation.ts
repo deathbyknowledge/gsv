@@ -110,6 +110,12 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     if (props.routing && new URL(props.pds.origin).hostname !== `pds.${props.domain}`) {
       throw new Error("When the deployment owns routing, the PDS must be at pds.<domain>");
     }
+    // Accounts routes one label below each domain to a Ship, except the reserved lexicons handle.
+    const handle = props.pds.lexiconHandle;
+    if (handle && [props.domain, ...props.domainAliases ?? []].some((domain) => handle.endsWith(`.${domain}`)
+      && !handle.slice(0, -domain.length - 1).includes(".") && handle !== `lexicons.${domain}`)) {
+      throw new Error("A lexicon handle one label below the deployment's domain must be lexicons.<domain>");
+    }
   }
   const signup = props.installations.ownerSignupOrigin ? new URL(props.installations.ownerSignupOrigin) : undefined;
   if (signup && (signup.origin !== props.installations.ownerSignupOrigin || signup.protocol !== "https:"

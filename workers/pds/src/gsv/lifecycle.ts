@@ -15,6 +15,7 @@ import {
 import { FIREHOSE_NAME } from "../host/firehose";
 import type { RetirementStatus } from "../host/repo";
 import type { PdsEnv } from "./env";
+import { LEXICON_REPOSITORY } from "./lexicons";
 
 /** States in which Accounts has retired an installation; only these admit deleting it. */
 const RETIRED: ReadonlySet<InstallationState> = new Set(["retained", "deleting", "deleted"]);
@@ -78,6 +79,8 @@ export class PdsLifecycleEntrypoint extends WorkerEntrypoint<PdsEnv, { authority
       return { ...resource, outcome: "unidentified" };
     }
     if (!holds) return { ...resource, outcome: "empty" };
+    // The deployment's lexicon account belongs to no installation.
+    if (name === LEXICON_REPOSITORY) return { ...resource, name, outcome: "unrelated" };
     const known = await this.env.INSTALLATION_DIRECTORY.resolveInstallation(name);
     return known.found && known.installationId === name
       ? { ...resource, name, outcome: "identified", installationId: name }

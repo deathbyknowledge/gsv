@@ -38,6 +38,7 @@
     "deployment:plan": "npm run deployment:build && alchemy plan --stage operator",
     "deployment:deploy": "npm run deployment:build && alchemy deploy --stage operator --yes",
     "deployment:bootstrap": "node deployment/src/operator-bootstrap-command.ts",
+    "pds:lexicons": "node workers/pds/operator/lexicons.mjs",
     "gsv:build": "npm run build --workspace packages/gsv",
     "gsv:check": "npm run typecheck --workspace packages/gsv && npm run gsv:build",
     "version:show": "node ./scripts/version.mjs show",

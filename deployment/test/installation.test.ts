@@ -569,12 +569,27 @@ describe("open network host", () => {
     });
   });
 
-  it("names no contact or policies the operator didn't give", async () => {
+  it("names no contact, policies or lexicon account the operator didn't give", async () => {
     await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds }, dependencies));
-    const env = recorded.workers.find((worker) => worker.id === "FixturePds")!.props.env!;
-    for (const name of ["PDS_CONTACT_EMAIL", "PDS_PRIVACY_POLICY_URL", "PDS_TERMS_OF_SERVICE_URL"]) {
-      expect(env).not.toHaveProperty(name);
+    const host = recorded.workers.find((worker) => worker.id === "FixturePds")!;
+    for (const name of ["PDS_CONTACT_EMAIL", "PDS_PRIVACY_POLICY_URL", "PDS_TERMS_OF_SERVICE_URL", "PDS_LEXICON_HANDLE"]) {
+      expect(host.props.env).not.toHaveProperty(name);
     }
+    expect(host.props.crons).toBeUndefined();
+  });
+
+  it("publishes lexicons on schedule from the account the operator names", async () => {
+    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds: { ...pds, lexiconHandle: "lexicons.example.com" } },
+      dependencies));
+    const host = recorded.workers.find((worker) => worker.id === "FixturePds")!;
+    expect(host.props.env).toMatchObject({ PDS_LEXICON_HANDLE: "lexicons.example.com" });
+    expect(host.props.crons).toEqual(["*/10 * * * *"]);
+  });
+
+  it("refuses a lexicon handle a Ship could take on a domain alias", async () => {
+    await expect(run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, domainAliases: ["old.example"],
+      pds: { ...pds, lexiconHandle: "schemas.old.example" } }, dependencies))).rejects.toThrow("lexicons.<domain>");
+    expect(recorded.workers).toEqual([]);
   });
 
   it("lets only Accounts' operator binding take down and restore what the PDS serves", async () => {
@@ -601,6 +616,8 @@ describe("open network host", () => {
     { label: "a contact that isn't an email address", change: { contactEmail: "hello" }, error: "contact email" },
     { label: "an HTTP privacy policy", change: { privacyPolicyUrl: "http://example.com/privacy" }, error: "HTTPS URLs" },
     { label: "terms that aren't a URL", change: { termsOfServiceUrl: "terms" }, error: "HTTPS URLs" },
+    { label: "a lexicon handle that isn't a domain name", change: { lexiconHandle: "Lexicons" }, error: "lowercase domain name" },
+    { label: "a lexicon handle a Ship could take", change: { lexiconHandle: "schemas.example.com" }, error: "lexicons.<domain>" },
   ])("refuses a PDS at $label before allocating resources", async ({ change, error }) => {
     await expect(run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds: { ...pds, ...change } }, dependencies)))
       .rejects.toThrow(error);
