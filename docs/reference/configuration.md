@@ -122,12 +122,15 @@ An agent, Process, or the owner may prefer an entry from any layer by its stable
 
 Without an explicit `contextWindowTokens`, the Kernel resolves the model's
 context limit through the inference service. Each lookup waits at most ten
-seconds, capped by a shorter generation timeout. Successful metadata is cached
-in that Kernel for one minute (up to 64 provider/model pairs); failures and
-late replies are not cached. A routing change can therefore take up to a minute
-to appear in newly resolved configuration. An active run retains its resolved
-configuration. Generation admission, permissions, credentials and usage checks
-remain independent of this metadata cache.
+seconds, capped by a shorter generation timeout. A model's context limit is the
+same for every Ship, so each gateway isolate shares its answers among Kernels:
+successful metadata for an hour (up to 256 provider/model pairs), and a failed
+or timed-out lookup for 30 seconds, during which configuration takes the last
+known limit, or none. Late replies are not cached. A routing change, such as a
+new default model, can therefore take up to an hour to appear in newly
+resolved configuration. An active run retains its resolved configuration.
+Generation admission, permissions, credentials and usage checks remain
+independent of this metadata cache.
 
 Image generation, transcription, and speech each own a separate complete configuration under `config/ai/{capability}` or `users/{uid}/ai/{capability}`. Setting any user-scoped provider, model, credential, or speaker selects that whole scope; provider and model must both be present, and missing values are not borrowed from the text stack or system capability configuration. Their `api_key` values belong only to that capability configuration.
 

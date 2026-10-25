@@ -16,13 +16,13 @@ function fixture() {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("Kernel model metadata", () => {
-  it("refreshes successful metadata after one minute without extending expiry on reads", async () => {
+  it("refreshes successful metadata after an hour without extending expiry on reads", async () => {
     vi.useFakeTimers();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { resolver, resolveModel, env } = fixture();
     expect(await resolver.resolve("gsv", "default", 180_000)).toBe(262_144);
     resolveModel.mockResolvedValue({ provider: "gsv", model: "default", contextWindowTokens: 131_072 });
-    await vi.advanceTimersByTimeAsync(59_999);
+    await vi.advanceTimersByTimeAsync(3_599_999);
     expect(await resolver.resolve("gsv", "default", 180_000)).toBe(262_144);
     expect(resolveModel).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(1);
@@ -41,29 +41,40 @@ describe("Kernel model metadata", () => {
     expect(resolveModel.mock.calls[0][2]).toEqual({ installationId: "inst_metadata", lookupId: first.properties.lookupId });
   });
 
-  it("separates providers, model names and Kernels and bounds cache growth", async () => {
+  it("separates providers and model names, shares them among a deployment's Kernels, and bounds cache growth", async () => {
     const { resolver, resolveModel, env } = fixture();
     env.GSV_TELEMETRY_ENABLED = false;
     for (const [provider, model] of [["a:b", "c"], ["a", "b:c"], ["a", "other"]]) {
       await resolver.resolve(provider, model, 180_000);
     }
-    await new ModelMetadataResolver(env, "inst_other").resolve("a:b", "c", 180_000);
-    expect(resolveModel).toHaveBeenCalledTimes(4);
-    for (let index = 0; index < 64; index++) await resolver.resolve("gsv", String(index), 180_000);
-    await resolver.resolve("gsv", "63", 180_000);
-    expect(resolveModel).toHaveBeenCalledTimes(68);
+    expect(await new ModelMetadataResolver(env, "inst_other").resolve("a:b", "c", 180_000)).toBe(262_144);
+    expect(resolveModel).toHaveBeenCalledTimes(3);
+    expect(resolveModel.mock.calls.map(([, , lookup]) => lookup?.installationId)).toEqual(["inst_metadata", "inst_metadata", "inst_metadata"]);
+    // Another deployment's execution binding keeps its own answers.
+    const other = fixture();
+    await new ModelMetadataResolver(other.env, "inst_metadata").resolve("a:b", "c", 180_000);
+    expect(other.resolveModel).toHaveBeenCalledOnce();
+    for (let index = 0; index < 256; index++) await resolver.resolve("gsv", String(index), 180_000);
+    await resolver.resolve("gsv", "255", 180_000);
+    expect(resolveModel).toHaveBeenCalledTimes(259);
     await resolver.resolve("a:b", "c", 180_000);
-    expect(resolveModel).toHaveBeenCalledTimes(69);
+    expect(resolveModel).toHaveBeenCalledTimes(260);
   });
 
-  it("answers unknown after a failed lookup without caching it or exporting exception text or model names", async () => {
+  it("answers unknown after a failed lookup, asks again half a minute later, and exports no exception text or model names", async () => {
+    vi.useFakeTimers();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { resolver, resolveModel } = fixture();
     resolveModel.mockRejectedValueOnce(new Error("private diagnostic detail"));
     await expect(resolver.resolve("custom", "private-model", 180_000)).resolves.toBeNull();
+    await vi.advanceTimersByTimeAsync(29_999);
+    await expect(resolver.resolve("custom", "private-model", 180_000)).resolves.toBeNull();
+    expect(resolveModel).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
     await expect(resolver.resolve("custom", "private-model", 180_000)).resolves.toBe(262_144);
     expect(resolveModel).toHaveBeenCalledTimes(2);
-    expect(log.mock.calls.map(([record]) => record.event.properties.outcome)).toEqual(["error", "ok"]);
+    expect(log.mock.calls.map(([record]) => [record.event.properties.outcome, record.event.properties.cache]))
+      .toEqual([["error", "miss"], ["ok", "hit"], ["ok", "miss"]]);
     expect(JSON.stringify(log.mock.calls)).not.toContain("private");
   });
 
@@ -72,19 +83,23 @@ describe("Kernel model metadata", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { resolver, resolveModel } = fixture();
     expect(await resolver.resolve("gsv", "default", 180_000)).toBe(262_144);
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(3_600_000);
     resolveModel.mockRejectedValueOnce(new Error("accounts unavailable"));
     expect(await resolver.resolve("gsv", "default", 180_000)).toBe(262_144);
+    expect(await resolver.resolve("gsv", "default", 180_000)).toBe(262_144);
+    await vi.advanceTimersByTimeAsync(30_000);
     resolveModel.mockImplementationOnce(() => new Promise(() => {}));
     const timedOut = resolver.resolve("gsv", "default", 180_000);
     await vi.advanceTimersByTimeAsync(10_000);
     await expect(timedOut).resolves.toBe(262_144);
+    await vi.advanceTimersByTimeAsync(30_000);
     resolveModel.mockResolvedValueOnce({ provider: "gsv", model: "default", contextWindowTokens: 131_072 });
     expect(await resolver.resolve("gsv", "default", 180_000)).toBe(131_072);
     expect(resolveModel).toHaveBeenCalledTimes(4);
     expect(log.mock.calls.map(([record]) => record.event.properties)).toEqual([
       expect.objectContaining({ outcome: "ok", cache: "miss" }),
       expect.objectContaining({ outcome: "error", cache: "miss" }),
+      expect.objectContaining({ outcome: "ok", cache: "hit" }),
       expect.objectContaining({ outcome: "timeout", cache: "miss" }),
       expect.objectContaining({ outcome: "ok", cache: "miss" }),
     ]);
@@ -118,6 +133,7 @@ describe("Kernel model metadata", () => {
     expect(dispose).toHaveBeenCalledOnce();
     finish({ provider: "gsv", model: "default", contextWindowTokens: 123 });
     await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(30_000);
     await expect(resolver.resolve("gsv", "default", 180_000)).resolves.toBe(262_144);
     expect(resolveModel).toHaveBeenCalledTimes(2);
     expect(log.mock.calls[0][0].event.properties).toMatchObject({ outcome: "timeout", durationMs: 10_000, cache: "miss" });
