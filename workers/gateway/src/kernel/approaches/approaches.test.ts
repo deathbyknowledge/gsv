@@ -213,6 +213,19 @@ describe("message requests", () => {
     expect(await incomingRequests(bob)).toEqual([]);
   });
 
+  it("reads a message request without the fields a later version adds, rather than refusing it", async () => {
+    const content = {
+      requestId: "request:later", profileCid: profile.cid, name: "Alice", messageId: "msg:later",
+      text: "Hello from a later Ship", createdAtMs: Date.now(), expiresAtMs: Date.now() + 60_000,
+    };
+    const later = await callShipMethod(alice.account, bob, SEND_MESSAGE_REQUEST, { ...content, pronouns: "she/her" });
+    expect([later.status, await later.json()]).toEqual([200, { state: "received" }]);
+    // Read without the field, it's the request sent again, so it's answered as a repeat rather than a replay.
+    const again = await callShipMethod(alice.account, bob, SEND_MESSAGE_REQUEST, content);
+    expect([again.status, await again.json()]).toEqual([200, { state: "received" }]);
+    expect((await incomingRequests(bob)).map((request) => request.peerDid)).toEqual([alice.account.did]);
+  });
+
   it("lets only the person a request went to accept it, and a block ends it", async () => {
     const sent = await sendRequest();
     const forged = await callShipMethod(mallory.account, alice, ACCEPT_MESSAGE_REQUEST, { requestId: sent.requestId, name: "Bob" });

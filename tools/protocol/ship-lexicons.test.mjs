@@ -180,7 +180,7 @@ const INPUT_CASES = [
   { what: "any MIME type where accept is absent", input: { any: { ...BLOB, mimeType: "application/octet-stream", size: 1_000_000 } }, ours: "accept" },
   { what: "a blob with a field blobs don't have", input: { file: { ...BLOB, name: "picture.png" } }, ours: "refuse" },
   { what: "a blob named by something other than a CID", input: { file: { ...BLOB, ref: { $link: "picture" } } }, ours: "refuse" },
-  { what: "a field the method doesn't declare", input: { extra: true }, ours: "refuse", theirs: "accept", why: "Ships refuse what a method doesn't declare" },
+  { what: "a field the method doesn't declare", input: { extra: true }, ours: "accept" },
 ];
 
 test("generated validators read Lexicon as the reference validator does, except where the spec asks more", async (context) => {
@@ -196,7 +196,9 @@ test("generated validators read Lexicon as the reference validator does, except 
 test("a method's output and parameters, and a record, read the same way", () => {
   assert.equal(verdict(generated.thingOutputSchema, { n: 1 }), "accept");
   assert.equal(verdict(generated.thingOutputSchema, { n: "1" }), "refuse");
-  assert.equal(verdict(generated.thingOutputSchema, { n: 1, extra: true }), "refuse");
+  // Lexicon objects are open, so a field a later version adds is read away rather than refused.
+  assert.deepEqual(generated.thingOutputSchema.parse({ n: 1, extra: true }), { n: 1 });
+  assert.deepEqual(generated.thingInputSchema.parse({ bytes: "ab", extra: true, shared: { kind: "c", extra: true } }), { bytes: "ab", shared: { kind: "c" } });
   assert.equal(reference(() => official.assertValidXrpcOutput("test.fixture.thing", { n: 1, extra: true })), "accept");
 
   for (const [params, expected] of [[{ q: "abcdefgh" }, "accept"], [{ q: "ééééé" }, "refuse"], [{}, "refuse"]]) {

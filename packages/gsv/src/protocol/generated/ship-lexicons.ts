@@ -29,7 +29,7 @@ export type AcceptInvitationInput = {
   /** The accepting person's name, as the inviter will see it. At most 256 UTF-16 code units. */
   name: string;
 };
-export const acceptInvitationInputSchema = z.strictObject({
+export const acceptInvitationInputSchema = z.object({
   token: z.string().check(z.minLength(1), utf8MaxLength(128)),
   // Ships count this limit in UTF-16 code units.
   name: z.string().check(z.minLength(1), utf8MaxLength(768), maxGraphemes(256), z.maxLength(256)),
@@ -43,7 +43,7 @@ export type AcceptInvitationOutput = {
   generation: string;
   threadId: string;
 };
-export const acceptInvitationOutputSchema = z.strictObject({
+export const acceptInvitationOutputSchema = z.object({
   // Ships count this limit in UTF-16 code units.
   name: z.string().check(z.minLength(1), utf8MaxLength(768), maxGraphemes(256), z.maxLength(256)),
   generation: z.string().check(z.minLength(1), utf8MaxLength(128)),
@@ -55,7 +55,7 @@ export type AcceptMessageRequestInput = {
   /** The accepting person's name, as the sender will see it. At most 256 UTF-16 code units. */
   name: string;
 };
-export const acceptMessageRequestInputSchema = z.strictObject({
+export const acceptMessageRequestInputSchema = z.object({
   requestId: z.string().check(z.minLength(1), utf8MaxLength(128)),
   // Ships count this limit in UTF-16 code units.
   name: z.string().check(z.minLength(1), utf8MaxLength(768), maxGraphemes(256), z.maxLength(256)),
@@ -66,7 +66,7 @@ export type AcceptMessageRequestOutput = {
   generation: string;
   threadId: string;
 };
-export const acceptMessageRequestOutputSchema = z.strictObject({
+export const acceptMessageRequestOutputSchema = z.object({
   generation: z.string().check(z.minLength(1), utf8MaxLength(128)),
   threadId: z.string().check(z.minLength(1), utf8MaxLength(128)),
 }) satisfies z.ZodMiniType<AcceptMessageRequestOutput>;
@@ -87,7 +87,7 @@ export type DeliverResource = {
   transcription?: string;
   duration?: number;
 };
-export const deliverResourceSchema = z.strictObject({
+export const deliverResourceSchema = z.object({
   // Lexicon has no pattern.
   id: z.string().check(utf8MaxLength(128), z.regex(/^resource:[A-Za-z0-9_-]{1,119}$/)),
   revision: z.string().check(z.minLength(1), utf8MaxLength(1_024)),
@@ -108,7 +108,7 @@ export type DeliverMessageRef = {
   did: string;
   messageId: string;
 };
-export const deliverMessageRefSchema = z.strictObject({
+export const deliverMessageRefSchema = z.object({
   // Ships resolve did:plc and did:web.
   did: z.string().check(stringFormat("did"), z.regex(DID_PATTERN)),
   messageId: z.string().check(z.minLength(1), utf8MaxLength(256)),
@@ -118,7 +118,7 @@ export const deliverMessageRefSchema = z.strictObject({
 export type DeliverHumanProvenance = {
   kind: "human";
 };
-export const deliverHumanProvenanceSchema = z.strictObject({
+export const deliverHumanProvenanceSchema = z.object({
   kind: z.literal("human"),
 }) satisfies z.ZodMiniType<DeliverHumanProvenance>;
 
@@ -127,7 +127,7 @@ export type DeliverProcessProvenance = {
   kind: "process";
   processId: string;
 };
-export const deliverProcessProvenanceSchema = z.strictObject({
+export const deliverProcessProvenanceSchema = z.object({
   kind: z.literal("process"),
   processId: z.string().check(z.minLength(1), utf8MaxLength(256)),
 }) satisfies z.ZodMiniType<DeliverProcessProvenance>;
@@ -148,7 +148,7 @@ export type DeliverSocial = {
   /** The message this one answers. */
   replyTo?: DeliverMessageRef;
 };
-export const deliverSocialSchema = z.strictObject({
+export const deliverSocialSchema = z.object({
   threadId: z.string().check(z.minLength(1), utf8MaxLength(128)),
   reference: deliverMessageRefSchema,
   // Lexicon unions are chosen by $type; these are chosen by kind.
@@ -168,7 +168,7 @@ export type DeliverMessage = {
   resources?: DeliverResource[];
   social: DeliverSocial;
 };
-export const deliverMessageSchema = z.strictObject({
+export const deliverMessageSchema = z.object({
   kind: z.literal("message"),
   messageId: z.string().check(z.minLength(1), utf8MaxLength(256)),
   threadId: z.string().check(z.minLength(1), utf8MaxLength(128)),
@@ -192,7 +192,7 @@ export type DeliverRequestOffer = {
   state: "offered";
   revision: 1;
 };
-export const deliverRequestOfferSchema = z.strictObject({
+export const deliverRequestOfferSchema = z.object({
   id: z.string().check(z.minLength(1), utf8MaxLength(256)),
   // Lexicon has no pattern.
   kind: z.string().check(z.minLength(1), utf8MaxLength(128), z.regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/i)),
@@ -209,7 +209,7 @@ export type DeliverRequest = {
   kind: "request";
   request: DeliverRequestOffer;
 };
-export const deliverRequestSchema = z.strictObject({
+export const deliverRequestSchema = z.object({
   kind: z.literal("request"),
   request: deliverRequestOfferSchema,
 }) satisfies z.ZodMiniType<DeliverRequest>;
@@ -223,7 +223,7 @@ export type DeliverRequestUpdate = {
   /** At most 32 KiB as JSON. */
   details?: JsonObject;
 };
-export const deliverRequestUpdateSchema = z.strictObject({
+export const deliverRequestUpdateSchema = z.object({
   kind: z.literal("request.update"),
   requestId: z.string().check(z.minLength(1), utf8MaxLength(256)),
   expectedRevision: z.int().check(z.gte(1)),
@@ -236,7 +236,7 @@ export const deliverRequestUpdateSchema = z.strictObject({
 export type DeliverContactRevoked = {
   kind: "contact.revoked";
 };
-export const deliverContactRevokedSchema = z.strictObject({
+export const deliverContactRevokedSchema = z.object({
   kind: z.literal("contact.revoked"),
 }) satisfies z.ZodMiniType<DeliverContactRevoked>;
 
@@ -256,7 +256,7 @@ export type DeliverInput = {
   /** One of #message, #request, #requestUpdate or #contactRevoked, chosen by its kind. */
   payload: DeliverPayload;
 };
-export const deliverInputSchema = z.strictObject({
+export const deliverInputSchema = z.object({
   deliveryId: z.string().check(z.minLength(1), utf8MaxLength(256)),
   generation: z.string().check(z.minLength(1), utf8MaxLength(128)),
   // Lexicon unions are chosen by $type; these are chosen by kind.
@@ -266,7 +266,7 @@ export const deliverInputSchema = z.strictObject({
 export type DeliverOutput = {
   state: "received";
 };
-export const deliverOutputSchema = z.strictObject({
+export const deliverOutputSchema = z.object({
   state: z.literal("received"),
 }) satisfies z.ZodMiniType<DeliverOutput>;
 
@@ -274,7 +274,7 @@ export type GetAttachmentParams = {
   /** The file's id from space.ship.deliver#resource: resource: followed by 1 to 119 letters, digits, hyphens or underscores. */
   id: string;
 };
-export const getAttachmentParamsSchema = z.strictObject({
+export const getAttachmentParamsSchema = z.object({
   // Lexicon has no pattern.
   id: z.string().check(utf8MaxLength(128), z.regex(/^resource:[A-Za-z0-9_-]{1,119}$/)),
 }) satisfies z.ZodMiniType<GetAttachmentParams>;
@@ -318,7 +318,7 @@ export type SendMessageRequestInput = {
   /** When the request lapses unanswered, in milliseconds since the Unix epoch. */
   expiresAtMs: number;
 };
-export const sendMessageRequestInputSchema = z.strictObject({
+export const sendMessageRequestInputSchema = z.object({
   requestId: z.string().check(z.minLength(1), utf8MaxLength(128)),
   profileCid: z.string().check(stringFormat("cid")),
   // Ships count this limit in UTF-16 code units.
@@ -333,20 +333,20 @@ export const sendMessageRequestInputSchema = z.strictObject({
 export type SendMessageRequestOutput = {
   state: "received";
 };
-export const sendMessageRequestOutputSchema = z.strictObject({
+export const sendMessageRequestOutputSchema = z.object({
   state: z.literal("received"),
 }) satisfies z.ZodMiniType<SendMessageRequestOutput>;
 
 export type WithdrawMessageRequestInput = {
   requestId: string;
 };
-export const withdrawMessageRequestInputSchema = z.strictObject({
+export const withdrawMessageRequestInputSchema = z.object({
   requestId: z.string().check(z.minLength(1), utf8MaxLength(128)),
 }) satisfies z.ZodMiniType<WithdrawMessageRequestInput>;
 
 export type WithdrawMessageRequestOutput = {
   state: "received";
 };
-export const withdrawMessageRequestOutputSchema = z.strictObject({
+export const withdrawMessageRequestOutputSchema = z.object({
   state: z.literal("received"),
 }) satisfies z.ZodMiniType<WithdrawMessageRequestOutput>;

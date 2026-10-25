@@ -18,10 +18,9 @@ import { SHIP_LEXICON_CONSTANTS, SHIP_LEXICON_IMPORTS, SHIP_LEXICON_LIMITS, SHIP
  *   - unknown is any JSON object;
  *   - a union is chosen by $type, and an open one also takes a $type it doesn't list;
  *   - a blob is exactly {$type, ref, mimeType, size}, within accept and maxSize.
- * Objects in a method lexicon refuse fields their lexicon doesn't declare, as
- * Ships always have; a record's objects ignore them, since records come from
- * any Ship. ship-lexicon-rules.mjs adds what Lexicon can't say, and names the
- * limits code checks before it sends.
+ * An object drops fields its lexicon doesn't declare, since Lexicon objects are
+ * open and a later version may add one. ship-lexicon-rules.mjs adds what
+ * Lexicon can't say, and names the limits code checks before it sends.
  *
  * With --check, the output must be current and no other source may write a
  * space.ship NSID: code takes it from the generated module.
@@ -240,8 +239,7 @@ function readLexicon(path, document) {
   for (const [name, definition] of Object.entries(lexicon.defs)) {
     if (name !== "main" && PRIMARY_TYPES.has(definition.type)) throw new Error(`${lexicon.id}#${name}: only main may be a ${definition.type}`);
   }
-  // A method refuses what it doesn't declare, as Ships always have; a record takes what later versions add.
-  return { ...lexicon, name: lexicon.id.split(".").at(-1), strict: main.type !== "record" };
+  return { ...lexicon, name: lexicon.id.split(".").at(-1) };
 }
 
 function emitMain(generator, lexicon) {
@@ -361,7 +359,7 @@ function emitObject(generator, { key, lexicon, object, typeName, description: te
     if (rule?.why) schemaLines.push(`  // ${rule.why}`);
     schemaLines.push(`  ${propertyName(name)}: ${schema},`);
   }
-  let schema = `${lexicon.strict ? "z.strictObject" : "z.object"}({\n${schemaLines.join("\n")}\n})`;
+  let schema = `z.object({\n${schemaLines.join("\n")}\n})`;
   const refine = fieldRules.$refine;
   if (refine) {
     state.usedRules.add(`${key} $refine`);

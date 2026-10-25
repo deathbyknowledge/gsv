@@ -89,9 +89,9 @@ tools/protocol/ship-lexicon-rules.mjs ─┘                                NSID
 The validators read Lexicon as its specification does. String lengths count
 UTF-8 bytes and graphemes; `enum` is closed while `knownValues` only advises;
 the `did`, `handle`, `at-uri`, `datetime` and `cid` formats are checked, a CID
-being CIDv1; a blob must match its `accept` types and `maxSize`. A method
-refuses fields its lexicon doesn't declare. A record ignores them, since
-records come from any Ship.
+being CIDv1; a blob must match its `accept` types and `maxSize`. Lexicon
+objects are open, so methods and records alike read away fields their lexicon
+doesn't declare rather than refusing them, and a later version can add one.
 
 Some checks Ships make can't be written in Lexicon, so
 `tools/protocol/ship-lexicon-rules.mjs` adds them, and the field's lexicon
@@ -109,10 +109,11 @@ so the sender's check and the receiver's can't drift apart.
 To change a lexicon:
 
 1. Edit its file. Ships already running keep validating with the version they
-   shipped. A record can gain optional fields, because readers ignore what they
-   don't know. A method can't, because a Ship refuses a call that carries a
-   field its lexicon doesn't declare. No limit can tighten and no field can
-   become required.
+   shipped. A record or a method can gain optional fields, because readers
+   drop what they don't know. Ships from before methods dropped undeclared
+   fields still refuse them, so a sender can't count on a new method field
+   reaching a Ship until those Ships are gone. No limit can tighten and no
+   field can become required.
 2. Run `npm run protocol:generate` and commit the regenerated module with the
    lexicon.
 3. `npm run protocol:check` fails while the generated module is stale. It also
