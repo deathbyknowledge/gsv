@@ -60,6 +60,18 @@ it("attaches the operator tail to both runtime Workers and explicitly configured
   expect(recorded.workers.find((worker) => worker.id === "Adapter")?.props.tailConsumers).toEqual(["test-tail"]);
 });
 
+it("lets both runtime Workers report telemetry without persisting the logs that carry it", async () => {
+  await run(GsvDeployment({ ...input, telemetry: { tailConsumers: ["test-tail"] } }, dependencies));
+  for (const id of ["FixtureGateway", "FixtureRipgit"]) {
+    const worker = recorded.workers.find((worker) => worker.id === id);
+    expect(worker?.props.env?.GSV_TELEMETRY_ENABLED).toBe("1");
+    expect(worker?.props.observability?.logs).toEqual({ enabled: true, invocationLogs: false, persist: false });
+  }
+  recorded.workers.length = 0;
+  await run(GsvDeployment(input, dependencies));
+  expect(recorded.workers.find((worker) => worker.id === "FixtureRipgit")?.props.env).not.toHaveProperty("GSV_TELEMETRY_ENABLED");
+});
+
 const input: GsvDeploymentProps = {
   logicalPrefix: "Fixture", domain: "example.com", adminOrigin: "https://accounts.example.com", access: { kind: "operator" },
   names: { gateway: "gateway", ripgit: "ripgit", storageBucket: "storage" },

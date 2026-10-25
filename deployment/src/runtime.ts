@@ -129,6 +129,12 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
         }] : undefined,
       },
     ).pipe(retain(props.allowResourceDeletion !== true));
+    const ripgitEnv: Cloudflare.Workers.WorkerBindingProps = {
+      REPOSITORY: Cloudflare.DurableObject("REPOSITORY", {
+        className: "Repository",
+      }),
+    };
+    if (props.telemetry) ripgitEnv.GSV_TELEMETRY_ENABLED = "1";
     const ripgitWorker = Cloudflare.Worker(
       `${props.logicalPrefix}Ripgit`,
       {
@@ -137,16 +143,12 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
         bundle: false,
         compatibility: { date: compatibility.date },
         workersDev: false,
-        observability: props.observability ?? {
-          enabled: true,
-          logs: { enabled: true, invocationLogs: true },
-        },
+        observability: props.observability
+          ?? (props.telemetry
+            ? telemetryProducerObservability
+            : { enabled: true, logs: { enabled: true, invocationLogs: true } }),
         tailConsumers: props.telemetry ? [...props.telemetry.tailConsumers] : undefined,
-        env: {
-          REPOSITORY: Cloudflare.DurableObject("REPOSITORY", {
-            className: "Repository",
-          }),
-        },
+        env: ripgitEnv,
       },
     ).pipe(retain(props.allowResourceDeletion !== true));
 

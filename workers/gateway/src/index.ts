@@ -47,7 +47,7 @@ import {
 import { managedInstallationWorkGate } from "./installation/lifecycle";
 import { createInstallationStorage } from "./installation/storage";
 import { createInstallationRipgit } from "./installation/ripgit";
-import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
+import { buildGitProxyRequest, getBasicAuth, matchGitPath, publicGitResponse } from "./git";
 import * as z from "zod/mini";
 import type { ServicePeerProfile } from "./kernel/peer";
 import { isShipXrpcPath } from "./kernel/ships/xrpc";
@@ -179,12 +179,12 @@ export default {
           : new Response(authorized.message, { status: authorized.status });
       }
 
-      return createInstallationRipgit(
+      return publicGitResponse(await createInstallationRipgit(
         env.RIPGIT,
         route.identity.installationId,
       ).fetch(
         await buildGitProxyRequest(request, gitMatch, authorized.username),
-      );
+      ));
     }
 
     if (request.method === "GET" || request.method === "HEAD") {
