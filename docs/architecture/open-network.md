@@ -478,7 +478,9 @@ Some of it outlasts erasure:
 - Cloudflare keeps backups of the erased storage for 30 days. The PDS reports
   that backup as a retained copy until it expires.
 
-A tombstone can't be undone, so erasure leaves alone a DID that has moved to
+A tombstone ends the identity wherever it's hosted. Only a key ranked above
+this PDS's, such as the owner's recovery key or the operator's, can undo one,
+and only within 72 hours. Erasure therefore leaves alone a DID that has moved to
 another host: one whose `#atproto_pds` names another PDS, or whose rotation keys
 no longer include this PDS's.
 
