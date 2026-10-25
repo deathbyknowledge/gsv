@@ -30,6 +30,8 @@ export class TestShipNetwork {
   readonly hosts = new Map<string, Host>();
   /** Records test spaces publish, by AT URI; their repository host serves them. */
   readonly records = new Map<string, { cid: string; value: JsonObject }>();
+  /** DIDs whose repository host has taken the account down; it signs no call for them. */
+  readonly takenDown = new Set<string>();
   plcReachable = true;
 
   install(): this {

@@ -351,6 +351,32 @@ describe("listing contacts", () => {
   });
 });
 
+describe("a Ship its host took down", () => {
+  it("fails a message at once with the reason, and still takes its contact's messages in", async () => {
+    network.takenDown.add(alice.account.did);
+    const deliveryId = await queue(alice, bob, "Hello?");
+    const retries: string[] = [];
+    await alice.run((ctx) => processFederationDelivery(deliveryId, held(ctx, retries)));
+    expect(await alice.run((ctx) => ctx.federation.outbox(deliveryId))).toMatchObject({
+      state: "terminal", attemptCount: 1, retryable: false,
+      lastError: "Your Ship is taken down on the open network, so it can't reach other Ships",
+    });
+    expect(retries).toEqual([]);
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
+    expect(await send(bob, alice, { text: "Are you there?" })).toBe("delivered");
+  });
+
+  it("refuses an invitation with the reason, and accepts the same one once restored", async () => {
+    const { code } = await mallory.run((ctx) => handleContactInviteCreate({}, ctx));
+    network.takenDown.add(alice.account.did);
+    await expect(alice.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx)))
+      .rejects.toThrow("Your Ship is taken down on the open network, so it can't reach other Ships");
+    network.takenDown.delete(alice.account.did);
+    await alice.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx));
+    expect(await alice.run((ctx) => contactFor(ctx, mallory).state)).toBe("active");
+  });
+});
+
 /** Connects two spaces' people through an invitation. */
 async function connect(inviter: TestSpace, acceptor: TestSpace): Promise<void> {
   const { code } = await inviter.run((ctx) => handleContactInviteCreate({}, ctx));

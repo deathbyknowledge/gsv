@@ -17,6 +17,7 @@ import {
   type PublicRecordWrite,
   type PublicRepository,
   type PublicRepositoryAccount,
+  type PublicTakedown,
   type ShipServiceAuthRequest,
 } from "@humansandmachines/gsv/services/pds";
 import * as z from "zod/mini";
@@ -24,6 +25,7 @@ import { shipAddress } from "../installation/identity";
 import { raceWithAbort } from "../shared/abort";
 import { principalOf, resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { ProfileAvatarFile } from "./profile-store";
+import { ShipTakenDownError } from "./ships/errors";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 
 /** Collections a Ship feature publishes itself, and where the person changes them instead. */
@@ -56,7 +58,15 @@ export function parseAtprotoWrites(value: JsonValue): PublicRecordWrite[] {
 
 export async function handleAtprotoIdentity(ctx: KernelContext): Promise<AtprotoIdentityResult> {
   requirePublisher(ctx);
-  return { identity: await withRepository(ctx, (repository) => raceWithAbort(repository.account(), ctx.requestSignal)) };
+  return await withRepository(ctx, async (repository) => {
+    const [identity, takedowns] = await raceWithAbort(Promise.all([repository.account(), repository.takedowns()]), ctx.requestSignal);
+    return { identity, takedowns };
+  });
+}
+
+/** What the Ship's open-network host has taken down of its repository, which the Ship's own public pages honour too. */
+export async function publicTakedowns(ctx: KernelContext): Promise<PublicTakedown[]> {
+  return await withRepository(ctx, (repository) => raceWithAbort(repository.takedowns(), ctx.requestSignal));
 }
 
 /** Commits the writes to the Ship's public repository once the person approves what their Ship publishes. */
@@ -185,7 +195,12 @@ export async function ensureShipDid(ctx: KernelContext): Promise<string> {
 export async function signShipCall(ctx: KernelContext, request: ShipServiceAuthRequest): Promise<string> {
   return await withRepository(ctx, async (repository) => {
     if (!ctx.shipIdentity.current()) await ensureIdentity(repository, shipHostname(ctx), ctx);
-    return await raceWithAbort(repository.serviceAuth(request), ctx.requestSignal);
+    try {
+      return await raceWithAbort(repository.serviceAuth(request), ctx.requestSignal);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("RepoTakendown:")) throw new ShipTakenDownError({ cause: error });
+      throw error;
+    }
   });
 }
 

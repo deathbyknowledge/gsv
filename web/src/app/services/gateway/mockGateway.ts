@@ -990,6 +990,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { profile: { did: MARA_DID, handle, cid: "bafyreimockmara", url: `https://${handle}/profile`,
         displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests" } });
     }
+    case "atproto.identity": return respond(id, { identity: { did: OWN_DID, handle: "esteve.ship.space", host: "https://pds.ship.space" }, takedowns: [] });
     case "atproto.blob.read": {
       const { cid } = z.object({ cid: z.string() }).parse(args);
       return cid === PUBLISHED_PICTURE_CID

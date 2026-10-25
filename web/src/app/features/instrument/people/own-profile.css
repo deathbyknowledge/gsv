@@ -9,3 +9,8 @@
 .people-profile-notice h2 { margin: 0 0 8px; color: var(--text-title); font: 500 16px/1.4 var(--gsv-font-prose); }
 .people-profile-notice p { margin: 0 0 10px; color: var(--text); font: 14px/1.6 var(--gsv-font-prose); }
 .people-profile-notice .people-actions { margin-top: 14px; }
+.people-profile-notice.is-takedown { border-color: color-mix(in srgb, var(--error) 40%, var(--border)); }
+.people-profile-takedowns { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.people-profile-takedowns li { padding-top: 12px; border-top: 1px solid var(--border); }
+.people-profile-takedowns strong { color: var(--text-title); font: 500 14px/1.5 var(--gsv-font-prose); overflow-wrap: anywhere; }
+.people-profile-takedowns p { margin: 4px 0 0; }

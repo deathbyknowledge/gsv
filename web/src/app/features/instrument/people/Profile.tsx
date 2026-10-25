@@ -15,10 +15,11 @@ import { Select } from "../../../components/ui/Select";
 import { Tag } from "../../../components/ui/Tag";
 import { TextArea } from "../../../components/ui/TextArea";
 import { Hint } from "../../../components/ui/Tooltip";
-import { profileNamed, profileSubmission, profileUnpublished, profileVisibility, type ProfilePictureEdit, type ProfileSubmission } from "./profileModel";
+import { profileNamed, profileSubmission, profileTakenDown, profileUnpublished, profileVisibility, type ProfilePictureEdit, type ProfileSubmission } from "./profileModel";
 import { profilePicture, readProfilePicture, saveProfilePicture } from "./profilePicture";
 import { ProfilePicturePicker, useObjectUrl } from "./ProfilePicturePicker";
 import { ProfileNotice } from "./ProfileNotice";
+import { ProfileTakedowns, useShipTakedowns } from "./ProfileTakedowns";
 
 const VISIBILITY_TEXT = {
   private: "people.profile.visibilityPrivate", requests: "people.profile.visibilityPublic", invitation: "people.profile.visibilityPublicInvite",
@@ -38,6 +39,8 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
   const canRead = canConfigure(account, "profile.get");
   const profile = useQuery({ queryKey: key, queryFn: async () => (await client.profile.get({})).profile, enabled: connected && active && canRead });
   const savedAvatar = profile.data?.avatar;
+  const takedowns = useShipTakedowns(account, active);
+  const takenDown = profileTakenDown(takedowns);
   // A picture is named by its CID, so its bytes never change and profile updates don't refetch it.
   const savedPicture = useQuery({
     queryKey: ["instrument", "profile-picture", account.uid, savedAvatar?.cid ?? null],
@@ -156,6 +159,7 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
         <h1 id="people-profile-title">{t(editing ? "people.profile.editTitle" : "people.profile.title")}</h1>
         {state && !editing && <>
           <span class="people-profile-tag"><Tag boxed size="medium" tone={state.published ? "accent" : "idle"} label={t(state.published ? "people.profile.publicLabel" : "people.profile.privateLabel")} /></span>
+          {takenDown && <span class="people-profile-tag"><Tag boxed size="medium" tone="error" label={t("people.profile.takenDownLabel")} /></span>}
           {unpublishedChanges && <span class="people-profile-tag"><Tag boxed size="medium" tone="update" label={t("people.profile.unpublishedChanges")} /></span>}
           <InfoTip position="bottom" label={t("people.profile.visibilityQuestion")} title={t("people.profile.visibilityQuestion")} text={t(VISIBILITY_TEXT[profileVisibility(state)])} />
         </>}
@@ -167,7 +171,8 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
     {!canRead && <p class="people-note">{t("people.profile.noAccess")}</p>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
     {profile.isPending && connected && canRead && <LoadingState variant="panel">{t("people.profile.loading")}</LoadingState>}
-    {state && !editing && <ProfileNotice ownerUid={account.uid} published={!!state.published} />}
+    {state && !editing && <ProfileTakedowns takedowns={takedowns} avatarCid={savedAvatar?.cid} />}
+    {state && !editing && <ProfileNotice ownerUid={account.uid} published={!!state.published && !takenDown} />}
     {state && !editing && preview(state.draft, unpublishedChanges ? t("people.profile.previewSaved") : null, savedPictureUrl)}
     {state && fields && editing && <>
       {status}

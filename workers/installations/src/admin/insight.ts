@@ -3,11 +3,14 @@ import {
   type OperatorGatewayService,
   type OperatorShipSnapshot,
 } from "@humansandmachines/gsv/services/operator";
+import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 
 /** Optional operator bindings; without them the Ship page still renders from Accounts alone. */
 export type OperatorEnvironment = {
   OPERATOR_GATEWAY?: OperatorGatewayService;
+  /** Takedowns on the deployment's PDS, present when the deployment runs one. */
+  PDS_MODERATION?: PdsModerationService;
   GSV_MAIL_DOMAIN?: string;
 };
 
@@ -55,12 +58,13 @@ export type OperatorAuditResult = { installationId?: string; detail?: Record<str
 
 /**
  * Runs an operator mutation under its audit row; the actor comes from the
- * request's admission. Call it only after the request is admitted.
+ * request's admission. Call it only after the request is admitted. The
+ * mutation receives the row's id when an audit log records it.
  */
 export type AdminAuditRecorder = <T>(
   request: Request,
   action: { name: string; installationId?: string; reason?: string | null },
-  mutation: () => Promise<T>,
+  mutation: (eventId?: string) => Promise<T>,
   describe?: (result: T) => OperatorAuditResult,
 ) => Promise<T>;
 
@@ -161,11 +165,12 @@ export class OperatorAuditLog {
   /**
    * Writes the row before the mutation runs: if it cannot be written, nothing
    * changes. A committed mutation is reported as done even when its outcome
-   * cannot be written afterwards; its row then stays `pending`.
+   * cannot be written afterwards; its row then stays `pending`. The mutation
+   * receives the row's id, so a service can keep it with what it changed.
    */
   async run<T>(
     input: { actor: string; action: string; installationId?: string; reason?: string | null },
-    mutation: () => Promise<T>,
+    mutation: (eventId: string) => Promise<T>,
     describe?: (result: T) => OperatorAuditResult,
   ): Promise<T> {
     const id = `audit_${crypto.randomUUID()}`;
@@ -176,7 +181,7 @@ export class OperatorAuditLog {
     ).bind(id, Date.now(), input.actor.slice(0, 256), input.action, input.installationId ?? null, reason).run();
     let result: T;
     try {
-      result = await mutation();
+      result = await mutation(id);
     } catch (error) {
       await this.finish(id, { refused: true });
       throw error;

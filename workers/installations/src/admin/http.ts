@@ -12,6 +12,7 @@ import { adminErrorPage, adminStylesheet, adminTimeScript } from "./page";
 import type { IssuedAdminInstallation } from "./service";
 import { InstallationDeletionHttp } from "../deletion-http";
 import type { AccountsDeletionRuntime } from "../deletion-runtime";
+import { runTakedownAction, type ShipTakedowns } from "./takedowns";
 
 type AdminCreateFormInput = { operationId: string; handle: string };
 type AdminService<Detail extends AdminInstallation, Summary extends AdminInstallationSummary> = {
@@ -40,9 +41,10 @@ export class InstallationAdminHttp<
     private readonly presentation: InstallationAdminPresentation<Detail, Summary> = {},
     deletion?: AccountsDeletionRuntime,
     private readonly insight?: ShipInsight,
+    private readonly takedowns?: ShipTakedowns,
   ) {
     const audited: AdminAuditRecorder = (request, action, mutation, describe) => this.audited(request, action, mutation, describe);
-    this.api = new InstallationAdminApi(service, access, origin, audited);
+    this.api = new InstallationAdminApi(service, access, origin, audited, takedowns);
     this.deletion = deletion ? new InstallationDeletionHttp(deletion, access, origin, audited) : undefined;
   }
 
@@ -55,7 +57,7 @@ export class InstallationAdminHttp<
     if (response) return response;
     if (!await this.access.allows(request)) return adminText("Forbidden", 403);
     const head = request.method === "HEAD";
-    const route = /^\/admin\/installations\/([^/]+)(?:\/(onboarding|lifecycle|reset))?$/.exec(url.pathname);
+    const route = /^\/admin\/installations\/([^/]+)(?:\/(onboarding|lifecycle|reset|takedowns|takedowns\/restore))?$/.exec(url.pathname);
     let createFormInput: AdminCreateFormInput | undefined;
     let usernamePolicyInput: UsernamePolicyInput | undefined;
     try {
@@ -129,6 +131,11 @@ export class InstallationAdminHttp<
             (result) => ({ detail: { replacementInstallationId: result.installation.installationId } }));
           return adminInstallationPage(issued.installation, issued, undefined, false, 201, this.presentation, await this.shipView(issued.installation));
         }
+        if ((route[2] === "takedowns" || route[2] === "takedowns/restore") && this.takedowns) {
+          await runTakedownAction(this.takedowns, (...args) => this.audited(...args), request, installationId,
+            route[2] === "takedowns" ? "takedown" : "restore", Object.fromEntries(await readAdminForm(request)));
+          return adminRedirect(`/admin/installations/${encodeURIComponent(installationId)}`);
+        }
       }
       return isAdminApiPath(url.pathname)
         ? json({ error: "Not Found" }, 404)
@@ -164,7 +171,7 @@ export class InstallationAdminHttp<
   private async audited<T>(
     request: Request,
     action: { name: string; installationId?: string; reason?: string | null },
-    mutation: () => Promise<T>,
+    mutation: (eventId?: string) => Promise<T>,
     describe?: (result: T) => OperatorAuditResult,
   ): Promise<T> {
     if (!this.insight) return await mutation();
@@ -183,11 +190,12 @@ export class InstallationAdminHttp<
   private async shipView(installation: Detail): Promise<ShipView | undefined> {
     if (!this.insight) return undefined;
     try {
-      const [context, health] = await Promise.all([
+      const [context, health, openNetwork] = await Promise.all([
         this.insight.context(installation),
         this.insight.health(installation.installationId),
+        this.takedowns?.view(installation.installationId),
       ]);
-      return { context, health };
+      return openNetwork ? { context, health, openNetwork } : { context, health };
     } catch (error) {
       console.warn("[Operator] Ship page details unavailable:", installation.installationId, exceptionDiagnostics(error));
       return undefined;

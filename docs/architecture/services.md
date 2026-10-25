@@ -164,7 +164,10 @@ Its deployment-owned props carry the `kernel-publish` authority, and the Kernel
 asks only for its own installation; the PDS checks with Accounts that the
 installation is active, and gives a restricted one only its DID. The Kernel
 owns who may publish, approval and the collections features reserve; the PDS
-owns signing, files and the firehose.
+owns signing, files and the firehose. Accounts' `PDS_MODERATION` binding carries
+the `operator-moderation` authority, through which the operator takes down and
+restores what a Ship publishes; the PDS holds each takedown and honours it in
+every read it serves.
 See [The open network](./open-network.md).
 
 ## Cloud instances

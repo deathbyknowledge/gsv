@@ -11,8 +11,8 @@ import { approachStatus, requestMayRetry } from "./peopleModel";
 import { ContactHandlingChoice } from "./ContactHandlingChoice";
 import { useT } from "../../../i18n/locale";
 
-export function MessageRequest({ request, account, onOpen }: {
-  request: ApproachSummary; account: ConsoleAccount | undefined; onOpen: (contactId: string) => void;
+export function MessageRequest({ request, account, shipTakenDown, onOpen }: {
+  request: ApproachSummary; account: ConsoleAccount | undefined; shipTakenDown: boolean; onOpen: (contactId: string) => void;
 }) {
   const t = useT();
   const { client, connected } = useGateway();
@@ -57,7 +57,7 @@ export function MessageRequest({ request, account, onOpen }: {
   return <section class="people-request" aria-labelledby="message-request-title">
     <div class="people-kicker">{t(request.direction === "incoming" ? "people.request.from" : "people.request.to")}</div>
     <h1 id="message-request-title">{request.displayName}</h1>
-    <p class="people-status" role="status">{t(approachStatus(request))}</p>
+    <p class="people-status" role="status">{t(approachStatus(request, shipTakenDown))}</p>
     {history.isFetching && !history.data && request.messageSequence !== undefined && <LoadingState variant="panel">{t("people.request.loadingFirst")}</LoadingState>}
     {!allowed("conversation.history") && connected && <p class="people-note">{t("people.request.noRead")}</p>}
     {text !== undefined && <article class="people-first-message"><p>{text}</p><time dateTime={new Date(request.createdAtMs).toISOString()}>{new Date(request.createdAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time></article>}

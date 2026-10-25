@@ -306,6 +306,11 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
         bindings: [{ type: "service", name: "DELETION_OWNER_PDS", service: props.pds.workerName,
           entrypoint: "PdsLifecycleEntrypoint", props: { authority: "installation-deletion" } }],
       });
+      // Only Accounts' operator pages may take down what the PDS serves, or restore it.
+      yield* directory.bind(`${props.logicalPrefix}DirectoryPdsModerationBinding`, {
+        bindings: [{ type: "service", name: "PDS_MODERATION", service: props.pds.workerName,
+          entrypoint: "PdsModerationEntrypoint", props: { authority: "operator-moderation" } }],
+      });
     }
     yield* directory.bind(`${props.logicalPrefix}DirectoryOperatorGatewayBinding`, {
       bindings: [{ type: "service", name: "OPERATOR_GATEWAY", service: props.names.gateway,

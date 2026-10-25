@@ -185,6 +185,60 @@ contact policy as closed. The
 [profile syscalls](../reference/syscalls.md#public-profiles-and-first-messages)
 have the record's limits.
 
+## Takedowns
+
+The operator can take down a Ship's whole account, one of its records or one
+of its files on the PDS that hosts them. This is narrower than suspending the
+Ship in Accounts, which stops everything it does. Takedowns follow
+`com.atproto.admin.updateSubjectStatus`, as Bluesky's moderation service uses
+it: a takedown names a `repoRef`, a `strongRef` or a `repoBlobRef`, and
+restoring is the same call with `applied: false`.
+
+```text
+Accounts Ship page ── audit event, reason ── PDS_MODERATION ──▶ HostedRepo: takedowns
+                                             operator-moderation       │ every public read honours them
+People, atproto identity ◀── Kernel ◀── PDS (kernel-publish) ◀─────────┘
+/profile, /.well-known/atproto-did ◀─┘
+```
+
+The PDS keeps each takedown with the Ship's repository and honours it in every
+read it serves:
+
+- An account taken down answers repository reads with `RepoTakendown` and
+  reads as `takendown` in `getRepoStatus` and `listRepos`. Relays receive an
+  `#account` event saying so. The PDS refuses the Ship's writes, uploads and
+  service-auth signatures, so the Ship publishes nothing and can't call other
+  Ships. The Kernel takes that refusal as final: a message, message request or
+  acceptance it was sending fails at once instead of retrying, and its person
+  reads why. Other Ships can still call it, so its contacts' messages keep
+  arriving. Restoring the account tells relays it is active again and sends its
+  identity and current commit.
+- A record taken down reads as missing: `getRecord` answers `RecordNotFound`
+  and `listRecords` leaves it out. Its commit stays in the signed repository,
+  so `sync.getRepo` and the record's proof from `sync.getRecord` still verify,
+  as on Bluesky's PDS.
+- A file taken down reads as missing from `getBlob`, and stays listed in
+  `listBlobs`.
+- A takedown stays with its subject until the operator restores it. A record
+  the Ship edits, deletes and writes again stays hidden, and so do the same
+  bytes uploaded again. Bluesky's PDS instead forgets a record's takedown
+  once the record is deleted, so the same record written again is public.
+
+The Ship's own pages honour the same takedowns. For each request to `/profile`
+or `/profile/avatar`, the Kernel asks the PDS what it has taken down rather
+than keeping a copy that could fall behind. The page answers 404 while the
+account or the profile record is down, leaves out a picture whose file is
+down, and answers 503 while the PDS can't say. `/.well-known/atproto-did`
+claims no handle for an account that is down, as Bluesky's PDS does. Other
+Ships read profiles from the PDS, so `profile.resolve` finds no public profile.
+
+Accounts records each takedown and restore in the operator audit log, with the
+operator's reason. A takedown requires a reason, and the PDS keeps the audit
+event's ID as the takedown's `ref`. The person sees each takedown and its
+reason in People, and their Ship reads them with `atproto identity`.
+[Take down what a Ship publishes](../how-to/operate-gsv.md#take-down-what-a-ship-publishes)
+is the operator's procedure.
+
 ## Deployment
 
 The operator composition runs the PDS once the operator gives it a PLC
@@ -192,7 +246,8 @@ rotation key; without one, Ships have no DID and stay off the open network. The
 PDS serves at `pds.<domain>` through a route more specific than the Gateway's
 wildcard, and Accounts reserves the `pds` handle, so no Ship can claim that
 hostname. Only the Gateway's `PDS` binding carries the `kernel-publish`
-authority.
+authority, and only Accounts' `PDS_MODERATION` binding carries
+`operator-moderation`, which takes down and restores.
 
 The Gateway's `PLC_URL` names the same did:plc directory the PDS registers DIDs
 with, so a Ship reads other Ships' DIDs from where its own is registered. The

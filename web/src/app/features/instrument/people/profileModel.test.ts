@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ProfileFields, ProfileState } from "@humansandmachines/gsv/protocol";
-import { profileSubmission, profileUnpublished, profileVisibility } from "./profileModel";
+import type { ProfileFields, ProfileState, PublicTakedown } from "@humansandmachines/gsv/protocol";
+import { profileSubmission, profileTakenDown, profileUnpublished, profileVisibility, shipTakenDown, takedownSubject } from "./profileModel";
 
 const fields: ProfileFields = { displayName: "ada", about: "Hello", contactPolicy: "requests" };
 const url = "https://ada.ship.example/profile";
@@ -71,5 +71,35 @@ describe("unpublished changes", () => {
     expect(profileUnpublished(state({ revision: 3, published: { ...live(), revision: 2 } }))).toBe(true);
     expect(profileUnpublished(state({ published: live() }))).toBe(false);
     expect(profileUnpublished(state({ revision: 3 }))).toBe(false);
+  });
+});
+
+describe("what the operator took down", () => {
+  const did = "did:plc:adaaaaaaaaaaaaaaaaaaaaaa";
+  const takedown = (subject: PublicTakedown["subject"]): PublicTakedown => ({ subject, ref: "audit_1", reason: "Spam", at: 1 });
+  const account = takedown({ $type: "com.atproto.admin.defs#repoRef", did });
+  const profile = takedown({ $type: "com.atproto.repo.strongRef", uri: `at://${did}/space.ship.profile/self`, cid: "bafyreiprofile" });
+  const note = takedown({ $type: "com.atproto.repo.strongRef", uri: `at://${did}/space.ship.note/first`, cid: "bafyreinote" });
+  const file = takedown({ $type: "com.atproto.admin.defs#repoBlobRef", did, cid: "bafkreipicture" });
+
+  it("names it as the person knows it", () => {
+    expect(takedownSubject(account)).toEqual({ kind: "account" });
+    expect(takedownSubject(profile)).toEqual({ kind: "profile" });
+    expect(takedownSubject(note)).toEqual({ kind: "record", uri: `at://${did}/space.ship.note/first` });
+    expect(takedownSubject(file, "bafkreipicture")).toEqual({ kind: "picture" });
+    expect(takedownSubject(file, "bafkreiother")).toEqual({ kind: "file" });
+    expect(takedownSubject(file)).toEqual({ kind: "file" });
+  });
+
+  it("counts the profile as down with the whole Ship or on its own, but not for its picture or another record", () => {
+    expect(profileTakenDown([])).toBe(false);
+    expect(profileTakenDown([file, note])).toBe(false);
+    expect(profileTakenDown([account])).toBe(true);
+    expect(profileTakenDown([note, profile])).toBe(true);
+  });
+
+  it("counts the whole Ship as down only for its account", () => {
+    expect(shipTakenDown([profile, note, file])).toBe(false);
+    expect(shipTakenDown([note, account])).toBe(true);
   });
 });

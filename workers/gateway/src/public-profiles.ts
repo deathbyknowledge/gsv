@@ -1,5 +1,6 @@
 import { profileContactPolicy } from "@humansandmachines/gsv/protocol";
 import { toBase64Url } from "@atcute/multibase";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { ProfileAvatarFile } from "./kernel/profile-store";
 import type { PublicProfileProjection } from "./kernel/profiles";
 import { renderPublicProfile } from "../../../web/src/public/profile";
@@ -33,8 +34,15 @@ export async function servePublicProfileRequest(
   if (path === "invalid") return unavailable();
   // A Ship has one profile, so a link to one of its old aliases opens it.
   if (path === "alias") return new Response(null, { status: 308, headers: { location: "/profile", "cache-control": "no-store" } });
-  if (path === "avatar") return serveAvatar(request, await source.avatar());
-  const projection = await source.page();
+  let projection: PublicProfileProjection | null;
+  try {
+    if (path === "avatar") return serveAvatar(request, await source.avatar());
+    projection = await source.page();
+  } catch (error) {
+    // The Kernel fails closed while it can't say what the Ship's host has taken down.
+    console.error("[Gateway] Public profile lookup failed:", exceptionDiagnostics(error));
+    return new Response("Profile unavailable", { status: 503, headers: { "cache-control": "no-store" } });
+  }
   if (!projection) return unavailable();
   if (new URL(request.url).origin !== new URL(projection.url).origin) {
     return new Response(null, { status: 308, headers: { location: projection.url, "cache-control": "no-store" } });

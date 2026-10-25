@@ -1157,6 +1157,12 @@ an invitation, a message request or another call to a Ship.
 the profile is private, writes and uploads are refused with a message naming
 People.
 
+`atproto.identity` also lists what the operator has taken down on the PDS,
+oldest first, with the reason the operator gave; readers on the open network no
+longer see those. While the whole account is down, its `status` is
+`takendown`, and writes, uploads and calls to other Ships fail. See
+[takedowns](../architecture/open-network.md#takedowns).
+
 Only the signed-in person and their Ship may publish. Other processes, Crew
 included, other accounts and machines are refused whatever their capabilities.
 When the Ship calls `atproto.write`, the person approves it first unless an
@@ -1169,7 +1175,7 @@ again, so a profile made private meanwhile stops the publish.
 type AtprotoSyscalls = {
   "atproto.identity": {
     args: Record<string, never>;
-    result: { identity: PublicRepositoryAccount | null };
+    result: { identity: PublicRepositoryAccount | null; takedowns: PublicTakedown[] };
   };
   "atproto.write": {
     args: { writes: PublicRecordWrite[] };
@@ -1188,7 +1194,16 @@ type AtprotoSyscalls = {
   };
 };
 
-type PublicRepositoryAccount = { did: string; handle: string; host: string };
+type PublicRepositoryAccount = { did: string; handle: string; host: string; status?: "takendown" };
+type PublicTakedown = {
+  subject:
+    | { $type: "com.atproto.admin.defs#repoRef"; did: string }
+    | { $type: "com.atproto.repo.strongRef"; uri: string; cid: string }
+    | { $type: "com.atproto.admin.defs#repoBlobRef"; did: string; cid: string; recordUri?: string };
+  ref: string;            // the operator's reference, such as an audit event ID
+  reason: string | null;
+  at: number;             // milliseconds since the epoch
+};
 type PublicRecordWrite =
   | { action: "create"; collection: string; rkey?: string; record: JsonObject }
   | { action: "put"; collection: string; rkey: string; record: JsonObject }

@@ -10,11 +10,12 @@ import {
   bodyFromBytes, bodyToBytes, cancelBinaryBody, profileContactPolicy, profileFieldsSchema, shipProfileRecordSchema,
 } from "@humansandmachines/gsv/protocol";
 import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
+import type { PublicTakedown } from "@humansandmachines/gsv/services/pds";
 import { z } from "zod/mini";
 import type { KernelContext } from "./context";
 import { isLocked } from "../auth/shadow";
 import { shipAddress } from "../installation/identity";
-import { deleteProfileRecord, putProfileRecord } from "./atproto";
+import { deleteProfileRecord, publicTakedowns, putProfileRecord } from "./atproto";
 import { requireContactCaller, requireContactHuman } from "./federation/authority";
 import { fetchFederation, readFederationJson } from "./federation/http";
 import { FederationHttpError } from "./federation/errors";
@@ -40,6 +41,7 @@ const PROFILE_PATH = /^\/(?:profile|@[a-z][a-z0-9_-]{1,31})?$/;
 const NO_PUBLIC_PROFILE = "No public profile is available at this address. A private invitation does not require a public profile.";
 const UNREADABLE_ADDRESS = "Enter a handle, such as @alice, or a profile address";
 const RECORD_LOOKUP_TIMEOUT_MS = 10_000;
+const PROFILE_RECORD_PATH = `/${SHIP_PROFILE_COLLECTION}/${SHIP_PROFILE_RKEY}`;
 /** Invitation codes, acceptances and message requests carry names of at most this many characters. */
 const MAX_PERSON_NAME_LENGTH = 256;
 /** Sign-in publishes in the background; this bounds how long it waits on the open-network host. */
@@ -298,23 +300,47 @@ async function readProfileRecord(resolved: ResolvedDid, ctx: KernelContext): Pro
   };
 }
 
-/** The Ship's published profile for its public page, while its owner can still sign in. */
-export function publicProfileProjection(ctx: KernelContext): PublicProfileProjection | null {
+/**
+ * The Ship's published profile for its public page, while its owner can still
+ * sign in and its open-network host serves it. The page shows what the
+ * repository's readers see, so it asks the host each time rather than keeping
+ * a copy of the host's takedowns that could fall behind.
+ */
+export async function publicProfileProjection(ctx: KernelContext): Promise<PublicProfileProjection | null> {
   const published = ctx.profiles.page();
   if (!published || !profileOwnerActive(published.ownerUid, ctx)) return null;
+  const cid = published.record.avatar?.ref.$link;
+  const hidden = hiddenByHost(await publicTakedowns(ctx), cid);
+  if (hidden.page) return null;
   const projection: PublicProfileProjection = { url: profileUrl(ctx), cid: published.cid, record: published.record };
   const handle = ctx.installationIdentity?.handle;
   if (handle) projection.handle = handle;
-  const avatar = published.record.avatar ? ctx.profiles.avatar(published.record.avatar.ref.$link) : null;
+  const avatar = cid && !hidden.avatar ? ctx.profiles.avatar(cid) : null;
   if (avatar) projection.avatar = { cid: avatar.cid, mimeType: avatar.mimeType, size: avatar.size };
   return projection;
 }
 
-/** The published record's picture, which the public page shows from the Ship's own host. */
-export function publicProfileAvatar(ctx: KernelContext): ProfileAvatarFile | null {
+/** The published record's picture, which the public page shows from the Ship's own host while that host serves it. */
+export async function publicProfileAvatar(ctx: KernelContext): Promise<ProfileAvatarFile | null> {
   const published = ctx.profiles.page();
   const cid = published?.record.avatar?.ref.$link;
-  return published && cid && profileOwnerActive(published.ownerUid, ctx) ? ctx.profiles.avatar(cid) : null;
+  if (!published || !cid || !profileOwnerActive(published.ownerUid, ctx)) return null;
+  const hidden = hiddenByHost(await publicTakedowns(ctx), cid);
+  return hidden.page || hidden.avatar ? null : ctx.profiles.avatar(cid);
+}
+
+/**
+ * What the host's takedowns hide of the public page: all of it with the account
+ * or the profile record, or only the picture its blob holds. Every takedown the
+ * host lists is of the Ship's own repository.
+ */
+function hiddenByHost(takedowns: PublicTakedown[], avatarCid: string | undefined) {
+  return {
+    page: takedowns.some(({ subject }) => subject.$type === "com.atproto.admin.defs#repoRef"
+      || (subject.$type === "com.atproto.repo.strongRef" && subject.uri.endsWith(PROFILE_RECORD_PATH))),
+    avatar: avatarCid !== undefined
+      && takedowns.some(({ subject }) => subject.$type === "com.atproto.admin.defs#repoBlobRef" && subject.cid === avatarCid),
+  };
 }
 
 export function profileOwnerActive(ownerUid: number, ctx: KernelContext): boolean {

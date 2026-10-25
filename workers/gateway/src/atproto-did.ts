@@ -35,7 +35,8 @@ export async function serveAtprotoDid(
     console.error("[Gateway] Public repository lookup failed:", exceptionDiagnostics(error));
     return new Response("Public repository unavailable", { status: 503, headers: { "cache-control": "no-store" } });
   }
-  if (!account || account.handle !== new URL(request.url).hostname) return notFound();
+  // A host claims no handle for an account it has taken down, as Bluesky's PDS answers.
+  if (!account || account.status === "takendown" || account.handle !== new URL(request.url).hostname) return notFound();
   return new Response(request.method === "HEAD" ? null : account.did, {
     headers: {
       "content-type": "text/plain; charset=utf-8",

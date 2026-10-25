@@ -2,6 +2,7 @@ import { ADMIN_VISIBLE_INSTALLATION_STATES, type AdminInstallationListQuery } fr
 import { hasExpectedOrigin, json, noStoreHeaders, readJsonObject, requireString, type JsonValue } from "../http";
 import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
 import type { AdminAuditRecorder } from "./insight";
+import { runTakedownAction, type ShipTakedowns } from "./takedowns";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { z } from "zod";
 
@@ -19,12 +20,13 @@ export class InstallationAdminApi {
     private readonly access: InstallationAdminAccess,
     private readonly origin: string,
     private readonly audited: AdminAuditRecorder = async (_request, _action, mutation) => await mutation(),
+    private readonly takedowns?: ShipTakedowns,
   ) {}
 
   async handle(request: Request): Promise<Response | null> {
     const url = new URL(request.url);
     const collection = url.pathname === "/admin/api/installations";
-    const route = /^\/admin\/api\/installations\/([^/]+)(?:\/(onboarding|lifecycle|reset))?$/.exec(url.pathname);
+    const route = /^\/admin\/api\/installations\/([^/]+)(?:\/(onboarding|lifecycle|reset|takedowns|takedowns\/restore))?$/.exec(url.pathname);
     if (!collection && !route) return null;
     if (!await this.access.allows(request)) {
       return new Response("Forbidden", { status: 403, headers: noStoreHeaders({ "content-type": "text/plain; charset=utf-8" }) });
@@ -49,6 +51,10 @@ export class InstallationAdminApi {
         const installation = await this.service.getInstallation(installationId);
         return installation ? json(installation) : json({ error: "Not Found" }, 404);
       }
+      if (request.method === "GET" && action === "takedowns" && this.takedowns) {
+        const repository = await this.takedowns.repository(installationId);
+        return repository ? json(repository) : json({ error: "Not Found" }, 404);
+      }
       if (request.method === "POST") {
         if (action === "onboarding") {
           const issued = await this.audited(request, { name: "ship.setup-link.reissue", installationId },
@@ -69,6 +75,10 @@ export class InstallationAdminApi {
             () => this.service.resetInstallation(installationId, input),
             (result) => ({ detail: { replacementInstallationId: result.installation.installationId } }));
           return json(reset, 201);
+        }
+        if ((action === "takedowns" || action === "takedowns/restore") && this.takedowns) {
+          return json(await runTakedownAction(this.takedowns, this.audited, request, installationId,
+            action === "takedowns" ? "takedown" : "restore", await readJsonObject(request)));
         }
       }
       return json({ error: "Not Found" }, 404);

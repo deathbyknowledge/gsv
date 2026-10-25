@@ -256,6 +256,7 @@
 .people .people-self { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; border-top: 1px solid var(--border); padding: 14px 0 0; text-align: left; }
 .people-self > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-title); font: 500 16px/1.4 var(--gsv-font-prose); }
 .people-self > small { flex-shrink: 0; color: var(--text-dim); font: 10px/1.5 var(--gsv-font-mono); }
+.people-self > small.is-takedown { color: var(--error); text-transform: uppercase; }
 .people-self:hover > span, .people-self[aria-current="page"] > span { color: var(--accent); }
 .people-profile-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .people-own-profile { width: min(100%, 840px); box-sizing: border-box; margin-inline: auto; padding: 0 var(--people-gutter) 44px; }

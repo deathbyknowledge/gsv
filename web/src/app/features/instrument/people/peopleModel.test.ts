@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { PublicProfile } from "@humansandmachines/gsv/protocol";
-import { approachSendIntent, contactProfileUrl, emptyApproachDraft, handleLabel as label, profileAddress as address } from "./peopleModel";
+import type { ApproachSummary, PublicProfile } from "@humansandmachines/gsv/protocol";
+import { approachSendIntent, approachStatus, contactProfileUrl, emptyApproachDraft, handleLabel as label, profileAddress as address } from "./peopleModel";
 
 const deployment = { primaryDomain: "fleet.example", legacyDomains: ["old.example"] };
 const profileAddress = (value: string) => address(value, deployment);
@@ -76,5 +76,21 @@ describe("first-message approval", () => {
       { profile: { ...profile, did: "did:plc:otheraaaaaaaaaaaaaaaaaaa" } },
     ]) expect(approachSendIntent({ ...draft, intent, ...change }).idempotencyKey).not.toBe(intent.idempotencyKey);
     expect(() => approachSendIntent(emptyApproachDraft(profile.url))).toThrow("Open a profile");
+  });
+});
+
+describe("message request status", () => {
+  const sent: ApproachSummary = {
+    id: "approach:sent", direction: "outgoing", requestId: "request:sent", peerDid: profile.did, displayName: "Person",
+    conversationId: "conv:sent", state: "pending", revision: 1, delivery: "failed", createdAtMs: 1, updatedAtMs: 1, expiresAtMs: 2,
+  };
+  const accepting: ApproachSummary = { ...sent, id: "approach:received", direction: "incoming", state: "accepting", delivery: "received", connection: "failed" };
+
+  it("gives a taken-down Ship as the reason a request or an acceptance failed", () => {
+    expect(approachStatus(sent, false)).toBe("people.status.deliveryFailed");
+    expect(approachStatus(sent, true)).toBe("people.status.shipTakenDown");
+    expect(approachStatus(accepting, false)).toBe("people.status.connectionFailed");
+    expect(approachStatus(accepting, true)).toBe("people.status.shipTakenDown");
+    expect(approachStatus({ ...sent, delivery: "received" }, true)).toBe("people.status.received");
   });
 });

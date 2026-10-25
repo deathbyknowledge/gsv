@@ -1,7 +1,7 @@
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PublicCommit, PublicRepository } from "@humansandmachines/gsv/services/pds";
+import type { PublicCommit, PublicRepository, PublicTakedown } from "@humansandmachines/gsv/services/pds";
 import type { BinaryBody, ProfileFields, ShipProfileRecord } from "@humansandmachines/gsv/protocol";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
@@ -54,7 +54,7 @@ describe("publishing the profile record", () => {
       expect(handleProfileGet(ctx).profile).toMatchObject({
         revision: 2, draft: { about: "Private revision", contactPolicy: "invitation" }, published: { revision: 1, contactPolicy: "requests" },
       });
-      expect(publicProfileProjection(ctx)).toEqual({ url: PROFILE_URL, handle: "local", cid: "bafyrecord1", record });
+      expect(await publicProfileProjection(ctx)).toEqual({ url: PROFILE_URL, handle: "local", cid: "bafyrecord1", record });
     });
   });
 
@@ -102,7 +102,7 @@ describe("publishing the profile record", () => {
       expect(result.profile).toMatchObject({ revision: 2, draft: DRAFT });
       expect(result.profile.published).toBeUndefined();
       expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      expect(publicProfileProjection(ctx)).toBeNull();
+      expect(await publicProfileProjection(ctx)).toBeNull();
 
       await handleProfilePublish({ expectedRevision: 2 }, ctx);
       repository.applyWrites.mockRejectedValueOnce(new Error("InvalidRequest: Could not find a record with key: space.ship.profile/self"));
@@ -173,7 +173,7 @@ describe("publishing the profile record", () => {
       await handleProfilePublish({ expectedRevision: 1 }, ctx);
       const shadow = vi.spyOn(ctx.auth, "getShadowByUsername").mockReturnValue(null);
       await expect(handleProfilePublish({ expectedRevision: 1 }, ctx)).rejects.toThrow("signed-in human");
-      expect(publicProfileProjection(ctx)).toBeNull();
+      expect(await publicProfileProjection(ctx)).toBeNull();
       shadow.mockRestore();
       expect(repository.applyWrites).toHaveBeenCalledOnce();
     });
@@ -190,19 +190,19 @@ describe("the profile picture", () => {
       expect(read.data).toEqual({ cid: PNG_CID, mimeType: "image/png", size: PNG.byteLength });
       expect(await bytesOf(read.body)).toEqual(PNG);
       expect(repository.uploadBlob).not.toHaveBeenCalled();
-      expect(publicProfileAvatar(ctx)).toBeNull();
+      expect(await publicProfileAvatar(ctx)).toBeNull();
 
       await handleProfilePublish({ expectedRevision: 1 }, ctx);
       expect(repository.uploadBlob).toHaveBeenCalledExactlyOnceWith(expect.any(ReadableStream), PNG.byteLength, "image/png");
       expect(uploads).toEqual([PNG]);
       const png = { $type: "blob", ref: { $link: PNG_CID }, mimeType: "image/png", size: PNG.byteLength };
       expect(ctx.profiles.published(OWNER.uid)?.record.avatar).toEqual(png);
-      expect(publicProfileProjection(ctx)?.avatar).toEqual({ cid: PNG_CID, mimeType: "image/png", size: PNG.byteLength });
-      expect(publicProfileAvatar(ctx)?.bytes).toEqual(PNG);
+      expect((await publicProfileProjection(ctx))?.avatar).toEqual({ cid: PNG_CID, mimeType: "image/png", size: PNG.byteLength });
+      expect((await publicProfileAvatar(ctx))?.bytes).toEqual(PNG);
 
       // A new picture stays private until it is published; the public page keeps the old one.
       await handleProfileAvatarSet({ expectedRevision: 1, mimeType: "image/webp" }, ctx, bodyFromBytes(WEBP));
-      expect(publicProfileAvatar(ctx)?.cid).toBe(PNG_CID);
+      expect((await publicProfileAvatar(ctx))?.cid).toBe(PNG_CID);
       expect(handleProfileAvatarRead({ cid: PNG_CID }, ctx).data.cid).toBe(PNG_CID);
       await handleProfilePublish({ expectedRevision: 2 }, ctx);
       expect(ctx.profiles.published(OWNER.uid)?.record.avatar?.ref.$link).toBe(WEBP_CID);
@@ -211,11 +211,11 @@ describe("the profile picture", () => {
 
       const removed = handleProfileAvatarRemove({ expectedRevision: 2 }, ctx);
       expect(removed.profile.avatar).toBeUndefined();
-      expect(publicProfileAvatar(ctx)?.cid).toBe(WEBP_CID);
+      expect((await publicProfileAvatar(ctx))?.cid).toBe(WEBP_CID);
       await handleProfilePublish({ expectedRevision: 3 }, ctx);
       expect(ctx.profiles.published(OWNER.uid)?.record).not.toHaveProperty("avatar");
       expect(ctx.profiles.avatar(WEBP_CID)).toBeNull();
-      expect(publicProfileAvatar(ctx)).toBeNull();
+      expect(await publicProfileAvatar(ctx)).toBeNull();
     });
   });
 
@@ -230,7 +230,7 @@ describe("the profile picture", () => {
       held.release();
       await publishing;
       expect(ctx.profiles.published(OWNER.uid)?.record.avatar?.ref.$link).toBe(PNG_CID);
-      expect(publicProfileAvatar(ctx)?.bytes).toEqual(PNG);
+      expect((await publicProfileAvatar(ctx))?.bytes).toEqual(PNG);
 
       const next = holdNextCommit(repository);
       const republishing = handleProfilePublish({ expectedRevision: 2 }, ctx);
@@ -239,7 +239,7 @@ describe("the profile picture", () => {
       next.release();
       await republishing;
       expect(ctx.profiles.published(OWNER.uid)?.record.avatar?.ref.$link).toBe(WEBP_CID);
-      expect(publicProfileAvatar(ctx)?.bytes).toEqual(WEBP);
+      expect((await publicProfileAvatar(ctx))?.bytes).toEqual(WEBP);
       expect(ctx.profiles.avatar(PNG_CID)).toBeNull();
     });
   });
@@ -278,6 +278,42 @@ describe("the profile picture", () => {
       // SAFETY: the handler validates arguments that arrive outside the typed client.
       await expect(handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/svg+xml" } as never, ctx, bodyFromBytes(PNG))).rejects.toThrow();
       expect(ctx.profiles.draft(OWNER.uid)).toBeNull();
+    });
+  });
+});
+
+describe("a takedown by the Ship's open-network host", () => {
+  it("hides the public page while the host has taken down the account or the profile record, and only the picture for its picture", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      const page = await publicProfileProjection(ctx);
+      expect(page?.avatar).toEqual({ cid: PNG_CID, mimeType: "image/png", size: PNG.byteLength });
+      const takenDown = (subject: PublicTakedown["subject"]): PublicTakedown[] => [{ subject, ref: "audit_1", reason: "Impersonation", at: 1 }];
+
+      for (const subject of [
+        { $type: "com.atproto.admin.defs#repoRef", did: SHIP.did },
+        { $type: "com.atproto.repo.strongRef", uri: `at://${SHIP.did}/space.ship.profile/self`, cid: "bafyrecord1" },
+      ] satisfies PublicTakedown["subject"][]) {
+        repository.takedowns.mockResolvedValue(takenDown(subject));
+        expect(await publicProfileProjection(ctx)).toBeNull();
+        expect(await publicProfileAvatar(ctx)).toBeNull();
+      }
+      repository.takedowns.mockResolvedValue(takenDown({ $type: "com.atproto.repo.strongRef", uri: `at://${SHIP.did}/space.ship.note/self`, cid: "bafynote" }));
+      expect(await publicProfileProjection(ctx)).toEqual(page);
+      repository.takedowns.mockResolvedValue(takenDown({ $type: "com.atproto.admin.defs#repoBlobRef", did: SHIP.did, cid: PNG_CID }));
+      const { avatar: _picture, ...withoutPicture } = page ?? {};
+      expect(await publicProfileProjection(ctx)).toEqual(withoutPicture);
+      expect(await publicProfileAvatar(ctx)).toBeNull();
+      repository.takedowns.mockResolvedValue([]);
+      expect(await publicProfileProjection(ctx)).toEqual(page);
+      expect((await publicProfileAvatar(ctx))?.bytes).toEqual(PNG);
+
+      // The page fails closed while the host can't say what it has taken down.
+      repository.takedowns.mockRejectedValue(new Error("PDS unavailable"));
+      await expect(publicProfileProjection(ctx)).rejects.toThrow("PDS unavailable");
+      await expect(publicProfileAvatar(ctx)).rejects.toThrow("PDS unavailable");
     });
   });
 });
@@ -383,7 +419,7 @@ describe("the default profile", () => {
       expect(ctx.profiles.pendingPublication(OWNER.uid)).toEqual({ revision: 2, record });
       // Until the repository holds it, the profile reads as private.
       expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      expect(publicProfileProjection(ctx)).toBeNull();
+      expect(await publicProfileProjection(ctx)).toBeNull();
       expect(handleProfileGet(ctx).profile.published).toBeUndefined();
 
       await ensureDefaultProfile(OWNER.uid, ctx);
@@ -565,6 +601,7 @@ function profileContext(storage: DurableObjectStorage, { pds = true }: { pds?: b
       return { $type: "blob", ref: { $link: cid }, mimeType, size };
     }),
     readBlob: vi.fn<PublicRepository["readBlob"]>(),
+    takedowns: vi.fn<PublicRepository["takedowns"]>(async () => []),
     [Symbol.dispose]: vi.fn(),
   };
   const context = {

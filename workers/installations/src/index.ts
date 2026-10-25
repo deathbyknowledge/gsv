@@ -22,6 +22,7 @@ import { InstallationBootstrapService, parseOperatorAccessMode } from "./bootstr
 import { InstallationOperatorHttp, OperatorInstallationAdminAccess } from "./operator-http";
 import { createAccountsDeletionRuntime } from "./deletion-runtime";
 import { configuredDeletionEnvironment, type DeletionResourceEnvironment } from "./deletion-verifier";
+import { ShipTakedowns } from "./admin/takedowns";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
 
 export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment & OperatorEnvironment>
@@ -55,6 +56,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
       {},
       createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)),
       new ShipInsight(this.env.INSTALLATIONS_DB, { gateway: this.env.OPERATOR_GATEWAY, mailDomain: this.env.GSV_MAIL_DOMAIN }),
+      this.env.PDS_MODERATION ? new ShipTakedowns(this.env.PDS_MODERATION) : undefined,
     );
     const response = await api.handle(request);
     if (response) return response;

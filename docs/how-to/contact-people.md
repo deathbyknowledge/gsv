@@ -95,6 +95,14 @@ record and keeps the profile private until you publish again;
 existing contacts and conversations remain. People who already viewed it may
 retain copies. A Ship whose owner already saved, published or unpublished a profile
 keeps it exactly as it was; only a Ship with no saved profile gets the public default.
+If your operator takes down your profile, its picture, something else your Ship
+published or your whole Ship on the open network, your handle at the bottom of
+People reads **taken down**, and your profile lists each takedown with the
+reason your operator gave. A profile that is down is labelled **taken down**
+too. People on the open network can't see what is down until your operator
+restores it. While your whole Ship is down, neither you nor your Ship can
+publish or message your contacts: a message or message request you send fails
+at once and says why. Messages from your contacts still arrive.
 The published page uses Ship's cursor icon in the browser tab, the same pale block on a dark square as the app.
 On phones, the profile editor keeps its title and back arrow above the scrolling
 form. The same lavender edge used in conversations appears only while text crosses
