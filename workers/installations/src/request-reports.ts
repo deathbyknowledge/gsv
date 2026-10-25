@@ -152,12 +152,17 @@ export class RequestReports {
   }
 }
 
-/** Only the Kernel's deployment-granted binding may file a person's report. */
+/** Only the Kernel's deployment-granted binding may file a person's report, whichever database keeps the queue. */
+export async function fileKernelReport(db: D1Database, props: { authority?: string } | undefined,
+  input: RequestReportSubmission): Promise<RequestReportReceipt> {
+  if (props?.authority !== "kernel-report") throw new Error("Request report authority is required");
+  return await new RequestReports(db).submit(input);
+}
+
 export class RequestReportsEntrypoint extends WorkerEntrypoint<{ INSTALLATIONS_DB: D1Database }, { authority: "kernel-report" }>
   implements RequestReportService {
   async submitRequestReport(input: RequestReportSubmission): Promise<RequestReportReceipt> {
-    if (this.ctx.props?.authority !== "kernel-report") throw new Error("Request report authority is required");
-    return await new RequestReports(this.env.INSTALLATIONS_DB).submit(input);
+    return await fileKernelReport(this.env.INSTALLATIONS_DB, this.ctx.props, input);
   }
 }
 
