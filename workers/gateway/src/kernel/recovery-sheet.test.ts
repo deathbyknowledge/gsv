@@ -3,11 +3,14 @@ import type { InstallationOwnerConfirmationService, OwnerConfirmationRequestResu
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../test-support/peers";
 import type { KernelContext } from "./context";
-import { handleRecoveryGet, handleRecoverySet, RECOVERY_PASSWORD_WINDOW_MS, RecoverySheetStore } from "./recovery-sheet";
+import { passwordWaitMessage } from "./password-attempts";
+import { handleRecoveryGet, handleRecoverySet, RecoverySheetStore } from "./recovery-sheet";
 
 const OWNER: ProcessIdentity = { uid: 1000, gid: 1000, gids: [100, 1000], username: "alice", home: "/home/alice", cwd: "/home/alice" };
 const ACCOUNT = { did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", handle: "alice.ship.space", host: "https://pds.ship.space" };
 const PASSWORD = "correct horse";
+// The keyed hash of the address the person signed in from.
+const SOURCE = "5f0c2a9e41d7b8a3c6e2f1d0a9b8c7d6";
 const CODE = "424242";
 // The sheets from the derivation's fixed vectors, with their sheet codes.
 const SHEET = "did:key:zDnaewGvRNmdcuZt2bW7LxUWxazHNEUMBQmpF9UqyVVVs19Hk";
@@ -103,27 +106,19 @@ describe("the password", () => {
     expect(confirmations.requestOwnerConfirmation).not.toHaveBeenCalled();
   });
 
-  it("takes an attempt before checking, so five wrong passwords in 15 minutes stop even parallel tries", async () => {
-    vi.useFakeTimers({ toFake: ["Date"], now: 1_000_000 });
+  it("checks the password as signing in does, counted for the person and the address they signed in from", async () => {
     const { ctx } = harness();
-    const tries = await Promise.all(Array.from({ length: 7 }, () => handleRecoverySet({ key: SHEET }, ctx, confirmation(undefined, "wrong"))));
-    expect(tries.filter((result) => result.status === "refused" && result.reason === "password")).toHaveLength(5);
-    expect(tries.filter((result) => result.status === "refused" && result.reason === "attempts")).toEqual([
-      { status: "refused", reason: "attempts", retryAt: 1_000_000 + RECOVERY_PASSWORD_WINDOW_MS },
-      { status: "refused", reason: "attempts", retryAt: 1_000_000 + RECOVERY_PASSWORD_WINDOW_MS },
-    ]);
-    expect(ctx.auth.authenticate).toHaveBeenCalledTimes(5);
-    expect(await handleRecoverySet({ key: SHEET }, ctx, confirmation())).toMatchObject({ status: "refused", reason: "attempts" });
-
-    vi.setSystemTime(1_000_000 + RECOVERY_PASSWORD_WINDOW_MS);
-    expect(await handleRecoverySet({ key: SHEET }, ctx, confirmation())).toMatchObject({ status: "code-sent" });
+    await handleRecoverySet({ key: SHEET }, ctx, confirmation());
+    expect(ctx.auth.authenticate).toHaveBeenCalledExactlyOnceWith(OWNER.username, PASSWORD, SOURCE);
   });
 
-  it("counts only wrong passwords", async () => {
-    const { ctx } = harness();
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      expect(await handleRecoverySet({ key: SHEET }, ctx, confirmation())).toMatchObject({ status: "code-sent" });
-    }
+  it("gives the same answer during a wait whether or not the password is right, and asks Accounts nothing", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: 1_000_000 });
+    const { ctx, confirmations } = harness({ waitMs: 30_000 });
+    const waiting = { status: "refused", reason: "attempts", retryAt: 1_030_000 };
+    expect(await handleRecoverySet({ key: SHEET }, ctx, confirmation())).toEqual(waiting);
+    expect(await handleRecoverySet({ key: SHEET }, ctx, confirmation(undefined, "wrong"))).toEqual(waiting);
+    expect(confirmations.requestOwnerConfirmation).not.toHaveBeenCalled();
   });
 });
 
@@ -233,7 +228,7 @@ function confirmation(code?: string, password = PASSWORD) {
 
 function harness(options: {
   account?: boolean; key?: string | null; pending?: boolean; request?: OwnerConfirmationRequestResult;
-  credentialEpoch?: number; overrides?: Partial<KernelContext>;
+  credentialEpoch?: number; waitMs?: number; overrides?: Partial<KernelContext>;
 } = {}) {
   const listed = { ownerRecoveryKey: options.key ?? null, pending: options.pending ?? false };
   const repository = {
@@ -270,11 +265,15 @@ function harness(options: {
     installationId: "inst_alice",
     env: { PDS: { getInstallation: async () => repository }, INSTALLATION_OWNER_CONFIRMATIONS: confirmations },
     peer: testPeer({ account: OWNER, calls: ["atproto.*"] }),
-    connection: { state: { step: "connected", credentialEpoch: 0 } },
+    connection: { state: { step: "connected", credentialEpoch: 0, source: SOURCE } },
     auth: {
       getHumanAccount: () => ({ uid: OWNER.uid, gid: OWNER.gid, username: OWNER.username, home: OWNER.home }),
       credentialEpoch: () => options.credentialEpoch ?? 0,
-      authenticate: vi.fn(async (_username: string, password: string) => password === PASSWORD ? { ok: true } : { ok: false, error: "Authentication failed" }),
+      // While sign-in pacing makes an attempt wait, the password goes unchecked.
+      authenticate: vi.fn(async (_username: string, password: string, _source: string | null) => {
+        if (options.waitMs !== undefined) return { ok: false, error: passwordWaitMessage(options.waitMs), waitMs: options.waitMs };
+        return password === PASSWORD ? { ok: true } : { ok: false, error: "Authentication failed" };
+      }),
     },
     recoverySheet: new RecoverySheetStore(storage as never),
     requestSignal: new AbortController().signal,

@@ -250,7 +250,10 @@ A wrong password answers `401`. Passwords are paced:
 
 An IPv4 address counts exactly, and an IPv6 address counts by its /64; an
 IPv4-mapped IPv6 address counts as its IPv4 address. The Kernel keeps an
-address only as a hash keyed to that Ship.
+address only as a hash keyed to that Ship. A password checked later in a
+signed-in session, such as for a
+[recovery sheet](syscalls.md#recovery-sheet) change, counts with the address
+that session signed in from.
 
 While any of these applies, the password isn't checked: the attempt answers `429`
 with the same message whether or not it was right, such as "Too many sign-in

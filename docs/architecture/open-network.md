@@ -121,9 +121,12 @@ password and a code that Accounts emails them for exactly that change: the
 SHA-256 of `{"from": <listed key or null>, "to": <new key or null>}`. Accounts
 keeps only a keyed hash of each code. A code expires after ten minutes and works
 once, and five wrong tries use it up. Accounts sends at most one a minute and
-five an hour for each Ship. The Kernel allows five wrong passwords in 15
-minutes, and takes an attempt before checking one, so parallel tries can't pass
-the limit.
+five an hour for each Ship. The password is paced as
+[signing in](../reference/websocket-protocol.md#sys-connect) is, and counts with
+it: wrong passwords for the sheet and at sign-in add up for the person and for
+the address their session signed in from. Each attempt counts before its
+password is checked, so parallel tries can't pass a limit, and while a wait
+applies no password is checked.
 
 The password alone confirms a change only when Accounts sends no email at all,
 which is a fact of its deployment. When Accounts is pacing codes, has no

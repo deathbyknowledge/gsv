@@ -57,8 +57,10 @@ Both take your password and a new emailed code.
 
 ## If something stops you
 
-- **The password isn't right.** After five wrong passwords in 15 minutes, wait
-  until the time Settings shows.
+- **The password isn't right.** Wrong passwords here count with the ones you
+  type to sign in. After five in a row, wait until the time Settings shows: 30
+  seconds at first, then longer after each wrong one. Until then no password is
+  checked, even the right one.
 - **The code isn't right or has expired.** A code works once, for 10 minutes,
   and five wrong tries use it up. Continue to get a new one; we send at most one
   a minute and five an hour.

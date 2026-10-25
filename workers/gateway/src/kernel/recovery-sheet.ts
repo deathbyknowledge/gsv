@@ -19,9 +19,6 @@ import { withRepository } from "./atproto";
 import { principalOf, type KernelContext } from "./context";
 
 const SHEET_KEY = "recovery_sheet_v1";
-const PASSWORD_ATTEMPTS_KEY = "recovery_sheet_password_attempts_v1";
-export const RECOVERY_PASSWORD_ATTEMPT_LIMIT = 5;
-export const RECOVERY_PASSWORD_WINDOW_MS = 15 * 60 * 1000;
 /** A password and a code fit easily; a body any larger is refused unread. */
 const CONFIRMATION_MAX_BYTES = 4096;
 
@@ -34,10 +31,7 @@ const confirmationSchema = z.strictObject({
 type MadeSheet = { key: string; madeAt: number };
 type ListedKey = { ownerRecoveryKey: string | null; pending: boolean };
 
-/**
- * The sheet this Ship made, and the password attempts its changes took,
- * beside the Kernel where no syscall reaches them.
- */
+/** The sheet this Ship made, beside the Kernel where no syscall reaches it. */
 export class RecoverySheetStore {
   constructor(private readonly storage: DurableObjectStorage) {}
 
@@ -48,30 +42,6 @@ export class RecoverySheetStore {
   remember(key: string | null, now: number): void {
     if (key === null) this.storage.kv.delete(SHEET_KEY);
     else this.storage.kv.put(SHEET_KEY, { key, madeAt: now });
-  }
-
-  /**
-   * Takes one password attempt before the password is checked, so tries made
-   * in parallel can't pass the limit. Returns when the next is free, or null
-   * when this one was.
-   */
-  takeAttempt(now: number): number | null {
-    const recent = this.attempts(now);
-    if (recent.length >= RECOVERY_PASSWORD_ATTEMPT_LIMIT) return recent[0]! + RECOVERY_PASSWORD_WINDOW_MS;
-    this.storage.kv.put(PASSWORD_ATTEMPTS_KEY, [...recent, now]);
-    return null;
-  }
-
-  /** A right password gives its attempt back, so only wrong ones count. */
-  returnAttempt(takenAt: number): void {
-    const recent = this.attempts(takenAt);
-    const taken = recent.indexOf(takenAt);
-    if (taken >= 0) recent.splice(taken, 1);
-    this.storage.kv.put(PASSWORD_ATTEMPTS_KEY, recent);
-  }
-
-  private attempts(now: number): number[] {
-    return (this.storage.kv.get<number[]>(PASSWORD_ATTEMPTS_KEY) ?? []).filter((at) => at > now - RECOVERY_PASSWORD_WINDOW_MS);
   }
 }
 
@@ -103,11 +73,14 @@ export async function handleRecoverySet(
   const confirmations = ctx.env.INSTALLATION_OWNER_CONFIRMATIONS;
   if (!ctx.env.PDS || !confirmations) throw new Error("Recovery sheets aren't available on this deployment");
 
+  // Wrong passwords here and at sign-in count together, for the person and the address they signed in from.
   const now = Date.now();
-  const retryAt = ctx.recoverySheet.takeAttempt(now);
-  if (retryAt !== null) return { status: "refused", reason: "attempts", retryAt };
-  if (!(await ctx.auth.authenticate(person.username, confirmation.password)).ok) return { status: "refused", reason: "password" };
-  ctx.recoverySheet.returnAttempt(now);
+  const checked = await ctx.auth.authenticate(person.username, confirmation.password, ctx.connection?.state.source ?? null);
+  if (!checked.ok) {
+    return checked.waitMs === undefined
+      ? { status: "refused", reason: "password" }
+      : { status: "refused", reason: "attempts", retryAt: now + checked.waitMs };
+  }
 
   return await withRepository(ctx, async (repository) => {
     const [account, listed] = await raceWithAbort(Promise.all([repository.account(), repository.ownerRecoveryKey()]), ctx.requestSignal);

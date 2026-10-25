@@ -1301,8 +1301,11 @@ enters the syscall ledger. A call without a code asks Accounts to email one for
 exactly this change and returns `code-sent`; the same call with the code makes
 the change. Each code works once, for that change only, and expires after ten
 minutes. Accounts sends at most one a minute and five an hour, and five wrong
-codes use one up. Five wrong passwords in 15 minutes refuse further tries until
-`retryAt`. Each change is then emailed to the person with its sheet code.
+codes use one up. The password is paced with
+[signing in](websocket-protocol.md#sys-connect), counted for the person and the
+address their session signed in from; while a wait applies, the password isn't
+checked and the call answers `attempts` until `retryAt`. Each change is then
+emailed to the person with its sheet code.
 
 The password alone makes the change only when the deployment's Accounts sends
 no email at all. When Accounts is pacing codes, can't reach the person or

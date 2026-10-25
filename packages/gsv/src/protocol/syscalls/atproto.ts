@@ -98,7 +98,7 @@ export type AtprotoRecoveryConfirmation = { password: string; code?: string };
  * - `code-sent`: Accounts emailed the person a code for this change; call again with it.
  * - `refused`: nothing changed, because:
  *   - `password`: the password is wrong;
- *   - `attempts`: five wrong passwords in 15 minutes, until `retryAt`;
+ *   - `attempts`: too many wrong passwords, counted with signing in's, so the password went unchecked until `retryAt`;
  *   - `code`: the code is wrong;
  *   - `code-expired`: no code is open for this change any more, so ask for a new one;
  *   - `wait`: a code went out too recently, until `retryAt`;

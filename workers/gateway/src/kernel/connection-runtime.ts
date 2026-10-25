@@ -219,6 +219,8 @@ async handleSysConnect(
       clientPlatform: clientPlatform || undefined,
       credentialMethod: frame.args.auth?.token ? "token" : "password",
       credentialEpoch,
+      // A password checked later in the session is paced with its sign-in's.
+      source: connection.state.source,
     } satisfies ConnectionState & { step: "connected" };
 
     if (
