@@ -1988,7 +1988,7 @@ export class ProcessRun {
   }
 
   async managedWorkGate() {
-    this.gate ??= new ManagedInstallationGate(this.host.env, () => this.host.installationId);
+    this.gate ??= new ManagedInstallationGate(() => this.host.kernel.installationWorkGate());
     return await this.gate.check();
   }
 

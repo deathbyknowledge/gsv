@@ -319,6 +319,18 @@ describe("Kernel service peer identity", () => {
   });
 });
 
+describe("Kernel installation gate for Processes", () => {
+  it("answers from its own record and refuses for a retired installation without asking further", async () => {
+    const kernel = bareKernel();
+    const managedWorkGate = vi.fn(async () => ({ allowed: true }));
+    kernel.onboarding = { managedWorkGate };
+    await expect(kernel.installationWorkGate()).resolves.toEqual({ allowed: true });
+    kernel.retirement = { assertActive: vi.fn(), state: { phase: "quiescing" } };
+    await expect(kernel.installationWorkGate()).resolves.toEqual({ allowed: false, code: 503, message: "Managed installation is unavailable" });
+    expect(managedWorkGate).toHaveBeenCalledOnce();
+  });
+});
+
 describe("Kernel managed adapter unlink", () => {
   it("cleans the exact revoked generation after a peer moves without deleting a successor", async () => {
     await runWithRealKernelSql(async (sql) => {
@@ -591,6 +603,7 @@ describe("Kernel frame bodies", () => {
     kernel.env = { INSTALLATION_DIRECTORY: {
       resolveInstallation: async (installationId: string) => ({ found: true, installationId, state: "active" }),
     } };
+    kernel.ctx = { storage: { kv: { get: () => undefined } } };
     kernel.installationId = TEST_INSTALLATION_ID;
     kernel.transport.frameBodyChannels = new Map();
     kernel.auth = { isSetupMode: () => false };

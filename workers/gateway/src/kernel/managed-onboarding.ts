@@ -20,10 +20,13 @@ import {
   handleSysSetupAssist,
 } from "./sys/setup-assist";
 import {
-  ManagedInstallationGate,
+  RecordedInstallationGate,
   resolveManagedInstallationById,
   setupRecoveryDetails,
 } from "../installation/lifecycle";
+import type {
+  InstallationDirectoryResult,
+} from "@humansandmachines/gsv/protocol";
 import type {
   GatewayEnv,
 } from "../runtime-env";
@@ -47,7 +50,7 @@ type SetupFailureProperties = Extract<TelemetryEvent, { name: "installation.setu
 type SetupFailureRecord = Pick<SetupFailureProperties, "diagnosticId" | "stage" | "step"> & { recordedAt: number; cause: string };
 
 export class ManagedOnboarding {
-  private gate?: ManagedInstallationGate;
+  private gate?: RecordedInstallationGate;
 
   constructor(readonly host: Kernel) {}
 
@@ -323,12 +326,27 @@ managedOnboardingService(): GatewayEnv["INSTALLATION_DIRECTORY"] | null {
 /** `fresh` asks Accounts even after a recent confirmation; use it before granting new authority. */
   async managedWorkGate(options: { fresh?: boolean } = {}) {
     this.host.retirement.assertActive();
-    this.gate ??= new ManagedInstallationGate(this.host.env, () => this.host.installationId);
-    return await this.gate.check(options);
+    return await this.workGate().check(options);
   }
 
   /** A lifecycle change from Accounts must apply before the next admission. */
   invalidateWorkGate(): void {
     this.gate?.invalidate();
+  }
+
+  /**
+   * Keeps the state Accounts' directory holds now, after Accounts said it
+   * changed, and returns the revision the Kernel holds. A retired Kernel
+   * admits nothing whatever the state, so it keeps none.
+   */
+  followInstallationState(installation: Extract<InstallationDirectoryResult, { found: true }>): number | undefined {
+    if (installation.installationId !== this.host.installationId) throw new Error("Installation state belongs to another installation");
+    if (this.host.retirement.state) return installation.stateRevision;
+    return this.workGate().follow(installation);
+  }
+
+  private workGate(): RecordedInstallationGate {
+    this.gate ??= new RecordedInstallationGate(this.host.env, () => this.host.installationId, this.host.ctx.storage.kv);
+    return this.gate;
   }
 }

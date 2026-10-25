@@ -3,7 +3,7 @@ import type {
   InstallationDirectoryService,
 } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ManagedInstallationGate, managedInstallationWorkGate, setupFeatures } from "./lifecycle";
+import { MANAGED_INSTALLATION_STATE_KEY, RecordedInstallationGate, managedInstallationWorkGate, setupFeatures } from "./lifecycle";
 
 function directory(
   result: InstallationDirectoryResult,
@@ -119,6 +119,24 @@ describe("managed installation lifecycle", () => {
   });
 });
 
+/** What Accounts answers for the installation, which a test changes as Accounts would. */
+type DirectoryAnswer = { answer: InstallationDirectoryResult };
+
+/** A Durable Object's synchronous key-value storage, kept in memory. */
+function memoryKv(): SyncKvStorage & { values: Map<string, unknown> } {
+  const values = new Map<string, unknown>();
+  return {
+    values,
+    // SAFETY: tests store only the plain records the gate writes.
+    get: <T>(key: string) => structuredClone(values.get(key)) as T | undefined,
+    put: <T>(key: string, value: T) => { values.set(key, structuredClone(value)); },
+    delete: (key: string) => values.delete(key),
+    // SAFETY: tests store only the plain records the gate writes.
+    list: <T>() => values.entries() as Iterable<[string, T]>,
+  };
+}
+
+// These answers carry no revision: an Accounts that doesn't number its changes doesn't tell the Kernel of them either.
 describe("managed installation gate", () => {
   const active: InstallationDirectoryResult = {
     found: true, installationId: "inst_gate", handle: "gate", canonicalOrigin: "https://gate.example", state: "active",
@@ -129,7 +147,8 @@ describe("managed installation gate", () => {
 
   function gateWith(resolveInstallation: InstallationDirectoryService["resolveInstallation"]) {
     const service: InstallationDirectoryService = { resolveHostname: vi.fn(), resolveInstallation: vi.fn(resolveInstallation) };
-    return { service, gate: new ManagedInstallationGate({ INSTALLATION_DIRECTORY: service }, () => "inst_gate") };
+    const kv = memoryKv();
+    return { service, kv, gate: new RecordedInstallationGate({ INSTALLATION_DIRECTORY: service }, () => "inst_gate", kv) };
   }
 
   it("asks Accounts once a minute while the installation stays active", async () => {
@@ -211,5 +230,111 @@ describe("managed installation gate", () => {
     const checked = gate.check();
     await vi.advanceTimersByTimeAsync(2_001);
     await expect(checked).resolves.toEqual(unreachable);
+  });
+
+  it("keeps no record of an answer without a revision", async () => {
+    const { kv, gate } = gateWith(async () => active);
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    expect(kv.values.size).toBe(0);
+  });
+});
+
+describe("a Kernel's record of its installation state", () => {
+  const identity = { found: true as const, installationId: "inst_record", handle: "record", canonicalOrigin: "https://record.example" };
+  const suspended = { allowed: false, code: 423, message: "Managed installation is suspended" };
+
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  /** A Kernel whose Accounts answers with `answer`, which a test changes as Accounts would. */
+  function kernelWith(initial: Extract<InstallationDirectoryResult, { found: true }>) {
+    const accounts: DirectoryAnswer = { answer: initial };
+    const resolveInstallation = vi.fn(async () => accounts.answer);
+    const kv = memoryKv();
+    const gate = new RecordedInstallationGate(
+      { INSTALLATION_DIRECTORY: { resolveHostname: vi.fn(), resolveInstallation } }, () => identity.installationId, kv);
+    return { accounts, resolveInstallation, kv, gate };
+  }
+
+  it("asks Accounts once, then answers from its record however long it runs", async () => {
+    vi.useFakeTimers();
+    const { resolveInstallation, kv, gate } = kernelWith({ ...identity, state: "active", stateRevision: 4 });
+    await expect(Promise.all([gate.check(), gate.check()])).resolves.toEqual([{ allowed: true }, { allowed: true }]);
+    vi.advanceTimersByTime(24 * 60 * 60_000);
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    expect(resolveInstallation).toHaveBeenCalledTimes(1);
+    expect(kv.values.get(MANAGED_INSTALLATION_STATE_KEY)).toEqual({ state: "active", revision: 4 });
+  });
+
+  it("follows each change Accounts reports, and a late report never undoes a newer one", async () => {
+    const { resolveInstallation, gate } = kernelWith({ ...identity, state: "active", stateRevision: 1 });
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    expect(gate.follow({ ...identity, state: "restricted", stateRevision: 3 })).toBe(3);
+    await expect(gate.check()).resolves.toEqual(suspended);
+    // A retry of the earlier reactivation arrives after the suspension it preceded.
+    expect(gate.follow({ ...identity, state: "active", stateRevision: 2 })).toBe(3);
+    await expect(gate.check()).resolves.toEqual(suspended);
+    expect(gate.follow({ ...identity, state: "active", stateRevision: 4 })).toBe(4);
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    expect(resolveInstallation).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops admitting once Accounts retires the installation", async () => {
+    const { gate } = kernelWith({ ...identity, state: "active", stateRevision: 1 });
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    expect(gate.follow({ ...identity, state: "retained", stateRevision: 2 })).toBe(2);
+    await expect(gate.check()).resolves.toEqual({ allowed: false, code: 503, message: "Managed installation is unavailable" });
+  });
+
+  it("asks Accounts before granting new authority, and keeps a newer answer", async () => {
+    const { accounts, resolveInstallation, gate } = kernelWith({ ...identity, state: "active", stateRevision: 1 });
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    accounts.answer = { ...identity, state: "restricted", stateRevision: 2 };
+    await expect(gate.check({ fresh: true })).resolves.toEqual(suspended);
+    await expect(gate.check()).resolves.toEqual(suspended);
+    expect(resolveInstallation).toHaveBeenCalledTimes(2);
+  });
+
+  it("answers from a newer notice that arrived while Accounts answered", async () => {
+    let answer!: (result: InstallationDirectoryResult) => void;
+    const { gate, resolveInstallation } = kernelWith({ ...identity, state: "active", stateRevision: 1 });
+    resolveInstallation.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    const checked = gate.check();
+    await vi.waitFor(() => expect(resolveInstallation).toHaveBeenCalledOnce());
+    gate.follow({ ...identity, state: "restricted", stateRevision: 2 });
+    answer({ ...identity, state: "active", stateRevision: 1 });
+    await expect(checked).resolves.toEqual(suspended);
+    await expect(gate.check()).resolves.toEqual(suspended);
+  });
+
+  it("keeps no setup state, so a Ship being set up asks until it is active", async () => {
+    const { accounts, resolveInstallation, kv, gate } = kernelWith({ ...identity, state: "provisioning", stateRevision: 0 });
+    await expect(gate.check()).resolves.toMatchObject({ allowed: false, code: 503, message: "Finish setting up your Ship" });
+    expect(kv.values.size).toBe(0);
+    accounts.answer = { ...identity, state: "active", stateRevision: 1 };
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    expect(resolveInstallation).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps nothing from a failed lookup, so the next check asks again", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { resolveInstallation, kv, gate } = kernelWith({ ...identity, state: "active", stateRevision: 1 });
+    resolveInstallation.mockRejectedValueOnce(new Error("Network connection lost"));
+    await expect(gate.check()).resolves.toEqual({ allowed: false, code: 503, message: "Ship is briefly unreachable; try again in a moment" });
+    expect(kv.values.size).toBe(0);
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    expect(resolveInstallation).toHaveBeenCalledTimes(2);
+  });
+
+  it("forgets its record once Accounts stops numbering changes", async () => {
+    vi.useFakeTimers();
+    const { accounts, resolveInstallation, kv, gate } = kernelWith({ ...identity, state: "active", stateRevision: 2 });
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    accounts.answer = { ...identity, state: "active" };
+    await expect(gate.check({ fresh: true })).resolves.toEqual({ allowed: true });
+    expect(kv.values.size).toBe(0);
+    vi.advanceTimersByTime(60_001);
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    expect(resolveInstallation).toHaveBeenCalledTimes(3);
   });
 });

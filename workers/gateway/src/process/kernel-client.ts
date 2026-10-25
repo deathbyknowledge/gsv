@@ -19,6 +19,8 @@ import { routedFetchOptionsSchema } from "./internal/schemas";
 import type { Process } from "./do";
 import type { ProcessApprovalTarget, ProcessApprovalTargetRef, ProcessMemoryReview } from "../protocol/process-frames";
 import { raceWithAbort } from "../shared/abort";
+import { UNREACHABLE, type ManagedInstallationWorkGate } from "../installation/lifecycle";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 
 export class ProcessKernelClient {
   constructor(private readonly host: Process) {}
@@ -26,6 +28,17 @@ export class ProcessKernelClient {
   async queueMemoryReview(review: ProcessMemoryReview): Promise<void> {
     const kernel = await getKernelPtr(this.host.installationId);
     await kernel.queueProcessMemoryReview(this.host.pid, review);
+  }
+
+  /** The Kernel answers from its record of the installation; a failed call fails closed. */
+  async installationWorkGate(): Promise<ManagedInstallationWorkGate> {
+    try {
+      const kernel = await getKernelPtr(this.host.installationId);
+      return await kernel.installationWorkGate();
+    } catch (error) {
+      console.warn("[Installation gate] Kernel lookup failed:", exceptionDiagnostics(error));
+      return UNREACHABLE;
+    }
   }
 
   async resolveApprovalTarget(ref: ProcessApprovalTargetRef, signal?: AbortSignal): Promise<ProcessApprovalTarget> {
