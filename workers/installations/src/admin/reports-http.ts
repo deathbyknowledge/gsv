@@ -100,10 +100,10 @@ export class RequestReportsHttp {
     await this.audited(request, { name: "ship.takedown", installationId: sender.installationId, reason, detail: { subject: "account", report: report.id } },
       async (eventId) => {
         const event = closingEvent(eventId);
-        await takedowns.takeDown(sender.installationId, { subject: "account", reason }, event);
-        return await this.reports.closeTakenDown(report.sender.did, event);
+        const { bluesky } = await takedowns.takeDown(sender.installationId, { subject: "account", reason }, event);
+        return { closed: await this.reports.closeTakenDown(report.sender.did, event), bluesky };
       },
-      (closed) => ({ detail: { subject: "account", report: report.id, closed: String(closed) } }));
+      ({ closed, bluesky }) => ({ detail: { subject: "account", report: report.id, closed: String(closed), bluesky } }));
   }
 }
 

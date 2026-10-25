@@ -225,6 +225,7 @@ Accounts Ship page ── audit event, reason ── PDS_MODERATION ──▶ Ho
                                              operator-moderation       │ every public read honours them
 People, atproto identity ◀── Kernel ◀── PDS (kernel-publish) ◀─────────┘
 /profile, /.well-known/atproto-did ◀─┘
+Accounts ── OPERATOR_GATEWAY: operatorTakedownsChanged ──▶ Kernel ── Bluesky's copy ──▶ HostedRepo
 ```
 
 The PDS keeps each takedown with the Ship's repository and honours it in every
@@ -256,10 +257,17 @@ while it is down would reach Bluesky. The Kernel keeps the Bluesky copy of the
 profile from showing what the host hid. It reads the takedowns as it publishes:
 while the account, the profile record or the copy is down, it deletes the copy
 instead of writing it, and while the picture's file is down it leaves the
-picture out. The copy Bluesky already shows stays until the person next
-publishes. After the operator restores the profile, the copy or the file, the
-next of those checks writes the full copy again. To take a Ship off Bluesky at
-once, take its account down, which relays announce to apps.
+picture out. Each takedown and restore also reaches the Ship at once. Once the
+PDS holds the change, Accounts calls `operatorTakedownsChanged` on its
+`OPERATOR_GATEWAY` binding, which reaches only an active or suspended Ship. The
+Kernel reads the takedowns and, under the lock its publishing takes, deletes or
+rewrites the copy in one commit. It answers only `removed`, `updated` or
+`unchanged`. While the whole account is down the PDS refuses the Ship's writes,
+so the copy stays as it is; relays hide the account meanwhile, and restoring
+the account tells the Ship again. If the Ship can't be told, the change still
+stands and its audit entry says `unreachable`. Taking the subject down again
+tells the Ship again, and a restore it missed reaches Bluesky at the person's
+next sign-in or message.
 
 The Ship's own pages honour the same takedowns. For each request to `/profile`
 or `/profile/avatar`, the Kernel asks the PDS what it has taken down rather
@@ -270,7 +278,7 @@ claims no handle for an account that is down, as Bluesky's PDS does. Other
 Ships read profiles from the PDS, so `profile.resolve` finds no public profile.
 
 Accounts records each takedown and restore in the operator audit log, with the
-operator's reason. A takedown requires a reason, and the PDS keeps the audit
+operator's reason and what became of the Bluesky copy. A takedown requires a reason, and the PDS keeps the audit
 event's ID as the takedown's `ref`. The person sees each takedown and its
 reason in People, and their Ship reads them with `atproto identity`.
 [Take down what a Ship publishes](../how-to/operate-gsv.md#take-down-what-a-ship-publishes)
