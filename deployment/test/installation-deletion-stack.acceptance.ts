@@ -148,7 +148,7 @@ describe("public multi-worker deletion acceptance", () => {
       pendingClaims.push({ pairing: { id: pairing.id, secret: pairing.secret, credential: createPairingCredential() }, recovery, authorization });
     }
     const oldEnrollment = await openSocket("first");
-    const reset = await post(`/admin/api/installations/${a.installationId}/reset`, { operationId: "reset-first", confirmHandle: "first" });
+    const reset = await post(`/admin/api/installations/${a.installationId}/reset`, { operationId: "reset-first", confirmHandle: "first", reason: "deletion acceptance" });
     expect(reset.status).toBe(201);
     const replacement = createdSchema.parse(await reset.json());
     expect(replacement.installation.installationId).not.toBe(a.installationId);

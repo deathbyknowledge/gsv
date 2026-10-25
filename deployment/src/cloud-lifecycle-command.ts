@@ -121,7 +121,7 @@ export function cloudLifecycleDependencies(input: { configuration: LifecycleConf
     }); },
     async login(gateway, root) { try { return await connected(gateway, async () => true, root); }
       catch (error) { if (error instanceof GsvClientError && error.code === 401) return false; throw error; } },
-    async reset(id, operationId, confirmHandle) { return lifecycleIssuedSchema.parse(await admin(`/${encodeURIComponent(id)}/reset`, { operationId, confirmHandle })); },
+    async reset(id, operationId, confirmHandle) { return lifecycleIssuedSchema.parse(await admin(`/${encodeURIComponent(id)}/reset`, { operationId, confirmHandle, reason: "cloud lifecycle acceptance" })); },
     async setup(gateway, token) {
       const client = new GSVClient({ WebSocket: acceptanceWebSocket, defaultRequestTimeoutMs: 60_000 });
       try { await client.requestOnce(wsUrl(gateway.origin), "sys.setup", { ...gateway.credentials, onboardingToken: token, agentName: "algo" }); }
