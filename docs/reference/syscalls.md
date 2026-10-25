@@ -806,7 +806,7 @@ type ContactSummary = {
   ownerUid: number;
   state: "active" | "revoked";
   generation: string;
-  remoteDid?: string;
+  remoteDid?: string; // absent only for a contact that ended before DIDs
   remoteName: string;
   remoteHandle?: string;
   localAlias?: string;

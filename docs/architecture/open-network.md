@@ -74,36 +74,16 @@ with 429 `RateLimitExceeded` and a `retry-after` header:
 ## Contacts from before DIDs
 
 Before the open network, Ships named each other's people by a Ship key and an
-account subject. The upgrade keeps those contacts, blocks, message requests and
-deliveries in separate tables, and the operator moves them to DIDs once, from
-Accounts, in two passes over every active or suspended Ship:
+account subject. Every contact is now named by DID, and an active contact always
+has one. A contact that ended before DIDs keeps its conversation, marked ended,
+without a DID; to talk again, the two people connect anew. Messages archived
+before DIDs read without the old identifiers. A message from before DIDs whose
+author has no DID here keeps its text, but a reply can't point to it. An
+invitation code from before DIDs is refused with a request for a new one.
 
-```text
-Accounts: identity_moves, scheduled job          Gateway operator entrypoint → Kernel
-  survey ──────────────────────────────────▶  its person's old name and DID; the people its rows name
-  the operator reviews the totals and applies
-  move ──── its person and the DIDs it names ─▶  contact conversations, then one transaction for every row
-```
-
-- The survey gives a Ship with contacts its DID, and writes a profile published
-  before profiles were records to its repository. It changes no contact.
-- The move gives each conversation only the DIDs of its own two people, then
-  commits every row and deletes the old identity. A row naming someone without a
-  DID here ends: a person on another deployment, or a contact held by an account
-  other than the Ship's person. An outgoing message request its recipient never
-  received expires for its sender. Deliveries and requests in flight resume on
-  their own retry schedule.
-- Until its move, a Ship answers other Ships' calls with 503 and a five-minute
-  `retry-after`. It refuses new invitations, message requests and sends to a
-  contact from before DIDs with "Your contacts are moving to the open network.
-  Try again in a few minutes." A contact conversation keeps messages that name
-  people the old way out of its immutable archive until the move names them.
-- Repeating a finished move changes nothing. Accounts keeps each Ship's DID
-  and handle, the old identifiers its rows name, and the counts each pass
-  returned, never names or messages.
-
-[Move contacts to DIDs](../how-to/operate-gsv.md#move-contacts-to-dids) is the
-operator's procedure.
+A deployment whose Ships are from before the open network moves their contacts
+on an earlier revision before it updates; see
+[Update an existing deployment](../how-to/deploy-with-alchemy.md#update-an-existing-deployment).
 
 ## Publishing
 

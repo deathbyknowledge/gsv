@@ -489,18 +489,6 @@
         "docs/architecture/open-network.md",
         "docs/reference/syscalls.md"
       ]
-    },
-    {
-      "id": "identity-move",
-      "paths": [
-        "workers/gateway/src/kernel/federation/identity-move.ts",
-        "workers/installations/src/identity-moves.ts",
-        "workers/installations/src/admin/identity-move-*.ts"
-      ],
-      "docs": [
-        "docs/how-to/operate-gsv.md",
-        "docs/architecture/open-network.md"
-      ]
     }
   ]
 }
