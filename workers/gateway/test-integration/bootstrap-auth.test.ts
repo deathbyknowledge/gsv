@@ -132,6 +132,53 @@ describe("gateway authentication integration", () => {
     });
   });
 
+  it("waits after repeated wrong passwords, refusing even the right one, while signed-in sessions and tokens keep working", async () => {
+    await setup();
+    const signedIn = createClient({ username: USERNAME, password: PASSWORD, peer: peerInfo("signed-in-before") });
+    await signedIn.connect();
+    const issued = await signedIn.call<SysTokenCreateResult>("sys.token.create", { kind: "human", label: "pacing token" });
+
+    const answers: unknown[] = [];
+    for (let attempt = 0; attempt < 8; attempt++) {
+      answers.push(await connectOnce({
+        protocol: 4,
+        peer: peerInfo(`wrong-${attempt}`),
+        auth: { username: USERNAME, password: `wrong-${attempt}` },
+      }).catch((error: GsvClientError) => ({ code: error.code, message: error.message })));
+    }
+    const waiting = { code: 429, message: "Too many sign-in attempts. Try again in 1 minute." };
+    expect(answers).toEqual([
+      ...Array(5).fill({ code: 401, message: "Authentication failed" }),
+      ...Array(3).fill(waiting),
+    ]);
+    await expect(connectOnce({
+      protocol: 4,
+      peer: peerInfo("right-while-waiting"),
+      auth: { username: USERNAME, password: PASSWORD },
+    })).rejects.toMatchObject({ ...waiting, details: { retryAfterMs: expect.any(Number) } });
+
+    await expect(signedIn.proc.list()).resolves.toBeDefined();
+    const tokenUser = createClient({ username: USERNAME, token: issued.token.token, peer: peerInfo("token-while-waiting") });
+    await expect(tokenUser.connect()).resolves.toMatchObject({ peer: { principal: { kind: "human", account: { uid: 1000 } } } });
+  });
+
+  it("gives one address twenty wrong passwords an hour across the Ship's accounts", async () => {
+    await setup();
+    const tries = [...Array<string>(4).fill(USERNAME), ...Array<string>(4).fill("root"), ...Array<string>(12).fill("nobody")];
+    for (const [attempt, username] of tries.entries()) {
+      await expect(connectOnce({
+        protocol: 4,
+        peer: peerInfo(`address-${attempt}`),
+        auth: { username, password: `wrong-${attempt}` },
+      })).rejects.toMatchObject({ code: 401 });
+    }
+    await expect(connectOnce({
+      protocol: 4,
+      peer: peerInfo("address-right"),
+      auth: { username: USERNAME, password: PASSWORD },
+    })).rejects.toMatchObject({ code: 429, message: expect.stringContaining("Too many sign-in attempts") });
+  });
+
   it("enrolls an exact device through a resumable invitation without exposing a human credential", async () => {
     await setup();
     const user = createClient({ username: USERNAME, password: PASSWORD, peer: peerInfo("pairing-human") });

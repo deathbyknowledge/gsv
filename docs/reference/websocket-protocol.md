@@ -236,6 +236,24 @@ Password and token are mutually exclusive. A machine token is bound to the exact
 advertisement, not authority: the Kernel validates it and independently derives
 the returned grants.
 
+A wrong password answers `401`. Passwords are paced:
+
+- An account gets five wrong passwords in a row. The next attempt waits 30
+  seconds, and each wrong password after a wait doubles it, up to 15 minutes. A
+  right password ends the run, and a run is forgotten 15 minutes after its last
+  wrong password or wait.
+- One client address gets 20 wrong passwords an hour across all of a Ship's
+  accounts, root included. The Kernel keeps the address only as a hash keyed to
+  that Ship.
+
+While either applies, the password isn't checked: the attempt answers `429`
+with the same message whether or not it was right, such as "Too many sign-in
+attempts. Try again in 1 minute.", and `details.retryAfterMs`. Tokens and
+connections already signed in aren't affected. Git over HTTP is paced the same
+way: a password it refuses for a wait answers `429` with `Retry-After`, and a
+token is checked before any password, so using one never counts as a wrong
+password.
+
 ### Response
 
 ```json

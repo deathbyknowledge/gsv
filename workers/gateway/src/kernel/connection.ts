@@ -14,6 +14,8 @@ export type KernelConnectionState = {
   credentialMethod?: "password" | "token";
   credentialEpoch?: number;
   observedProcessIds?: string[];
+  /** The keyed hash of the client's address, which paces its sign-in attempts. */
+  source?: string;
 };
 
 const KERNEL_CONNECTION_STATE_SCHEMA = z.object({
@@ -25,6 +27,7 @@ const KERNEL_CONNECTION_STATE_SCHEMA = z.object({
   credentialMethod: z.enum(["password", "token"]).optional(),
   credentialEpoch: z.number().int().nonnegative().optional(),
   observedProcessIds: z.array(z.string()).optional(),
+  source: z.string().optional(),
 }) satisfies z.ZodType<KernelConnectionState>;
 
 type ConnectionAttachment<State> = {
