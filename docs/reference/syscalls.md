@@ -1078,6 +1078,8 @@ type ShipProfileRecord = {
 };
 ```
 
+`lexicons/space/ship/profile.json` defines the record; [Lexicons](../architecture/open-network.md#lexicons)
+describes how Ship's lexicons become the SDK's validators.
 Readers ignore record fields they don't know and read an unknown `contactPolicy` as `closed`.
 The page shows the record's picture from the Ship's own host at `/profile/avatar`, served as a
 sandboxed image, and asks search engines not to index either. The page has no JSON form; other
@@ -1198,7 +1200,7 @@ type PublicBlobRef = { $type: "blob"; ref: { $link: string }; mimeType: string; 
 returns one result per change in order; a delete has no record CID. A
 collection is any valid NSID except one a Ship feature owns. Today that is
 `space.ship.profile`, the profile, which changes only in People. Ship's own
-lexicons use the `space.ship.*` namespace.
+lexicons use the `space.ship.*` namespace and live in `lexicons/space/ship/`.
 
 `atproto.blob.upload` takes a file of any type, up to 48 MiB, as a request body
 of declared length, and streams it to the repository. Uploading does not ask:

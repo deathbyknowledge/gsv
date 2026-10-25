@@ -478,6 +478,9 @@
     {
       "id": "open-network",
       "paths": [
+        "lexicons/**",
+        "tools/protocol/generate-ship-lexicons.mjs",
+        "tools/protocol/ship-lexicon-rules.mjs",
         "workers/pds/**",
         "packages/gsv/src/services/pds.ts",
         "packages/gsv/src/protocol/syscalls/atproto.ts",
