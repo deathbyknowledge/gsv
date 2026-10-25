@@ -258,6 +258,10 @@ import type {
   AtprotoBlobUploadResult,
   AtprotoIdentityArgs,
   AtprotoIdentityResult,
+  AtprotoRecoveryGetArgs,
+  AtprotoRecoveryGetResult,
+  AtprotoRecoverySetArgs,
+  AtprotoRecoverySetResult,
   AtprotoWriteArgs,
   AtprotoWriteResult,
 } from "./atproto";
@@ -382,6 +386,8 @@ export type SyscallDomains = {
   "atproto.write": { args: AtprotoWriteArgs; result: AtprotoWriteResult };
   "atproto.blob.upload": { args: AtprotoBlobUploadArgs; result: AtprotoBlobUploadResult };
   "atproto.blob.read": { args: AtprotoBlobReadArgs; result: AtprotoBlobReadResult };
+  "atproto.recovery.get": { args: AtprotoRecoveryGetArgs; result: AtprotoRecoveryGetResult };
+  "atproto.recovery.set": { args: AtprotoRecoverySetArgs; result: AtprotoRecoverySetResult };
 
   "approach.create": { args: ApproachCreateArgs; result: ApproachResult };
   "approach.get": { args: ApproachGetArgs; result: ApproachResult };

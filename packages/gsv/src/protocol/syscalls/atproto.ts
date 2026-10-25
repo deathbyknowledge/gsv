@@ -58,6 +58,59 @@ export type AtprotoWriteResult = PublicCommit;
 export type AtprotoBlobUploadArgs = { mimeType: string };
 export type AtprotoBlobUploadResult = { blob: PublicBlobRef };
 
+/** A recovery sheet the Ship's identity lists. Its words stay on the person's paper; the Ship knows only its public half. */
+export type RecoverySheet = {
+  /** The public sheet code printed on it, which tells the person which sheet is current. */
+  code: string;
+  /** When this Ship made it, or null for a sheet the Ship holds no record of making. */
+  madeAt: number | null;
+  /** True while the host has signed the change and the directory has yet to take it. */
+  pending: boolean;
+};
+
+export type AtprotoRecoveryGetArgs = Record<string, never>;
+/**
+ * Whether the Ship has an identity on the open network for a sheet to keep,
+ * which the sheet names, and the sheet it lists. The Ship's first outward act
+ * creates its identity; making a sheet never does.
+ */
+export type AtprotoRecoveryGetResult = {
+  available: boolean;
+  identity: { did: string; handle: string } | null;
+  sheet: RecoverySheet | null;
+};
+
+/**
+ * Makes, replaces or removes the recovery sheet. `key` is the sheet's public
+ * half, a P-256 did:key, which goes first among the identity's rotation keys
+ * in place of any earlier sheet; null removes the sheet. The request body
+ * carries an AtprotoRecoveryConfirmation, outside the syscall ledger. Only the
+ * signed-in person, in their own session, can call it.
+ */
+export type AtprotoRecoverySetArgs = { key: string | null };
+/**
+ * The request body of atproto.recovery.set: the person's password, and the
+ * code Accounts emailed them after a call without one.
+ */
+export type AtprotoRecoveryConfirmation = { password: string; code?: string };
+/**
+ * - `done`: the identity lists `sheet` now, or no sheet after a removal.
+ * - `code-sent`: Accounts emailed the person a code for this change; call again with it.
+ * - `refused`: nothing changed, because:
+ *   - `password`: the password is wrong;
+ *   - `attempts`: five wrong passwords in 15 minutes, until `retryAt`;
+ *   - `code`: the code is wrong;
+ *   - `code-expired`: no code is open for this change any more, so ask for a new one;
+ *   - `wait`: a code went out too recently, until `retryAt`;
+ *   - `no-address`: the person's account has no verified email address to send a code to.
+ */
+export type AtprotoRecoverySetResult =
+  | { status: "done"; sheet: RecoverySheet | null }
+  | { status: "code-sent"; to: string; expiresAt: number; retryAt: number }
+  | { status: "refused"; reason: "password" | "code-expired" | "no-address" }
+  | { status: "refused"; reason: "attempts" | "wait"; retryAt: number }
+  | { status: "refused"; reason: "code"; attemptsLeft: number };
+
 export type AtprotoBlobReadArgs = { cid: string };
 /** The response body carries the file. */
 export type AtprotoBlobReadResult = { mimeType: string; size: number };
