@@ -88,6 +88,9 @@ export default Alchemy.Stack("gsv", {
     workerName: `${prefix}-pds`, bucketName: `${prefix}-pds-blobs`, workerBundle: manifest.runtime.pdsBundle,
     origin: `https://pds.${domain}`, plcUrl: yield* Config.String("GSV_PLC_URL").pipe(Config.withDefault("https://plc.directory")),
     rotationKey: plcRotationKey, recoveryKey: plcRecoveryKey,
+    contactEmail: Option.getOrUndefined(yield* Config.String("GSV_PDS_CONTACT_EMAIL").pipe(Config.option)),
+    privacyPolicyUrl: Option.getOrUndefined(yield* Config.String("GSV_PDS_PRIVACY_POLICY_URL").pipe(Config.option)),
+    termsOfServiceUrl: Option.getOrUndefined(yield* Config.String("GSV_PDS_TERMS_OF_SERVICE_URL").pipe(Config.option)),
   } : undefined;
   const deployment = yield* GsvDeployment({ logicalPrefix: "Gsv", domain, adminOrigin, access, routing: { zoneId },
     domainAliases, presentation, operatorUpdates,

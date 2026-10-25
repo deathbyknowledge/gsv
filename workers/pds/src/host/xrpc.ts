@@ -97,6 +97,15 @@ export async function handleXrpc(
   }
 }
 
+/** com.atproto.server.describeServer's output; the operator's links and contact appear when the deployment gives them. */
+type ServerDescription = {
+  did: string;
+  availableUserDomains: string[];
+  inviteCodeRequired: boolean;
+  links?: { privacyPolicy?: string; termsOfService?: string };
+  contact?: { email: string };
+};
+
 async function serveQuery(request: Request, env: HostEnv, admit: (name: string) => Promise<Admission>): Promise<Response> {
   const url = new URL(request.url);
   const method = url.pathname.slice(XRPC_PREFIX.length);
@@ -104,8 +113,14 @@ async function serveQuery(request: Request, env: HostEnv, admit: (name: string) 
   switch (method) {
     case "_health":
       return Response.json({ version: "gsv-pds" });
-    case "com.atproto.server.describeServer":
-      return Response.json({ did: `did:web:${url.hostname}`, availableUserDomains: [], inviteCodeRequired: true });
+    case "com.atproto.server.describeServer": {
+      const server: ServerDescription = { did: `did:web:${url.hostname}`, availableUserDomains: [], inviteCodeRequired: true };
+      if (env.PDS_PRIVACY_POLICY_URL || env.PDS_TERMS_OF_SERVICE_URL) {
+        server.links = { privacyPolicy: env.PDS_PRIVACY_POLICY_URL, termsOfService: env.PDS_TERMS_OF_SERVICE_URL };
+      }
+      if (env.PDS_CONTACT_EMAIL) server.contact = { email: env.PDS_CONTACT_EMAIL };
+      return Response.json(server);
+    }
     case "com.atproto.sync.listRepos": {
       const query = parseQuery(listReposQuery, url);
       const { repos, cursor } = await firehose.listRepos(query.limit, query.cursor);

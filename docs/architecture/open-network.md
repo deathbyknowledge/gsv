@@ -164,6 +164,10 @@ with, so a Ship reads other Ships' DIDs from where its own is registered. The
 PDS reaches only that directory, over the public internet even when the
 directory runs on the deployment's own zone.
 
+The PDS's `com.atproto.server.describeServer` answer names the operator's public
+contact address and links its privacy policy and terms of service when the
+operator gives them. Relays and other services read it to learn who runs the host.
+
 A deployment that admits installation deletion binds the PDS to Accounts as a
 deletion owner and lists its `HostedRepo` and `HostFirehose` namespaces for
 discovery. The operator's catalog must also cover the PDS bucket's unfinished
