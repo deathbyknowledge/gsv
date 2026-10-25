@@ -10,6 +10,20 @@ export type RelayRequest = {
   failures: number;
   /** Whether the host has introduced the accounts it held when the relay joined. */
   introduced: boolean;
+  /** How far an introduction still under way has got. */
+  cursor?: IntroductionCursor;
+};
+
+/**
+ * An introduction walks the host's directory in DID order. It covers the
+ * entries the directory held when it began; accounts added since reach the
+ * relay live.
+ */
+export type IntroductionCursor = {
+  /** The newest directory entry, by when it was added, that the introduction covers. */
+  through: number;
+  /** The last DID introduced so far. */
+  after: string;
 };
 
 /** The least time between two requests to one relay, as long as Bluesky's PDS waits between them. */

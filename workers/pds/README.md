@@ -9,10 +9,10 @@ the object that holds the repository. Each `HostedRepo` also signs
 service-auth tokens with its account's key for calls to other services. The
 worker's schedule has `HostFirehose` ask the relays the deployment names in
 `PDS_RELAYS` to crawl the host when a request to each is due, and the firehose
-keeps each relay's last answer; `src/host/relays.ts` decides when and asks. On
-the run after a relay first accepts, the firehose introduces the accounts it
-already holds, reading each one's head from its `HostedRepo`. The host imports
-nothing from GSV.
+keeps each relay's last answer; `src/host/relays.ts` decides when and asks.
+From the run after a relay first accepts, the firehose introduces the accounts
+it already held, 200 a run in DID order, reading each one's head from its
+`HostedRepo`. The host imports nothing from GSV.
 
 `src/gsv/` connects the host to a GSV deployment. Each installation's
 repository object is named by its installation ID and keeps its blobs under
@@ -123,10 +123,12 @@ host's `describeServer` through the worker before accepting. They cover asking
 each relay the deployment names once by the host's hostname, asking again only
 for new events after twenty minutes, backing off a relay that refuses or can't
 be reached, forgetting a relay the deployment stops naming, and asking the
-relays when publishing lexicons fails. They also cover introducing each active
-account to a relay that joins after it, once across runs and a restart of the
-firehose and again when the relay is named anew, and leaving out an account
-taken down while the firehose reads its head.
+relays when publishing lexicons fails, and writing the relay record only when
+it changes. They also cover introducing each active account to a relay that
+joins after it, once across runs and a restart of the firehose and again when
+the relay is named anew; introducing a batch a run, resuming after a restart
+and leaving out accounts listed after the introduction began; and leaving out
+an account taken down while the firehose reads its head.
 
 Uploads stream in with a declared size, up to 48 MiB. The host hashes the bytes
 as they arrive, names the staged copy by the resulting CID, and keeps one

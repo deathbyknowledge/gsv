@@ -328,8 +328,8 @@ every ten minutes ─▶ HostFirehose: which relays are due?
                        ▼
                      relay ── describeServer, then subscribeRepos ──▶ PDS
 
-the run after a relay first accepts:
-  HostFirehose ── #account, #identity, #sync for each active account ──▶ relays
+each run after a relay first accepts, until every account is introduced:
+  HostFirehose ── #account, #identity, #sync for the next 200 accounts ──▶ relays
 ```
 
 The operator names the relays with `GSV_PDS_RELAYS`, such as
@@ -345,13 +345,15 @@ them are due:
 - A relay that refused or couldn't be reached is asked again after forty
   minutes, and each further refusal in a row doubles the wait, up to six hours.
 
-The firehose keeps each relay's last answer. It forgets a relay at the first
-run after the deployment stops naming it, so a relay named again after that is
-asked at once and introduced to the host's accounts again. The schedule runs
-while the deployment names a relay or a lexicon account. A relay that refuses or
-can't be reached is a warning in the PDS Worker's logs that names the relay
-and, for a refusal, the HTTP status and the XRPC error. The request carries
-only the host's hostname.
+The firehose keeps each relay's last answer, and writes that record only when
+an answer changes it. It forgets a relay at the first run after the deployment
+stops naming it, so a relay named again after that is asked at once and
+introduced to the host's accounts again. While the deployment names no relay,
+each run only reads which relays the firehose remembers, to find one to
+forget. The schedule runs while the deployment names a relay or a lexicon
+account. A relay that refuses or can't be reached is a warning in the PDS
+Worker's logs that names the relay and, for a refusal, the HTTP status and the
+XRPC error. The request carries only the host's hostname.
 
 A relay checks every event as sync 1.1 describes, and a Ship's repository sends
 what it needs: `#identity`, `#account` and `#sync` when the account is created,
@@ -362,16 +364,19 @@ reads an account's status from `getRepoStatus` and a whole repository from
 
 A relay reads a host's firehose from its live end the first time, so on its
 own it would learn of an account that existed before it joined only with that
-account's next event. The host introduces those accounts instead. On its first
-run after a relay accepts, when the relay is following the firehose, it sends
-for each active account what creating the account sent: `#account`,
-`#identity`, and `#sync` at the repository's current head, which tells the
-relay and the apps that read it to fetch the repository at that head.
-Taken-down and deleted accounts aren't introduced. Each relay hears the
-introduction once, across runs and restarts of the firehose, and again only
-when the deployment stops naming it and then names it again. The firehose is
-one stream, so relays already following hear it too, and already have each
-account at that head.
+account's next event. The host introduces those accounts instead. From its
+first run after a relay accepts, when the relay is following the firehose, it
+sends what creating each active account sent: `#account`, `#identity`, and
+`#sync` at the repository's current head, which tells the relay and the apps
+that read it to fetch the repository at that head. A run introduces at most
+200 accounts, in DID order, so a host with 10,000 accounts takes 50 runs, a
+little over eight hours. The introduction covers the accounts the host held
+when it began; accounts created since reach the relay live. Taken-down and
+deleted accounts aren't introduced. Each batch commits with how far the relay
+has got, so each relay hears each account once, across runs and restarts of
+the firehose, and again only when the deployment stops naming it and then
+names it again. The firehose is one stream, so relays already following hear
+the introduction too, and already have each account at that head.
 
 Relays limit how many accounts they follow on each host. The reference relay,
 which Bluesky operates, follows 100 accounts on a new host by default and drops

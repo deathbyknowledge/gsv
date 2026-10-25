@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { decode, encode } from "../cirrus/cbor-compat";
 import type { AccountStatus, SeqEvent } from "../cirrus/repo/sequencer";
 import type { HostEnv } from "./env";
-import { crawlDue, requestCrawl, type RelayRequest } from "./relays";
+import { crawlDue, requestCrawl, type IntroductionCursor, type RelayRequest } from "./relays";
 import { migrate } from "./schema";
 
 /** Name of the one firehose object a host runs. */
@@ -40,6 +40,8 @@ const REPLAY_PAGE = 500;
 const ACCOUNT_STATUSES = ["takendown", "suspended", "deleted", "deactivated"] as const;
 /** The host's last request to each relay, kept as one record by the relay's origin. */
 const RELAYS_KEY = "relays";
+/** Accounts one run introduces to relays that have joined. */
+const INTRODUCTION_BATCH = 200;
 
 const MIGRATIONS = [{
   id: 1,
@@ -189,9 +191,10 @@ export class HostFirehose extends DurableObject<HostEnv> {
    *
    * A relay follows a host it has just accepted from the firehose's live end,
    * so the accounts the host already held would reach it only with their next
-   * events. The first run after a relay accepts introduces those accounts.
+   * events. The runs after a relay accepts introduce those accounts, a batch
+   * of them a run.
    */
-  async announce(relays: readonly string[], host: string): Promise<string[]> {
+  async announce(relays: readonly string[], host: string, batch = INTRODUCTION_BATCH): Promise<string[]> {
     const last = this.relayRequests();
     const seq = this.latestSeq();
     const now = Date.now();
@@ -212,15 +215,21 @@ export class HostFirehose extends DurableObject<HostEnv> {
         if (previous) kept[relay] = previous;
       } else {
         const introduced = previous?.introduced ?? false;
-        // A refusal keeps the sequence number the relay last accepted.
+        // A refusal keeps the sequence number the relay last accepted; either keeps how far its introduction has got.
         kept[relay] = accepted
-          ? { at: now, seq, failures: 0, introduced }
-          : { at: now, seq: previous?.seq ?? null, failures: (previous?.failures ?? 0) + 1, introduced };
+          ? { ...previous, at: now, seq, failures: 0, introduced }
+          : { ...previous, at: now, seq: previous?.seq ?? null, failures: (previous?.failures ?? 0) + 1, introduced };
       }
     }
-    this.ctx.storage.kv.put(RELAYS_KEY, kept);
-    if (joined.length > 0) await this.introduce(joined);
+    // Most runs ask no relay, and leave the record as it was.
+    if (JSON.stringify(kept) !== JSON.stringify(current)) this.ctx.storage.kv.put(RELAYS_KEY, kept);
+    if (joined.length > 0) await this.introduce(joined, batch);
     return due;
+  }
+
+  /** The relays the host remembers asking. */
+  async relays(): Promise<string[]> {
+    return Object.keys(this.relayRequests());
   }
 
   /** Accepts a com.atproto.sync.subscribeRepos WebSocket and replays from its cursor. */
@@ -288,24 +297,45 @@ export class HostFirehose extends DurableObject<HostEnv> {
   }
 
   /**
-   * Introduces each active account to relays that joined after it, with what
-   * activating the account announced: #account, #identity, and #sync at the
-   * repository's current head. The relays are marked introduced in the same
-   * transaction, so each hears the introduction once.
+   * Introduces the next batch of active accounts, in DID order, to relays that
+   * joined after them, with what activating each account announced: #account,
+   * #identity, and #sync at the repository's current head. One batch serves
+   * every relay that has got as far as the first one waiting; the others wait
+   * for later runs. The batch's frames and how far each relay has got commit in one
+   * transaction, so a relay hears each account once, even across restarts, and
+   * is introduced once a batch comes up short.
    */
-  private async introduce(relays: readonly string[]): Promise<void> {
+  private async introduce(relays: readonly string[], batch: number): Promise<void> {
+    const requests = this.relayRequests();
+    const waiting = relays.filter((relay) => requests[relay] && !requests[relay].introduced);
+    const [first] = waiting;
+    if (!first) return;
+    const begun = requests[first]?.cursor;
+    const along = (request: RelayRequest | undefined) => request !== undefined && !request.introduced
+      && JSON.stringify(request.cursor) === JSON.stringify(begun);
+    const sharing = waiting.filter((relay) => along(requests[relay]));
+    const from: IntroductionCursor = begun ?? {
+      through: this.ctx.storage.sql.exec<{ through: number | null }>("SELECT MAX(rowid) AS through FROM repos").one().through ?? 0,
+      after: "",
+    };
     const accounts = this.ctx.storage.sql.exec<{ did: string; name: string }>(
-      "SELECT did, name FROM repos WHERE active = 1 AND head IS NOT NULL ORDER BY did",
+      "SELECT did, name FROM repos WHERE rowid <= ? AND did > ? AND active = 1 AND head IS NOT NULL ORDER BY did LIMIT ?",
+      from.through,
+      from.after,
+      batch,
     ).toArray();
     const heads = await Promise.all(accounts.map(async ({ did, name }) => ({ did, head: await this.env.REPOS.getByName(name).head() })));
+    // A full batch may leave accounts after its last; a short one ends the introduction.
+    const next = accounts.length < batch ? undefined : accounts.at(-1)?.did;
     const appendedAt = Date.now();
     const time = new Date(appendedAt).toISOString();
     const frames: Uint8Array[] = [];
     this.ctx.storage.transactionSync(() => {
-      const requests = this.relayRequests();
-      const introducing = relays.flatMap((relay) => {
-        const request = requests[relay];
-        return request && !request.introduced ? [[relay, request] as const] : [];
+      const current = this.relayRequests();
+      // Another run may have introduced this batch while the heads were read.
+      const introducing = sharing.flatMap((relay) => {
+        const request = current[relay];
+        return along(request) ? [[relay, request] as const] : [];
       });
       if (introducing.length === 0) return;
       let seq = this.latestSeq();
@@ -325,8 +355,12 @@ export class HostFirehose extends DurableObject<HostEnv> {
         }
       }
       this.ctx.storage.sql.exec("UPDATE sequence SET seq = ?", seq);
-      for (const [relay, request] of introducing) requests[relay] = { ...request, introduced: true };
-      this.ctx.storage.kv.put(RELAYS_KEY, requests);
+      for (const [relay, { at, seq: accepted, failures }] of introducing) {
+        current[relay] = next === undefined
+          ? { at, seq: accepted, failures, introduced: true }
+          : { at, seq: accepted, failures, introduced: false, cursor: { through: from.through, after: next } };
+      }
+      this.ctx.storage.kv.put(RELAYS_KEY, current);
     });
     for (const frame of frames) this.broadcast(frame);
   }
@@ -348,11 +382,13 @@ export class HostFirehose extends DurableObject<HostEnv> {
 /**
  * Has the host's firehose ask each relay the deployment names to crawl it,
  * when a request to that relay is due. With none named, the firehose forgets
- * the relays it knew.
+ * the relays it remembers, and has nothing to do once it remembers none.
  */
 export async function announceToRelays(env: HostEnv): Promise<void> {
   const relays = [...new Set((env.PDS_RELAYS ?? "").split(",").map((relay) => relay.trim()).filter(Boolean))];
-  await env.FIREHOSE.getByName(FIREHOSE_NAME).announce(relays, new URL(env.PDS_ORIGIN).host);
+  const firehose = env.FIREHOSE.getByName(FIREHOSE_NAME);
+  if (relays.length === 0 && (await firehose.relays()).length === 0) return;
+  await firehose.announce(relays, new URL(env.PDS_ORIGIN).host);
 }
 
 /** Encodes an outbox event as a subscribeRepos frame that carries the host's sequence number. */

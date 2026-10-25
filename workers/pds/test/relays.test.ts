@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { encode } from "../src/cirrus/cbor-compat";
 import type { PdsEnv } from "../src/gsv/env";
-import { FIREHOSE_NAME, type HostFirehose } from "../src/host/firehose";
+import { FIREHOSE_NAME, HostFirehose } from "../src/host/firehose";
 import { REPO_REF } from "../src/host/moderation";
 import type { RelayRequest } from "../src/host/relays";
 import { HostedRepo, type RepoWrite } from "../src/host/repo";
@@ -120,6 +120,28 @@ describe("announcing the host to relays", () => {
     expect([kept.requests, dropped.requests]).toEqual([[HOST, HOST], [HOST, HOST]]);
   });
 
+  it("writes what it keeps of the relays only when that changes, and only reads it while the deployment names no relay", async () => {
+    const quiet = relay("https://relay-h.test");
+    const host = env.FIREHOSE.getByName(FIREHOSE_NAME);
+    await scheduled(quiet.origin);
+    await scheduled(quiet.origin);
+    const writes = await kvWrites(host);
+    const announce = vi.spyOn(HostFirehose.prototype, "announce");
+    // A relay that has accepted and heard the introduction isn't due again until the host changes and twenty minutes pass.
+    await scheduled(quiet.origin);
+    await scheduled(quiet.origin);
+    expect(writes).not.toHaveBeenCalled();
+
+    // Dropping the last relay forgets it once; after that, a run with none named only reads what the firehose keeps.
+    await scheduled(undefined);
+    await scheduled(undefined);
+    await scheduled("");
+    expect(announce).toHaveBeenCalledTimes(3);
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(await requested(host)).toEqual({});
+    expect(quiet.requests).toEqual([HOST]);
+  });
+
   it("introduces each active account to a relay that joins after it, as creating the account announced it, once per relay", async () => {
     const first = await publishedAccount();
     const second = await publishedAccount();
@@ -169,6 +191,45 @@ describe("announcing the host to relays", () => {
     const introduction = await heardWhile(() => scheduled(joining.origin));
     expect(await heard(introduction, ship.did)).toEqual([{ type: "#account", active: false }]);
   });
+
+  it("introduces at most a batch of accounts a run, in DID order, and resumes where it stopped after a restart", async () => {
+    const ships: PublishedAccount[] = [];
+    for (let count = 0; count < 5; count++) ships.push(await publishedAccount());
+    // A firehose of its own lists only these five.
+    const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
+    for (const ship of ships) await list(firehose, ship);
+    const joining = relay("https://relay-i.test");
+    expect(await firehose.announce([joining.origin], HOST, 2)).toEqual([joining.origin]);
+
+    const order = ships.map((ship) => ship.did).sort();
+    const runs: string[][] = [];
+    for (let run = 0; run < 3; run++) {
+      if (run === 1) {
+        // An account listed after the introduction began reaches relays live, so no batch introduces it,
+        // even one whose DID the walk has yet to reach.
+        let late = await publishedAccount();
+        while (late.did < order[1]) late = await publishedAccount();
+        await list(firehose, late);
+        // The firehose restarts after the first batch, keeping only what it stored.
+        await evictDurableObject(firehose);
+      }
+      const frames = await heardWhile(async () => {
+        await firehose.announce([joining.origin], HOST, 2);
+      }, firehose);
+      const dids = [...new Set(frames.flatMap((frame) => "did" in frame ? [frame.did] : []))];
+      for (const did of dids) {
+        const ship = ships.find((candidate) => candidate.did === did);
+        if (!ship) throw new Error(`The firehose introduced ${did}, which it doesn't list`);
+        expect(await heard(frames, did)).toEqual(await introductionOf(ship));
+      }
+      runs.push(dids);
+      expect((await requested(firehose))[joining.origin]?.introduced).toBe(run === 2);
+    }
+    expect(runs).toEqual([order.slice(0, 2), order.slice(2, 4), order.slice(4)]);
+    expect(await heardWhile(async () => {
+      await firehose.announce([joining.origin], HOST, 2);
+    }, firehose)).toEqual([]);
+  });
 });
 
 /** A relay at origin that reaches the host through the deployed Worker. */
@@ -193,6 +254,13 @@ function requested(firehose: DurableObjectStub<HostFirehose>): Promise<Record<st
   return runInDurableObject(firehose, (_instance, state) => state.storage.kv.get<Record<string, RelayRequest>>("relays") ?? {});
 }
 
+/** Watches every write a firehose makes to its synchronous storage, which keeps only the relay record. */
+function kvWrites(firehose: DurableObjectStub<HostFirehose>): Promise<MockInstance<SyncKvStorage["put"]>> {
+  return runInDurableObject(firehose, (_instance, state) =>
+    // SAFETY: a SyncKvStorage's methods live on its prototype, which every object's storage shares.
+    vi.spyOn(Object.getPrototypeOf(state.storage.kv) as SyncKvStorage, "put"));
+}
+
 /** Moves the firehose's last request to each relay back by ms, as though that long had passed. */
 async function rewind(firehose: DurableObjectStub<HostFirehose>, ms: number): Promise<void> {
   const relays = await requested(firehose);
@@ -209,7 +277,7 @@ async function change(firehose: DurableObjectStub<HostFirehose>): Promise<string
   return did;
 }
 
-type PublishedAccount = { repo: DurableObjectStub<HostedRepo>; did: string };
+type PublishedAccount = { name: string; repo: DurableObjectStub<HostedRepo>; did: string };
 
 /** A hosted account that has written a record since it was created, delivered to the host firehose. */
 async function publishedAccount(): Promise<PublishedAccount> {
@@ -218,7 +286,14 @@ async function publishedAccount(): Promise<PublishedAccount> {
   const { did } = await repo.create(`${name}.ship.test`, `installations/${name}/`);
   await repo.applyWrites([note("first")]);
   await deliver(repo);
-  return { repo, did };
+  return { name, repo, did };
+}
+
+/** Lists an account on another firehose, as its repository's first delivery would. */
+async function list(firehose: DurableObjectStub<HostFirehose>, { name, repo, did }: PublishedAccount): Promise<void> {
+  const state = await repo.state();
+  if (!state) throw new Error("The repository holds no account");
+  await firehose.append(name, state, [{ seq: 1, type: "identity", payload: encode({ did, time: new Date().toISOString() }) }]);
 }
 
 function note(rkey: string): RepoWrite {
@@ -229,8 +304,7 @@ function note(rkey: string): RepoWrite {
  * Every frame a relay following the host's firehose hears while run runs. The
  * host's next event marks the end, since a relay hears its frames in order.
  */
-async function heardWhile(run: () => Promise<void>): Promise<Frame[]> {
-  const host = env.FIREHOSE.getByName(FIREHOSE_NAME);
+async function heardWhile(run: () => Promise<void>, host = env.FIREHOSE.getByName(FIREHOSE_NAME)): Promise<Frame[]> {
   const following = await subscribe(host);
   await run();
   const marker = await change(host);
