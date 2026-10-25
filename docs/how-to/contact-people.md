@@ -70,15 +70,21 @@ They make their own handling choice when accepting, or can decline it. Acceptanc
 conversation, opens it directly, and enables further messages and attachments.
 
 A new Ship's profile is public on the open network from your first sign-in, named
-by your handle and open to message requests, so people can add you by handle. Choose
+by your handle and open to message requests, so people can add you by handle,
+and Bluesky and other apps can show it. Choose
 your handle at the bottom of People to see your profile as others will: a **public**
 or **private** label, your picture, your handle with a button that copies your
 profile address, your bio, and who can start a conversation. An empty bio shows
 "Space cowboy." with a **complete bio** link. While the profile is public, a note
 there says who can see it and how to make it private, until you choose **got it**.
+The note says that Bluesky and other apps can show your profile and that any app
+or search engine can save it and make it searchable; if you chose **got it**
+before the note said so, it shows once more.
 Choose **edit** to change it. **choose picture** takes a PNG, JPEG or WebP image,
-which Ship crops to a square of at most 512 pixels; like the rest of the profile,
-it becomes public when you publish. On a private profile the main
+which Ship crops to a square of at most 512 pixels and saves as a JPEG, or as a
+PNG when it has transparency, so Bluesky can show it; like the rest of the profile,
+it becomes public when you publish. A WebP picture saved before then shows
+everywhere but Bluesky until you choose a picture again. On a private profile the main
 button is **publish**, which makes it public; on a public one it is **save**, which
 updates the public page. **save as draft** keeps changes private, shown as
 **unpublished changes**, and leaves the public page as it is. The note under the
@@ -90,17 +96,25 @@ public page shows your picture, your handle, your bio, and either a form where v
 their own handle to message you from their Ship, or a note that message requests
 are restricted. Its Ship wordmark links to the operator's site. The page asks
 search engines not to list it. Other Ships and open-network apps read the same
-profile from your Ship's public record. Unpublishing removes the page and the
-record and keeps the profile private until you publish again;
+profile from your Ship's public record. Your Ship also keeps a copy as Bluesky
+shows it: your name, bio and picture, with a link to your page. Bluesky allows a
+name of 64 characters and a bio of 256, so it shows a longer one cut short with
+an ellipsis. Bluesky and other apps may let anyone search for your profile. Your
+Ship doesn't see follows, replies or messages on Bluesky. Unpublishing removes
+the page, the record and the Bluesky copy, and keeps the profile private until
+you publish again;
 existing contacts and conversations remain. People who already viewed it may
 retain copies. A Ship whose owner already saved, published or unpublished a profile
 keeps it exactly as it was; only a Ship with no saved profile gets the public default.
-If your operator takes down your profile, its picture, something else your Ship
-published or your whole Ship on the open network, your handle at the bottom of
-People reads **taken down**, and your profile lists each takedown with the
-reason your operator gave. A profile that is down is labelled **taken down**
-too. People on the open network can't see what is down until your operator
-restores it. While your whole Ship is down, neither you nor your Ship can
+If your operator takes down your profile, its copy on Bluesky, its picture,
+something else your Ship published or your whole Ship on the open network, your
+handle at the bottom of People reads **taken down**, and your profile lists each
+takedown with the reason your operator gave. A profile that is down is labelled
+**taken down** too. People on the open network can't see what is down until your
+operator restores it. Bluesky keeps what it already shows until you next publish
+your profile: while your profile or its copy is down, publishing removes the
+copy from Bluesky, and while your picture is down, it leaves the picture out.
+Your next sign-in after your operator restores it puts the full copy back. While your whole Ship is down, neither you nor your Ship can
 publish or message your contacts: a message or message request you send fails
 at once and says why. Messages from your contacts still arrive.
 The published page uses Ship's cursor icon in the browser tab, the same pale block on a dark square as the app.

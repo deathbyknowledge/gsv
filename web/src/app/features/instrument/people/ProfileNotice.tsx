@@ -6,6 +6,8 @@ import { Button } from "../../../components/ui/Button";
 import "./own-profile.css";
 
 const NOTICE_SEEN = "ui/profile_notice_seen";
+/** The notice the owner dismissed; it names Bluesky since "2", so an owner who dismissed an earlier one sees it again once. */
+const NOTICE_VERSION = "2";
 
 /**
  * Tells the owner once that their profile is public on the open network, and how to make it
@@ -19,11 +21,11 @@ export function ProfileNotice({ ownerUid, published }: { ownerUid: number; publi
   const queryKey = ["instrument", "profile-notice", ownerUid];
   const seen = useQuery({
     queryKey,
-    queryFn: async () => (await client.sys.config.get({ key })).entries.some((entry) => entry.key === key && entry.value === "1"),
+    queryFn: async () => (await client.sys.config.get({ key })).entries.some((entry) => entry.key === key && entry.value === NOTICE_VERSION),
     enabled: connected && published,
   });
   const dismiss = useMutation({
-    mutationFn: async () => { await client.sys.config.set({ key, value: "1" }); },
+    mutationFn: async () => { await client.sys.config.set({ key, value: NOTICE_VERSION }); },
     onSuccess: () => { cache.setQueryData(queryKey, true); },
   });
   if (!published || seen.data !== false) return null;
