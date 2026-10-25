@@ -10,6 +10,7 @@ import {
   bodyFromBytes, bodyToBytes, cancelBinaryBody, profileContactPolicy, profileFieldsSchema, shipProfileRecordSchema,
 } from "@humansandmachines/gsv/protocol";
 import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
+import type { ProfileCopyChange } from "@humansandmachines/gsv/services/operator";
 import type { PublicTakedown } from "@humansandmachines/gsv/services/pds";
 import { z } from "zod/mini";
 import type { KernelContext } from "./context";
@@ -261,6 +262,29 @@ async function mirrorPublishedProfile(ownerUid: number, ctx: KernelContext): Pro
     if (ctx.profiles.holdsMirror(ownerUid, mirror)) return;
     await putProfileMirror(ctx, mirror);
     ctx.profiles.setMirror(ownerUid, mirror);
+  });
+}
+
+/**
+ * Brings Bluesky's copy of the published profile in line with the host's
+ * takedowns once the operator changes them. The checks above ask the host only
+ * while the copy differs from the one the published record makes, so a
+ * takedown after the copy is written would otherwise reach Bluesky only with
+ * the next publish.
+ */
+export async function followHostTakedowns(ctx: KernelContext): Promise<ProfileCopyChange> {
+  if (!ctx.env.PDS) return "unchanged";
+  return await ctx.profiles.exclusive(async () => {
+    const published = ctx.profiles.page();
+    if (!published) return "unchanged";
+    const takedowns = await publicTakedowns(ctx);
+    // The host refuses every write while the whole account is down, and relays hide the account meanwhile.
+    if (takedowns.some(({ subject }) => subject.$type === "com.atproto.admin.defs#repoRef")) return "unchanged";
+    const mirror = blueskyMirror(published.record, takedowns, ctx);
+    if (ctx.profiles.holdsMirror(published.ownerUid, mirror)) return "unchanged";
+    await putProfileMirror(ctx, mirror);
+    ctx.profiles.setMirror(published.ownerUid, mirror);
+    return mirror ? "updated" : "removed";
   });
 }
 
