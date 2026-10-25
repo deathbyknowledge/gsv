@@ -15,8 +15,6 @@ import { ShipCallError, ShipXrpcError } from "./errors";
 /** Ship-to-Ship methods are Ship's own lexicons. */
 export const SHIP_METHOD_PREFIX = "space.ship.";
 const XRPC_PREFIX = "/xrpc/";
-/** How soon a caller tries again while this Ship moves its contacts to DIDs. */
-const MOVE_RETRY_MS = 5 * 60_000;
 /** The XRPC error a shared contact limit or check names by its status. */
 const ERRORS_BY_STATUS = new Map([
   [400, "InvalidRequest"],
@@ -60,10 +58,6 @@ export async function handleShipXrpc(request: Request, ctx: KernelContext, metho
     if (!method) throw new ShipXrpcError(501, "MethodNotImplemented", `This Ship doesn't serve ${nsid}`);
     const verb = method.type === "procedure" ? "POST" : "GET";
     if (request.method !== verb) throw new ShipXrpcError(405, "InvalidRequest", `${nsid} takes ${verb}`);
-    // A caller can't be matched to its contact until the move names every contact's DID.
-    if (ctx.federation.awaitingMove()) {
-      throw new ShipXrpcError(503, "TemporarilyUnavailable", "This Ship is moving its contacts to the open network", MOVE_RETRY_MS);
-    }
     const caller = await authenticateShipCall(request, nsid, ctx);
     // Counted only once the signature verifies, so nobody can spend another Ship's budget.
     consumePublicRateLimits(ctx, [{

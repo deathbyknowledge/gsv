@@ -259,12 +259,6 @@ describe("message requests", () => {
     await alice.run((ctx) => handleContactBlockSet({ did: bob.account.did, blocked: false }, ctx));
     expect(await alice.run((ctx) => handleContactBlockList({}, ctx).blocks)).toEqual([]);
   });
-
-  it("waits to send while contacts move to DIDs", async () => {
-    await alice.run((_ctx, storage) => void storage.sql.exec(`INSERT INTO federation_actor_blocks_legacy (owner_uid, ship_id, subject_id, display_name, created_at)
-      VALUES (?, 'ship:old', 'subject:old', 'Old', 1)`, SPACE_OWNER_UID));
-    await expect(alice.run((ctx) => handleApproachCreate(request(profile), held(ctx)))).rejects.toThrow("Your contacts are moving to the open network");
-  });
 });
 
 function request(read: PublicProfile): ApproachCreateArgs {

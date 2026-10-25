@@ -189,43 +189,6 @@ error is marked "Returned an error". If the outcome could not be written after
 the change ran, the change is still reported as done and its entry reads
 "Outcome not recorded"; check the Ship's current state.
 
-## Move contacts to DIDs {#move-contacts-to-dids}
-
-Ships from before the open network name the people in their contacts by an
-older Ship identity. After you deploy this release, each of those Ships holds
-its contacts until you move them to DIDs. Until then, its person sees "Your
-contacts are moving to the open network. Try again in a few minutes." when
-they message a contact, invite someone or send a message request. Calls from
-other Ships wait and retry. A Ship with no contacts from before has nothing to
-move.
-
-Open **Contacts move** in administration, at `<admin-origin>/admin/identity-move`:
-
-1. **Survey every Ship.** Accounts asks each active or suspended Ship, a few
-   each minute, how other Ships knew its person and who its own contacts are. A
-   Ship with contacts gets its DID, and a profile it published in the old
-   format is written to its repository. No contact changes, so you can survey
-   again until you apply.
-2. **Review the totals.** The page counts the people the Ships name, how many
-   have a DID on this deployment, and how many don't: people on another
-   deployment, or whose Ship is gone. A Ship that doesn't answer is tried again
-   after 1, 5 and 15 minutes, then hourly, and listed with its last error.
-3. **Apply the move.** Once every Ship has answered, type `move` to confirm.
-   Each Ship then names its people by DID, a few Ships each minute, and resumes
-   the deliveries and message requests that were waiting. A contact with
-   someone who has no DID here ends, so the two people must connect again;
-   contacts held by an account other than the Ship's person, such as root, end
-   too. A message request its recipient never received expires, and its sender
-   sees that. Applying can't be undone, and the Ships can't be surveyed again
-   afterwards.
-
-The audit log records each survey and apply, with the reason you give.
-`<admin-origin>/admin/api/identity-move` returns the same status as JSON; POST
-to `/survey`, or to `/apply` with `{"confirm":"move"}`. The move needs
-Accounts' `OPERATOR_GATEWAY` binding. Accounts keeps each Ship's DID and
-handle, the old identifiers its contacts name, and counts, never names or
-messages.
-
 ## Connect services and verify cleanup
 
 Enabled adapters require their application secrets declared in the adapter

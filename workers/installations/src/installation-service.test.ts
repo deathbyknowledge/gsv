@@ -33,6 +33,11 @@ it("runs directory, onboarding and an isolated reset without any commercial tabl
   await expect(onboarding.begin(reset.installationId)).resolves.toMatchObject({ installationId: reset.installationId });
 });
 
+it("keeps no record of the move to DIDs once every Ship names its contacts by DID", async () => {
+  expect((await env.INSTALLATIONS_DB.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'identity_moves%'")
+    .all()).results).toEqual([]);
+});
+
 it.each(["https://accounts.example.com", "https://owners.example.com"])("completes owner signup at %s while reserving every configured service handle", async (origin) => {
   const ownerHandle = `${new URL(origin).hostname.split(".")[0]}-pilot`;
   let code = "";

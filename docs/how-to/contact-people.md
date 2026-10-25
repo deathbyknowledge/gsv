@@ -183,17 +183,11 @@ An update takes effect locally before the other Ship confirms it. **Awaiting con
 
 ## Contacts from before the open network
 
-If your Ship had contacts before your operator moved it to the open network,
-those contacts move too, so that each person is named by their DID. Your
-conversations and their messages stay. Until the move finishes, sending a
-message, inviting someone or sending a message request says "Your contacts are
-moving to the open network. Try again in a few minutes."
-
-A contact whose Ship is on another operator's deployment ends with the move.
-The conversation stays, marked ended; to keep talking, send them a new
-invitation or a message request. A message request the other person never
-received expires, and you can send it again. Invitation links created before
-the upgrade no longer work, so create a new one.
+Contacts from before the open network keep their conversations and messages. A
+contact that ended with the move to the open network, such as one whose Ship is
+on another operator's deployment, stays ended, and its conversation is kept. To
+keep talking, send them a new invitation or a message request. Invitation links
+from before the open network no longer work, so create a new one.
 
 ## Delivery
 

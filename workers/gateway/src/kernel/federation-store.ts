@@ -31,7 +31,7 @@ export type FederationContactRecord = ContactSummary & {
   threadId: string;
 };
 
-/** A contact whose Ship this Ship can call: the operator's move has named its DID. */
+/** A contact whose Ship this Ship can call: one that names its DID. */
 export type ReachableContact = FederationContactRecord & { remoteDid: string };
 
 type ActorBlockChange = { block: ContactBlock | null; changed: boolean };
@@ -235,7 +235,7 @@ const conversationMessageOriginSchema = z.discriminatedUnion("kind", [
   }),
 ]) satisfies z.ZodType<ConversationMessageOrigin>;
 
-export const federationOutboxLocalMessageSchema = z.strictObject({
+const federationOutboxLocalMessageSchema = z.strictObject({
   messageId: z.string(),
   text: z.string(),
   social: socialMessageMetadataSchema,
@@ -247,7 +247,7 @@ export const federationOutboxLocalMessageSchema = z.strictObject({
   createdAtMs: z.number().int().nonnegative(),
 }) satisfies z.ZodType<FederationOutboxLocalMessage>;
 
-export const federationMessagePreparationSchema = z.strictObject({
+const federationMessagePreparationSchema = z.strictObject({
   kind: z.literal("message"),
   messageId: z.string(),
   threadId: z.string(),
@@ -378,16 +378,6 @@ export class FederationStore {
 
   transaction<Value>(callback: () => Value): Value {
     return this.storage.transactionSync(callback);
-  }
-
-  /** Whether rows that named Ships by shipId still wait for the operator's move to name their DIDs. */
-  awaitingMove(): boolean {
-    return this.sql.exec<{ waiting: number }>(`SELECT
-      EXISTS (SELECT 1 FROM federation_contacts_legacy)
-      OR EXISTS (SELECT 1 FROM federation_actor_blocks_legacy)
-      OR EXISTS (SELECT 1 FROM federation_outbox_legacy)
-      OR EXISTS (SELECT 1 FROM federation_inbox_legacy)
-      OR EXISTS (SELECT 1 FROM social_approaches_legacy) AS waiting`).one().waiting === 1;
   }
 
   prune(input: {

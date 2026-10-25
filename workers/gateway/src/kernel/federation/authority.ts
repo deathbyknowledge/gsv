@@ -3,7 +3,6 @@ import type { KernelContext } from "../context";
 import { principalOf, resolveCallerOwnerUid } from "../context";
 import { isLocked } from "../../auth/shadow";
 import type { FederationContactRecord, ReachableContact } from "../federation-store";
-import { assertContactReachable } from "./limits";
 import { hasCapability } from "../capabilities";
 import { z } from "zod/mini";
 
@@ -30,6 +29,11 @@ export function requireContactCaller(ctx: KernelContext, directHuman: boolean): 
     }
   }
   return ownerUid;
+}
+
+/** Every active contact names a DID, as does the contact of every delivery; only one that ended before DIDs has none. */
+export function assertContactReachable(contact: FederationContactRecord): asserts contact is ReachableContact {
+  if (contact.remoteDid === undefined) throw new Error(`Contact ${contact.id} has no DID`);
 }
 
 export function requireOwnedActiveContact(

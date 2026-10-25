@@ -395,7 +395,8 @@ the other person accepts either while signed in to their own Ship. The default
 lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
 be performed by the signed-in human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts
-alongside messaging endpoints. `contact alias` changes only the local display
+alongside messaging endpoints. `contact list --all` adds ended contacts, and one
+that ended before DIDs shows `(before DIDs)` as its address. `contact alias` changes only the local display
 name; the remote Ship's authenticated identity remains visible and unchanged.
 
 Creating and accepting through Shell require `--handling manual|ship`. Ship asks
