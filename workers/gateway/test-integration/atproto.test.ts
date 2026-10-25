@@ -1,11 +1,14 @@
+import { Lexicons, jsonToLex, lexiconDoc } from "@atproto/lexicon";
 import { bodyFromBytes, bodyToBytes, type PublicRecordWrite } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it } from "vitest";
+import profileLexicon from "../../../lexicons/space/ship/profile.json";
 import { startProcessRuntimeHarness } from "./process-runtime-harness";
 
 /** The fixture PDS as these tests read it back: each installation's committed batches of writes. */
 type FixturePds = { getInstallation(installationId: string): Promise<{ commits(): Promise<PublicRecordWrite[][]> }> };
 
 const NOTE = { action: "put" as const, collection: "space.ship.note", rkey: "first", record: { $type: "space.ship.note", text: "hello" } };
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
 
 describe("publishing to the open network", () => {
   it("publishes the person's profile at sign-in, creating the Ship's identity, then lets them publish directly", async () => {
@@ -33,6 +36,28 @@ describe("publishing to the open network", () => {
       await expect(runtime.client.atproto.write({ writes: [{ action: "delete", collection: "space.ship.profile", rkey: "self" }] }))
         .rejects.toThrow("space.ship.profile is your profile; change it in People");
       expect(await committed(runtime.harness)).toHaveLength(2);
+    } finally { await runtime.close(); }
+  });
+});
+
+describe("the profile record", () => {
+  it("is one its lexicon accepts, with a picture and without, as the reference validator reads it", async () => {
+    const runtime = await startProcessRuntimeHarness({ pds: true });
+    try {
+      await profilePublishedAtSignIn(runtime);
+      const { profile } = await runtime.client.profile.get({});
+      const set = await runtime.client.request("profile.avatar.set", { expectedRevision: profile.revision, mimeType: "image/png" }, { body: bodyFromBytes(PNG) });
+      await set.body?.stream.cancel("profile.avatar.set does not return a body");
+      await runtime.client.profile.publish({ expectedRevision: set.data.profile.revision });
+      await runtime.waitFor(async () => (await committed(runtime.harness)).length === 2, "the profile published with its picture");
+
+      const records = (await committed(runtime.harness)).flat().map((write) => write.action === "delete" ? null : write.record);
+      expect(records).toEqual([
+        expect.not.objectContaining({ avatar: expect.anything() }),
+        expect.objectContaining({ avatar: { $type: "blob", ref: { $link: expect.any(String) }, mimeType: "image/png", size: PNG.byteLength } }),
+      ]);
+      const lexicons = new Lexicons([lexiconDoc.parse(profileLexicon)]);
+      for (const record of records) lexicons.assertValidRecord("space.ship.profile", jsonToLex(record));
     } finally { await runtime.close(); }
   });
 });
