@@ -18,7 +18,7 @@ const HANDLE = "lexicons.ship.test";
 const SCHEMA = "com.atproto.lexicon.schema";
 const NSIDS = SHIP_LEXICONS.map((lexicon) => lexicon.id);
 
-const hosted = z.object({ did: z.string(), handle: z.string() });
+const hosted = z.object({ did: z.string(), handle: z.string(), status: z.optional(z.literal("takendown")) });
 const status = z.object({ handle: z.string().nullable(), account: hosted.nullable(), pending: z.array(z.string()) });
 const published = z.object({ published: z.array(z.string()), pending: z.array(z.string()) });
 const record = z.object({ uri: z.string(), cid: z.string(), value: z.record(z.string(), z.json()) });
@@ -147,6 +147,30 @@ describe("the deployment's lexicon account", () => {
     await deliver(env.REPOS.getByName(LEXICON_REPOSITORY));
     expect((await read(record, serve("com.atproto.repo.getRecord", { repo: did, collection: SCHEMA, rkey: first().id }))).value)
       .toEqual({ ...first(), $type: SCHEMA });
+  });
+
+  it("publishes nothing while the host has the account taken down", async () => {
+    const { did } = await account();
+    const repo = env.REPOS.getByName(LEXICON_REPOSITORY);
+    const subject = { $type: "com.atproto.admin.defs#repoRef", did } as const;
+    expect(await publishLexicons(deployedEnv(), revised())).toEqual([first().id]);
+    await repo.updateSubjectStatus({ subject, takedown: { applied: true, ref: "lexicon-test" } });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    expect(await errorOf(operator({ aud: env.PDS_ORIGIN, act: "publish" }))).toBe("RepoTakendown");
+    await worker.scheduled(createScheduledController(), deployedEnv());
+    expect(warn).toHaveBeenCalledExactlyOnceWith("Lexicon publishing is held while the lexicon account is taken down");
+    expect(await read(status, operator({ aud: env.PDS_ORIGIN, act: "status" }))).toMatchObject({
+      account: { did, status: "takendown" }, pending: [first().id],
+    });
+
+    // Lifting the takedown lets the schedule publish what waited.
+    await repo.updateSubjectStatus({ subject, takedown: { applied: false } });
+    await worker.scheduled(createScheduledController(), deployedEnv());
+    expect(warn).toHaveBeenCalledOnce();
+    expect(await read(status, operator({ aud: env.PDS_ORIGIN, act: "status" }))).toEqual({
+      handle: HANDLE, account: { did, handle: HANDLE }, pending: [],
+    });
   });
 
   it("is served without asking Accounts, since it belongs to no installation", async () => {

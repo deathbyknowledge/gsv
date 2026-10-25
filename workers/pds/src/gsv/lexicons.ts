@@ -1,4 +1,4 @@
-import type { HostedAccount, LexObject, RecordPut } from "../host/repo";
+import type { HostedAccount, HostedRepo, LexObject, RecordPut } from "../host/repo";
 import { XrpcError } from "../host/xrpc";
 import type { PdsEnv } from "./env";
 import { SHIP_LEXICONS } from "./generated/ship-lexicons";
@@ -72,19 +72,38 @@ export async function publishLexicons(env: PdsEnv, lexicons: readonly ShipLexico
   configuredHandle(env);
   const repo = env.REPOS.getByName(LEXICON_REPOSITORY);
   if (!await repo.account()) throw new XrpcError("AccountNotFound", "This deployment has no lexicon account yet", 404);
-  return repo.putChangedRecords(LEXICON_SCHEMA, records(lexicons));
+  return putLexicons(repo, lexicons);
 }
 
 /**
  * Publishes what changed on schedule, as a deploy's lexicons take over. It
  * does nothing until the operator has published once, so no deploy makes the
- * first publish, and it never creates the account.
+ * first publish, and it never creates the account. While the host has the
+ * account taken down, it publishes nothing and says so in the log.
  */
 export async function republishLexicons(env: PdsEnv, lexicons: readonly ShipLexicon[] = SHIP_LEXICONS): Promise<string[]> {
   if (!env.PDS_LEXICON_HANDLE) return [];
   const repo = env.REPOS.getByName(LEXICON_REPOSITORY);
   if (!(await repo.collections()).includes(LEXICON_SCHEMA)) return [];
-  return repo.putChangedRecords(LEXICON_SCHEMA, records(lexicons));
+  try {
+    return await putLexicons(repo, lexicons);
+  } catch (error) {
+    if (!(error instanceof XrpcError) || error.error !== "RepoTakendown") throw error;
+    console.warn("Lexicon publishing is held while the lexicon account is taken down");
+    return [];
+  }
+}
+
+/** Puts each lexicon whose record changed; a taken-down account refuses them all. */
+async function putLexicons(repo: DurableObjectStub<HostedRepo>, lexicons: readonly ShipLexicon[]): Promise<string[]> {
+  try {
+    return await repo.putChangedRecords(LEXICON_SCHEMA, records(lexicons));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("RepoTakendown")) {
+      throw new XrpcError("RepoTakendown", "The host has taken this deployment's lexicon account down", 409);
+    }
+    throw error;
+  }
 }
 
 function configuredHandle(env: PdsEnv): string {
