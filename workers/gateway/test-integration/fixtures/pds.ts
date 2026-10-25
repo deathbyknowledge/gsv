@@ -1,3 +1,4 @@
+import { toBase32 } from "@atcute/multibase";
 import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import type {
   PublicBlob,
@@ -53,7 +54,7 @@ class IntegrationRepository extends RpcTarget implements PublicRepository {
     const bytes = new Uint8Array(await new Response(body).arrayBuffer());
     if (bytes.byteLength !== size) throw new Error(`InvalidRequest: the upload ended after ${bytes.byteLength} of its declared ${size} bytes`);
     const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-    const cid = `bafkrei${Array.from(digest.subarray(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    const cid = `b${toBase32(new Uint8Array([0x01, 0x55, 0x12, 0x20, ...digest]))}`;
     BLOBS.set(`${this.installationId}/${cid}`, { bytes, mimeType });
     return { $type: "blob", ref: { $link: cid }, mimeType, size };
   }
