@@ -11,6 +11,7 @@ import type {
   PublicRecordWrite,
   PublicRepository,
   PublicRepositoryAccount,
+  PublicTakedown,
   ShipServiceAuthRequest,
 } from "@humansandmachines/gsv/services/pds";
 
@@ -82,6 +83,11 @@ class NetworkRepository extends RpcTarget implements PublicRepository {
   async readBlob(cid: string): Promise<PublicBlob | null> {
     const blob = BLOBS.get(`${this.installationId}/${cid}`);
     return blob ? { body: new Blob([blob.bytes]).stream(), mimeType: blob.mimeType, size: blob.bytes.byteLength } : null;
+  }
+
+  /** The test network's host takes nothing down. */
+  async takedowns(): Promise<PublicTakedown[]> {
+    return [];
   }
 
   private requireAccount(): NetworkAccount {

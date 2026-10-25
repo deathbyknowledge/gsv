@@ -1,11 +1,15 @@
 import { Lexicons, jsonToLex, lexiconDoc } from "@atproto/lexicon";
 import { bodyFromBytes, bodyToBytes, type PublicRecordWrite } from "@humansandmachines/gsv/protocol";
+import type { PublicTakedown } from "@humansandmachines/gsv/services/pds";
 import { describe, expect, it } from "vitest";
 import profileLexicon from "../../../lexicons/space/ship/profile.json";
 import { startProcessRuntimeHarness } from "./process-runtime-harness";
 
-/** The fixture PDS as these tests read it back: each installation's committed batches of writes. */
-type FixturePds = { getInstallation(installationId: string): Promise<{ commits(): Promise<PublicRecordWrite[][]> }> };
+/** The fixture PDS as these tests drive it: each installation's committed batches of writes, and what its host has taken down. */
+type FixturePds = { getInstallation(installationId: string): Promise<{
+  commits(): Promise<PublicRecordWrite[][]>;
+  setTakedowns(takedowns: PublicTakedown[]): Promise<void>;
+}> };
 
 const NOTE = { action: "put" as const, collection: "com.example.note", rkey: "first", record: { $type: "com.example.note", text: "hello" } };
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
@@ -18,6 +22,7 @@ describe("publishing to the open network", () => {
       expect(profile).toEqual([expect.objectContaining({ action: "put", collection: "space.ship.profile", rkey: "self" })]);
       expect(await runtime.client.atproto.identity({})).toEqual({
         identity: { did: "did:plc:dddddddddddddddddddddddd", handle: "default.gsv.space", host: "https://pds.gsv.space" },
+        takedowns: [],
       });
       // Large enough that the file is still streaming after the Kernel releases its repository handle.
       const bytes = Uint8Array.from({ length: 2 * 1024 * 1024 }, (_, index) => index % 251);
@@ -58,6 +63,46 @@ describe("the profile record", () => {
       ]);
       const lexicons = new Lexicons([lexiconDoc.parse(profileLexicon)]);
       for (const record of records) lexicons.assertValidRecord("space.ship.profile", jsonToLex(record));
+    } finally { await runtime.close(); }
+  });
+});
+
+describe("a takedown by the Ship's open-network host", () => {
+  it("takes down the public page, and the handle with the account, tells the person why, and restores both", async () => {
+    const runtime = await startProcessRuntimeHarness({ pds: true });
+    try {
+      await profilePublishedAtSignIn(runtime);
+      const gateway = runtime.harness.getWorker("gsv");
+      const status = async (path: string) => {
+        const response = await gateway.fetch(`https://default.gsv.space${path}`);
+        await response.body?.cancel();
+        return response.status;
+      };
+      const { identity } = await runtime.client.atproto.identity({});
+      if (!identity) throw new Error("Sign-in did not create the Ship's identity");
+      expect(await status("/profile")).toBe(200);
+      const { PDS } = await runtime.harness.getWorker<{ PDS: FixturePds }>("gsv").getEnv();
+      const repository = await PDS.getInstallation("inst_integration_default");
+
+      const record: PublicTakedown = {
+        subject: { $type: "com.atproto.repo.strongRef", uri: `at://${identity.did}/space.ship.profile/self`, cid: "bafyrecord1" },
+        ref: "audit_record", reason: "It impersonates another person", at: 1,
+      };
+      await repository.setTakedowns([record]);
+      expect(await status("/profile")).toBe(404);
+      expect(await status("/.well-known/atproto-did")).toBe(200);
+      expect(await runtime.client.atproto.identity({})).toEqual({ identity, takedowns: [record] });
+
+      const account: PublicTakedown = { subject: { $type: "com.atproto.admin.defs#repoRef", did: identity.did }, ref: "audit_account", reason: "Spam", at: 2 };
+      await repository.setTakedowns([account]);
+      expect(await status("/profile")).toBe(404);
+      expect(await status("/.well-known/atproto-did")).toBe(404);
+      expect(await runtime.client.atproto.identity({})).toEqual({ identity: { ...identity, status: "takendown" }, takedowns: [account] });
+
+      await repository.setTakedowns([]);
+      expect(await status("/profile")).toBe(200);
+      expect(await (await gateway.fetch("https://default.gsv.space/.well-known/atproto-did")).text()).toBe(identity.did);
+      expect(await runtime.client.atproto.identity({})).toEqual({ identity, takedowns: [] });
     } finally { await runtime.close(); }
   });
 });

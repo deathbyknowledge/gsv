@@ -1,6 +1,6 @@
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { bodyFromText } from "@humansandmachines/gsv/protocol";
-import { PUBLIC_BLOB_MAX_BYTES, type PublicRecordWrite, type PublicRepository } from "@humansandmachines/gsv/services/pds";
+import { PUBLIC_BLOB_MAX_BYTES, type PublicRecordWrite, type PublicRepository, type PublicTakedown } from "@humansandmachines/gsv/services/pds";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../test-support/peers";
 import * as processTransport from "../shared/utils";
@@ -43,12 +43,21 @@ describe("who publishes", () => {
 
   it("reports the Ship's identity to the person and their Ship", async () => {
     const human = context();
-    expect(await handleAtprotoIdentity(human.ctx)).toEqual({ identity: ACCOUNT });
+    expect(await handleAtprotoIdentity(human.ctx)).toEqual({ identity: ACCOUNT, takedowns: [] });
     expect(human.getInstallation).toHaveBeenCalledExactlyOnceWith("inst_alice");
     expect(human.repository[Symbol.dispose]).toHaveBeenCalledOnce();
     const ship = context({ ...shipProcess(), account: null });
-    expect(await handleAtprotoIdentity(ship.ctx)).toEqual({ identity: null });
+    expect(await handleAtprotoIdentity(ship.ctx)).toEqual({ identity: null, takedowns: [] });
     expect(ship.repository.ensureAccount).not.toHaveBeenCalled();
+  });
+
+  it("tells the person and their Ship what the host has taken down, and why", async () => {
+    const takedowns: PublicTakedown[] = [
+      { subject: { $type: "com.atproto.admin.defs#repoRef", did: ACCOUNT.did }, ref: "audit_account", reason: "Impersonation", at: 1 },
+      { subject: { $type: "com.atproto.repo.strongRef", uri: COMMIT.results[0].uri, cid: "bafyrecord" }, ref: "audit_record", reason: null, at: 2 },
+    ];
+    const { ctx } = context({ ...shipProcess(), account: { ...ACCOUNT, status: "takendown" }, takedowns });
+    expect(await handleAtprotoIdentity(ctx)).toEqual({ identity: { ...ACCOUNT, status: "takendown" }, takedowns });
   });
 
   it("says when the deployment has no open-network host", async () => {
@@ -208,7 +217,8 @@ describe("files", () => {
 });
 
 type ContextOptions = Partial<KernelContext> & {
-  account?: typeof ACCOUNT | null;
+  account?: (typeof ACCOUNT & { status?: "takendown" }) | null;
+  takedowns?: PublicTakedown[];
   published?: boolean;
   profile?: { published: boolean };
   pds?: boolean;
@@ -219,9 +229,10 @@ type ContextOptions = Partial<KernelContext> & {
 };
 
 function context(options: ContextOptions = {}) {
-  const { account = ACCOUNT, published = true, profile = { published }, pds = true, personal = true, humanUid = OWNER.uid, ...overrides } = options;
+  const { account = ACCOUNT, takedowns = [], published = true, profile = { published }, pds = true, personal = true, humanUid = OWNER.uid, ...overrides } = options;
   const repository = {
     account: vi.fn<PublicRepository["account"]>(async () => account),
+    takedowns: vi.fn<PublicRepository["takedowns"]>(async () => takedowns),
     ensureAccount: vi.fn<PublicRepository["ensureAccount"]>(async () => ACCOUNT),
     applyWrites: vi.fn<PublicRepository["applyWrites"]>(async () => COMMIT),
     uploadBlob: vi.fn<PublicRepository["uploadBlob"]>(),

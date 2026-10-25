@@ -7,6 +7,7 @@ import type {
   PublicRecordWrite,
   PublicRepository,
   PublicRepositoryAccount,
+  PublicTakedown,
 } from "@humansandmachines/gsv/services/pds";
 
 // Public repositories the deployment's PDS holds for the integration installations.
@@ -17,6 +18,7 @@ const ACCOUNTS = new Map<string, PublicRepositoryAccount>([
 ]);
 const COMMITS = new Map<string, PublicRecordWrite[][]>();
 const BLOBS = new Map<string, { bytes: Uint8Array<ArrayBuffer>; mimeType: string }>();
+const TAKEDOWNS = new Map<string, PublicTakedown[]>();
 
 class IntegrationRepository extends RpcTarget implements PublicRepository {
   constructor(private readonly installationId: string) { super(); }
@@ -28,7 +30,11 @@ class IntegrationRepository extends RpcTarget implements PublicRepository {
   }
 
   async account(): Promise<PublicRepositoryAccount | null> {
-    return ACCOUNTS.get(this.installationId) ?? null;
+    const account = ACCOUNTS.get(this.installationId);
+    if (!account) return null;
+    return (await this.takedowns()).some(({ subject }) => subject.$type === "com.atproto.admin.defs#repoRef")
+      ? { ...account, status: "takendown" }
+      : account;
   }
 
   async serviceAuth(): Promise<string> {
@@ -64,9 +70,18 @@ class IntegrationRepository extends RpcTarget implements PublicRepository {
     return blob ? { body: new Blob([blob.bytes]).stream(), mimeType: blob.mimeType, size: blob.bytes.byteLength } : null;
   }
 
+  async takedowns(): Promise<PublicTakedown[]> {
+    return TAKEDOWNS.get(this.installationId) ?? [];
+  }
+
   /** Fixture only: every batch of writes the installation committed, in order. */
   async commits(): Promise<PublicRecordWrite[][]> {
     return COMMITS.get(this.installationId) ?? [];
+  }
+
+  /** Fixture only: what the operator has taken down of the repository, as the PDS answers once Accounts asks it. */
+  async setTakedowns(takedowns: PublicTakedown[]): Promise<void> {
+    TAKEDOWNS.set(this.installationId, takedowns);
   }
 }
 

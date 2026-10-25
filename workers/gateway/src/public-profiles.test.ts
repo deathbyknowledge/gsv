@@ -105,6 +105,20 @@ describe("public profile serving", () => {
     expect(unpublished.headers.get("cache-control")).toBe("no-store");
   });
 
+  it("shows neither the page nor its picture while the Ship can't say what its host has taken down", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failing = { page: vi.fn(async () => { throw new Error("PDS unavailable"); }), avatar: vi.fn(async () => { throw new Error("PDS unavailable"); }) };
+    for (const [url, path] of [[PROFILE_URL, "page"], [`${PROFILE_URL}/avatar`, "avatar"]] as const) {
+      const response = await servePublicProfileRequest(new Request(url), path, failing);
+      expect(response.status).toBe(503);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.text()).toBe("Profile unavailable");
+    }
+    expect(error).toHaveBeenCalledTimes(2);
+    expect(error).toHaveBeenCalledWith("[Gateway] Public profile lookup failed:", expect.objectContaining({ exceptionName: "Error", exceptionMessage: "PDS unavailable" }));
+    error.mockRestore();
+  });
+
   it("supports HEAD and refuses mutation methods without consulting the profile", async () => {
     const head = await servePublicProfileRequest(new Request(PROFILE_URL, { method: "HEAD" }), "page", source());
     expect(head.status).toBe(200);

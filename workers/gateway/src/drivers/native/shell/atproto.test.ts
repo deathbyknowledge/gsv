@@ -94,9 +94,9 @@ describe("atproto shell command", () => {
   });
 
   it("prints the Ship's identity", async () => {
-    vi.spyOn(atproto, "handleAtprotoIdentity").mockResolvedValue({ identity: null });
+    vi.spyOn(atproto, "handleAtprotoIdentity").mockResolvedValue({ identity: null, takedowns: [] });
     const result = await buildAtprotoCommand(files({}), context()).execute(["identity"], shell());
-    expect(JSON.parse(result.stdout)).toEqual({ identity: null });
+    expect(JSON.parse(result.stdout)).toEqual({ identity: null, takedowns: [] });
   });
 });
 

@@ -156,6 +156,8 @@ const LEDGER_ROTATION_TASK = "rotate";
 const LEDGER_ROTATION_SOON_MS = 5_000;
 const LEDGER_ROTATION_RETRY_MS = 60_000;
 const LEDGER_ROTATION_DAILY_MS = 24 * 60 * 60 * 1000;
+/** How long the public page waits for the Ship's host to say what it has taken down. */
+const PUBLIC_PROFILE_TIMEOUT_MS = 5_000;
 import { ManualUpdater } from "./sys/manual";
 import { SERVER_VERSION } from "../version";
 import { parseInstallationId } from "../installation/identity";
@@ -763,7 +765,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const gate = await this.onboarding.managedWorkGate();
     if (!gate.allowed) return null;
     this.retirement.assertActive();
-    return publicProfileProjection(this.buildKernelContext({}));
+    return await publicProfileProjection(this.buildKernelContext({ requestSignal: AbortSignal.timeout(PUBLIC_PROFILE_TIMEOUT_MS) }));
   }
 
   /** The published profile's picture, served from the Ship's own host. */
@@ -772,7 +774,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const gate = await this.onboarding.managedWorkGate();
     if (!gate.allowed) return null;
     this.retirement.assertActive();
-    return publicProfileAvatar(this.buildKernelContext({}));
+    return await publicProfileAvatar(this.buildKernelContext({ requestSignal: AbortSignal.timeout(PUBLIC_PROFILE_TIMEOUT_MS) }));
   }
 
   async scheduleApproachMaintenance(runningTaskId?: string): Promise<void> {
@@ -2039,6 +2041,7 @@ function envWithInstallationResources(
               applyWrites: (writes) => retirement.write(() => repository.applyWrites(writes)),
               uploadBlob: (body, size, mimeType) => retirement.write(() => repository.uploadBlob(body, size, mimeType)),
               readBlob: (cid) => repository.readBlob(cid),
+              takedowns: () => repository.takedowns(),
               [Symbol.dispose]: () => repository[Symbol.dispose]?.(),
             };
             return scoped;

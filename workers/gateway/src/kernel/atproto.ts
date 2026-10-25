@@ -17,6 +17,7 @@ import {
   type PublicRecordWrite,
   type PublicRepository,
   type PublicRepositoryAccount,
+  type PublicTakedown,
   type ShipServiceAuthRequest,
 } from "@humansandmachines/gsv/services/pds";
 import * as z from "zod/mini";
@@ -56,7 +57,15 @@ export function parseAtprotoWrites(value: JsonValue): PublicRecordWrite[] {
 
 export async function handleAtprotoIdentity(ctx: KernelContext): Promise<AtprotoIdentityResult> {
   requirePublisher(ctx);
-  return { identity: await withRepository(ctx, (repository) => raceWithAbort(repository.account(), ctx.requestSignal)) };
+  return await withRepository(ctx, async (repository) => {
+    const [identity, takedowns] = await raceWithAbort(Promise.all([repository.account(), repository.takedowns()]), ctx.requestSignal);
+    return { identity, takedowns };
+  });
+}
+
+/** What the Ship's open-network host has taken down of its repository, which the Ship's own public pages honour too. */
+export async function publicTakedowns(ctx: KernelContext): Promise<PublicTakedown[]> {
+  return await withRepository(ctx, (repository) => raceWithAbort(repository.takedowns(), ctx.requestSignal));
 }
 
 /** Commits the writes to the Ship's public repository once the person approves what their Ship publishes. */

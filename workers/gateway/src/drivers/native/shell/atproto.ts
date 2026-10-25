@@ -22,7 +22,9 @@ const ATPROTO_USAGE = `Usage:
 Records are public on the open network under the Ship's address. The person
 approves each publish unless they allowed it. A record's $type defaults to its
 collection. Upload a file with atproto blob, then put the reference it prints
-in a record to publish the file with it.
+in a record to publish the file with it. atproto identity also shows what the
+Ship's host has taken down, with the reason the host gave; readers on the open
+network no longer see those.
 `;
 
 export function buildAtprotoCommand(fs: GsvFs, ctx: KernelContext) {

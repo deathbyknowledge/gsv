@@ -49,6 +49,14 @@ describe("ATProto handle resolution", () => {
     }
   });
 
+  it("claims no handle for an account its host has taken down, as Bluesky's PDS answers", async () => {
+    const takendown = fixture(async () => ({ ...ACCOUNT, host: "https://pds.ship.space", status: "takendown" }));
+    const response = await resolve("https://ada.ship.space/.well-known/atproto-did", takendown.pds);
+    expect(response.status).toBe(404);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(takendown.dispose).toHaveBeenCalledOnce();
+  });
+
   it("refuses methods other than GET and HEAD before looking up the repository", async () => {
     const f = fixture(async () => ACCOUNT);
     const response = await resolve("https://ada.ship.space/.well-known/atproto-did", f.pds, "POST");

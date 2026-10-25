@@ -139,6 +139,7 @@ function testPds(network: TestShipNetwork, space: TestSpace, identity: ShipIdent
       throw new Error("This test space uploads no blobs");
     },
     readBlob: async () => null,
+    takedowns: async () => [],
   };
   return { getInstallation: async () => repository };
 }
