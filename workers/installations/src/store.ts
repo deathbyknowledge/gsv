@@ -12,6 +12,7 @@ import {
   parseHandle,
   parseOpaqueId,
 } from "./domain";
+import { noticeInstallationState } from "./state-notices";
 
 const RESERVATION_TTL_MS = 30 * 60 * 1000;
 
@@ -395,6 +396,7 @@ export class AccountStore {
          FROM installation_reset_operations
          WHERE operation_id = ? AND replacement_installation_id = ?`,
       ).bind(participant, now, operationId, replacement.installationId)),
+      noticeInstallationState(this.db, previousInstallationId, now),
     ]);
 
     const committed = await this.getResetByOperation(operationId);
@@ -510,8 +512,14 @@ export class AccountStore {
     }>();
   }
 
+  /**
+   * `stateRevision` reports the revision of the installation's latest change
+   * of state. Report it only while each change is delivered to the Gateway,
+   * since a Kernel that holds a revision stops asking.
+   */
   async resolveInstallation(
     installationIdValue: string,
+    options: { stateRevision?: boolean } = {},
   ): Promise<InstallationDirectoryResult> {
     let installationId: string;
     try {
@@ -522,8 +530,9 @@ export class AccountStore {
 
     const row = await this.db.prepare(
       `SELECT i.id, i.handle, i.canonical_origin, i.state,
-         i.owner_setup AS owner_setup_recovery
+         i.owner_setup AS owner_setup_recovery, COALESCE(n.revision, 0) AS state_revision
        FROM installations i
+       LEFT JOIN installation_state_notices n ON n.installation_id = i.id
        WHERE i.id = ?
        LIMIT 1`,
     ).bind(installationId).first<{
@@ -532,6 +541,7 @@ export class AccountStore {
       canonical_origin: string;
       state: InstallationState;
       owner_setup_recovery: number;
+      state_revision: number;
     }>();
     if (!row) {
       const retired = await this.db.prepare("SELECT installation_id FROM installation_account_deletions WHERE installation_id = ?")
@@ -546,6 +556,7 @@ export class AccountStore {
       state: row.state,
     };
     if (row.owner_setup_recovery) result.ownerSetupRecovery = true;
+    if (options.stateRevision) result.stateRevision = row.state_revision;
     return result;
   }
 

@@ -1,5 +1,6 @@
 import type { InstallationState } from "@humansandmachines/gsv/services/directory";
 import { parseOpaqueId } from "./domain";
+import { noticeInstallationState } from "./state-notices";
 import type { InstallationDataDeletionState } from "./store";
 
 export const ADMIN_INSTALLATIONS_PAGE_SIZE = 50;
@@ -170,12 +171,15 @@ export class InstallationAdminStore {
       "installationId",
     );
     const expectedState = state === "active" ? "restricted" : "active";
-    const result = await this.db.prepare(
-      `UPDATE installations
-       SET state = ?
-       WHERE id = ? AND state = ?`,
-    ).bind(state, installationId, expectedState).run();
-    if ((result.meta.changes ?? 0) === 1) return;
+    const [result] = await this.db.batch([
+      this.db.prepare(
+        `UPDATE installations
+         SET state = ?
+         WHERE id = ? AND state = ?`,
+      ).bind(state, installationId, expectedState),
+      noticeInstallationState(this.db, installationId),
+    ]);
+    if ((result?.meta.changes ?? 0) === 1) return;
 
     const current = await this.db.prepare(
       `SELECT state
