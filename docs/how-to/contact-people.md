@@ -101,7 +101,8 @@ People reads **taken down**, and your profile lists each takedown with the
 reason your operator gave. A profile that is down is labelled **taken down**
 too. People on the open network can't see what is down until your operator
 restores it. While your whole Ship is down, neither you nor your Ship can
-publish or message your contacts.
+publish or message your contacts: a message or message request you send fails
+at once and says why. Messages from your contacts still arrive.
 The published page uses Ship's cursor icon in the browser tab, the same pale block on a dark square as the app.
 On phones, the profile editor keeps its title and back arrow above the scrolling
 form. The same lavender edge used in conversations appears only while text crosses

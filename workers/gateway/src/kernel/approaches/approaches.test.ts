@@ -276,6 +276,25 @@ describe("message requests", () => {
   });
 });
 
+describe("a Ship its host took down", () => {
+  it("fails its request and its acceptance at once instead of trying again", async () => {
+    // Mallory asked Alice before Alice's host took her Ship down.
+    const open = await publishProfile(alice, "requests");
+    const asked = (await mallory.run((ctx) => handleApproachCreate(request(open), held(ctx)))).approach;
+    await mallory.run((ctx) => processApproachMaintenance(held(ctx)));
+    const [received] = await incomingRequests(alice);
+    expect(received?.requestId).toBe(asked.requestId);
+    network.takenDown.add(alice.account.did);
+
+    const { approach } = await alice.run((ctx) => handleApproachCreate(request(profile), held(ctx)));
+    await alice.run((ctx) => handleApproachDecide({ approachId: received.id, expectedRevision: received.revision, decision: "accept", shipHandlesMessages: false }, held(ctx)));
+    await alice.run((ctx) => processApproachMaintenance(held(ctx)));
+    expect(await alice.run((ctx) => ctx.approaches.get(approach.id))).toMatchObject({ nextAttemptAt: null, summary: { delivery: "failed" } });
+    expect(await alice.run((ctx) => ctx.approaches.get(received.id))).toMatchObject({ nextAttemptAt: null, summary: { connection: "failed" } });
+    expect(await incomingRequests(bob)).toEqual([]);
+  });
+});
+
 function request(read: PublicProfile): ApproachCreateArgs {
   return { did: read.did, profileCid: read.cid, displayName: "Alice in the open", text: "Hello, I'd like to ask about your boat.", idempotencyKey: "first-message" };
 }

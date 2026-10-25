@@ -25,6 +25,7 @@ import { shipAddress } from "../installation/identity";
 import { raceWithAbort } from "../shared/abort";
 import { principalOf, resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { ProfileAvatarFile } from "./profile-store";
+import { ShipTakenDownError } from "./ships/errors";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 
 /** Collections a Ship feature publishes itself, and where the person changes them instead. */
@@ -194,7 +195,12 @@ export async function ensureShipDid(ctx: KernelContext): Promise<string> {
 export async function signShipCall(ctx: KernelContext, request: ShipServiceAuthRequest): Promise<string> {
   return await withRepository(ctx, async (repository) => {
     if (!ctx.shipIdentity.current()) await ensureIdentity(repository, shipHostname(ctx), ctx);
-    return await raceWithAbort(repository.serviceAuth(request), ctx.requestSignal);
+    try {
+      return await raceWithAbort(repository.serviceAuth(request), ctx.requestSignal);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("RepoTakendown:")) throw new ShipTakenDownError({ cause: error });
+      throw error;
+    }
   });
 }
 

@@ -208,7 +208,10 @@ read it serves:
   reads as `takendown` in `getRepoStatus` and `listRepos`. Relays receive an
   `#account` event saying so. The PDS refuses the Ship's writes, uploads and
   service-auth signatures, so the Ship publishes nothing and can't call other
-  Ships. Restoring the account tells relays it is active again and sends its
+  Ships. The Kernel takes that refusal as final: a message, message request or
+  acceptance it was sending fails at once instead of retrying, and its person
+  reads why. Other Ships can still call it, so its contacts' messages keep
+  arriving. Restoring the account tells relays it is active again and sends its
   identity and current commit.
 - A record taken down reads as missing: `getRecord` answers `RecordNotFound`
   and `listRecords` leaves it out. Its commit stays in the signed repository,

@@ -37,7 +37,11 @@ export interface PublicRepository {
   /** Creates the installation's did:plc and empty repository for a handle, or returns the account it already has. */
   ensureAccount(handle: string): Promise<PublicRepositoryAccount>;
   account(): Promise<PublicRepositoryAccount | null>;
-  /** Signs a service-auth token for one call to another Ship; it lasts about a minute and a receiver accepts it once. */
+  /**
+   * Signs a service-auth token for one call to another Ship; it lasts about a
+   * minute and a receiver accepts it once. While the host has the account taken
+   * down it refuses, with an error whose message starts `RepoTakendown:`.
+   */
   serviceAuth(request: ShipServiceAuthRequest): Promise<string>;
   applyWrites(writes: PublicRecordWrite[]): Promise<PublicCommit>;
   /**

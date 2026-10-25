@@ -66,15 +66,16 @@ export function approachSendIntent(draft: ApproachDraft): ApproachCreateArgs {
     displayName, text: draft.text.trim(), shipHandlesMessages: draft.shipHandlesMessages, idempotencyKey: randomId() };
 }
 
-export function approachStatus(request: ApproachSummary): TextKey {
+/** A request's status; while the person's whole Ship is taken down, that is why its delivery or connection failed. */
+export function approachStatus(request: ApproachSummary, shipTakenDown: boolean): TextKey {
   if (request.state === "blocked") return "people.status.blocked";
   if (request.state === "declined") return "people.status.declined";
   if (request.state === "withdrawn") return "people.status.withdrawn";
   if (request.state === "expired") return "people.status.expired";
-  if (request.connection === "failed") return "people.status.connectionFailed";
+  if (request.connection === "failed") return shipTakenDown ? "people.status.shipTakenDown" : "people.status.connectionFailed";
   if (request.connection === "connecting") return "people.status.connecting";
   if (request.connection === "connected" || request.state === "accepted") return "people.status.accepted";
-  if (request.delivery === "failed") return "people.status.deliveryFailed";
+  if (request.delivery === "failed") return shipTakenDown ? "people.status.shipTakenDown" : "people.status.deliveryFailed";
   if (request.state === "preparing") return "people.status.preparing";
   if (request.direction === "incoming") return "people.status.awaitingDecision";
   return request.delivery === "received" ? "people.status.received" : "people.status.sending";

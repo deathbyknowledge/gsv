@@ -768,6 +768,7 @@ export const es = {
   "people.status.connecting": "Conectando…",
   "people.status.accepted": "Solicitud aceptada",
   "people.status.deliveryFailed": "No se ha podido confirmar la recepción",
+  "people.status.shipTakenDown": "Tu Ship está retirado de la red abierta, así que no puede contactar con otros Ships",
   "people.status.preparing": "Preparando el mensaje…",
   "people.status.awaitingDecision": "Pendiente de tu decisión",
   "people.status.received": "Solicitud recibida · esperando respuesta",

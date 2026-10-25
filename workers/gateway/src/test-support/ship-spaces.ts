@@ -120,7 +120,11 @@ function testPds(network: TestShipNetwork, space: TestSpace, identity: ShipIdent
   const repository: PublicRepository = {
     ensureAccount: async () => account,
     account: async () => identity.current() ? account : null,
-    serviceAuth: async (request) => await signServiceAuth(space.account.did, space.account.signingHex, request),
+    serviceAuth: async (request) => {
+      // As the PDS refuses an account it took down.
+      if (network.takenDown.has(space.account.did)) throw new Error(`RepoTakendown: ${space.account.did} was taken down by its host`);
+      return await signServiceAuth(space.account.did, space.account.signingHex, request);
+    },
     applyWrites: async (writes) => {
       const results = await Promise.all(writes.map(async (write) => {
         if (write.action === "create") throw new Error("This test space writes records by key");

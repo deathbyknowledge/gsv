@@ -773,6 +773,7 @@ export const ptBR = {
   "people.status.connecting": "Conectando…",
   "people.status.accepted": "Solicitação aceita",
   "people.status.deliveryFailed": "Não foi possível confirmar o recebimento",
+  "people.status.shipTakenDown": "Seu Ship foi removido da rede aberta, então não consegue contatar outros Ships",
   "people.status.preparing": "Preparando a mensagem…",
   "people.status.awaitingDecision": "Aguardando sua decisão",
   "people.status.received": "Solicitação recebida · aguardando resposta",

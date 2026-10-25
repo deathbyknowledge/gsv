@@ -767,6 +767,7 @@ export const en = {
   "people.status.connecting": "Connecting…",
   "people.status.accepted": "Accepted",
   "people.status.deliveryFailed": "Could not confirm receipt",
+  "people.status.shipTakenDown": "Your Ship is taken down on the open network, so it can't reach other Ships",
   "people.status.preparing": "Preparing message…",
   "people.status.awaitingDecision": "Waiting for your decision",
   "people.status.received": "Received · awaiting a reply",

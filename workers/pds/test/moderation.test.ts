@@ -116,7 +116,8 @@ describe("taking down an account", () => {
     expect(await repository.account()).toEqual(takendown);
     expect(await repository.ensureAccount(ship.handle)).toEqual(takendown);
     expect(await rejection(repository.applyWrites([note("second")]))).toContain("RepoTakendown");
-    expect(await rejection(repository.serviceAuth({ aud: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb#ship", lxm: "space.ship.deliver" }))).toContain("RepoTakendown");
+    // The Kernel knows the refusal by this prefix, and fails what it was sending at once.
+    expect(await rejection(repository.serviceAuth({ aud: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb#ship", lxm: "space.ship.deliver" }))).toMatch(/^RepoTakendown: /);
     expect(await rejection(upload(repository, "another file"))).toContain("RepoTakendown");
     expect(await errorOf(serve("com.atproto.repo.describeRepo", { repo: did }))).toBe("RepoTakendown");
 

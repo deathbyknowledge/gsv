@@ -60,6 +60,11 @@ export function takedownSubject({ subject }: PublicTakedown, avatarCid?: string)
   }
 }
 
+/** Whether the operator took down the person's whole Ship, which then reaches no other Ship. */
+export function shipTakenDown(takedowns: readonly PublicTakedown[]): boolean {
+  return takedowns.some((takedown) => takedownSubject(takedown).kind === "account");
+}
+
 /** Whether no one can see the person's profile because their operator took down their whole Ship or the profile itself. */
 export function profileTakenDown(takedowns: readonly PublicTakedown[]): boolean {
   return takedowns.some((takedown) => ["account", "profile"].includes(takedownSubject(takedown).kind));

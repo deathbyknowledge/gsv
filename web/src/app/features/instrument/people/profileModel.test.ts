@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProfileFields, ProfileState, PublicTakedown } from "@humansandmachines/gsv/protocol";
-import { profileSubmission, profileTakenDown, profileUnpublished, profileVisibility, takedownSubject } from "./profileModel";
+import { profileSubmission, profileTakenDown, profileUnpublished, profileVisibility, shipTakenDown, takedownSubject } from "./profileModel";
 
 const fields: ProfileFields = { displayName: "ada", about: "Hello", contactPolicy: "requests" };
 const url = "https://ada.ship.example/profile";
@@ -96,5 +96,10 @@ describe("what the operator took down", () => {
     expect(profileTakenDown([file, note])).toBe(false);
     expect(profileTakenDown([account])).toBe(true);
     expect(profileTakenDown([note, profile])).toBe(true);
+  });
+
+  it("counts the whole Ship as down only for its account", () => {
+    expect(shipTakenDown([profile, note, file])).toBe(false);
+    expect(shipTakenDown([note, account])).toBe(true);
   });
 });

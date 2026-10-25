@@ -212,7 +212,9 @@ Choose what to take down:
 - **File** takes down one blob by its CID, such as a profile picture.
 - **Whole account** takes down everything the Ship publishes. Until you restore
   it, the Ship can't publish or call other Ships, so its person can't message
-  their contacts either. Everything else in the Ship keeps working.
+  their contacts either; what they send fails at once with that reason. Their
+  contacts' messages still arrive, and everything else in the Ship keeps
+  working.
 
 Write the reason the Ship's person will read in People, then choose **Take
 down**. The PDS stops serving it at once, and relays learn of an account

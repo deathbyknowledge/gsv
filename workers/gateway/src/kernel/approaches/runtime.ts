@@ -4,6 +4,7 @@ import type { KernelContext } from "../context";
 import type { ApproachRecord } from "../approach-store";
 import { APPROACH_RECEIPT_MS } from "../approach-store";
 import { FederationHttpError, PublicFederationError } from "../federation/errors";
+import { ShipTakenDownError } from "../ships/errors";
 import { callShipProcedure } from "../ships/xrpc";
 import { getConversationById } from "../../shared/utils";
 import { appendApproachMessage } from "./admission";
@@ -37,8 +38,9 @@ export async function processApproachMaintenance(ctx: KernelContext): Promise<vo
           await acceptApproach(record, ctx);
         }
       } catch (error) {
-        const terminal = (error instanceof FederationHttpError || error instanceof PublicFederationError)
-          && [400, 401, 403, 404, 410, 413].includes(error.status);
+        const terminal = error instanceof ShipTakenDownError
+          || ((error instanceof FederationHttpError || error instanceof PublicFederationError)
+            && [400, 401, 403, 404, 410, 413].includes(error.status));
         ctx.approaches.defer(record.summary.id, record.summary.revision, terminal);
         ctx.broadcastToUserUid(record.ownerUid, "approach.changed");
       }
