@@ -3,11 +3,14 @@ import { CODEC_DCBOR, create, toString } from "@atcute/cid";
 import { parseDidKey, Secp256k1PrivateKey, Secp256k1PrivateKeyExportable, type DidKeyString } from "@atcute/crypto";
 import {
   deriveDidFromGenesisOp,
+  normalizeOp,
   PlcClient,
   PlcClientError,
+  processIndexedEntryLog,
   signOperation,
   signTombstone,
   validateIncomingOp,
+  type CompatibleOperationOrTombstone,
   type DidPlcString,
   type Operation,
   type Service,
@@ -43,6 +46,22 @@ export type IdentityHead = { cid: string; operation: Operation };
 
 /** What an operation states about an identity: every field an update carries forward or changes. */
 export type IdentityState = Omit<UnsignedOperation, "type" | "prev">;
+
+/**
+ * Why a host steps aside for a change to its identity: its own key signed an
+ * operation the host never submitted, a key it doesn't trust signed one, or
+ * the identity no longer names this host as its PDS with the account's signing key.
+ */
+export type StepAside = "leaked-key" | "untrusted-key" | "moved";
+
+/** What a host makes of the head of its DID's log. */
+export type HeadCheck =
+  /** The head is an operation the host signed or adopted. */
+  | { outcome: "own" }
+  /** Keys the host trusts signed every operation since its own, and the identity still names this host: the host follows the head. */
+  | { outcome: "adopted"; head: IdentityHead; signedBy: DidKeyString }
+  /** The host steps aside for the head, because of `operation`. */
+  | { outcome: StepAside; head: string; operation: string; signedBy: DidKeyString };
 
 /** The directory's log has moved past the head the host recorded, so someone else changed the identity. */
 export class IdentityChangedError extends Error {
@@ -168,6 +187,44 @@ export function parseOwnerRecoveryKey(value: string): DidKeyString {
   return value;
 }
 
+/** The owner's recovery key that rotation keys list at its rank, unless the key there is one of the operator's. */
+export function ownerRecoveryKeyOf(rotationKeys: readonly DidKeyString[], operatorKeys: readonly string[]): DidKeyString | null {
+  const key = rotationKeys[OWNER_RECOVERY_KEY_RANK];
+  return key !== undefined && !operatorKeys.includes(key) ? key : null;
+}
+
+/**
+ * Reads the DID's log and judges its head by every operation in force since
+ * the newest of `known`, the CIDs of the operations the host signed or
+ * adopted, genesis first; an undo can nullify the latest. The host trusts the
+ * keys that operation ranks above its own key. Each later operation must be
+ * signed by one of them, and the host then trusts the keys that operation
+ * ranks above its own, or all of them once its key is gone. An operation the
+ * host's key signed is one this host never submitted, so the key has leaked.
+ */
+export async function checkHead(env: HostEnv, did: DidPlcString, known: readonly string[], signingKey: DidKeyString): Promise<HeadCheck> {
+  const { canonical } = await processIndexedEntryLog(did, await new PlcClient({ serviceUrl: env.PLC_URL }).getAuditLog(did));
+  const start = canonical.findLastIndex((entry) => known.includes(entry.cid));
+  const base = canonical[start];
+  const head = canonical.at(-1);
+  if (!base || !head) throw new Error(`The directory's log for ${did} doesn't begin with this host's genesis`);
+  if (base === head) return { outcome: "own" };
+  const hostKey = await (await hostRotationKey(env)).exportPublicKey("did");
+  let trusted = keysAboveHost(base.operation, hostKey);
+  for (const entry of canonical.slice(start + 1)) {
+    if (!trusted.includes(entry.signedBy)) {
+      const outcome = entry.signedBy === hostKey ? "leaked-key" : "untrusted-key";
+      return { outcome, head: head.cid, operation: entry.cid, signedBy: entry.signedBy };
+    }
+    trusted = keysAboveHost(entry.operation, hostKey);
+  }
+  const state = head.operation;
+  if (state.type !== "plc_operation" || !namesHost(state, env.PDS_ORIGIN) || state.verificationMethods.atproto !== signingKey) {
+    return { outcome: "moved", head: head.cid, operation: head.cid, signedBy: head.signedBy };
+  }
+  return { outcome: "adopted", head: { cid: head.cid, operation: state }, signedBy: head.signedBy };
+}
+
 /**
  * Tombstones a DID so the directory stops resolving it. The directory keeps
  * the DID's operation log, which names its handle and host. A DID the
@@ -214,6 +271,14 @@ async function operationCid(operation: Operation): Promise<string> {
 
 function hostRotationKey(env: HostEnv): Promise<Secp256k1PrivateKey> {
   return Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY));
+}
+
+/** The keys an operation ranks above the host's, which the host trusts to change the identity next: all of them once the host's key is gone. */
+function keysAboveHost(operation: CompatibleOperationOrTombstone, hostKey: DidKeyString): DidKeyString[] {
+  if (operation.type === "plc_tombstone") return [];
+  const { rotationKeys } = normalizeOp(operation);
+  const rank = rotationKeys.indexOf(hostKey);
+  return rank === -1 ? rotationKeys : rotationKeys.slice(0, rank);
 }
 
 /** Whether an operation names this host as the identity's PDS. */

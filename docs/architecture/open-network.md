@@ -65,6 +65,24 @@ operation instead of signing another. A log that has moved past the recorded
 head means someone else changed the identity, and the PDS signs nothing on it:
 the change fails with `IdentityChanged`.
 
+The PDS also notices changes it didn't make. Before a commit or a Ship-call
+signature it reads the DID's audit log, at most once an hour, and walks every
+operation in force since the newest one it signed or adopted; an undo can
+nullify the latest. It trusts the keys that operation ranks above the host's
+key. Each later operation must be signed by one of them, and the trust then
+moves to the keys that operation ranks above the host's. A person's undo with
+their sheet, a sheet they replaced themselves and the operator's paper-key
+repair all pass. If every operation passes and the identity still names this
+PDS with the account's signing key, the PDS adopts the head and keeps serving.
+Otherwise it steps aside and refuses the account's writes and signatures with
+`IdentityChanged`. The identity has moved, a key the PDS doesn't trust changed
+it, or the host's own key signed an operation the PDS never submitted, so that
+key has leaked. A failed read keeps the last answer until the next hour.
+
+The PDS records each adoption and step-aside with the head, the operation that
+decided it and the key that signed it, for the Kernel or the operator to read
+later; it tells nobody yet.
+
 ## Calls between Ships
 
 Ships call each other's `space.ship.*` XRPC methods on the hostname that the

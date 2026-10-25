@@ -19,6 +19,7 @@ import {
 export class FakePlcDirectory {
   /** Each DID's audit log in the order the directory logged it. */
   private readonly logs = new Map<string, IndexedEntryWithSigner[]>();
+  private readonly readCounts = new Map<string, number>();
   private dropNextResponse = false;
   private elapsedMs = 0;
 
@@ -30,6 +31,11 @@ export class FakePlcDirectory {
   /** Moves the directory's clock on, so the operations it logs next carry a later time. */
   elapse(ms: number): void {
     this.elapsedMs += ms;
+  }
+
+  /** How many times anyone read the DID's log or document. */
+  reads(did: string): number {
+    return this.readCounts.get(did) ?? 0;
   }
 
   /** The operations in force in a DID's log, genesis first. */
@@ -45,6 +51,7 @@ export class FakePlcDirectory {
     if (request.method === "POST" && path === "") {
       return this.submit(did, await request.json<CompatibleOperationOrTombstone>());
     }
+    this.readCounts.set(did, this.reads(did) + 1);
     const log = this.logs.get(did);
     const operations = this.operations(did);
     const last = operations.at(-1);

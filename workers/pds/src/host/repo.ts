@@ -17,17 +17,22 @@ import { validator } from "../cirrus/validation";
 import type { HostEnv } from "./env";
 import { FIREHOSE_NAME, type OutboxEvent, type RepoHead, type RepoState } from "./firehose";
 import {
+  checkHead,
   didDocument,
   genesisHead,
+  IdentityChangedError,
   mintIdentity,
+  ownerRecoveryKeyOf,
   parseOwnerRecoveryKey,
   registerGenesis,
   signNextOperation,
   submitNextOperation,
   tombstoneIdentity,
   withOwnerRecoveryKey,
+  type HeadCheck,
   type IdentityHead,
   type RepoIdentity,
+  type StepAside,
 } from "./identity";
 import {
   REPO_BLOB_REF, REPO_REF, STRONG_REF, subjectKey, Takedowns,
@@ -92,12 +97,18 @@ const ACCOUNT_KEY = "account";
 const RETIREMENT_KEY = "retirement";
 const DELIVERED_KEY = "firehose.delivered";
 const FAILURES_KEY = "firehose.failures";
+const IDENTITY_CHECK_KEY = "identity.check";
 const DELIVERY_BATCH = 100;
 /** Delivered events kept locally so the wake check can read the last announced head. */
 const KEEP_DELIVERED = 100;
 const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 5 * 60_000;
 const STAGED_BLOB_TTL_MS = 6 * 60 * 60_000;
+/** How long a write or signature relies on the host's last read of its DID's log. */
+const IDENTITY_CHECK_TTL_MS = 60 * 60_000;
+/** The operations the host remembers having signed or adopted; an undo reaches back 72 hours, far fewer than this. */
+const KNOWN_OPERATIONS = 64;
+const IDENTITY_EVENTS = 20;
 /** Files one erasure call deletes, the most one R2 delete takes. */
 const ERASE_BATCH = 1_000;
 /** Stored values one delete call removes. */
@@ -145,12 +156,29 @@ type StoredAccount = RepoIdentity & {
   blobPrefix: string;
   /** Whether the PLC directory accepted the genesis operation. */
   registered: boolean;
-  /** The last operation the host signed for the DID after its genesis; absent until it signs one. */
+  /** The last operation the host signed or adopted for the DID after its genesis; absent until there is one. */
   identity?: IdentityUpdate;
 };
 
-/** An operation the host signed for an account's DID, the owner's recovery key it lists, and whether the directory accepted it. */
-type IdentityUpdate = { head: IdentityHead; ownerRecoveryKey: DidKeyString | null; accepted: boolean };
+/**
+ * An operation the host signed or adopted for an account's DID, the owner's
+ * recovery key it lists, and whether the directory accepted it, with the CIDs
+ * of the last operations the host signed or adopted after the genesis, oldest first.
+ */
+type IdentityUpdate = { head: IdentityHead; ownerRecoveryKey: DidKeyString | null; accepted: boolean; operations: string[] };
+
+/** What the host last read at the head of its DID's log, and the changes it found there that it didn't sign. */
+export type IdentityCheck = {
+  /** When the host last read the log, or tried to. */
+  checkedAt: number;
+  /** The change the host steps aside for, refusing every write and signature; null while it follows the head. */
+  steppedAside: IdentityEvent | null;
+  /** The changes the host adopted or stepped aside for, oldest first; the last 20. */
+  events: IdentityEvent[];
+};
+
+/** A change at the head of the DID's log that the host didn't sign: the head, the operation that decided, and the key that signed it. */
+export type IdentityEvent = { at: number; outcome: "adopted" | StepAside; head: string; operation: string; signedBy: DidKeyString };
 
 type OpenRepo = {
   account: StoredAccount;
@@ -221,6 +249,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
     const repo = await this.requireRepo();
     refuseTakendown(repo);
     if (!await repo.storage.getActive()) throw new Error(`RepoDeactivated: ${repo.account.did} cannot sign calls`);
+    await this.requireIdentity(repo.account, false);
     return signServiceAuth(repo.account.did, repo.account.signingKey, request);
   }
 
@@ -236,8 +265,10 @@ export class HostedRepo extends DurableObject<HostEnv> {
       await this.requireLive();
       const repo = await this.requireRepo();
       refuseTakendown(repo);
+      if ((await this.checkIdentity(true)).check.steppedAside) throw new IdentityChangedError(repo.account.did);
       const account = await this.acceptIdentity(repo.account);
-      const known = account.identity ?? { head: await genesisHead(account.genesis), ownerRecoveryKey: null, accepted: true };
+      const operations = account.identity?.operations ?? [];
+      const known = account.identity ?? { head: await genesisHead(account.genesis), ownerRecoveryKey: null, accepted: true, operations };
       if (next === known.ownerRecoveryKey) return { ownerRecoveryKey: next };
       if (next !== null && known.head.operation.rotationKeys.includes(next)) {
         throw new Error("InvalidRecoveryKey: the identity already lists that key");
@@ -246,9 +277,15 @@ export class HostedRepo extends DurableObject<HostEnv> {
         ...state,
         rotationKeys: withOwnerRecoveryKey(state.rotationKeys, known.ownerRecoveryKey, next),
       }));
-      await this.acceptIdentity(await this.saveAccount({ ...account, identity: { head, ownerRecoveryKey: next, accepted: false } }));
+      const identity = { head, ownerRecoveryKey: next, accepted: false, operations: [...operations, head.cid].slice(-KNOWN_OPERATIONS) };
+      await this.acceptIdentity(await this.saveAccount({ ...account, identity }));
       return { ownerRecoveryKey: next };
     });
+  }
+
+  /** What the host last read at the head of its DID's log, without reading it again. */
+  async identityCheck(): Promise<IdentityCheck | null> {
+    return (await this.ctx.storage.get<IdentityCheck>(IDENTITY_CHECK_KEY)) ?? null;
   }
 
   /** Applies writes in one signed commit after validating records and the blobs they reference. */
@@ -666,6 +703,63 @@ export class HostedRepo extends DurableObject<HostEnv> {
     return account;
   }
 
+  /**
+   * Refuses while the host steps aside for a change to its DID. Once the last
+   * read of the DID's log is an hour old, it reads it again in the write
+   * queue, which `queued` callers are already in.
+   */
+  private async requireIdentity(account: StoredAccount, queued: boolean): Promise<void> {
+    let check = await this.ctx.storage.get<IdentityCheck>(IDENTITY_CHECK_KEY);
+    if (!check || Date.now() - check.checkedAt >= IDENTITY_CHECK_TTL_MS) {
+      const read = () => this.checkIdentity(false);
+      check = (queued ? await read() : await this.serialize(read)).check;
+    }
+    if (check.steppedAside) throw new IdentityChangedError(account.did);
+  }
+
+  /**
+   * Reads the DID's log, unless `fresh` is false and the last read is less
+   * than an hour old, and judges its head with `checkHead`. The host adopts a
+   * change keys it trusts made and records it; for any other it steps aside.
+   * A failed read keeps the last answer for the hour. Runs in the write queue.
+   */
+  private async checkIdentity(fresh: boolean): Promise<{ check: IdentityCheck; read: boolean }> {
+    const stored = (await this.ctx.storage.get<IdentityCheck>(IDENTITY_CHECK_KEY)) ?? { checkedAt: 0, steppedAside: null, events: [] };
+    const account = await this.storedAccount();
+    if (!account || (!fresh && Date.now() - stored.checkedAt < IDENTITY_CHECK_TTL_MS)) return { check: stored, read: true };
+    const checkedAt = Date.now();
+    const operations = account.identity?.operations ?? [];
+    let found: HeadCheck;
+    try {
+      found = await checkHead(this.env, account.did, [(await genesisHead(account.genesis)).cid, ...operations], account.signingDidKey);
+    } catch (error) {
+      console.error("Identity check failed; the host reads its DID's log again in an hour", error);
+      return { check: await this.saveCheck({ ...stored, checkedAt }), read: false };
+    }
+    if (found.outcome === "own") return { check: await this.saveCheck({ ...stored, checkedAt, steppedAside: null }), read: true };
+    if (found.outcome === "adopted") {
+      const operatorKeys = [...account.genesis.rotationKeys, ...this.env.PLC_RECOVERY_KEY ? [this.env.PLC_RECOVERY_KEY] : []];
+      await this.saveAccount({ ...account, identity: {
+        head: found.head,
+        ownerRecoveryKey: ownerRecoveryKeyOf(found.head.operation.rotationKeys, operatorKeys),
+        accepted: true,
+        operations: [...operations, found.head.cid].slice(-KNOWN_OPERATIONS),
+      } });
+      const event: IdentityEvent = { at: checkedAt, outcome: "adopted", head: found.head.cid, operation: found.head.cid, signedBy: found.signedBy };
+      return { check: await this.saveCheck({ checkedAt, steppedAside: null, events: [...stored.events, event].slice(-IDENTITY_EVENTS) }), read: true };
+    }
+    const { outcome, head, operation, signedBy } = found;
+    const same = stored.steppedAside?.outcome === outcome && stored.steppedAside.head === head && stored.steppedAside.operation === operation;
+    if (same) return { check: await this.saveCheck({ ...stored, checkedAt }), read: true };
+    const event: IdentityEvent = { at: checkedAt, outcome, head, operation, signedBy };
+    return { check: await this.saveCheck({ checkedAt, steppedAside: event, events: [...stored.events, event].slice(-IDENTITY_EVENTS) }), read: true };
+  }
+
+  private async saveCheck(check: IdentityCheck): Promise<IdentityCheck> {
+    await this.ctx.storage.put(IDENTITY_CHECK_KEY, check);
+    return check;
+  }
+
   /** The account once the directory has the last operation the host signed for its DID, submitted again after a lost response. */
   private async acceptIdentity(account: StoredAccount): Promise<StoredAccount> {
     if (!account.identity || account.identity.accepted) return account;
@@ -861,6 +955,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
 
   private async commit(repo: OpenRepo, writes: RepoWrite[]): Promise<CommitResult> {
     refuseTakendown(repo);
+    await this.requireIdentity(repo.account, true);
     const prepared = await this.prepare(repo, writes);
     const promoted = await this.promote(repo, prepared);
     const before = await repo.storage.getRev();

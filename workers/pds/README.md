@@ -124,6 +124,11 @@ carried forward, a head that moved, PLC's rotation-key limits, and an owner's
 recovery key: its rank, replacement, removal, a lost response, and what each
 key can undo. With an undone operation in the log, a retry and a tombstone
 follow the operations in force, and the paper key can still undo the tombstone.
+The identity check tests change a DID's log behind the host's back: a leaked
+host key's one- and two-step changes, a sheet that moves the identity, the
+person's undo with an old sheet, their own new sheet and the operator's
+paper-key repair. They also cover reading at most once an hour and a failed
+read.
 
 The relay tests answer `requestCrawl` as the reference relay does, checking the
 host's `describeServer` through the worker before accepting. They cover asking
