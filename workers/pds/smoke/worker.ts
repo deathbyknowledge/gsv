@@ -10,7 +10,7 @@ type SmokeEnv = {
 
 const INSTALLATION_ID = "inst_smoke";
 const HANDLE = "smoke.ship.test";
-const NOTE = "space.ship.note";
+const NOTE = "com.example.note";
 
 /** Identity operations the host registers during the run; a restart starts an empty directory. */
 const plc = new FakePlcDirectory();

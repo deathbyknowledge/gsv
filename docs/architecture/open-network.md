@@ -71,6 +71,54 @@ with 429 `RateLimitExceeded` and a `retry-after` header:
   fails against its cached key, means a directory lookup. A Ship makes at most
   60 lookups a minute.
 
+## Lexicons
+
+Each `space.ship.*` method and record is defined by a Lexicon v1 document in
+`lexicons/space/ship/`, one file per NSID: the six methods Ships call on each
+other and the `space.ship.profile` record. The lexicons are the contract. The
+SDK's NSID constants, validators and types are generated from them, as are the
+limits a Ship checks before it sends, and the Kernel and web import those from
+`packages/gsv/src/protocol/generated/ship-lexicons.ts`.
+
+```text
+lexicons/space/ship/*.json ────────────┐
+                                       ├─ npm run protocol:generate ─▶ generated/ship-lexicons.ts
+tools/protocol/ship-lexicon-rules.mjs ─┘                                NSIDs, limits, zod/mini validators, types
+```
+
+The validators read Lexicon as its specification does. String lengths count
+UTF-8 bytes and graphemes; `enum` is closed while `knownValues` only advises;
+the `did`, `handle`, `at-uri`, `datetime` and `cid` formats are checked, a CID
+being CIDv1; a blob must match its `accept` types and `maxSize`. A method
+refuses fields its lexicon doesn't declare. A record ignores them, since
+records come from any Ship.
+
+Some checks Ships make can't be written in Lexicon, so
+`tools/protocol/ship-lexicon-rules.mjs` adds them, and the field's lexicon
+description states them for other implementations. Names, message text,
+filenames and transcriptions count UTF-16 code units. Resource IDs and request
+kinds follow patterns. A delivery's payload is chosen by its `kind` rather than
+a `$type`. A file's duration is a fractional number of seconds. A request's
+details are at most 32 KiB as JSON.
+
+The rules file also names the limits a Ship checks before it sends, such as
+`MAX_FEDERATION_MESSAGE_BYTES`, the most UTF-8 bytes a message's text may hold.
+Each is the lexicon's own `maxLength` or `maximum`, or the number a rule checks,
+so the sender's check and the receiver's can't drift apart.
+
+To change a lexicon:
+
+1. Edit its file. Ships already running keep validating with the version they
+   shipped. A record can gain optional fields, because readers ignore what they
+   don't know. A method can't, because a Ship refuses a call that carries a
+   field its lexicon doesn't declare. No limit can tighten and no field can
+   become required.
+2. Run `npm run protocol:generate` and commit the regenerated module with the
+   lexicon.
+3. `npm run protocol:check` fails while the generated module is stale. It also
+   fails when code writes a `space.ship` NSID as a string, so import the
+   generated constant instead.
+
 ## Contacts from before DIDs
 
 Before the open network, Ships named each other's people by a Ship key and an

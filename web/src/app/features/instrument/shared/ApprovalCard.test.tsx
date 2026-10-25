@@ -106,21 +106,21 @@ describe("approval card", () => {
       handle: "alice",
       address: "alice.ship.space",
       writes: [
-        { action: "put", collection: "space.ship.note", rkey: "first", record: { $type: "space.ship.note", text: "hello", picture } },
-        { action: "delete", collection: "space.ship.note", rkey: "old" },
+        { action: "put", collection: "com.example.note", rkey: "first", record: { $type: "com.example.note", text: "hello", picture } },
+        { action: "delete", collection: "com.example.note", rkey: "old" },
       ],
     } } });
     const text = collectText(tree);
     expect(text).toContain("Publish to the open network");
     expect(text).toMatch(/Publishes to the open network as\s+@alice/);
-    expect(text).toContain("add or replace space.ship.note/first");
-    expect(text).toContain("remove space.ship.note/old");
+    expect(text).toContain("add or replace com.example.note/first");
+    expect(text).toContain("remove com.example.note/old");
     const nodes = collectNodes(tree);
     const handle = nodes.find((node) => node.type === Hint && collectText(node) === "@alice");
     expect(handle?.props.text).toBe("alice.ship.space");
     // Each file the records carry renders once, keyed by its CID.
     expect(nodes.filter((node) => node.key === "bafkreipicture")).toHaveLength(1);
-    expect(collectText(nodes.find((node) => node.props.class === "machine-rail"))).toBe("space.ship.note/first · space.ship.note/old");
+    expect(collectText(nodes.find((node) => node.props.class === "machine-rail"))).toBe("com.example.note/first · com.example.note/old");
   });
 
   it.each<{ syscall: string; args: JsonObject }>([

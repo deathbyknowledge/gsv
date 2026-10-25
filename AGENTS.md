@@ -43,6 +43,7 @@ This document is the root engineering contract for the repository. It explains h
 - A linked adapter actor may invoke an ordinary syscall only through a Kernel-derived, interaction-scoped human peer whose grant is intersected with the linked account's capabilities.
 - Shell, agent tools, CodeMode, apps, and SDK clients may present results differently, but they must share the same underlying primitive behavior.
 - Structured frames carry metadata. Potentially large or binary payloads travel through frame bodies and streams.
+- `space.ship.*` methods and records are the lexicons in `lexicons/space/ship/`. Change a lexicon and run `npm run protocol:generate`; never hand-write a `space.ship` schema or NSID.
 - Live syscall ledger rows require both the ledger signal grant and `sys.ledger.list`, scoped to the owning human or root. Clients merge pushed rows and completion updates by sequence; ordinary ledger changes must not trigger another ledger read.
 - Whoever accepts a body, request, media object, or background operation owns its completion, cancellation, and cleanup.
 - The instance service owns cloud browser save ordering, profile leases, encrypted snapshots and forgetting. Browser profile syscalls expose metadata and deletion under the same owner and browser capabilities. Ordinary stop requires a successful final save, while explicit force, expiry and deletion remain available.

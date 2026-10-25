@@ -18,7 +18,7 @@ import { FakePlcDirectory } from "./plc";
 import { framesFor, subscribe, verifyCommit, type Frame } from "./relay";
 import { byteStream, deliver, errorOf, installFakePlc, read, rejection, upload } from "./support";
 
-const NOTE = "space.ship.note";
+const NOTE = "com.example.note";
 
 const describedRepo = z.object({
   did: z.string(),

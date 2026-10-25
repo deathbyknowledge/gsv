@@ -1,0 +1,287 @@
+{
+  "lexicon": 1,
+  "id": "space.ship.deliver",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "A message or contact update for a connected Ship; a repeated delivery ID is received once.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["deliveryId", "generation", "payload"],
+          "properties": {
+            "deliveryId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "generation": {
+              "type": "string",
+              "description": "The connection the delivery belongs to; a replaced connection refuses it.",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "payload": {
+              "type": "unknown",
+              "description": "One of #message, #request, #requestUpdate or #contactRevoked, chosen by its kind."
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["state"],
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "received"
+            }
+          }
+        }
+      }
+    },
+    "message": {
+      "type": "object",
+      "description": "A message in the contact's conversation. It carries text, files, or both.",
+      "required": ["kind", "messageId", "threadId", "text", "social"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "message"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "threadId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "text": {
+          "type": "string",
+          "description": "More than whitespace, unless the message carries files.",
+          "maxLength": 32768
+        },
+        "resources": {
+          "type": "array",
+          "maxLength": 16,
+          "items": {
+            "type": "ref",
+            "ref": "#resource"
+          }
+        },
+        "social": {
+          "type": "ref",
+          "ref": "#social"
+        }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "description": "A file a message carries, which space.ship.getAttachment reads. Audio and video may also carry a duration, a non-negative JSON number of seconds, which Lexicon can't declare.",
+      "required": ["id", "revision", "contentType", "size"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "resource: followed by 1 to 119 letters, digits, hyphens or underscores.",
+          "maxLength": 128
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "contentType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "size": {
+          "type": "integer",
+          "description": "In bytes.",
+          "minimum": 0,
+          "maximum": 50331648
+        },
+        "mediaType": {
+          "type": "string",
+          "enum": ["image", "audio", "video", "document"]
+        },
+        "filename": {
+          "type": "string",
+          "description": "At most 1,024 UTF-16 code units.",
+          "maxLength": 3072,
+          "maxGraphemes": 1024
+        },
+        "transcription": {
+          "type": "string",
+          "description": "What an audio or video file says. At most 32,768 UTF-16 code units.",
+          "maxLength": 98304,
+          "maxGraphemes": 32768
+        }
+      }
+    },
+    "social": {
+      "type": "object",
+      "description": "Who wrote a message, and where it sits in the conversation.",
+      "required": ["threadId", "reference", "provenance"],
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reference": {
+          "type": "ref",
+          "ref": "#messageRef"
+        },
+        "provenance": {
+          "type": "unknown",
+          "description": "#humanProvenance or #processProvenance, chosen by its kind."
+        },
+        "replyTo": {
+          "type": "ref",
+          "description": "The message this one answers.",
+          "ref": "#messageRef"
+        }
+      }
+    },
+    "messageRef": {
+      "type": "object",
+      "description": "A message as its author's Ship names it.",
+      "required": ["did", "messageId"],
+      "properties": {
+        "did": {
+          "type": "string",
+          "description": "The author's Ship: a did:plc or did:web identity.",
+          "format": "did"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "humanProvenance": {
+      "type": "object",
+      "description": "The person wrote the message.",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "human"
+        }
+      }
+    },
+    "processProvenance": {
+      "type": "object",
+      "description": "A process wrote the message for the person.",
+      "required": ["kind", "processId"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "process"
+        },
+        "processId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "description": "Offers the contact a request.",
+      "required": ["kind", "request"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "request"
+        },
+        "request": {
+          "type": "ref",
+          "ref": "#requestOffer"
+        }
+      }
+    },
+    "requestOffer": {
+      "type": "object",
+      "required": ["id", "kind", "title", "state", "revision"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "description": "Segments of letters and digits joined by a dot, hyphen or underscore, starting with a letter.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "More than whitespace.",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "details": {
+          "type": "unknown",
+          "description": "At most 32 KiB as JSON."
+        },
+        "state": {
+          "type": "string",
+          "const": "offered"
+        },
+        "revision": {
+          "type": "integer",
+          "const": 1
+        }
+      }
+    },
+    "requestUpdate": {
+      "type": "object",
+      "description": "Moves a request on.",
+      "required": ["kind", "requestId", "expectedRevision", "state"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "request.update"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "state": {
+          "type": "string",
+          "enum": ["accepted", "rejected", "active", "completed", "cancelled"]
+        },
+        "details": {
+          "type": "unknown",
+          "description": "At most 32 KiB as JSON."
+        }
+      }
+    },
+    "contactRevoked": {
+      "type": "object",
+      "description": "The sender removed the contact; the delivery's generation names which connection ended.",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "contact.revoked"
+        }
+      }
+    }
+  }
+}

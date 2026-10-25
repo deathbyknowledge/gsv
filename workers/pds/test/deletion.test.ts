@@ -15,7 +15,7 @@ import { FakePlcDirectory, isDidPlc } from "./plc";
 import { framesFor, subscribe } from "./relay";
 import { deliver, installFakePlc, rejection, upload } from "./support";
 
-const NOTE = "space.ship.note";
+const NOTE = "com.example.note";
 const SHIP_CALL = { aud: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb#ship", lxm: "space.ship.deliver" };
 const DAY_MS = 24 * 60 * 60_000;
 

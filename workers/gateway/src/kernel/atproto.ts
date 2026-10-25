@@ -28,13 +28,13 @@ import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 
 /** Collections a Ship feature publishes itself, and where the person changes them instead. */
 const FEATURE_COLLECTIONS = new Map([
-  ["space.ship.profile", "space.ship.profile is your profile; change it in People"],
+  [SHIP_PROFILE_COLLECTION, `${SHIP_PROFILE_COLLECTION} is your profile; change it in People`],
 ]);
 
 /** One approval covers the whole batch, so it stays small enough to show in full. */
 const MAX_WRITES_BYTES = 64 * 1024;
 const NSID = /^[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(\.[a-zA-Z]([a-zA-Z0-9]{0,62})?)$/;
-const collection = z.string().check(z.maxLength(317), z.regex(NSID, "must be a collection NSID, such as space.ship.note"));
+const collection = z.string().check(z.maxLength(317), z.regex(NSID, "must be a collection NSID, such as com.example.note"));
 const rkey = z.string().check(
   z.regex(/^[a-zA-Z0-9_~.:-]{1,512}$/, "must be a record key of letters, digits and _~.:-"),
   z.refine((value) => value !== "." && value !== "..", "must be a record key of letters, digits and _~.:-"),

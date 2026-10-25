@@ -457,7 +457,7 @@ and put that reference in the record:
 
 ```bash
 atproto blob trip.jpg
-atproto create space.ship.note --file note.json
+atproto create com.example.note --file note.json
 ```
 
 `atproto identity` prints the Ship's DID and handle, or `null` until the Ship

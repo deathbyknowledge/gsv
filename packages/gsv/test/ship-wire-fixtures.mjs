@@ -1,0 +1,333 @@
+/**
+ * Ship-to-Ship values at the edges of what a Ship accepts, by the SDK schema
+ * that reads them. Limits written for people count UTF-16 code units, so each
+ * is tried with two-byte letters, emoji and combining marks as well as ASCII.
+ */
+
+const ALICE = "did:plc:aliceaaaaaaaaaaaaaaaaaaa";
+const RAW_CID = "bafkreihf2w4xce4657vtnvxnxgjy7isgoqgjbwraanrgjb7lfvozmrvoyy";
+const DAG_CBOR_CID = "bafyreihf2w4xce4657vtnvxnxgjy7isgoqgjbwraanrgjb7lfvozmrvoyy";
+const V0_CID = "Qmdoq6FDxYYYSWRhU7LiVtwe4RbKDSsf8xxj2uFV69ueHs";
+// One code unit and two UTF-8 bytes; two code units and four bytes; four code units
+// and eight bytes; two code points and three bytes; seven code points and 25 bytes.
+// Each is one grapheme.
+const ACCENT = "é";
+const EMOJI = "👍";
+const TONED = "👍🏽";
+const COMBINED = "é";
+const FAMILY = "👨‍👩‍👧‍👦";
+
+const accept = "accept";
+const refuse = "refuse";
+const x = (count) => "x".repeat(count);
+
+/** Each case's value is the base with its changes; a change to `undefined` leaves the field out. */
+function cases(base, list) {
+  return list.map(([what, changes, verdict]) => ({ what, value: withChanges(base, changes), verdict }));
+}
+
+function withChanges(base, changes) {
+  const value = { ...base, ...changes };
+  for (const [key, change] of Object.entries(changes)) if (change === undefined) delete value[key];
+  return value;
+}
+
+const SOCIAL = { threadId: "thread-1", reference: { did: ALICE, messageId: "message-1" }, provenance: { kind: "human" } };
+const RESOURCE = { id: "resource:file-1", revision: "revision-1", contentType: "image/png", size: 12 };
+const MESSAGE = { kind: "message", messageId: "message-1", threadId: "thread-1", text: "Hello", social: SOCIAL };
+const OFFER = { id: "request-1", kind: "travel.booking", title: "Book a table", state: "offered", revision: 1 };
+const REQUEST = { kind: "request", request: OFFER };
+const UPDATE = { kind: "request.update", requestId: "request-1", expectedRevision: 1, state: "accepted" };
+// `{"text":""}` is 11 bytes, so this is exactly 32 KiB as JSON.
+const DETAILS = { text: x(32_757) };
+const AVATAR = { $type: "blob", ref: { $link: RAW_CID }, mimeType: "image/png", size: 1_000 };
+const PROFILE = { $type: "space.ship.profile", displayName: "Alice", contactPolicy: "requests" };
+const RECEIVED = cases({ state: "received" }, [
+  ["received", {}, accept],
+  ["another state", { state: "accepted" }, refuse],
+  ["no state", { state: undefined }, refuse],
+  ["a field the method doesn't declare", { extra: true }, refuse],
+]);
+
+export const SHIP_WIRE_FIXTURES = {
+  acceptInvitationInputSchema: cases({ token: "token-1", name: "Alice" }, [
+    ["a token and a name", {}, accept],
+    ["an empty token", { token: "" }, refuse],
+    ["a token of 128 characters", { token: x(128) }, accept],
+    ["a token of 129 characters", { token: x(129) }, refuse],
+    ["a token of 64 two-byte letters", { token: ACCENT.repeat(64) }, accept],
+    ["a token of 65 two-byte letters, 130 bytes", { token: ACCENT.repeat(65) }, refuse],
+    ["an empty name", { name: "" }, refuse],
+    ["a name of 256 characters", { name: x(256) }, accept],
+    ["a name of 257 characters", { name: x(257) }, refuse],
+    ["a name of 256 two-byte letters", { name: ACCENT.repeat(256) }, accept],
+    ["a name of 128 emoji, 256 code units", { name: EMOJI.repeat(128) }, accept],
+    ["a name of 129 emoji, 258 code units", { name: EMOJI.repeat(129) }, refuse],
+    ["a name of 64 toned emoji, 256 code units", { name: TONED.repeat(64) }, accept],
+    ["a name of 65 toned emoji, 260 code units", { name: TONED.repeat(65) }, refuse],
+    ["a name of 128 letters with combining accents", { name: COMBINED.repeat(128) }, accept],
+    ["a name of 129 letters with combining accents", { name: COMBINED.repeat(129) }, refuse],
+    ["a name that isn't text", { name: 1 }, refuse],
+    ["no name", { name: undefined }, refuse],
+    ["a field the method doesn't declare", { extra: true }, refuse],
+  ]),
+  acceptInvitationOutputSchema: cases({ name: "Bob", generation: "generation-1", threadId: "thread-1" }, [
+    ["a name, generation and thread", {}, accept],
+    ["an empty generation", { generation: "" }, refuse],
+    ["a generation of 128 characters", { generation: x(128) }, accept],
+    ["a generation of 129 characters", { generation: x(129) }, refuse],
+    ["a generation of 65 two-byte letters, 130 bytes", { generation: ACCENT.repeat(65) }, refuse],
+    ["a thread of 129 characters", { threadId: x(129) }, refuse],
+    ["a name of 128 emoji", { name: EMOJI.repeat(128) }, accept],
+    ["a name of 257 characters", { name: x(257) }, refuse],
+    ["no thread", { threadId: undefined }, refuse],
+    ["a field the method doesn't declare", { extra: true }, refuse],
+  ]),
+  acceptMessageRequestInputSchema: cases({ requestId: "request-1", name: "Alice" }, [
+    ["a request and a name", {}, accept],
+    ["an empty request", { requestId: "" }, refuse],
+    ["a request of 128 characters", { requestId: x(128) }, accept],
+    ["a request of 129 characters", { requestId: x(129) }, refuse],
+    ["a name of 256 characters", { name: x(256) }, accept],
+    ["a name of 257 characters", { name: x(257) }, refuse],
+    ["a name of 129 emoji", { name: EMOJI.repeat(129) }, refuse],
+    ["a field the method doesn't declare", { extra: true }, refuse],
+  ]),
+  acceptMessageRequestOutputSchema: cases({ generation: "generation-1", threadId: "thread-1" }, [
+    ["a generation and thread", {}, accept],
+    ["an empty thread", { threadId: "" }, refuse],
+    ["a thread of 129 characters", { threadId: x(129) }, refuse],
+    ["a field the method doesn't declare", { name: "Bob" }, refuse],
+  ]),
+  withdrawMessageRequestInputSchema: cases({ requestId: "request-1" }, [
+    ["a request", {}, accept],
+    ["an empty request", { requestId: "" }, refuse],
+    ["a request of 129 characters", { requestId: x(129) }, refuse],
+    ["a field the method doesn't declare", { reason: "changed my mind" }, refuse],
+  ]),
+  sendMessageRequestInputSchema: cases({
+    requestId: "request-1", profileCid: DAG_CBOR_CID, name: "Alice", messageId: "message-1", text: "Hello",
+    createdAtMs: 1_761_000_000_000, expiresAtMs: 1_762_000_000_000,
+  }, [
+    ["a request", {}, accept],
+    ["an empty name", { name: "" }, refuse],
+    ["a name of 80 characters", { name: x(80) }, accept],
+    ["a name of 81 characters", { name: x(81) }, refuse],
+    ["a name of 80 two-byte letters", { name: ACCENT.repeat(80) }, accept],
+    ["a name of 40 emoji, 80 code units", { name: EMOJI.repeat(40) }, accept],
+    ["a name of 41 emoji, 82 code units", { name: EMOJI.repeat(41) }, refuse],
+    ["a name of 41 letters with combining accents", { name: COMBINED.repeat(41) }, refuse],
+    ["no text", { text: "" }, refuse],
+    ["text of 32,768 characters", { text: x(32_768) }, accept],
+    ["text of 32,769 characters", { text: x(32_769) }, refuse],
+    ["text of 32,768 two-byte letters", { text: ACCENT.repeat(32_768) }, accept],
+    ["text of 16,384 emoji, 32,768 code units", { text: EMOJI.repeat(16_384) }, accept],
+    ["text of 16,385 emoji, 32,770 code units", { text: EMOJI.repeat(16_385) }, refuse],
+    ["an empty profile CID", { profileCid: "" }, refuse],
+    ["a raw profile CID", { profileCid: RAW_CID }, accept],
+    ["a profile CID that isn't a CID", { profileCid: x(59) }, refuse],
+    ["a CIDv0 profile CID", { profileCid: V0_CID }, refuse],
+    ["a request of 129 characters", { requestId: x(129) }, refuse],
+    ["a message of 129 characters", { messageId: x(129) }, refuse],
+    ["sent at the epoch", { createdAtMs: 0 }, refuse],
+    ["sent a millisecond after the epoch", { createdAtMs: 1 }, accept],
+    ["sent at a fractional millisecond", { createdAtMs: 1.5 }, refuse],
+    ["sent at a time written as text", { createdAtMs: "1" }, refuse],
+    ["expiring at the epoch", { expiresAtMs: 0 }, refuse],
+    ["no expiry", { expiresAtMs: undefined }, refuse],
+    ["a field the method doesn't declare", { did: ALICE }, refuse],
+  ]),
+  sendMessageRequestOutputSchema: RECEIVED,
+  withdrawMessageRequestOutputSchema: RECEIVED,
+  deliverOutputSchema: RECEIVED,
+  getAttachmentParamsSchema: cases({ id: "resource:abc" }, [
+    ["a resource", {}, accept],
+    ["a resource without a name", { id: "resource:" }, refuse],
+    ["a resource of 128 characters", { id: `resource:${x(119)}` }, accept],
+    ["a resource of 129 characters", { id: `resource:${x(120)}` }, refuse],
+    ["a resource with a space", { id: "resource:a b" }, refuse],
+    ["a resource with a slash", { id: "resource:a/b" }, refuse],
+    ["a resource with an accent", { id: `resource:${ACCENT}` }, refuse],
+    ["something other than a resource", { id: "file:abc" }, refuse],
+    ["a parameter the method doesn't declare", { revision: "1" }, refuse],
+  ]),
+  federationResourceDescriptorSchema: cases(RESOURCE, [
+    ["a file", {}, accept],
+    ["an id that isn't a resource", { id: "file-1" }, refuse],
+    ["an empty revision", { revision: "" }, refuse],
+    ["a revision of 1,024 characters", { revision: x(1_024) }, accept],
+    ["a revision of 1,025 characters", { revision: x(1_025) }, refuse],
+    ["a revision of 513 two-byte letters, 1,026 bytes", { revision: ACCENT.repeat(513) }, refuse],
+    ["an empty content type", { contentType: "" }, refuse],
+    ["a content type of 256 characters", { contentType: x(256) }, accept],
+    ["a content type of 257 characters", { contentType: x(257) }, refuse],
+    ["an empty file", { size: 0 }, accept],
+    ["a file of 48 MiB", { size: 50_331_648 }, accept],
+    ["a file of 48 MiB and a byte", { size: 50_331_649 }, refuse],
+    ["a fractional size", { size: 1.5 }, refuse],
+    ["a negative size", { size: -1 }, refuse],
+    ["an image", { mediaType: "image" }, accept],
+    ["audio", { mediaType: "audio" }, accept],
+    ["a video", { mediaType: "video" }, accept],
+    ["a document", { mediaType: "document" }, accept],
+    ["a media type no Ship knows", { mediaType: "text" }, refuse],
+    ["a filename of 1,024 characters", { filename: x(1_024) }, accept],
+    ["a filename of 1,025 characters", { filename: x(1_025) }, refuse],
+    ["a filename of 1,024 two-byte letters", { filename: ACCENT.repeat(1_024) }, accept],
+    ["a filename of 512 emoji", { filename: EMOJI.repeat(512) }, accept],
+    ["a filename of 513 emoji", { filename: EMOJI.repeat(513) }, refuse],
+    ["a duration of nothing", { duration: 0 }, accept],
+    ["a fractional duration", { duration: 1.5 }, accept],
+    ["a negative duration", { duration: -1 }, refuse],
+    ["a duration written as text", { duration: "1" }, refuse],
+    ["a transcription of 32,768 characters", { transcription: x(32_768) }, accept],
+    ["a transcription of 32,769 characters", { transcription: x(32_769) }, refuse],
+    ["a transcription of 32,768 two-byte letters", { transcription: ACCENT.repeat(32_768) }, accept],
+    ["a transcription of 16,385 emoji", { transcription: EMOJI.repeat(16_385) }, refuse],
+    ["a field files don't have", { url: "https://example.com/file" }, refuse],
+  ]),
+  deliverInputSchema: cases({ deliveryId: "delivery-1", generation: "generation-1", payload: MESSAGE }, [
+    ["a message", {}, accept],
+    ["a contact ending", { payload: { kind: "contact.revoked" } }, accept],
+    ["an empty delivery", { deliveryId: "" }, refuse],
+    ["a delivery of 256 characters", { deliveryId: x(256) }, accept],
+    ["a delivery of 257 characters", { deliveryId: x(257) }, refuse],
+    ["a generation of 128 characters", { generation: x(128) }, accept],
+    ["a generation of 129 characters", { generation: x(129) }, refuse],
+    ["no payload", { payload: undefined }, refuse],
+    ["a payload no Ship knows", { payload: { kind: "reaction" } }, refuse],
+    ["a sender of its own", { senderDid: ALICE }, refuse],
+  ]),
+  federationDeliveryPayloadSchema: [
+    ...cases(MESSAGE, [
+      ["a message", {}, accept],
+      ["a message without text or files", { text: "" }, refuse],
+      ["a message of only whitespace", { text: " \n\t" }, refuse],
+      ["a file without text", { text: "", resources: [RESOURCE] }, accept],
+      ["a file with whitespace", { text: " ", resources: [RESOURCE] }, accept],
+      ["no files and no text", { text: "", resources: [] }, refuse],
+      ["text of 32,768 characters", { text: x(32_768) }, accept],
+      ["text of 32,769 characters", { text: x(32_769) }, refuse],
+      ["text of 16,384 two-byte letters, 32 KiB", { text: ACCENT.repeat(16_384) }, accept],
+      ["text of 16,385 two-byte letters, 32 KiB and two bytes", { text: ACCENT.repeat(16_385) }, refuse],
+      ["16 files", { resources: Array.from({ length: 16 }, () => RESOURCE) }, accept],
+      ["17 files", { resources: Array.from({ length: 17 }, () => RESOURCE) }, refuse],
+      ["a file over 48 MiB", { resources: [{ ...RESOURCE, size: 50_331_649 }] }, refuse],
+      ["an empty message id", { messageId: "" }, refuse],
+      ["a message id of 256 characters", { messageId: x(256) }, accept],
+      ["a message id of 257 characters", { messageId: x(257) }, refuse],
+      ["a thread of 128 characters", { threadId: x(128) }, accept],
+      ["a thread of 129 characters", { threadId: x(129) }, refuse],
+      ["no author", { social: undefined }, refuse],
+      ["an author with a field Ships don't know", { social: { ...SOCIAL, verified: true } }, refuse],
+      ["an author's thread of 129 characters", { social: { ...SOCIAL, threadId: x(129) } }, refuse],
+      ["an author on did:web", { social: { ...SOCIAL, reference: { did: "did:web:example.com", messageId: "message-1" } } }, accept],
+      ["an author on did:web with a port", { social: { ...SOCIAL, reference: { did: "did:web:localhost%3A8080", messageId: "message-1" } } }, accept],
+      ["an author on did:key", { social: { ...SOCIAL, reference: { did: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK", messageId: "message-1" } } }, refuse],
+      ["an author on a short did:plc", { social: { ...SOCIAL, reference: { did: "did:plc:alice", messageId: "message-1" } } }, refuse],
+      ["an author named without a DID", { social: { ...SOCIAL, reference: { actor: "ship:alice", messageId: "message-1" } } }, refuse],
+      ["an author's message id of 257 characters", { social: { ...SOCIAL, reference: { did: ALICE, messageId: x(257) } } }, refuse],
+      ["a process wrote it", { social: { ...SOCIAL, provenance: { kind: "process", processId: "process-1" } } }, accept],
+      ["a process without an id", { social: { ...SOCIAL, provenance: { kind: "process", processId: "" } } }, refuse],
+      ["a process id of 257 characters", { social: { ...SOCIAL, provenance: { kind: "process", processId: x(257) } } }, refuse],
+      ["a writer no Ship knows", { social: { ...SOCIAL, provenance: { kind: "approved" } } }, refuse],
+      ["a person who names a process", { social: { ...SOCIAL, provenance: { kind: "human", processId: "process-1" } } }, refuse],
+      ["a reply", { social: { ...SOCIAL, replyTo: { did: ALICE, messageId: "message-0" } } }, accept],
+      ["a reply to an author on did:key", { social: { ...SOCIAL, replyTo: { did: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK", messageId: "message-0" } } }, refuse],
+      ["a field messages don't have", { subject: "Hello" }, refuse],
+    ]),
+    ...cases(REQUEST, [
+      ["a request", {}, accept],
+      ["a request with details", { request: { ...OFFER, details: { party: 4, names: ["Alice"] } } }, accept],
+      ["a kind of segments", { request: { ...OFFER, kind: "a.b-c_d" } }, accept],
+      ["a kind starting with a digit", { request: { ...OFFER, kind: "1abc" } }, refuse],
+      ["a kind with an empty segment", { request: { ...OFFER, kind: "a..b" } }, refuse],
+      ["a kind with an accent", { request: { ...OFFER, kind: `caf${ACCENT}` } }, refuse],
+      ["a kind of 128 characters", { request: { ...OFFER, kind: x(128) } }, accept],
+      ["a kind of 129 characters", { request: { ...OFFER, kind: x(129) } }, refuse],
+      ["an empty kind", { request: { ...OFFER, kind: "" } }, refuse],
+      ["an empty title", { request: { ...OFFER, title: "" } }, refuse],
+      ["a title of only whitespace", { request: { ...OFFER, title: "   " } }, refuse],
+      ["a title of 1,024 characters", { request: { ...OFFER, title: x(1_024) } }, accept],
+      ["a title of 1,025 characters", { request: { ...OFFER, title: x(1_025) } }, refuse],
+      ["a title of 512 two-byte letters", { request: { ...OFFER, title: ACCENT.repeat(512) } }, accept],
+      ["a title of 513 two-byte letters, 1,026 bytes", { request: { ...OFFER, title: ACCENT.repeat(513) } }, refuse],
+      ["details of 32 KiB as JSON", { request: { ...OFFER, details: DETAILS } }, accept],
+      ["details of 32 KiB and a byte as JSON", { request: { ...OFFER, details: { text: x(32_758) } } }, refuse],
+      ["details that are a list", { request: { ...OFFER, details: [] } }, refuse],
+      ["an offer already accepted", { request: { ...OFFER, state: "accepted" } }, refuse],
+      ["an offer at revision 2", { request: { ...OFFER, revision: 2 } }, refuse],
+      ["an empty request id", { request: { ...OFFER, id: "" } }, refuse],
+      ["a request id of 257 characters", { request: { ...OFFER, id: x(257) } }, refuse],
+      ["an offer with a field Ships don't know", { request: { ...OFFER, deadline: "tomorrow" } }, refuse],
+    ]),
+    ...cases(UPDATE, [
+      ["an acceptance", {}, accept],
+      ["a rejection", { state: "rejected" }, accept],
+      ["work starting", { state: "active" }, accept],
+      ["work finished", { state: "completed" }, accept],
+      ["a cancellation", { state: "cancelled" }, accept],
+      ["an update back to offered", { state: "offered" }, refuse],
+      ["an update with details", { details: { note: "Done" } }, accept],
+      ["details of 32 KiB and a byte as JSON", { details: { text: x(32_758) } }, refuse],
+      ["revision 0", { expectedRevision: 0 }, refuse],
+      ["a fractional revision", { expectedRevision: 1.5 }, refuse],
+      ["a request id of 257 characters", { requestId: x(257) }, refuse],
+      ["a field updates don't have", { title: "Book a table" }, refuse],
+    ]),
+    ...cases({ kind: "contact.revoked" }, [
+      ["a contact ending", {}, accept],
+      ["a contact ending that names its connection", { generation: "generation-1" }, refuse],
+    ]),
+  ],
+  originMessageRefSchema: cases({ did: ALICE, messageId: "message-1" }, [
+    ["a message on did:plc", {}, accept],
+    ["a message on did:web", { did: "did:web:example.com" }, accept],
+    ["a message on did:key", { did: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK" }, refuse],
+    ["a message id of 257 characters", { messageId: x(257) }, refuse],
+    ["a field references don't have", { cid: RAW_CID }, refuse],
+  ]),
+  shipProfileRecordSchema: cases(PROFILE, [
+    ["a profile", {}, accept],
+    ["a profile with an about", { about: "Hello" }, accept],
+    ["an empty about", { about: "" }, accept],
+    ["a field a later version adds", { pronouns: "they/them" }, accept],
+    ["an empty name", { displayName: "" }, refuse],
+    ["a name of 80 characters", { displayName: x(80) }, accept],
+    ["a name of 81 characters", { displayName: x(81) }, refuse],
+    ["a name of 80 toned emoji, 640 bytes", { displayName: TONED.repeat(80) }, accept],
+    ["a name of 81 toned emoji", { displayName: TONED.repeat(81) }, refuse],
+    ["a name of 80 letters with combining accents", { displayName: COMBINED.repeat(80) }, accept],
+    ["a name of 25 family emoji, 625 bytes", { displayName: FAMILY.repeat(25) }, accept],
+    ["a name of 26 family emoji, 650 bytes", { displayName: FAMILY.repeat(26) }, refuse],
+    ["an about of 2,048 characters", { about: x(2_048) }, accept],
+    ["an about of 2,049 characters", { about: x(2_049) }, refuse],
+    ["an about of 2,048 toned emoji", { about: TONED.repeat(2_048) }, accept],
+    ["an about of 820 family emoji, 20,500 bytes", { about: FAMILY.repeat(820) }, refuse],
+    ["open to requests", { contactPolicy: "requests" }, accept],
+    ["open to invitations", { contactPolicy: "invitation" }, accept],
+    ["closed", { contactPolicy: "closed" }, accept],
+    ["a policy this version doesn't know", { contactPolicy: "friends-of-friends" }, accept],
+    ["a policy of 64 characters", { contactPolicy: x(64) }, accept],
+    ["a policy of 65 characters", { contactPolicy: x(65) }, refuse],
+    ["a policy of 33 two-byte letters, 66 bytes", { contactPolicy: ACCENT.repeat(33) }, refuse],
+    ["no policy", { contactPolicy: undefined }, refuse],
+    ["another record type", { $type: "com.example.post" }, refuse],
+    ["no record type", { $type: undefined }, refuse],
+    ["a PNG picture", { avatar: AVATAR }, accept],
+    ["a JPEG picture", { avatar: { ...AVATAR, mimeType: "image/jpeg" } }, accept],
+    ["a WebP picture", { avatar: { ...AVATAR, mimeType: "image/webp" } }, accept],
+    ["a GIF picture", { avatar: { ...AVATAR, mimeType: "image/gif" } }, refuse],
+    ["a picture of 1 MB", { avatar: { ...AVATAR, size: 1_000_000 } }, accept],
+    ["a picture of 1 MB and a byte", { avatar: { ...AVATAR, size: 1_000_001 } }, refuse],
+    ["an empty picture", { avatar: { ...AVATAR, size: 0 } }, accept],
+    ["a picture of fractional size", { avatar: { ...AVATAR, size: 1.5 } }, refuse],
+    ["a picture with a field blobs don't have", { avatar: { ...AVATAR, name: "me.png" } }, refuse],
+    ["a picture whose link has a field links don't have", { avatar: { ...AVATAR, ref: { $link: RAW_CID, codec: "raw" } } }, refuse],
+    ["a picture named by something other than a CID", { avatar: { ...AVATAR, ref: { $link: "picture" } } }, refuse],
+    ["a picture named by a CIDv0", { avatar: { ...AVATAR, ref: { $link: V0_CID } } }, refuse],
+    ["a picture named by nothing", { avatar: { ...AVATAR, ref: { $link: "" } } }, refuse],
+    ["a picture in the legacy blob form", { avatar: { cid: RAW_CID, mimeType: "image/png" } }, refuse],
+    ["a picture that isn't a blob", { avatar: { ...AVATAR, $type: "image" } }, refuse],
+  ]),
+};

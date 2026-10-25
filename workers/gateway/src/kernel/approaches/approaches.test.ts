@@ -205,7 +205,9 @@ describe("message requests", () => {
       text: "Hello?", createdAtMs: Date.now(), expiresAtMs: Date.now() + 60_000,
     };
     const blocked = await callShipMethod(alice.account, bob, SEND_MESSAGE_REQUEST, content);
-    const closed = await callShipMethod(mallory.account, bob, SEND_MESSAGE_REQUEST, { ...content, profileCid: "bafystale" });
+    // A CID, but not of the profile Bob's Ship publishes now.
+    const stale = "bafyreihf2w4xce4657vtnvxnxgjy7isgoqgjbwraanrgjb7lfvozmrvoyy";
+    const closed = await callShipMethod(mallory.account, bob, SEND_MESSAGE_REQUEST, { ...content, profileCid: stale });
     expect(closed.status).toBe(404);
     expect([blocked.status, await blocked.json()]).toEqual([closed.status, await closed.json()]);
     expect(await incomingRequests(bob)).toEqual([]);

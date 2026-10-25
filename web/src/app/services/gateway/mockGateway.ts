@@ -321,15 +321,15 @@ function approvalFor(trigger: string): ApprovalScenario | null {
   }
   if (trigger === "/approve-publish") {
     const record = {
-      $type: "space.ship.note", text: "Back from the coast. The light at six was something else.",
+      $type: "com.example.note", text: "Back from the coast. The light at six was something else.",
       picture: { $type: "blob", ref: { $link: PUBLISHED_PICTURE_CID }, mimeType: "image/svg+xml", size: PUBLISHED_PICTURE.length },
     };
     return {
       step: {
         think: "", thought: "Ask before publishing the note publicly.", place: "gsv", tool: "Shell", syscall: "atproto.write",
         purpose: "publish your trip photo with a short note",
-        args: { handle: "esteve", address: "esteve.ship.space", writes: [{ action: "create", collection: "space.ship.note", record }] },
-        ms: 900, output: { commit: { cid: "bafymockcommit", rev: "3mockrev" }, results: [{ uri: "at://did:plc:mock/space.ship.note/3mockrev", cid: "bafymockrecord" }] },
+        args: { handle: "esteve", address: "esteve.ship.space", writes: [{ action: "create", collection: "com.example.note", record }] },
+        ms: 900, output: { commit: { cid: "bafymockcommit", rev: "3mockrev" }, results: [{ uri: "at://did:plc:mock/com.example.note/3mockrev", cid: "bafymockrecord" }] },
       },
       approved: "Published your note with the photo.", denied: "Not published. Nothing went to the open network.",
     };
