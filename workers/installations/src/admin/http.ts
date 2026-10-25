@@ -180,7 +180,7 @@ export class InstallationAdminHttp<
   /** Runs an admitted operator mutation under its audit row. */
   private async audited<T>(
     request: Request,
-    action: { name: string; installationId?: string; reason?: string | null },
+    action: { name: string; installationId?: string; reason?: string | null; detail?: Record<string, string> },
     mutation: (eventId?: string) => Promise<T>,
     describe?: (result: T) => OperatorAuditResult,
   ): Promise<T> {
@@ -189,8 +189,8 @@ export class InstallationAdminHttp<
     // that fails a second verification refuses the action rather than losing attribution.
     const actor = this.access.operatorIdentity ? await this.access.operatorIdentity(request) : "operator";
     if (actor === null) throw new AdminForbiddenError();
-    return await this.insight.audit.run({ actor, action: action.name, installationId: action.installationId, reason: action.reason },
-      mutation, describe);
+    return await this.insight.audit.run({ actor, action: action.name, installationId: action.installationId, reason: action.reason,
+      detail: action.detail }, mutation, describe);
   }
 
   /**

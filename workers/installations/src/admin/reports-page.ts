@@ -45,15 +45,15 @@ export function reportsPage(page: RequestReportPage, head: boolean, navigation: 
   });
 }
 
-/** One report: what its person shared, where its sender is hosted, the operator's actions and the action that closed it. */
+/** One report: what its person shared, where its sender is hosted, the operator's actions and its audit trail. */
 export function reportPage(input: {
   report: RequestReport;
   /** Null on a deployment without an open-network host. */
   hosting: HostView<HostedRepositoryModeration> | null;
   /** How many open reports name the same sender. */
   openReports: number;
-  /** The audit event of the action that closed the report. */
-  closing: OperatorAuditEvent | null;
+  /** Every audit event that names the report, newest first, failed attempts included. */
+  trail: readonly OperatorAuditEvent[];
   error?: string;
   status?: number;
   head: boolean;
@@ -99,7 +99,7 @@ export function reportPage(input: {
         </form>
       </section>`}
       <section class="stack"><p class="eyebrow">AUDIT TRAIL</p>
-        ${input.closing ? auditTable([input.closing], true) : `<div class="empty">${report.closed ? "The action that closed this report is not in the audit log." : "No operator action yet."}</div>`}
+        ${input.trail.length > 0 ? auditTable(input.trail, true) : `<div class="empty">${report.closed ? "The action that closed this report is not in the audit log." : "No operator action yet."}</div>`}
       </section>
     </section>`,
   });

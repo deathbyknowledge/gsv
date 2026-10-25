@@ -127,6 +127,33 @@ describe("the operator's report queue", () => {
     expect(report).not.toContain(`action="/admin/reports/${second.reportId}/takedown"`);
   });
 
+  it("shows every audit event that names a report in its trail, a failed takedown included", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { sender, reporter } = await ships();
+    const { pds, moderation } = hostingPds(sender);
+    pds.updateSubjectStatus.mockRejectedValueOnce(new Error("The host refused the takedown"));
+    const { http, reports, insight } = stack(moderation);
+    const { reportId } = await reports.submit(submission(reporter.installationId));
+
+    const failed = await http.handle(form(`/admin/reports/${reportId}/takedown`, { reason: "Spam in every message request" }));
+    expect(failed?.status).toBe(503);
+    const [attempt] = (await insight.audit.list({ page: 1 })).events;
+    expect(attempt).toMatchObject({
+      action: "ship.takedown", installationId: sender.installationId, reason: "Spam in every message request",
+      detail: { subject: "account", report: reportId }, outcome: "error",
+    });
+    expect((await reports.get(reportId))?.closed).toBeNull();
+    expect(await failed!.text()).toContain("Returned an error");
+
+    expect((await http.handle(form(`/admin/reports/${reportId}/dismiss`, { reason: "Handled by email" })))?.status).toBe(303);
+    const trail = await page(http, `/admin/reports/${reportId}`);
+    expect(trail).toContain("Returned an error");
+    expect(trail).toContain("Spam in every message request");
+    expect(trail.indexOf("report.dismiss")).toBeGreaterThan(-1);
+    expect(trail.indexOf("report.dismiss")).toBeLessThan(trail.indexOf("ship.takedown"));
+    warn.mockRestore();
+  });
+
   it("refuses to take down a sender the deployment's host doesn't hold, before acting", async () => {
     const { sender, reporter } = await ships();
     const { pds, moderation } = hostingPds(sender);

@@ -2,7 +2,7 @@ import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { RequestReport, RequestReports, RequestReportState } from "../request-reports";
 import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
 import { adminRedirect, adminText, installationAdminFailure, readAdminForm, readPageNumber, requireAdminMutationOrigin } from "./http";
-import type { AdminAuditRecorder, OperatorAuditLog } from "./insight";
+import type { AdminAuditRecorder, OperatorAuditEvent, OperatorAuditLog } from "./insight";
 import { adminErrorPage, type AdminNavigationItem } from "./page";
 import { reportPage, reportsPage } from "./reports-page";
 import type { ShipTakedowns } from "./takedowns";
@@ -68,18 +68,26 @@ export class RequestReportsHttp {
   }
 
   private async reportPage(report: RequestReport, head: boolean, error?: string, status = 200): Promise<Response> {
-    const [hosting, openReports, closing] = await Promise.all([
+    const [hosting, openReports, trail] = await Promise.all([
       this.takedowns ? this.takedowns.senderView(report.sender.did) : null,
       this.reports.openReportsOf(report.sender.did),
-      report.closed ? this.audit.event(report.closed.eventId) : null,
+      this.trail(report),
     ]);
-    return reportPage({ report, hosting, openReports, closing, error, status, head, navigation: this.navigation });
+    return reportPage({ report, hosting, openReports, trail, error, status, head, navigation: this.navigation });
+  }
+
+  /** Every audit event that names the report, failures included, and the one that closed it when another report's takedown did. */
+  private async trail(report: RequestReport): Promise<OperatorAuditEvent[]> {
+    const events = await this.audit.forReport(report.id);
+    const closedBy = report.closed?.eventId;
+    if (!closedBy || events.some(({ id }) => id === closedBy)) return events;
+    const closing = await this.audit.event(closedBy);
+    return closing ? [...events, closing].sort((first, second) => second.at - first.at) : events;
   }
 
   private async dismiss(request: Request, report: RequestReport, reason: string | null): Promise<void> {
-    await this.audited(request, { name: "report.dismiss", reason },
-      (eventId) => this.reports.dismiss(report.id, closingEvent(eventId)),
-      () => ({ detail: { report: report.id } }));
+    await this.audited(request, { name: "report.dismiss", reason, detail: { report: report.id } },
+      (eventId) => this.reports.dismiss(report.id, closingEvent(eventId)));
   }
 
   /** Takes the sender's whole account down on the deployment's host, closing each open report of them. */
@@ -89,7 +97,7 @@ export class RequestReportsHttp {
     if (reason.length > REASON_MAX_LENGTH) throw new Error("request reason is too long");
     const sender = await takedowns.sender(report.sender.did);
     if (!sender) throw new Error("request names a sender this deployment's host doesn't hold");
-    await this.audited(request, { name: "ship.takedown", installationId: sender.installationId, reason },
+    await this.audited(request, { name: "ship.takedown", installationId: sender.installationId, reason, detail: { subject: "account", report: report.id } },
       async (eventId) => {
         const event = closingEvent(eventId);
         await takedowns.takeDown(sender.installationId, { subject: "account", reason }, event);
