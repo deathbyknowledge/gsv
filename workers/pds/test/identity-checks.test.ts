@@ -121,10 +121,12 @@ describe("a hosted identity someone else changes", () => {
     await repo.setOwnerRecoveryKey(old.did);
     const before = await head(did);
     await repo.setOwnerRecoveryKey((await sheet()).did);
+    const swap = await head(did);
 
-    // Building on the operation before the swap, the old sheet nullifies it.
+    // Building on the operation before the swap, the old sheet nullifies it; the log keeps the swap, flagged.
     await submitAs(did, before, stateOf(before.operation), old.key);
     const undone = await head(did);
+    expect(await nullified(did)).toEqual([swap.cid]);
     anHourPasses();
 
     await write(repo);
@@ -135,6 +137,7 @@ describe("a hosted identity someone else changes", () => {
     const next = await sheet();
     expect(await repo.setOwnerRecoveryKey(next.did)).toEqual({ ownerRecoveryKey: next.did });
     expect(lastRotationKeys(did)).toEqual([next.did, await hostKey()]);
+    expect((await head(did)).operation).toMatchObject({ prev: undone.cid });
   });
 
   it("is followed from the host's newest operation still in force when an undo nullifies its latest", async () => {
@@ -143,11 +146,14 @@ describe("a hosted identity someone else changes", () => {
     await repo.setOwnerRecoveryKey(first.did);
     const surviving = await head(did);
     await repo.setOwnerRecoveryKey((await sheet()).did);
+    const firstSwap = await head(did);
     await repo.setOwnerRecoveryKey((await sheet()).did);
+    const secondSwap = await head(did);
 
     // The first sheet undoes both of the host's later swaps at once.
     await submitAs(did, surviving, stateOf(surviving.operation), first.key);
     const undone = await head(did);
+    expect(await nullified(did)).toEqual([firstSwap.cid, secondSwap.cid]);
     anHourPasses();
 
     await write(repo);
@@ -183,12 +189,14 @@ describe("a hosted identity someone else changes", () => {
     const { repo, did } = await hostedAccount("repaired.ship.test", await paper.exportPublicKey("did"));
     const genesis = await head(did);
     await submitAs(did, genesis, { ...stateOf(genesis.operation), alsoKnownAs: ["at://taken.example"] }, await hostKeypair());
+    const leaked = await head(did);
     anHourPasses();
     expect(await rejection(write(repo))).toContain("IdentityChanged");
 
     // Within 72 hours the paper key, which ranks above the host's, builds on the genesis and nullifies the leak.
     await submitAs(did, genesis, stateOf(genesis.operation), paper);
     const repaired = await head(did);
+    expect(await nullified(did)).toEqual([leaked.cid]);
     anHourPasses();
 
     await write(repo);
@@ -196,6 +204,9 @@ describe("a hosted identity someone else changes", () => {
     expect(check?.steppedAside).toBeNull();
     expect(check?.events.map(({ outcome }) => outcome)).toEqual(["leaked-key", "adopted"]);
     expect(check?.events.at(-1)).toMatchObject({ head: repaired.cid, signedBy: await paper.exportPublicKey("did") });
+    // The host's next operation follows the repair, not the leak it nullified.
+    await repo.setOwnerRecoveryKey((await sheet()).did);
+    expect((await head(did)).operation).toMatchObject({ prev: repaired.cid });
   });
 });
 
@@ -306,6 +317,11 @@ async function head(did: DidPlcString) {
   const entry = (await new PlcClient({ serviceUrl: env.PLC_URL }).getAuditLog(did)).filter(({ nullified }) => !nullified).at(-1);
   if (!entry) throw new Error(`Expected a log for ${did}`);
   return entry;
+}
+
+/** The CIDs of the operations in the DID's audit log that a later one nullified, oldest first. */
+async function nullified(did: DidPlcString): Promise<string[]> {
+  return (await new PlcClient({ serviceUrl: env.PLC_URL }).getAuditLog(did)).filter((entry) => entry.nullified).map((entry) => entry.cid);
 }
 
 function lastRotationKeys(did: string): DidKeyString[] {
