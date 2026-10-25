@@ -1,9 +1,10 @@
+import { readCar } from "@atproto/repo";
 import { createScheduledController, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { encode } from "../src/cirrus/cbor-compat";
 import type { PdsEnv } from "../src/gsv/env";
-import { FIREHOSE_NAME, type HostFirehose } from "../src/host/firehose";
+import { FIREHOSE_NAME, type HostFirehose, type OutboxEvent } from "../src/host/firehose";
 import { REPO_REF } from "../src/host/moderation";
 import type { RelayRequest } from "../src/host/relays";
 import { HostedRepo, type RepoWrite } from "../src/host/repo";
@@ -146,8 +147,7 @@ describe("announcing the host to relays", () => {
     const first = await publishedAccount();
     const second = await publishedAccount();
     const down = await publishedAccount();
-    await down.repo.updateSubjectStatus({ subject: { $type: REPO_REF, did: down.did }, takedown: { applied: true } });
-    await deliver(down.repo);
+    await takeDown(down);
     const joining = relay("https://relay-f.test");
     const host = env.FIREHOSE.getByName(FIREHOSE_NAME);
 
@@ -175,21 +175,130 @@ describe("announcing the host to relays", () => {
     expect(joining.requests).toEqual([HOST, HOST, HOST]);
   });
 
-  it("leaves out an account taken down while the host reads its head, so relays still see it down", async () => {
-    const ship = await publishedAccount();
+  it("introduces each account at the latest commit the firehose keeps, without waking its repository", async () => {
+    const ships = [await publishedAccount(), await publishedAccount()];
+    const expected = await Promise.all(ships.map(introductionOf));
+    const joining = relay("https://relay-j.test");
+    await scheduled(joining.origin);
+    const calls = repositoryCalls();
+    const introduction = await heardWhile(() => scheduled(joining.origin));
+    expect(calls()).toEqual([]);
+    for (const [index, ship] of ships.entries()) expect(await heard(introduction, ship.did)).toEqual(expected[index]);
+  });
+
+  it("leaves out an account taken down or deleted while the relays answer, so relays still see it as its last event left it", async () => {
+    const down = await publishedAccount();
+    const deleted = await publishedAccount();
     const joining = relay("https://relay-g.test");
     await scheduled(joining.origin);
-    const read = HostedRepo.prototype.head;
-    vi.spyOn(HostedRepo.prototype, "head").mockImplementation(async function (this: HostedRepo) {
-      const head = await read.call(this);
-      if ((await this.account())?.did === ship.did) {
-        await this.updateSubjectStatus({ subject: { $type: REPO_REF, did: ship.did }, takedown: { applied: true } });
-        await this.alarm();
-      }
-      return head;
+    // The run that introduces the accounts asks a relay the deployment names since, and both accounts change before it answers.
+    const named = relay("https://relay-k.test");
+    // Each side polls a flag: code a promise resumes after the firehose settles it runs on the firehose's behalf, without the test's stubs.
+    let asked = false;
+    let changed = false;
+    services.set(named.origin, async (request) => {
+      asked = true;
+      while (!changed) await scheduler.wait(1);
+      return named.handle(request);
     });
+    const introduction = heardWhile(() => scheduled(`${joining.origin},${named.origin}`));
+    try {
+      await vi.waitFor(() => expect(asked).toBe(true));
+      await takeDown(down);
+      await env.FIREHOSE.getByName(FIREHOSE_NAME).eraseRepository(deleted.name);
+    } finally {
+      changed = true;
+    }
+    const frames = await introduction;
+    expect(named.requests).toEqual([HOST]);
+    expect(await heard(frames, down.did)).toEqual([{ type: "#account", active: false }]);
+    expect(await heard(frames, deleted.did)).toEqual([]);
+  });
+
+  it("introduces relays at the same point in one shared batch a run, and a relay that joins later after them", async () => {
+    const ships: PublishedAccount[] = [];
+    for (let count = 0; count < 3; count++) ships.push(await publishedAccount());
+    const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
+    for (const ship of ships) await list(firehose, ship);
+    const together = [relay("https://relay-m.test"), relay("https://relay-n.test")].map((joining) => joining.origin);
+    const later = relay("https://relay-o.test").origin;
+    await firehose.announce(together, HOST, 2);
+
+    const order = ships.map((ship) => ship.did).sort();
+    const runs: string[][] = [];
+    const introduced: boolean[][] = [];
+    for (let run = 0; run < 4; run++) {
+      const frames = await heardWhile(async () => {
+        await firehose.announce([...together, later], HOST, 2);
+      }, firehose);
+      const dids = [...new Set(frames.flatMap((frame) => "did" in frame ? [frame.did] : []))];
+      // However many relays a batch serves, it sends each account's introduction once.
+      for (const did of dids) {
+        const ship = ships.find((candidate) => candidate.did === did);
+        if (!ship) throw new Error(`The firehose introduced ${did}, which it doesn't list`);
+        expect(await heard(frames, did)).toEqual(await introductionOf(ship));
+      }
+      runs.push(dids);
+      const requests = await requested(firehose);
+      introduced.push([...together, later].map((origin) => requests[origin]?.introduced ?? false));
+    }
+    // The relay that joins in the first of these runs waits for the two ahead of it, then walks the accounts itself.
+    expect(runs).toEqual([order.slice(0, 2), order.slice(2), order.slice(0, 2), order.slice(2)]);
+    expect(introduced).toEqual([[false, false, false], [true, true, false], [true, true, false], [true, true, true]]);
+  });
+
+  it("keeps each active repository's latest commit as a #sync carries it, and drops it once the account is taken down or erased", async () => {
+    const ship = await publishedAccount();
+    const host = env.FIREHOSE.getByName(FIREHOSE_NAME);
+    const state = await ship.repo.state();
+    const committed = await keptHead(host, ship.did);
+    if (!committed) throw new Error("The firehose keeps no head for the account");
+    // The CAR holds the commit's own block, without the record and tree nodes its #commit carried.
+    expect(committed.rev).toBe(state?.rev);
+    expect(await syncedCommit(committed)).toBe(state?.head);
+    expect((await readCar(committed.blocks)).blocks.size).toBe(1);
+    expect(committed.blocks.length).toBeLessThan(300);
+
+    await takeDown(ship);
+    expect(await keptHead(host, ship.did)).toBeNull();
+    // Restoring the account announces its head with #sync, the same CAR the firehose kept from the commit.
+    await ship.repo.updateSubjectStatus({ subject: { $type: REPO_REF, did: ship.did }, takedown: { applied: false } });
+    await deliver(ship.repo);
+    expect(await keptHead(host, ship.did)).toEqual(committed);
+
+    await host.eraseRepository(ship.name);
+    expect(await keptHead(host, ship.did)).toBeNull();
+  });
+
+  it("introduces repositories from before the firehose kept commits at the ones it still retains, and the rest without #sync", async () => {
+    const retained = await publishedAccount();
+    const aged = await publishedAccount();
+    const down = await publishedAccount();
+    await takeDown(down);
+    const expected = await introductionOf(retained);
+    const host = env.FIREHOSE.getByName(FIREHOSE_NAME);
+    // The firehose as it was before it kept heads, after one account's events aged out of what it retains.
+    await runInDurableObject(host, (_instance, { storage }) => {
+      storage.sql.exec("ALTER TABLE repos DROP COLUMN sync_rev");
+      storage.sql.exec("ALTER TABLE repos DROP COLUMN sync_blocks");
+      storage.sql.exec("DELETE FROM host_schema WHERE component = 'host_firehose' AND id = 2");
+      storage.sql.exec("DELETE FROM events WHERE did = ?", aged.did);
+    });
+    await evictDurableObject(host);
+
+    const joining = relay("https://relay-l.test");
+    await scheduled(joining.origin);
+    const calls = repositoryCalls();
     const introduction = await heardWhile(() => scheduled(joining.origin));
-    expect(await heard(introduction, ship.did)).toEqual([{ type: "#account", active: false }]);
+    expect(calls()).toEqual([]);
+    expect(await heard(introduction, retained.did)).toEqual(expected);
+    expect(await heard(introduction, aged.did)).toEqual([{ type: "#account", active: true }, { type: "#identity" }]);
+    expect(await heard(introduction, down.did)).toEqual([]);
+
+    // The aged account's next commit gives the firehose its head.
+    await aged.repo.applyWrites([note("second")]);
+    await deliver(aged.repo);
+    expect((await keptHead(host, aged.did))?.rev).toBe((await aged.repo.state())?.rev);
   });
 
   it("introduces at most a batch of accounts a run, in DID order, and resumes where it stopped after a restart", async () => {
@@ -290,10 +399,35 @@ async function publishedAccount(): Promise<PublishedAccount> {
 }
 
 /** Lists an account on another firehose, as its repository's first delivery would. */
-async function list(firehose: DurableObjectStub<HostFirehose>, { name, repo, did }: PublishedAccount): Promise<void> {
+async function list(firehose: DurableObjectStub<HostFirehose>, { name, repo }: PublishedAccount): Promise<void> {
   const state = await repo.state();
   if (!state) throw new Error("The repository holds no account");
-  await firehose.append(name, state, [{ seq: 1, type: "identity", payload: encode({ did, time: new Date().toISOString() }) }]);
+  const events = await runInDurableObject(repo, (_instance, { storage }) => storage.sql.exec<{ seq: number; event_type: string; payload: ArrayBuffer }>(
+    "SELECT seq, event_type, payload FROM firehose_events ORDER BY seq",
+  ).toArray().map((row): OutboxEvent => ({
+    seq: row.seq,
+    // SAFETY: a repository's outbox holds only the engine Sequencer's event types.
+    type: row.event_type as OutboxEvent["type"],
+    payload: new Uint8Array(row.payload),
+  })));
+  await firehose.append(name, state, events);
+}
+
+/** Takes an account down and delivers its takedown to the host firehose. */
+async function takeDown({ repo, did }: PublishedAccount): Promise<void> {
+  await repo.updateSubjectStatus({ subject: { $type: REPO_REF, did }, takedown: { applied: true } });
+  await deliver(repo);
+}
+
+/** The latest commit a firehose keeps for a repository, as a #sync carries it. */
+function keptHead(firehose: DurableObjectStub<HostFirehose>, did: string): Promise<{ rev: string; blocks: Uint8Array } | null> {
+  return runInDurableObject(firehose, (_instance, { storage }) => {
+    const row = storage.sql.exec<{ rev: string | null; blocks: ArrayBuffer | null }>(
+      "SELECT sync_rev AS rev, sync_blocks AS blocks FROM repos WHERE did = ?",
+      did,
+    ).toArray()[0];
+    return row?.rev && row.blocks ? { rev: row.rev, blocks: new Uint8Array(row.blocks) } : null;
+  });
 }
 
 function note(rkey: string): RepoWrite {
@@ -329,6 +463,18 @@ async function introductionOf({ repo }: PublishedAccount): Promise<Heard[]> {
   const state = await repo.state();
   if (!state?.rev || !state.head) throw new Error("The repository has no head");
   return [{ type: "#account", active: true }, { type: "#identity" }, { type: "#sync", rev: state.rev, commit: state.head }];
+}
+
+/** Whether a name on a hosted repository's prototype is one of its methods, public or private. */
+function isRepositoryMethod(name: string): name is Extract<keyof HostedRepo, string> {
+  return name !== "constructor" && typeof Object.getOwnPropertyDescriptor(HostedRepo.prototype, name)?.value === "function";
+}
+
+/** Watches every method of a hosted repository's object, and lists the ones called since. */
+function repositoryCalls(): () => string[] {
+  const spies = Object.getOwnPropertyNames(HostedRepo.prototype).filter(isRepositoryMethod)
+    .map((name) => ({ name, spy: vi.spyOn(HostedRepo.prototype, name) }));
+  return () => spies.filter(({ spy }) => spy.mock.calls.length > 0).map(({ name }) => name);
 }
 
 /** The text of every warning so far, sorted. */

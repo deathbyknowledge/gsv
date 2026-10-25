@@ -6,7 +6,7 @@ import { isHandle, isNsid, isRecordKey, parseCanonicalResourceUri } from "@atcut
 import { now as tidNow } from "@atcute/tid";
 import { jsonToLex } from "@atproto/lex-json";
 import type { CID } from "@atproto/lex-data";
-import { BlockMap, blocksToCarFile, cidForRecord } from "@atproto/repo";
+import { BlockMap, cidForRecord } from "@atproto/repo";
 import * as z from "zod/mini";
 import { BlobStore, extractJsonBlobCids, type BlobRef } from "../cirrus/repo/blobs";
 import { RepoEngine } from "../cirrus/repo/engine";
@@ -15,7 +15,7 @@ import { SqliteRepoStorage } from "../cirrus/repo/storage";
 import { getBlocksCar, getRecordProofCar, getRepoCar } from "../cirrus/repo/sync";
 import { validator } from "../cirrus/validation";
 import type { HostEnv } from "./env";
-import { FIREHOSE_NAME, type OutboxEvent, type RepoHead, type RepoState } from "./firehose";
+import { FIREHOSE_NAME, type OutboxEvent, type RepoState } from "./firehose";
 import {
   checkHead,
   didDocument,
@@ -452,16 +452,6 @@ export class HostedRepo extends DurableObject<HostEnv> {
   async state(): Promise<RepoState | null> {
     const repo = await this.readable();
     return repo ? repoState(repo, await this.retired(), await this.suspended()) : null;
-  }
-
-  /** The repository's head as a #sync event carries it, so the host can introduce the account to a relay that joined after it. */
-  async head(): Promise<RepoHead | null> {
-    const repo = await this.readable();
-    if (!repo) return null;
-    const root = await repo.storage.getRoot();
-    const rev = await repo.storage.getRev();
-    if (!root || !rev) return null;
-    return { rev, blocks: await blocksToCarFile(root, await headBlocks(repo, root)) };
   }
 
   /**

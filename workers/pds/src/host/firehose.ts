@@ -1,3 +1,5 @@
+import { decodeFirst, type CidLink } from "@atcute/cbor";
+import { decodeFirst as decodeCid, equals as sameCid, fromCidLink } from "@atcute/cid";
 import { DurableObject } from "cloudflare:workers";
 import { decode, encode } from "../cirrus/cbor-compat";
 import type { AccountStatus, SeqEvent } from "../cirrus/repo/sequencer";
@@ -30,7 +32,10 @@ export type RepoState = {
 export type HostedEntry = RepoState & { name: string };
 
 /** A repository's head as a #sync event carries it: its revision and a CAR holding its signed commit. */
-export type RepoHead = { rev: string; blocks: Uint8Array };
+type RepoHead = { rev: string; blocks: Uint8Array };
+
+/** The fields of a decoded event body that place its repository's head; decoding leaves each CID a link. */
+type EventBody = { rev?: string; commit?: CidLink; blocks?: Uint8Array };
 
 export type RepoListing = { repos: RepoState[]; cursor?: string };
 
@@ -56,6 +61,14 @@ const MIGRATIONS = [{
     "CREATE TABLE sequence (id INTEGER PRIMARY KEY CHECK (id = 1), seq INTEGER NOT NULL)",
     "INSERT INTO sequence (id, seq) VALUES (1, 0)",
   ],
+}, {
+  id: 2,
+  statements: [
+    // An active repository's latest commit as a #sync carries it, so introducing the account to a relay reads only the firehose.
+    "ALTER TABLE repos ADD COLUMN sync_rev TEXT",
+    "ALTER TABLE repos ADD COLUMN sync_blocks BLOB",
+  ],
+  backfill: keepRetainedHeads,
 }];
 
 type RepoRow = {
@@ -67,6 +80,8 @@ type RepoRow = {
   rev: string | null;
   head: string | null;
   delivered: number;
+  sync_rev: string | null;
+  sync_blocks: ArrayBuffer | null;
 };
 
 /**
@@ -95,10 +110,13 @@ export class HostFirehose extends DurableObject<HostEnv> {
     let delivered = hosted?.delivered ?? 0;
     this.ctx.storage.transactionSync(() => {
       let seq = this.latestSeq();
+      let head = hosted ? storedHead(hosted) : null;
       for (const event of events) {
         if (event.seq <= delivered) continue;
         seq += 1;
-        const frame = eventFrame(event, seq);
+        // SAFETY: outbox payloads are the engine Sequencer's own CBOR encoding of an event body.
+        const body = decode(event.payload) as EventBody;
+        const frame = eventFrame(event.type, body, seq);
         this.ctx.storage.sql.exec(
           "INSERT INTO events (seq, did, frame, appended_at) VALUES (?, ?, ?, ?)",
           seq,
@@ -108,12 +126,17 @@ export class HostFirehose extends DurableObject<HostEnv> {
         );
         frames.push(frame);
         delivered = event.seq;
+        head = eventHead(event.type, body) ?? head;
       }
+      // The host keeps an active account's latest commit to introduce the account to relays, and drops it while the account is
+      // inactive; reactivating an account announces its head again.
+      const kept = state.active ? head : null;
       this.ctx.storage.sql.exec("UPDATE sequence SET seq = ?", seq);
       this.ctx.storage.sql.exec(
-        `INSERT INTO repos (did, name, handle, active, status, rev, head, delivered) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO repos (did, name, handle, active, status, rev, head, delivered, sync_rev, sync_blocks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (did) DO UPDATE SET handle = excluded.handle, active = excluded.active, status = excluded.status,
-           rev = excluded.rev, head = excluded.head, delivered = excluded.delivered`,
+           rev = excluded.rev, head = excluded.head, delivered = excluded.delivered,
+           sync_rev = excluded.sync_rev, sync_blocks = excluded.sync_blocks`,
         state.did,
         name,
         state.handle,
@@ -122,6 +145,8 @@ export class HostFirehose extends DurableObject<HostEnv> {
         state.rev,
         state.head,
         delivered,
+        kept?.rev ?? null,
+        kept?.blocks ?? null,
       );
       this.ctx.storage.sql.exec("DELETE FROM events WHERE appended_at < ?", appendedAt - RETENTION_MS);
     });
@@ -230,7 +255,7 @@ export class HostFirehose extends DurableObject<HostEnv> {
     }
     // Most runs ask no relay, and leave the record as it was.
     if (JSON.stringify(kept) !== JSON.stringify(current)) this.ctx.storage.kv.put(RELAYS_KEY, kept);
-    if (joined.length > 0) await this.introduce(joined, batch);
+    if (joined.length > 0) this.introduce(joined, batch);
     return due;
   }
 
@@ -301,54 +326,48 @@ export class HostFirehose extends DurableObject<HostEnv> {
   /**
    * Introduces the next batch of active accounts, in DID order, to relays that
    * joined after them, with what activating each account announced: #account,
-   * #identity, and #sync at the repository's current head. One batch serves
+   * #identity, and #sync at the latest commit the firehose keeps for the
+   * repository, so introducing wakes no repository. One batch serves
    * every relay that has got as far as the first one waiting; the others wait
    * for later runs. The batch's frames and how far each relay has got commit in one
    * transaction, so a relay hears each account once, even across restarts, and
    * is introduced once a batch comes up short.
    */
-  private async introduce(relays: readonly string[], batch: number): Promise<void> {
+  private introduce(relays: readonly string[], batch: number): void {
+    // Nothing here awaits, so no other event lands between reading a batch and committing it: an account taken down or
+    // deleted first is left out, and one changed after reaches relays after its introduction.
     const requests = this.relayRequests();
     const waiting = relays.filter((relay) => requests[relay] && !requests[relay].introduced);
     const [first] = waiting;
     if (!first) return;
     const begun = requests[first]?.cursor;
-    const along = (request: RelayRequest | undefined) => request !== undefined && !request.introduced
-      && JSON.stringify(request.cursor) === JSON.stringify(begun);
-    const sharing = waiting.filter((relay) => along(requests[relay]));
+    const sharing = waiting.filter((relay) => JSON.stringify(requests[relay]?.cursor) === JSON.stringify(begun));
     const from: IntroductionCursor = begun ?? {
       through: this.ctx.storage.sql.exec<{ through: number | null }>("SELECT MAX(rowid) AS through FROM repos").one().through ?? 0,
       after: "",
     };
-    const accounts = this.ctx.storage.sql.exec<{ did: string; name: string }>(
-      "SELECT did, name FROM repos WHERE rowid <= ? AND did > ? AND active = 1 AND head IS NOT NULL ORDER BY did LIMIT ?",
+    const accounts = this.ctx.storage.sql.exec<Pick<RepoRow, "did" | "sync_rev" | "sync_blocks">>(
+      "SELECT did, sync_rev, sync_blocks FROM repos WHERE rowid <= ? AND did > ? AND active = 1 AND head IS NOT NULL ORDER BY did LIMIT ?",
       from.through,
       from.after,
       batch,
     ).toArray();
-    const heads = await Promise.all(accounts.map(async ({ did, name }) => ({ did, head: await this.env.REPOS.getByName(name).head() })));
     // A full batch may leave accounts after its last; a short one ends the introduction.
     const next = accounts.length < batch ? undefined : accounts.at(-1)?.did;
     const appendedAt = Date.now();
     const time = new Date(appendedAt).toISOString();
     const frames: Uint8Array[] = [];
     this.ctx.storage.transactionSync(() => {
-      const current = this.relayRequests();
-      // Another run may have introduced this batch while the heads were read.
-      const introducing = sharing.flatMap((relay) => {
-        const request = current[relay];
-        return along(request) ? [[relay, request] as const] : [];
-      });
-      if (introducing.length === 0) return;
       let seq = this.latestSeq();
-      for (const { did, head } of heads) {
-        // An account taken down or deleted while its head was read stays as its own last event left it.
-        if (!head || !this.row("SELECT * FROM repos WHERE did = ? AND active = 1", did)) continue;
-        const events = [
+      for (const account of accounts) {
+        const { did } = account;
+        const head = storedHead(account);
+        const events: Array<{ t: string; body: object }> = [
           { t: "#account", body: { did, active: true, time } },
           { t: "#identity", body: { did, time } },
-          { t: "#sync", body: { did, rev: head.rev, blocks: head.blocks, time } },
         ];
+        // Only a repository whose last commit aged out before the firehose kept commits has none; relays get its head with its next commit.
+        if (head) events.push({ t: "#sync", body: { did, rev: head.rev, blocks: head.blocks, time } });
         for (const { t, body } of events) {
           seq += 1;
           const frame = frameBytes(encode({ op: 1, t }), encode({ ...body, seq }));
@@ -357,12 +376,13 @@ export class HostFirehose extends DurableObject<HostEnv> {
         }
       }
       this.ctx.storage.sql.exec("UPDATE sequence SET seq = ?", seq);
-      for (const [relay, { at, seq: accepted, failures }] of introducing) {
-        current[relay] = next === undefined
+      for (const relay of sharing) {
+        const { at, seq: accepted, failures } = requests[relay];
+        requests[relay] = next === undefined
           ? { at, seq: accepted, failures, introduced: true }
           : { at, seq: accepted, failures, introduced: false, cursor: { through: from.through, after: next } };
       }
-      this.ctx.storage.kv.put(RELAYS_KEY, current);
+      this.ctx.storage.kv.put(RELAYS_KEY, requests);
     });
     for (const frame of frames) this.broadcast(frame);
   }
@@ -392,10 +412,86 @@ export async function announceToRelays(env: HostEnv): Promise<void> {
 }
 
 /** Encodes an outbox event as a subscribeRepos frame that carries the host's sequence number. */
-function eventFrame(event: OutboxEvent, seq: number): Uint8Array {
-  // SAFETY: outbox payloads are the engine Sequencer's own CBOR encoding of an event body.
-  const body = decode(event.payload) as Omit<SeqEvent["event"], "seq">;
-  return frameBytes(encode({ op: 1, t: `#${event.type}` }), encode({ ...body, seq }));
+function eventFrame(type: OutboxEvent["type"], body: EventBody, seq: number): Uint8Array {
+  return frameBytes(encode({ op: 1, t: `#${type}` }), encode({ ...body, seq }));
+}
+
+/** The head a #commit or #sync leaves its repository at, as a #sync carries it. */
+function eventHead(type: string, body: EventBody): RepoHead | null {
+  if (body.rev === undefined || body.blocks === undefined) return null;
+  if (type === "sync") return { rev: body.rev, blocks: body.blocks };
+  if (type === "commit" && body.commit) return { rev: body.rev, blocks: commitCar(body.blocks, body.commit) };
+  return null;
+}
+
+/**
+ * The CAR a #sync carries for a commit: the header of the commit's own CAR,
+ * which names the commit as its first root, and the commit's block, without the
+ * records and tree nodes a #commit carries so relays can check its operations.
+ */
+function commitCar(car: Uint8Array, commit: CidLink): Uint8Array {
+  const root = fromCidLink(commit);
+  const [headerLength, headerStart] = varint(car, 0);
+  const blocksStart = headerStart + headerLength;
+  for (let offset = blocksStart; offset < car.length;) {
+    const [length, start] = varint(car, offset);
+    const end = start + length;
+    const [cid] = decodeCid(car.subarray(start, end));
+    if (sameCid(cid, root)) {
+      const head = new Uint8Array(blocksStart + end - offset);
+      head.set(car.subarray(0, blocksStart));
+      head.set(car.subarray(offset, end), blocksStart);
+      return head;
+    }
+    offset = end;
+  }
+  throw new Error(`The CAR of commit ${commit.$link} doesn't hold the commit`);
+}
+
+/** Reads the unsigned varint at offset that frames a CAR's header and each block, and the offset after it. */
+function varint(bytes: Uint8Array, offset: number): [value: number, next: number] {
+  let value = 0;
+  for (let index = offset, scale = 1; index < bytes.length; index += 1, scale *= 128) {
+    const byte = bytes[index];
+    value += (byte & 0x7f) * scale;
+    if (byte < 0x80) return [value, index + 1];
+  }
+  throw new Error("A CAR ends inside a varint");
+}
+
+function storedHead(row: Pick<RepoRow, "sync_rev" | "sync_blocks">): RepoHead | null {
+  return row.sync_rev !== null && row.sync_blocks !== null ? { rev: row.sync_rev, blocks: new Uint8Array(row.sync_blocks) } : null;
+}
+
+/**
+ * Keeps each active repository's latest commit from the frames the firehose
+ * still retains, reading them newest first and stopping once every repository
+ * has one. A repository whose last #commit or #sync has aged out keeps none
+ * until its next.
+ */
+function keepRetainedHeads(sql: SqlStorage): void {
+  const waiting = new Set(sql.exec<{ did: string }>(
+    "SELECT did FROM repos WHERE active = 1 AND head IS NOT NULL",
+  ).toArray().map((row) => row.did));
+  const heads = new Map<string, RepoHead>();
+  for (const { did, frame } of sql.exec<{ did: string; frame: ArrayBuffer }>("SELECT did, frame FROM events ORDER BY seq DESC")) {
+    if (heads.size === waiting.size) break;
+    if (!waiting.has(did) || heads.has(did)) continue;
+    const head = frameHead(new Uint8Array(frame));
+    if (head) heads.set(did, head);
+  }
+  for (const [did, { rev, blocks }] of heads) {
+    sql.exec("UPDATE repos SET sync_rev = ?, sync_blocks = ? WHERE did = ?", rev, blocks, did);
+  }
+}
+
+/** The head a stored #commit or #sync frame left its repository at. */
+function frameHead(frame: Uint8Array): RepoHead | null {
+  // SAFETY: the firehose stores only frames it encoded, each a header naming the event's type and then the event's body.
+  const [header, body] = decodeFirst(frame) as [{ t?: string }, Uint8Array];
+  if (header.t !== "#commit" && header.t !== "#sync") return null;
+  // SAFETY: the firehose encoded the body from the engine Sequencer's own event body.
+  return eventHead(header.t.slice(1), decode(body) as EventBody);
 }
 
 function errorFrame(error: string, message: string): Uint8Array {
