@@ -427,7 +427,10 @@ recipient still chooses their own handling and accepts the invitation.
 
 `contact invite list --all` exposes retained invitation lifecycle metadata but
 never a recoverable code. `message history --with contact:...` reads the Contact
-conversation. A Contact send reports durable local acceptance separately from
+conversation. As opening it in People does, the read then checks whether the
+contact's Ship is gone, at most once an hour for each contact. `contact list`
+makes no lookup: it ends only contacts whose DIDs the directory cache already
+knows were deactivated. A Contact send reports durable local acceptance separately from
 remote confirmation; use `message delivery show` with its delivery id.
 
 When Ship contacts someone for an existing task, pass `--responsibility ID` to

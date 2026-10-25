@@ -623,6 +623,26 @@ describe("Ship-to-Ship integration", () => {
     expect(messagesWithText(await first.conversation.history({ conversationId: contact.conversationId, limit: 100 }), "Welcome to the conversation")).toHaveLength(1);
   });
 
+  it("ends a contact once its person opens their conversation and another account holds its Ship's address", async () => {
+    const harness = successorHarness;
+    const client = successor;
+    if (!harness || !client) throw new Error("The reset Ship isn't running");
+    const did = (await client.atproto.identity({})).identity?.did;
+    const invite = await first.contact.invite.create({ expiresInSeconds: 300 });
+    await client.contact.invite.accept({ code: invite.code });
+    const contact = await waitForContact(first, did);
+    // Another account claims the address and serves its Ship there; nothing is sent to it.
+    const holder = await network.account(SECOND_HANDLE);
+    const serve = servedBy((url, init) => harness.fetch(url, init));
+    network.hosts.set(SECOND_HANDLE, (request) => new URL(request.url).pathname === "/.well-known/atproto-did" ? new Response(holder.did) : serve(request));
+    try {
+      expect((await first.conversation.history({ conversationId: contact.conversationId })).conversation.id).toBe(contact.conversationId);
+      await waitForContact(first, undefined, true, contact.id, "revoked");
+    } finally {
+      network.hosts.set(SECOND_HANDLE, serve);
+    }
+  });
+
   it("ends a contact once its Ship's space is deleted and its DID tombstoned", async () => {
     const harness = successorHarness;
     const client = successor;

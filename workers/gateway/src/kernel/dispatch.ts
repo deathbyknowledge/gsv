@@ -851,7 +851,7 @@ async function dispatchKernel(
         data = handleContactInviteCancel(frame.args, ctx);
         break;
       case "contact.list":
-        data = handleContactList(frame.args, ctx);
+        data = await handleContactList(frame.args, ctx);
         break;
       case "contact.notice.dismiss":
         data = handleContactNoticeDismiss(ctx);

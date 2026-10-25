@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
 import { testPeer } from "../../test-support/peers";
 import { FederationStore } from "../federation-store";
+import { DidDocumentStore } from "../ships/did-directory";
 import type { KernelContext } from "../context";
 import { handleContactDeliveryList, handleContactDeliveryRetry } from "../federation";
 import { DurableTaskScheduler } from "../../shared/durable-tasks";
@@ -80,10 +81,14 @@ describe("human message delivery recovery", () => {
 
 function fixture(storage: DurableObjectStorage, createdAt = Date.now()) {
   const store = new FederationStore(storage);
+  const remoteDid = "did:plc:remoteaaaaaaaaaaaaaaaaaa";
   const contact = store.activateContact({
-    ownerUid: OWNER.uid, remoteDid: "did:plc:remoteaaaaaaaaaaaaaaaaaa", remoteName: "Remote",
+    ownerUid: OWNER.uid, remoteDid, remoteName: "Remote",
     generation: "generation:one", threadId: "thread:one",
   });
+  // Reading deliveries checks the contact's Ship; its cached document names none, so the check makes no lookup.
+  const didDocuments = new DidDocumentStore(storage.sql);
+  didDocuments.put({ did: remoteDid, handle: null, signingKey: { type: "Multikey", publicKeyMultibase: "z" }, shipEndpoint: null, pdsEndpoint: null }, Date.now());
   const deliveryId = "delivery:one";
   store.enqueue({ deliveryId, ownerUid: OWNER.uid, contactId: contact.id, contactGeneration: contact.generation,
     idempotencyKey: "intent:one", fingerprint: "fingerprint:one", now: createdAt,
@@ -92,7 +97,7 @@ function fixture(storage: DurableObjectStorage, createdAt = Date.now()) {
     } } });
   const context = {
     peer: testPeer({ kind: "human", account: OWNER, calls: ["contact.*"] }), callerOwnerUid: OWNER.uid,
-    connection: {}, federation: store, broadcastToUserUid: vi.fn(), scheduleFederationDelivery: vi.fn(async () => {}),
+    connection: {}, federation: store, didDocuments, defer: vi.fn(), broadcastToUserUid: vi.fn(), scheduleFederationDelivery: vi.fn(async () => {}),
     procs: { get: () => null },
     auth: { getPasswdByUid: () => OWNER, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false },
   };

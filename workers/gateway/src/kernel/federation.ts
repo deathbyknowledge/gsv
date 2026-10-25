@@ -96,7 +96,7 @@ import {
 } from "./federation/authority";
 import { bindContactReply, admitContactMessage } from "./federation/attention";
 import { PublicFederationError } from "./federation/errors";
-import { endContactIfShipGone } from "./federation/gone-ships";
+import { checkContactWhenOpened, endContactIfShipGone, endContactsKnownGone } from "./federation/gone-ships";
 import { ShipXrpcError } from "./ships/errors";
 import { callShip, callShipProcedure, type ShipCall } from "./ships/xrpc";
 import {
@@ -154,11 +154,12 @@ const MAX_DELIVERY_ATTEMPTS = 12;
 const RECEIVED: DeliverOutput = { state: "received" };
 const encoder = new TextEncoder();
 
-export function handleContactList(
+export async function handleContactList(
   args: ContactListArgs,
   ctx: KernelContext,
-): ContactListResult {
+): Promise<ContactListResult> {
   const ownerUid = requireContactCaller(ctx, false);
+  await endContactsKnownGone(ownerUid, ctx);
   return {
     contacts: ctx.federation.list(ownerUid, args.includeRevoked ?? false).map(contactSummary),
     attentionNotice: ctx.federation.attentionNotice(ownerUid),
@@ -374,10 +375,10 @@ export function handleContactDeliveryList(args: ContactDeliveryListArgs, ctx: Ke
   if (deliveryIds.length + messageSequences.length > 100) {
     throw new Error("Select at most 100 delivery identities or message sequences");
   }
-  return {
-    deliveries: ctx.federation.listDeliveries(ownerUid, contact.id, deliveryIds, messageSequences)
-      .map((record) => contactDeliveryStatus(record, contact)),
-  };
+  const deliveries = ctx.federation.listDeliveries(ownerUid, contact.id, deliveryIds, messageSequences)
+    .map((record) => contactDeliveryStatus(record, contact));
+  checkContactWhenOpened(contact, ctx);
+  return { deliveries };
 }
 
 export async function handleContactDeliveryRetry(args: ContactDeliveryRetryArgs, ctx: KernelContext): Promise<ContactDeliveryRetryResult> {

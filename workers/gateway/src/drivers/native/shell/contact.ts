@@ -75,7 +75,7 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
       requireCommandCapability(ctx, "approach.create");
       return json(await connectToPerson(rest, ctx));
     case "list":
-      return listContacts(rest, ctx);
+      return await listContacts(rest, ctx);
     case "alias":
       requireCommandCapability(ctx, "contact.alias.set");
       if (rest.length < 2) {
@@ -108,10 +108,10 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
   }
 }
 
-function listContacts(args: string[], ctx: KernelContext): ExecResult {
+async function listContacts(args: string[], ctx: KernelContext): Promise<ExecResult> {
   requireCommandCapability(ctx, "contact.list");
   const flags = parseOnlyFlags(args, new Set(["--all", "--json"]));
-  const result = handleContactList({ includeRevoked: flags.has("--all") }, ctx);
+  const result = await handleContactList({ includeRevoked: flags.has("--all") }, ctx);
   if (flags.has("--json")) return json(result);
   const lines = ["CONTACT\tSTATE\tNAME\tADDRESS"];
   for (const contact of result.contacts) {

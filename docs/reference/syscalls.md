@@ -626,7 +626,7 @@ conversation ownership checks. Delegated processes do not inherit this read auth
 | `conversation.ship` | Kernel | Ensures and returns the caller's stable Ship conversation and current personal Process handler. |
 | `conversation.forProcess` | Kernel | Returns Ship for the personal Process or ensures a Work conversation for an owned interactive Process. |
 | `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
-| `conversation.history` | Conversation DO | Returns a page in chronological order, paging transparently across hot SQLite messages and immutable R2 segments. `beforeSequence` reads earlier messages; `afterSequence` reads later messages. |
+| `conversation.history` | Conversation DO | Returns a page in chronological order, paging transparently across hot SQLite messages and immutable R2 segments. `beforeSequence` reads earlier messages; `afterSequence` reads later messages. For a contact conversation, it then checks whether the contact's Ship is gone, at most once an hour for each contact. |
 | `conversation.search` | Conversation DO | Searches retained message indexes, newest matches first. Defaults to the caller's Ship. Only new messages are indexed; older search entries are pruned under storage pressure without deleting their original history. Archival alone does not remove a search entry. |
 | `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
@@ -745,7 +745,7 @@ never supplied by the remote person, and activation admits no Ship work itself.
 | `contact.invite.accept` | Accepts a link or code, verifies and consumes the remote invite, creates both contact records, and ensures the local Contact conversation. |
 | `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
-| `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
+| `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. It first ends any contact whose DID the directory cache already knows was deactivated, without a lookup. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
 | `contact.preferences.update` | Owner or canonical Ship, revision-checked changes to saved, muted and standing Ship handling preferences. |
 | `contact.block.set` | Human-only block or unblock of one person, named by their DID; blocking also ends their active connection and pending message requests. |
@@ -754,7 +754,7 @@ never supplied by the remote person, and activation admits no Ship work itself.
 | `contact.revoke` | Revokes the local relationship immediately, withdraws its resource grants, terminates pending deliveries, and durably notifies the other Ship. |
 | `contact.send` | Commits one local Contact message and queues an authenticated delivery. Reusing an `idempotencyKey` with the same input returns the same logical delivery; changed input is rejected. |
 | `contact.delivery.get` | Reads the owner-scoped queued, delivered, or failed state of one retained Contact delivery. |
-| `contact.delivery.list` | Reads retained delivery status for selected messages in a contact conversation. |
+| `contact.delivery.list` | Reads retained delivery status for selected messages in a contact conversation. After answering, it checks whether the contact's Ship is gone, at most once an hour for each contact. |
 | `contact.delivery.retry` | Resumes the original recoverable delivery without appending a second message. |
 | `contact.request.list` | Lists structured incoming and outgoing cross-GSV requests. |
 | `contact.request.create` | Offers a typed request with a title and optional JSON details. |
