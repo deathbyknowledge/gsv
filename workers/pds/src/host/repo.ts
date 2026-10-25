@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { CODEC_RAW, fromDigest, fromString as parseCid, toString as formatCid } from "@atcute/cid";
 import type { Service } from "@atcute/did-plc";
-import { isHandle, isNsid, isRecordKey } from "@atcute/lexicons/syntax";
+import { isHandle, isNsid, isRecordKey, parseCanonicalResourceUri } from "@atcute/lexicons/syntax";
 import { now as tidNow } from "@atcute/tid";
 import { BlockMap } from "@atproto/repo";
 import * as z from "zod/mini";
@@ -14,6 +14,10 @@ import { validator } from "../cirrus/validation";
 import type { HostEnv } from "./env";
 import { FIREHOSE_NAME, type OutboxEvent, type RepoState } from "./firehose";
 import { didDocument, mintIdentity, registerGenesis, tombstoneIdentity, type RepoIdentity } from "./identity";
+import {
+  REPO_BLOB_REF, REPO_REF, STRONG_REF, subjectKey, Takedowns,
+  type ModerationSubject, type SubjectStatus, type SubjectStatusQuery, type SubjectStatusUpdate, type Takedown,
+} from "./moderation";
 import { migrate } from "./schema";
 import { signServiceAuth, type ServiceAuthRequest } from "./service-auth";
 import { parseQuery, repositoryParameter, XRPC_PREFIX, XrpcError } from "./xrpc";
@@ -36,7 +40,8 @@ export type CommitResult = {
   results: Array<{ uri: string; cid: string | null }>;
 };
 
-export type HostedAccount = { did: string; handle: string };
+/** A hosted account; `status` is set while its host has taken it down. */
+export type HostedAccount = { did: string; handle: string; status?: "takendown" };
 
 /** A deletion of this repository. It stays after erasure, so the object never holds another account. */
 export type Retirement = {
@@ -88,6 +93,16 @@ const MIGRATIONS = [{
     "CREATE TABLE staged_blobs (name TEXT PRIMARY KEY, cid TEXT UNIQUE, expires_at INTEGER NOT NULL)",
     "CREATE INDEX staged_blobs_expiry ON staged_blobs(expires_at)",
   ],
+}, {
+  id: 2,
+  statements: [
+    // What the host has taken down, by subject: the account's DID, a record's AT URI or a blob's CID.
+    `CREATE TABLE takedowns (
+      subject TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('account', 'record', 'blob')),
+      cid TEXT, record_uri TEXT, ref TEXT NOT NULL, reason TEXT, applied_at INTEGER NOT NULL,
+      CHECK ((kind = 'record') = (cid IS NOT NULL)), CHECK (kind = 'blob' OR record_uri IS NULL)
+    )`,
+  ],
 }];
 
 const collection = z.string().check(z.refine((value) => isNsid(value), "must be a collection NSID"));
@@ -120,6 +135,7 @@ type OpenRepo = {
   sequencer: Sequencer;
   engine: RepoEngine;
   blobs: BlobStore;
+  takedowns: Takedowns;
   /** Whether this instance has compared the repository head with its last announced event. */
   checked: boolean;
 };
@@ -164,21 +180,23 @@ export class HostedRepo extends DurableObject<HostEnv> {
       const repo = this.open(await this.provision(handle.toLowerCase(), blobPrefix, services));
       // The first access commits the empty repository; activation then announces
       // #account, #identity and #sync, and does nothing once the account is active.
+      // A taken-down account stays down until its host restores it.
       await repo.engine.getStatus();
-      await repo.engine.activateAccount();
-      return { did: repo.account.did, handle: repo.account.handle };
+      if (!repo.takedowns.has(repo.account.did)) await repo.engine.activateAccount();
+      return hostedAccount(repo);
     });
   }
 
   async account(): Promise<HostedAccount | null> {
     const account = await this.storedAccount();
-    return account ? { did: account.did, handle: account.handle } : null;
+    return account ? hostedAccount(this.open(account)) : null;
   }
 
   /** Signs a service-auth token for one call from this account to another service. */
   async serviceAuth(request: ServiceAuthRequest): Promise<string> {
     await this.requireLive();
     const repo = await this.requireRepo();
+    refuseTakendown(repo);
     if (!await repo.storage.getActive()) throw new Error(`RepoDeactivated: ${repo.account.did} cannot sign calls`);
     return signServiceAuth(repo.account.did, repo.account.signingKey, request);
   }
@@ -187,6 +205,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
   async applyWrites(writes: RepoWrite[]): Promise<CommitResult> {
     return this.write(async (repo) => {
       await this.requireLive();
+      refuseTakendown(repo);
       const prepared = await this.prepare(repo, writes);
       const promoted = await this.promote(repo, prepared);
       const before = await repo.storage.getRev();
@@ -222,8 +241,9 @@ export class HostedRepo extends DurableObject<HostEnv> {
     // The staged copy is recorded before any byte is stored, so it expires even if the upload never finishes.
     let name: string;
     try {
-      name = await this.write(async () => {
+      name = await this.write(async (repo) => {
         await this.requireLive();
+        refuseTakendown(repo);
         const staged = `upload-${crypto.randomUUID()}`;
         const expiresAt = Date.now() + STAGED_BLOB_TTL_MS;
         this.ctx.storage.sql.exec("INSERT INTO staged_blobs (name, cid, expires_at) VALUES (?, NULL, ?)", staged, expiresAt);
@@ -272,6 +292,73 @@ export class HostedRepo extends DurableObject<HostEnv> {
   async state(): Promise<RepoState | null> {
     const repo = await this.readable();
     return repo ? repoState(repo, await this.retired()) : null;
+  }
+
+  /**
+   * Takes down or restores the account, one of its records or one of its
+   * blobs, as com.atproto.admin.updateSubjectStatus does. Taking the account
+   * down deactivates it and tells relays; restoring it activates it again.
+   * Without a reference, a takedown is named by its time, as Bluesky's PDS names it.
+   */
+  async updateSubjectStatus(input: SubjectStatusUpdate): Promise<SubjectStatus> {
+    return this.serialize(async () => {
+      await this.requireLive();
+      const repo = await this.requireRepo();
+      const { subject, takedown } = input;
+      const key = await this.moderatedKey(repo, subject, takedown.applied);
+      const account = subject.$type === REPO_REF;
+      if (!takedown.applied) {
+        if (repo.takedowns.has(key)) {
+          repo.takedowns.restore(key);
+          if (account) await repo.engine.activateAccount();
+        }
+        return { subject, takedown: { applied: false } };
+      }
+      const ref = takedown.ref ?? new Date().toISOString();
+      const announce = account && !repo.takedowns.has(key);
+      repo.takedowns.apply(subject, ref, input.reason?.trim() || null, Date.now());
+      if (announce) {
+        await repo.storage.setActive(false);
+        await repo.sequencer.sequenceAccount({ did: repo.account.did, active: false, status: "takendown" });
+        await this.alarmBy(Date.now());
+      }
+      return { subject, takedown: { applied: true, ref } };
+    });
+  }
+
+  /** com.atproto.admin.getSubjectStatus for this account, one of its records or one of its blobs; null for anything else. */
+  async getSubjectStatus(query: SubjectStatusQuery): Promise<SubjectStatus | null> {
+    const stored = await this.storedAccount();
+    if (!stored) return null;
+    const repo = this.open(stored);
+    const { did } = stored;
+    const status = (subject: ModerationSubject, taken: Takedown | null): SubjectStatus =>
+      ({ subject, takedown: taken ? { applied: true, ref: taken.ref } : { applied: false } });
+    if (query.blob !== undefined) {
+      if (query.did === undefined) throw new Error("InvalidRequest: Must provide a did to request blob state");
+      if (query.did !== did) return null;
+      const taken = repo.takedowns.get(query.blob);
+      if (taken) return status(taken.subject, taken);
+      return isCanonicalCid(query.blob, CODEC_RAW) && await repo.blobs.hasBlob(query.blob)
+        ? status({ $type: REPO_BLOB_REF, did, cid: query.blob }, null)
+        : null;
+    }
+    if (query.uri !== undefined) {
+      const record = recordOf(repo, query.uri);
+      if (!record) return null;
+      const taken = repo.takedowns.get(query.uri);
+      const found = await repo.engine.getRecord(record.collection, record.rkey);
+      const cid = found?.cid ?? (taken?.subject.$type === STRONG_REF ? taken.subject.cid : null);
+      return cid ? status({ $type: STRONG_REF, uri: query.uri, cid }, taken) : null;
+    }
+    if (query.did !== undefined) return query.did === did ? status({ $type: REPO_REF, did }, repo.takedowns.get(did)) : null;
+    throw new Error("InvalidRequest: No provided subject");
+  }
+
+  /** What the host has taken down of this repository, oldest first, with the reason it gives the account's person. */
+  async takedowns(): Promise<Takedown[]> {
+    const account = await this.storedAccount();
+    return account ? this.open(account).takedowns.list() : [];
   }
 
   /**
@@ -380,11 +467,13 @@ export class HostedRepo extends DurableObject<HostEnv> {
 
   private async read(repo: OpenRepo, method: string, url: URL): Promise<Response> {
     const { did, handle } = repo.account;
-    const active = await repo.storage.getActive();
+    const takendown = repo.takedowns.has(did);
+    const active = !takendown && await repo.storage.getActive();
     if (method === "com.atproto.sync.getRepoStatus") {
       const rev = await repo.storage.getRev();
-      return Response.json({ did, active, status: active ? undefined : "deactivated", rev: rev ?? undefined });
+      return Response.json({ did, active, status: takendown ? "takendown" : active ? undefined : "deactivated", rev: rev ?? undefined });
     }
+    if (takendown) throw new XrpcError("RepoTakendown", `Repo has been takendown: ${did}`);
     if (!active) throw new XrpcError("RepoDeactivated", `Repo has been deactivated: ${did}`);
     switch (method) {
       case "com.atproto.repo.describeRepo": {
@@ -396,7 +485,8 @@ export class HostedRepo extends DurableObject<HostEnv> {
         const query = parseQuery(recordQuery, url);
         const found = await repo.engine.getRecord(query.collection, query.rkey);
         const uri = `at://${did}/${query.collection}/${query.rkey}`;
-        if (!found || (query.cid !== undefined && query.cid !== found.cid)) {
+        // A taken-down record reads as missing, as Bluesky's PDS answers it; the sync methods still carry it.
+        if (!found || (query.cid !== undefined && query.cid !== found.cid) || repo.takedowns.has(uri)) {
           throw new XrpcError("RecordNotFound", `Could not locate record: ${uri}`);
         }
         return Response.json({ uri, cid: found.cid, value: found.record });
@@ -422,7 +512,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
       }
       case "com.atproto.sync.getBlob": {
         const { cid } = parseQuery(blobQuery, url);
-        const blob = await repo.blobs.getBlob(cid);
+        const blob = repo.takedowns.has(cid) ? null : await repo.blobs.getBlob(cid);
         if (!blob) throw new XrpcError("BlobNotFound", `Blob not found: ${cid}`);
         return new Response(blob.body, {
           headers: {
@@ -450,10 +540,12 @@ export class HostedRepo extends DurableObject<HostEnv> {
   /**
    * Lists a collection newest record key first, as the reference PDS does, or
    * oldest first when reversed; the cursor is the last record key returned.
+   * Taken-down records are left out.
    */
   private async listRecords(repo: OpenRepo, query: z.output<typeof listRecordsQuery>) {
     const tree = (await repo.engine.getRepo()).data;
     const prefix = `${query.collection}/`;
+    const hidden = repo.takedowns.records(`at://${repo.account.did}/${prefix}`);
     const bound = query.cursor === undefined ? null : `${prefix}${query.cursor}`;
     const start = query.reverse && bound !== null ? bound : prefix;
     const keys: string[] = [];
@@ -462,6 +554,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
       if (leaf.key < start || (previous !== null && leaf.key <= previous)) continue;
       if (!leaf.key.startsWith(prefix)) break;
       previous = leaf.key;
+      if (hidden.has(`at://${repo.account.did}/${leaf.key}`)) continue;
       if (query.reverse) {
         if (leaf.key === bound) continue;
         keys.push(leaf.key);
@@ -594,6 +687,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
         broadcast: () => this.alarmBy(Date.now()),
       }),
       blobs: new BlobStore(this.env.BLOBS, account.did, account.blobPrefix),
+      takedowns: new Takedowns(this.ctx.storage.sql, account.did),
       checked: false,
     };
     return this.opened;
@@ -660,6 +754,29 @@ export class HostedRepo extends DurableObject<HostEnv> {
     if (!row) return null;
     const [event] = await repo.sequencer.getEventsSince(row.seq - 1, 1);
     return event?.type === "commit" || event?.type === "sync" ? event.event.rev : null;
+  }
+
+  /** The key of a subject of this account; a takedown needs the record or blob it names to be here. */
+  private async moderatedKey(repo: OpenRepo, subject: ModerationSubject, applying: boolean): Promise<string> {
+    const { did } = repo.account;
+    if (subject.$type === REPO_REF) {
+      if (subject.did !== did) throw new Error(`InvalidRequest: ${subject.did} is not this repository's account`);
+    } else if (subject.$type === STRONG_REF) {
+      const record = recordOf(repo, subject.uri);
+      if (!record) throw new Error(`InvalidRequest: ${subject.uri} is not the AT URI of one of ${did}'s records`);
+      if (!isCanonicalCid(subject.cid)) throw new Error(`InvalidRequest: ${subject.cid} is not a CID`);
+      if (applying && !(await repo.engine.getRecord(record.collection, record.rkey))) {
+        throw new Error(`RecordNotFound: Could not locate record: ${subject.uri}`);
+      }
+    } else {
+      if (subject.did !== did) throw new Error(`InvalidRequest: ${subject.did} is not this repository's account`);
+      if (!isCanonicalCid(subject.cid, CODEC_RAW)) throw new Error(`InvalidRequest: ${subject.cid} is not a blob CID`);
+      if (subject.recordUri !== undefined && !recordOf(repo, subject.recordUri)) {
+        throw new Error(`InvalidRequest: ${subject.recordUri} is not the AT URI of one of ${did}'s records`);
+      }
+      if (applying && !(await repo.blobs.hasBlob(subject.cid))) throw new Error(`BlobNotFound: Blob not found: ${subject.cid}`);
+    }
+    return subjectKey(subject);
   }
 
   private async prepare(repo: OpenRepo, writes: RepoWrite[]): Promise<PreparedWrite[]> {
@@ -801,7 +918,7 @@ async function repoState(repo: OpenRepo, retired: boolean): Promise<RepoState> {
     did: repo.account.did,
     handle: repo.account.handle,
     active,
-    status: active ? null : retired ? "deleted" : "deactivated",
+    status: active ? null : retired ? "deleted" : repo.takedowns.has(repo.account.did) ? "takendown" : "deactivated",
     rev: await repo.storage.getRev(),
     head: head ? head.toString() : null,
   };
@@ -809,6 +926,24 @@ async function repoState(repo: OpenRepo, retired: boolean): Promise<RepoState> {
 
 function recordUri(repo: OpenRepo, collection: string, rkey: string): string {
   return `at://${repo.account.did}/${collection}/${rkey}`;
+}
+
+function hostedAccount(repo: OpenRepo): HostedAccount {
+  const { did, handle } = repo.account;
+  return repo.takedowns.has(did) ? { did, handle, status: "takendown" } : { did, handle };
+}
+
+/** Refuses a write for an account its host has taken down. */
+function refuseTakendown(repo: OpenRepo): void {
+  if (repo.takedowns.has(repo.account.did)) throw new Error(`RepoTakendown: ${repo.account.did} was taken down by its host`);
+}
+
+/** The collection and record key a canonical AT URI names in this account, or null for any other URI. */
+function recordOf(repo: OpenRepo, uri: string): { collection: string; rkey: string } | null {
+  const parsed = parseCanonicalResourceUri(uri);
+  if (!parsed.ok || parsed.value.fragment !== undefined) return null;
+  const { repo: did, collection, rkey } = parsed.value;
+  return did === repo.account.did && uri === `at://${did}/${collection}/${rkey}` ? { collection, rkey } : null;
 }
 
 /** Deletes the public copies of blobs a failed write promoted; their staged uploads remain until they expire. */

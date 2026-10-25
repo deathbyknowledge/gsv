@@ -7,6 +7,7 @@ import type {
   PublicRecordWrite,
   PublicRepository,
   PublicRepositoryAccount,
+  PublicTakedown,
   ShipServiceAuthRequest,
 } from "@humansandmachines/gsv/services/pds";
 import type { InstallationState } from "@humansandmachines/gsv/services/directory";
@@ -96,6 +97,11 @@ class InstallationRepository extends RpcTarget implements PublicRepository {
   async readBlob(cid: string): Promise<PublicBlob | null> {
     if (!this.publishing) throw new Error(NOT_PUBLISHING);
     return await this.repo.readBlob(cid);
+  }
+
+  /** What the host has taken down, with the reasons the installation's person sees. */
+  async takedowns(): Promise<PublicTakedown[]> {
+    return await this.repo.takedowns();
   }
 
   private hosted(account: HostedAccount): PublicRepositoryAccount {
