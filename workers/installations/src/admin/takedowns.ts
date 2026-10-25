@@ -6,6 +6,7 @@ import type {
   SubjectStatus,
   SubjectStatusUpdate,
 } from "@humansandmachines/gsv/services/pds";
+import type { OperatorGatewayService, ProfileCopyChange } from "@humansandmachines/gsv/services/operator";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { z } from "zod";
 import type { JsonObject } from "../http";
@@ -13,6 +14,8 @@ import type { AdminAuditRecorder, OperatorAuditResult } from "./insight";
 
 /** The Ship page waits for the PDS as long as it waits for the Ship's health. */
 const VIEW_TIMEOUT_MS = 3_000;
+/** How long a takedown or restore waits for its Ship to bring Bluesky's copy of its profile in line. */
+const FOLLOW_TIMEOUT_MS = 15_000;
 const REASON_MAX_LENGTH = 500;
 /** A trimmed text field; a blank one reads as absent. */
 const field = (maxLength: number) => z.string().max(maxLength).nullish().transform((value) => value?.trim() || undefined);
@@ -38,6 +41,14 @@ export type ShipOpenNetwork = HostView<RepositoryModeration>;
 
 export type TakedownSubjectKind = "account" | "record" | "blob";
 
+/** What became of the copy of the Ship's profile that Bluesky shows; `unreachable` when the Ship couldn't be told. */
+export type BlueskyCopyOutcome = ProfileCopyChange | "unreachable";
+
+/** A takedown or restore the PDS holds, and what became of the Ship's profile copy on Bluesky. */
+export type TakedownChange = SubjectStatus & { bluesky: BlueskyCopyOutcome };
+
+type TakedownFollower = Pick<OperatorGatewayService, "operatorTakedownsChanged">;
+
 /** The Ship's whole account, one of its records by AT URI, or one of its files by CID, and the reason its person reads. */
 export type TakedownInput =
   | { subject: "account"; reason: string }
@@ -50,10 +61,18 @@ export type TakedownInput =
  * Accounts records the operator's action and reason in the audit log.
  */
 export class ShipTakedowns {
+  private readonly gateway: TakedownFollower | undefined;
+  private readonly timeoutMs: number;
+  private readonly followTimeoutMs: number;
+
   constructor(
     private readonly pds: PdsModerationService,
-    private readonly timeoutMs = VIEW_TIMEOUT_MS,
-  ) {}
+    options: { gateway?: TakedownFollower; timeoutMs?: number; followTimeoutMs?: number } = {},
+  ) {
+    this.gateway = options.gateway;
+    this.timeoutMs = options.timeoutMs ?? VIEW_TIMEOUT_MS;
+    this.followTimeoutMs = options.followTimeoutMs ?? FOLLOW_TIMEOUT_MS;
+  }
 
   /** The Ship's open-network account and what its host has taken down; null before the Ship's first outward act. */
   repository(installationId: string): Promise<RepositoryModeration | null> {
@@ -76,7 +95,7 @@ export class ShipTakedowns {
   }
 
   /** Takes a subject down; the PDS keeps `ref`, the audit event that records the action, with it. */
-  async takeDown(installationId: string, input: TakedownInput, ref?: string): Promise<SubjectStatus> {
+  async takeDown(installationId: string, input: TakedownInput, ref?: string): Promise<TakedownChange> {
     const { did } = await this.requireRepository(installationId);
     let subject: ModerationSubject;
     if (input.subject === "account") subject = { $type: "com.atproto.admin.defs#repoRef", did };
@@ -87,31 +106,47 @@ export class ShipTakedowns {
       if (status?.subject.$type !== "com.atproto.repo.strongRef") throw new Error(`request names no record of this Ship: ${input.uri}`);
       subject = status.subject;
     }
-    return await this.update(installationId, { subject, takedown: ref ? { applied: true, ref } : { applied: true }, reason: input.reason });
+    const status = await this.update(installationId, { subject, takedown: ref ? { applied: true, ref } : { applied: true }, reason: input.reason });
+    return { ...status, bluesky: await this.follow(installationId) };
   }
 
   /** Restores what the Ship's host has taken down, named by its DID, AT URI or CID. */
-  async restore(installationId: string, key: string): Promise<SubjectStatus> {
+  async restore(installationId: string, key: string): Promise<TakedownChange> {
     const repository = await this.requireRepository(installationId);
     const takedown = repository.takedowns.find(({ subject }) => takedownSubjectKey(subject) === key);
     if (!takedown) throw new Error("request names nothing this Ship has taken down");
-    return await this.update(installationId, { subject: takedown.subject, takedown: { applied: false } });
+    const status = await this.update(installationId, { subject: takedown.subject, takedown: { applied: false } });
+    return { ...status, bluesky: await this.follow(installationId) };
+  }
+
+  /**
+   * Tells the Ship its takedowns changed, so it brings Bluesky's copy of its
+   * profile in line at once. The change stands whatever the Ship answers, and
+   * taking the subject down again tells it again.
+   */
+  private async follow(installationId: string): Promise<BlueskyCopyOutcome> {
+    if (!this.gateway) return "unreachable";
+    try {
+      const result = await withTimeout(this.gateway.operatorTakedownsChanged({ version: 1, installationId }), this.followTimeoutMs);
+      if (result === "timeout") {
+        console.warn("[Operator] Ship didn't follow its takedowns in time:", installationId);
+        return "unreachable";
+      }
+      return result.found ? result.copy : "unreachable";
+    } catch (error) {
+      console.warn("[Operator] Ship couldn't follow its takedowns:", installationId, exceptionDiagnostics(error));
+      return "unreachable";
+    }
   }
 
   private async bestEffort<Repository>(read: () => Promise<Repository | null>): Promise<HostView<Repository>> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const repository = await Promise.race([
-        read(),
-        new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), this.timeoutMs); }),
-      ]);
+      const repository = await withTimeout(read(), this.timeoutMs);
       if (repository === "timeout") return { kind: "unavailable", reason: "timed out" };
       return repository ? { kind: "ok", repository } : { kind: "none" };
     } catch (error) {
       console.warn("[Operator] Ship takedowns unavailable:", exceptionDiagnostics(error));
       return { kind: "unavailable", reason: "failed" };
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
     }
   }
 
@@ -143,11 +178,13 @@ export async function runTakedownAction(
   installationId: string,
   action: "takedown" | "restore",
   body: JsonObject,
-): Promise<SubjectStatus> {
+): Promise<TakedownChange> {
   const parsed = takedownRequestSchema.safeParse(body);
   if (!parsed.success) throw new Error(`request ${parsed.error.issues[0]?.path.join(".") || "body"} is invalid`);
   const values = parsed.data;
-  const describe = (result: SubjectStatus): OperatorAuditResult => ({ detail: { subject: takedownSubjectKind(result.subject) } });
+  const describe = (result: TakedownChange): OperatorAuditResult => ({
+    detail: { subject: takedownSubjectKind(result.subject), bluesky: result.bluesky },
+  });
   if (action === "restore") {
     const { subject } = values;
     if (!subject) throw new Error("request subject is required");
@@ -159,6 +196,16 @@ export async function runTakedownAction(
   const input = takedownInput(values, reason);
   return await audited(request, { name: "ship.takedown", installationId, reason },
     (eventId) => takedowns.takeDown(installationId, input, eventId), describe);
+}
+
+/** The work's result, or "timeout" once `ms` pass first; the work itself carries on. */
+async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([work, new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), ms); })]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /** The key the PDS keeps a takedown by: the account's DID, the record's AT URI or the blob's CID. */

@@ -112,11 +112,11 @@ something else your Ship published or your whole Ship on the open network, your
 handle at the bottom of People reads **taken down**, and your profile lists each
 takedown with the reason your operator gave. A profile that is down is labelled
 **taken down** too. People on the open network can't see what is down until your
-operator restores it. Bluesky keeps what it already shows until you next publish
-your profile: while your profile or its copy is down, publishing removes the
-copy from Bluesky, and while your picture is down, it leaves the picture out.
-Your next sign-in after your operator restores it puts the full copy back, and so can a message to
-your Ship from another app, such as WhatsApp. While your whole Ship is down, neither you nor your Ship can
+operator restores it. Your Ship removes its copy from Bluesky as soon as your
+operator takes down your profile or its copy, and leaves your picture out while
+your picture is down. When your operator restores it, your Ship puts the full
+copy back. If your Ship misses a restore, your next sign-in or a message to your
+Ship from another app, such as WhatsApp, puts the copy back. While your whole Ship is down, neither you nor your Ship can
 publish or message your contacts: a message or message request you send fails
 at once and says why. Messages from your contacts still arrive.
 The published page uses Ship's cursor icon in the browser tab, the same pale block on a dark square as the app.

@@ -18,7 +18,7 @@ import type { Kernel } from "./do";
 import { ConfigStore } from "./config";
 import { ProfileStore } from "./profile-store";
 import {
-  ensureDefaultProfile, ensurePublishedProfile, handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet,
+  ensureDefaultProfile, ensurePublishedProfile, followHostTakedowns, handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet,
   handleProfilePublish, handleProfileResolve, handleProfileUnpublish, handleProfileUpdate, ownerDisplayName,
   publicProfileAvatar, publicProfileProjection, readPublicProfile,
 } from "./profiles";
@@ -511,6 +511,101 @@ describe("the profile on Bluesky", () => {
       await Promise.all(deferred);
       expect(host.getInstallation).toHaveBeenCalledTimes(asked);
       expect(repository.applyWrites).toHaveBeenCalledOnce();
+    });
+  });
+});
+
+describe("an operator's change to the host's takedowns", () => {
+  const PICTURE: PublicBlobRef = { $type: "blob", ref: { $link: PNG_CID }, mimeType: "image/png", size: PNG.byteLength };
+  const takenDown = (subject: PublicTakedown["subject"]): PublicTakedown[] => [{ subject, ref: "audit_1", reason: "Impersonation", at: 1 }];
+  const PROFILE_DOWN: PublicTakedown["subject"] = { $type: "com.atproto.repo.strongRef", uri: `at://${SHIP.did}/space.ship.profile/self`, cid: "bafyrecord1" };
+
+  it.each<[string, PublicTakedown["subject"]]>([
+    ["the profile", PROFILE_DOWN],
+    ["Bluesky's profile record", { $type: "com.atproto.repo.strongRef", uri: `at://${SHIP.did}/${BLUESKY}/self`, cid: "bafymirror" }],
+  ])("deletes Bluesky's copy as soon as the operator takes %s down, and writes it again as soon as they restore it", async (_label, subject) => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository, records } = profileContext(storage);
+      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      repository.takedowns.mockResolvedValue(takenDown(subject));
+      expect(await followHostTakedowns(ctx)).toBe("removed");
+      expect(repository.applyWrites).toHaveBeenLastCalledWith([{ action: "delete", collection: BLUESKY, rkey: "self" }]);
+      expect(records.has(`${BLUESKY}/self`)).toBe(false);
+      // Told again, the copy is already as the takedowns make it.
+      const writes = repository.applyWrites.mock.calls.length;
+      expect(await followHostTakedowns(ctx)).toBe("unchanged");
+      expect(repository.applyWrites).toHaveBeenCalledTimes(writes);
+
+      repository.takedowns.mockResolvedValue([]);
+      expect(await followHostTakedowns(ctx)).toBe("updated");
+      expect(repository.applyWrites).toHaveBeenLastCalledWith([blueskyPut({ displayName: DRAFT.displayName, description: DRAFT.about })]);
+      expect(records.has(`${BLUESKY}/self`)).toBe(true);
+    });
+  });
+
+  it("leaves the picture out as soon as the operator takes its file down, and puts it back once they restore it", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      repository.takedowns.mockResolvedValue(takenDown({ $type: "com.atproto.admin.defs#repoBlobRef", did: SHIP.did, cid: PNG_CID }));
+      expect(await followHostTakedowns(ctx)).toBe("updated");
+      expect(repository.applyWrites).toHaveBeenLastCalledWith([blueskyPut({ displayName: "local" })]);
+      repository.takedowns.mockResolvedValue([]);
+      expect(await followHostTakedowns(ctx)).toBe("updated");
+      expect(repository.applyWrites).toHaveBeenLastCalledWith([blueskyPut({ displayName: "local", avatar: PICTURE })]);
+    });
+  });
+
+  it("leaves the copy to the account's status while the whole account is down, and changes nothing for another record", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository, records } = profileContext(storage);
+      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      const writes = repository.applyWrites.mock.calls.length;
+      // The host refuses every write while the account is down, and relays hide the whole account meanwhile.
+      repository.takedowns.mockResolvedValue([
+        ...takenDown({ $type: "com.atproto.admin.defs#repoRef", did: SHIP.did }), ...takenDown(PROFILE_DOWN),
+      ]);
+      expect(await followHostTakedowns(ctx)).toBe("unchanged");
+      repository.takedowns.mockResolvedValue(takenDown({ $type: "com.atproto.repo.strongRef", uri: `at://${SHIP.did}/space.ship.note/self`, cid: "bafynote" }));
+      expect(await followHostTakedowns(ctx)).toBe("unchanged");
+      expect(repository.applyWrites).toHaveBeenCalledTimes(writes);
+      expect(records.has(`${BLUESKY}/self`)).toBe(true);
+    });
+  });
+
+  it("asks the host nothing for a private profile or without an open-network host", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
+      expect(await followHostTakedowns(ctx)).toBe("unchanged");
+      expect(await followHostTakedowns(profileContext(storage, { pds: false }).ctx)).toBe("unchanged");
+      expect(repository.takedowns).not.toHaveBeenCalled();
+    });
+  });
+
+  it("waits for a publication under way, then follows the takedowns against the profile it published", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository, records } = profileContext(storage);
+      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "Edited" } }, ctx);
+      const held = holdNextCommit(repository);
+      const publishing = handleProfilePublish({ expectedRevision: 2 }, ctx);
+      // The publication read the takedowns before the operator took the profile down, and is committing its copy.
+      await vi.waitFor(() => expect(repository.applyWrites).toHaveBeenCalledTimes(2));
+      repository.takedowns.mockResolvedValue(takenDown({ ...PROFILE_DOWN, cid: "bafyrecord2" }));
+      const following = followHostTakedowns(ctx);
+      // Had it not waited its turn, the copy's deletion would land before the held publication's copy.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      held.release();
+      await publishing;
+      expect(await following).toBe("removed");
+      expect(repository.applyWrites).toHaveBeenLastCalledWith([{ action: "delete", collection: BLUESKY, rkey: "self" }]);
+      expect(records.has(`${BLUESKY}/self`)).toBe(false);
+      expect(ctx.profiles.holdsMirror(OWNER.uid, null)).toBe(true);
     });
   });
 });

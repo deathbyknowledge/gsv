@@ -296,11 +296,19 @@ Choose what to take down:
 Write the reason the Ship's person will read in People, then choose **Take
 down**. The PDS stops serving it at once, and relays learn of an account
 takedown from its firehose; copies that apps and relays already made are
-theirs. Bluesky keeps showing a profile it already has until the Ship deletes
-its copy, which happens the next time its person publishes while you have the
-profile or the copy down. To take a profile off Bluesky at once, take the whole
-account down. **Restore** brings it back, with an optional reason for the audit log.
-The person sees each takedown in People, on their profile, with your reason.
+theirs. Accounts then tells the Ship, which brings the copy of its profile that
+Bluesky shows in line at once: it deletes the copy while you have the profile or
+the copy down, and leaves the picture out while you have its file down. An
+account takedown leaves the copy as it is, because relays hide the whole
+account. **Restore** brings it back, with an optional reason for the audit log,
+and the Ship writes its full copy again. The person sees each takedown in
+People, on their profile, with your reason.
+
+Each takedown's and restore's audit entry says what became of the copy:
+`bluesky: removed`, `updated` or `unchanged`. `bluesky: unreachable` means the
+Ship couldn't be told, for example while it restarts. The takedown still stands;
+take the same subject down again to tell the Ship again. A restore the Ship
+missed reaches Bluesky at its person's next sign-in or message to their Ship.
 
 The operator JSON API takes down and restores the same way, under the same
 audit. Takedowns need Accounts' `PDS_MODERATION` binding, which the

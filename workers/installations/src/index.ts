@@ -59,7 +59,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
       {},
       createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)),
       new ShipInsight(this.env.INSTALLATIONS_DB, { gateway: this.env.OPERATOR_GATEWAY, mailDomain: this.env.GSV_MAIL_DOMAIN }),
-      this.env.PDS_MODERATION ? new ShipTakedowns(this.env.PDS_MODERATION) : undefined,
+      this.env.PDS_MODERATION ? new ShipTakedowns(this.env.PDS_MODERATION, { gateway: this.env.OPERATOR_GATEWAY }) : undefined,
       new RequestReports(this.env.INSTALLATIONS_DB),
     );
     const response = await api.handle(request);

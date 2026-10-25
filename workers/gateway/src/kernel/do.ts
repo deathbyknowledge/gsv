@@ -1,4 +1,4 @@
-import type { OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
+import type { OperatorShipSnapshot, ProfileCopyChange } from "@humansandmachines/gsv/services/operator";
 import { buildOperatorShipSnapshot } from "./operator-snapshot";
 import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
@@ -124,7 +124,7 @@ import {
 import { FederationStore } from "./federation-store";
 import { ProfileStore, type ProfileAvatarFile } from "./profile-store";
 import { ApproachStore } from "./approach-store";
-import { publicProfileAvatar, publicProfileProjection, type PublicProfileProjection } from "./profiles";
+import { followHostTakedowns, publicProfileAvatar, publicProfileProjection, type PublicProfileProjection } from "./profiles";
 import { processApproachMaintenance } from "./approaches/runtime";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { DidDocumentStore } from "./ships/did-directory";
@@ -158,6 +158,8 @@ const LEDGER_ROTATION_RETRY_MS = 60_000;
 const LEDGER_ROTATION_DAILY_MS = 24 * 60 * 60 * 1000;
 /** How long the public page waits for the Ship's host to say what it has taken down. */
 const PUBLIC_PROFILE_TIMEOUT_MS = 5_000;
+/** How long an operator's takedown waits for the Ship's host while the Ship brings Bluesky's copy in line. */
+const OPERATOR_TAKEDOWN_TIMEOUT_MS = 10_000;
 import { ManualUpdater } from "./sys/manual";
 import { SERVER_VERSION } from "../version";
 import { parseInstallationId } from "../installation/identity";
@@ -801,6 +803,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
       shipSummary: async (pid) => await (await getProcessByPid(pid, this.installationId)).operatorRunSummary(runLimit),
       now: () => Date.now(),
     });
+  }
+
+  /** Brings Bluesky's copy of the published profile in line with the host's takedowns, which the operator has just changed. */
+  async operatorTakedownsChanged(): Promise<ProfileCopyChange> {
+    this.retirement.assertActive();
+    return await followHostTakedowns(this.buildKernelContext({ requestSignal: AbortSignal.timeout(OPERATOR_TAKEDOWN_TIMEOUT_MS) }));
   }
 
   async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {
