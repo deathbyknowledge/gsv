@@ -2,8 +2,8 @@ import { z } from "zod";
 import { didSchema } from "../protocol/social";
 import { REQUEST_REPORT_CATEGORIES, type RequestReportCategory } from "../protocol/syscalls/approach";
 
-/** Message requests carry at most this much text; a report carries the same. */
-export const REQUEST_REPORT_TEXT_MAX_BYTES = 32_768;
+/** Message requests carry at most this much text; a report carries the same. Both count UTF-16 code units, as Ships do. */
+export const REQUEST_REPORT_TEXT_MAX_LENGTH = 32_768;
 
 /**
  * A message request a Ship's person reported to their operator. It names the
@@ -35,7 +35,7 @@ export const requestReportSubmissionSchema = z.object({
   receivedAtMs: z.number().int().positive(),
   message: z.object({
     displayName: z.string().min(1).max(80),
-    text: z.string().min(1).refine((text) => new TextEncoder().encode(text).length <= REQUEST_REPORT_TEXT_MAX_BYTES, "is too long"),
+    text: z.string().min(1).max(REQUEST_REPORT_TEXT_MAX_LENGTH),
   }).strict().optional(),
 }).strict() satisfies z.ZodType<RequestReportSubmission>;
 

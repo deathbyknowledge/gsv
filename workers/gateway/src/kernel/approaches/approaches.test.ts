@@ -13,7 +13,7 @@ import type { ProcessRecord } from "../processes";
 import { handleContactSend, processFederationDelivery } from "../federation";
 import { handleContactBlockList, handleContactBlockSet } from "../federation/preferences";
 import { handleProfileGet, handleProfilePublish, handleProfileUnpublish, handleProfileUpdate, readPublicProfile } from "../profiles";
-import type { RequestReportService, RequestReportSubmission } from "@humansandmachines/gsv/services/reports";
+import { requestReportSubmissionSchema, type RequestReportService, type RequestReportSubmission } from "@humansandmachines/gsv/services/reports";
 import { handleApproachCreate, handleApproachDecide, handleApproachGet, handleApproachList, handleApproachReport, handleApproachRetry } from "./admission";
 import { expireOverdueApproach, processApproachMaintenance } from "./runtime";
 
@@ -327,6 +327,19 @@ describe("reporting a message request", () => {
     })]);
   });
 
+  it("includes the longest message a request can carry, in any script", async () => {
+    // The Kernel keeps a request of at most 32,768 UTF-8 bytes, whichever way the request came.
+    const text = `${"語".repeat(10_922)}ok`;
+    await alice.run(async (ctx) => {
+      await handleApproachCreate({ ...request(profile), text }, held(ctx));
+      await processApproachMaintenance(held(ctx));
+    });
+    const [received] = await incomingRequests(bob);
+    const queue = operatorQueue();
+    await bob.run((ctx) => handleApproachReport({ approachId: received.id, category: "spam", includeMessage: true }, reporting(ctx, queue)));
+    expect(queue.filed).toEqual([expect.objectContaining({ message: { displayName: "Alice in the open", text } })]);
+  });
+
   it("reports a request the person already declined, and refuses one they accepted or sent", async () => {
     const sent = await sendRequest();
     const [received] = await incomingRequests(bob);
@@ -408,14 +421,14 @@ async function requestFrom(space: TestSpace): Promise<ApproachSummary> {
   return received;
 }
 
-/** The operator's queue as the Kernel's binding reaches it, keeping what each report carried. */
+/** The operator's queue as the Kernel's binding reaches it, refusing what Accounts refuses and keeping what each report carried. */
 function operatorQueue() {
   const filed: RequestReportSubmission[] = [];
   const reportedAtMs = Date.now();
   return {
     filed, reportedAtMs,
     submitRequestReport: async (input: RequestReportSubmission) => {
-      filed.push(input);
+      filed.push(requestReportSubmissionSchema.parse(input));
       return { reportId: `report_${filed.length}`, reportedAtMs };
     },
   } satisfies RequestReportService & { filed: RequestReportSubmission[]; reportedAtMs: number };

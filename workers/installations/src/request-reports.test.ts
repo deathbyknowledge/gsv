@@ -35,6 +35,15 @@ describe("filing a report", () => {
     });
   });
 
+  it("keeps a message as long as a request's, counted in UTF-16 code units as Ships count it", async () => {
+    const ship = await activeShip();
+    const reports = new RequestReports(db);
+    const text = "語".repeat(32_768);
+    const { reportId } = await reports.submit(submission(ship.installationId, { message: { displayName: "Stranger", text } }));
+    expect((await reports.get(reportId))?.message).toEqual({ displayName: "Stranger", text });
+    await expect(reports.submit(submission(ship.installationId, { message: { displayName: "Stranger", text: `${text}語` } }))).rejects.toThrow();
+  });
+
   it("files each request once: reporting it again returns the first report unchanged", async () => {
     const ship = await activeShip();
     let now = 1_800_000_000_000;
