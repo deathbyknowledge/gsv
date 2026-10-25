@@ -1,4 +1,7 @@
-import { SHIP_PROFILE_COLLECTION, SHIP_PROFILE_RKEY, type ProfileFields, type ProfileState, type PublicTakedown } from "@humansandmachines/gsv/protocol";
+import {
+  BLUESKY_PROFILE_COLLECTION, BLUESKY_PROFILE_RKEY, SHIP_PROFILE_COLLECTION, SHIP_PROFILE_RKEY,
+  type ProfileFields, type ProfileState, type PublicTakedown,
+} from "@humansandmachines/gsv/protocol";
 import type { ProfilePicture } from "./profilePicture";
 
 export type ProfileEdit = { revision: number; fields: ProfileFields };
@@ -48,14 +51,17 @@ export function profileVisibility(state: ProfileState): "private" | "requests" |
 }
 
 /** What a takedown covers, as the person knows it. */
-export type TakedownSubject = { kind: "account" | "profile" | "picture" | "file" } | { kind: "record"; uri: string };
+export type TakedownSubject = { kind: "account" | "profile" | "bluesky" | "picture" | "file" } | { kind: "record"; uri: string };
 
 /** Names a takedown as the person knows it: their whole Ship, their profile or its picture, or something else their Ship published. */
 export function takedownSubject({ subject }: PublicTakedown, avatarCid?: string): TakedownSubject {
   switch (subject.$type) {
     case "com.atproto.admin.defs#repoRef": return { kind: "account" };
     case "com.atproto.repo.strongRef":
-      return subject.uri.endsWith(`/${SHIP_PROFILE_COLLECTION}/${SHIP_PROFILE_RKEY}`) ? { kind: "profile" } : { kind: "record", uri: subject.uri };
+      if (subject.uri.endsWith(`/${SHIP_PROFILE_COLLECTION}/${SHIP_PROFILE_RKEY}`)) return { kind: "profile" };
+      // The copy of the profile Bluesky shows.
+      if (subject.uri.endsWith(`/${BLUESKY_PROFILE_COLLECTION}/${BLUESKY_PROFILE_RKEY}`)) return { kind: "bluesky" };
+      return { kind: "record", uri: subject.uri };
     case "com.atproto.admin.defs#repoBlobRef": return { kind: subject.cid === avatarCid ? "picture" : "file" };
   }
 }

@@ -14,6 +14,7 @@ const TAKEDOWNS_STALE_MS = 5 * 60_000;
 const SUBJECT_TEXT = {
   account: "people.profile.takedownAccount",
   profile: "people.profile.takedownProfile",
+  bluesky: "people.profile.takedownBluesky",
   picture: "people.profile.takedownPicture",
   file: "people.profile.takedownFile",
 } as const;

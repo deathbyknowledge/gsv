@@ -976,8 +976,9 @@ record as the page at `https://SPACE/profile`, and older `/@name` links redirect
 the profile by default on the owner's first sign-in, named by the Ship's handle with `contactPolicy: "requests"`,
 only when the owner has no saved profile, and applies that default once, so a saved draft or an explicit
 unpublish stays private. Without the `PDS` service nothing publishes, and the default waits for it.
-Draft changes stay private until the next explicit publish, which writes the record; unpublishing
-deletes it. Profile mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
+Draft changes stay private until the next explicit publish, which writes the record together with
+the profile as Bluesky shows it, an `app.bsky.actor.profile` record (record key `self`); unpublishing
+deletes both. Profile mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
 may resolve a profile and create, read, list and retry outgoing message requests (`approach.create`,
 `approach.get`, `approach.list`, `approach.retry`) on their behalf. A Ship's `approach.create` asks the
 owner first unless an approval rule matches it, and a replay of a request already sent does not ask again. Incoming requests, publishing a
@@ -1089,6 +1090,25 @@ The page shows the record's picture from the Ship's own host at `/profile/avatar
 sandboxed image, and asks search engines not to index either. The page has no JSON form; other
 Ships read the record.
 
+```ts
+type BlueskyProfileRecord = {
+  $type: "app.bsky.actor.profile";
+  displayName: string; // the record's, within 64 graphemes and 640 bytes
+  description?: string; // its about, within 256 graphemes and 2,560 bytes; absent when empty
+  avatar?: { $type: "blob"; ref: { $link: string }; mimeType: "image/png" | "image/jpeg"; size: number };
+  website: string; // the profile page
+};
+```
+
+The Bluesky copy shows the same profile, linking to its page. A name or bio over Bluesky's limits is
+cut between graphemes and ends with an ellipsis. It shares the record's picture unless that is a
+WebP, which Bluesky doesn't show, or a file the operator took down. While the operator has the
+account, the profile record or the copy down, publishing deletes the copy instead of writing it. When
+the repository holds another copy than the published record makes, including none for a profile
+published before Ships kept one, the owner's next sign-in writes it once the takedowns allow, as
+does the Kernel's next reconciliation of their personal agent when a message reaches their Ship from
+any surface.
+
 `profile.resolve` takes a handle, with or without its `@`, or a profile link. A bare handle is on
 the Ship's own domain, and one on the operator's older domain names the same Ship on its primary
 domain. The Kernel resolves the handle to a DID, checks that the DID document claims the handle,
@@ -1097,7 +1117,8 @@ and reads the record from the repository the document names. `PublicProfile` ret
 profile is available at that address; it does not establish whether the Ship exists or prevent a
 private invitation. A 503 means the host the document names doesn't serve repositories right now,
 so the profile can't be read yet. A profile published as a signed document before profiles were records keeps its
-published fields and is written as a record at its owner's next sign-in.
+published fields and is written as a record at its owner's next sign-in or the next reconciliation
+of their personal agent.
 A message request names the recipient's `did` and the `profileCid` of the record its sender read.
 The sender's Ship refuses to send it if that record has changed or no longer takes requests, and the
 recipient's Ship refuses it on arrival for the same reasons, so a person never receives a request
@@ -1226,8 +1247,9 @@ type PublicBlobRef = { $type: "blob"; ref: { $link: string }; mimeType: string; 
 
 `atproto.write` commits one to ten changes together, up to 64 KiB of JSON, and
 returns one result per change in order; a delete has no record CID. A
-collection is any valid NSID except one a Ship feature owns. Today that is
-`space.ship.profile`, the profile, which changes only in People. Ship's own
+collection is any valid NSID except one a Ship feature owns. Today those are
+`space.ship.profile`, the profile, and `app.bsky.actor.profile`, the profile
+as Bluesky shows it, which change only in People. Ship's own
 lexicons use the `space.ship.*` namespace and live in `lexicons/space/ship/`.
 
 `atproto.blob.upload` takes a file of any type, up to 48 MiB, as a request body

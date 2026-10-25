@@ -15,8 +15,12 @@ export type PictureCrop = { x: number; y: number; side: number; size: number };
 type Encode = (mimeType: ProfileAvatarMimeType, quality: number | undefined) => Promise<Blob | null>;
 type PictureClient = Pick<GSVClient, "request">;
 
-/** WebP and PNG keep transparency; JPEG always fits. */
-const FORMATS: Array<[ProfileAvatarMimeType, number | undefined]> = [["image/webp", 0.9], ["image/png", undefined], ["image/jpeg", 0.9], ["image/jpeg", 0.7]];
+/**
+ * WebP and PNG keep transparency; JPEG always fits. Bluesky shows only PNG and
+ * JPEG, so a picture with transparency is a PNG where one fits, and any other a JPEG.
+ */
+const TRANSPARENT_FORMATS: Array<[ProfileAvatarMimeType, number | undefined]> = [["image/png", undefined], ["image/jpeg", 0.9], ["image/jpeg", 0.7]];
+const OPAQUE_FORMATS: Array<[ProfileAvatarMimeType, number | undefined]> = [["image/jpeg", 0.9], ["image/jpeg", 0.7]];
 
 /** A picture smaller than the profile's size keeps its own; none is enlarged. */
 export function pictureCrop(width: number, height: number): PictureCrop {
@@ -25,13 +29,21 @@ export function pictureCrop(width: number, height: number): PictureCrop {
 }
 
 /** The first format the browser writes that fits the profile's limit. */
-export async function encodePicture(encode: Encode): Promise<ProfilePicture> {
-  for (const [mimeType, quality] of FORMATS) {
+export async function encodePicture(encode: Encode, transparent: boolean): Promise<ProfilePicture> {
+  for (const [mimeType, quality] of transparent ? TRANSPARENT_FORMATS : OPAQUE_FORMATS) {
     const blob = await encode(mimeType, quality);
     // A browser that can't write a format writes PNG instead.
     if (blob?.type === mimeType && blob.size <= PROFILE_AVATAR_MAX_BYTES) return { bytes: new Uint8Array(await blob.arrayBuffer()), mimeType };
   }
   throw new Error(t("people.profile.pictureTooLarge"));
+}
+
+/** Whether any pixel of RGBA image data isn't fully opaque. */
+export function hasTransparency(pixels: Uint8ClampedArray): boolean {
+  for (let alpha = 3; alpha < pixels.length; alpha += 4) {
+    if (pixels[alpha] !== 255) return true;
+  }
+  return false;
 }
 
 /** Crops the chosen file to its centred square and resizes it for the profile. */
@@ -51,7 +63,8 @@ export async function profilePicture(file: Blob): Promise<ProfilePicture> {
     if (!context) throw new Error(t("people.profile.pictureUnreadable"));
     context.imageSmoothingQuality = "high";
     context.drawImage(image, crop.x, crop.y, crop.side, crop.side, 0, 0, crop.size, crop.size);
-    return await encodePicture((mimeType, quality) => new Promise((resolve) => canvas.toBlob(resolve, mimeType, quality)));
+    const transparent = hasTransparency(context.getImageData(0, 0, crop.size, crop.size).data);
+    return await encodePicture((mimeType, quality) => new Promise((resolve) => canvas.toBlob(resolve, mimeType, quality)), transparent);
   } finally {
     image.close();
   }
