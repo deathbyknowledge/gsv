@@ -13,6 +13,8 @@ const purposeSchema = z.enum(OWNER_CONFIRMATION_PURPOSES);
 /** The SHA-256, in hex, of exactly what the change does; a code confirms that change and no other. */
 const subjectHashSchema = z.string().regex(/^[0-9a-f]{64}$/);
 const changeSchema = z.enum(OWNER_CONFIRMATION_CHANGES);
+/** Milliseconds since the epoch. */
+const timeSchema = z.number().int().nonnegative();
 /** The Ship's hostname on the open network, which the emails name it by. */
 const shipSchema = z.string().max(253).regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/);
 
@@ -52,21 +54,25 @@ export type OwnerNotice = z.infer<typeof ownerNoticeSchema>;
  *
  * A transient failure throws instead.
  */
-export type OwnerConfirmationRequestResult =
-  | { status: "sent"; to: string; expiresAt: number; retryAt: number }
-  | { status: "wait"; retryAt: number }
-  | { status: "no-address" }
-  | { status: "not-configured" };
+export const ownerConfirmationRequestResultSchema = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("sent"), to: z.string().min(1).max(320), expiresAt: timeSchema, retryAt: timeSchema }),
+  z.strictObject({ status: z.literal("wait"), retryAt: timeSchema }),
+  z.strictObject({ status: z.literal("no-address") }),
+  z.strictObject({ status: z.literal("not-configured") }),
+]);
+export type OwnerConfirmationRequestResult = z.infer<typeof ownerConfirmationRequestResultSchema>;
 
 /**
  * - `confirmed`: the code was right, and is used up.
  * - `wrong`: the code isn't the one sent for this change.
  * - `expired`: no code is open for it: it expired, was used, was replaced by a newer one, or took five wrong tries.
  */
-export type OwnerConfirmationCheckResult =
-  | { status: "confirmed" }
-  | { status: "wrong"; attemptsLeft: number }
-  | { status: "expired" };
+export const ownerConfirmationCheckResultSchema = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("confirmed") }),
+  z.strictObject({ status: z.literal("wrong"), attemptsLeft: z.number().int().nonnegative() }),
+  z.strictObject({ status: z.literal("expired") }),
+]);
+export type OwnerConfirmationCheckResult = z.infer<typeof ownerConfirmationCheckResultSchema>;
 
 /**
  * Bound only to the Kernel, with deployment-owned authority; the Kernel names
