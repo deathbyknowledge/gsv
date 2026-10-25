@@ -121,8 +121,9 @@ To change a lexicon:
    reaching a Ship until those Ships are gone. No limit can tighten, no field
    can become required, and a method's new error must be declared.
 2. Run `npm run protocol:generate` and commit the regenerated modules with the
-   lexicon. It also writes the PDS's copy of each document, in
-   `workers/pds/src/gsv/generated/ship-lexicons.ts`.
+   lexicon. It also writes the list of lexicon files the PDS imports and
+   publishes, `workers/pds/src/gsv/generated/ship-lexicons.ts`, which changes
+   only when a lexicon is added or removed.
 3. `npm run protocol:check` fails while a generated module is stale. It also
    fails when code writes a `space.ship` NSID as a string, so import the
    generated constant instead.

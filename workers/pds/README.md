@@ -38,8 +38,9 @@ operator's `npm run pds:lexicons` command at `POST /operator/lexicons`, and
 only a short-lived token signed with the host's PLC rotation key opens it:
 `create` registers the account for the handle the deployment configures, and
 `publish` writes each lexicon whose record changed. Once the operator has
-published, the worker's schedule publishes a deploy's changes. `npm run
-protocol:generate` writes the documents to `src/gsv/generated/ship-lexicons.ts`.
+published, the worker's schedule publishes a deploy's changes. The documents
+are the files in `lexicons/`, which `src/gsv/generated/ship-lexicons.ts`
+imports; `npm run protocol:generate` writes that list.
 
 The operator composition in `deployment/src/runtime.ts` deploys the worker
 when the operator configures a PLC rotation key. `npm run deployment:build`
