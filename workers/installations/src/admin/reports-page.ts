@@ -1,6 +1,6 @@
 import type { RequestReportCategory } from "@humansandmachines/gsv/protocol/syscalls/approach";
 import type { HostedRepositoryModeration } from "@humansandmachines/gsv/services/pds";
-import type { RequestReport, RequestReportPage, RequestReportResolution } from "../request-reports";
+import { messageLapsed, type RequestReport, type RequestReportPage, type RequestReportResolution } from "../request-reports";
 import type { OperatorAuditEvent } from "./insight";
 import { adminPageResponse, auditTable, errorNotice, escapeHtml, formatDate, stateBadge, type AdminNavigationItem } from "./page";
 import type { HostView } from "./takedowns";
@@ -21,7 +21,7 @@ export function reportsPage(page: RequestReportPage, head: boolean, navigation: 
     head,
     content: `<section class="stack">
       <div class="page-heading"><div><p class="eyebrow">MESSAGE REQUESTS</p><h1>Reports</h1>
-        <p class="subtitle">Message requests people reported to you. A report names its sender, and carries their name and message only when the person chose to include them.</p></div></div>
+        <p class="subtitle">Message requests people reported to you. A report names its sender, and carries their name and message only when the person chose to include them, until 90 days after it closes.</p></div></div>
       <nav class="tabs" aria-label="Report status">
         <a class="button secondary" href="/admin/reports"${open ? ' aria-current="page"' : ""}>Open (${page.counts.open})</a>
         <a class="button secondary" href="/admin/reports?state=closed"${open ? "" : ' aria-current="page"'}>Closed (${page.counts.closed})</a>
@@ -34,7 +34,7 @@ export function reportsPage(page: RequestReportPage, head: boolean, navigation: 
             <td>${CATEGORY_LABELS[report.category]}</td>
             <td>${reporterLink(report)}</td>
             <td>${formatDate(report.reportedAt)}</td>
-            <td>${report.message ? "Included" : "Not included"}</td>
+            <td>${report.message ? "Included" : messageLapsed(report, Date.now()) ? "Not kept" : "Not included"}</td>
             ${report.closed ? `<td><strong>${RESOLUTION_LABELS[report.closed.resolution]}</strong><small>${formatDate(report.closed.at)}</small></td>` : ""}
           </tr>`).join("")}</tbody></table></div>
       <div class="pagination"><span>Page ${page.page} of ${page.totalPages}</span><div>
@@ -88,7 +88,9 @@ export function reportPage(input: {
         ${report.message
           ? `<details><summary>Their name and message, as the person saw them</summary>
             <p><strong>${escapeHtml(report.message.displayName)}</strong></p><p class="reported-message">${escapeHtml(report.message.text)}</p></details>`
-          : "<p>The person didn't include the sender's name or message.</p>"}
+          : messageLapsed(report, Date.now())
+            ? "<p>The report holds no name or message: a closed report keeps them for 90 days at most.</p>"
+            : "<p>The person didn't include the sender's name or message.</p>"}
       </section>
       ${hostingPanel(hosting, takenDown)}
       ${report.closed ? "" : `${hosted && !takenDown ? takedownForm(path, input.openReports) : ""}

@@ -8,6 +8,15 @@ import {
 } from "@humansandmachines/gsv/services/reports";
 
 const REPORT_PAGE_SIZE = 50;
+/** A closed report keeps the sender's name and message this long; the rest stays until its Ship is deleted. */
+export const CLOSED_MESSAGE_RETENTION_MS = 90 * 86_400_000;
+/** How many lapsed messages one run of the Accounts cron erases. */
+const FORGET_BATCH = 100;
+
+/** Whether a report has been closed long enough that it no longer keeps the sender's name and message. */
+export function messageLapsed(report: RequestReport, now: number): boolean {
+  return report.closed !== null && report.closed.at <= now - CLOSED_MESSAGE_RETENTION_MS;
+}
 
 export type RequestReportState = "open" | "closed";
 export type RequestReportResolution = "dismissed" | "taken-down";
@@ -109,6 +118,14 @@ export class RequestReports {
     const row = await this.db.prepare(`SELECT ${REPORT_COLUMNS} FROM request_reports r
       LEFT JOIN installations i ON i.id = r.installation_id WHERE r.id = ?`).bind(id).first<ReportRow>();
     return row ? requestReport(row) : null;
+  }
+
+  /** Erases the sender's name and message from reports closed for the retention period, keeping the rest of each. */
+  async forgetClosedMessages(): Promise<number> {
+    const result = await this.db.prepare(`UPDATE request_reports SET sender_name = NULL, message_text = NULL
+      WHERE id IN (SELECT id FROM request_reports WHERE message_text IS NOT NULL AND closed_at <= ? LIMIT ?)`)
+      .bind(this.clock() - CLOSED_MESSAGE_RETENTION_MS, FORGET_BATCH).run();
+    return result.meta.changes;
   }
 
   /** How many open reports name a sender. */

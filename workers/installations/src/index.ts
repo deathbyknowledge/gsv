@@ -31,6 +31,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
   implements InstallationDirectoryService, InstallationOnboardingService {
   async scheduled(): Promise<void> {
     await cleanExpiredOwnerAuthentication(this.env);
+    await new RequestReports(this.env.INSTALLATIONS_DB).forgetClosedMessages();
     await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)).resumePending();
   }
 

@@ -1,7 +1,8 @@
 -- The operator's queue of message requests a Ship's person reported. A report
 -- names the sender by DID and handle, with its category and when the request
 -- arrived; the sender's name and message are here only when the person chose
--- to include them. Reports go with the reporting Ship when it is deleted.
+-- to include them, and only until 90 days after the report closes. Reports go
+-- with the reporting Ship when it is deleted.
 CREATE TABLE request_reports (
   id              TEXT PRIMARY KEY,
   installation_id TEXT NOT NULL REFERENCES installations(id) ON DELETE CASCADE,
@@ -26,3 +27,4 @@ CREATE TABLE request_reports (
 CREATE INDEX request_reports_open ON request_reports (reported_at DESC) WHERE closed_at IS NULL;
 CREATE INDEX request_reports_closed ON request_reports (closed_at DESC) WHERE closed_at IS NOT NULL;
 CREATE INDEX request_reports_sender ON request_reports (sender_did) WHERE closed_at IS NULL;
+CREATE INDEX request_reports_messages ON request_reports (closed_at) WHERE message_text IS NOT NULL;

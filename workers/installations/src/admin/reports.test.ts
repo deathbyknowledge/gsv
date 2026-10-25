@@ -10,7 +10,7 @@ import type {
 } from "@humansandmachines/gsv/services/pds";
 import type { RequestReportSubmission } from "@humansandmachines/gsv/services/reports";
 import { InstallationOnboardingStore } from "../onboarding";
-import { RequestReports } from "../request-reports";
+import { CLOSED_MESSAGE_RETENTION_MS, RequestReports } from "../request-reports";
 import { AccountStore } from "../store";
 import { CloudflareInstallationAdminAccess, type InstallationAdminAccess } from "./access";
 import { InstallationAdminHttp } from "./http";
@@ -152,6 +152,20 @@ describe("the operator's report queue", () => {
     expect(trail.indexOf("report.dismiss")).toBeGreaterThan(-1);
     expect(trail.indexOf("report.dismiss")).toBeLessThan(trail.indexOf("ship.takedown"));
     warn.mockRestore();
+  });
+
+  it("says a report closed 90 days ago no longer holds the sender's name or message", async () => {
+    const { sender, reporter } = await ships();
+    const { http } = stack(hostingPds(sender).moderation);
+    const past = new RequestReports(db, () => Date.now() - CLOSED_MESSAGE_RETENTION_MS - 60_000);
+    const { reportId } = await past.submit(submission(reporter.installationId, { message: { displayName: "Stranger", text: "Buy my coins" } }));
+    await past.dismiss(reportId, "audit_lapsed");
+    expect(await new RequestReports(db).forgetClosedMessages()).toBe(1);
+
+    const report = await page(http, `/admin/reports/${reportId}`);
+    expect(report).toContain("a closed report keeps them for 90 days at most");
+    expect(report).not.toContain("Buy my coins");
+    expect(await page(http, "/admin/reports?state=closed")).toContain("Not kept");
   });
 
   it("refuses to take down a sender the deployment's host doesn't hold, before acting", async () => {

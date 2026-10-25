@@ -2,7 +2,8 @@ import { createExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { RequestReportSubmission } from "@humansandmachines/gsv/services/reports";
-import { RequestReports, RequestReportsEntrypoint } from "./request-reports";
+import InstallationService from "./index";
+import { CLOSED_MESSAGE_RETENTION_MS, RequestReports, RequestReportsEntrypoint } from "./request-reports";
 import { AccountStore } from "./store";
 
 const db = env.INSTALLATIONS_DB;
@@ -116,6 +117,38 @@ describe("the operator's queue", () => {
     expect((await reports.get(dismissed.reportId))?.closed).toMatchObject({ resolution: "dismissed", eventId: "audit_dismissed" });
     expect((await reports.get(other.reportId))?.closed).toBeNull();
     expect(await reports.openReportsOf(SENDER)).toBe(0);
+  });
+});
+
+describe("keeping a report", () => {
+  it("erases the sender's name and message once a report has been closed 90 days, and keeps everything else", async () => {
+    const ship = await activeShip();
+    const closedAt = 1_800_000_000_000;
+    let now = closedAt;
+    const reports = new RequestReports(db, () => now);
+    const message = { displayName: "Stranger", text: "Buy my coins" };
+    const [lapsed, recent, open] = await Promise.all([0, 1, 2].map(() => reports.submit(submission(ship.installationId, { message }))));
+    await reports.dismiss(lapsed.reportId, "audit_lapsed");
+    now = closedAt + 86_400_000;
+    await reports.dismiss(recent.reportId, "audit_recent");
+    now = closedAt + CLOSED_MESSAGE_RETENTION_MS + 1;
+    const kept = await Promise.all([lapsed, recent, open].map(({ reportId }) => reports.get(reportId)));
+    expect(kept.map((report) => report?.message)).toEqual([message, message, message]);
+
+    expect(await reports.forgetClosedMessages()).toBe(1);
+    expect(await reports.get(lapsed.reportId)).toEqual({ ...kept[0], message: null });
+    expect(await reports.get(recent.reportId)).toEqual(kept[1]);
+    expect(await reports.get(open.reportId)).toEqual(kept[2]);
+    expect(await reports.forgetClosedMessages()).toBe(0);
+  });
+
+  it("forgets lapsed messages from the Accounts cron", async () => {
+    const ship = await activeShip();
+    const reports = new RequestReports(db, () => Date.now() - CLOSED_MESSAGE_RETENTION_MS - 60_000);
+    const { reportId } = await reports.submit(submission(ship.installationId, { message: { displayName: "Stranger", text: "Buy my coins" } }));
+    await reports.dismiss(reportId, "audit_lapsed");
+    await new InstallationService(createExecutionContext(), env).scheduled();
+    expect(await reports.get(reportId)).toMatchObject({ message: null, closed: { resolution: "dismissed", eventId: "audit_lapsed" } });
   });
 });
 
