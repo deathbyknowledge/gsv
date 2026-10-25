@@ -185,7 +185,7 @@ describe("suspending an installation's account", () => {
     // Asking again changes nothing.
     await moderation().reconcileAccountStatus(installationId);
     await deliver(ship.repo);
-    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did }))).toEqual({ did, active: false, status: "suspended" });
+    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did }))).toEqual({ did, active: false, status: "suspended", rev });
     expect(await listed(did)).toMatchObject({ did, active: false, status: "suspended" });
     expect(await errorOf(serve("com.atproto.repo.describeRepo", { repo: did }))).toBe("RepoSuspended");
     await vi.waitFor(() => expect(framesFor(live, did)).toMatchObject([{ type: "#account", body: { active: false, status: "suspended" } }]));
@@ -236,7 +236,8 @@ describe("suspending an installation's account", () => {
     const repo = env.REPOS.getByName(ship.installationId);
     await deliver(repo);
     expect(await listed(did)).toMatchObject({ did, active: false, status: "suspended" });
-    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did }))).toEqual({ did, active: false, status: "suspended" });
+    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did })))
+      .toEqual({ did, active: false, status: "suspended", rev: expect.any(String) });
 
     accounts.setState(ship.installationId, "active");
     await moderation().reconcileAccountStatus(ship.installationId);

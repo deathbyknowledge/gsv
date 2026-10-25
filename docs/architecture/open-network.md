@@ -24,11 +24,15 @@ standard `com.atproto.repo.*` and `com.atproto.sync.*` XRPC methods; each
 reaches the object that holds the repository. `workers/pds/README.md` describes
 the repository engine.
 
-The PDS serves an installation's repository only while Accounts reports the
-installation active. A retired installation's repository reads as deleted, and
-any other state as suspended. A restricted installation keeps its identity, so
-the PDS still creates its DID when the Kernel asks, but signs, publishes and
-serves nothing for it until it is active again.
+Each repository answers its own public reads from the state Accounts has it
+follow, as below: it is served while its installation is active, reads as
+suspended while Accounts restricts the installation, and as deleted once
+Accounts retires it. Public reads never ask Accounts. The host finds a
+repository by DID in its directory once in each Worker isolate, since a DID
+names the same repository for as long as it exists, and by handle every time,
+since a reset moves a handle to a new repository. A restricted installation
+keeps its identity, so the PDS still creates its DID when the Kernel asks, but
+signs, publishes and serves nothing for it until it is active again.
 
 Relays hear of a suspension. Once Accounts restricts or reactivates an
 installation, it asks the PDS through `PDS_MODERATION` to follow, and the PDS
