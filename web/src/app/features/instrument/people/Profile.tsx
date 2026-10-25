@@ -19,6 +19,7 @@ import { profileNamed, profileSubmission, profileTakenDown, profileUnpublished, 
 import { profilePicture, readProfilePicture, saveProfilePicture } from "./profilePicture";
 import { ProfilePicturePicker, useObjectUrl } from "./ProfilePicturePicker";
 import { ProfileNotice } from "./ProfileNotice";
+import { openNetworkTerm } from "./openNetwork";
 import { ProfileTakedowns, useShipTakedowns } from "./ProfileTakedowns";
 
 const VISIBILITY_TEXT = {
@@ -195,13 +196,13 @@ export function Profile({ account, active, edit: editing, focusBio, onDirty, onE
           }} />
           {dirty && <Button variant="link" tone="neutral" disabled={pending} label={t("people.profile.discard")} onClick={() => { setDraft(null); setPictureEdit(null); setPictureError(null); save.reset(); }} />}
         </div>
-        <p id="people-profile-save-note" class="people-note people-profile-save-note">{t(state.published ? "people.profile.saveNote" : "people.profile.publishNote")}</p>
+        <p id="people-profile-save-note" class="people-note people-profile-save-note">{state.published ? t("people.profile.saveNote") : rich(t("people.profile.publishNote"), { network: openNetworkTerm(t) })}</p>
       </form>
       {preview(fields, t(dirty ? "people.profile.previewUnsaved" : "people.profile.previewSaved"), shownPictureUrl)}
       {state.published && <div class="people-actions">
         <Button variant="dangerGhost" disabled={!connected || pending || !canConfigure(account, "profile.unpublish")} label={t("people.profile.unpublish")} onClick={() => unpublish.mutate(state.revision)} />
       </div>}
-      {state.published && <p class="people-note">{t("people.profile.unpublishHint")}</p>}
+      {state.published && <p class="people-note">{rich(t("people.profile.unpublishHint"), { network: openNetworkTerm(t) })}</p>}
     </>}
     </div></div>
   </section>;

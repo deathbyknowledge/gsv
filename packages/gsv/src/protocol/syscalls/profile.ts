@@ -79,6 +79,10 @@ export const profileFieldsSchema = z.strictObject({
 /** Where a Ship keeps its public profile: one record in its repository. */
 export { SHIP_PROFILE_COLLECTION, SHIP_PROFILE_RKEY } from "../generated/ship-lexicons";
 
+/** Where the Ship keeps a public profile as Bluesky shows it: one `app.bsky.actor.profile` record beside its own. */
+export const BLUESKY_PROFILE_COLLECTION = "app.bsky.actor.profile";
+export const BLUESKY_PROFILE_RKEY = "self";
+
 /** A Ship's public profile as its `space.ship.profile` record holds it. */
 export type { ShipProfileRecord } from "../generated/ship-lexicons";
 

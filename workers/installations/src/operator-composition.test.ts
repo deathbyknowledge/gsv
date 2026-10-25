@@ -24,6 +24,7 @@ describe("an operator's own Accounts Worker", () => {
       updateSubjectStatus: vi.fn(),
       getSubjectStatus: vi.fn(async () => null),
       locateRepository: vi.fn(async () => null),
+      reconcileAccountStatus: vi.fn(async () => {}),
     } satisfies PdsModerationService;
     expect(await new ShipTakedowns(pds).view("installation_operator")).toEqual({ kind: "ok", repository });
   });

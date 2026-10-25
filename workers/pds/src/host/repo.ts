@@ -99,6 +99,8 @@ const RETIREMENT_KEY = "retirement";
 const DELIVERED_KEY = "firehose.delivered";
 const FAILURES_KEY = "firehose.failures";
 const IDENTITY_CHECK_KEY = "identity.check";
+/** Set while Accounts restricts the account's installation. */
+const SUSPENDED_KEY = "suspended";
 const DELIVERY_BATCH = 100;
 /** Delivered events kept locally so the wake check can read the last announced head. */
 const KEEP_DELIVERED = 100;
@@ -240,18 +242,40 @@ export class HostedRepo extends DurableObject<HostEnv> {
    * Creates the account's DID, naming any other services it offers, and its
    * empty repository, or returns the account this object already holds.
    */
-  async create(handle: string, blobPrefix: string, services: Record<string, Service> = {}): Promise<HostedAccount> {
+  async create(handle: string, blobPrefix: string, services: Record<string, Service> = {}, suspended = false): Promise<HostedAccount> {
     if (!isHandle(handle)) throw new Error(`InvalidHandle: ${handle} is not a handle`);
     return this.serialize(async () => {
       await this.requireLive();
+      const created = !(await this.storedAccount());
       // Handles compare without case; the host keeps the lowercase form.
       const repo = this.open(await this.provision(handle.toLowerCase(), blobPrefix, services));
       // The first access commits the empty repository; activation then announces
       // #account, #identity and #sync, and does nothing once the account is active.
       // A taken-down account stays down until its host restores it.
       await repo.engine.getStatus();
-      if (!repo.takedowns.has(repo.account.did)) await repo.engine.activateAccount();
+      // A restricted installation's new account announces only its suspension.
+      if (created && suspended) await this.suspend(repo);
+      else if (!repo.takedowns.has(repo.account.did) && !(await this.suspended())) await repo.engine.activateAccount();
       return hostedAccount(repo);
+    });
+  }
+
+  /**
+   * Suspends the account while Accounts restricts its installation, or
+   * reinstates it, and tells relays. A takedown outranks the suspension: the
+   * account stays down, and reports the suspension once its host restores it.
+   * Before the account exists there is nothing to follow; creating it takes
+   * the installation's state.
+   */
+  async setSuspended(suspended: boolean): Promise<void> {
+    return this.serialize(async () => {
+      await this.requireLive();
+      const account = await this.storedAccount();
+      if (!account || suspended === (await this.suspended())) return;
+      const repo = this.open(account);
+      if (suspended) return await this.suspend(repo);
+      await this.ctx.storage.delete(SUSPENDED_KEY);
+      if (!repo.takedowns.has(account.did)) await repo.engine.activateAccount();
     });
   }
 
@@ -427,7 +451,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
 
   async state(): Promise<RepoState | null> {
     const repo = await this.readable();
-    return repo ? repoState(repo, await this.retired()) : null;
+    return repo ? repoState(repo, await this.retired(), await this.suspended()) : null;
   }
 
   /** The repository's head as a #sync event carries it, so the host can introduce the account to a relay that joined after it. */
@@ -456,18 +480,16 @@ export class HostedRepo extends DurableObject<HostEnv> {
       if (!takedown.applied) {
         if (repo.takedowns.has(key)) {
           repo.takedowns.restore(key);
-          if (account) await repo.engine.activateAccount();
+          // A suspended account stays down until Accounts reactivates its installation.
+          if (account && await this.suspended()) await this.announceInactive(repo, "suspended");
+          else if (account) await repo.engine.activateAccount();
         }
         return { subject, takedown: { applied: false } };
       }
       const ref = takedown.ref ?? new Date().toISOString();
       const announce = account && !repo.takedowns.has(key);
       repo.takedowns.apply(subject, ref, input.reason?.trim() || null, Date.now());
-      if (announce) {
-        await repo.storage.setActive(false);
-        await repo.sequencer.sequenceAccount({ did: repo.account.did, active: false, status: "takendown" });
-        await this.alarmBy(Date.now());
-      }
+      if (announce) await this.announceInactive(repo, "takendown");
       return { subject, takedown: { applied: true, ref } };
     });
   }
@@ -614,12 +636,15 @@ export class HostedRepo extends DurableObject<HostEnv> {
   private async read(repo: OpenRepo, method: string, url: URL): Promise<Response> {
     const { did, handle } = repo.account;
     const takendown = repo.takedowns.has(did);
-    const active = !takendown && await repo.storage.getActive();
+    const suspended = !takendown && await this.suspended();
+    const active = !takendown && !suspended && await repo.storage.getActive();
     if (method === "com.atproto.sync.getRepoStatus") {
       const rev = await repo.storage.getRev();
-      return Response.json({ did, active, status: takendown ? "takendown" : active ? undefined : "deactivated", rev: rev ?? undefined });
+      const status = takendown ? "takendown" : suspended ? "suspended" : active ? undefined : "deactivated";
+      return Response.json({ did, active, status, rev: rev ?? undefined });
     }
     if (takendown) throw new XrpcError("RepoTakendown", `Repo has been takendown: ${did}`);
+    if (suspended) throw new XrpcError("RepoSuspended", `Repo has been suspended: ${did}`);
     if (!active) throw new XrpcError("RepoDeactivated", `Repo has been deactivated: ${did}`);
     switch (method) {
       case "com.atproto.repo.describeRepo": {
@@ -822,6 +847,23 @@ export class HostedRepo extends DurableObject<HostEnv> {
 
   private async retired(): Promise<boolean> {
     return (await this.ctx.storage.get<Retirement>(RETIREMENT_KEY)) !== undefined;
+  }
+
+  private async suspended(): Promise<boolean> {
+    return (await this.ctx.storage.get<boolean>(SUSPENDED_KEY)) === true;
+  }
+
+  /** Marks the account suspended and, unless its host has taken it down, tells relays. */
+  private async suspend(repo: OpenRepo): Promise<void> {
+    await this.ctx.storage.put(SUSPENDED_KEY, true);
+    if (!repo.takedowns.has(repo.account.did)) await this.announceInactive(repo, "suspended");
+  }
+
+  /** Deactivates the account and tells relays why. */
+  private async announceInactive(repo: OpenRepo, status: "takendown" | "suspended"): Promise<void> {
+    await repo.storage.setActive(false);
+    await repo.sequencer.sequenceAccount({ did: repo.account.did, active: false, status });
+    await this.alarmBy(Date.now());
   }
 
   private async requireLive(): Promise<void> {
@@ -1147,7 +1189,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
         DELIVERY_BATCH,
       ).toArray().map((row): OutboxEvent => ({ seq: row.seq, type: eventType(row.event_type), payload: new Uint8Array(row.payload) }));
       if (events.length === 0) return;
-      delivered = await firehose.append(repo.account.name, await repoState(repo, await this.retired()), events);
+      delivered = await firehose.append(repo.account.name, await repoState(repo, await this.retired(), await this.suspended()), events);
       await this.ctx.storage.put(DELIVERED_KEY, delivered);
       this.ctx.storage.sql.exec("DELETE FROM firehose_events WHERE seq <= ?", delivered - KEEP_DELIVERED);
     }
@@ -1159,14 +1201,14 @@ export class HostedRepo extends DurableObject<HostEnv> {
   }
 }
 
-async function repoState(repo: OpenRepo, retired: boolean): Promise<RepoState> {
+async function repoState(repo: OpenRepo, retired: boolean, suspended: boolean): Promise<RepoState> {
   const active = await repo.storage.getActive();
   const head = await repo.storage.getRoot();
   return {
     did: repo.account.did,
     handle: repo.account.handle,
     active,
-    status: active ? null : retired ? "deleted" : repo.takedowns.has(repo.account.did) ? "takendown" : "deactivated",
+    status: active ? null : retired ? "deleted" : repo.takedowns.has(repo.account.did) ? "takendown" : suspended ? "suspended" : "deactivated",
     rev: await repo.storage.getRev(),
     head: head ? head.toString() : null,
   };

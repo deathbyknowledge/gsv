@@ -1,3 +1,5 @@
+import { AppBskyActorProfile } from "@atcute/bluesky";
+import { safeParse } from "@atcute/lexicons/validations";
 import { Lexicons, jsonToLex, lexiconDoc } from "@atproto/lexicon";
 import { bodyFromBytes, bodyToBytes, type PublicRecordWrite } from "@humansandmachines/gsv/protocol";
 import type { PublicTakedown } from "@humansandmachines/gsv/services/pds";
@@ -19,7 +21,10 @@ describe("publishing to the open network", () => {
     const runtime = await startProcessRuntimeHarness({ pds: true });
     try {
       const [profile] = await profilePublishedAtSignIn(runtime);
-      expect(profile).toEqual([expect.objectContaining({ action: "put", collection: "space.ship.profile", rkey: "self" })]);
+      expect(profile).toEqual([
+        expect.objectContaining({ action: "put", collection: "space.ship.profile", rkey: "self" }),
+        expect.objectContaining({ action: "put", collection: "app.bsky.actor.profile", rkey: "self" }),
+      ]);
       expect(await runtime.client.atproto.identity({})).toEqual({
         identity: { did: "did:plc:dddddddddddddddddddddddd", handle: "default.gsv.space", host: "https://pds.gsv.space" },
         takedowns: [],
@@ -40,6 +45,8 @@ describe("publishing to the open network", () => {
       expect(await committed(runtime.harness)).toEqual([profile, [write]]);
       await expect(runtime.client.atproto.write({ writes: [{ action: "delete", collection: "space.ship.profile", rkey: "self" }] }))
         .rejects.toThrow("space.ship.profile is your profile; change it in People");
+      await expect(runtime.client.atproto.write({ writes: [{ action: "delete", collection: "app.bsky.actor.profile", rkey: "self" }] }))
+        .rejects.toThrow("app.bsky.actor.profile is your profile on Bluesky; change it in People");
       expect(await committed(runtime.harness)).toHaveLength(2);
     } finally { await runtime.close(); }
   });
@@ -56,13 +63,21 @@ describe("the profile record", () => {
       await runtime.client.profile.publish({ expectedRevision: set.data.profile.revision });
       await runtime.waitFor(async () => (await committed(runtime.harness)).length === 2, "the profile published with its picture");
 
-      const records = (await committed(runtime.harness)).flat().map((write) => write.action === "delete" ? null : write.record);
-      expect(records).toEqual([
+      const writes = (await committed(runtime.harness)).flat();
+      const records = (collection: string) => writes.flatMap((write) => write.action !== "delete" && write.collection === collection ? [write.record] : []);
+      const picture = { $type: "blob", ref: { $link: expect.any(String) }, mimeType: "image/png", size: PNG.byteLength };
+      expect(records("space.ship.profile")).toEqual([
         expect.not.objectContaining({ avatar: expect.anything() }),
-        expect.objectContaining({ avatar: { $type: "blob", ref: { $link: expect.any(String) }, mimeType: "image/png", size: PNG.byteLength } }),
+        expect.objectContaining({ avatar: picture }),
       ]);
       const lexicons = new Lexicons([lexiconDoc.parse(profileLexicon)]);
-      for (const record of records) lexicons.assertValidRecord("space.ship.profile", jsonToLex(record));
+      for (const record of records("space.ship.profile")) lexicons.assertValidRecord("space.ship.profile", jsonToLex(record));
+      // Bluesky's copy shares the picture and passes the validator the open-network host applies to app.bsky.actor.profile.
+      expect(records("app.bsky.actor.profile")).toEqual([
+        expect.not.objectContaining({ avatar: expect.anything() }),
+        expect.objectContaining({ avatar: picture, website: "https://default.gsv.space/profile" }),
+      ]);
+      for (const record of records("app.bsky.actor.profile")) expect(safeParse(AppBskyActorProfile.mainSchema, record)).toMatchObject({ ok: true });
     } finally { await runtime.close(); }
   });
 });

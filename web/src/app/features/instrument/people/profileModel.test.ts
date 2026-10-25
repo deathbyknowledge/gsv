@@ -81,10 +81,12 @@ describe("what the operator took down", () => {
   const profile = takedown({ $type: "com.atproto.repo.strongRef", uri: `at://${did}/space.ship.profile/self`, cid: "bafyreiprofile" });
   const note = takedown({ $type: "com.atproto.repo.strongRef", uri: `at://${did}/space.ship.note/first`, cid: "bafyreinote" });
   const file = takedown({ $type: "com.atproto.admin.defs#repoBlobRef", did, cid: "bafkreipicture" });
+  const bluesky = takedown({ $type: "com.atproto.repo.strongRef", uri: `at://${did}/app.bsky.actor.profile/self`, cid: "bafyreibluesky" });
 
   it("names it as the person knows it", () => {
     expect(takedownSubject(account)).toEqual({ kind: "account" });
     expect(takedownSubject(profile)).toEqual({ kind: "profile" });
+    expect(takedownSubject(bluesky)).toEqual({ kind: "bluesky" });
     expect(takedownSubject(note)).toEqual({ kind: "record", uri: `at://${did}/space.ship.note/first` });
     expect(takedownSubject(file, "bafkreipicture")).toEqual({ kind: "picture" });
     expect(takedownSubject(file, "bafkreiother")).toEqual({ kind: "file" });
@@ -94,6 +96,8 @@ describe("what the operator took down", () => {
   it("counts the profile as down with the whole Ship or on its own, but not for its picture or another record", () => {
     expect(profileTakenDown([])).toBe(false);
     expect(profileTakenDown([file, note])).toBe(false);
+    // Bluesky's copy being down leaves the profile itself up for other Ships and its page.
+    expect(profileTakenDown([bluesky])).toBe(false);
     expect(profileTakenDown([account])).toBe(true);
     expect(profileTakenDown([note, profile])).toBe(true);
   });

@@ -10,10 +10,13 @@ import type {
   JsonValue,
   ShipProfileRecord,
 } from "@humansandmachines/gsv/protocol";
-import { jsonObjectSchema, SHIP_PROFILE_COLLECTION, SHIP_PROFILE_RKEY } from "@humansandmachines/gsv/protocol";
+import {
+  BLUESKY_PROFILE_COLLECTION, BLUESKY_PROFILE_RKEY, jsonObjectSchema, SHIP_PROFILE_COLLECTION, SHIP_PROFILE_RKEY,
+} from "@humansandmachines/gsv/protocol";
 import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
 import {
   PUBLIC_BLOB_MAX_BYTES,
+  type PublicCommit,
   type PublicRecordWrite,
   type PublicRepository,
   type PublicRepositoryAccount,
@@ -23,6 +26,7 @@ import {
 import * as z from "zod/mini";
 import { shipAddress } from "../installation/identity";
 import { raceWithAbort } from "../shared/abort";
+import type { BlueskyProfileRecord } from "./bluesky-profile";
 import { principalOf, resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { ProfileAvatarFile } from "./profile-store";
 import { ShipTakenDownError } from "./ships/errors";
@@ -31,6 +35,7 @@ import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 /** Collections a Ship feature publishes itself, and where the person changes them instead. */
 const FEATURE_COLLECTIONS = new Map([
   [SHIP_PROFILE_COLLECTION, `${SHIP_PROFILE_COLLECTION} is your profile; change it in People`],
+  [BLUESKY_PROFILE_COLLECTION, `${BLUESKY_PROFILE_COLLECTION} is your profile on Bluesky; change it in People`],
 ]);
 
 /** One approval covers the whole batch, so it stays small enough to show in full. */
@@ -149,36 +154,79 @@ export async function handleAtprotoBlobRead(
  * the Kernel's profile rules who may; this is the profile's own write, so it
  * waits for no published profile and asks no approval. A first publish
  * creates the Ship's DID.
+ *
+ * Bluesky's copy commits with the record, as `mirror` makes it from what the
+ * host has taken down; without one, the copy is deleted. Returns the copy the
+ * repository now holds.
  */
-export async function putProfileRecord(ctx: KernelContext, record: ShipProfileRecord, avatar: ProfileAvatarFile | null): Promise<string> {
+export async function putProfileRecord(
+  ctx: KernelContext,
+  record: ShipProfileRecord,
+  avatar: ProfileAvatarFile | null,
+  mirror: (takedowns: PublicTakedown[]) => BlueskyProfileRecord | null,
+): Promise<{ cid: string; mirror: BlueskyProfileRecord | null }> {
   return await withRepository(ctx, async (repository) => {
-    await ensureIdentity(repository, shipHostname(ctx), ctx);
+    // A new account has nothing taken down, so the takedowns needn't wait for it.
+    const [, takedowns] = await Promise.all([
+      ensureIdentity(repository, shipHostname(ctx), ctx),
+      raceWithAbort(repository.takedowns(), ctx.requestSignal),
+    ]);
     if (avatar) {
       const blob = await raceWithAbort(repository.uploadBlob(new Blob([avatar.bytes.slice()]).stream(), avatar.size, avatar.mimeType), ctx.requestSignal);
       if (blob.ref.$link !== avatar.cid) throw new Error("The open-network host named the profile picture differently");
     }
-    // A commit already sent completes, so its outcome is reported rather than raced.
-    ctx.requestSignal?.throwIfAborted();
-    const commit = await repository.applyWrites([
+    const copy = mirror(takedowns);
+    const commit = await commitProfileWrites(repository, [
       { action: "put", collection: SHIP_PROFILE_COLLECTION, rkey: SHIP_PROFILE_RKEY, record: jsonObjectSchema.parse(record) },
-    ]);
-    const cid = commit.results[0]?.cid;
+      mirrorWrite(copy),
+    ], ctx);
+    const cid = commit?.results[0]?.cid;
     if (!cid) throw new Error("The open-network host didn't name the profile record it stored");
-    return cid;
+    return { cid, mirror: copy };
   });
 }
 
-/** Deletes the profile record from the Ship's repository; a record already gone stays gone. */
+/** Writes Bluesky's copy of the published profile, or deletes it for null, leaving the profile record as it is. */
+export async function putProfileMirror(ctx: KernelContext, mirror: BlueskyProfileRecord | null): Promise<void> {
+  await withRepository(ctx, (repository) => commitProfileWrites(repository, [mirrorWrite(mirror)], ctx));
+}
+
+/** Deletes the profile record from the Ship's repository; a record already gone stays gone. Bluesky's copy goes in the same commit. */
 export async function deleteProfileRecord(ctx: KernelContext): Promise<void> {
-  await withRepository(ctx, async (repository) => {
+  await withRepository(ctx, (repository) => commitProfileWrites(repository, [
+    { action: "delete", collection: SHIP_PROFILE_COLLECTION, rkey: SHIP_PROFILE_RKEY },
+    mirrorWrite(null),
+  ], ctx));
+}
+
+function mirrorWrite(mirror: BlueskyProfileRecord | null): PublicRecordWrite {
+  return mirror
+    ? { action: "put", collection: BLUESKY_PROFILE_COLLECTION, rkey: BLUESKY_PROFILE_RKEY, record: jsonObjectSchema.parse(mirror) }
+    : { action: "delete", collection: BLUESKY_PROFILE_COLLECTION, rkey: BLUESKY_PROFILE_RKEY };
+}
+
+/**
+ * Commits the profile's writes together, without a delete of a record the
+ * repository doesn't hold; null when nothing was left to commit.
+ */
+async function commitProfileWrites(repository: PublicRepository, writes: PublicRecordWrite[], ctx: KernelContext): Promise<PublicCommit | null> {
+  let pending = writes;
+  while (pending.length > 0) {
+    // A commit already sent completes, so its outcome is reported rather than raced.
     ctx.requestSignal?.throwIfAborted();
     try {
-      await repository.applyWrites([{ action: "delete", collection: SHIP_PROFILE_COLLECTION, rkey: SHIP_PROFILE_RKEY }]);
+      return await repository.applyWrites(pending);
     } catch (error) {
       // The repository refuses to delete a record it doesn't hold, which an interrupted unpublish leaves behind.
-      if (!(error instanceof Error && error.message.includes(`Could not find a record with key: ${SHIP_PROFILE_COLLECTION}/${SHIP_PROFILE_RKEY}`))) throw error;
+      // Bluesky's copy is also gone while the host has the profile down, and before a Ship first wrote one.
+      const missing = error instanceof Error
+        ? pending.find((write) => write.action === "delete" && error.message.includes(`Could not find a record with key: ${write.collection}/${write.rkey}`))
+        : undefined;
+      if (!missing) throw error;
+      pending = pending.filter((write) => write !== missing);
     }
-  });
+  }
+  return null;
 }
 
 /** The Ship's account on the open network: its DID and the handle that names it; its first outward act creates them. */
