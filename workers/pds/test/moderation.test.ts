@@ -10,6 +10,7 @@ import type { PdsEnv } from "../src/gsv/env";
 import { PdsModerationEntrypoint } from "../src/gsv/moderation";
 import { PdsPublisherEntrypoint } from "../src/gsv/publisher";
 import { FIREHOSE_NAME } from "../src/host/firehose";
+import { HostedRepo } from "../src/host/repo";
 import worker from "../src/index";
 import { FakeAccounts } from "./accounts";
 import { FakePlcDirectory } from "./plc";
@@ -51,6 +52,7 @@ describe("moderating for an operator", () => {
       expect(await rejection(moderation(authority).getSubjectStatus(installationId, { did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa" })))
         .toContain("moderation authority");
       expect(await rejection(moderation(authority).locateRepository("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"))).toContain("moderation authority");
+      expect(await rejection(moderation(authority).reconcileAccountStatus(installationId))).toContain("moderation authority");
       expect(resolve).not.toHaveBeenCalled();
     },
   );
@@ -58,6 +60,7 @@ describe("moderating for an operator", () => {
   it("refuses an installation Accounts doesn't know without addressing a repository, and names nothing before an account exists", async () => {
     const before = await listDurableObjectIds(env.REPOS);
     expect(await rejection(moderation().getRepository(`inst_${crypto.randomUUID()}`))).toContain("Unknown installation");
+    expect(await rejection(moderation().reconcileAccountStatus(`inst_${crypto.randomUUID()}`))).toContain("Unknown installation");
     expect(await listDurableObjectIds(env.REPOS)).toHaveLength(before.length);
 
     const { installationId } = accounts.add();
@@ -167,6 +170,113 @@ describe("taking down an account", () => {
     expect(await repository.takedowns()).toEqual([]);
     expect(await moderation().getSubjectStatus(installationId, { did })).toEqual({ subject, takedown: { applied: false } });
     expect((await repository.applyWrites([note("second")])).results).toHaveLength(1);
+  });
+});
+
+describe("suspending an installation's account", () => {
+  it("tells relays when Accounts restricts the installation and again when it reactivates it, as listRepos and getRepoStatus report", async () => {
+    const ship = await publishedShip();
+    const { did, installationId, repository } = ship;
+    const live = await subscribe(env.FIREHOSE.getByName(FIREHOSE_NAME));
+    const rev = (await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did }))).rev;
+
+    accounts.setState(installationId, "restricted");
+    await moderation().reconcileAccountStatus(installationId);
+    // Asking again changes nothing.
+    await moderation().reconcileAccountStatus(installationId);
+    await deliver(ship.repo);
+    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did }))).toEqual({ did, active: false, status: "suspended" });
+    expect(await listed(did)).toMatchObject({ did, active: false, status: "suspended" });
+    expect(await errorOf(serve("com.atproto.repo.describeRepo", { repo: did }))).toBe("RepoSuspended");
+    await vi.waitFor(() => expect(framesFor(live, did)).toMatchObject([{ type: "#account", body: { active: false, status: "suspended" } }]));
+
+    accounts.setState(installationId, "active");
+    await moderation().reconcileAccountStatus(installationId);
+    await deliver(ship.repo);
+    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did }))).toEqual({ did, active: true, rev });
+    expect(await listed(did)).toEqual({ did, head: expect.any(String), rev, active: true });
+    // A relay that dropped the account's events while it was suspended fetches the repository again from its head.
+    await vi.waitFor(() => expect(framesFor(live, did)).toMatchObject([
+      { type: "#account", body: { active: false, status: "suspended" } },
+      { type: "#account", body: { active: true } },
+      { type: "#identity", body: { did } },
+      { type: "#sync", body: { rev } },
+    ]));
+    expect((await repository.applyWrites([note("second")])).results).toHaveLength(1);
+  });
+
+  it("keeps a taken-down account down while it is suspended, and reports the suspension once the takedown is lifted", async () => {
+    const ship = await publishedShip();
+    const { did, installationId } = ship;
+    const live = await subscribe(env.FIREHOSE.getByName(FIREHOSE_NAME));
+    const subject = { $type: "com.atproto.admin.defs#repoRef", did } as const;
+    await moderation().updateSubjectStatus(installationId, { subject, takedown: { applied: true, ref: "audit_down" } });
+    accounts.setState(installationId, "restricted");
+    await moderation().reconcileAccountStatus(installationId);
+    await deliver(ship.repo);
+    expect(await listed(did)).toMatchObject({ active: false, status: "takendown" });
+
+    await moderation().updateSubjectStatus(installationId, { subject, takedown: { applied: false } });
+    await deliver(ship.repo);
+    expect(await listed(did)).toMatchObject({ active: false, status: "suspended" });
+    expect(await ship.repository.takedowns()).toEqual([]);
+
+    accounts.setState(installationId, "active");
+    await moderation().reconcileAccountStatus(installationId);
+    await deliver(ship.repo);
+    expect(await listed(did)).toMatchObject({ active: true });
+    await vi.waitFor(() => expect(framesFor(live, did).map((frame) => frame.type === "#account" ? frame.body.status ?? "active" : frame.type))
+      .toEqual(["takendown", "suspended", "active", "#identity", "#sync"]));
+  });
+
+  it("creates a restricted installation's account suspended, and announces it once Accounts reactivates the installation", async () => {
+    const ship = accounts.add("restricted");
+    const live = await subscribe(env.FIREHOSE.getByName(FIREHOSE_NAME));
+    const { did } = await (await publisher().getInstallation(ship.installationId)).ensureAccount(ship.handle);
+    const repo = env.REPOS.getByName(ship.installationId);
+    await deliver(repo);
+    expect(await listed(did)).toMatchObject({ did, active: false, status: "suspended" });
+    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did }))).toEqual({ did, active: false, status: "suspended" });
+
+    accounts.setState(ship.installationId, "active");
+    await moderation().reconcileAccountStatus(ship.installationId);
+    await deliver(repo);
+    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did }))).toMatchObject({ did, active: true });
+    await vi.waitFor(() => expect(framesFor(live, did).map((frame) => frame.type === "#account" ? frame.body.status ?? "active" : frame.type))
+      .toEqual(["suspended", "active", "#identity", "#sync"]));
+  });
+
+  it("suspends an account whose installation Accounts restricts while the account is being created", async () => {
+    const ship = accounts.add();
+    const create = HostedRepo.prototype.create;
+    // Accounts restricts the installation after the publisher reads its state, before the account exists to follow it.
+    vi.spyOn(HostedRepo.prototype, "create").mockImplementationOnce(async function (this: HostedRepo, ...args: Parameters<HostedRepo["create"]>) {
+      accounts.setState(ship.installationId, "restricted");
+      return await create.apply(this, args);
+    });
+    const { did } = await (await publisher().getInstallation(ship.installationId)).ensureAccount(ship.handle);
+    await deliver(env.REPOS.getByName(ship.installationId));
+    expect(await listed(did)).toMatchObject({ did, active: false, status: "suspended" });
+  });
+
+  it("follows a change Accounts makes while the account follows the one before it, and gives up while the state keeps changing", async () => {
+    const ship = await publishedShip();
+    const { did, installationId } = ship;
+    accounts.setState(installationId, "restricted");
+    const follow = HostedRepo.prototype.setSuspended;
+    // Accounts reactivates the installation while the host suspends its account.
+    vi.spyOn(HostedRepo.prototype, "setSuspended").mockImplementationOnce(async function (this: HostedRepo, suspended: boolean) {
+      await follow.call(this, suspended);
+      accounts.setState(installationId, "active");
+    });
+    await moderation().reconcileAccountStatus(installationId);
+    await deliver(ship.repo);
+    expect(await listed(did)).toMatchObject({ did, active: true });
+
+    const known = await accounts.resolveInstallation(installationId);
+    let answers = 0;
+    vi.spyOn(accounts, "resolveInstallation").mockImplementation(async () => ({ ...known, state: answers++ % 2 ? "active" : "restricted" }));
+    expect(await rejection(moderation().reconcileAccountStatus(installationId))).toContain("kept changing");
   });
 });
 
@@ -314,6 +424,11 @@ function publisher(): PdsPublisherEntrypoint {
 function serve(method: string, params: Record<string, string>): Promise<Response> {
   const request = new Request<unknown, IncomingRequestCfProperties>(`https://pds.test/xrpc/${method}?${new URLSearchParams(params)}`);
   return worker.fetch(request, deployedEnv());
+}
+
+/** The host's listRepos entry for a DID. */
+async function listed(did: string) {
+  return (await read(repoListing, serve("com.atproto.sync.listRepos", {}))).repos.find((repo) => repo.did === did);
 }
 
 function deployedEnv(): PdsEnv {

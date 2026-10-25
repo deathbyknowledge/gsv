@@ -1,5 +1,6 @@
 import { UsernamePolicy, type UsernamePolicyInput, type UsernamePolicyLists } from "../username-policy";
 import type { InstallationResetService } from "@humansandmachines/gsv/services/lifecycle";
+import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 import { InstallationAdminStore, type AdminInstallation } from "../administration";
 import { parseOpaqueId } from "../domain";
 import { InstallationOnboardingStore, type IssuedInstallationOnboarding } from "../onboarding";
@@ -24,6 +25,14 @@ export const RESET_CONSEQUENCES: readonly string[] = [
   "Nothing is erased yet: this Ship's data is kept as pending deletion until a separate deletion removes it.",
 ];
 
+/** Accounts kept a Ship's new lifecycle state, but the deployment's PDS could not follow it. */
+export class OpenNetworkFollowError extends Error {
+  constructor(readonly state: "active" | "restricted", options: ErrorOptions) {
+    super(`The Ship is ${state === "restricted" ? "suspended" : "reactivated"}, but its open-network host could not be told.`, options);
+    this.name = "OpenNetworkFollowError";
+  }
+}
+
 export class InstallationAdminService extends InstallationAdminStore {
   private readonly resets: InstallationResetCoordinator;
 
@@ -33,9 +42,25 @@ export class InstallationAdminService extends InstallationAdminStore {
     private readonly onboarding: InstallationOnboardingStore,
     private readonly registryPrincipal: OperatorRegistryPrincipal,
     participants: Readonly<Record<string, InstallationResetService>>,
+    /** The deployment's PDS, which tells relays when a Ship is suspended or reactivated. */
+    private readonly pds?: PdsModerationService,
   ) {
     super(database);
     this.resets = new InstallationResetCoordinator(database, accounts, participants);
+  }
+
+  /**
+   * Suspends or reactivates the installation, then has the deployment's PDS
+   * follow. If the PDS can't, the request fails with the new state kept, and
+   * repeating it tells the PDS.
+   */
+  override async setInstallationState(installationId: string, state: "active" | "restricted"): Promise<void> {
+    await super.setInstallationState(installationId, state);
+    try {
+      await this.pds?.reconcileAccountStatus(installationId);
+    } catch (error) {
+      throw new OpenNetworkFollowError(state, { cause: error });
+    }
   }
 
   getUsernamePolicy(): Promise<UsernamePolicyLists> {

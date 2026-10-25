@@ -33,7 +33,11 @@ records and blobs for Accounts' operator pages when the binding carries the
 `operator-moderation` authority. Its calls follow
 `com.atproto.admin.updateSubjectStatus` and `getSubjectStatus`; each
 repository keeps its takedowns in `src/host/moderation.ts`, and every read the
-host serves honours them.
+host serves honours them. Once Accounts restricts or reactivates an
+installation, the binding's `reconcileAccountStatus` has the account follow:
+the repository sends `#account` suspended, or active with `#identity` and
+`#sync`, and reports the same status in `getRepoStatus` and `listRepos`. A new
+account for a restricted installation starts suspended.
 
 The deployment's lexicon account publishes each `lexicons/` document as a
 `com.atproto.lexicon.schema` record. Its object is named `operator/lexicons`,
@@ -146,7 +150,9 @@ before any record publishes it.
 
 The GSV tests use an in-memory Accounts directory. They cover the publishing
 authority, installations that are not active, the handles a new account may
-take, the installation's blob prefix, and how each installation state reads.
+take, the installation's blob prefix, how each installation state reads, and
+how an account follows Accounts as it restricts and reactivates the
+installation, while the account is taken down or still being created.
 The deletion tests cover the deletion authority, what quiescing refuses and
 announces, resumable erasure, the DID tombstone, and deletion discovery. The
 lexicon tests cover the operator's token, creating the account once, the

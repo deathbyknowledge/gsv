@@ -95,4 +95,11 @@ export interface PdsModerationService {
   getSubjectStatus(installationId: string, query: SubjectStatusQuery): Promise<SubjectStatus | null>;
   /** The account this host holds for a DID, and its installation; null for a DID hosted elsewhere. */
   locateRepository(did: string): Promise<HostedRepositoryModeration | null>;
+  /**
+   * Has the installation's account follow the state Accounts now records for
+   * it, telling relays: suspended while the installation is restricted, and
+   * active again once it is reactivated. Accounts calls it after each change;
+   * calling it again changes nothing.
+   */
+  reconcileAccountStatus(installationId: string): Promise<void>;
 }

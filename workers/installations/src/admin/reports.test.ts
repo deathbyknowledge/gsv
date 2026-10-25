@@ -229,6 +229,7 @@ function hostingPds(sender: { installationId: string }, timeoutMs?: number) {
     getSubjectStatus: vi.fn(async (_installationId: string, _query: SubjectStatusQuery) => null),
     locateRepository: vi.fn(async (did: string): Promise<HostedRepositoryModeration | null> =>
       did === SENDER ? { ...repository(), installationId: sender.installationId } : null),
+    reconcileAccountStatus: vi.fn(async (_installationId: string) => {}),
   } satisfies PdsModerationService;
   return { pds, takedowns, moderation: new ShipTakedowns(pds, timeoutMs) };
 }

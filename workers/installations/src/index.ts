@@ -46,7 +46,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     const accounts = this.accounts();
     const administration = new InstallationAdminService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), {
         id: OPERATOR_REGISTRY_PRINCIPAL_ID, email: "operator@gsv.invalid", displayName: "Operator registry",
-      }, {});
+      }, {}, this.env.PDS_MODERATION);
     const mode = parseOperatorAccessMode(this.env.GSV_OPERATOR_ACCESS_MODE);
     const bootstrap = new InstallationBootstrapService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), administration, mode);
     const operatorResponse = await new InstallationOperatorHttp(bootstrap, this.env.GSV_ADMIN_ORIGIN, mode).handle(request);

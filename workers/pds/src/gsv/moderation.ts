@@ -10,6 +10,7 @@ import type {
 import * as z from "zod/mini";
 import { FIREHOSE_NAME } from "../host/firehose";
 import type { HostedRepo } from "../host/repo";
+import { followAdmission } from "./admission";
 import type { PdsEnv } from "./env";
 
 const identifier = z.string().check(z.minLength(1), z.maxLength(2_048));
@@ -55,6 +56,11 @@ export class PdsModerationEntrypoint extends WorkerEntrypoint<PdsEnv, { authorit
     if (!entry) return null;
     const repository = await this.getRepository(entry.name);
     return repository && { ...repository, installationId: entry.name };
+  }
+
+  /** Accounts calls this once it restricts or reactivates the installation. */
+  async reconcileAccountStatus(installationId: string): Promise<void> {
+    await followAdmission(this.env.INSTALLATION_DIRECTORY, installationId, await this.repository(installationId));
   }
 
   /** The installation's repository object, once the binding's authority and Accounts' record of the installation allow it. */
