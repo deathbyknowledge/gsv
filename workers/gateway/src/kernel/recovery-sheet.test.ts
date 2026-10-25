@@ -152,6 +152,22 @@ describe("the emailed code", () => {
     await expect(handleRecoverySet({ key: SHEET }, ctx, confirmation(CODE))).rejects.toThrow("D1 is unavailable");
     expect(repository.setOwnerRecoveryKey).not.toHaveBeenCalled();
   });
+
+  it.each<[string, "request" | "confirm", { status: string; expiresAt?: number; retryAt?: number }]>([
+    ["a code request answered with a status it doesn't know", "request", { status: "queued" }],
+    ["a sent code with no address", "request", { status: "sent", expiresAt: 2_000, retryAt: 1_060 }],
+    ["a code check answered with a status it doesn't know", "confirm", { status: "accepted" }],
+  ])("refuses %s, and changes nothing", async (_, call, answer) => {
+    const { ctx, repository, confirmations } = harness();
+    // SAFETY: an Accounts on another version, or with a bug, can answer anything; this double does.
+    const unexpected = answer as never;
+    if (call === "request") confirmations.requestOwnerConfirmation.mockResolvedValueOnce(unexpected);
+    else confirmations.confirmOwnerConfirmation.mockResolvedValueOnce(unexpected);
+    await expect(handleRecoverySet({ key: SHEET }, ctx, confirmation(call === "confirm" ? CODE : undefined)))
+      .rejects.toThrow("Accounts answered in a form this Kernel doesn't know");
+    expect(repository.setOwnerRecoveryKey).not.toHaveBeenCalled();
+    expect(confirmations.notifyOwner).not.toHaveBeenCalled();
+  });
 });
 
 describe("who can reach the sheet", () => {

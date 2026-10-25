@@ -7,7 +7,11 @@ import {
   type BinaryBody,
   type RecoverySheet,
 } from "@humansandmachines/gsv/protocol";
-import type { OwnerConfirmationChange } from "@humansandmachines/gsv/services/owner-confirmations";
+import {
+  ownerConfirmationCheckResultSchema,
+  ownerConfirmationRequestResultSchema,
+  type OwnerConfirmationChange,
+} from "@humansandmachines/gsv/services/owner-confirmations";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { z } from "zod";
 import { raceWithAbort } from "../shared/abort";
@@ -116,17 +120,25 @@ export async function handleRecoverySet(
         subjectHash: await changeHash(listed.ownerRecoveryKey, key),
       };
       if (confirmation.code === undefined) {
-        const requested = await confirmations.requestOwnerConfirmation({
+        const requested = accountsAnswer(ownerConfirmationRequestResultSchema, await confirmations.requestOwnerConfirmation({
           ...subject, change: changeOf(listed.ownerRecoveryKey, key), ship: account.handle,
-        });
-        if (requested.status === "sent") return { status: "code-sent", to: requested.to, expiresAt: requested.expiresAt, retryAt: requested.retryAt };
-        if (requested.status === "wait") return { status: "refused", reason: "wait", retryAt: requested.retryAt };
-        if (requested.status === "no-address") return { status: "refused", reason: "no-address" };
-        // `not-configured`: this deployment's Accounts sends no email, so the password alone confirms the change.
+        }));
+        switch (requested.status) {
+          case "sent": return { status: "code-sent", to: requested.to, expiresAt: requested.expiresAt, retryAt: requested.retryAt };
+          case "wait": return { status: "refused", reason: "wait", retryAt: requested.retryAt };
+          case "no-address": return { status: "refused", reason: "no-address" };
+          // This deployment's Accounts sends no email, so the password alone confirms the change.
+          case "not-configured": break;
+          default: throw new Error("Accounts answered in a form this Kernel doesn't know");
+        }
       } else {
-        const checked = await confirmations.confirmOwnerConfirmation({ ...subject, code: confirmation.code });
-        if (checked.status === "wrong") return { status: "refused", reason: "code", attemptsLeft: checked.attemptsLeft };
-        if (checked.status === "expired") return { status: "refused", reason: "code-expired" };
+        const checked = accountsAnswer(ownerConfirmationCheckResultSchema, await confirmations.confirmOwnerConfirmation({ ...subject, code: confirmation.code }));
+        switch (checked.status) {
+          case "confirmed": break;
+          case "wrong": return { status: "refused", reason: "code", attemptsLeft: checked.attemptsLeft };
+          case "expired": return { status: "refused", reason: "code-expired" };
+          default: throw new Error("Accounts answered in a form this Kernel doesn't know");
+        }
       }
     }
     // The host's work, once accepted, finishes even if the person goes away. It
@@ -184,4 +196,14 @@ function changeOf(from: string | null, to: string | null): OwnerConfirmationChan
 async function changeHash(from: string | null, to: string | null): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ from, to })));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Accounts may run another version, or have a bug: an answer this Kernel can't
+ * read refuses the change rather than skipping the code.
+ */
+function accountsAnswer<T>(schema: z.ZodType<T>, answer: T): T {
+  const parsed = schema.safeParse(answer);
+  if (!parsed.success) throw new Error("Accounts answered in a form this Kernel doesn't know", { cause: parsed.error });
+  return parsed.data;
 }
