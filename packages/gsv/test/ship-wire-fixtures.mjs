@@ -19,11 +19,13 @@ const FAMILY = "👨‍👩‍👧‍👦";
 
 const accept = "accept";
 const refuse = "refuse";
+// Accepted, and read without the changed fields, since a later version may add them.
+const drop = "drop";
 const x = (count) => "x".repeat(count);
 
 /** Each case's value is the base with its changes; a change to `undefined` leaves the field out. */
 function cases(base, list) {
-  return list.map(([what, changes, verdict]) => ({ what, value: withChanges(base, changes), verdict }));
+  return list.map(([what, changes, verdict]) => ({ what, value: withChanges(base, changes), base, verdict }));
 }
 
 function withChanges(base, changes) {
@@ -46,7 +48,7 @@ const RECEIVED = cases({ state: "received" }, [
   ["received", {}, accept],
   ["another state", { state: "accepted" }, refuse],
   ["no state", { state: undefined }, refuse],
-  ["a field the method doesn't declare", { extra: true }, refuse],
+  ["a field the method doesn't declare", { extra: true }, drop],
 ]);
 
 export const SHIP_WIRE_FIXTURES = {
@@ -69,7 +71,7 @@ export const SHIP_WIRE_FIXTURES = {
     ["a name of 129 letters with combining accents", { name: COMBINED.repeat(129) }, refuse],
     ["a name that isn't text", { name: 1 }, refuse],
     ["no name", { name: undefined }, refuse],
-    ["a field the method doesn't declare", { extra: true }, refuse],
+    ["a field the method doesn't declare", { extra: true }, drop],
   ]),
   acceptInvitationOutputSchema: cases({ name: "Bob", generation: "generation-1", threadId: "thread-1" }, [
     ["a name, generation and thread", {}, accept],
@@ -81,7 +83,7 @@ export const SHIP_WIRE_FIXTURES = {
     ["a name of 128 emoji", { name: EMOJI.repeat(128) }, accept],
     ["a name of 257 characters", { name: x(257) }, refuse],
     ["no thread", { threadId: undefined }, refuse],
-    ["a field the method doesn't declare", { extra: true }, refuse],
+    ["a field the method doesn't declare", { extra: true }, drop],
   ]),
   acceptMessageRequestInputSchema: cases({ requestId: "request-1", name: "Alice" }, [
     ["a request and a name", {}, accept],
@@ -91,19 +93,19 @@ export const SHIP_WIRE_FIXTURES = {
     ["a name of 256 characters", { name: x(256) }, accept],
     ["a name of 257 characters", { name: x(257) }, refuse],
     ["a name of 129 emoji", { name: EMOJI.repeat(129) }, refuse],
-    ["a field the method doesn't declare", { extra: true }, refuse],
+    ["a field the method doesn't declare", { extra: true }, drop],
   ]),
   acceptMessageRequestOutputSchema: cases({ generation: "generation-1", threadId: "thread-1" }, [
     ["a generation and thread", {}, accept],
     ["an empty thread", { threadId: "" }, refuse],
     ["a thread of 129 characters", { threadId: x(129) }, refuse],
-    ["a field the method doesn't declare", { name: "Bob" }, refuse],
+    ["a field the method doesn't declare", { name: "Bob" }, drop],
   ]),
   withdrawMessageRequestInputSchema: cases({ requestId: "request-1" }, [
     ["a request", {}, accept],
     ["an empty request", { requestId: "" }, refuse],
     ["a request of 129 characters", { requestId: x(129) }, refuse],
-    ["a field the method doesn't declare", { reason: "changed my mind" }, refuse],
+    ["a field the method doesn't declare", { reason: "changed my mind" }, drop],
   ]),
   sendMessageRequestInputSchema: cases({
     requestId: "request-1", profileCid: DAG_CBOR_CID, name: "Alice", messageId: "message-1", text: "Hello",
@@ -135,7 +137,7 @@ export const SHIP_WIRE_FIXTURES = {
     ["sent at a time written as text", { createdAtMs: "1" }, refuse],
     ["expiring at the epoch", { expiresAtMs: 0 }, refuse],
     ["no expiry", { expiresAtMs: undefined }, refuse],
-    ["a field the method doesn't declare", { did: ALICE }, refuse],
+    ["a field the method doesn't declare", { did: ALICE }, drop],
   ]),
   sendMessageRequestOutputSchema: RECEIVED,
   withdrawMessageRequestOutputSchema: RECEIVED,
@@ -149,7 +151,7 @@ export const SHIP_WIRE_FIXTURES = {
     ["a resource with a slash", { id: "resource:a/b" }, refuse],
     ["a resource with an accent", { id: `resource:${ACCENT}` }, refuse],
     ["something other than a resource", { id: "file:abc" }, refuse],
-    ["a parameter the method doesn't declare", { revision: "1" }, refuse],
+    ["a parameter the method doesn't declare", { revision: "1" }, drop],
   ]),
   federationResourceDescriptorSchema: cases(RESOURCE, [
     ["a file", {}, accept],
@@ -184,7 +186,7 @@ export const SHIP_WIRE_FIXTURES = {
     ["a transcription of 32,769 characters", { transcription: x(32_769) }, refuse],
     ["a transcription of 32,768 two-byte letters", { transcription: ACCENT.repeat(32_768) }, accept],
     ["a transcription of 16,385 emoji", { transcription: EMOJI.repeat(16_385) }, refuse],
-    ["a field files don't have", { url: "https://example.com/file" }, refuse],
+    ["a field files don't have", { url: "https://example.com/file" }, drop],
   ]),
   deliverInputSchema: cases({ deliveryId: "delivery-1", generation: "generation-1", payload: MESSAGE }, [
     ["a message", {}, accept],
@@ -196,7 +198,7 @@ export const SHIP_WIRE_FIXTURES = {
     ["a generation of 129 characters", { generation: x(129) }, refuse],
     ["no payload", { payload: undefined }, refuse],
     ["a payload no Ship knows", { payload: { kind: "reaction" } }, refuse],
-    ["a sender of its own", { senderDid: ALICE }, refuse],
+    ["a sender of its own", { senderDid: ALICE }, drop],
   ]),
   federationDeliveryPayloadSchema: [
     ...cases(MESSAGE, [
@@ -219,7 +221,7 @@ export const SHIP_WIRE_FIXTURES = {
       ["a thread of 128 characters", { threadId: x(128) }, accept],
       ["a thread of 129 characters", { threadId: x(129) }, refuse],
       ["no author", { social: undefined }, refuse],
-      ["an author with a field Ships don't know", { social: { ...SOCIAL, verified: true } }, refuse],
+      ["an author with a field Ships don't know", { social: { ...SOCIAL, verified: true } }, drop],
       ["an author's thread of 129 characters", { social: { ...SOCIAL, threadId: x(129) } }, refuse],
       ["an author on did:web", { social: { ...SOCIAL, reference: { did: "did:web:example.com", messageId: "message-1" } } }, accept],
       ["an author on did:web with a port", { social: { ...SOCIAL, reference: { did: "did:web:localhost%3A8080", messageId: "message-1" } } }, accept],
@@ -231,10 +233,10 @@ export const SHIP_WIRE_FIXTURES = {
       ["a process without an id", { social: { ...SOCIAL, provenance: { kind: "process", processId: "" } } }, refuse],
       ["a process id of 257 characters", { social: { ...SOCIAL, provenance: { kind: "process", processId: x(257) } } }, refuse],
       ["a writer no Ship knows", { social: { ...SOCIAL, provenance: { kind: "approved" } } }, refuse],
-      ["a person who names a process", { social: { ...SOCIAL, provenance: { kind: "human", processId: "process-1" } } }, refuse],
+      ["a person who names a process", { social: { ...SOCIAL, provenance: { kind: "human", processId: "process-1" } } }, drop],
       ["a reply", { social: { ...SOCIAL, replyTo: { did: ALICE, messageId: "message-0" } } }, accept],
       ["a reply to an author on did:key", { social: { ...SOCIAL, replyTo: { did: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK", messageId: "message-0" } } }, refuse],
-      ["a field messages don't have", { subject: "Hello" }, refuse],
+      ["a field messages don't have", { subject: "Hello" }, drop],
     ]),
     ...cases(REQUEST, [
       ["a request", {}, accept],
@@ -259,7 +261,7 @@ export const SHIP_WIRE_FIXTURES = {
       ["an offer at revision 2", { request: { ...OFFER, revision: 2 } }, refuse],
       ["an empty request id", { request: { ...OFFER, id: "" } }, refuse],
       ["a request id of 257 characters", { request: { ...OFFER, id: x(257) } }, refuse],
-      ["an offer with a field Ships don't know", { request: { ...OFFER, deadline: "tomorrow" } }, refuse],
+      ["an offer with a field Ships don't know", { request: { ...OFFER, deadline: "tomorrow" } }, drop],
     ]),
     ...cases(UPDATE, [
       ["an acceptance", {}, accept],
@@ -273,11 +275,11 @@ export const SHIP_WIRE_FIXTURES = {
       ["revision 0", { expectedRevision: 0 }, refuse],
       ["a fractional revision", { expectedRevision: 1.5 }, refuse],
       ["a request id of 257 characters", { requestId: x(257) }, refuse],
-      ["a field updates don't have", { title: "Book a table" }, refuse],
+      ["a field updates don't have", { title: "Book a table" }, drop],
     ]),
     ...cases({ kind: "contact.revoked" }, [
       ["a contact ending", {}, accept],
-      ["a contact ending that names its connection", { generation: "generation-1" }, refuse],
+      ["a contact ending that names its connection", { generation: "generation-1" }, drop],
     ]),
   ],
   originMessageRefSchema: cases({ did: ALICE, messageId: "message-1" }, [
@@ -285,7 +287,7 @@ export const SHIP_WIRE_FIXTURES = {
     ["a message on did:web", { did: "did:web:example.com" }, accept],
     ["a message on did:key", { did: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK" }, refuse],
     ["a message id of 257 characters", { messageId: x(257) }, refuse],
-    ["a field references don't have", { cid: RAW_CID }, refuse],
+    ["a field references don't have", { cid: RAW_CID }, drop],
   ]),
   shipProfileRecordSchema: cases(PROFILE, [
     ["a profile", {}, accept],

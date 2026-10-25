@@ -480,6 +480,7 @@
       "paths": [
         "lexicons/**",
         "tools/protocol/generate-ship-lexicons.mjs",
+        "tools/protocol/check-ship-method-errors.mjs",
         "tools/protocol/ship-lexicon-rules.mjs",
         "workers/pds/**",
         "packages/gsv/src/services/pds.ts",

@@ -18,7 +18,17 @@
       },
       "output": {
         "encoding": "*/*"
-      }
+      },
+      "errors": [
+        {
+          "name": "NotFound",
+          "description": "No file with this ID was granted to the caller's current connection."
+        },
+        {
+          "name": "Conflict",
+          "description": "The file was granted, but this Ship doesn't keep it to serve."
+        }
+      ]
     }
   }
 }

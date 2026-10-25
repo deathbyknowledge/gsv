@@ -6,8 +6,10 @@ import { SHIP_WIRE_FIXTURES } from "./ship-wire-fixtures.mjs";
 test("Ships accept and refuse Ship-to-Ship values at the edges of each lexicon", async (context) => {
   for (const [schema, cases] of Object.entries(SHIP_WIRE_FIXTURES)) {
     await context.test(schema, () => {
-      for (const { what, value, verdict } of cases) {
-        assert.equal(protocol[schema].safeParse(value).success, verdict === "accept", what);
+      for (const { what, value, base, verdict } of cases) {
+        const parsed = protocol[schema].safeParse(value);
+        assert.equal(parsed.success, verdict !== "refuse", what);
+        if (verdict === "drop") assert.deepEqual(parsed.data, protocol[schema].parse(base), what);
       }
     });
   }

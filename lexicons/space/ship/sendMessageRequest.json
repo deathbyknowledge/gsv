@@ -65,7 +65,17 @@
             }
           }
         }
-      }
+      },
+      "errors": [
+        {
+          "name": "NotFound",
+          "description": "This Ship takes no message requests from the caller for this profile now."
+        },
+        {
+          "name": "Conflict",
+          "description": "A message request between these people is already pending. Retry after the Retry-After interval."
+        }
+      ]
     }
   }
 }

@@ -45,7 +45,21 @@
             }
           }
         }
-      }
+      },
+      "errors": [
+        {
+          "name": "NotFound",
+          "description": "This Ship sent the caller no message request with this ID."
+        },
+        {
+          "name": "Gone",
+          "description": "The message request expired or was withdrawn, declined or blocked, or the connection its acceptance made has been replaced or removed."
+        },
+        {
+          "name": "Conflict",
+          "description": "A newer connection between these people is already active, or the request's conversation changed while it was being accepted."
+        }
+      ]
     }
   }
 }

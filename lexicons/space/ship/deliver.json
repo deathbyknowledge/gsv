@@ -41,7 +41,21 @@
             }
           }
         }
-      }
+      },
+      "errors": [
+        {
+          "name": "NotFound",
+          "description": "This Ship has no current connection with the caller for this generation, or no delivery or contact request the payload names."
+        },
+        {
+          "name": "Conflict",
+          "description": "The delivery doesn't fit what this Ship holds: its ID was used for other content, its thread or origin is outside the connection, or the contact request it updates has changed."
+        },
+        {
+          "name": "TemporarilyUnavailable",
+          "description": "This Ship is still accepting the connection the delivery is for. Retry after the Retry-After interval."
+        }
+      ]
     },
     "message": {
       "type": "object",

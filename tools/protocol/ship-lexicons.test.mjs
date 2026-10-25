@@ -180,7 +180,7 @@ const INPUT_CASES = [
   { what: "any MIME type where accept is absent", input: { any: { ...BLOB, mimeType: "application/octet-stream", size: 1_000_000 } }, ours: "accept" },
   { what: "a blob with a field blobs don't have", input: { file: { ...BLOB, name: "picture.png" } }, ours: "refuse" },
   { what: "a blob named by something other than a CID", input: { file: { ...BLOB, ref: { $link: "picture" } } }, ours: "refuse" },
-  { what: "a field the method doesn't declare", input: { extra: true }, ours: "refuse", theirs: "accept", why: "Ships refuse what a method doesn't declare" },
+  { what: "a field the method doesn't declare", input: { extra: true }, ours: "accept" },
 ];
 
 test("generated validators read Lexicon as the reference validator does, except where the spec asks more", async (context) => {
@@ -196,7 +196,9 @@ test("generated validators read Lexicon as the reference validator does, except 
 test("a method's output and parameters, and a record, read the same way", () => {
   assert.equal(verdict(generated.thingOutputSchema, { n: 1 }), "accept");
   assert.equal(verdict(generated.thingOutputSchema, { n: "1" }), "refuse");
-  assert.equal(verdict(generated.thingOutputSchema, { n: 1, extra: true }), "refuse");
+  // Lexicon objects are open, so a field a later version adds is read away rather than refused.
+  assert.deepEqual(generated.thingOutputSchema.parse({ n: 1, extra: true }), { n: 1 });
+  assert.deepEqual(generated.thingInputSchema.parse({ bytes: "ab", extra: true, shared: { kind: "c", extra: true } }), { bytes: "ab", shared: { kind: "c" } });
   assert.equal(reference(() => official.assertValidXrpcOutput("test.fixture.thing", { n: 1, extra: true })), "accept");
 
   for (const [params, expected] of [[{ q: "abcdefgh" }, "accept"], [{ q: "ééééé" }, "refuse"], [{}, "refuse"]]) {
@@ -266,6 +268,8 @@ test("the generator refuses what it can't map", () => {
     ["an input without a JSON schema", one({ main: { type: "procedure", input: { encoding: "*/*" } } }), {}, /an input without a JSON schema/],
     ["a nested object", one({ main: object({ inner: { type: "object", properties: {} } }) }), {}, /name a nested object as a definition/],
     ["a required field it doesn't declare", one({ main: procedure({ type: "object", required: ["name"], properties: {} }) }), {}, /lists name, which it doesn't declare/],
+    ["an error name that isn't one word in PascalCase", one({ main: { ...object({}), errors: [{ name: "not-found" }] } }), {}, /errors/],
+    ["an error declared twice", one({ main: { ...object({}), errors: [{ name: "Gone" }, { name: "Gone" }] } }), {}, /declares the error Gone twice/],
     ["a reference that resolves to nothing", one({ main: object({ thing: { type: "ref", ref: "#missing" } }) }), {}, /unresolved reference #missing/],
     ["a union member that isn't an object", one({
       main: object({ either: { type: "union", refs: ["#name"] } }), name: { type: "string" },

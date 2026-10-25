@@ -23,7 +23,7 @@ test("a delivered message names its author by DID and says who wrote it", () => 
 });
 
 test("a delivery carries no sender identity of its own", () => {
-  assert.equal(deliverInputSchema.safeParse({ ...delivery, senderDid: ALICE }).success, false);
+  assert.deepEqual(deliverInputSchema.parse({ ...delivery, senderDid: ALICE }), deliverInputSchema.parse(delivery));
   assert.equal(deliverInputSchema.safeParse({ ...delivery, payload: { kind: "contact.revoked" } }).success, true);
-  assert.equal(deliverInputSchema.safeParse({ ...delivery, payload: { kind: "contact.revoked", generation: "generation:one" } }).success, false);
+  assert.deepEqual(deliverInputSchema.parse({ ...delivery, payload: { kind: "contact.revoked", generation: "generation:one" } }).payload, { kind: "contact.revoked" });
 });
