@@ -110,6 +110,14 @@ export async function verifyCommit(event: CommitClaim, didKey: string): Promise<
   expect((await tree.getPointer()).equals(event.prevData)).toBe(true);
 }
 
+/** The CID of the signed commit a #sync's CAR holds, which a relay takes as the repository's head at the event's revision. */
+export async function syncedCommit(event: { rev: string; blocks: Uint8Array }): Promise<string> {
+  const { root, blocks } = await readCarWithRoot(event.blocks);
+  const { obj: commit } = await getAndParseByDef(blocks, root, def.commit);
+  expect(commit.rev).toBe(event.rev);
+  return root.toString();
+}
+
 /** The hostnames the reference relay takes in requestCrawl: a DNS name, without a scheme, port or path. */
 const RELAY_HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const crawlRequest = z.object({ hostname: z.string() });

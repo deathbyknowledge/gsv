@@ -1,20 +1,22 @@
-import { createScheduledController, runInDurableObject } from "cloudflare:test";
+import { createScheduledController, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { encode } from "../src/cirrus/cbor-compat";
 import type { PdsEnv } from "../src/gsv/env";
 import { FIREHOSE_NAME, type HostFirehose } from "../src/host/firehose";
+import { REPO_REF } from "../src/host/moderation";
 import type { RelayRequest } from "../src/host/relays";
-import { HostedRepo } from "../src/host/repo";
+import { HostedRepo, type RepoWrite } from "../src/host/repo";
 import worker from "../src/index";
 import { FakeAccounts } from "./accounts";
 import { FakePlcDirectory } from "./plc";
-import { FakeRelay, framesFor, subscribe } from "./relay";
+import { FakeRelay, framesFor, subscribe, syncedCommit, type Frame } from "./relay";
 import { deliver, installFakeServices, rejection, type FakeService } from "./support";
 
 const MINUTE = 60_000;
 /** The name a relay knows the host by: its origin's host, without the scheme. */
 const HOST = new URL(env.PDS_ORIGIN).host;
+const NOTE = "com.example.note";
 
 let services: Map<string, FakeService>;
 let accounts: FakeAccounts;
@@ -102,18 +104,70 @@ describe("announcing the host to relays", () => {
     expect(warned(warnings)).toHaveLength(4);
   });
 
-  it("asks no relay while the deployment names none, and asks a relay at once when it's named again", async () => {
-    await worker.scheduled(createScheduledController(), deployed(undefined));
-    await worker.scheduled(createScheduledController(), deployed(""));
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+  it("asks no relay while the deployment names none, and forgets each relay it stops naming", async () => {
+    const kept = relay("https://relay-d.test");
+    const dropped = relay("https://relay-e.test");
+    const host = env.FIREHOSE.getByName(FIREHOSE_NAME);
+    await scheduled(`${kept.origin},${dropped.origin}`);
+    await scheduled(kept.origin);
+    expect(Object.keys(await requested(host))).toEqual([kept.origin]);
+    await scheduled(undefined);
+    await scheduled("");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(await requested(host)).toEqual({});
+    // A relay named again is asked at once.
+    await scheduled(`${kept.origin},${dropped.origin}`);
+    expect([kept.requests, dropped.requests]).toEqual([[HOST, HOST], [HOST, HOST]]);
+  });
 
-    const kept = relay("https://relay-a.test");
-    const dropped = relay("https://relay-b.test");
-    const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
-    expect(await firehose.announce([kept.origin, dropped.origin], HOST)).toEqual([kept.origin, dropped.origin]);
-    expect(await firehose.announce([kept.origin], HOST)).toEqual([]);
-    expect(Object.keys(await requested(firehose))).toEqual([kept.origin]);
-    expect(await firehose.announce([kept.origin, dropped.origin], HOST)).toEqual([dropped.origin]);
+  it("introduces each active account to a relay that joins after it, as creating the account announced it, once per relay", async () => {
+    const first = await publishedAccount();
+    const second = await publishedAccount();
+    const down = await publishedAccount();
+    await down.repo.updateSubjectStatus({ subject: { $type: REPO_REF, did: down.did }, takedown: { applied: true } });
+    await deliver(down.repo);
+    const joining = relay("https://relay-f.test");
+    const host = env.FIREHOSE.getByName(FIREHOSE_NAME);
+
+    // A relay follows a host it has just accepted from the live end, so the run after it accepts introduces the accounts.
+    expect(await heardWhile(() => scheduled(joining.origin))).toEqual([]);
+    const introduction = await heardWhile(() => scheduled(joining.origin));
+    for (const ship of [first, second]) expect(await heard(introduction, ship.did)).toEqual(await introductionOf(ship));
+    expect(await heard(introduction, down.did)).toEqual([]);
+
+    // Later runs don't introduce the accounts again, even after the firehose restarts.
+    await evictDurableObject(host);
+    await rewind(host, 21 * MINUTE);
+    expect(await heardWhile(async () => {
+      await scheduled(joining.origin);
+      await scheduled(joining.origin);
+    })).toEqual([]);
+
+    // A relay named again after the deployment stopped naming it hears of each account again, at its current head.
+    await first.repo.applyWrites([note("second")]);
+    await deliver(first.repo);
+    await scheduled(undefined);
+    await scheduled(joining.origin);
+    const again = await heardWhile(() => scheduled(joining.origin));
+    for (const ship of [first, second]) expect(await heard(again, ship.did)).toEqual(await introductionOf(ship));
+    expect(joining.requests).toEqual([HOST, HOST, HOST]);
+  });
+
+  it("leaves out an account taken down while the host reads its head, so relays still see it down", async () => {
+    const ship = await publishedAccount();
+    const joining = relay("https://relay-g.test");
+    await scheduled(joining.origin);
+    const read = HostedRepo.prototype.head;
+    vi.spyOn(HostedRepo.prototype, "head").mockImplementation(async function (this: HostedRepo) {
+      const head = await read.call(this);
+      if ((await this.account())?.did === ship.did) {
+        await this.updateSubjectStatus({ subject: { $type: REPO_REF, did: ship.did }, takedown: { applied: true } });
+        await this.alarm();
+      }
+      return head;
+    });
+    const introduction = await heardWhile(() => scheduled(joining.origin));
+    expect(await heard(introduction, ship.did)).toEqual([{ type: "#account", active: false }]);
   });
 });
 
@@ -129,24 +183,78 @@ function deployed(relays?: string): PdsEnv {
   return { ...env, INSTALLATION_DIRECTORY: accounts, PDS_RELAYS: relays };
 }
 
+/** Runs the deployed Worker's schedule once, with the relays the deployment names. */
+function scheduled(relays?: string): Promise<void> {
+  return worker.scheduled(createScheduledController(), deployed(relays));
+}
+
 /** What the firehose keeps of its last request to each relay. */
 function requested(firehose: DurableObjectStub<HostFirehose>): Promise<Record<string, RelayRequest>> {
-  return runInDurableObject(firehose, async (_instance, state) => (await state.storage.get<Record<string, RelayRequest>>("relays")) ?? {});
+  return runInDurableObject(firehose, (_instance, state) => state.storage.kv.get<Record<string, RelayRequest>>("relays") ?? {});
 }
 
 /** Moves the firehose's last request to each relay back by ms, as though that long had passed. */
 async function rewind(firehose: DurableObjectStub<HostFirehose>, ms: number): Promise<void> {
   const relays = await requested(firehose);
   for (const request of Object.values(relays)) request.at -= ms;
-  await runInDurableObject(firehose, (_instance, state) => state.storage.put("relays", relays));
+  await runInDurableObject(firehose, (_instance, state) => state.storage.kv.put("relays", relays));
 }
 
-/** Appends an event to the firehose, as a repository's next change does. */
-async function change(firehose: DurableObjectStub<HostFirehose>): Promise<void> {
+/** Appends an event to the firehose, as a repository's next change does, and returns the DID it is for. */
+async function change(firehose: DurableObjectStub<HostFirehose>): Promise<string> {
   const name = crypto.randomUUID();
   const did = `did:plc:${name.replaceAll("-", "").slice(0, 24)}`;
   const state = { did, handle: `${name}.ship.test`, active: true, status: null, rev: null, head: null };
   await firehose.append(name, state, [{ seq: 1, type: "identity", payload: encode({ did, time: new Date().toISOString() }) }]);
+  return did;
+}
+
+type PublishedAccount = { repo: DurableObjectStub<HostedRepo>; did: string };
+
+/** A hosted account that has written a record since it was created, delivered to the host firehose. */
+async function publishedAccount(): Promise<PublishedAccount> {
+  const name = crypto.randomUUID();
+  const repo = env.REPOS.getByName(name);
+  const { did } = await repo.create(`${name}.ship.test`, `installations/${name}/`);
+  await repo.applyWrites([note("first")]);
+  await deliver(repo);
+  return { repo, did };
+}
+
+function note(rkey: string): RepoWrite {
+  return { action: "put", collection: NOTE, rkey, record: { $type: NOTE, text: rkey, createdAt: "2026-10-25T00:00:00.000Z" } };
+}
+
+/**
+ * Every frame a relay following the host's firehose hears while run runs. The
+ * host's next event marks the end, since a relay hears its frames in order.
+ */
+async function heardWhile(run: () => Promise<void>): Promise<Frame[]> {
+  const host = env.FIREHOSE.getByName(FIREHOSE_NAME);
+  const following = await subscribe(host);
+  await run();
+  const marker = await change(host);
+  await vi.waitFor(() => expect(framesFor(following, marker)).toHaveLength(1));
+  return following.frames.slice(0, following.frames.findIndex((frame) => "did" in frame && frame.did === marker));
+}
+
+/** A firehose event as a relay acts on it: an account's status, or the commit a #sync makes its head. */
+type Heard = { type: string; active?: boolean; rev?: string; commit?: string };
+
+/** The events among frames for one account, as a relay acts on them. */
+function heard(frames: readonly Frame[], did: string): Promise<Heard[]> {
+  return Promise.all(frames.filter((frame) => "did" in frame && frame.did === did).map(async (frame): Promise<Heard> => {
+    if (frame.type === "#account") return { type: frame.type, active: frame.body.active };
+    if (frame.type === "#sync") return { type: frame.type, rev: frame.body.rev, commit: await syncedCommit(frame.body) };
+    return { type: frame.type };
+  }));
+}
+
+/** What creating an account announces, at its repository's current head. */
+async function introductionOf({ repo }: PublishedAccount): Promise<Heard[]> {
+  const state = await repo.state();
+  if (!state?.rev || !state.head) throw new Error("The repository has no head");
+  return [{ type: "#account", active: true }, { type: "#identity" }, { type: "#sync", rev: state.rev, commit: state.head }];
 }
 
 /** The text of every warning so far, sorted. */

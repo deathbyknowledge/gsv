@@ -8,6 +8,8 @@ export type RelayRequest = {
   seq: number | null;
   /** Requests the relay hasn't accepted since it last did. */
   failures: number;
+  /** Whether the host has introduced the accounts it held when the relay joined. */
+  introduced: boolean;
 };
 
 /** The least time between two requests to one relay, as long as Bluesky's PDS waits between them. */

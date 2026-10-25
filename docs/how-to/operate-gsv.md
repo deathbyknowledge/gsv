@@ -138,8 +138,14 @@ host by default and drops the events of any past that, so ask the relay's
 operator to raise the host's limit before the host has more accounts than
 that.
 
-A relay follows the host from the moment it joins, so a Ship that existed
-before then reaches it with its next event, such as its next publish.
+A relay reads the host only from the moment it joins, so on its first run
+after a relay accepts, the host introduces every active Ship it already holds,
+as it announced each Ship when it was created. A Ship past the relay's account
+limit misses that introduction. Once the limit is raised, take the relay out of
+`GSV_PDS_RELAYS` and deploy, wait for the next ten-minute run, then name it
+again and deploy: the host forgets a relay at its first run without it, and
+introduces every Ship to it again once it's named anew. That run happens only
+while the deployment names another relay or a lexicon account.
 
 ## Give someone a Ship {#give-someone-a-space}
 
