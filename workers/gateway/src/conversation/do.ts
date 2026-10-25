@@ -25,7 +25,6 @@ import {
   type ConversationAppendInput,
   type ConversationAppendResult,
   type ConversationArchiveSegment,
-  type SocialBeforeDids,
 } from "./store";
 
 const HOT_MESSAGE_LIMIT = 1_000;
@@ -39,20 +38,6 @@ export type ConversationInitializeInput = {
 };
 
 type ConversationIntake = { id: string; ownerUid: number; promoted: boolean; discarded: boolean };
-
-export type ConversationMoveInput = {
-  /** People named the old way, with their DIDs. */
-  people: { shipId: string; subjectId: string; did: string }[];
-  /** Appends the Kernel may still make for deliveries from before the move. */
-  idempotencyKeys: string[];
-};
-export type ConversationMoveResult = {
-  /** Messages whose origin details now name their author by DID. */
-  moved: number;
-  /** Messages that lost their origin details, because their author has no DID here. */
-  ended: number;
-  appended: { idempotencyKey: string; sequence: number }[];
-};
 const INTAKE_KEY = "conversation:intake";
 
 export type ConversationHistoryInput = {
@@ -184,7 +169,7 @@ export class Conversation extends DurableObject<GatewayEnv> {
     this.ctx.storage.kv.put(INTAKE_KEY, { ...intake, discarded: true });
     await Promise.allSettled([this.appendTransition, this.archiveTransition]);
     this.ctx.storage.transactionSync(() => {
-      for (const table of ["messages", "message_receipts", "message_origins", "message_origins_legacy", "message_search"]) {
+      for (const table of ["messages", "message_receipts", "message_origins", "message_search"]) {
         this.ctx.storage.sql.exec(`DELETE FROM ${table}`);
       }
     });
@@ -240,25 +225,6 @@ export class Conversation extends DurableObject<GatewayEnv> {
   resolveOrigin(reference: OriginMessageRef, threadId: string) {
     this.assertAvailable();
     return this.store.resolveOrigin(originMessageRefSchema.parse(reference), threadId);
-  }
-
-  /**
-   * The operator's move to DIDs: names the people in this conversation's
-   * origin details by DID. Also reports which of the Kernel's pending appends
-   * already reached a message, so a delivery received or sent just before the
-   * move isn't appended a second time.
-   */
-  async moveToDids(input: ConversationMoveInput): Promise<ConversationMoveResult> {
-    this.retirement.assertActive();
-    const dids = new Map(input.people.map((person) => [`${person.shipId} ${person.subjectId}`, person.did]));
-    const result = this.ctx.storage.transactionSync(() => this.store.moveOriginsToDids(
-      (person) => dids.get(`${person.shipId} ${person.subjectId}`),
-    ));
-    const appended = input.idempotencyKeys.flatMap((idempotencyKey) => {
-      const receipt = this.store.receipt(idempotencyKey);
-      return receipt ? [{ idempotencyKey, sequence: receipt.sequence }] : [];
-    });
-    return { ...result, appended };
   }
 
   async readMedia(input: { key: string }): Promise<ConversationMediaRead> {
@@ -394,8 +360,6 @@ export class Conversation extends DurableObject<GatewayEnv> {
   private async archiveIfNeeded(): Promise<void> {
     if (this.retirement.state || this.ctx.storage.kv.get<ConversationIntake>(INTAKE_KEY)?.discarded) return;
     while (this.store.hotCount() > HOT_MESSAGE_LIMIT) {
-      // An archive is immutable, so origin details from before DIDs stay hot until the move names them.
-      if (this.store.awaitingMove()) return;
       const messages = this.store.oldestHot(ARCHIVE_SEGMENT_SIZE);
       if (messages.length === 0) return;
       const bytes = new TextEncoder().encode(JSON.stringify(messages));
@@ -504,6 +468,12 @@ export type ArchivedMessage = Omit<ConversationMessage, "author" | "social"> & {
   social?: SocialMessageMetadata | SocialBeforeDids;
   action?: unknown;
 };
+/** Origin details from before DIDs, which named a Ship by shipId and its person by subject. */
+type SocialBeforeDids = Omit<SocialMessageMetadata, "reference" | "replyTo"> & {
+  reference: OriginBeforeDids;
+  replyTo?: OriginBeforeDids;
+};
+type OriginBeforeDids = { actor: { shipId: string; subjectId: string }; messageId: string };
 
 /**
  * Messages archived before DIDs named a contact's Ship by shipId and subject,
