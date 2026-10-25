@@ -471,6 +471,7 @@ export async function handleSysSetup(
 export async function recoverCompletedSysSetup(
   args: SysSetupArgs,
   ctx: KernelContext,
+  source = ctx.connection?.state.source ?? null,
 ): Promise<SysSetupResult> {
   const { username, password } = parseSetupIdentity(args, ctx);
   const humans = ctx.auth.getPasswdEntries().filter((entry) => {
@@ -481,7 +482,8 @@ export async function recoverCompletedSysSetup(
   if (humans.length !== 1 || !user || humans[0]?.uid !== user.uid) {
     throw new Error("System already initialized");
   }
-  const authenticated = await ctx.auth.authenticate(username, password);
+  const authenticated = await ctx.auth.authenticate(username, password, source);
+  if (!authenticated.ok && authenticated.waitMs !== undefined) throw new Error(authenticated.error);
   if (!authenticated.ok || authenticated.identity.uid !== user.uid) {
     throw new Error("Installation setup credentials do not match");
   }
