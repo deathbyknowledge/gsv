@@ -251,6 +251,16 @@ export class HostedRepo extends DurableObject<HostEnv> {
     });
   }
 
+  /**
+   * The owner's recovery key the account's identity lists, and whether the
+   * host has yet to send that change to the directory; null without an account.
+   */
+  async ownerRecoveryKey(): Promise<{ ownerRecoveryKey: DidKeyString | null; pending: boolean } | null> {
+    const account = await this.storedAccount();
+    if (!account) return null;
+    return { ownerRecoveryKey: account.identity?.ownerRecoveryKey ?? null, pending: account.identity?.accepted === false };
+  }
+
   /** Applies writes in one signed commit after validating records and the blobs they reference. */
   async applyWrites(writes: RepoWrite[]): Promise<CommitResult> {
     return this.write(async (repo) => {

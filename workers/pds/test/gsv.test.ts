@@ -4,6 +4,7 @@ import type { InstallationDirectoryService, InstallationState } from "@humansand
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { PUBLIC_BLOB_MAX_BYTES } from "@humansandmachines/gsv/services/pds";
+import { P256PrivateKeyExportable } from "@atcute/crypto";
 import { fromBase64Url } from "@atcute/multibase";
 import { admitInstallation } from "../src/gsv/admission";
 import type { PdsEnv } from "../src/gsv/env";
@@ -89,6 +90,29 @@ describe("publishing for an installation", () => {
     expect(await rejection(upload(repository, "avatar"))).toContain(refusal);
     expect(await rejection(repository.readBlob("bafkreie5737gdxlw5i64vzichcalba3z2v5n6icifvx5xytvske7mr3hpm"))).toContain(refusal);
     expect(await admitInstallation(accounts, ship.installationId)).toBe("suspended");
+  });
+
+  it("lists, replaces and removes the owner's recovery key, and reads it back, only while the installation publishes", async () => {
+    const ship = accounts.add();
+    const repository = await publisher().getInstallation(ship.installationId);
+    expect(await repository.ownerRecoveryKey()).toBeNull();
+    const account = await repository.ensureAccount(ship.handle);
+    expect(await repository.ownerRecoveryKey()).toEqual({ ownerRecoveryKey: null, pending: false });
+
+    const [first, second] = await Promise.all([sheetKey(), sheetKey()]);
+    expect(await repository.setOwnerRecoveryKey(first)).toEqual({ ownerRecoveryKey: first });
+    expect(await repository.ownerRecoveryKey()).toEqual({ ownerRecoveryKey: first, pending: false });
+    expect(await repository.setOwnerRecoveryKey(second)).toEqual({ ownerRecoveryKey: second });
+    const last = plc.operations(account.did).at(-1);
+    expect(last?.type === "plc_operation" && last.rotationKeys[0]).toBe(second);
+    expect(await repository.setOwnerRecoveryKey(null)).toEqual({ ownerRecoveryKey: null });
+    expect(await repository.ownerRecoveryKey()).toEqual({ ownerRecoveryKey: null, pending: false });
+
+    const restricted = accounts.add("restricted");
+    const held = await publisher().getInstallation(restricted.installationId);
+    await held.ensureAccount(restricted.handle);
+    expect(await rejection(held.setOwnerRecoveryKey(first))).toContain("active installation");
+    expect(await held.ownerRecoveryKey()).toEqual({ ownerRecoveryKey: null, pending: false });
   });
 
   it("signs only Ship methods addressed to another Ship's service", async () => {
@@ -195,6 +219,11 @@ describe("public reads", () => {
     expect(await admitInstallation(renamed, installationId)).toBe("deleted");
   });
 });
+
+/** A recovery sheet's public key, as the person's browser makes one. */
+async function sheetKey(): Promise<string> {
+  return (await P256PrivateKeyExportable.createKeypair()).exportPublicKey("did");
+}
 
 /** The publisher entrypoint as a binding with the given authority, or with no props at all, sees it. */
 function publisher(authority: string | null = "kernel-publish"): PdsPublisherEntrypoint {

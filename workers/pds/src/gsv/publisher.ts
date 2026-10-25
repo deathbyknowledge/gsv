@@ -104,6 +104,15 @@ class InstallationRepository extends RpcTarget implements PublicRepository {
     return await this.repo.takedowns();
   }
 
+  async ownerRecoveryKey(): Promise<{ ownerRecoveryKey: string | null; pending: boolean } | null> {
+    return await this.repo.ownerRecoveryKey();
+  }
+
+  async setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: string | null }> {
+    if (!this.publishing) throw new Error(NOT_PUBLISHING);
+    return await this.repo.setOwnerRecoveryKey(key);
+  }
+
   private hosted(account: HostedAccount): PublicRepositoryAccount {
     return { ...account, host: this.env.PDS_ORIGIN };
   }
