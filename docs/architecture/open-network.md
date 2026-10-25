@@ -115,11 +115,14 @@ which is a fact of its deployment. When Accounts is pacing codes, has no
 verified address for the owner, or fails, the change is refused.
 
 The host's rotation key signs each change, so for 72 hours a key ranked above
-it in the operation before can undo it: the operator's recovery key can undo a
-new sheet, and the previous sheet can undo its replacement or removal. After
-each change Accounts emails the owner its sheet code, from
+it in the operation before can undo it. The previous sheet can undo its
+replacement or removal. The operator's recovery key, `GSV_PLC_RECOVERY_KEY`,
+can undo any of the three, but it is optional, and only DIDs created while it
+is configured list it. Without it, nothing can undo a first sheet that someone
+else made. After each change Accounts emails the owner its sheet code, from
 `GSV_OWNER_EMAIL_FROM` with replies to `GSV_OWNER_EMAIL_REPLY_TO`, so a change
-the owner didn't make reaches the operator in time to undo it.
+the owner didn't make reaches the operator while its recovery key can still
+undo it.
 
 A reset gives the Ship a new identity, and the sheet stays with the old one. A
 deletion's tombstone is an operation like any other, so the sheet can undo it

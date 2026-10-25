@@ -40,7 +40,10 @@ printed on the sheet too, so you can tell which sheet is current. It's safe to
 share.
 
 We email you whenever your sheet changes, with the sheet code. If you didn't
-make the change, reply to that email within 3 days and your host can undo it.
+make the change, reply to that email straight away. For 3 days, a host that
+keeps a recovery key can undo the change, and so can your previous sheet, if you
+had one. Operators set up that key, `GSV_PLC_RECOVERY_KEY`, when they
+[run Ship](operate-gsv.md); only identities created while it's set list it.
 
 ## Make a new sheet, or remove it
 
