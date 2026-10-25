@@ -93,6 +93,12 @@ being CIDv1; a blob must match its `accept` types and `maxSize`. Lexicon
 objects are open, so methods and records alike read away fields their lexicon
 doesn't declare rather than refusing them, and a later version can add one.
 
+Each method's lexicon declares the errors it answers with, beyond those any
+XRPC method may answer with, such as `InvalidRequest`, `RateLimitExceeded`
+and service auth's `BadJwt`. `npm run protocol:check` walks each handler the
+Kernel registers in `kernel/ships/methods.ts` through the calls it makes, and
+fails when one can answer with an error its lexicon doesn't declare.
+
 Some checks Ships make can't be written in Lexicon, so
 `tools/protocol/ship-lexicon-rules.mjs` adds them, and the field's lexicon
 description states them for other implementations. Names, message text,
@@ -112,8 +118,8 @@ To change a lexicon:
    shipped. A record or a method can gain optional fields, because readers
    drop what they don't know. Ships from before methods dropped undeclared
    fields still refuse them, so a sender can't count on a new method field
-   reaching a Ship until those Ships are gone. No limit can tighten and no
-   field can become required.
+   reaching a Ship until those Ships are gone. No limit can tighten, no field
+   can become required, and a method's new error must be declared.
 2. Run `npm run protocol:generate` and commit the regenerated module with the
    lexicon.
 3. `npm run protocol:check` fails while the generated module is stale. It also

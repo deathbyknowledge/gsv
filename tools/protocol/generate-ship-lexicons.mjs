@@ -100,7 +100,7 @@ const bodyType = z.strictObject({
   encoding: z.string(),
   schema: z.discriminatedUnion("type", [objectType, refType]).optional(),
 });
-const errorsType = z.array(z.strictObject({ name: z.string(), description })).optional();
+const errorsType = z.array(z.strictObject({ name: z.string().regex(/^[A-Z][A-Za-z0-9]*$/), description })).optional();
 const queryType = z.strictObject({
   type: z.literal("query"),
   description,
@@ -239,6 +239,9 @@ function readLexicon(path, document) {
   for (const [name, definition] of Object.entries(lexicon.defs)) {
     if (name !== "main" && PRIMARY_TYPES.has(definition.type)) throw new Error(`${lexicon.id}#${name}: only main may be a ${definition.type}`);
   }
+  const errors = (main.errors ?? []).map((error) => error.name);
+  const repeated = errors.find((name, index) => errors.indexOf(name) !== index);
+  if (repeated) throw new Error(`${lexicon.id} declares the error ${repeated} twice`);
   return { ...lexicon, name: lexicon.id.split(".").at(-1) };
 }
 

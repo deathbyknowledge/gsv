@@ -54,7 +54,29 @@
             }
           }
         }
-      }
+      },
+      "errors": [
+        {
+          "name": "InvitationNotFound",
+          "description": "No invitation has this token, or its person can't take a connection from the caller."
+        },
+        {
+          "name": "InvitationCancelled",
+          "description": "Its person cancelled the invitation."
+        },
+        {
+          "name": "InvitationExpired",
+          "description": "The invitation expired before the caller accepted it."
+        },
+        {
+          "name": "InvitationUsed",
+          "description": "Another Ship already accepted the invitation, or the connection it made has since ended or changed."
+        },
+        {
+          "name": "NotFound",
+          "description": "The invitation's person can't take a connection from the caller."
+        }
+      ]
     }
   }
 }

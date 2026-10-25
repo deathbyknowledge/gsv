@@ -268,6 +268,8 @@ test("the generator refuses what it can't map", () => {
     ["an input without a JSON schema", one({ main: { type: "procedure", input: { encoding: "*/*" } } }), {}, /an input without a JSON schema/],
     ["a nested object", one({ main: object({ inner: { type: "object", properties: {} } }) }), {}, /name a nested object as a definition/],
     ["a required field it doesn't declare", one({ main: procedure({ type: "object", required: ["name"], properties: {} }) }), {}, /lists name, which it doesn't declare/],
+    ["an error name that isn't one word in PascalCase", one({ main: { ...object({}), errors: [{ name: "not-found" }] } }), {}, /errors/],
+    ["an error declared twice", one({ main: { ...object({}), errors: [{ name: "Gone" }, { name: "Gone" }] } }), {}, /declares the error Gone twice/],
     ["a reference that resolves to nothing", one({ main: object({ thing: { type: "ref", ref: "#missing" } }) }), {}, /unresolved reference #missing/],
     ["a union member that isn't an object", one({
       main: object({ either: { type: "union", refs: ["#name"] } }), name: { type: "string" },
