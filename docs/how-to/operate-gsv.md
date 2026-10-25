@@ -295,6 +295,24 @@ audit. Takedowns need Accounts' `PDS_MODERATION` binding, which the
 composition adds with the PDS; see
 [the open network](../architecture/open-network.md#takedowns).
 
+## Audit Ships' identities {#audit-identities}
+
+If you suspect `GSV_PLC_ROTATION_KEY` has leaked, have the open-network host
+check every Ship's DID at once, with the key in your environment:
+
+```sh
+npm run pds:identities -- audit --pds https://pds.<domain>
+```
+
+The host reads each DID's log in the PLC directory again, at most four reads a
+second, and judges it as it does before a Ship's writes. It follows a change
+that a person's sheet or your paper key signed. Any other change makes it step
+aside for that Ship, refusing its writes and signatures; a change your rotation
+key signed that the host never submitted is reported as `leaked-key`. The
+command lists only the Ships the host steps aside for, by DID and handle, with
+the operation that decided and the public key that signed it, and any DIDs it
+couldn't read.
+
 ## Review reports {#review-reports}
 
 People on your Ships can report a message request from someone they don't

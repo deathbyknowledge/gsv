@@ -180,6 +180,9 @@ export type IdentityCheck = {
 /** A change at the head of the DID's log that the host didn't sign: the head, the operation that decided, and the key that signed it. */
 export type IdentityEvent = { at: number; outcome: "adopted" | StepAside; head: string; operation: string; signedBy: DidKeyString };
 
+/** What the operator's audit learns of one identity: whether the host could read its log, and what it steps aside for. */
+export type IdentityAudit = { did: string; handle: string; read: boolean; steppedAside: IdentityEvent | null };
+
 type OpenRepo = {
   account: StoredAccount;
   storage: SqliteRepoStorage;
@@ -286,6 +289,16 @@ export class HostedRepo extends DurableObject<HostEnv> {
   /** What the host last read at the head of its DID's log, without reading it again. */
   async identityCheck(): Promise<IdentityCheck | null> {
     return (await this.ctx.storage.get<IdentityCheck>(IDENTITY_CHECK_KEY)) ?? null;
+  }
+
+  /** Reads the DID's log again for the operator's audit; null without an account. */
+  async auditIdentity(): Promise<IdentityAudit | null> {
+    return this.serialize(async () => {
+      const account = await this.storedAccount();
+      if (!account) return null;
+      const { check, read } = await this.checkIdentity(true);
+      return { did: account.did, handle: account.handle, read, steppedAside: check.steppedAside };
+    });
   }
 
   /** Applies writes in one signed commit after validating records and the blobs they reference. */

@@ -81,7 +81,11 @@ key has leaked. A failed read keeps the last answer until the next hour.
 
 The PDS records each adoption and step-aside with the head, the operation that
 decided it and the key that signed it, for the Kernel or the operator to read
-later; it tells nobody yet.
+later; it tells nobody yet. When the operator suspects the rotation key has
+leaked, `npm run pds:identities -- audit` reads every hosted identity's log
+again, at most four reads a second, and lists only the identities the PDS steps
+aside for and those it couldn't read. [Audit Ships'
+identities](../how-to/operate-gsv.md#audit-identities) is the procedure.
 
 ## Calls between Ships
 

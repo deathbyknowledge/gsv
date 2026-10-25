@@ -1,7 +1,7 @@
 import { admitRepository } from "./gsv/admission";
 import type { PdsEnv } from "./gsv/env";
 import { republishLexicons } from "./gsv/lexicons";
-import { handleOperator, OPERATOR_PATH } from "./gsv/operator";
+import { handleOperator, IDENTITY_AUDIT_PATH, OPERATOR_PATH } from "./gsv/operator";
 import { announceToRelays } from "./host/firehose";
 import { handleXrpc } from "./host/xrpc";
 
@@ -12,7 +12,7 @@ export { HostFirehose } from "./host/firehose";
 export { HostedRepo } from "./host/repo";
 
 export default {
-  fetch: (request, env) => new URL(request.url).pathname === OPERATOR_PATH
+  fetch: (request, env) => [OPERATOR_PATH, IDENTITY_AUDIT_PATH].includes(new URL(request.url).pathname)
     ? handleOperator(request, env)
     : handleXrpc(request, env, (name) => admitRepository(env.INSTALLATION_DIRECTORY, name)),
   // A deploy's lexicons take over once the operator has published.

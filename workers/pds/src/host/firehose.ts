@@ -152,6 +152,13 @@ export class HostFirehose extends DurableObject<HostEnv> {
     return { repos: page.map(repoState), cursor: rows.length > limit ? page.at(-1)?.did : undefined };
   }
 
+  /** The repositories this host holds, with the names of the objects that hold them, in DID order. */
+  async listHosted(limit: number, cursor?: string): Promise<{ hosted: HostedEntry[]; cursor?: string }> {
+    const rows = this.ctx.storage.sql.exec<RepoRow>("SELECT * FROM repos WHERE did > ? ORDER BY did LIMIT ?", cursor ?? "", limit + 1).toArray();
+    const page = rows.slice(0, limit);
+    return { hosted: page.map((row) => ({ ...repoState(row), name: row.name })), cursor: rows.length > limit ? page.at(-1)?.did : undefined };
+  }
+
   /** Whether the host holds a repository's directory entry, by the name of the object that holds it. */
   async inspectRepository(name: string): Promise<"identified" | "unrelated" | "empty"> {
     if (this.row("SELECT * FROM repos WHERE name = ?", name)) return "identified";

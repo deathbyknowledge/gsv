@@ -10,15 +10,32 @@ import {
 import { PlcClient, signOperation, type CompatibleOperationOrTombstone, type DidPlcString } from "@atcute/did-plc";
 import { fromBase16 } from "@atcute/multibase";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import type { PdsEnv } from "../src/gsv/env";
+import { signOperatorToken, type OperatorRequest } from "../src/gsv/operator-token";
 import type { IdentityState } from "../src/host/identity";
 import { HostedRepo } from "../src/host/repo";
+import worker from "../src/index";
+import { FakeAccounts } from "./accounts";
 import { FakePlcDirectory, isDidPlc } from "./plc";
-import { installFakePlc, rejection } from "./support";
+import { deliver, errorOf, installFakePlc, rejection } from "./support";
 
 const HOUR_MS = 60 * 60_000;
 const NOTE = "com.example.note";
 const SHIP_CALL = { aud: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb#ship", lxm: "space.ship.deliver" };
 const ELSEWHERE = { type: "AtprotoPersonalDataServer", endpoint: "https://pds.elsewhere.test" };
+
+// What the audit may say of an identity: nothing but its public DID, handle and log.
+const stepAside = z.strictObject({
+  did: z.string(),
+  handle: z.string(),
+  at: z.number(),
+  outcome: z.enum(["leaked-key", "untrusted-key", "moved"]),
+  head: z.string(),
+  operation: z.string(),
+  signedBy: z.string(),
+});
+const report = z.strictObject({ checked: z.number(), steppedAside: z.array(stepAside), unread: z.array(z.string()), cursor: z.optional(z.string()) });
 
 let plc: FakePlcDirectory;
 let notes = 0;
@@ -213,6 +230,41 @@ describe("the host's reads of its DID's log", () => {
   });
 });
 
+describe("the operator's identity audit", () => {
+  it("reads every hosted identity's log again and reports only those the host steps aside for", async () => {
+    const clean = await hostedAccount("clean.ship.test");
+    const leaked = await hostedAccount("audited.ship.test");
+    await deliver(clean.repo);
+    await deliver(leaked.repo);
+    await write(clean.repo);
+    await write(leaked.repo);
+    const known = await head(leaked.did);
+    await submitAs(leaked.did, known, { ...stateOf(known.operation), alsoKnownAs: ["at://taken.example"] }, await hostKeypair());
+    const changed = await head(leaked.did);
+
+    // No hour has passed: the audit reads each log again, a page at a time.
+    const pages = [report.parse(await (await audit({ limit: 1 })).json())];
+    while (pages.at(-1)?.cursor) pages.push(report.parse(await (await audit({ limit: 1, cursor: pages.at(-1)?.cursor })).json()));
+    const ours = ({ did }: { did: string }) => did === clean.did || did === leaked.did;
+    const reported = pages.flatMap((page) => page.steppedAside).filter(ours);
+
+    expect(pages.every((page) => page.checked <= 1)).toBe(true);
+    expect(pages.flatMap((page) => page.unread).filter((did) => ours({ did }))).toEqual([]);
+    expect(reported).toEqual([{
+      did: leaked.did, handle: "audited.ship.test", at: Date.now(), outcome: "leaked-key",
+      head: changed.cid, operation: changed.cid, signedBy: await hostKey(),
+    }]);
+    expect(await rejection(write(leaked.repo))).toContain("IdentityChanged");
+    await write(clean.repo);
+  });
+
+  it("opens only with an operator token for the audit", async () => {
+    expect(await errorOf(post("/operator/identities"))).toBe("AuthenticationRequired");
+    expect(await errorOf(post("/operator/identities", { aud: env.PDS_ORIGIN, act: "status" }))).toBe("InvalidToken");
+    expect(await errorOf(post("/operator/lexicons", { aud: env.PDS_ORIGIN, act: "audit" }))).toBe("InvalidToken");
+  });
+});
+
 /** An hour passes, so the host's next write or signature reads its DID's log again. */
 function anHourPasses(): void {
   vi.setSystemTime(Date.now() + HOUR_MS);
@@ -271,4 +323,19 @@ function stateOf(operation: CompatibleOperationOrTombstone): IdentityState {
 /** Signs and submits an operation on `base` with a key other than the host's own submissions. */
 async function submitAs(did: DidPlcString, base: { cid: string }, state: IdentityState, key: PrivateKey): Promise<void> {
   await new PlcClient({ serviceUrl: env.PLC_URL }).submitOperation(did, await signOperation({ type: "plc_operation", prev: base.cid, ...state }, key));
+}
+
+async function audit(page: { limit: number; cursor?: string }): Promise<Response> {
+  const query = new URLSearchParams({ limit: String(page.limit) });
+  if (page.cursor) query.set("cursor", page.cursor);
+  return post(`/operator/identities?${query}`, { aud: env.PDS_ORIGIN, act: "audit" });
+}
+
+async function post(path: string, request?: OperatorRequest): Promise<Response> {
+  const headers = request ? { Authorization: `Bearer ${await signOperatorToken(env.PLC_ROTATION_KEY, request)}` } : undefined;
+  return worker.fetch(new Request(`${env.PDS_ORIGIN}${path}`, { method: "POST", headers }), deployedEnv());
+}
+
+function deployedEnv(): PdsEnv {
+  return { ...env, INSTALLATION_DIRECTORY: new FakeAccounts() };
 }
