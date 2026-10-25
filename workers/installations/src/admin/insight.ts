@@ -253,7 +253,7 @@ type AuditRow = {
 };
 
 function auditEvent(row: AuditRow): OperatorAuditEvent {
-  // SAFETY: detail_json is only written by finish() from a Record<string, string>.
+  // SAFETY: detail_json is only written by run(), up front and from the outcome, each time from a Record<string, string>.
   const detail = row.detail_json ? JSON.parse(row.detail_json) as Record<string, string> : null;
   return {
     id: row.id, at: row.at, actor: row.actor, action: row.action, installationId: row.installation_id,
