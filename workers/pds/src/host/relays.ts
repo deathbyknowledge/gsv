@@ -41,30 +41,37 @@ export function crawlDue(last: RelayRequest | undefined, seq: number, now: numbe
  * warning, naming the relay and the XRPC error a small JSON refusal gives.
  */
 export async function requestCrawl(relay: string, host: string): Promise<boolean> {
-  let response: Response;
+  // The deadline stops once the relay answers; a timer left running would hold the firehose open.
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new DOMException("The relay didn't answer in time", "TimeoutError")), REQUEST_TIMEOUT_MS);
   try {
-    response = await fetch(new URL("/xrpc/com.atproto.sync.requestCrawl", relay), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "User-Agent": "gsv-pds" },
-      body: JSON.stringify({ hostname: host }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (error) {
-    console.warn(`Relay ${relay} could not be reached to crawl ${host}`, error);
+    let response: Response;
+    try {
+      response = await fetch(new URL("/xrpc/com.atproto.sync.requestCrawl", relay), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "User-Agent": "gsv-pds" },
+        body: JSON.stringify({ hostname: host }),
+        signal: deadline.signal,
+      });
+    } catch (error) {
+      console.warn(`Relay ${relay} could not be reached to crawl ${host}`, error);
+      return false;
+    }
+    if (response.ok) {
+      await response.body?.cancel();
+      return true;
+    }
+    const length = Number(response.headers.get("Content-Length"));
+    let name: string | null = null;
+    if (length > 0 && length <= MAX_REFUSAL_BYTES) {
+      const parsed = z.safeParse(refusal, await response.json().catch(() => null));
+      if (parsed.success) name = parsed.data.error;
+    } else {
+      await response.body?.cancel();
+    }
+    console.warn(`Relay ${relay} refused to crawl ${host}: HTTP ${response.status}${name ? ` ${name}` : ""}`);
     return false;
+  } finally {
+    clearTimeout(timer);
   }
-  if (response.ok) {
-    await response.body?.cancel();
-    return true;
-  }
-  const length = Number(response.headers.get("Content-Length"));
-  let name: string | null = null;
-  if (length > 0 && length <= MAX_REFUSAL_BYTES) {
-    const parsed = z.safeParse(refusal, await response.json().catch(() => null));
-    if (parsed.success) name = parsed.data.error;
-  } else {
-    await response.body?.cancel();
-  }
-  console.warn(`Relay ${relay} refused to crawl ${host}: HTTP ${response.status}${name ? ` ${name}` : ""}`);
-  return false;
 }
