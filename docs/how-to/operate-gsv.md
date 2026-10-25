@@ -181,10 +181,11 @@ missing or the read fails, the page names the reason and the rest of it still
 works.
 
 Accounts records every operator change in an audit log: creating a Ship,
-reissuing its setup link, suspending, reactivating, resetting, and each
-deletion step. Each entry names the operator and the action, plus any reason
-the operator gave. Suspending and reactivating take an optional reason;
-resetting or retiring a Ship requires one. A Ship's
+reissuing its setup link, suspending, reactivating, resetting, taking down and
+restoring what it publishes, and each deletion step. Each entry names the
+operator and the action, plus any reason the operator gave. Suspending,
+reactivating and restoring take an optional reason; resetting or retiring a
+Ship, and a takedown, require one. A Ship's
 page lists its recent entries, and `<admin-origin>/admin/audit` lists every
 entry. Entries outlive the Ship they describe. They name it only by Ship ID and
 hold no owner data.
@@ -194,6 +195,35 @@ not happen and the operator gets a retryable error. A change that returned an
 error is marked "Returned an error". If the outcome could not be written after
 the change ran, the change is still reported as done and its entry reads
 "Outcome not recorded"; check the Ship's current state.
+
+## Take down what a Ship publishes {#take-down-what-a-ship-publishes}
+
+When a Ship publishes something that breaks your rules, you can take down just
+that instead of suspending the Ship. On a deployment that runs the open-network
+host, each Ship's page has a **Takedowns** panel under its actions. It shows
+the Ship's DID and handle and everything currently taken down, with the reason
+and the audit event behind each.
+
+Choose what to take down:
+
+- **Record** takes down one record by its AT URI, such as
+  `at://did:plc:…/space.ship.profile/self` for the Ship's public profile.
+  Accounts looks up the record's current version for you.
+- **File** takes down one blob by its CID, such as a profile picture.
+- **Whole account** takes down everything the Ship publishes. Until you restore
+  it, the Ship can't publish or call other Ships, so its person can't message
+  their contacts either. Everything else in the Ship keeps working.
+
+Write the reason the Ship's person will read in People, then choose **Take
+down**. The PDS stops serving it at once, and relays learn of an account
+takedown from its firehose; copies that apps and relays already made are
+theirs. **Restore** brings it back, with an optional reason for the audit log.
+The person sees each takedown in People, on their profile, with your reason.
+
+The operator JSON API takes down and restores the same way, under the same
+audit. Takedowns need Accounts' `PDS_MODERATION` binding, which the
+composition adds with the PDS; see
+[the open network](../architecture/open-network.md#takedowns).
 
 ## Connect services and verify cleanup
 

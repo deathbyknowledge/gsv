@@ -464,7 +464,8 @@ atproto create com.example.note --file note.json
 ```
 
 `atproto identity` prints the Ship's DID and handle, or `null` until the Ship
-first publishes, invites or contacts someone. `space.ship.profile` belongs to the profile; change it in People.
+first publishes, invites or contacts someone, and what the operator has taken
+down, with the reason they gave. `space.ship.profile` belongs to the profile; change it in People.
 
 Use `sched add --ship` when every firing should become one durable Ship
 responsibility. It works from top-level and process-backed shells. Use

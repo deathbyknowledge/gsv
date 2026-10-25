@@ -23,6 +23,12 @@ retired one reads as deleted and any other state as suspended.
 when the binding carries the `installation-deletion` authority: the repository
 announces the deletion to relays, then erases its files, its host entries and
 its storage, and tombstones its DID. It keeps only a record of the deletion.
+`PdsModerationEntrypoint` takes down and restores an installation's account,
+records and blobs for Accounts' operator pages when the binding carries the
+`operator-moderation` authority. Its calls follow
+`com.atproto.admin.updateSubjectStatus` and `getSubjectStatus`; each
+repository keeps its takedowns in `src/host/moderation.ts`, and every read the
+host serves honours them.
 
 The operator composition in `deployment/src/runtime.ts` deploys the worker
 when the operator configures a PLC rotation key. `npm run deployment:build`
