@@ -320,7 +320,7 @@ export type SendMessageRequestInput = {
 };
 export const sendMessageRequestInputSchema = z.strictObject({
   requestId: z.string().check(z.minLength(1), utf8MaxLength(128)),
-  profileCid: z.string().check(z.minLength(1), utf8MaxLength(128)),
+  profileCid: z.string().check(stringFormat("cid")),
   // Ships count this limit in UTF-16 code units.
   name: z.string().check(z.minLength(1), utf8MaxLength(240), maxGraphemes(80), z.maxLength(80)),
   messageId: z.string().check(z.minLength(1), utf8MaxLength(128)),

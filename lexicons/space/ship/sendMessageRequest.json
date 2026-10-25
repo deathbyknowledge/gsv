@@ -19,8 +19,7 @@
             "profileCid": {
               "type": "string",
               "description": "The CID of the profile record its sender read.",
-              "minLength": 1,
-              "maxLength": 128
+              "format": "cid"
             },
             "name": {
               "type": "string",

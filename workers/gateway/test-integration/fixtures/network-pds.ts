@@ -1,5 +1,6 @@
 import { Secp256k1PrivateKeyExportable } from "@atcute/crypto";
 import { deriveDidFromGenesisOp, signOperation, signTombstone } from "@atcute/did-plc";
+import { toBase32 } from "@atcute/multibase";
 import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { signServiceAuth } from "@humansandmachines/gsv-pds/src/host/service-auth";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
@@ -152,5 +153,5 @@ function publicAccount({ did, handle, host }: NetworkAccount): PublicRepositoryA
 /** Stands in for a CID: different content has a different one. */
 async function contentId(bytes: Uint8Array): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  return `bafy${Array.from(digest.subarray(0, 20), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  return `b${toBase32(new Uint8Array([0x01, 0x55, 0x12, 0x20, ...digest]))}`;
 }

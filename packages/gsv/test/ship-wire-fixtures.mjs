@@ -6,6 +6,7 @@
 
 const ALICE = "did:plc:aliceaaaaaaaaaaaaaaaaaaa";
 const RAW_CID = "bafkreihf2w4xce4657vtnvxnxgjy7isgoqgjbwraanrgjb7lfvozmrvoyy";
+const DAG_CBOR_CID = "bafyreihf2w4xce4657vtnvxnxgjy7isgoqgjbwraanrgjb7lfvozmrvoyy";
 const V0_CID = "Qmdoq6FDxYYYSWRhU7LiVtwe4RbKDSsf8xxj2uFV69ueHs";
 // One code unit and two UTF-8 bytes; two code units and four bytes; four code units
 // and eight bytes; two code points and three bytes; seven code points and 25 bytes.
@@ -105,7 +106,7 @@ export const SHIP_WIRE_FIXTURES = {
     ["a field the method doesn't declare", { reason: "changed my mind" }, refuse],
   ]),
   sendMessageRequestInputSchema: cases({
-    requestId: "request-1", profileCid: RAW_CID, name: "Alice", messageId: "message-1", text: "Hello",
+    requestId: "request-1", profileCid: DAG_CBOR_CID, name: "Alice", messageId: "message-1", text: "Hello",
     createdAtMs: 1_761_000_000_000, expiresAtMs: 1_762_000_000_000,
   }, [
     ["a request", {}, accept],
@@ -123,8 +124,9 @@ export const SHIP_WIRE_FIXTURES = {
     ["text of 16,384 emoji, 32,768 code units", { text: EMOJI.repeat(16_384) }, accept],
     ["text of 16,385 emoji, 32,770 code units", { text: EMOJI.repeat(16_385) }, refuse],
     ["an empty profile CID", { profileCid: "" }, refuse],
-    ["a profile CID of 128 characters", { profileCid: x(128) }, accept],
-    ["a profile CID of 129 characters", { profileCid: x(129) }, refuse],
+    ["a raw profile CID", { profileCid: RAW_CID }, accept],
+    ["a profile CID that isn't a CID", { profileCid: x(59) }, refuse],
+    ["a CIDv0 profile CID", { profileCid: V0_CID }, refuse],
     ["a request of 129 characters", { requestId: x(129) }, refuse],
     ["a message of 129 characters", { messageId: x(129) }, refuse],
     ["sent at the epoch", { createdAtMs: 0 }, refuse],

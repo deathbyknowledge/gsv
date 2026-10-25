@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
+import { toBase32 } from "@atcute/multibase";
 import { signServiceAuth } from "@humansandmachines/gsv-pds/src/host/service-auth";
 import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import type { PdsService, PublicRepository, PublicRepositoryAccount } from "@humansandmachines/gsv/services/pds";
@@ -7,7 +8,6 @@ import { hashPassword, makeShadowEntry } from "../auth/shadow";
 import { getKernelByInstallationId } from "../installation/routing";
 import type { KernelContext } from "../kernel/context";
 import type { Kernel } from "../kernel/do";
-import { sha256Base64Url } from "../kernel/federation-crypto";
 import type { ShipIdentity } from "../kernel/ships/identity";
 import { SHIP_METHODS } from "../kernel/ships/methods";
 import { handleShipXrpc } from "../kernel/ships/xrpc";
@@ -145,7 +145,8 @@ function testPds(network: TestShipNetwork, space: TestSpace, identity: ShipIdent
 
 /** Stands in for a record's CID: a different record has a different one. */
 async function recordCid(value: JsonValue): Promise<string> {
-  return `bafy${(await sha256Base64Url(JSON.stringify(value))).toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value))));
+  return `b${toBase32(new Uint8Array([0x01, 0x71, 0x12, 0x20, ...digest]))}`;
 }
 
 /** Answers `com.atproto.repo.getRecord` as a repository host does, with a 400 for a record it doesn't hold. */
