@@ -213,25 +213,40 @@ export class OperatorAuditLog {
       this.db.prepare(`SELECT COUNT(*) AS total FROM operator_audit_events a ${where}`)
         .bind(...bindings).first<{ total: number }>(),
       this.db.prepare(
-        `SELECT a.id, a.at, a.actor, a.action, a.installation_id, a.detail_json, a.reason, a.outcome, i.handle
-         FROM operator_audit_events a LEFT JOIN installations i ON i.id = a.installation_id
+        `SELECT ${AUDIT_COLUMNS} FROM operator_audit_events a LEFT JOIN installations i ON i.id = a.installation_id
          ${where} ORDER BY a.at DESC, a.rowid DESC LIMIT ? OFFSET ?`,
-      ).bind(...bindings, pageSize, (input.page - 1) * pageSize).all<{
-        id: string; at: number; actor: string; action: string; installation_id: string | null;
-        detail_json: string | null; reason: string | null; outcome: OperatorAuditOutcome; handle: string | null;
-      }>(),
+      ).bind(...bindings, pageSize, (input.page - 1) * pageSize).all<AuditRow>(),
     ]);
-    // SAFETY: detail_json is only written by finish() from a Record<string, string>.
     return {
       page: input.page,
       totalPages: Math.max(1, Math.ceil((count?.total ?? 0) / pageSize)),
-      events: rows.results.map((row) => ({
-        id: row.id, at: row.at, actor: row.actor, action: row.action, installationId: row.installation_id,
-        handle: row.handle, detail: row.detail_json ? JSON.parse(row.detail_json) as Record<string, string> : null,
-        reason: row.reason, outcome: row.outcome,
-      })),
+      events: rows.results.map(auditEvent),
     };
   }
+
+  /** One event, as the log lists it. */
+  async event(id: string): Promise<OperatorAuditEvent | null> {
+    const row = await this.db.prepare(
+      `SELECT ${AUDIT_COLUMNS} FROM operator_audit_events a LEFT JOIN installations i ON i.id = a.installation_id WHERE a.id = ?`,
+    ).bind(id).first<AuditRow>();
+    return row ? auditEvent(row) : null;
+  }
+}
+
+const AUDIT_COLUMNS = "a.id, a.at, a.actor, a.action, a.installation_id, a.detail_json, a.reason, a.outcome, i.handle";
+
+type AuditRow = {
+  id: string; at: number; actor: string; action: string; installation_id: string | null;
+  detail_json: string | null; reason: string | null; outcome: OperatorAuditOutcome; handle: string | null;
+};
+
+function auditEvent(row: AuditRow): OperatorAuditEvent {
+  // SAFETY: detail_json is only written by finish() from a Record<string, string>.
+  const detail = row.detail_json ? JSON.parse(row.detail_json) as Record<string, string> : null;
+  return {
+    id: row.id, at: row.at, actor: row.actor, action: row.action, installationId: row.installation_id,
+    handle: row.handle, detail, reason: row.reason, outcome: row.outcome,
+  };
 }
 
 function signInLabel(method: string): string {

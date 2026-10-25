@@ -26,6 +26,7 @@ export function adminPageResponse(input: {
       <a class="brand" href="/admin/installations"><strong>Ship</strong><span>administration</span></a>
       <nav aria-label="Operator navigation">
         ${navLink("/admin/installations", "Ships", input.section === "installations")}
+        ${navLink("/admin/reports", "Reports", input.section === "reports")}
         ${(input.navigation ?? []).map((item) => navLink(item.href, item.label, input.section === item.section)).join("")}
         ${navLink("/admin/signup", "Signup", input.section === "signup")}
         ${navLink("/admin/audit", "Audit", input.section === "audit")}
@@ -254,6 +255,8 @@ td strong, td small { display: block; } td small { margin-top: 6px; color: #8585
 .badge-ok, .badge-online { border-color: #315f4b; color: #9de0be; background: #0d1713; } .badge-error, .badge-aborted, .badge-offline { border-color: #743b42; color: #efafb5; background: #1a0e10; }
 .timeline td, .audit td { padding: 10px 14px; vertical-align: top; }
 details summary { cursor: pointer; color: #c4c4ce; } .flag { color: #f1c48a; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; } .tabs a[aria-current="page"] { border-color: #716bea; background: #34306f; }
+.reported-message { white-space: pre-wrap; overflow-wrap: anywhere; color: #e8e8ef; }
 .steps { margin: 10px 0 0; padding-left: 18px; font: 11px/1.7 ui-monospace, monospace; color: #a7a7b2; }
 .steps span { color: #6f6f7c; } .steps .step-slow { color: #f1c48a; } .steps .step-error { color: #efafb5; }
 @media (max-width: 760px) { .topbar { flex-wrap: wrap; gap: 8px 18px; padding: 12px 18px 0; } .topbar nav { order: 3; width: 100%; height: 44px; } .topbar nav a { padding: 0 10px; } .topbar small { display: none; } main { padding: 32px 16px 60px; } .page-heading { align-items: start; flex-direction: column; } .filters { grid-template-columns: 1fr; } .grid, .metrics { grid-template-columns: 1fr; } .metric { border-right: 0; border-bottom: 1px solid #292932; } .metric:last-child { border-bottom: 0; } .notice { grid-template-columns: 1fr; } .notice .button, .notice code, .notice small { grid-column: 1; } .definition-list { grid-template-columns: 1fr; } .definition-list dt { padding-bottom: 3px; border-bottom: 0; } .definition-list dd { padding-top: 3px; } }

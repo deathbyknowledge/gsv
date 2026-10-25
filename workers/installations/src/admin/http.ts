@@ -12,6 +12,8 @@ import { adminErrorPage, adminStylesheet, adminTimeScript } from "./page";
 import type { IssuedAdminInstallation } from "./service";
 import { InstallationDeletionHttp } from "../deletion-http";
 import type { AccountsDeletionRuntime } from "../deletion-runtime";
+import type { RequestReports } from "../request-reports";
+import { RequestReportsHttp } from "./reports-http";
 import { runTakedownAction, type ShipTakedowns } from "./takedowns";
 
 type AdminCreateFormInput = { operationId: string; handle: string };
@@ -33,6 +35,7 @@ export class InstallationAdminHttp<
 > {
   private readonly api: InstallationAdminApi;
   private readonly deletion: InstallationDeletionHttp | undefined;
+  private readonly reports: RequestReportsHttp | undefined;
 
   constructor(
     private readonly service: AdminService<Detail, Summary>,
@@ -42,10 +45,15 @@ export class InstallationAdminHttp<
     deletion?: AccountsDeletionRuntime,
     private readonly insight?: ShipInsight,
     private readonly takedowns?: ShipTakedowns,
+    reports?: RequestReports,
   ) {
     const audited: AdminAuditRecorder = (request, action, mutation, describe) => this.audited(request, action, mutation, describe);
     this.api = new InstallationAdminApi(service, access, origin, audited, takedowns);
     this.deletion = deletion ? new InstallationDeletionHttp(deletion, access, origin, audited) : undefined;
+    // A report closes under the audit event of the operator's action, so the queue needs the audit log.
+    this.reports = reports && insight
+      ? new RequestReportsHttp(reports, insight.audit, access, origin, audited, takedowns, presentation.navigation)
+      : undefined;
   }
 
   async handle(request: Request): Promise<Response | null> {
@@ -53,6 +61,8 @@ export class InstallationAdminHttp<
     if (url.pathname !== "/admin" && !url.pathname.startsWith("/admin/")) return null;
     const deletionResponse = await this.deletion?.handle(request);
     if (deletionResponse) return deletionResponse;
+    const reportsResponse = await this.reports?.handle(request);
+    if (reportsResponse) return reportsResponse;
     const response = await this.api.handle(request);
     if (response) return response;
     if (!await this.access.allows(request)) return adminText("Forbidden", 403);
@@ -68,7 +78,7 @@ export class InstallationAdminHttp<
         return adminInstallationsPage(await this.service.listInstallations(readInstallationListQuery(url)), undefined, head, 200, this.presentation);
       }
       if (url.pathname === "/admin/audit" && (request.method === "GET" || head)) {
-        const page = readAuditPage(url);
+        const page = readPageNumber(url);
         return adminAuditPage(this.insight ? await this.insight.audit.list({ page }) : null, head, this.presentation.navigation);
       }
       if (url.pathname === "/admin/signup" && (request.method === "GET" || head)) {
@@ -203,7 +213,7 @@ export class InstallationAdminHttp<
   }
 }
 
-function readAuditPage(url: URL): number {
+export function readPageNumber(url: URL): number {
   const value = url.searchParams.get("page");
   if (value === null) return 1;
   const page = Number(value);
@@ -240,7 +250,7 @@ function isAdminApiPath(pathname: string): boolean {
   return pathname === "/admin/api" || pathname.startsWith("/admin/api/");
 }
 
-function installationAdminFailure(error: Error) {
+export function installationAdminFailure(error: Error) {
   const message = error.message;
   if (error instanceof UnconfirmedActionError) return { message, status: 400 };
   if (["handle ", "installation", "operationId ", "request ", "form ", "query ", "state ", "page "]
