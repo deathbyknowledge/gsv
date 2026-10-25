@@ -271,6 +271,7 @@ function makeContext(options?: {
   }
   return focusedFixture<KernelContext>({
     broadcastToUserUid: vi.fn(),
+    didDocuments: focusedFixture<KernelContext["didDocuments"]>({ deactivated: vi.fn(() => new Set<string>()) }),
     env: testEnv,
     modelMetadata: new ModelMetadataResolver(testEnv, installationIdentity.installationId),
     installationId: installationIdentity.installationId,
@@ -4524,7 +4525,8 @@ describe("native administration shell commands", () => {
     });
     const ctx = makeContext({
       capabilities: ["shell.exec", "contact.list", "conversation.history"],
-      federation: { list: vi.fn(() => [contact]) },
+      // Its Ship was already checked this hour.
+      federation: { list: vi.fn(() => [contact]), getByConversation: vi.fn(() => contact), consumeRateLimits: vi.fn(() => Date.now() + 60_000) },
       procs: {
         get: vi.fn(() => makeProcess({
           processId: "proc:ship",
