@@ -1,15 +1,22 @@
 import type {
+  ModerationSubject,
   PublicBlobRef,
   PublicCommit,
   PublicRecordWrite,
   PublicRepositoryAccount,
+  PublicTakedown,
 } from "../protocol/syscalls/atproto";
 
 export type {
+  ModerationBlobRef,
+  ModerationRepoRef,
+  ModerationStrongRef,
+  ModerationSubject,
   PublicBlobRef,
   PublicCommit,
   PublicRecordWrite,
   PublicRepositoryAccount,
+  PublicTakedown,
 } from "../protocol/syscalls/atproto";
 
 /** Largest blob a repository accepts: as much as a message may attach. */
@@ -40,10 +47,43 @@ export interface PublicRepository {
   uploadBlob(body: ReadableStream<Uint8Array>, size: number, mimeType: string): Promise<PublicBlobRef>;
   /** Reads back one of the repository's blobs, including an upload no record references yet. */
   readBlob(cid: string): Promise<PublicBlob | null>;
+  /** What the host has taken down of the repository, and why; every public read leaves it out. */
+  takedowns(): Promise<PublicTakedown[]>;
   [Symbol.dispose]?(): void;
 }
 
 /** The deployment's ATProto host for public records. The installation comes from the Kernel's binding, never a caller. */
 export interface PdsService {
   getInstallation(installationId: string): Promise<PublicRepository>;
+}
+
+/** com.atproto.admin.defs#statusAttr: whether a status applies, and the reference of the action that applied it. */
+export type SubjectStatusAttr = { applied: boolean; ref?: string };
+
+/**
+ * com.atproto.admin.updateSubjectStatus's input, with the reason the host
+ * gives the account's person. Restoring is the same call with `applied: false`.
+ */
+export type SubjectStatusUpdate = { subject: ModerationSubject; takedown: SubjectStatusAttr; reason?: string };
+
+/** com.atproto.admin.getSubjectStatus's output, which updateSubjectStatus answers too. */
+export type SubjectStatus = { subject: ModerationSubject; takedown: SubjectStatusAttr };
+
+/** com.atproto.admin.getSubjectStatus's parameters: an account by DID, a record by AT URI, or a blob by its account's DID and CID. */
+export type SubjectStatusQuery = { did?: string; uri?: string; blob?: string };
+
+/** An installation's account on the open network, and what its host has taken down. */
+export type RepositoryModeration = { did: string; handle: string; takedowns: PublicTakedown[] };
+
+/**
+ * Takedowns on the deployment's ATProto host, with the semantics of
+ * com.atproto.admin.updateSubjectStatus. Only Accounts' operator binding
+ * reaches it; each call names the installation whose repository holds the subject.
+ */
+export interface PdsModerationService {
+  /** The installation's account and its takedowns; null until the installation's first outward act creates the account. */
+  getRepository(installationId: string): Promise<RepositoryModeration | null>;
+  updateSubjectStatus(installationId: string, input: SubjectStatusUpdate): Promise<SubjectStatus>;
+  /** Null when the subject names nothing the installation's repository holds or has taken down. */
+  getSubjectStatus(installationId: string, query: SubjectStatusQuery): Promise<SubjectStatus | null>;
 }
