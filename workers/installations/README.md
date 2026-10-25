@@ -152,9 +152,11 @@ Resolvers may instead fetch evidence references from their owned storage.
 The existing operator authentication and exact mutation Origin protect these JSON
 routes under `/admin/api/installations/:id/deletion`:
 
-- `POST /retire` takes `operationId` and `confirmHandle` to close admission for
-  explicit deletion without creating a replacement. A required reset preparation
-  must finish first. Retired reset sources already have closed admission.
+- `POST /retire` takes `operationId`, `confirmHandle` and a `reason`, which the
+  audit log keeps, to close admission for explicit deletion without creating a
+  replacement. Without the handle or a reason it answers 400 with the
+  `consequences` of retiring. A required reset preparation must finish first.
+  Retired reset sources already have closed admission.
 - `POST /inspect` takes the shared lifecycle inspection request and probes only
   through the trusted gateway discovery capability.
 - `POST /inventory` registers a manifest, or `{ manifest, evidence }` where each
