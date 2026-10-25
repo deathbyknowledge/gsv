@@ -851,6 +851,14 @@ export class FederationStore {
     return row ? contactFromRow(row) : null;
   }
 
+  getByConversation(conversationId: string): FederationContactRecord | null {
+    const row = this.sql.exec<ContactRow>(
+      `${CONTACT_SELECT} WHERE c.conversation_id = ? LIMIT 1`,
+      conversationId,
+    ).toArray()[0];
+    return row ? contactFromRow(row) : null;
+  }
+
   /** The contact a calling Ship is, whichever of this space's people it belongs to. */
   getByCaller(remoteDid: string): FederationContactRecord | null {
     const row = this.sql.exec<ContactRow>(

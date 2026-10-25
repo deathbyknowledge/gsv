@@ -23,7 +23,8 @@ import { DidDeactivatedError, DidDirectoryUnavailableError, DidDocumentStore, Di
 import { ShipIdentity } from "./identity";
 import { callShip, handleShipXrpc, type ShipCall, type ShipMethods } from "./xrpc";
 
-const DAY_MS = 24 * 60 * 60_000;
+const HOUR_MS = 60 * 60_000;
+const DAY_MS = 24 * HOUR_MS;
 
 type TestShip = { ctx: KernelContext; settle: () => Promise<void> };
 
@@ -69,13 +70,28 @@ describe("resolving DIDs", () => {
     });
   });
 
-  it("forgets a DID once it is deactivated", async () => {
+  it("remembers a DID once it is deactivated, and answers from its cache without a lookup", async () => {
     const alice = await network.account("alice.ship.test");
     await withShip(async ({ ctx }) => {
       await resolveDid(alice.did, ctx);
       await network.deactivate(alice);
       await expect(resolveDid(alice.did, ctx, { refresh: true })).rejects.toThrow(DidDeactivatedError);
-      expect(isDidCached(alice.did, ctx)).toBe(false);
+      const lookups = vi.mocked(fetch).mock.calls.length;
+      await expect(resolveDid(alice.did, ctx)).rejects.toThrow(DidDeactivatedError);
+      expect(vi.mocked(fetch).mock.calls).toHaveLength(lookups);
+      expect(isDidCached(alice.did, ctx)).toBe(true);
+      expect(ctx.didDocuments.deactivated([alice.did, randomPlcDid()])).toEqual(new Set([alice.did]));
+    });
+  });
+
+  it("reads a cached document again once it is older than its caller accepts", async () => {
+    const alice = await network.account("alice.ship.test");
+    await withShip(async ({ ctx }) => {
+      const cached = await resolveDid(alice.did, ctx);
+      const rotated = await network.rotateSigningKey(alice);
+      expect(await resolveDid(alice.did, ctx, { maxAgeMs: HOUR_MS })).toEqual(cached);
+      vi.spyOn(Date, "now").mockReturnValue(Date.now() + HOUR_MS);
+      expect((await resolveDid(alice.did, ctx, { maxAgeMs: HOUR_MS })).signingKey.publicKeyMultibase).toBe(rotated);
     });
   });
 

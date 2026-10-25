@@ -3,18 +3,24 @@ import { ACCEPT_INVITATION, ATTACHMENT_REVISION_HEADER, ATTACHMENT_SIZE_HEADER, 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as nativeFs from "../../drivers/native/fs";
 import * as utils from "../../shared/utils";
-import { TestShipNetwork } from "../../test-support/ship-network";
+import { TEST_PLC_URL, TestShipNetwork } from "../../test-support/ship-network";
 import { loseNextAnswer, SPACE_OWNER_UID, testSpace, type TestSpace } from "../../test-support/ship-spaces";
 import type { KernelContext } from "../context";
+import { handleConversationHistory } from "../conversation-handlers";
 import type { FederationContactRecord } from "../federation-store";
 import {
+  handleContactDeliveryList,
+  handleContactList,
   handleContactResourceRead,
   handleContactResourceSend,
   handleContactRevoke,
   handleContactSend,
   processFederationDelivery,
 } from "../federation";
+import { DidDeactivatedError, resolveDid } from "../ships/did-directory";
 import { handleContactInviteAccept, handleContactInviteCreate } from "./invitations";
+
+const HOUR_MS = 60 * 60_000;
 
 let network: TestShipNetwork;
 let alice: TestSpace;
@@ -244,6 +250,107 @@ describe("a contact whose Ship is gone", () => {
   });
 });
 
+describe("a contact whose Ship is gone, once its person opens it", () => {
+  it("ends once another Ship holds its address, checking only after the conversation is read", async () => {
+    // An operator resets Bob's space, and nothing is sent to his address: it now names a new Ship with its own DID.
+    await testSpace(network, "bob");
+    // His address answers nothing until the conversation has been read.
+    let answer!: () => void;
+    const read = new Promise<void>((resolve) => { answer = resolve; });
+    const serve = hostOf(bob);
+    network.hosts.set(bob.hostname, async (request) => { await read; return await serve(request); });
+    const signals = await alice.run(async (ctx) => {
+      const { context, signals, settle } = observed(ctx);
+      await handleConversationHistory({ conversationId: contactFor(ctx, bob).conversationId }, context);
+      expect(contactFor(ctx, bob).state).toBe("active");
+      answer();
+      await settle();
+      return signals;
+    });
+    expect(signals).toContain("contact.changed");
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("revoked");
+  });
+
+  it("ends once its DID is tombstoned, reading a document cached over an hour ago again", async () => {
+    network.hosts.set(bob.hostname, () => new Response("Not Found", { status: 404 }));
+    await network.deactivate(bob.account);
+    await ageCachedDocument(alice, bob, HOUR_MS);
+    expect(await open(alice, bob, "deliveries")).toContain("contact.changed");
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("revoked");
+  });
+
+  it("trusts a document cached within the hour, and still checks the address it names", async () => {
+    await network.deactivate(bob.account);
+    const checks = requestsTo(bob.hostname);
+    const lookups = directoryLookups();
+    expect(await open(alice, bob)).toEqual([]);
+    expect(directoryLookups()).toBe(lookups);
+    expect(checks).toEqual(["/.well-known/atproto-did"]);
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
+  });
+
+  it("checks each contact at most once an hour", async () => {
+    const checks = requestsTo(bob.hostname);
+    await open(alice, bob);
+    await open(alice, bob, "deliveries");
+    await open(alice, bob);
+    expect(checks).toEqual(["/.well-known/atproto-did"]);
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + HOUR_MS);
+    await open(alice, bob);
+    expect(checks).toEqual(["/.well-known/atproto-did", "/.well-known/atproto-did"]);
+  });
+
+  it.each<[string, string | null]>([
+    ["serves its Ship elsewhere", "https://elsewhere.ship.test"],
+    ["isn't a Ship", null],
+  ])("keeps the contact when its address names another account that %s", async (_holder, endpoint) => {
+    const { ship: _ship, ...services } = bob.account.services;
+    const other = await network.account(bob.hostname, endpoint ? { ...services, ship: { type: "ShipService", endpoint } } : services);
+    const serve = hostOf(bob);
+    network.hosts.set(bob.hostname, (request) => new URL(request.url).pathname === "/.well-known/atproto-did" ? new Response(other.did) : serve(request));
+    expect(await open(alice, bob)).toEqual([]);
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
+  });
+
+  it("keeps the contact when its Ship moved within the hour before another took the old address", async () => {
+    network.hosts.set("bob-moved.ship.test", hostOf(bob));
+    await network.setServices(bob.account, { ...bob.account.services, ship: { type: "ShipService", endpoint: "https://bob-moved.ship.test" } });
+    await testSpace(network, "bob");
+    // Alice's Ship still has the recent copy that names the old address, which a new Ship now holds.
+    expect(await open(alice, bob)).toEqual([]);
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
+  });
+
+  it("keeps the contact while the directory can't be reached to read an old document again", async () => {
+    await testSpace(network, "bob");
+    await ageCachedDocument(alice, bob, HOUR_MS);
+    network.plcReachable = false;
+    expect(await open(alice, bob)).toEqual([]);
+    expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
+  });
+});
+
+describe("listing contacts", () => {
+  it("ends those whose DIDs the directory cache already knows were deactivated, without a lookup", async () => {
+    await network.deactivate(bob.account);
+    // Something else read Bob's DID again, and his Ship kept the tombstone it found.
+    await alice.run(async (ctx) => await expect(resolveDid(bob.account.did, ctx, { refresh: true })).rejects.toThrow(DidDeactivatedError));
+    const requests = vi.mocked(fetch).mock.calls.length;
+    const listed = await alice.run((ctx) => handleContactList({ includeRevoked: true }, ctx));
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(requests);
+    expect(listed.contacts.find((contact) => contact.remoteDid === bob.account.did)?.state).toBe("revoked");
+  });
+
+  it("makes no lookup for a contact whose cached document is old", async () => {
+    await network.deactivate(bob.account);
+    await ageCachedDocument(alice, bob, 2 * 24 * HOUR_MS);
+    const requests = vi.mocked(fetch).mock.calls.length;
+    const listed = await alice.run((ctx) => handleContactList({}, ctx));
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(requests);
+    expect(listed.contacts.map((contact) => contact.remoteDid)).toEqual([bob.account.did]);
+  });
+});
+
 /** Connects two spaces' people through an invitation. */
 async function connect(inviter: TestSpace, acceptor: TestSpace): Promise<void> {
   const { code } = await inviter.run((ctx) => handleContactInviteCreate({}, ctx));
@@ -280,6 +387,53 @@ async function deliverPending(space: TestSpace): Promise<void> {
   await space.run(async (ctx) => {
     for (const { deliveryId } of ctx.federation.recoverableOutbox(100)) await processFederationDelivery(deliveryId, held(ctx));
   });
+}
+
+/** A space's context that keeps the work a call leaves behind, for `settle` to wait for, and the signals it broadcasts. */
+function observed(ctx: KernelContext) {
+  const deferred: Promise<unknown>[] = [];
+  const signals: string[] = [];
+  const context: KernelContext = { ...ctx, defer: (work) => void deferred.push(work), broadcastToUserUid: (_uid, signal) => void signals.push(signal) };
+  return { context, signals, settle: async () => void await Promise.all(deferred) };
+}
+
+/** Opens a contact's conversation, or its deliveries, as its person does; returns what the work it leaves behind broadcast. */
+async function open(from: TestSpace, to: TestSpace, read: "conversation" | "deliveries" = "conversation"): Promise<string[]> {
+  return await from.run(async (ctx) => {
+    const { context, signals, settle } = observed(ctx);
+    const contact = contactFor(ctx, to);
+    if (read === "conversation") await handleConversationHistory({ conversationId: contact.conversationId }, context);
+    else handleContactDeliveryList({ contactId: contact.id }, context);
+    await settle();
+    return signals;
+  });
+}
+
+function hostOf(space: TestSpace): (request: Request) => Response | Promise<Response> {
+  const serve = network.hosts.get(space.hostname);
+  if (!serve) throw new Error(`${space.name}'s address has no host`);
+  return serve;
+}
+
+/** The paths a host is asked for from now on. */
+function requestsTo(hostname: string): string[] {
+  const serve = network.hosts.get(hostname);
+  if (!serve) throw new Error(`${hostname} has no host`);
+  const paths: string[] = [];
+  network.hosts.set(hostname, (request) => {
+    paths.push(new URL(request.url).pathname);
+    return serve(request);
+  });
+  return paths;
+}
+
+function directoryLookups(): number {
+  return vi.mocked(fetch).mock.calls.filter(([input]) => (input instanceof Request ? input.url : String(input)).startsWith(TEST_PLC_URL)).length;
+}
+
+/** Makes the copy of a contact's DID document a space keeps older by `ms`. */
+async function ageCachedDocument(space: TestSpace, other: TestSpace, ms: number): Promise<void> {
+  await space.run((_ctx, storage) => void storage.sql.exec("UPDATE did_documents SET resolved_at = resolved_at - ? WHERE did = ?", ms, other.account.did));
 }
 
 /** A space's conversation with a contact, as its person sees it. */

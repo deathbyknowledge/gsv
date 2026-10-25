@@ -50,28 +50,52 @@ const MAX_DID_BYTES = 2_048;
 const LOOKUP_TIMEOUT_MS = 10_000;
 const SHIP_SERVICE = { id: "#ship", type: "ShipService" } as const;
 
-type CachedDid = { resolved: ResolvedDid; resolvedAtMs: number };
+/** A cached document, or null for a DID whose verified history ended in a tombstone. */
+type CachedDid = { resolved: ResolvedDid | null; resolvedAtMs: number };
 
-/** The Kernel's cache of other accounts' DID documents. */
+/** The Kernel's cache of other accounts' DID documents, and of the tombstones that deactivated DIDs. */
 export class DidDocumentStore {
   constructor(private readonly sql: SqlStorage) {}
 
   get(did: string, now: number): CachedDid | null {
-    const row = this.sql.exec<{ resolved_json: string; resolved_at: number }>(
+    const row = this.sql.exec<{ resolved_json: string | null; resolved_at: number }>(
       "UPDATE did_documents SET used_at = ? WHERE did = ? RETURNING resolved_json, resolved_at",
       now,
       did,
     ).toArray()[0];
-    // SAFETY: rows are written only by put(), from a ResolvedDid.
-    return row ? { resolved: JSON.parse(row.resolved_json) as ResolvedDid, resolvedAtMs: row.resolved_at } : null;
+    if (!row) return null;
+    // SAFETY: rows are written only by put(), from a ResolvedDid, and by deactivate(), without one.
+    return { resolved: row.resolved_json === null ? null : JSON.parse(row.resolved_json) as ResolvedDid, resolvedAtMs: row.resolved_at };
   }
 
   put(resolved: ResolvedDid, now: number): void {
+    this.write(resolved.did, JSON.stringify(resolved), now);
+  }
+
+  /** Keeps the tombstone a lookup found in place of the DID's document. */
+  deactivate(did: string, now: number): void {
+    this.write(did, null, now);
+  }
+
+  /** Which of the DIDs the cache knows were deactivated; it reads nothing from the directory. */
+  deactivated(dids: readonly string[]): Set<string> {
+    if (dids.length === 0) return new Set();
+    return new Set(this.sql.exec<{ did: string }>(
+      "SELECT did FROM did_documents WHERE resolved_json IS NULL AND did IN (SELECT value FROM json_each(?))",
+      JSON.stringify(dids),
+    ).toArray().map(({ did }) => did));
+  }
+
+  delete(did: string): void {
+    this.sql.exec("DELETE FROM did_documents WHERE did = ?", did);
+  }
+
+  private write(did: string, resolvedJson: string | null, now: number): void {
     this.sql.exec(
       `INSERT INTO did_documents (did, resolved_json, resolved_at, used_at) VALUES (?, ?, ?, ?)
        ON CONFLICT (did) DO UPDATE SET resolved_json = excluded.resolved_json, resolved_at = excluded.resolved_at, used_at = excluded.used_at`,
-      resolved.did,
-      JSON.stringify(resolved),
+      did,
+      resolvedJson,
       now,
       now,
     );
@@ -82,35 +106,33 @@ export class DidDocumentStore {
       MAX_CACHED_DOCUMENTS,
     );
   }
-
-  delete(did: string): void {
-    this.sql.exec("DELETE FROM did_documents WHERE did = ?", did);
-  }
 }
 
 /**
  * Resolves a DID to what a Ship needs from its document. A did:plc is read from
  * its directory's audit log, whose every operation must verify back to the
  * genesis operation the DID hashes, so the directory can withhold an update but
- * not forge one. A cached document answers first; `refresh` reads the directory
- * again, as a failed signature check does once.
+ * not forge one. A cached document, or tombstone, answers first; `refresh`
+ * reads the directory again, as a failed signature check does once, and
+ * `maxAgeMs` does when the cached copy is at least that old.
  */
-export async function resolveDid(did: string, ctx: KernelContext, options: { refresh?: boolean } = {}): Promise<ResolvedDid> {
+export async function resolveDid(did: string, ctx: KernelContext, options: { refresh?: boolean; maxAgeMs?: number } = {}): Promise<ResolvedDid> {
   const now = Date.now();
   const cached = ctx.didDocuments.get(did, now);
-  if (cached && !options.refresh) {
+  if (cached && !options.refresh && (options.maxAgeMs === undefined || now - cached.resolvedAtMs < options.maxAgeMs)) {
     if (cached.resolvedAtMs + REFRESH_AFTER_MS <= now) {
       // A failed refresh keeps the copy this answer used; the next lookup tries again.
       ctx.defer(lookUpDid(did, ctx).catch((cause: unknown) => {
         console.warn("[Kernel] DID document refresh failed", cause instanceof Error ? cause.message : String(cause));
       }));
     }
+    if (!cached.resolved) throw new DidDeactivatedError(`${did} was deactivated`);
     return cached.resolved;
   }
   return await lookUpDid(did, ctx);
 }
 
-/** Whether a DID's document is already cached, so resolving it costs no lookup. */
+/** Whether a DID's document, or its tombstone, is already cached, so resolving it costs no lookup. */
 export function isDidCached(did: string, ctx: KernelContext): boolean {
   return ctx.didDocuments.get(did, Date.now()) !== null;
 }
@@ -163,7 +185,8 @@ async function lookUpDid(did: string, ctx: KernelContext): Promise<ResolvedDid> 
   try {
     document = isPlcDid(did) ? await plcDocument(did, ctx) : await webDocument(did, ctx);
   } catch (error) {
-    if (error instanceof DidNotResolvedError) ctx.didDocuments.delete(did);
+    if (error instanceof DidDeactivatedError) ctx.didDocuments.deactivate(did, Date.now());
+    else if (error instanceof DidNotResolvedError) ctx.didDocuments.delete(did);
     throw error;
   }
   const resolved = resolvedDid(did, document);

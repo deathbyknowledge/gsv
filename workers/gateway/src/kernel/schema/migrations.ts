@@ -11,6 +11,7 @@ import { KERNEL_V074_CONTACTS_BY_DID } from "./v074_contacts_by_did";
 import { KERNEL_V075_PROFILE_RECORDS } from "./v075_profile_records";
 import { KERNEL_V076_MESSAGE_REQUESTS_BY_DID } from "./v076_message_requests_by_did";
 import { KERNEL_V077_DROP_CONTACTS_BEFORE_DIDS } from "./v077_drop_contacts_before_dids";
+import { KERNEL_V078_REMEMBER_DEACTIVATED_DIDS } from "./v078_remember_deactivated_dids";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -206,6 +207,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V075_PROFILE_RECORDS,
   KERNEL_V076_MESSAGE_REQUESTS_BY_DID,
   KERNEL_V077_DROP_CONTACTS_BEFORE_DIDS,
+  KERNEL_V078_REMEMBER_DEACTIVATED_DIDS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {
