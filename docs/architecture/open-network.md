@@ -55,7 +55,8 @@ it can undo it, by signing another operation on that one. The owner's key can
 therefore undo what the host or the operator signs, and neither can undo what
 it signs. PLC allows one to five rotation keys, each listed once, and verifies
 only P-256 and secp256k1 keys. The PDS changes no owner's key while the account
-is taken down or being deleted, and no syscall reaches it yet.
+is taken down or being deleted. The person sets that key with a
+[recovery sheet](#recovery-sheets).
 
 Every change after the genesis goes through one function. It signs the next
 operation on the head of the DID's log that the PDS last recorded, and carries
@@ -64,6 +65,65 @@ until the directory has it, so a retry after a lost response submits the same
 operation instead of signing another. A log that has moved past the recorded
 head means someone else changed the identity, and the PDS signs nothing on it:
 the change fails with `IdentityChanged`.
+
+## Recovery sheets {#recovery-sheets}
+
+A recovery sheet is the owner's recovery key on paper. The person makes one in
+Settings once the Ship has its identity; making a sheet never creates one. Their
+browser draws 128 bits from its random source and derives a P-256 key from
+them. It sends the Kernel only the public half, which the PDS lists first among
+the rotation keys in place of any earlier sheet. The words, the private key and
+the QR code never leave the browser, which holds them in memory only until the
+person finishes, cancels or leaves the section. The word list and the curve load
+in a separate chunk, only when a sheet is made.
+
+The sheet holds:
+
+- the 128 bits as 12 words from the BIP39 English list, with its checksum;
+- the private key `d = (OKM mod (n − 1)) + 1`, as FIPS 186-5 A.2.1 reduces it.
+  OKM is 48 bytes of HKDF-SHA256 read as a big-endian integer, with the 16 bytes
+  of entropy as input keying material, the salt `GSV recovery sheet v1` and the
+  info `did:plc rotation key P-256`; `n` is the P-256 group order;
+- a QR code of the private key as a multikey: `z` and the base58btc encoding of
+  the varint of multicodec `0x1306` followed by the 32 bytes of `d`, which is
+  the form atproto tools read;
+- the sheet code: the first 30 bits of the SHA-256 of the public key's
+  `did:key`, in Crockford's base32, written `XXX-XXX`. It tells the person which
+  sheet is current and is safe to share.
+
+These vectors, from BIP39's own test entropies, are in the web and SDK tests:
+
+| Words | Entropy | `d` | `did:key` | Sheet code | QR |
+|---|---|---|---|---|---|
+| `abandon` ×11, `about` | `00` ×16 | `43760196af39f8db366a7b0baf5c732e35c9cfcc37c01e77cf067aa7227a768e` | `did:key:zDnaewGvRNmdcuZt2bW7LxUWxazHNEUMBQmpF9UqyVVVs19Hk` | `E35-BAN` | `z42tnRekTm23DJg8zCE8SfEy19MNf2irnT9zcCAmamcFVEvR` |
+| `legal winner thank year wave sausage worth useful legal winner thank yellow` | `7f` ×16 | `f2e63c62911001b87350fc9f19ab2e2a88ffe8d899606b5c2a0cbeb7fc79035c` | `did:key:zDnaeawtd1GGcWMADtNZPXHbhGtfX7F3dPFfh116iVeEz62yp` | `PJW-P30` | `z42tzEVMUGhTswAVhmB438G8FwMCuCrCNc9E9SVPyYC3Xskf` |
+
+Only the signed-in person, in their own session, makes, replaces or removes the
+sheet, through [`atproto.recovery.set`](../reference/syscalls.md#recovery-sheet).
+The Ship's process, Crew, tools, CodeMode, apps, messengers, machines and root
+are refused whatever their capabilities. Each change takes the person's
+password and a code that Accounts emails them for exactly that change: the
+SHA-256 of `{"from": <listed key or null>, "to": <new key or null>}`. Accounts
+keeps only a keyed hash of each code. A code expires after ten minutes and works
+once, and five wrong tries use it up. Accounts sends at most one a minute and
+five an hour for each Ship. The Kernel allows five wrong passwords in 15
+minutes, and takes an attempt before checking one, so parallel tries can't pass
+the limit.
+
+The password alone confirms a change only when Accounts sends no email at all,
+which is a fact of its deployment. When Accounts is pacing codes, has no
+verified address for the owner, or fails, the change is refused.
+
+The host's rotation key signs each change, so for 72 hours a key ranked above
+it in the operation before can undo it: the operator's recovery key can undo a
+new sheet, and the previous sheet can undo its replacement or removal. After
+each change Accounts emails the owner its sheet code, from
+`GSV_OWNER_EMAIL_FROM` with replies to `GSV_OWNER_EMAIL_REPLY_TO`, so a change
+the owner didn't make reaches the operator in time to undo it.
+
+A reset gives the Ship a new identity, and the sheet stays with the old one. A
+deletion's tombstone is an operation like any other, so the sheet can undo it
+for 72 hours.
 
 ## Calls between Ships
 

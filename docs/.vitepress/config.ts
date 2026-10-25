@@ -130,6 +130,7 @@ export default defineConfig({
             { text: "Retire a Standalone Deployment", link: "/how-to/standalone-retirement" },
             { text: "Run Ship for Your Organisation", link: "/how-to/organisations" },
             { text: "Personal Access", link: "/how-to/invite-people" },
+            { text: "Recovery Sheet", link: "/how-to/recovery-sheet" },
             { text: "Contact People", link: "/how-to/contact-people" },
             { text: "Install Host Applications", link: "/how-to/install-host-apps" },
             { text: "Use Voice Input", link: "/how-to/voice-input" },

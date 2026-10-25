@@ -487,13 +487,32 @@
         "packages/gsv/src/protocol/syscalls/atproto.ts",
         "workers/gateway/src/kernel/atproto.ts",
         "workers/gateway/src/kernel/federation/gone-ships.ts",
-    "workers/gateway/src/kernel/ships/did-directory.ts",
+        "workers/gateway/src/kernel/ships/did-directory.ts",
         "workers/gateway/src/drivers/native/shell/atproto.ts",
         "workers/gateway/src/atproto-did.ts"
       ],
       "docs": [
         "docs/architecture/open-network.md",
         "docs/reference/syscalls.md"
+      ]
+    },
+    {
+      "id": "recovery-sheet",
+      "paths": [
+        "web/src/app/features/instrument/settings/recovery/**",
+        "workers/gateway/src/kernel/recovery-sheet.ts",
+        "workers/installations/src/owner-confirmations.ts",
+        "workers/installations/src/owner-confirmation-email.ts",
+        "packages/gsv/src/services/owner-confirmations.ts",
+        "packages/gsv/src/protocol/recovery-sheet.ts"
+      ],
+      "docs": [
+        "docs/how-to/recovery-sheet.md",
+        "docs/architecture/open-network.md",
+        "docs/reference/syscalls.md"
+      ],
+      "manual": [
+        "pages/settings/recovery-sheet.md"
       ]
     }
   ]
