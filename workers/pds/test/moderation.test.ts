@@ -1,4 +1,4 @@
-import { createExecutionContext, listDurableObjectIds } from "cloudflare:test";
+import { createExecutionContext, listDurableObjectIds, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { CID } from "@atproto/lex-data";
 import { verifyProofs, verifyRepoCar } from "@atproto/repo";
@@ -280,6 +280,37 @@ describe("suspending an installation's account", () => {
   });
 });
 
+describe("retiring an installation's account", () => {
+  it("reads as deleted from its own repository once Accounts retires the installation, leaving relays to hear of it from the deletion", async () => {
+    const ship = await publishedShip();
+    const { did, installationId } = ship;
+    const live = await subscribe(env.FIREHOSE.getByName(FIREHOSE_NAME));
+    accounts.setState(installationId, "retained");
+    await moderation().reconcileAccountStatus(installationId);
+    // Asking again changes nothing.
+    await moderation().reconcileAccountStatus(installationId);
+    await deliver(ship.repo);
+
+    expect(await read(repoStatus, direct(ship.repo, "com.atproto.sync.getRepoStatus", { did }))).toEqual({ did, active: false, status: "deleted" });
+    const reads: Array<[string, Record<string, string>]> = [
+      ["com.atproto.repo.describeRepo", { repo: did }],
+      ["com.atproto.repo.getRecord", { repo: ship.handle, collection: NOTE, rkey: "first" }],
+      ["com.atproto.sync.getRepo", { did }],
+      ["com.atproto.sync.getBlob", { did, cid: ship.blobCid }],
+    ];
+    for (const [method, params] of reads) expect(await errorOf(direct(ship.repo, method, params))).toBe("RepoNotFound");
+    expect(await listed(did)).toMatchObject({ did, active: true });
+    expect(framesFor(live, did)).toEqual([]);
+  });
+
+  it("leaves an installation's object empty when Accounts retires it before it publishes", async () => {
+    const { installationId } = accounts.add("retained");
+    await moderation().reconcileAccountStatus(installationId);
+    expect(await runInDurableObject(env.REPOS.getByName(installationId), async (_instance, state) => [...(await state.storage.list()).keys()]))
+      .toEqual([]);
+  });
+});
+
 describe("taking down a record", () => {
   it("hides it from getRecord and listRecords, as Bluesky's PDS does, while the signed repository still carries it", async () => {
     const ship = await publishedShip();
@@ -424,6 +455,11 @@ function publisher(): PdsPublisherEntrypoint {
 function serve(method: string, params: Record<string, string>): Promise<Response> {
   const request = new Request<unknown, IncomingRequestCfProperties>(`https://pds.test/xrpc/${method}?${new URLSearchParams(params)}`);
   return worker.fetch(request, deployedEnv());
+}
+
+/** Sends a public XRPC query straight to the object holding a repository, as the host's front door forwards it. */
+function direct(repo: DurableObjectStub<HostedRepo>, method: string, params: Record<string, string>): Promise<Response> {
+  return repo.fetch(`https://pds.test/xrpc/${method}?${new URLSearchParams(params)}`);
 }
 
 /** The host's listRepos entry for a DID. */

@@ -100,8 +100,9 @@ two seconds is recorded as a diagnostic and fails closed with a retryable
 from a suspension. Accounts does not notify a Kernel when it restricts or
 resets an installation, so already-authenticated traffic observes those
 changes within a minute. Accounts does tell the deployment's PDS when it
-restricts or reactivates an installation, so relays hear of the suspension;
-see [the open network](open-network.md).
+restricts, reactivates or retires an installation, so relays hear of the
+suspension and a retired Ship's repository stops being served; see
+[the open network](open-network.md).
 
 Accounts also holds an operator binding to the Gateway for the Ship health
 view in administration. The Gateway resolves the installation through the

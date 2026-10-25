@@ -45,6 +45,13 @@ the PDS can't follow, Accounts keeps the new state and the operator's request
 fails; the Ship page's **Try again**, or the same request sent again, tells the
 PDS.
 
+Accounts asks the PDS to follow too once it retires an installation, by a
+reset or as the first step of deleting it. The repository then reads as
+deleted: `getRepoStatus` answers `active: false` with `status: "deleted"`, and
+every other read `RepoNotFound`. Relays hear of the deletion only once it
+quiesces the repository. If the PDS can't follow, the reset or retirement
+fails with the installation retired, and sending it again tells the PDS.
+
 ## Identity
 
 A Ship's account is a `did:plc` whose handle is the Ship's hostname, such as

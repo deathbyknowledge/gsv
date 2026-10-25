@@ -47,7 +47,8 @@ export async function followAdmission(
 ): Promise<void> {
   let admission = await admitInstallation(directory, installationId);
   for (let attempt = 0; attempt < FOLLOW_ATTEMPTS; attempt++) {
-    if (admission === "deleted") return;
+    // A retired installation's account reads as deleted from then on.
+    if (admission === "deleted") return await repo.close();
     await repo.setSuspended(admission !== "active");
     const current = await admitInstallation(directory, installationId);
     if (current === admission) return;
