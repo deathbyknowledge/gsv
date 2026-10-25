@@ -156,8 +156,9 @@ that boundary:
 - Nothing publishes while the profile is private.
 - The Ship's writes ask the person first unless an approval rule allows them,
   and the Kernel checks the profile again after approval.
-- A feature owns its collection: `space.ship.profile` changes only through
-  People.
+- A feature owns its collection: `space.ship.profile` and
+  `app.bsky.actor.profile`, the profile as Bluesky shows it, change only
+  through People.
 - A file is uploaded before the record that carries it, and is served only
   once a published record references it. An upload that no record references
   within six hours expires.
@@ -175,6 +176,25 @@ send a message request. Publishing uploads the picture and writes the record;
 unpublishing deletes it. The Kernel keeps the published record and
 its picture, and records the draft revision each publish wrote, so an
 unpublished change or a failed publish shows in the editor.
+
+While the profile is public, the repository also holds it as Bluesky shows
+it: an `app.bsky.actor.profile` record with record key `self`, which Bluesky
+and other apps read from relays. The Kernel writes it in the same commit as
+`space.ship.profile`, and unpublishing deletes both in one commit; a delete
+of either record already gone is dropped and the rest commits. The copy
+carries the display name, the bio, the picture and the profile page as its
+`website`. Bluesky allows a name of 64 graphemes and 640 bytes and a bio of 256
+graphemes and 2,560 bytes, so a longer one is cut between graphemes and ends
+with an ellipsis, while the Ship's record keeps it whole. Bluesky shows only
+PNG and JPEG pictures, so the copy leaves out a WebP picture; People saves new
+pictures as JPEG, or PNG when they have transparency. Both records reference
+one uploaded file. The Kernel keeps the copy it wrote, so a profile published
+before Ships kept one gets it at its owner's next sign-in, and a sign-in whose
+copy is current asks the PDS nothing.
+
+Bluesky shows the copy once relays crawl the deployment's PDS. The Ship
+doesn't read Bluesky, so follows, replies and messages there don't reach it,
+and a person who already has a Bluesky account has the Ship's as a second one.
 
 The Gateway renders the published record as the page at `/profile` on the
 Ship's hostname and serves its picture from the same host at
@@ -227,6 +247,17 @@ read it serves:
   the Ship edits, deletes and writes again stays hidden, and so do the same
   bytes uploaded again. Bluesky's PDS instead forgets a record's takedown
   once the record is deleted, so the same record written again is public.
+
+Bluesky reads the repository's commits, not the PDS's takedowns, so a
+takedown doesn't remove what Bluesky already shows, and a record written again
+while it is down would reach Bluesky. The Kernel keeps the Bluesky copy of the
+profile from showing what the host hid. It reads the takedowns as it publishes:
+while the account, the profile record or the copy is down, it deletes the copy
+instead of writing it, and while the picture's file is down it leaves the
+picture out. The copy Bluesky already shows stays until the person next
+publishes. After the operator restores the profile, the copy or the file, the
+owner's next sign-in writes the full copy again. To take a Ship off Bluesky at
+once, take its account down, which relays announce to apps.
 
 The Ship's own pages honour the same takedowns. For each request to `/profile`
 or `/profile/avatar`, the Kernel asks the PDS what it has taken down rather

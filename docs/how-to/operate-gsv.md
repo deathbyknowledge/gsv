@@ -237,8 +237,9 @@ and the audit event behind each.
 Choose what to take down:
 
 - **Record** takes down one record by its AT URI, such as
-  `at://did:plc:…/space.ship.profile/self` for the Ship's public profile.
-  Accounts looks up the record's current version for you.
+  `at://did:plc:…/space.ship.profile/self` for the Ship's public profile, or
+  `at://did:plc:…/app.bsky.actor.profile/self` for the copy of it that
+  Bluesky shows. Accounts looks up the record's current version for you.
 - **File** takes down one blob by its CID, such as a profile picture.
 - **Whole account** takes down everything the Ship publishes. Until you restore
   it, the Ship can't publish or call other Ships, so its person can't message
@@ -249,7 +250,10 @@ Choose what to take down:
 Write the reason the Ship's person will read in People, then choose **Take
 down**. The PDS stops serving it at once, and relays learn of an account
 takedown from its firehose; copies that apps and relays already made are
-theirs. **Restore** brings it back, with an optional reason for the audit log.
+theirs. Bluesky keeps showing a profile it already has until the Ship deletes
+its copy, which happens the next time its person publishes while you have the
+profile or the copy down. To take a profile off Bluesky at once, take the whole
+account down. **Restore** brings it back, with an optional reason for the audit log.
 The person sees each takedown in People, on their profile, with your reason.
 
 The operator JSON API takes down and restores the same way, under the same

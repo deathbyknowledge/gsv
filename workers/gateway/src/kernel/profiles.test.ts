@@ -2,11 +2,12 @@ import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicCommit, PublicRepository, PublicTakedown } from "@humansandmachines/gsv/services/pds";
-import type { BinaryBody, ProfileFields, ShipProfileRecord } from "@humansandmachines/gsv/protocol";
+import type { BinaryBody, ProfileFields, PublicBlobRef, ShipProfileRecord } from "@humansandmachines/gsv/protocol";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { testPeer } from "../test-support/peers";
 import { TEST_PDS_URL, TEST_PLC_URL, TestShipNetwork, type TestDidAccount } from "../test-support/ship-network";
+import type { BlueskyProfileRecord } from "./bluesky-profile";
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import { ConfigStore } from "./config";
@@ -18,6 +19,7 @@ import {
 } from "./profiles";
 import { KERNEL_V059_PUBLIC_PROFILES } from "./schema/v059_public_profiles";
 import { KERNEL_V075_PROFILE_RECORDS } from "./schema/v075_profile_records";
+import { KERNEL_V080_PROFILE_MIRRORS } from "./schema/v080_profile_mirrors";
 import { DidDocumentStore } from "./ships/did-directory";
 import { ShipIdentity } from "./ships/identity";
 
@@ -31,6 +33,12 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0
 const PNG_CID = "bafkreibbrlmfuiz676bjmgfgqznlnajcfnzuyywtlizlh2v5lq35rfc7qy";
 const WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 4, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
 const WEBP_CID = "bafkreib746lfdkjouocqyp6d3wkrtjt4p5yllgh2eofd7wjail3ei3teki";
+const BLUESKY = "app.bsky.actor.profile";
+
+/** The write that keeps a profile as Bluesky shows it, beside the Ship's own record. */
+function blueskyPut(record: Omit<BlueskyProfileRecord, "$type" | "website">) {
+  return { action: "put", collection: BLUESKY, rkey: "self", record: { $type: BLUESKY, website: PROFILE_URL, ...record } };
+}
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -43,7 +51,10 @@ describe("publishing the profile record", () => {
       expect(ctx.profiles.published(OWNER.uid)).toBeNull();
       const result = await handleProfilePublish({ expectedRevision: 1 }, ctx);
       const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: DRAFT.displayName, about: DRAFT.about, contactPolicy: "requests" };
-      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([{ action: "put", collection: "space.ship.profile", rkey: "self", record }]);
+      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([
+        { action: "put", collection: "space.ship.profile", rkey: "self", record },
+        blueskyPut({ displayName: DRAFT.displayName, description: DRAFT.about }),
+      ]);
       expect(repository.uploadBlob).not.toHaveBeenCalled();
       expect(result.profile).toMatchObject({ revision: 1, published: { url: PROFILE_URL, cid: "bafyrecord1", contactPolicy: "requests", revision: 1 } });
       expect(ctx.profiles.published(OWNER.uid)).toEqual({ cid: "bafyrecord1", record });
@@ -87,7 +98,7 @@ describe("publishing the profile record", () => {
       expect(repository.applyWrites.mock.calls[0]![0]).toEqual([{
         action: "put", collection: "space.ship.profile", rkey: "self",
         record: { $type: "space.ship.profile", displayName: DRAFT.displayName, contactPolicy: "requests" },
-      }]);
+      }, blueskyPut({ displayName: DRAFT.displayName })]);
       expect(repository[Symbol.dispose]).toHaveBeenCalledOnce();
     });
   });
@@ -98,7 +109,10 @@ describe("publishing the profile record", () => {
       handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
       await handleProfilePublish({ expectedRevision: 1 }, ctx);
       const result = await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
-      expect(repository.applyWrites).toHaveBeenLastCalledWith([{ action: "delete", collection: "space.ship.profile", rkey: "self" }]);
+      expect(repository.applyWrites).toHaveBeenLastCalledWith([
+        { action: "delete", collection: "space.ship.profile", rkey: "self" },
+        { action: "delete", collection: BLUESKY, rkey: "self" },
+      ]);
       expect(result.profile).toMatchObject({ revision: 2, draft: DRAFT });
       expect(result.profile.published).toBeUndefined();
       expect(ctx.profiles.published(OWNER.uid)).toBeNull();
@@ -318,12 +332,121 @@ describe("a takedown by the Ship's open-network host", () => {
   });
 });
 
+describe("the profile on Bluesky", () => {
+  const PICTURE: PublicBlobRef = { $type: "blob", ref: { $link: PNG_CID }, mimeType: "image/png", size: PNG.byteLength };
+  const takenDown = (subject: PublicTakedown["subject"]): PublicTakedown[] => [{ subject, ref: "audit_1", reason: "Impersonation", at: 1 }];
+
+  it("keeps the published profile as Bluesky's profile record, changing both in one commit", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
+      handleProfileUpdate({ expectedRevision: 1, draft: DRAFT }, ctx);
+      await handleProfilePublish({ expectedRevision: 2 }, ctx);
+      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([
+        { action: "put", collection: "space.ship.profile", rkey: "self", record: {
+          $type: "space.ship.profile", displayName: DRAFT.displayName, about: DRAFT.about, avatar: PICTURE, contactPolicy: "requests",
+        } },
+        blueskyPut({ displayName: DRAFT.displayName, description: DRAFT.about, avatar: PICTURE }),
+      ]);
+      // One upload serves both records.
+      expect(repository.uploadBlob).toHaveBeenCalledOnce();
+
+      // Bluesky doesn't show WebP, so its profile leaves that picture out.
+      await handleProfileAvatarSet({ expectedRevision: 2, mimeType: "image/webp" }, ctx, bodyFromBytes(WEBP));
+      await handleProfilePublish({ expectedRevision: 3 }, ctx);
+      const [record, bluesky] = repository.applyWrites.mock.lastCall![0];
+      expect(record).toMatchObject({ collection: "space.ship.profile", record: { avatar: { ref: { $link: WEBP_CID } } } });
+      expect(bluesky).toEqual(blueskyPut({ displayName: DRAFT.displayName, description: DRAFT.about }));
+    });
+  });
+
+  it("deletes Bluesky's profile record with the Ship's, and finishes when either is already gone", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository, records } = profileContext(storage);
+      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      // An interrupted write can leave the repository without one of the two.
+      records.delete(`${BLUESKY}/self`);
+      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
+      expect(repository.applyWrites.mock.calls.slice(1).map(([writes]) => writes)).toEqual([
+        [{ action: "delete", collection: "space.ship.profile", rkey: "self" }, { action: "delete", collection: BLUESKY, rkey: "self" }],
+        [{ action: "delete", collection: "space.ship.profile", rkey: "self" }],
+      ]);
+      expect(records.size).toBe(0);
+      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+    });
+  });
+
+  // While the whole account is down the host refuses every write, and relays already hide the account.
+  it.each<[string, PublicTakedown["subject"]]>([
+    ["the profile", { $type: "com.atproto.repo.strongRef", uri: `at://${SHIP.did}/space.ship.profile/self`, cid: "bafyrecord1" }],
+    ["Bluesky's profile record", { $type: "com.atproto.repo.strongRef", uri: `at://${SHIP.did}/${BLUESKY}/self`, cid: "bafymirror" }],
+  ])("deletes Bluesky's copy while the host has %s down, and writes it again once the host restores it", async (_label, subject) => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository, records } = profileContext(storage);
+      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      // Bluesky reads the firehose, not the host's takedowns, so a copy written now would show what the host hid.
+      repository.takedowns.mockResolvedValue(takenDown(subject));
+      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "Edited while down" } }, ctx);
+      await handleProfilePublish({ expectedRevision: 2 }, ctx);
+      expect(repository.applyWrites).toHaveBeenLastCalledWith([
+        expect.objectContaining({ action: "put", collection: "space.ship.profile" }),
+        { action: "delete", collection: BLUESKY, rkey: "self" },
+      ]);
+      expect(records.has(`${BLUESKY}/self`)).toBe(false);
+      // A sign-in while it is down writes nothing.
+      const writes = repository.applyWrites.mock.calls.length;
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(repository.applyWrites).toHaveBeenCalledTimes(writes);
+
+      repository.takedowns.mockResolvedValue([]);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(repository.applyWrites).toHaveBeenLastCalledWith([blueskyPut({ displayName: DRAFT.displayName, description: "Edited while down" })]);
+      expect(records.has(`${BLUESKY}/self`)).toBe(true);
+    });
+  });
+
+  it("leaves out a picture whose file the host has down, and shows it again once restored", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      await handleProfileAvatarSet({ expectedRevision: 0, mimeType: "image/png" }, ctx, bodyFromBytes(PNG));
+      repository.takedowns.mockResolvedValue(takenDown({ $type: "com.atproto.admin.defs#repoBlobRef", did: SHIP.did, cid: PNG_CID }));
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      expect(repository.applyWrites.mock.lastCall![0][1]).toEqual(blueskyPut({ displayName: "local" }));
+      repository.takedowns.mockResolvedValue([]);
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(repository.applyWrites).toHaveBeenLastCalledWith([blueskyPut({ displayName: "local", avatar: PICTURE })]);
+    });
+  });
+
+  it("gives a profile published before Ships kept one on Bluesky its copy at the next sign-in, then asks the host nothing", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository, host } = profileContext(storage);
+      const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: DRAFT.displayName, about: DRAFT.about, contactPolicy: "requests" };
+      handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
+      // As an earlier release left it: the record published, with nothing beside it.
+      ctx.profiles.publish(OWNER.uid, 1, "bafyrecord0", record, null, null);
+      ctx.config.set(`users/${OWNER.uid}/profile/default_published`, "1");
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([blueskyPut({ displayName: DRAFT.displayName, description: DRAFT.about })]);
+      expect(ctx.profiles.published(OWNER.uid)).toEqual({ cid: "bafyrecord0", record });
+
+      const asked = host.getInstallation.mock.calls.length;
+      await ensureDefaultProfile(OWNER.uid, ctx);
+      expect(host.getInstallation).toHaveBeenCalledTimes(asked);
+      expect(repository.applyWrites).toHaveBeenCalledOnce();
+    });
+  });
+});
+
 describe("the default profile", () => {
   it("publishes a public, request-open profile named by the Ship handle once, so an unpublish stays private", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
       await ensureDefaultProfile(OWNER.uid, ctx);
       expect(ctx.profiles.published(OWNER.uid)?.record).toEqual({ $type: "space.ship.profile", displayName: "local", contactPolicy: "requests" });
+      expect(repository.applyWrites.mock.calls[0]![0][1]).toEqual(blueskyPut({ displayName: "local" }));
       expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 1, published: { revision: 1 } });
       expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
       await ensureDefaultProfile(OWNER.uid, ctx);
@@ -411,7 +534,7 @@ describe("the default profile", () => {
       };
       sql.exec("INSERT INTO social_profiles (owner_uid, subject_id, revision, draft_json, published_revision, published_json) VALUES (?, ?, ?, ?, ?, ?)",
         OWNER.uid, "subject:local", 3, JSON.stringify({ ...DRAFT, about: "Private draft", representation: "human" }), 2, JSON.stringify(signed));
-      storage.transactionSync(() => { for (const statement of KERNEL_V075_PROFILE_RECORDS.statements) sql.exec(statement); });
+      storage.transactionSync(() => { for (const statement of [...KERNEL_V075_PROFILE_RECORDS.statements, ...KERNEL_V080_PROFILE_MIRRORS.statements]) sql.exec(statement); });
 
       const { ctx, repository } = profileContext(storage);
       const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: "Signed name", about: "Signed about", contactPolicy: "invitation" };
@@ -423,7 +546,10 @@ describe("the default profile", () => {
       expect(handleProfileGet(ctx).profile.published).toBeUndefined();
 
       await ensureDefaultProfile(OWNER.uid, ctx);
-      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([{ action: "put", collection: "space.ship.profile", rkey: "self", record }]);
+      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([
+        { action: "put", collection: "space.ship.profile", rkey: "self", record },
+        blueskyPut({ displayName: "Signed name", description: "Signed about" }),
+      ]);
       expect(ctx.profiles.published(OWNER.uid)).toEqual({ cid: "bafyrecord1", record });
       expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 3, draft: { about: "Private draft" }, published: { revision: 2, contactPolicy: "invitation" } });
       expect(ctx.profiles.pendingPublication(OWNER.uid)).toBeNull();
@@ -442,7 +568,7 @@ describe("the default profile", () => {
         JSON.stringify({ displayName: "Signed name", about: "", contactPolicy: "requests", representation: "human" }));
       sql.exec("INSERT INTO social_profiles (owner_uid, subject_id, revision, draft_json) VALUES (?, ?, ?, ?)",
         1001, "subject:other", 2, JSON.stringify({ ...DRAFT, representation: "ship" }));
-      storage.transactionSync(() => { for (const statement of KERNEL_V075_PROFILE_RECORDS.statements) sql.exec(statement); });
+      storage.transactionSync(() => { for (const statement of [...KERNEL_V075_PROFILE_RECORDS.statements, ...KERNEL_V080_PROFILE_MIRRORS.statements]) sql.exec(statement); });
       const profiles = new ProfileStore(storage);
       expect(profiles.pendingPublication(OWNER.uid)?.record).toEqual({ $type: "space.ship.profile", displayName: "Signed name", contactPolicy: "requests" });
       expect(profiles.draft(1001)).toEqual({ revision: 2, fields: DRAFT, avatar: null });
@@ -586,14 +712,28 @@ describe("reading another Ship's profile", () => {
 function profileContext(storage: DurableObjectStorage, { pds = true }: { pds?: boolean } = {}) {
   let stored = 0;
   const uploads: Uint8Array[] = [];
+  /** The records the repository holds, by collection and record key. */
+  const records = new Set<string>();
   const repository = {
     account: vi.fn<PublicRepository["account"]>(async () => SHIP),
     ensureAccount: vi.fn<PublicRepository["ensureAccount"]>(async () => SHIP),
     serviceAuth: vi.fn<PublicRepository["serviceAuth"]>(),
-    applyWrites: vi.fn<PublicRepository["applyWrites"]>(async (writes) => ({
-      commit: { cid: "bafycommit", rev: "3l2" },
-      results: writes.map((write) => ({ uri: `at://${SHIP.did}/${write.collection}/${write.rkey}`, cid: write.action === "delete" ? null : `bafyrecord${++stored}` })),
-    })),
+    applyWrites: vi.fn<PublicRepository["applyWrites"]>(async (writes) => {
+      // As the PDS does, the repository refuses a delete of a record it doesn't hold, and then commits nothing.
+      const missing = writes.find((write) => write.action === "delete" && !records.has(`${write.collection}/${write.rkey}`));
+      if (missing) throw new Error(`InvalidRequest: Could not find a record with key: ${missing.collection}/${missing.rkey}`);
+      for (const write of writes) {
+        if (write.action === "delete") records.delete(`${write.collection}/${write.rkey}`);
+        else records.add(`${write.collection}/${write.rkey}`);
+      }
+      return {
+        commit: { cid: "bafycommit", rev: "3l2" },
+        results: writes.map((write) => ({
+          uri: `at://${SHIP.did}/${write.collection}/${write.rkey}`,
+          cid: write.action === "delete" ? null : write.collection === BLUESKY ? "bafymirror" : `bafyrecord${++stored}`,
+        })),
+      };
+    }),
     uploadBlob: vi.fn<PublicRepository["uploadBlob"]>(async (body, size, mimeType) => {
       const bytes = new Uint8Array(await new Response(body).arrayBuffer());
       uploads.push(bytes);
@@ -604,12 +744,13 @@ function profileContext(storage: DurableObjectStorage, { pds = true }: { pds?: b
     takedowns: vi.fn<PublicRepository["takedowns"]>(async () => []),
     [Symbol.dispose]: vi.fn(),
   };
+  const host = { getInstallation: vi.fn(async () => repository) };
   const context = {
     installationId: "inst_local",
     installationIdentity: { installationId: "inst_local", canonicalOrigin: "https://local.example", handle: "local" },
     env: {
       GSV_PUBLIC_CONFIG: JSON.stringify({ primaryDomain: "ship.test", legacyDomains: ["gsv.test"] }),
-      PLC_URL: TEST_PLC_URL, PDS: pds ? { getInstallation: vi.fn(async () => repository) } : undefined,
+      PLC_URL: TEST_PLC_URL, PDS: pds ? host : undefined,
     },
     peer: testPeer({ kind: "human", account: OWNER, calls: ["profile.*"] }), callerOwnerUid: OWNER.uid, connection: {},
     procs: { get: () => ({ isPersonalController: true, ownerUid: OWNER.uid }), getOwnerUid: () => OWNER.uid },
@@ -619,7 +760,7 @@ function profileContext(storage: DurableObjectStorage, { pds = true }: { pds?: b
     broadcastToUserUid: vi.fn(), defer: vi.fn(),
   };
   // SAFETY: profile handlers use the real stores and the explicit account, repository, directory and notification fakes above.
-  return { ctx: context as KernelContext, repository, uploads };
+  return { ctx: context as KernelContext, repository, uploads, records, host };
 }
 
 /** Holds the repository's next commit until the test releases it. */

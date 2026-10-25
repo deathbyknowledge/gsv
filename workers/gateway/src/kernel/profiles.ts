@@ -6,7 +6,7 @@ import type {
   ProfileResolveArgs, ProfileResolveResult, ProfileUnpublishArgs, ProfileUpdateArgs, PublicProfile, ShipProfileRecord,
 } from "@humansandmachines/gsv/protocol";
 import {
-  PROFILE_AVATAR_MAX_BYTES, PROFILE_AVATAR_MIME_TYPES, SHIP_PROFILE_COLLECTION, SHIP_PROFILE_RKEY,
+  BLUESKY_PROFILE_COLLECTION, BLUESKY_PROFILE_RKEY, PROFILE_AVATAR_MAX_BYTES, PROFILE_AVATAR_MIME_TYPES, SHIP_PROFILE_COLLECTION, SHIP_PROFILE_RKEY,
   bodyFromBytes, bodyToBytes, cancelBinaryBody, profileContactPolicy, profileFieldsSchema, shipProfileRecordSchema,
 } from "@humansandmachines/gsv/protocol";
 import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
@@ -15,7 +15,8 @@ import { z } from "zod/mini";
 import type { KernelContext } from "./context";
 import { isLocked } from "../auth/shadow";
 import { shipAddress } from "../installation/identity";
-import { deleteProfileRecord, publicTakedowns, putProfileRecord } from "./atproto";
+import { deleteProfileRecord, publicTakedowns, putProfileMirror, putProfileRecord } from "./atproto";
+import { blueskyProfile, type BlueskyProfileRecord } from "./bluesky-profile";
 import { requireContactCaller, requireContactHuman } from "./federation/authority";
 import { fetchFederation, readFederationJson } from "./federation/http";
 import { FederationHttpError } from "./federation/errors";
@@ -42,6 +43,7 @@ const NO_PUBLIC_PROFILE = "No public profile is available at this address. A pri
 const UNREADABLE_ADDRESS = "Enter a handle, such as @alice, or a profile address";
 const RECORD_LOOKUP_TIMEOUT_MS = 10_000;
 const PROFILE_RECORD_PATH = `/${SHIP_PROFILE_COLLECTION}/${SHIP_PROFILE_RKEY}`;
+const MIRROR_RECORD_PATH = `/${BLUESKY_PROFILE_COLLECTION}/${BLUESKY_PROFILE_RKEY}`;
 /** Invitation codes, acceptances and message requests carry names of at most this many characters. */
 const MAX_PERSON_NAME_LENGTH = 256;
 /** Sign-in publishes in the background; this bounds how long it waits on the open-network host. */
@@ -84,16 +86,21 @@ export function personName(ownerUid: number, ctx: KernelContext): string {
  * draft, a published profile and one they unpublished before this default
  * existed are left alone. Without an open-network host nothing publishes, so
  * the default waits for one.
+ *
+ * A published profile without the Bluesky copy its record makes gets it here
+ * too, once the host's takedowns allow it.
  */
 export async function ensureDefaultProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
   if (!ctx.env.PDS || !profileOwnerActive(ownerUid, ctx)) return;
   const key = `users/${ownerUid}/profile/default_published`;
-  if (!ctx.profiles.pendingPublication(ownerUid) && ctx.config.getExplicit(key) === "1") return;
+  if (!ctx.profiles.pendingPublication(ownerUid) && ctx.config.getExplicit(key) === "1" && profileMirrored(ownerUid, ctx)) return;
   // The timer ends with the publish; one left pending would hold the Kernel awake after sign-in.
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(new Error("The open-network host took too long to publish the profile")), BACKGROUND_PUBLISH_TIMEOUT_MS);
   try {
-    await applyDefaultProfile(ownerUid, key, { ...ctx, requestSignal: ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, timeout.signal]) : timeout.signal });
+    const background = { ...ctx, requestSignal: ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, timeout.signal]) : timeout.signal };
+    await applyDefaultProfile(ownerUid, key, background);
+    await mirrorPublishedProfile(ownerUid, background);
   } finally {
     clearTimeout(timer);
   }
@@ -106,7 +113,8 @@ export async function publishPendingProfile(ownerUid: number, ctx: KernelContext
     // The owner may have published or unpublished it meanwhile.
     const pending = ctx.profiles.pendingPublication(ownerUid);
     if (!pending) return;
-    ctx.profiles.publish(ownerUid, pending.revision, await putProfileRecord(ctx, pending.record, null), pending.record, null);
+    const { cid, mirror } = await putProfileRecord(ctx, pending.record, null, (takedowns) => blueskyMirror(pending.record, takedowns, ctx));
+    ctx.profiles.publish(ownerUid, pending.revision, cid, pending.record, null, mirror);
   });
   ctx.broadcastToUserUid(ownerUid, "profile.changed");
 }
@@ -192,9 +200,47 @@ async function publishProfileRevision(ownerUid: number, revision: number, ctx: K
     if (!profileOwnerActive(ownerUid, ctx)) throw new Error("Profile owner is unavailable");
     const avatar = draft.avatar ? ctx.profiles.avatar(draft.avatar.cid) : null;
     const record = profileRecord(draft.fields, avatar);
-    const cid = await putProfileRecord(ctx, record, avatar);
+    const { cid, mirror } = await putProfileRecord(ctx, record, avatar, (takedowns) => blueskyMirror(record, takedowns, ctx));
     // The repository now holds this revision, so it is recorded even if the draft moved on meanwhile.
-    ctx.profiles.publish(ownerUid, revision, cid, record, avatar);
+    ctx.profiles.publish(ownerUid, revision, cid, record, avatar, mirror);
+  });
+}
+
+/**
+ * Bluesky's copy of the profile while the host has some of the Ship's
+ * repository down. Bluesky reads the repository's commits rather than the
+ * host's takedowns, so a copy written while the host hides the profile, or the
+ * copy itself, would show what the host hid: there is none then, and no
+ * picture while the host has its file down.
+ */
+function blueskyMirror(record: ShipProfileRecord, takedowns: PublicTakedown[], ctx: KernelContext): BlueskyProfileRecord | null {
+  const hidden = hiddenByHost(takedowns, record.avatar?.ref.$link);
+  const copyDown = takedowns.some(({ subject }) => subject.$type === "com.atproto.repo.strongRef" && subject.uri.endsWith(MIRROR_RECORD_PATH));
+  return hidden.page || copyDown ? null : blueskyProfile(record, profileUrl(ctx), !hidden.avatar);
+}
+
+/** Whether the repository holds the Bluesky copy the published record makes, or the profile is private and needs none. */
+function profileMirrored(ownerUid: number, ctx: KernelContext): boolean {
+  const published = ctx.profiles.published(ownerUid);
+  return !published || ctx.profiles.holdsMirror(ownerUid, blueskyProfile(published.record, profileUrl(ctx)));
+}
+
+/**
+ * Writes Bluesky's copy of the published profile where the repository holds
+ * another: none from before Ships kept one, or one the host's takedowns held
+ * back. It asks the host only then, so a sign-in after the copy is written
+ * asks nothing.
+ */
+async function mirrorPublishedProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
+  if (profileMirrored(ownerUid, ctx)) return;
+  await ctx.profiles.exclusive(async () => {
+    // The owner may have published or unpublished it meanwhile.
+    const published = ctx.profiles.published(ownerUid);
+    if (!published) return;
+    const mirror = blueskyMirror(published.record, await publicTakedowns(ctx), ctx);
+    if (ctx.profiles.holdsMirror(ownerUid, mirror)) return;
+    await putProfileMirror(ctx, mirror);
+    ctx.profiles.setMirror(ownerUid, mirror);
   });
 }
 

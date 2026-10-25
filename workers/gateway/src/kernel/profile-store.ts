@@ -1,6 +1,7 @@
 import type { ProfileAvatar, ProfileFields, ProfileState, ShipProfileRecord } from "@humansandmachines/gsv/protocol";
 import { PROFILE_AVATAR_MIME_TYPES, profileContactPolicy, profileFieldsSchema, shipProfileRecordSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod/mini";
+import type { BlueskyProfileRecord } from "./bluesky-profile";
 
 type ProfileRow = {
   owner_uid: number;
@@ -10,6 +11,7 @@ type ProfileRow = {
   published_revision: number | null;
   published_json: string | null;
   published_cid: string | null;
+  mirror_json: string | null;
 };
 type AvatarRow = { cid: string; mime_type: string; size: number };
 
@@ -75,13 +77,16 @@ export class ProfileStore {
     });
   }
 
-  /** Records the record the Ship's repository now holds for `revision`, whatever the draft became meanwhile. */
-  publish(ownerUid: number, revision: number, cid: string, record: ShipProfileRecord, avatar: ProfileAvatarFile | null): void {
+  /**
+   * Records the record the Ship's repository now holds for `revision`, whatever the draft became meanwhile.
+   * `mirror` is Bluesky's copy the repository holds beside it, or null for none.
+   */
+  publish(ownerUid: number, revision: number, cid: string, record: ShipProfileRecord, avatar: ProfileAvatarFile | null, mirror: BlueskyProfileRecord | null): void {
     this.storage.transactionSync(() => {
       // The draft may have dropped the record's picture while the repository wrote it.
       if (avatar) this.keepAvatar(avatar);
-      this.sql.exec("UPDATE social_profiles SET published_revision = ?, published_json = ?, published_cid = ? WHERE owner_uid = ?",
-        revision, JSON.stringify(record), cid, ownerUid);
+      this.sql.exec("UPDATE social_profiles SET published_revision = ?, published_json = ?, published_cid = ?, mirror_json = ? WHERE owner_uid = ?",
+        revision, JSON.stringify(record), cid, mirrorJson(mirror), ownerUid);
       this.releaseAvatars();
     });
   }
@@ -90,7 +95,7 @@ export class ProfileStore {
   unpublish(ownerUid: number): void {
     this.storage.transactionSync(() => {
       this.sql.exec(`UPDATE social_profiles SET revision = revision + 1,
-        published_revision = NULL, published_json = NULL, published_cid = NULL WHERE owner_uid = ?`, ownerUid);
+        published_revision = NULL, published_json = NULL, published_cid = NULL, mirror_json = NULL WHERE owner_uid = ?`, ownerUid);
       this.releaseAvatars();
     });
   }
@@ -100,6 +105,16 @@ export class ProfileStore {
     const row = this.row(ownerUid);
     const published = row ? publishedOf(row) : null;
     return published ? { cid: published.cid, record: published.record } : null;
+  }
+
+  /** Whether the repository holds exactly `mirror` as Bluesky's copy of the published profile, or nothing for null. */
+  holdsMirror(ownerUid: number, mirror: BlueskyProfileRecord | null): boolean {
+    return (this.row(ownerUid)?.mirror_json ?? null) === mirrorJson(mirror);
+  }
+
+  /** Records Bluesky's copy the repository now holds beside the published record, or null once it holds none. */
+  setMirror(ownerUid: number, mirror: BlueskyProfileRecord | null): void {
+    this.sql.exec("UPDATE social_profiles SET mirror_json = ? WHERE owner_uid = ?", mirrorJson(mirror), ownerUid);
   }
 
   /** The space's one published profile, for its public page. */
@@ -175,6 +190,11 @@ export class ProfileStore {
 
 function draftFields(row: ProfileRow): ProfileFields {
   return profileFieldsSchema.parse(JSON.parse(row.draft_json));
+}
+
+/** A copy as stored, which a copy made the same way matches exactly. */
+function mirrorJson(mirror: BlueskyProfileRecord | null): string | null {
+  return mirror ? JSON.stringify(mirror) : null;
 }
 
 function publishedOf(row: ProfileRow): PublishedProfile | null {
