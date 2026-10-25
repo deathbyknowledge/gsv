@@ -439,8 +439,15 @@ own it would learn of an account that existed before it joined only with that
 account's next event. The host introduces those accounts instead. From its
 first run after a relay accepts, when the relay is following the firehose, it
 sends what creating each active account sent: `#account`, `#identity`, and
-`#sync` at the repository's current head, which tells the relay and the apps
-that read it to fetch the repository at that head. A run introduces at most
+`#sync` at the repository's latest commit, which tells the relay and the apps
+that read it to fetch the repository at that commit. The firehose keeps what
+that `#sync` carries for each active repository as it sequences the
+repository's commits: the commit's revision and a CAR holding only its signed
+commit block, under 300 bytes a repository. Introducing an account therefore
+reads only the firehose's own storage, and wakes no repository object. The
+firehose drops an account's commit when the account is taken down, suspended
+or deactivated, and when it erases a deleted repository; reactivating an
+account announces its head with `#sync` again. A run introduces at most
 200 accounts, in DID order, so a host with 10,000 accounts takes 50 runs, a
 little over eight hours. The introduction covers the accounts the host held
 when it began; accounts created since reach the relay live. Taken-down and
@@ -449,6 +456,12 @@ has got, so each relay hears each account once, across runs and restarts of
 the firehose, and again only when the deployment stops naming it and then
 names it again. The firehose is one stream, so relays already following hear
 the introduction too, and already have each account at that head.
+
+A firehose created before it kept commits fills them in once, the first time it
+starts with them, from the frames it still retains: each active repository's
+newest `#commit` or `#sync` from the last 72 hours. It reads nothing from the
+repository objects. A repository with neither is introduced with `#account` and
+`#identity` alone, and relays learn its head from its next commit.
 
 Relays limit how many accounts they follow on each host. The reference relay,
 which Bluesky operates, follows 100 accounts on a new host by default and drops
