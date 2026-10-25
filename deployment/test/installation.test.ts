@@ -571,13 +571,24 @@ describe("open network host", () => {
     });
   });
 
-  it("names no contact, policies or lexicon account the operator didn't give", async () => {
-    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds }, dependencies));
-    const host = recorded.workers.find((worker) => worker.id === "FixturePds")!;
-    for (const name of ["PDS_CONTACT_EMAIL", "PDS_PRIVACY_POLICY_URL", "PDS_TERMS_OF_SERVICE_URL", "PDS_LEXICON_HANDLE"]) {
-      expect(host.props.env).not.toHaveProperty(name);
+  it("names no contact, policies, lexicon account or relays the operator didn't give", async () => {
+    for (const relays of [undefined, []]) {
+      recorded.workers.length = 0;
+      await run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds: { ...pds, relays } }, dependencies));
+      const host = recorded.workers.find((worker) => worker.id === "FixturePds")!;
+      for (const name of ["PDS_CONTACT_EMAIL", "PDS_PRIVACY_POLICY_URL", "PDS_TERMS_OF_SERVICE_URL", "PDS_LEXICON_HANDLE", "PDS_RELAYS"]) {
+        expect(host.props.env).not.toHaveProperty(name);
+      }
+      expect(host.props.crons).toBeUndefined();
     }
-    expect(host.props.crons).toBeUndefined();
+  });
+
+  it("tells the relays the operator names about the host, on a ten-minute schedule", async () => {
+    await run(GsvDeployment({ ...input, routing: { zoneId: "zone" },
+      pds: { ...pds, relays: ["https://relay-a.example", "https://relay-b.example"] } }, dependencies));
+    const host = recorded.workers.find((worker) => worker.id === "FixturePds")!;
+    expect(host.props.env).toMatchObject({ PDS_RELAYS: "https://relay-a.example,https://relay-b.example" });
+    expect(host.props.crons).toEqual(["*/10 * * * *"]);
   });
 
   it("publishes lexicons on schedule from the account the operator names", async () => {
@@ -620,6 +631,8 @@ describe("open network host", () => {
     { label: "terms that aren't a URL", change: { termsOfServiceUrl: "terms" }, error: "HTTPS URLs" },
     { label: "a lexicon handle that isn't a domain name", change: { lexiconHandle: "Lexicons" }, error: "lowercase domain name" },
     { label: "a lexicon handle a Ship could take", change: { lexiconHandle: "schemas.example.com" }, error: "lexicons.<domain>" },
+    { label: "an HTTP relay", change: { relays: ["http://relay.example"] }, error: "relays" },
+    { label: "a relay with a path", change: { relays: ["https://relay.example/xrpc"] }, error: "relays" },
   ])("refuses a PDS at $label before allocating resources", async ({ change, error }) => {
     await expect(run(GsvDeployment({ ...input, routing: { zoneId: "zone" }, pds: { ...pds, ...change } }, dependencies)))
       .rejects.toThrow(error);

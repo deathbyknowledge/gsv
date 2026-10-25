@@ -293,8 +293,9 @@ authority, and only Accounts' `PDS_MODERATION` binding carries
 
 The Gateway's `PLC_URL` names the same did:plc directory the PDS registers DIDs
 with, so a Ship reads other Ships' DIDs from where its own is registered. The
-PDS reaches only that directory, over the public internet even when the
-directory runs on the deployment's own zone.
+PDS reaches only that directory and the [relays](#relays) the operator names,
+over the public internet even when one of them runs on the deployment's own
+zone.
 
 The PDS's `com.atproto.server.describeServer` answer names the operator's public
 contact address and links its privacy policy and terms of service when the
@@ -308,6 +309,60 @@ uploads and, when they persist, the PDS Worker's logs.
 A pull request preview runs the PDS only against a disposable directory that
 its workflow names, with a rotation key generated for that preview. It never
 registers DIDs with `plc.directory`, which keeps every DID it accepts.
+
+## Relays
+
+Bluesky and other apps don't read each host. They read a relay, which follows
+the firehoses of the hosts it knows and serves them as one. A relay starts
+following a host when the host asks it to with
+`com.atproto.sync.requestCrawl`, naming its hostname. It first checks that the
+host answers `com.atproto.server.describeServer`, then reads the host's
+firehose: from its live end the first time, and from the last event it read
+when it follows the host again. A relay that loses the firehose too often stops
+following the host until the host asks again. The firehose keeps 72 hours of
+events, so a relay that comes back within that time misses none.
+
+```text
+every ten minutes ─▶ HostFirehose: which relays are due?
+                       │ requestCrawl { hostname: "pds.<domain>" }
+                       ▼
+                     relay ── describeServer, then subscribeRepos ──▶ PDS
+```
+
+The operator names the relays with `GSV_PDS_RELAYS`, such as
+`https://bsky.network`. A deployment names none by default, and then the PDS
+asks no relay. Once it names some, the PDS checks every ten minutes which of
+them are due:
+
+- A relay it hasn't asked is asked at once.
+- A relay that accepted is asked again only once the host has events it didn't
+  have then and twenty minutes have passed, as Bluesky's PDS does. A relay that
+  dropped the host is asked back soon after the host's next event, and a quiet
+  host sends nothing.
+- A relay that refused or couldn't be reached is asked again after forty
+  minutes, and each further refusal in a row doubles the wait, up to six hours.
+
+The firehose keeps each relay's last answer and forgets a relay the deployment
+no longer names, so one named again is asked at once. A relay that refuses or
+can't be reached is a warning in the PDS Worker's logs that names the relay
+and, for a refusal, the HTTP status and the XRPC error. The request carries
+only the host's hostname.
+
+A relay checks every event as sync 1.1 describes, and a Ship's repository sends
+what it needs: `#identity`, `#account` and `#sync` when the account is created,
+and each `#commit` with the previous data root and the blocks that undo its
+operations, so the relay checks the commit without the repository. The relay
+reads an account's status from `getRepoStatus` and a whole repository from
+`getRepo`, and it requires the DID's PDS endpoint to name the host it follows.
+It doesn't backfill: it learns of an account that existed before it joined
+with that account's next event.
+
+Relays limit how many accounts they follow on each host. The reference relay,
+which Bluesky operates, follows 100 accounts on a new host by default and drops
+the events of any past that until its operator raises the host's limit. It
+also takes at most 50 new hosts a day.
+[Announce the host to relays](../how-to/operate-gsv.md#announce-the-host-to-relays)
+is the operator's procedure.
 
 ## The lexicon account
 

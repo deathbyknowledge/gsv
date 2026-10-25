@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { decode, encode } from "../cirrus/cbor-compat";
 import type { AccountStatus, SeqEvent } from "../cirrus/repo/sequencer";
 import type { HostEnv } from "./env";
+import { crawlDue, requestCrawl, type RelayRequest } from "./relays";
 import { migrate } from "./schema";
 
 /** Name of the one firehose object a host runs. */
@@ -34,6 +35,8 @@ export type RepoListing = { repos: RepoState[]; cursor?: string };
 const RETENTION_MS = 72 * 60 * 60_000;
 const REPLAY_PAGE = 500;
 const ACCOUNT_STATUSES = ["takendown", "suspended", "deleted", "deactivated"] as const;
+/** The host's last request to each relay, kept as one record by the relay's origin. */
+const RELAYS_KEY = "relays";
 
 const MIGRATIONS = [{
   id: 1,
@@ -176,6 +179,32 @@ export class HostFirehose extends DurableObject<HostEnv> {
     return { ok: true };
   }
 
+  /**
+   * Asks each relay to crawl the host, named by its hostname, when a request
+   * to it is due, and keeps how each answered. It forgets the relays it isn't
+   * given, so one named again is asked at once. Returns the relays it asked.
+   */
+  async announce(relays: readonly string[], host: string): Promise<string[]> {
+    const last = (await this.ctx.storage.get<Record<string, RelayRequest>>(RELAYS_KEY)) ?? {};
+    const seq = this.latestSeq();
+    const now = Date.now();
+    const due = relays.filter((relay) => crawlDue(last[relay], seq, now));
+    const answers = new Map(await Promise.all(due.map(async (relay) => [relay, await requestCrawl(relay, host)] as const)));
+    const kept: Record<string, RelayRequest> = {};
+    for (const relay of relays) {
+      const previous = last[relay];
+      const accepted = answers.get(relay);
+      if (accepted === undefined) {
+        if (previous) kept[relay] = previous;
+      } else {
+        // A refusal keeps the sequence number the relay last accepted.
+        kept[relay] = accepted ? { at: now, seq, failures: 0 } : { at: now, seq: previous?.seq ?? null, failures: (previous?.failures ?? 0) + 1 };
+      }
+    }
+    await this.ctx.storage.put(RELAYS_KEY, kept);
+    return due;
+  }
+
   /** Accepts a com.atproto.sync.subscribeRepos WebSocket and replays from its cursor. */
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -247,6 +276,12 @@ export class HostFirehose extends DurableObject<HostEnv> {
   private row(query: string, value: string): RepoRow | null {
     return this.ctx.storage.sql.exec<RepoRow>(query, value).toArray()[0] ?? null;
   }
+}
+
+/** Has the host's firehose ask each relay the deployment names to crawl it, when a request to that relay is due. */
+export async function announceToRelays(env: HostEnv): Promise<void> {
+  const relays = [...new Set((env.PDS_RELAYS ?? "").split(",").map((relay) => relay.trim()).filter(Boolean))];
+  if (relays.length > 0) await env.FIREHOSE.getByName(FIREHOSE_NAME).announce(relays, new URL(env.PDS_ORIGIN).host);
 }
 
 /** Encodes an outbox event as a subscribeRepos frame that carries the host's sequence number. */

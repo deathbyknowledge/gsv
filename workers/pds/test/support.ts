@@ -42,12 +42,21 @@ export async function deliver(repo: DurableObjectStub<HostedRepo>): Promise<void
   });
 }
 
+/** Answers the requests this isolate sends to one origin. */
+export type FakeService = (request: Request) => Promise<Response>;
+
 /** Sends this isolate's requests for origin to the directory and fails any other outbound request. */
 export function installFakePlc(directory: FakePlcDirectory, origin: string): void {
+  installFakeServices(new Map<string, FakeService>([[origin, (request) => directory.handle(request)]]));
+}
+
+/** Sends this isolate's requests for each origin to its service, looked up as each request leaves, and fails any other. */
+export function installFakeServices(services: ReadonlyMap<string, FakeService>): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const request = new Request(input, init);
-    if (new URL(request.url).origin !== origin) throw new Error(`Unexpected request to ${request.url}`);
-    return directory.handle(request);
+    const service = services.get(new URL(request.url).origin);
+    if (!service) throw new Error(`Unexpected request to ${request.url}`);
+    return service(request);
   });
 }
 
