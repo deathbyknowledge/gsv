@@ -114,7 +114,8 @@ takedown with the reason your operator gave. A profile that is down is labelled
 operator restores it. Bluesky keeps what it already shows until you next publish
 your profile: while your profile or its copy is down, publishing removes the
 copy from Bluesky, and while your picture is down, it leaves the picture out.
-Your next sign-in after your operator restores it puts the full copy back. While your whole Ship is down, neither you nor your Ship can
+Your next sign-in after your operator restores it puts the full copy back, and so can a message to
+your Ship from another app, such as WhatsApp. While your whole Ship is down, neither you nor your Ship can
 publish or message your contacts: a message or message request you send fails
 at once and says why. Messages from your contacts still arrive.
 The published page uses Ship's cursor icon in the browser tab, the same pale block on a dark square as the app.

@@ -4,8 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicCommit, PublicRepository, PublicTakedown } from "@humansandmachines/gsv/services/pds";
 import type { BinaryBody, ProfileFields, PublicBlobRef, ShipProfileRecord } from "@humansandmachines/gsv/protocol";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
+import { makeShadowEntry } from "../auth/shadow";
+import { getKernelByInstallationId } from "../installation/routing";
+import * as utils from "../shared/utils";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { testPeer } from "../test-support/peers";
+import { commitAccount } from "./accounts";
+import { handleAdapterInbound } from "./adapter-ingress";
 import { TEST_PDS_URL, TEST_PLC_URL, TestShipNetwork, type TestDidAccount } from "../test-support/ship-network";
 import type { BlueskyProfileRecord } from "./bluesky-profile";
 import type { KernelContext } from "./context";
@@ -13,7 +18,7 @@ import type { Kernel } from "./do";
 import { ConfigStore } from "./config";
 import { ProfileStore } from "./profile-store";
 import {
-  ensureDefaultProfile, handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet,
+  ensureDefaultProfile, ensurePublishedProfile, handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet,
   handleProfilePublish, handleProfileResolve, handleProfileUnpublish, handleProfileUpdate, ownerDisplayName,
   publicProfileAvatar, publicProfileProjection, readPublicProfile,
 } from "./profiles";
@@ -27,6 +32,10 @@ const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "private-login", g
 const DRAFT: ProfileFields = { displayName: "Published name", about: "Hello from my space", contactPolicy: "requests" };
 const SHIP = { did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", handle: "local.ship.test", host: TEST_PDS_URL };
 const PROFILE_URL = "https://local.ship.test/profile";
+const PUBLIC_CONFIG = JSON.stringify({ primaryDomain: "ship.test", legacyDomains: ["gsv.test"] });
+const ROOT = { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" };
+/** The WhatsApp identity the person has linked to their account. */
+const MESSENGER = { adapter: "whatsapp", accountId: "primary", actorId: "wa:+123" };
 const NO_PUBLIC_PROFILE = "A private invitation does not require a public profile";
 // Each picture's CID as the repository names it (CIDv1, raw, SHA-256), computed with @atcute/cid.
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
@@ -438,6 +447,72 @@ describe("the profile on Bluesky", () => {
       expect(repository.applyWrites).toHaveBeenCalledOnce();
     });
   });
+
+  it("asks the host once when a sign-in and a message from elsewhere reach the Ship together", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository, host } = profileContext(storage);
+      const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: DRAFT.displayName, contactPolicy: "requests" };
+      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, about: "" } }, ctx);
+      ctx.profiles.publish(OWNER.uid, 1, "bafyrecord0", record, null, null);
+      ctx.config.set(`users/${OWNER.uid}/profile/default_published`, "1");
+      await Promise.all([ensurePublishedProfile(OWNER.uid, ctx), ensureDefaultProfile(OWNER.uid, ctx)]);
+      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([blueskyPut({ displayName: DRAFT.displayName })]);
+      // One read of the takedowns, and the commit.
+      expect(host.getInstallation).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("gives the copy to a person who reaches their Ship only from a messenger, after their message, then asks the host nothing", async () => {
+    const installationId = `inst_messenger_${crypto.randomUUID()}`;
+    const kernel = () => getKernelByInstallationId(env.KERNEL, installationId);
+    const { repository, host } = profileHost();
+    const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: DRAFT.displayName, about: DRAFT.about, contactPolicy: "requests" };
+    // The Kernel is real; the conversation and the Ship's process take each message as delivered.
+    vi.spyOn(utils, "getConversationById").mockReturnValue({
+      initialize: vi.fn(async () => undefined),
+      append: vi.fn(async (input) => ({ created: true, message: { id: input.messageId, sequence: 1 } })),
+    });
+    vi.spyOn(utils, "sendFrameToProcess").mockImplementation(async (_installationId, _pid, frame) => ({
+      type: "res", id: frame.id, ok: true,
+      data: frame.call === "proc.adapter.deliver" ? { ok: true, status: "started", runId: frame.args.runId, queued: false } : { ok: true },
+    }));
+    await runInDurableObject(await kernel(), async (instance: Kernel) => {
+      await instance.ensureInstallationIdentity({ installationId, handle: "local", canonicalOrigin: "https://local.example" });
+      instance.auth.addUser({ username: OWNER.username, uid: OWNER.uid, gid: OWNER.gid, gecos: OWNER.gecos, home: OWNER.home, shell: "/bin/init" });
+      instance.auth.addGroup({ name: "users", gid: 100, members: [OWNER.username] });
+      instance.auth.addGroup({ name: OWNER.username, gid: OWNER.gid, members: [] });
+      instance.auth.setShadow(makeShadowEntry(OWNER.username, "unlocked"));
+      commitAccount(instance.buildKernelContext({}), {
+        kind: "agent", username: "ship", gecos: "Ship", ownerUid: OWNER.uid, crossMemberOwner: true, personalAgentOf: OWNER.uid,
+      });
+      instance.adapters.identityLinks.link(MESSENGER.adapter, MESSENGER.accountId, MESSENGER.actorId, OWNER.uid, OWNER.uid);
+      // As an earlier release left it: the record published, with nothing beside it.
+      instance.profiles.update(OWNER.uid, 0, DRAFT);
+      instance.profiles.publish(OWNER.uid, 1, "bafyrecord0", record, null, null);
+      instance.config.set(`users/${OWNER.uid}/profile/default_published`, "1");
+    });
+
+    await runInDurableObject(await kernel(), async (instance: Kernel) => {
+      const { ctx, deferred } = messengerContext(instance, host);
+      // The commit waits until the message is in, so a message that waited for the host would never arrive.
+      const commit = holdNextCommit(repository);
+      await expect(messengerMessage(ctx, "wamid-1")).resolves.toMatchObject({ ok: true, delivered: { uid: OWNER.uid } });
+      commit.release();
+      await Promise.all(deferred);
+      expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([blueskyPut({ displayName: DRAFT.displayName, description: DRAFT.about })]);
+    });
+
+    // A Kernel that starts again finds the Ship afresh, and the copy already matches.
+    await evictDurableObject(await kernel());
+    await runInDurableObject(await kernel(), async (instance: Kernel) => {
+      const { ctx, deferred } = messengerContext(instance, host);
+      const asked = host.getInstallation.mock.calls.length;
+      await expect(messengerMessage(ctx, "wamid-2")).resolves.toMatchObject({ ok: true, delivered: { uid: OWNER.uid } });
+      await Promise.all(deferred);
+      expect(host.getInstallation).toHaveBeenCalledTimes(asked);
+      expect(repository.applyWrites).toHaveBeenCalledOnce();
+    });
+  });
 });
 
 describe("the default profile", () => {
@@ -505,6 +580,16 @@ describe("the default profile", () => {
       await ensureDefaultProfile(OWNER.uid, ctx);
       expect(ctx.profiles.published(OWNER.uid)?.record.contactPolicy).toBe("invitation");
       expect(repository.applyWrites).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("is left to sign-in when the person reaches their Ship from anywhere else", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, host } = profileContext(storage);
+      await ensurePublishedProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.draft(OWNER.uid)).toBeNull();
+      expect(ctx.config.getExplicit(`users/${OWNER.uid}/profile/default_published`)).toBeNull();
+      expect(host.getInstallation).not.toHaveBeenCalled();
     });
   });
 
@@ -710,6 +795,24 @@ describe("reading another Ship's profile", () => {
 });
 
 function profileContext(storage: DurableObjectStorage, { pds = true }: { pds?: boolean } = {}) {
+  const { repository, host, uploads, records } = profileHost();
+  const context = {
+    installationId: "inst_local",
+    installationIdentity: { installationId: "inst_local", canonicalOrigin: "https://local.example", handle: "local" },
+    env: { GSV_PUBLIC_CONFIG: PUBLIC_CONFIG, PLC_URL: TEST_PLC_URL, PDS: pds ? host : undefined },
+    peer: testPeer({ kind: "human", account: OWNER, calls: ["profile.*"] }), callerOwnerUid: OWNER.uid, connection: {},
+    procs: { get: () => ({ isPersonalController: true, ownerUid: OWNER.uid }), getOwnerUid: () => OWNER.uid },
+    profiles: new ProfileStore(storage), config: new ConfigStore(storage.sql),
+    shipIdentity: new ShipIdentity(storage), didDocuments: new DidDocumentStore(storage.sql),
+    auth: { getPasswdByUid: (uid: number) => uid === OWNER.uid ? OWNER : null, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false },
+    broadcastToUserUid: vi.fn(), defer: vi.fn(),
+  };
+  // SAFETY: profile handlers use the real stores and the explicit account, repository, directory and notification fakes above.
+  return { ctx: context as KernelContext, repository, uploads, records, host };
+}
+
+/** The Ship's open-network host: one repository, which keeps the records it holds and names pictures by their bytes. */
+function profileHost() {
   let stored = 0;
   const uploads: Uint8Array[] = [];
   /** The records the repository holds, by collection and record key. */
@@ -745,22 +848,27 @@ function profileContext(storage: DurableObjectStorage, { pds = true }: { pds?: b
     [Symbol.dispose]: vi.fn(),
   };
   const host = { getInstallation: vi.fn(async () => repository) };
-  const context = {
-    installationId: "inst_local",
-    installationIdentity: { installationId: "inst_local", canonicalOrigin: "https://local.example", handle: "local" },
-    env: {
-      GSV_PUBLIC_CONFIG: JSON.stringify({ primaryDomain: "ship.test", legacyDomains: ["gsv.test"] }),
-      PLC_URL: TEST_PLC_URL, PDS: pds ? host : undefined,
-    },
-    peer: testPeer({ kind: "human", account: OWNER, calls: ["profile.*"] }), callerOwnerUid: OWNER.uid, connection: {},
-    procs: { get: () => ({ isPersonalController: true, ownerUid: OWNER.uid }), getOwnerUid: () => OWNER.uid },
-    profiles: new ProfileStore(storage), config: new ConfigStore(storage.sql),
-    shipIdentity: new ShipIdentity(storage), didDocuments: new DidDocumentStore(storage.sql),
-    auth: { getPasswdByUid: (uid: number) => uid === OWNER.uid ? OWNER : null, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false },
-    broadcastToUserUid: vi.fn(), defer: vi.fn(),
+  return { repository, host, uploads, records };
+}
+
+/** The Kernel as the messenger's adapter reaches it, at the open-network host, keeping what it defers for the test to await. */
+function messengerContext(instance: Kernel, host: ReturnType<typeof profileHost>["host"]) {
+  const base = instance.buildKernelContext({ peer: testPeer({ kind: "service", account: ROOT, calls: ["adapter.inbound"] }) });
+  const deferred: Promise<unknown>[] = [];
+  const ctx: KernelContext = {
+    ...base,
+    env: { ...base.env, GSV_PUBLIC_CONFIG: PUBLIC_CONFIG, PDS: host },
+    defer: (promise) => { deferred.push(promise); },
   };
-  // SAFETY: profile handlers use the real stores and the explicit account, repository, directory and notification fakes above.
-  return { ctx: context as KernelContext, repository, uploads, records, host };
+  return { ctx, deferred };
+}
+
+/** The person's private WhatsApp message to their Ship. */
+function messengerMessage(ctx: KernelContext, messageId: string) {
+  return handleAdapterInbound({
+    adapter: MESSENGER.adapter, accountId: MESSENGER.accountId, deliveryId: messageId,
+    message: { messageId, surface: { kind: "dm", id: "dm-1" }, actor: { id: MESSENGER.actorId }, text: "Hello Ship" },
+  }, ctx);
 }
 
 /** Holds the repository's next commit until the test releases it. */

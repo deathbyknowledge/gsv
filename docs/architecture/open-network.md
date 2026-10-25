@@ -188,9 +188,11 @@ graphemes and 2,560 bytes, so a longer one is cut between graphemes and ends
 with an ellipsis, while the Ship's record keeps it whole. Bluesky shows only
 PNG and JPEG pictures, so the copy leaves out a WebP picture; People saves new
 pictures as JPEG, or PNG when they have transparency. Both records reference
-one uploaded file. The Kernel keeps the copy it wrote, so a profile published
-before Ships kept one gets it at its owner's next sign-in, and a sign-in whose
-copy is current asks the PDS nothing.
+one uploaded file. The Kernel keeps the copy it wrote and checks it at each
+sign-in and whenever it reconciles the owner's existing personal agent, as the
+first message to their Ship from any surface after the Kernel starts does. A
+profile published before Ships kept one gets its copy then, without delaying
+that message, and a check that finds the copy current asks the PDS nothing.
 
 Bluesky shows the copy once relays crawl the deployment's PDS. The Ship
 doesn't read Bluesky, so follows, replies and messages there don't reach it,
@@ -256,7 +258,7 @@ while the account, the profile record or the copy is down, it deletes the copy
 instead of writing it, and while the picture's file is down it leaves the
 picture out. The copy Bluesky already shows stays until the person next
 publishes. After the operator restores the profile, the copy or the file, the
-owner's next sign-in writes the full copy again. To take a Ship off Bluesky at
+next of those checks writes the full copy again. To take a Ship off Bluesky at
 once, take its account down, which relays announce to apps.
 
 The Ship's own pages honour the same takedowns. For each request to `/profile`

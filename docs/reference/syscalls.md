@@ -1105,7 +1105,9 @@ cut between graphemes and ends with an ellipsis. It shares the record's picture 
 WebP, which Bluesky doesn't show, or a file the operator took down. While the operator has the
 account, the profile record or the copy down, publishing deletes the copy instead of writing it. When
 the repository holds another copy than the published record makes, including none for a profile
-published before Ships kept one, the owner's next sign-in writes it once the takedowns allow.
+published before Ships kept one, the owner's next sign-in writes it once the takedowns allow, as
+does the Kernel's next reconciliation of their personal agent when a message reaches their Ship from
+any surface.
 
 `profile.resolve` takes a handle, with or without its `@`, or a profile link. A bare handle is on
 the Ship's own domain, and one on the operator's older domain names the same Ship on its primary
@@ -1115,7 +1117,8 @@ and reads the record from the repository the document names. `PublicProfile` ret
 profile is available at that address; it does not establish whether the Ship exists or prevent a
 private invitation. A 503 means the host the document names doesn't serve repositories right now,
 so the profile can't be read yet. A profile published as a signed document before profiles were records keeps its
-published fields and is written as a record at its owner's next sign-in.
+published fields and is written as a record at its owner's next sign-in or the next reconciliation
+of their personal agent.
 A message request names the recipient's `did` and the `profileCid` of the record its sender read.
 The sender's Ship refuses to send it if that record has changed or no longer takes requests, and the
 recipient's Ship refuses it on arrival for the same reasons, so a person never receives a request

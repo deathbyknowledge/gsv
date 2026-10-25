@@ -81,26 +81,46 @@ export function personName(ownerUid: number, ctx: KernelContext): string {
 /**
  * Publish the owner's profile once by default, and write a profile published
  * before profiles were records to the Ship's repository. Runs on every human
- * sign-in but acts only until the default has been applied, so a later
- * unpublish stays private. Any saved profile is the owner's own choice: a
- * draft, a published profile and one they unpublished before this default
- * existed are left alone. Without an open-network host nothing publishes, so
- * the default waits for one.
- *
- * A published profile without the Bluesky copy its record makes gets it here
- * too, once the host's takedowns allow it.
+ * sign-in. The default applies only once, so a later unpublish stays private;
+ * after that, sign-in only adds the Bluesky copy a published profile is
+ * missing, once the host's takedowns allow it. Any saved profile is the
+ * owner's own choice: a draft, a published profile and one they unpublished
+ * before this default existed are left alone. Without an open-network host
+ * nothing publishes, so the default waits for one.
  */
 export async function ensureDefaultProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
   if (!ctx.env.PDS || !profileOwnerActive(ownerUid, ctx)) return;
   const key = `users/${ownerUid}/profile/default_published`;
   if (!ctx.profiles.pendingPublication(ownerUid) && ctx.config.getExplicit(key) === "1" && profileMirrored(ownerUid, ctx)) return;
+  await publishInBackground(ctx, async (background) => {
+    await applyDefaultProfile(ownerUid, key, background);
+    await mirrorPublishedProfile(ownerUid, background);
+  });
+}
+
+/**
+ * Writes what a published profile is missing when the owner's existing Ship is
+ * used from any surface, such as a messenger: a record published before
+ * profiles were records, or the Bluesky copy, once the host's takedowns allow
+ * it. The default is left to sign-in. Once nothing is missing, this reads only
+ * the Kernel.
+ */
+export async function ensurePublishedProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
+  if (!ctx.env.PDS || !profileOwnerActive(ownerUid, ctx)) return;
+  if (!ctx.profiles.pendingPublication(ownerUid) && profileMirrored(ownerUid, ctx)) return;
+  await publishInBackground(ctx, async (background) => {
+    await publishPendingProfile(ownerUid, background);
+    await mirrorPublishedProfile(ownerUid, background);
+  });
+}
+
+/** Publishes away from the caller, within the time the open-network host gets for it. */
+async function publishInBackground(ctx: KernelContext, publish: (background: KernelContext) => Promise<void>): Promise<void> {
   // The timer ends with the publish; one left pending would hold the Kernel awake after sign-in.
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(new Error("The open-network host took too long to publish the profile")), BACKGROUND_PUBLISH_TIMEOUT_MS);
   try {
-    const background = { ...ctx, requestSignal: ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, timeout.signal]) : timeout.signal };
-    await applyDefaultProfile(ownerUid, key, background);
-    await mirrorPublishedProfile(ownerUid, background);
+    await publish({ ...ctx, requestSignal: ctx.requestSignal ? AbortSignal.any([ctx.requestSignal, timeout.signal]) : timeout.signal });
   } finally {
     clearTimeout(timer);
   }
@@ -228,15 +248,15 @@ function profileMirrored(ownerUid: number, ctx: KernelContext): boolean {
 /**
  * Writes Bluesky's copy of the published profile where the repository holds
  * another: none from before Ships kept one, or one the host's takedowns held
- * back. It asks the host only then, so a sign-in after the copy is written
- * asks nothing.
+ * back. It asks the host only then, so reaching the Ship after the copy is
+ * written asks nothing.
  */
 async function mirrorPublishedProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
   if (profileMirrored(ownerUid, ctx)) return;
   await ctx.profiles.exclusive(async () => {
-    // The owner may have published or unpublished it meanwhile.
+    // The owner may have published or unpublished it meanwhile, or a sign-in and a message both found it missing.
     const published = ctx.profiles.published(ownerUid);
-    if (!published) return;
+    if (!published || profileMirrored(ownerUid, ctx)) return;
     const mirror = blueskyMirror(published.record, await publicTakedowns(ctx), ctx);
     if (ctx.profiles.holdsMirror(ownerUid, mirror)) return;
     await putProfileMirror(ctx, mirror);
