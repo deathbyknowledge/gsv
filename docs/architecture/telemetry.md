@@ -64,7 +64,8 @@ without turning the logical request into a failure.
 
 `inference.metadata.finished` measures configuration lookup separately from
 generation: each participating component emits its own elapsed time and outcome.
-Gateway distinguishes cache hits, misses and deadline expiry; Accounts can also
+Gateway distinguishes cache hits, misses and deadline expiry, and records a
+failed or expired lookup even though the run continues without it; Accounts can also
 report D1 SQL execution time and automatic retry attempts when provided by D1.
 The difference between these timings helps locate waiting between components;
 it does not by itself prove a platform fault. No provider/model names or error

@@ -9,8 +9,8 @@ describe("run failure visibility", () => {
       await runtime.configureAi(process.pid);
       await runtime.client.proc.observe({ pid: process.pid });
       await runtime.client.sys.config.set({ key: "users/1000/ai/models", value: JSON.stringify({ version: 1, models: [{
-        id: "integration-model", name: "Unavailable metadata", provider: "custom", model: "integration-metadata-error",
-        baseUrl: runtime.ai.baseUrl, providerStyle: "openai-chat-completions", transportTarget: "gsv",
+        id: "integration-model", name: "Disconnected ChatGPT account", provider: "openai-codex", model: "gpt-5.5",
+        oauthAccountKey: "disconnected", transportTarget: "gsv",
       }] }) });
       const sent = await runtime.client.proc.send({ pid: process.pid, message: "Hello" });
       if (!sent.ok) throw new Error(sent.error);
@@ -22,13 +22,30 @@ describe("run failure visibility", () => {
       expect(history.activeRunId).toBeNull();
       expect(history.records).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "event", payload: {
         kind: "runtime.failed", severity: "error", audience: "both",
-        payload: { reason: "tick.error", prefix: "Process run failed", error: expect.stringContaining("Fixture model metadata unavailable") },
+        payload: { reason: "tick.error", prefix: "Process run failed", error: expect.stringContaining("The selected ChatGPT account is not connected") },
       } })]));
       await runtime.configureAi(process.pid);
       runtime.ai.enqueue({ kind: "tool-calls", calls: [{ id: "yield", name: "Shell", arguments: { input: "yield" } }] });
       expect(await runtime.client.proc.send({ pid: process.pid, message: "Try again" })).toMatchObject({ ok: true });
       await runtime.waitFor(() => runtime.signals.some(({ signal, payload }) => signal === "proc.run.finished"
         && payload.pid === process.pid && payload.status === "ok"), "recovered run", 15000);
+    } finally { await runtime.close(); }
+  });
+
+  it("keeps a run going when its model's metadata lookup fails", async () => {
+    const runtime = await startProcessRuntimeHarness();
+    try {
+      const process = await runtime.spawn("Metadata outage");
+      await runtime.configureAi(process.pid);
+      await runtime.client.proc.observe({ pid: process.pid });
+      await runtime.client.sys.config.set({ key: "users/1000/ai/models", value: JSON.stringify({ version: 1, models: [{
+        id: "integration-model", name: "Unavailable metadata", provider: "custom", model: "integration-metadata-error",
+        baseUrl: runtime.ai.baseUrl, providerStyle: "openai-chat-completions", transportTarget: "gsv",
+      }] }) });
+      runtime.ai.enqueue({ kind: "tool-calls", calls: [{ id: "yield", name: "Shell", arguments: { input: "yield" } }] });
+      expect(await runtime.client.proc.send({ pid: process.pid, message: "Hello" })).toMatchObject({ ok: true });
+      await runtime.waitFor(() => runtime.signals.some(({ signal, payload }) => signal === "proc.run.finished"
+        && payload.pid === process.pid && payload.status === "ok"), "run without model metadata", 15000);
     } finally { await runtime.close(); }
   });
 });
