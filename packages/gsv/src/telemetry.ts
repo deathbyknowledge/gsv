@@ -85,12 +85,33 @@ export const installationSetupStepSchema = z.enum([
   "provision-personal-agent",
 ]);
 
+/** The layer that reported an unexpected ripgit failure. The cause stays with ripgit's caller. */
+export const ripgitFailureKindSchema = z.enum(["runtime", "repository", "json", "encoding", "binding", "other"]);
+
+/** The ripgit operation that failed, without the repository it addressed. */
+export const ripgitRouteSchema = z.enum([
+  "apply",
+  "import",
+  "hyperspace-read",
+  "read",
+  "git-info-refs",
+  "git-upload-pack",
+  "git-receive-pack",
+  "admin",
+  "delete",
+  "registration",
+  "lifecycle",
+  "discovery",
+  "other",
+]);
+
 export const telemetryComponentSchema = z.enum([
   "gateway",
   "accounts",
   "inference",
   "search",
   "mail",
+  "ripgit",
 ]);
 
 const processRunFinishedSchema = z.strictObject({
@@ -346,6 +367,16 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
     }),
   }),
   z.strictObject({
+    stream: z.literal("operational"), name: z.literal("ripgit.request.failed"),
+    properties: z.strictObject({
+      diagnosticId: z.string().check(z.uuid()),
+      outcome: z.literal("failed"),
+      route: ripgitRouteSchema,
+      kind: ripgitFailureKindSchema,
+      durationMs: nonNegativeIntegerSchema,
+    }),
+  }),
+  z.strictObject({
     stream: z.literal("operational"), name: z.literal("inference.client.finished"),
     properties: z.strictObject({
       ...exceptionDiagnosticProperties,
@@ -442,6 +473,7 @@ export type TelemetryEventOwnership = Record<z.infer<typeof telemetryEventSchema
 export const telemetryEventComponents = {
   "memory.review.admission.failed": ["gateway"],
   "installation.setup.failed": ["gateway"],
+  "ripgit.request.failed": ["ripgit"],
   "inference.client.finished": ["gateway", "inference"],
   "inference.metadata.finished": ["gateway", "inference", "accounts"],
   "entitlements.refresh.finished": ["inference", "search", "mail"],
