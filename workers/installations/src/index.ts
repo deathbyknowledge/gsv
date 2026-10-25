@@ -24,6 +24,7 @@ import { createAccountsDeletionRuntime } from "./deletion-runtime";
 import { configuredDeletionEnvironment, type DeletionResourceEnvironment } from "./deletion-verifier";
 import { ShipTakedowns } from "./admin/takedowns";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
+export { RequestReportsEntrypoint } from "./request-reports";
 
 export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment & OperatorEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { JsonValue } from "./http";
 import type { InstallationDeletionReceipt, InstallationDeletionRequest, InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
+import { RequestReports } from "./request-reports";
 import { AccountStore } from "./store";
 import { InstallationResetCoordinator } from "./reset-preparation";
 import { AccountsDeletionRuntime } from "./deletion-runtime";
@@ -235,6 +236,35 @@ describe("Accounts deletion runtime", () => {
     expect((await post({ operationId: state.operationId, confirmHandle: state.old.handle, reason: "owner asked" }))?.status).toBe(200);
     expect(audited).toEqual([{ name: "ship.deletion.retire", installationId: state.old.installationId, reason: "owner asked" }]);
     expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "retained" });
+  });
+
+  it("erases the reports a deleted Ship's person filed, a hundred at a time, and keeps another Ship's", async () => {
+    const state = await fixture();
+    const reports = new RequestReports(state.db);
+    const report = (installationId: string, requestKey: string) => reports.submit({
+      installationId, requestKey, sender: { did: "did:plc:reportedsenderaaaaaaaaaa" }, category: "spam", receivedAtMs: 1,
+    });
+    const kept = await report(state.second.installationId, "apr_kept");
+    await state.db.prepare(`INSERT INTO request_reports (id, installation_id, request_key, sender_did, category, received_at, reported_at)
+      SELECT 'report_' || value, ?, 'apr_' || value, 'did:plc:reportedsenderaaaaaaaaaa', 'spam', 1, 1 FROM json_each(?)`)
+      .bind(state.old.installationId, JSON.stringify(Array.from({ length: 150 }, (_, index) => index))).run();
+    const count = async () => (await state.db.prepare("SELECT COUNT(*) AS count FROM request_reports WHERE installation_id = ?")
+      .bind(state.old.installationId).first<{ count: number }>())!.count;
+    const runtime = state.makeRuntime();
+    await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: state.old.handle });
+    const inventory = await runtime.registerInventory(state.old.installationId, state.manifest);
+    await runtime.begin(state.old.installationId, { operationId: state.operationId, inventorySha256: inventory.sha256 });
+    let status = await runtime.status(state.old.installationId);
+    let previous = await count();
+    for (let attempt = 0; attempt < 15 && status.phase !== "live-erased"; attempt++) {
+      status = await runtime.retry(state.old.installationId);
+      const remaining = await count();
+      expect(previous - remaining).toBeLessThanOrEqual(100);
+      previous = remaining;
+    }
+    expect(status.phase).toBe("live-erased");
+    expect(previous).toBe(0);
+    expect(await reports.get(kept.reportId)).toMatchObject({ installationId: state.second.installationId });
   });
 
   it("denies unauthenticated and cross-origin administration without retiring the space", async () => {
