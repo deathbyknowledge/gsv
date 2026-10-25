@@ -108,6 +108,14 @@
       }
     },
     {
+      "binding": "REQUEST_REPORTS",
+      "service": "gsv-installations-dev",
+      "entrypoint": "RequestReportsEntrypoint",
+      "props": {
+        "authority": "kernel-report"
+      }
+    },
+    {
       "binding": "INFERENCE_EXECUTION",
       "service": "gsv-inference-public-dev"
     },

@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type {
+  HostedRepositoryModeration,
   PdsModerationService,
   RepositoryModeration,
   SubjectStatus,
@@ -7,6 +8,7 @@ import type {
   SubjectStatusUpdate,
 } from "@humansandmachines/gsv/services/pds";
 import * as z from "zod/mini";
+import { FIREHOSE_NAME } from "../host/firehose";
 import type { HostedRepo } from "../host/repo";
 import type { PdsEnv } from "./env";
 
@@ -22,6 +24,7 @@ const updateSchema = z.strictObject({
   reason: z.optional(z.string().check(z.maxLength(500))),
 });
 const querySchema = z.strictObject({ did: z.optional(identifier), uri: z.optional(identifier), blob: z.optional(identifier) });
+const didSchema = identifier.check(z.startsWith("did:", "Invalid DID"));
 
 /**
  * Bound only to Accounts, with the operator's moderation authority. Each call
@@ -46,12 +49,24 @@ export class PdsModerationEntrypoint extends WorkerEntrypoint<PdsEnv, { authorit
     return await repo.getSubjectStatus(querySchema.parse(query));
   }
 
+  async locateRepository(did: string): Promise<HostedRepositoryModeration | null> {
+    this.requireAuthority();
+    const entry = await this.env.FIREHOSE.getByName(FIREHOSE_NAME).locate(didSchema.parse(did));
+    if (!entry) return null;
+    const repository = await this.getRepository(entry.name);
+    return repository && { ...repository, installationId: entry.name };
+  }
+
   /** The installation's repository object, once the binding's authority and Accounts' record of the installation allow it. */
   private async repository(installationId: string): Promise<DurableObjectStub<HostedRepo>> {
-    if (this.ctx.props?.authority !== "operator-moderation") throw new Error("PDS moderation authority is required");
+    this.requireAuthority();
     if (!installationId || installationId.length > 160) throw new Error("Invalid installation identity");
     const route = await this.env.INSTALLATION_DIRECTORY.resolveInstallation(installationId);
     if (!route.found || route.installationId !== installationId) throw new Error("Unknown installation");
     return this.env.REPOS.getByName(installationId);
+  }
+
+  private requireAuthority(): void {
+    if (this.ctx.props?.authority !== "operator-moderation") throw new Error("PDS moderation authority is required");
   }
 }

@@ -247,6 +247,8 @@ describe("public operator composition", () => {
     expect(gateway).not.toHaveProperty("MANAGED_INFERENCE_INSTALLATIONS");
     expect(gateway?.INSTALLATION_OWNERSHIP).toEqual({ worker: "directory",
       options: { entrypoint: "InstallationOwnershipEntrypoint", props: { authority: "kernel-owner-link" } } });
+    expect(gateway?.REQUEST_REPORTS).toEqual({ worker: "directory",
+      options: { entrypoint: "RequestReportsEntrypoint", props: { authority: "kernel-report" } } });
     expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryRecoveryBinding", bindings: [{ type: "service",
       name: "ACCOUNTS_GATEWAY_RECOVERY", service: "gateway", entrypoint: "GatewayRecoveryEntrypoint",
       props: { authority: "installation-owner-recovery" } }] });

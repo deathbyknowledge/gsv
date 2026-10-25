@@ -171,6 +171,10 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
     serviceBindings.INSTALLATION_OWNERSHIP = Cloudflare.WorkerEntrypoint(directory, {
       entrypoint: "InstallationOwnershipEntrypoint", props: { authority: "kernel-owner-link" },
     });
+    // Only the Kernel's binding may file the reports people send to the operator's queue.
+    serviceBindings.REQUEST_REPORTS = Cloudflare.WorkerEntrypoint(directory, {
+      entrypoint: "RequestReportsEntrypoint", props: { authority: "kernel-report" },
+    });
     if (props.services?.entitlements) {
       serviceBindings.ENTITLEMENTS = props.services.entitlements;
     }

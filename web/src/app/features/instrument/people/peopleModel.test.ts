@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ApproachSummary, PublicProfile } from "@humansandmachines/gsv/protocol";
-import { approachSendIntent, approachStatus, contactProfileUrl, emptyApproachDraft, handleLabel as label, profileAddress as address } from "./peopleModel";
+import { approachSendIntent, approachStatus, contactProfileUrl, emptyApproachDraft, handleLabel as label, profileAddress as address, requestMayReport } from "./peopleModel";
 
 const deployment = { primaryDomain: "fleet.example", legacyDomains: ["old.example"] };
 const profileAddress = (value: string) => address(value, deployment);
@@ -92,5 +92,16 @@ describe("message request status", () => {
     expect(approachStatus(accepting, false)).toBe("people.status.connectionFailed");
     expect(approachStatus(accepting, true)).toBe("people.status.shipTakenDown");
     expect(approachStatus({ ...sent, delivery: "received" }, true)).toBe("people.status.received");
+  });
+
+  it("offers a report on a stranger's request once its message arrived, until it's accepted or reported", () => {
+    const received: ApproachSummary = { ...sent, direction: "incoming", delivery: "received", messageSequence: 1 };
+    expect(requestMayReport(received)).toBe(true);
+    expect(requestMayReport({ ...received, state: "declined" })).toBe(true);
+    expect(requestMayReport({ ...received, messageSequence: undefined })).toBe(false);
+    expect(requestMayReport({ ...received, state: "accepting" })).toBe(false);
+    expect(requestMayReport({ ...received, state: "accepted" })).toBe(false);
+    expect(requestMayReport({ ...received, reportedAtMs: 5 })).toBe(false);
+    expect(requestMayReport({ ...sent, messageSequence: 1 })).toBe(false);
   });
 });

@@ -50,6 +50,7 @@ describe("moderating for an operator", () => {
       }))).toContain("moderation authority");
       expect(await rejection(moderation(authority).getSubjectStatus(installationId, { did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa" })))
         .toContain("moderation authority");
+      expect(await rejection(moderation(authority).locateRepository("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"))).toContain("moderation authority");
       expect(resolve).not.toHaveBeenCalled();
     },
   );
@@ -81,6 +82,30 @@ describe("moderating for an operator", () => {
     const { takedown } = await moderation().updateSubjectStatus(ship.installationId, { subject, takedown: { applied: true } });
     expect(new Date(takedown.ref ?? "").toISOString()).toBe(takedown.ref);
     expect(await ship.repository.takedowns()).toEqual([{ subject, ref: takedown.ref, reason: null, at: expect.any(Number) }]);
+  });
+});
+
+describe("finding an account by its DID", () => {
+  it("names the installation that holds it and what is taken down, and nothing for a DID hosted elsewhere", async () => {
+    const ship = await publishedShip();
+    const { did, installationId, handle } = ship;
+    expect(await moderation().locateRepository(did)).toEqual({ installationId, did, handle, takedowns: [] });
+
+    const subject = { $type: "com.atproto.admin.defs#repoRef", did } as const;
+    await moderation().updateSubjectStatus(installationId, { subject, takedown: { applied: true, ref: "audit_found" }, reason: "Spam" });
+    expect(await moderation().locateRepository(did)).toEqual({
+      installationId, did, handle, takedowns: [{ subject, ref: "audit_found", reason: "Spam", at: expect.any(Number) }],
+    });
+
+    expect(await moderation().locateRepository("did:plc:cccccccccccccccccccccccc")).toBeNull();
+    expect(await rejection(moderation().locateRepository(handle))).toContain("Invalid DID");
+  });
+
+  it("refuses a DID whose installation Accounts doesn't know", async () => {
+    const ship = await publishedShip();
+    const resolve = vi.spyOn(accounts, "resolveInstallation").mockResolvedValue({ found: false });
+    expect(await rejection(moderation().locateRepository(ship.did))).toContain("Unknown installation");
+    expect(resolve).toHaveBeenCalledWith(ship.installationId);
   });
 });
 

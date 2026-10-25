@@ -1050,6 +1050,10 @@ type ProfileAndApproachSyscalls = {
     args: { approachId: string; expectedRevision: number };
     result: { approach: ApproachSummary };
   };
+  "approach.report": {
+    args: { approachId: string; category: "spam" | "harassment" | "impersonation" | "sexual" | "other"; includeMessage: boolean };
+    result: { approach: ApproachSummary };
+  };
 };
 ```
 
@@ -1107,6 +1111,15 @@ until both hold the same connection. Neither arrival nor acceptance starts Ship.
 Blocking denies future requests from that DID whether or not a contact was ever accepted, and a
 blocked sender hears the same refusal as a profile closed to requests. Unblocking does not revive an
 old request.
+
+`approach.report` sends a request the signed-in human received, and did not accept, to the
+operator's queue, and declines it privately if it is still waiting. The report names the sender by
+DID and verified handle, with the category and when the request arrived. With `includeMessage`, it
+also carries the sender's display name and first message exactly as the person read them; the
+Kernel reads them from the request itself, never from the caller. A request is reported once:
+reporting it again returns it unchanged, and `ApproachSummary.reportedAtMs` records when. Each person
+can report 20 requests a day. Without the deployment's `REQUEST_REPORTS` binding the call fails
+closed, and nothing changes until the operator's queue has the report. The sender's Ship is not told.
 
 ### Private conversation inbox
 

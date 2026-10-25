@@ -300,6 +300,7 @@ const SYSCALL_NAMES = [
   "approach.list",
   "approach.decide",
   "approach.retry",
+  "approach.report",
   "contact.invite.create",
   "contact.invite.accept",
   "contact.invite.list",

@@ -81,6 +81,12 @@ export function approachStatus(request: ApproachSummary, shipTakenDown: boolean)
   return request.delivery === "received" ? "people.status.received" : "people.status.sending";
 }
 
+/** Whether the person can report a stranger's request to their operator: once its message arrived, until they accept it. */
+export function requestMayReport(request: ApproachSummary): boolean {
+  return request.direction === "incoming" && request.messageSequence !== undefined && request.reportedAtMs === undefined
+    && request.state !== "accepting" && request.state !== "accepted";
+}
+
 export function requestMayRetry(request: ApproachSummary): boolean {
   return request.direction === "incoming" ? request.connection === "failed"
     : ["pending", "preparing"].includes(request.state) && request.delivery === "failed";

@@ -79,6 +79,9 @@ export type SubjectStatusQuery = { did?: string; uri?: string; blob?: string };
 /** An installation's account on the open network, and what its host has taken down. */
 export type RepositoryModeration = { did: string; handle: string; takedowns: PublicTakedown[] };
 
+/** An account the deployment's host holds, found by its DID, with the installation it belongs to. */
+export type HostedRepositoryModeration = RepositoryModeration & { installationId: string };
+
 /**
  * Takedowns on the deployment's ATProto host, with the semantics of
  * com.atproto.admin.updateSubjectStatus. Only Accounts' operator binding
@@ -90,4 +93,6 @@ export interface PdsModerationService {
   updateSubjectStatus(installationId: string, input: SubjectStatusUpdate): Promise<SubjectStatus>;
   /** Null when the subject names nothing the installation's repository holds or has taken down. */
   getSubjectStatus(installationId: string, query: SubjectStatusQuery): Promise<SubjectStatus | null>;
+  /** The account this host holds for a DID, and its installation; null for a DID hosted elsewhere. */
+  locateRepository(did: string): Promise<HostedRepositoryModeration | null>;
 }

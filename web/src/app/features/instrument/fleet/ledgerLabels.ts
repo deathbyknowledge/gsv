@@ -36,6 +36,7 @@ const labels = {
   "approach.list": "fleet.ledger.approachList",
   "approach.decide": "fleet.ledger.approachDecide",
   "approach.retry": "fleet.ledger.approachRetry",
+  "approach.report": "fleet.ledger.approachReport",
   "profile.update": "fleet.ledger.profileUpdate",
   "profile.publish": "fleet.ledger.profilePublish",
   "profile.unpublish": "fleet.ledger.profileUnpublish",

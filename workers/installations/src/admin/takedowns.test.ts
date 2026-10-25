@@ -43,6 +43,7 @@ function moderationPds(timeoutMs?: number) {
     getSubjectStatus: vi.fn(async (_installationId: string, query: SubjectStatusQuery) => query.uri === PROFILE
       ? { subject: { $type: "com.atproto.repo.strongRef" as const, uri: PROFILE, cid: "bafyreiprofile" }, takedown: { applied: false } }
       : null),
+    locateRepository: vi.fn(async (_did: string) => null),
   } satisfies PdsModerationService;
   return { pds, takedowns, moderation: new ShipTakedowns(pds, timeoutMs) };
 }

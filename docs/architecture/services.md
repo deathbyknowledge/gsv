@@ -168,6 +168,10 @@ owns signing, files and the firehose. Accounts' `PDS_MODERATION` binding carries
 the `operator-moderation` authority, through which the operator takes down and
 restores what a Ship publishes; the PDS holds each takedown and honours it in
 every read it serves.
+Gateway's `REQUEST_REPORTS` binding reaches Accounts' `RequestReportsEntrypoint`
+with the `kernel-report` authority in deployment-owned props, so only the
+Kernel files a person's report of a message request; Accounts owns the
+operator's queue and its retention.
 See [The open network](./open-network.md).
 
 ## Cloud instances

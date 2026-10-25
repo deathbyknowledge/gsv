@@ -2,7 +2,9 @@ import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 export { IntegrationInstances } from "./instances";
 export { IntegrationPds } from "./pds";
 export { NetworkPds } from "./network-pds";
+export { IntegrationRequestReports } from "./request-reports";
 import { eraseNetworkIdentities, serveNetworkRecord } from "./network-pds";
+import { filedRequestReports } from "./request-reports";
 import { z } from "zod";
 import {
   adapterSendArgsSchema,
@@ -548,6 +550,10 @@ export default class TestDependencies
     if (url.pathname === "/__test/erase-identity" && request.method === "POST") {
       await eraseNetworkIdentities();
       return new Response(null, { status: 204 });
+    }
+
+    if (url.pathname === "/__test/request-reports" && request.method === "GET") {
+      return Response.json(filedRequestReports());
     }
 
     if (url.pathname === "/__test/outbound" && request.method === "GET") {

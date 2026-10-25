@@ -136,7 +136,7 @@ import {
   handleProfileResolve, handleProfileUnpublish, handleProfileUpdate,
 } from "./profiles";
 import { handleConversationInbox, handleConversationViewGet, handleConversationViewUpdate } from "./conversation-views";
-import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachRetry } from "./approaches/admission";
+import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachReport, handleApproachRetry } from "./approaches/admission";
 import {
   handleSchedulerAdd,
   handleSchedulerList,
@@ -811,6 +811,9 @@ async function dispatchKernel(
         break;
       case "approach.retry":
         data = await handleApproachRetry(frame.args, ctx);
+        break;
+      case "approach.report":
+        data = await handleApproachReport(frame.args, ctx);
         break;
       case "profile.update":
         data = handleProfileUpdate(frame.args, ctx);

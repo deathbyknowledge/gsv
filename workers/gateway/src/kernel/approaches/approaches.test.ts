@@ -13,7 +13,8 @@ import type { ProcessRecord } from "../processes";
 import { handleContactSend, processFederationDelivery } from "../federation";
 import { handleContactBlockList, handleContactBlockSet } from "../federation/preferences";
 import { handleProfileGet, handleProfilePublish, handleProfileUnpublish, handleProfileUpdate, readPublicProfile } from "../profiles";
-import { handleApproachCreate, handleApproachDecide, handleApproachGet, handleApproachList, handleApproachRetry } from "./admission";
+import { requestReportSubmissionSchema, type RequestReportService, type RequestReportSubmission } from "@humansandmachines/gsv/services/reports";
+import { handleApproachCreate, handleApproachDecide, handleApproachGet, handleApproachList, handleApproachReport, handleApproachRetry } from "./admission";
 import { expireOverdueApproach, processApproachMaintenance } from "./runtime";
 
 let network: TestShipNetwork;
@@ -295,6 +296,100 @@ describe("a Ship its host took down", () => {
   });
 });
 
+describe("reporting a message request", () => {
+  it("files the report the person chose to send and declines the request privately, once", async () => {
+    const sent = await sendRequest();
+    const [received] = await incomingRequests(bob);
+    const queue = operatorQueue();
+    const { approach } = await bob.run((ctx) => handleApproachReport({ approachId: received.id, category: "spam", includeMessage: false }, reporting(ctx, queue)));
+    expect(queue.filed).toEqual([{
+      installationId: bob.installationId, requestKey: received.id,
+      sender: { did: alice.account.did, handle: "alice.ship.test" }, category: "spam", receivedAtMs: received.createdAtMs,
+    }]);
+    expect(approach).toMatchObject({ state: "declined", revision: received.revision + 1, reportedAtMs: queue.reportedAtMs });
+    expect(await incomingRequests(bob)).toEqual([approach]);
+    // As with any decline, the sender's Ship hears nothing.
+    await bob.run((ctx) => processApproachMaintenance(held(ctx)));
+    expect((await alice.run((ctx) => ctx.approaches.get(sent.id)))?.summary).toMatchObject({ state: "pending", delivery: "received" });
+    // Reporting it again returns the same report.
+    expect((await bob.run((ctx) => handleApproachReport({ approachId: received.id, category: "other", includeMessage: true }, reporting(ctx, queue)))).approach)
+      .toEqual(approach);
+    expect(queue.filed).toHaveLength(1);
+  });
+
+  it("includes the sender's name and message exactly as the person saw them only when they choose to", async () => {
+    await sendRequest();
+    const [received] = await incomingRequests(bob);
+    const queue = operatorQueue();
+    await bob.run((ctx) => handleApproachReport({ approachId: received.id, category: "harassment", includeMessage: true }, reporting(ctx, queue)));
+    expect(queue.filed).toEqual([expect.objectContaining({
+      category: "harassment", message: { displayName: "Alice in the open", text: "Hello, I'd like to ask about your boat." },
+    })]);
+  });
+
+  it("includes the longest message a request can carry, in any script", async () => {
+    // The Kernel keeps a request of at most 32,768 UTF-8 bytes, whichever way the request came.
+    const text = `${"語".repeat(10_922)}ok`;
+    await alice.run(async (ctx) => {
+      await handleApproachCreate({ ...request(profile), text }, held(ctx));
+      await processApproachMaintenance(held(ctx));
+    });
+    const [received] = await incomingRequests(bob);
+    const queue = operatorQueue();
+    await bob.run((ctx) => handleApproachReport({ approachId: received.id, category: "spam", includeMessage: true }, reporting(ctx, queue)));
+    expect(queue.filed).toEqual([expect.objectContaining({ message: { displayName: "Alice in the open", text } })]);
+  });
+
+  it("reports a request the person already declined, and refuses one they accepted or sent", async () => {
+    const sent = await sendRequest();
+    const [received] = await incomingRequests(bob);
+    const declined = (await bob.run((ctx) => handleApproachDecide({ approachId: received.id, expectedRevision: received.revision, decision: "decline" }, held(ctx)))).approach;
+    const queue = operatorQueue();
+    const { approach } = await bob.run((ctx) => handleApproachReport({ approachId: received.id, category: "spam", includeMessage: true }, reporting(ctx, queue)));
+    expect(approach).toMatchObject({ state: "declined", revision: declined.revision, reportedAtMs: queue.reportedAtMs });
+    expect(queue.filed[0]?.message?.text).toBe("Hello, I'd like to ask about your boat.");
+
+    await expect(alice.run((ctx) => handleApproachReport({ approachId: sent.id, category: "spam", includeMessage: false }, reporting(ctx, queue))))
+      .rejects.toThrow("Only a message request you received can be reported");
+    const fromMallory = await requestFrom(mallory);
+    const accepting = (await bob.run((ctx) => handleApproachDecide({
+      approachId: fromMallory.id, expectedRevision: fromMallory.revision, decision: "accept", shipHandlesMessages: false,
+    }, held(ctx)))).approach;
+    await expect(bob.run((ctx) => handleApproachReport({ approachId: accepting.id, category: "spam", includeMessage: false }, reporting(ctx, queue))))
+      .rejects.toThrow("A message request you accepted can't be reported");
+    expect(queue.filed).toHaveLength(1);
+  });
+
+  it("changes nothing when the operator's queue is missing or doesn't answer", async () => {
+    await sendRequest();
+    const [received] = await incomingRequests(bob);
+    const input = { approachId: received.id, category: "spam", includeMessage: false } as const;
+    await expect(bob.run((ctx) => handleApproachReport(input, held(ctx)))).rejects.toThrow("Reporting is not available here");
+    const failing: RequestReportService = { submitRequestReport: async () => { throw new Error("Accounts is down"); } };
+    await expect(bob.run((ctx) => handleApproachReport(input, reporting(ctx, failing)))).rejects.toThrow("Your report couldn't be sent; try again");
+    expect(await incomingRequests(bob)).toEqual([received]);
+  });
+
+  it("is the signed-in person's to make, a few times a day", async () => {
+    await sendRequest();
+    const [received] = await incomingRequests(bob);
+    const queue = operatorQueue();
+    const input = { approachId: received.id, category: "spam", includeMessage: false } as const;
+    const procs = { get: (): Pick<ProcessRecord, "isPersonalController" | "ownerUid"> | null => ({ isPersonalController: true, ownerUid: SPACE_OWNER_UID }) };
+    // SAFETY: the authority check reads only the calling process's controller flag and owner from the registry.
+    await expect(bob.run((ctx) => handleApproachReport(input, { ...reporting(ctx, queue), processId: "proc:ship", procs } as KernelContext)))
+      .rejects.toThrow("signed-in human");
+    await bob.run((ctx) => {
+      for (let report = 0; report < 20; report++) {
+        ctx.federation.consumeRateLimits([{ scope: `owner:${SPACE_OWNER_UID}`, operation: "approach.report.day", maximum: 20, windowMs: 86_400_000 }], Date.now());
+      }
+    });
+    await expect(bob.run((ctx) => handleApproachReport(input, reporting(ctx, queue)))).rejects.toThrow("Daily report limit reached");
+    expect(queue.filed).toEqual([]);
+    expect(await incomingRequests(bob)).toEqual([received]);
+  });
+});
+
 function request(read: PublicProfile): ApproachCreateArgs {
   return { did: read.did, profileCid: read.cid, displayName: "Alice in the open", text: "Hello, I'd like to ask about your boat.", idempotencyKey: "first-message" };
 }
@@ -314,6 +409,34 @@ async function sendRequest(): Promise<ApproachSummary> {
   const { approach } = await alice.run((ctx) => handleApproachCreate(request(profile), held(ctx)));
   await alice.run((ctx) => processApproachMaintenance(held(ctx)));
   return approach;
+}
+
+/** A request from another space to Bob, delivered and waiting for his decision. */
+async function requestFrom(space: TestSpace): Promise<ApproachSummary> {
+  const read = await space.run((ctx) => readPublicProfile(bob.account.did, ctx));
+  await space.run((ctx) => handleApproachCreate({ ...request(read), displayName: space.name }, held(ctx)));
+  await space.run((ctx) => processApproachMaintenance(held(ctx)));
+  const received = (await incomingRequests(bob)).find((entry) => entry.peerDid === space.account.did);
+  if (!received) throw new Error(`${space.name}'s request did not reach Bob`);
+  return received;
+}
+
+/** The operator's queue as the Kernel's binding reaches it, refusing what Accounts refuses and keeping what each report carried. */
+function operatorQueue() {
+  const filed: RequestReportSubmission[] = [];
+  const reportedAtMs = Date.now();
+  return {
+    filed, reportedAtMs,
+    submitRequestReport: async (input: RequestReportSubmission) => {
+      filed.push(requestReportSubmissionSchema.parse(input));
+      return { reportId: `report_${filed.length}`, reportedAtMs };
+    },
+  } satisfies RequestReportService & { filed: RequestReportSubmission[]; reportedAtMs: number };
+}
+
+/** The space's context with alarms held and the deployment's report binding. */
+function reporting(ctx: KernelContext, reports: RequestReportService): KernelContext {
+  return { ...held(ctx), env: { ...ctx.env, REQUEST_REPORTS: reports } };
 }
 
 async function incomingRequests(space: TestSpace): Promise<ApproachSummary[]> {

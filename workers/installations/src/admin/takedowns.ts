@@ -1,4 +1,5 @@
 import type {
+  HostedRepositoryModeration,
   ModerationSubject,
   PdsModerationService,
   RepositoryModeration,
@@ -26,11 +27,14 @@ type TakedownRequest = z.infer<typeof takedownRequestSchema>;
 /** The PDS answers a subject it doesn't hold, or can't take down, with one of these XRPC errors. */
 const PDS_REFUSAL = /^(?:InvalidRequest|RecordNotFound|BlobNotFound|RepoNotFound|RepoDeleted): (.+)$/s;
 
-/** What the Ship page shows of the Ship's repository on the open network. */
-export type ShipOpenNetwork =
-  | { kind: "ok"; repository: RepositoryModeration }
+/** What a page shows of an account on the deployment's host: the account, none, or why it could not be read. */
+export type HostView<Repository> =
+  | { kind: "ok"; repository: Repository }
   | { kind: "none" }
   | { kind: "unavailable"; reason: "timed out" | "failed" };
+
+/** What the Ship page shows of the Ship's repository on the open network. */
+export type ShipOpenNetwork = HostView<RepositoryModeration>;
 
 export type TakedownSubjectKind = "account" | "record" | "blob";
 
@@ -57,21 +61,18 @@ export class ShipTakedowns {
   }
 
   /** Best effort, for the Ship page: a slow or failed read must not hide the rest of it. */
-  async view(installationId: string): Promise<ShipOpenNetwork> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const repository = await Promise.race([
-        this.pds.getRepository(installationId),
-        new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), this.timeoutMs); }),
-      ]);
-      if (repository === "timeout") return { kind: "unavailable", reason: "timed out" };
-      return repository ? { kind: "ok", repository } : { kind: "none" };
-    } catch (error) {
-      console.warn("[Operator] Ship takedowns unavailable:", exceptionDiagnostics(error));
-      return { kind: "unavailable", reason: "failed" };
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-    }
+  view(installationId: string): Promise<ShipOpenNetwork> {
+    return this.bestEffort(() => this.pds.getRepository(installationId));
+  }
+
+  /** The account the deployment's host holds for a reported sender's DID, with its installation; null for one hosted elsewhere. */
+  sender(did: string): Promise<HostedRepositoryModeration | null> {
+    return this.pds.locateRepository(did);
+  }
+
+  /** Best effort, for a report's page. */
+  senderView(did: string): Promise<HostView<HostedRepositoryModeration>> {
+    return this.bestEffort(() => this.pds.locateRepository(did));
   }
 
   /** Takes a subject down; the PDS keeps `ref`, the audit event that records the action, with it. */
@@ -95,6 +96,23 @@ export class ShipTakedowns {
     const takedown = repository.takedowns.find(({ subject }) => takedownSubjectKey(subject) === key);
     if (!takedown) throw new Error("request names nothing this Ship has taken down");
     return await this.update(installationId, { subject: takedown.subject, takedown: { applied: false } });
+  }
+
+  private async bestEffort<Repository>(read: () => Promise<Repository | null>): Promise<HostView<Repository>> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const repository = await Promise.race([
+        read(),
+        new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), this.timeoutMs); }),
+      ]);
+      if (repository === "timeout") return { kind: "unavailable", reason: "timed out" };
+      return repository ? { kind: "ok", repository } : { kind: "none" };
+    } catch (error) {
+      console.warn("[Operator] Ship takedowns unavailable:", exceptionDiagnostics(error));
+      return { kind: "unavailable", reason: "failed" };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   private async requireRepository(installationId: string): Promise<RepositoryModeration> {

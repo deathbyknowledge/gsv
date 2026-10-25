@@ -23,6 +23,7 @@ type ApproachRow = {
   contact_generation: string | null;
   delivery_state: ApproachSummary["delivery"]; attempts: number; next_attempt_at: number | null;
   accepted_at: number | null; created_at: number; updated_at: number; expires_at: number; cleanup_at: number | null;
+  reported_at: number | null;
 };
 
 /** Owning-runtime record. Public APIs return summary() instead. */
@@ -295,6 +296,20 @@ export class ApproachStore {
     });
   }
 
+  /**
+   * Records that the person reported a request they received to their
+   * operator, and declines it privately if it is still waiting for them.
+   */
+  reported(id: string, ownerUid: number, reportedAt: number, now = Date.now()): ApproachRecord {
+    return this.storage.transactionSync(() => {
+      const current = this.owned(id, ownerUid);
+      if (current.summary.reportedAtMs !== undefined) return current;
+      if (current.summary.state === "pending") this.decide(id, ownerUid, current.summary.revision, "declined", now);
+      this.sql.exec("UPDATE social_approaches SET reported_at = ?, updated_at = ? WHERE approach_id = ?", reportedAt, now, id);
+      return this.get(id)!;
+    });
+  }
+
   /** Ends every unsettled request with the DID; the caller's block transaction records the block itself. */
   blockForDid(ownerUid: number, did: string, now = Date.now()): void {
     this.sql.exec(`UPDATE social_approaches SET state = 'blocked', revision = revision + 1,
@@ -331,6 +346,7 @@ function summary(row: ApproachRow): ApproachSummary {
   };
   if (row.remote_handle !== null) result.peerHandle = row.remote_handle;
   if (row.accepted_at !== null) result.acceptedAtMs = row.accepted_at;
+  if (row.reported_at !== null) result.reportedAtMs = row.reported_at;
   if (row.message_sequence !== null) result.messageSequence = row.message_sequence;
   if (row.contact_generation !== null) result.contactId = row.contact_id;
   if (row.state === "accepting" || row.state === "accepted") {

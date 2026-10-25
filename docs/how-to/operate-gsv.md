@@ -257,6 +257,34 @@ audit. Takedowns need Accounts' `PDS_MODERATION` binding, which the
 composition adds with the PDS; see
 [the open network](../architecture/open-network.md#takedowns).
 
+## Review reports {#review-reports}
+
+People on your Ships can report a message request from someone they don't
+know. **Reports** in Accounts lists the open reports, newest first, and the
+closed ones with how each closed. A report names the Ship whose person reported
+it, and the sender by DID and handle, with what the person picked and when the
+request arrived and was reported. The sender's name and message are there only
+when the person chose to include them. Accounts erases the name and message
+90 days after the report closes, keeps the rest until the reporting Ship is
+deleted, and forwards no report to other hosts.
+
+Open a report to act on it:
+
+- **Take down** appears when this deployment's open-network host holds the
+  sender's account. It takes the whole account down, as
+  [Take down what a Ship publishes](#take-down-what-a-ship-publishes)
+  describes, with a reason the sender's person reads, and closes every open
+  report of that sender. A sender hosted elsewhere can't be taken down from
+  here.
+- **Dismiss** closes the report without acting on the sender, with an
+  optional reason for the audit log.
+
+Both actions run under the operator audit log. A report's trail lists every
+audit event that names it, including a takedown that failed, so you can see
+what was tried before it closed. Reports need Gateway's `REQUEST_REPORTS`
+binding, which the composition adds; see
+[request reports](../architecture/open-network.md#request-reports).
+
 ## Connect services and verify cleanup
 
 Enabled adapters require their application secrets declared in the adapter
