@@ -21,6 +21,8 @@ export type ApproachSummary = {
   updatedAtMs: number;
   expiresAtMs: number;
   acceptedAtMs?: number;
+  /** When the person reported this incoming request to their operator. */
+  reportedAtMs?: number;
   contactId?: string;
   connection?: "connecting" | "connected" | "failed";
 };

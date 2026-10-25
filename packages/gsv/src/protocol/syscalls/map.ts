@@ -333,7 +333,7 @@ import type {
   ProfileResolveArgs, ProfileResolveResult, ProfileAvatarSetArgs, ProfileAvatarSetResult,
   ProfileAvatarRemoveArgs, ProfileAvatarRemoveResult, ProfileAvatarReadArgs, ProfileAvatarReadResult,
 } from "./profile";
-import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachRetryArgs } from "./approach";
+import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachReportArgs, ApproachRetryArgs } from "./approach";
 
 export type SyscallDomains = {
   "fs.read": { args: FsReadArgs; result: FsReadResult };
@@ -388,6 +388,7 @@ export type SyscallDomains = {
   "approach.list": { args: ApproachListArgs; result: ApproachListResult };
   "approach.decide": { args: ApproachDecideArgs; result: ApproachResult };
   "approach.retry": { args: ApproachRetryArgs; result: ApproachResult };
+  "approach.report": { args: ApproachReportArgs; result: ApproachResult };
 
   "contact.invite.create": { args: ContactInviteCreateArgs; result: ContactInviteCreateResult };
   "contact.invite.accept": { args: ContactInviteAcceptArgs; result: ContactInviteAcceptResult };

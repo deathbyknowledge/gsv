@@ -2229,6 +2229,7 @@ export const es = {
   "fleet.ledger.approachList": "se abrieron las solicitudes de mensaje",
   "fleet.ledger.approachDecide": "se respondió a una solicitud de mensaje",
   "fleet.ledger.approachRetry": "se reintentó una solicitud de mensaje",
+  "fleet.ledger.approachReport": "se denunció una solicitud de mensaje",
   "fleet.ledger.profileUpdate": "se guardó el borrador del perfil",
   "fleet.ledger.profilePublish": "se publicó el perfil",
   "fleet.ledger.profileUnpublish": "se retiró la publicación del perfil",

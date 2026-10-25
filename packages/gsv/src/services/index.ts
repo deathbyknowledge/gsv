@@ -9,6 +9,7 @@ export type * from "./pds";
 export type * from "./inference-execution";
 export * from "./web-search";
 export * from "./feedback";
+export * from "./reports";
 export * from "./instances";
 export * from "./deployment";
 export * from "./operator";

@@ -2234,6 +2234,7 @@ export const ptBR = {
   "fleet.ledger.approachList": "abriu as solicitações de mensagem",
   "fleet.ledger.approachDecide": "respondeu a uma solicitação de mensagem",
   "fleet.ledger.approachRetry": "tentou de novo enviar uma solicitação de mensagem",
+  "fleet.ledger.approachReport": "denunciou uma solicitação de mensagem",
   "fleet.ledger.profileUpdate": "salvou o rascunho do perfil",
   "fleet.ledger.profilePublish": "publicou o perfil",
   "fleet.ledger.profileUnpublish": "cancelou a publicação do perfil",

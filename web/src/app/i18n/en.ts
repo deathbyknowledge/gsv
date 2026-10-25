@@ -2228,6 +2228,7 @@ export const en = {
   "fleet.ledger.approachList": "opened message requests",
   "fleet.ledger.approachDecide": "responded to a message request",
   "fleet.ledger.approachRetry": "retried a message request",
+  "fleet.ledger.approachReport": "reported a message request",
   "fleet.ledger.profileUpdate": "saved the profile draft",
   "fleet.ledger.profilePublish": "published the profile",
   "fleet.ledger.profileUnpublish": "unpublished the profile",
