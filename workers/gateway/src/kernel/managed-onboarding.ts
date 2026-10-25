@@ -150,7 +150,7 @@ async handleManagedSysSetup(
       if (!authorization.ok) {
         let recovered: SysSetupResult | null;
         try {
-          recovered = await this.recoverActivatedManagedSetup(setupArgs);
+          recovered = await this.recoverActivatedManagedSetup(setupArgs, ctx.connection?.state.source ?? null);
         } catch (error) {
           this.reportSetupFailure(connection, frame.id, error, "recovery", startedAt);
           return;
@@ -283,6 +283,7 @@ async authorizeManagedInstallationOnboarding(
 
 async recoverActivatedManagedSetup(
     args: Parameters<typeof recoverCompletedSysSetup>[0],
+    source: string | null,
   ): Promise<SysSetupResult | null> {
     const pending = this.pendingManagedOnboarding;
     const installation = this.host.installationIdentity;
@@ -306,7 +307,7 @@ async recoverActivatedManagedSetup(
 
     let data: SysSetupResult;
     try {
-      data = await recoverCompletedSysSetup(args, this.host.buildKernelContext({}));
+      data = await recoverCompletedSysSetup(args, this.host.buildKernelContext({}), source);
     } catch {
       return null;
     }

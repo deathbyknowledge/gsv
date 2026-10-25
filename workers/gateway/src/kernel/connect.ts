@@ -140,7 +140,9 @@ export async function handleConnect(
   // Authentication
   const authenticated = await authenticatePeer(args, ctx);
   if (!authenticated.ok) {
-    return { ok: false, code: 401, message: authenticated.error };
+    return authenticated.waitMs === undefined
+      ? { ok: false, code: 401, message: authenticated.error }
+      : { ok: false, code: 429, message: authenticated.error, details: { retryAfterMs: authenticated.waitMs } };
   }
   const { identity, principalKind } = authenticated;
   const implementsList = [...new Set(args.peer.implements ?? [])];
@@ -213,7 +215,7 @@ type PeerAuthenticationOutcome =
       principalKind: PeerPrincipalKind;
       targetLabel?: string;
     }
-  | { ok: false; error: string };
+  | { ok: false; error: string; waitMs?: number };
 
 function withDefaultProcessContext(identity: {
   uid: number;
@@ -274,8 +276,8 @@ async function authenticatePeer(
   }
 
   if (!hasPassword) return { ok: false, error: "Password or token required" };
-  const result = await auth.authenticate(username, args.auth.password!);
-  if (!result.ok) return { ok: false, error: result.error };
+  const result = await auth.authenticate(username, args.auth.password!, ctx.connection?.state.source ?? null);
+  if (!result.ok) return { ok: false, error: result.error, waitMs: result.waitMs };
 
   return {
     ok: true,

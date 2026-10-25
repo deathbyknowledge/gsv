@@ -56,6 +56,7 @@ import {
   adapterSurfaceSchema,
 } from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
+import { PasswordAttempts } from "./password-attempts";
 import { DevicePairingStore } from "./device-pairings";
 import { MemberRecoveryStore } from "./member-recovery";
 import { AccountRecoveryStore } from "./account-recovery";
@@ -222,6 +223,8 @@ type AuthorizeGitHttpInput = {
   write: boolean;
   username?: string;
   credential?: string;
+  /** The client's address, as Cloudflare reports it; the Kernel keeps only a keyed hash. */
+  address?: string | null;
 };
 
 type AuthorizeGitHttpResult =
@@ -235,6 +238,7 @@ type AuthorizeGitHttpResult =
       ok: false;
       status: number;
       message: string;
+      retryAfterSeconds?: number;
     };
 
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
@@ -429,6 +433,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly installationStorage: R2Bucket;
   readonly installationEnv: GatewayEnv;
   readonly auth: AuthStore;
+  private readonly passwordAttempts: PasswordAttempts;
   readonly pairings: DevicePairingStore;
   readonly accountRecovery: AccountRecoveryStore;
   readonly memberRecovery: MemberRecoveryStore;
@@ -512,7 +517,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       this.retirement,
     );
 
-    this.auth = new AuthStore(sql);
+    this.passwordAttempts = new PasswordAttempts(ctx.storage.kv);
+    this.auth = new AuthStore(sql, this.passwordAttempts);
 
     this.caps = new CapabilityStore(sql);
     if (!this.retirement.state) this.caps.seed();
@@ -861,11 +867,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
       ) {
         return new Response("WebSocket upgrade required", { status: 426 });
       }
-      const accepted = acceptKernelWebSocket<ConnectionState>(
-        this.ctx,
-        request,
-        { step: "pending" } satisfies ConnectionState,
-      );
+      const initial: ConnectionState = { step: "pending" };
+      const source = await this.passwordAttempts.source(request.headers.get("CF-Connecting-IP"));
+      if (source) initial.source = source;
+      const accepted = acceptKernelWebSocket<ConnectionState>(this.ctx, request, initial);
       this.connectionRuntime.onConnect(accepted.connection);
       return accepted.response;
     }
@@ -1467,10 +1472,14 @@ export class Kernel extends DurableObject<GatewayEnv> {
         return { ok: false, status: 401, message: "Authentication required" };
       }
     } else {
-      const passwordAuth = await this.auth.authenticate(username, credential);
-      const auth = passwordAuth.ok
-        ? passwordAuth
-        : await this.auth.authenticateToken(username, credential, { kind: "human" });
+      // A token is checked first, so using one never counts as a wrong password.
+      const tokenAuth = await this.auth.authenticateToken(username, credential, { kind: "human" });
+      const auth = tokenAuth.ok
+        ? tokenAuth
+        : await this.auth.authenticate(username, credential, await this.passwordAttempts.source(input.address));
+      if (!auth.ok && auth.waitMs !== undefined && !isPublicRead) {
+        return { ok: false, status: 429, message: auth.error, retryAfterSeconds: Math.ceil(auth.waitMs / 1000) };
+      }
 
       if (auth.ok) {
         const capabilities = this.caps.resolve(auth.identity.gids);
