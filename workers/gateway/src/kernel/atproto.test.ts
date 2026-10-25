@@ -129,6 +129,15 @@ describe("writing records", () => {
     expect(repository.applyWrites).not.toHaveBeenCalled();
   });
 
+  it.each(["app.bsky.actor.profile", "App.Bsky.Actor.profile"])("sends %s, the profile on Bluesky, back to People", async (collection) => {
+    const send = approval(true);
+    const { ctx, repository } = context(shipProcess());
+    await expect(handleAtprotoWrite({ writes: [{ action: "put", collection, rkey: "self", record: { $type: collection, displayName: "Not my name" } }] }, ctx))
+      .rejects.toThrow("app.bsky.actor.profile is your profile on Bluesky; change it in People");
+    expect(send).not.toHaveBeenCalled();
+    expect(repository.applyWrites).not.toHaveBeenCalled();
+  });
+
   it("keeps a collection whose name differs only in case", async () => {
     approval(true);
     const { ctx, repository } = context();

@@ -94,6 +94,9 @@ export function adminNewInstallationPage(
   });
 }
 
+/** A lifecycle change Accounts kept but couldn't finish, which the operator can submit again. */
+export type LifecycleRetry = { state: "active" | "restricted"; reason: string | null };
+
 export function adminInstallationPage<Detail extends AdminInstallation>(
   installation: Detail,
   issued?: IssuedAdminInstallation,
@@ -102,6 +105,7 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
   status = 200,
   presentation: Pick<InstallationAdminPresentation<Detail>, "navigation" | "overview" | "panel"> = {},
   ship?: ShipView,
+  retry?: LifecycleRetry,
 ): Response {
   const installationPath = `/admin/installations/${encodeURIComponent(installation.installationId)}`;
   const host = hostOf(installation.canonicalOrigin);
@@ -119,7 +123,7 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
         <div><p class="eyebrow">SHIP</p><h1>${escapeHtml(installation.handle)}</h1><p class="subtitle">${subtitle.map(escapeHtml).join(" · ")}</p></div>
         <div class="actions">${stateBadge(installation.state)}<a class="button secondary" href="${escapeHtml(installation.canonicalOrigin)}" target="_blank" rel="noreferrer">Open Ship</a></div>
       </div>
-      ${error ? errorNotice(error) : ""}
+      ${error ? errorNotice(error, retry ? lifecycleRetryForm(installationPath, retry) : "") : ""}
       ${issued ? onboardingNotice(issued) : ""}
       ${presentation.overview?.(installation) ?? ""}
       <div class="grid">
@@ -369,6 +373,12 @@ function takedownPanel(network: ShipOpenNetwork, installationPath: string): stri
       <div class="form-actions"><button class="danger" type="submit">Take down</button></div>
     </form>
   </section>`;
+}
+
+/** Submits the same lifecycle change again, with the reason the operator gave. */
+function lifecycleRetryForm(installationPath: string, retry: LifecycleRetry): string {
+  const reason = retry.reason ? `<input type="hidden" name="reason" value="${escapeHtml(retry.reason)}">` : "";
+  return `<form class="form-actions" method="post" action="${installationPath}/lifecycle">${reason}<button type="submit" name="state" value="${retry.state}">Try again</button></form>`;
 }
 
 function reasonField(required = false): string {

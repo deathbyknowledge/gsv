@@ -10,7 +10,7 @@ import type {
   ProfileState,
 } from "@humansandmachines/gsv/protocol";
 import { PROFILE_AVATAR_MAX_BYTES, bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
-import { encodePicture, pictureCrop, readProfilePicture, saveProfilePicture } from "./profilePicture";
+import { encodePicture, hasTransparency, pictureCrop, readProfilePicture, saveProfilePicture } from "./profilePicture";
 
 type PictureClient = Pick<GSVClient, "request">;
 type PictureArgs = ProfileAvatarSetArgs | ProfileAvatarRemoveArgs | ProfileAvatarReadArgs;
@@ -45,26 +45,37 @@ describe("pictureCrop", () => {
 });
 
 describe("encodePicture", () => {
-  it("keeps the first format the browser writes within the limit", async () => {
-    await expect(encodePicture(async (mimeType) => new Blob([BYTES], { type: mimeType }))).resolves.toEqual({ bytes: BYTES, mimeType: "image/webp" });
+  it("writes an opaque picture as a JPEG and one with transparency as a PNG, which every Ship and Bluesky show", async () => {
+    const encode = async (mimeType: ProfileAvatarMimeType) => new Blob([BYTES], { type: mimeType });
+    await expect(encodePicture(encode, false)).resolves.toEqual({ bytes: BYTES, mimeType: "image/jpeg" });
+    await expect(encodePicture(encode, true)).resolves.toEqual({ bytes: BYTES, mimeType: "image/png" });
   });
 
-  it("moves on when the browser writes another format or the picture is too large", async () => {
+  it("moves on when the browser writes another format or the picture is too large, and never writes WebP", async () => {
     const tried: Array<[ProfileAvatarMimeType, number | undefined]> = [];
     const picture = await encodePicture(async (mimeType, quality) => {
       tried.push([mimeType, quality]);
-      // This browser can't write WebP, so it writes PNG, and its PNG is over the limit.
-      if (mimeType === "image/webp") return new Blob([BYTES], { type: "image/png" });
+      // This PNG is over the limit, and this browser writes PNG for a JPEG of the higher quality.
       if (mimeType === "image/png") return new Blob([new Uint8Array(PROFILE_AVATAR_MAX_BYTES + 1)], { type: mimeType });
+      if (quality === 0.9) return new Blob([BYTES], { type: "image/png" });
       return new Blob([BYTES], { type: mimeType });
-    });
+    }, true);
     expect(picture.mimeType).toBe("image/jpeg");
-    expect(tried).toEqual([["image/webp", 0.9], ["image/png", undefined], ["image/jpeg", 0.9]]);
+    expect(tried).toEqual([["image/png", undefined], ["image/jpeg", 0.9], ["image/jpeg", 0.7]]);
   });
 
   it("refuses a picture no format fits", async () => {
-    await expect(encodePicture(async (mimeType) => mimeType === "image/png" ? null : new Blob([new Uint8Array(PROFILE_AVATAR_MAX_BYTES + 1)], { type: mimeType })))
-      .rejects.toThrow("can't be made small enough");
+    for (const transparent of [false, true]) {
+      await expect(encodePicture(async (mimeType) => mimeType === "image/png" ? null : new Blob([new Uint8Array(PROFILE_AVATAR_MAX_BYTES + 1)], { type: mimeType }), transparent))
+        .rejects.toThrow("can't be made small enough");
+    }
+  });
+});
+
+describe("hasTransparency", () => {
+  it("finds any pixel that isn't fully opaque", () => {
+    expect(hasTransparency(new Uint8ClampedArray([10, 20, 30, 255, 40, 50, 60, 255]))).toBe(false);
+    expect(hasTransparency(new Uint8ClampedArray([10, 20, 30, 255, 40, 50, 60, 254]))).toBe(true);
   });
 });
 

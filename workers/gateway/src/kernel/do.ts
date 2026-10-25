@@ -1,4 +1,4 @@
-import type { OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
+import type { OperatorShipSnapshot, ProfileCopyChange } from "@humansandmachines/gsv/services/operator";
 import { buildOperatorShipSnapshot } from "./operator-snapshot";
 import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
@@ -56,6 +56,7 @@ import {
   adapterSurfaceSchema,
 } from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
+import { PasswordAttempts } from "./password-attempts";
 import { DevicePairingStore } from "./device-pairings";
 import { MemberRecoveryStore } from "./member-recovery";
 import { AccountRecoveryStore } from "./account-recovery";
@@ -124,7 +125,7 @@ import {
 import { FederationStore } from "./federation-store";
 import { ProfileStore, type ProfileAvatarFile } from "./profile-store";
 import { ApproachStore } from "./approach-store";
-import { publicProfileAvatar, publicProfileProjection, type PublicProfileProjection } from "./profiles";
+import { followHostTakedowns, publicProfileAvatar, publicProfileProjection, type PublicProfileProjection } from "./profiles";
 import { processApproachMaintenance } from "./approaches/runtime";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { DidDocumentStore } from "./ships/did-directory";
@@ -159,6 +160,8 @@ const LEDGER_ROTATION_RETRY_MS = 60_000;
 const LEDGER_ROTATION_DAILY_MS = 24 * 60 * 60 * 1000;
 /** How long the public page waits for the Ship's host to say what it has taken down. */
 const PUBLIC_PROFILE_TIMEOUT_MS = 5_000;
+/** How long an operator's takedown waits for the Ship's host while the Ship brings Bluesky's copy in line. */
+const OPERATOR_TAKEDOWN_TIMEOUT_MS = 10_000;
 import { ManualUpdater } from "./sys/manual";
 import { SERVER_VERSION } from "../version";
 import { parseInstallationId } from "../installation/identity";
@@ -221,6 +224,8 @@ type AuthorizeGitHttpInput = {
   write: boolean;
   username?: string;
   credential?: string;
+  /** The client's address, as Cloudflare reports it; the Kernel keeps only a keyed hash. */
+  address?: string | null;
 };
 
 type AuthorizeGitHttpResult =
@@ -234,6 +239,7 @@ type AuthorizeGitHttpResult =
       ok: false;
       status: number;
       message: string;
+      retryAfterSeconds?: number;
     };
 
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
@@ -428,6 +434,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly installationStorage: R2Bucket;
   readonly installationEnv: GatewayEnv;
   readonly auth: AuthStore;
+  private readonly passwordAttempts: PasswordAttempts;
   readonly pairings: DevicePairingStore;
   readonly accountRecovery: AccountRecoveryStore;
   readonly memberRecovery: MemberRecoveryStore;
@@ -512,7 +519,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       this.retirement,
     );
 
-    this.auth = new AuthStore(sql);
+    this.passwordAttempts = new PasswordAttempts(ctx.storage.kv);
+    this.auth = new AuthStore(sql, this.passwordAttempts);
 
     this.caps = new CapabilityStore(sql);
     if (!this.retirement.state) this.caps.seed();
@@ -806,6 +814,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     });
   }
 
+  /** Brings Bluesky's copy of the published profile in line with the host's takedowns, which the operator has just changed. */
+  async operatorTakedownsChanged(): Promise<ProfileCopyChange> {
+    this.retirement.assertActive();
+    return await followHostTakedowns(this.buildKernelContext({ requestSignal: AbortSignal.timeout(OPERATOR_TAKEDOWN_TIMEOUT_MS) }));
+  }
+
   async authorizeRootRecovery(input: AuthorizeRootRecoveryInput): Promise<{ authorized: true }> {
     const gate = await this.onboarding.managedWorkGate({ fresh: true });
     if (!gate.allowed) throw new Error("This Ship is unavailable");
@@ -856,11 +870,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
       ) {
         return new Response("WebSocket upgrade required", { status: 426 });
       }
-      const accepted = acceptKernelWebSocket<ConnectionState>(
-        this.ctx,
-        request,
-        { step: "pending" } satisfies ConnectionState,
-      );
+      const initial: ConnectionState = { step: "pending" };
+      const source = await this.passwordAttempts.source(request.headers.get("CF-Connecting-IP"));
+      if (source) initial.source = source;
+      const accepted = acceptKernelWebSocket<ConnectionState>(this.ctx, request, initial);
       this.connectionRuntime.onConnect(accepted.connection);
       return accepted.response;
     }
@@ -1462,10 +1475,14 @@ export class Kernel extends DurableObject<GatewayEnv> {
         return { ok: false, status: 401, message: "Authentication required" };
       }
     } else {
-      const passwordAuth = await this.auth.authenticate(username, credential);
-      const auth = passwordAuth.ok
-        ? passwordAuth
-        : await this.auth.authenticateToken(username, credential, { kind: "human" });
+      // A token is checked first, so using one never counts as a wrong password.
+      const tokenAuth = await this.auth.authenticateToken(username, credential, { kind: "human" });
+      const auth = tokenAuth.ok
+        ? tokenAuth
+        : await this.auth.authenticate(username, credential, await this.passwordAttempts.source(input.address));
+      if (!auth.ok && auth.waitMs !== undefined && !isPublicRead) {
+        return { ok: false, status: 429, message: auth.error, retryAfterSeconds: Math.ceil(auth.waitMs / 1000) };
+      }
 
       if (auth.ok) {
         const capabilities = this.caps.resolve(auth.identity.gids);

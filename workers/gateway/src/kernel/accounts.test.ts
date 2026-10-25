@@ -164,6 +164,7 @@ function createCtx() {
         getByDedupeKey: vi.fn(() => null),
       } as KernelContext["responsibilities"],
       welcome: { prepare: prepareWelcome, createdAt: vi.fn() },
+      defer: vi.fn(),
       peer,
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;

@@ -93,7 +93,9 @@ describe("the operator's report queue", () => {
 
   it("takes down a sender hosted here and closes each of their open reports under one audit event", async () => {
     const { sender, reporter, other } = await ships();
-    const { pds, takedowns, moderation } = hostingPds(sender);
+    // Relays hide a whole account, so the sender's Ship leaves its profile's copy as it is.
+    const gateway = { operatorTakedownsChanged: vi.fn(async () => ({ found: true as const, copy: "unchanged" as const })) };
+    const { pds, takedowns, moderation } = hostingPds(sender, { gateway });
     const { http, reports, insight } = stack(moderation);
     const first = await reports.submit(submission(reporter.installationId));
     const second = await reports.submit(submission(other.installationId, { category: "impersonation" }));
@@ -110,8 +112,9 @@ describe("the operator's report queue", () => {
     const [event] = (await insight.audit.list({ page: 1 })).events;
     expect(event).toMatchObject({
       action: "ship.takedown", installationId: sender.installationId, reason: "Spam in every message request",
-      detail: { subject: "account", report: first.reportId, closed: "2" }, outcome: "completed",
+      detail: { subject: "account", report: first.reportId, closed: "2", bluesky: "unchanged" }, outcome: "completed",
     });
+    expect(gateway.operatorTakedownsChanged).toHaveBeenCalledExactlyOnceWith({ version: 1, installationId: sender.installationId });
     expect(pds.updateSubjectStatus).toHaveBeenCalledWith(sender.installationId, {
       subject: { $type: "com.atproto.admin.defs#repoRef", did: SENDER }, takedown: { applied: true, ref: event?.id },
       reason: "Spam in every message request",
@@ -185,7 +188,7 @@ describe("the operator's report queue", () => {
   it("still shows a report while the host can't be read, and offers no takedown without a PDS", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { sender, reporter } = await ships();
-    const { pds, moderation } = hostingPds(sender, 20);
+    const { pds, moderation } = hostingPds(sender, { timeoutMs: 20 });
     const { http, reports } = stack(moderation);
     const { reportId } = await reports.submit(submission(reporter.installationId));
     pds.locateRepository.mockRejectedValueOnce(new Error("PDS reset because its code was updated"));
@@ -217,7 +220,7 @@ describe("the operator's report queue", () => {
 });
 
 /** The deployment's PDS as Accounts' moderation binding reaches it: the sender's account on one of its Ships. */
-function hostingPds(sender: { installationId: string }, timeoutMs?: number) {
+function hostingPds(sender: { installationId: string }, options: ConstructorParameters<typeof ShipTakedowns>[1] = {}) {
   const takedowns: PublicTakedown[] = [];
   const repository = (): RepositoryModeration => ({ did: SENDER, handle: "sender.ship.test", takedowns: [...takedowns] });
   const pds = {
@@ -229,8 +232,9 @@ function hostingPds(sender: { installationId: string }, timeoutMs?: number) {
     getSubjectStatus: vi.fn(async (_installationId: string, _query: SubjectStatusQuery) => null),
     locateRepository: vi.fn(async (did: string): Promise<HostedRepositoryModeration | null> =>
       did === SENDER ? { ...repository(), installationId: sender.installationId } : null),
+    reconcileAccountStatus: vi.fn(async (_installationId: string) => {}),
   } satisfies PdsModerationService;
-  return { pds, takedowns, moderation: new ShipTakedowns(pds, timeoutMs) };
+  return { pds, takedowns, moderation: new ShipTakedowns(pds, options) };
 }
 
 function stack(moderation?: ShipTakedowns, access: InstallationAdminAccess = new CloudflareInstallationAdminAccess({ environment: "development", origin })) {

@@ -87,8 +87,9 @@ export function onboardingNotice(issued: IssuedAdminInstallation): string {
   </section>`;
 }
 
-export function errorNotice(message: string): string {
-  return `<section class="notice error" role="alert"><p class="eyebrow">REQUEST NOT COMPLETED</p><p>${escapeHtml(message)}</p></section>`;
+/** An error, with any form that acts on it. */
+export function errorNotice(message: string, action = ""): string {
+  return `<section class="notice error" role="alert"><p class="eyebrow">REQUEST NOT COMPLETED</p><p>${escapeHtml(message)}</p>${action}</section>`;
 }
 
 export function stateBadge(value: string): string {

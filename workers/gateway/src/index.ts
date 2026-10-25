@@ -169,14 +169,19 @@ export default {
         write: gitMatch.access === "write",
         username: basicAuth?.username,
         credential: basicAuth?.credential,
+        address: request.headers.get("CF-Connecting-IP"),
       });
       if (!authorized.ok) {
-        return authorized.status === 401
-          ? new Response(authorized.message, {
+        if (authorized.status === 401) {
+          return new Response(authorized.message, {
             status: 401,
             headers: { "WWW-Authenticate": 'Basic realm="gsv"' },
-          })
-          : new Response(authorized.message, { status: authorized.status });
+          });
+        }
+        return new Response(authorized.message, {
+          status: authorized.status,
+          headers: authorized.retryAfterSeconds === undefined ? undefined : { "Retry-After": String(authorized.retryAfterSeconds) },
+        });
       }
 
       return publicGitResponse(await createInstallationRipgit(

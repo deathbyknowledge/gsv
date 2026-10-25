@@ -65,6 +65,7 @@ export class ConnectionRuntime {
 
 onConnect(connection: KernelConnection<ConnectionState>): void {
     const state: ConnectionState = { step: "pending" };
+    if (connection.state.source) state.source = connection.state.source;
     connection.setState(state);
     this.host.connections.set(connection.id, connection);
   }

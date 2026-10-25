@@ -12,6 +12,7 @@ import type {
 } from "@humansandmachines/gsv/services/pds";
 import type { InstallationState } from "@humansandmachines/gsv/services/directory";
 import type { HostedAccount, HostedRepo } from "../host/repo";
+import { followAdmission } from "./admission";
 import type { PdsEnv } from "./env";
 
 /** The DID document service other Ships call, at the Ship's own address. */
@@ -65,7 +66,11 @@ class InstallationRepository extends RpcTarget implements PublicRepository {
       throw new Error(`InvalidHandle: ${handle} does not address this installation`);
     }
     const ship = { type: SHIP_SERVICE_TYPE, endpoint: `https://${handle.toLowerCase()}` };
-    return this.hosted(await this.repo.create(handle, `installations/${encodeURIComponent(this.installationId)}/`, { [SHIP_SERVICE]: ship }));
+    const account = await this.repo.create(handle, `installations/${encodeURIComponent(this.installationId)}/`,
+      { [SHIP_SERVICE]: ship }, route.state !== "active");
+    // Accounts may have changed the installation's state before the account existed to follow it.
+    await followAdmission(this.env.INSTALLATION_DIRECTORY, this.installationId, this.repo);
+    return this.hosted(account);
   }
 
   async account(): Promise<PublicRepositoryAccount | null> {
