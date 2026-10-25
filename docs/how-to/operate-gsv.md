@@ -33,6 +33,7 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_PDS_CONTACT_EMAIL` | Optional public address where relays and other services can reach you about the host. The host's `describeServer` answer names it. |
 | `GSV_PDS_PRIVACY_POLICY_URL`, `GSV_PDS_TERMS_OF_SERVICE_URL` | Optional HTTPS links to your privacy policy and terms of service, which `describeServer` lists. |
 | `GSV_PDS_LEXICON_HANDLE` | Optional handle of the [account that publishes Ship's lexicons](../architecture/open-network.md#the-lexicon-account), such as `lexicons.<domain>`. Deploying never creates that account; see [Publish the lexicons](#publish-the-lexicons). |
+| `GSV_PDS_RELAYS` | Optional comma-separated HTTPS origins of the [relays](../architecture/open-network.md#relays) the host asks to follow it, such as `https://bsky.network`; empty by default, so no relay hears of the host. See [Announce the host to relays](#announce-the-host-to-relays). |
 
 Optional inference ceilings are `GSV_INFERENCE_MONTHLY_REQUESTS`,
 `GSV_INFERENCE_MONTHLY_OUTPUT_TOKENS`, `GSV_INFERENCE_MAX_OUTPUT_TOKENS` and
@@ -109,6 +110,43 @@ directory for good, so each step is yours to run, once, with
 After the first publish, each deployment's changed lexicons go out within ten
 minutes. `npm run pds:lexicons -- status --pds https://pds.<domain>` shows the
 account and the lexicons waiting to go out.
+
+### Announce the host to relays
+
+Bluesky and other apps read what Ships publish through a relay, which follows
+the host only once the host asks it to. Name the relays in `GSV_PDS_RELAYS`,
+such as `GSV_PDS_RELAYS=https://bsky.network`, and deploy. Within ten minutes
+the host asks each one to follow it, and it asks again when it has new events
+and twenty minutes have passed, so a relay that dropped the host picks it up
+again. The PDS Worker's logs show a warning each time a relay refuses or can't
+be reached, naming the relay and any HTTP status and XRPC error; the host then
+waits longer before asking that relay again, up to six hours.
+
+Check what a relay knows of the host with
+[goat](https://github.com/bluesky-social/goat), which asks `bsky.network`
+unless you name another relay:
+
+```sh
+goat relay host status pds.<domain>
+goat relay --relay-host https://relay.example host status pds.<domain>
+```
+
+It shows whether the relay follows the host, the last event it read and how
+many of the host's accounts it knows. A relay limits that number for each
+host. The reference relay that Bluesky operates follows 100 accounts on a new
+host by default and drops the events of any past that, so ask the relay's
+operator to raise the host's limit before the host has more accounts than
+that.
+
+A relay reads the host only from the moment it joins, so from its first run
+after a relay accepts, the host introduces every active Ship it already holds,
+200 a run, as it announced each Ship when it was created. A Ship past the
+relay's account limit misses that introduction. Once the limit is raised, take
+the relay out of `GSV_PDS_RELAYS` and deploy, wait for the next ten-minute run,
+then name it again and deploy: the host forgets a relay at its first run
+without it, and introduces every Ship to it again once it's named anew. That
+run happens only while the deployment names another relay or a lexicon
+account.
 
 ## Give someone a Ship {#give-someone-a-space}
 

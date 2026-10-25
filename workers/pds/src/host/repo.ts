@@ -4,7 +4,8 @@ import type { Service } from "@atcute/did-plc";
 import { isHandle, isNsid, isRecordKey, parseCanonicalResourceUri } from "@atcute/lexicons/syntax";
 import { now as tidNow } from "@atcute/tid";
 import { jsonToLex } from "@atproto/lex-json";
-import { BlockMap, cidForRecord } from "@atproto/repo";
+import type { CID } from "@atproto/lex-data";
+import { BlockMap, blocksToCarFile, cidForRecord } from "@atproto/repo";
 import * as z from "zod/mini";
 import { BlobStore, extractJsonBlobCids, type BlobRef } from "../cirrus/repo/blobs";
 import { RepoEngine } from "../cirrus/repo/engine";
@@ -13,7 +14,7 @@ import { SqliteRepoStorage } from "../cirrus/repo/storage";
 import { getBlocksCar, getRecordProofCar, getRepoCar } from "../cirrus/repo/sync";
 import { validator } from "../cirrus/validation";
 import type { HostEnv } from "./env";
-import { FIREHOSE_NAME, type OutboxEvent, type RepoState } from "./firehose";
+import { FIREHOSE_NAME, type OutboxEvent, type RepoHead, type RepoState } from "./firehose";
 import { didDocument, mintIdentity, registerGenesis, tombstoneIdentity, type RepoIdentity } from "./identity";
 import {
   REPO_BLOB_REF, REPO_REF, STRONG_REF, subjectKey, Takedowns,
@@ -307,6 +308,16 @@ export class HostedRepo extends DurableObject<HostEnv> {
   async state(): Promise<RepoState | null> {
     const repo = await this.readable();
     return repo ? repoState(repo, await this.retired()) : null;
+  }
+
+  /** The repository's head as a #sync event carries it, so the host can introduce the account to a relay that joined after it. */
+  async head(): Promise<RepoHead | null> {
+    const repo = await this.readable();
+    if (!repo) return null;
+    const root = await repo.storage.getRoot();
+    const rev = await repo.storage.getRev();
+    if (!root || !rev) return null;
+    return { rev, blocks: await blocksToCarFile(root, await headBlocks(repo, root)) };
   }
 
   /**
@@ -754,11 +765,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
     const root = await repo.storage.getRoot();
     const rev = await repo.storage.getRev();
     if (!root || !rev || (await this.lastAnnouncedRev(repo)) === rev) return;
-    const bytes = await repo.storage.getBytes(root);
-    if (!bytes) throw new Error(`Repository head block ${root.toString()} is missing`);
-    const blocks = new BlockMap();
-    blocks.set(root, bytes);
-    await repo.sequencer.sequenceSync({ did: repo.account.did, rev, cid: root, blocks });
+    await repo.sequencer.sequenceSync({ did: repo.account.did, rev, cid: root, blocks: await headBlocks(repo, root) });
     await this.alarmBy(Date.now());
   }
 
@@ -968,6 +975,15 @@ async function repoState(repo: OpenRepo, retired: boolean): Promise<RepoState> {
     rev: await repo.storage.getRev(),
     head: head ? head.toString() : null,
   };
+}
+
+/** The repository's signed head commit, the one block a #sync event carries. */
+async function headBlocks(repo: OpenRepo, root: CID): Promise<BlockMap> {
+  const bytes = await repo.storage.getBytes(root);
+  if (!bytes) throw new Error(`Repository head block ${root.toString()} is missing`);
+  const blocks = new BlockMap();
+  blocks.set(root, bytes);
+  return blocks;
 }
 
 function recordUri(repo: OpenRepo, collection: string, rkey: string): string {

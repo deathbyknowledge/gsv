@@ -19,4 +19,6 @@ export interface HostEnv {
   /** The operator's privacy policy and terms of service, linked from describeServer. */
   PDS_PRIVACY_POLICY_URL?: string;
   PDS_TERMS_OF_SERVICE_URL?: string;
+  /** Comma-separated HTTPS origins of the relays the host asks to crawl it, such as https://bsky.network; without one, it asks none. */
+  PDS_RELAYS?: string;
 }

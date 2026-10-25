@@ -7,7 +7,12 @@ repository's events into the host's firehose and keeps the directory of hosted
 repositories. `handleXrpc` serves public reads, sending each repository read to
 the object that holds the repository. Each `HostedRepo` also signs
 service-auth tokens with its account's key for calls to other services. The
-host imports nothing from GSV.
+worker's schedule has `HostFirehose` ask the relays the deployment names in
+`PDS_RELAYS` to crawl the host when a request to each is due, and the firehose
+keeps each relay's last answer; `src/host/relays.ts` decides when and asks.
+From the run after a relay first accepts, the firehose introduces the accounts
+it already held, 200 a run in DID order, reading each one's head from its
+`HostedRepo`. The host imports nothing from GSV.
 
 `src/gsv/` connects the host to a GSV deployment. Each installation's
 repository object is named by its installation ID and keeps its blobs under
@@ -45,7 +50,7 @@ imports; `npm run protocol:generate` writes that list.
 The operator composition in `deployment/src/runtime.ts` deploys the worker
 when the operator configures a PLC rotation key. `npm run deployment:build`
 bundles it from `wrangler.jsonc`, and the composition supplies its origins,
-Accounts binding, PLC keys and `pds.<domain>` route;
+Accounts binding, PLC keys, relays and `pds.<domain>` route;
 `docs/architecture/open-network.md` describes the deployment.
 
 ## Repository engine
@@ -112,6 +117,18 @@ firehose as a relay does. They cover a lost directory response, writes that
 overlap while blob storage is slow, a head that no event announced, delivery
 retries with backoff, the blob lifecycle, cursor replay and retention, and the
 XRPC reads, including an unknown DID that must not address any object.
+
+The relay tests answer `requestCrawl` as the reference relay does, checking the
+host's `describeServer` through the worker before accepting. They cover asking
+each relay the deployment names once by the host's hostname, asking again only
+for new events after twenty minutes, backing off a relay that refuses or can't
+be reached, forgetting a relay the deployment stops naming, and asking the
+relays when publishing lexicons fails, and writing the relay record only when
+it changes. They also cover introducing each active account to a relay that
+joins after it, once across runs and a restart of the firehose and again when
+the relay is named anew; introducing a batch a run, resuming after a restart
+and leaving out accounts listed after the introduction began; and leaving out
+an account taken down while the firehose reads its head.
 
 Uploads stream in with a declared size, up to 48 MiB. The host hashes the bytes
 as they arrive, names the staged copy by the resulting CID, and keeps one

@@ -92,6 +92,8 @@ export default Alchemy.Stack("gsv", {
     privacyPolicyUrl: Option.getOrUndefined(yield* Config.String("GSV_PDS_PRIVACY_POLICY_URL").pipe(Config.option)),
     termsOfServiceUrl: Option.getOrUndefined(yield* Config.String("GSV_PDS_TERMS_OF_SERVICE_URL").pipe(Config.option)),
     lexiconHandle: Option.getOrUndefined(yield* Config.String("GSV_PDS_LEXICON_HANDLE").pipe(Config.option)),
+    relays: [...new Set((yield* Config.String("GSV_PDS_RELAYS").pipe(Config.withDefault(""))).split(",")
+      .map((relay) => relay.trim()).filter(Boolean))],
   } : undefined;
   const deployment = yield* GsvDeployment({ logicalPrefix: "Gsv", domain, adminOrigin, access, routing: { zoneId },
     domainAliases, presentation, operatorUpdates,

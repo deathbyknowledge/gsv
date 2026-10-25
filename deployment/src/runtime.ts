@@ -67,6 +67,12 @@ export type GsvPdsProps = {
    * `npm run pds:lexicons -- create`.
    */
   lexiconHandle?: string;
+  /**
+   * HTTPS origins of the relays the PDS asks to crawl it, such as
+   * https://bsky.network, so the open network hears what Ships publish.
+   * Without one, the PDS asks no relay.
+   */
+  relays?: readonly string[];
 };
 
 export type GsvRuntimeProps = {
@@ -202,6 +208,8 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
       if (props.pds.privacyPolicyUrl) pdsEnv.PDS_PRIVACY_POLICY_URL = props.pds.privacyPolicyUrl;
       if (props.pds.termsOfServiceUrl) pdsEnv.PDS_TERMS_OF_SERVICE_URL = props.pds.termsOfServiceUrl;
       if (props.pds.lexiconHandle) pdsEnv.PDS_LEXICON_HANDLE = props.pds.lexiconHandle;
+      const relays = props.pds.relays ?? [];
+      if (relays.length > 0) pdsEnv.PDS_RELAYS = relays.join(",");
       pds = yield* Cloudflare.Worker(
         `${props.logicalPrefix}Pds`,
         {
@@ -209,8 +217,9 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
           main: props.pds.workerBundle,
           bundle: false,
           // Once the operator has published the lexicons, a deploy's changes follow within ten minutes.
-          crons: props.pds.lexiconHandle ? ["*/10 * * * *"] : undefined,
-          // The PDS reaches only its PLC directory, over the public internet even on the deployment's own zone.
+          // The same schedule tells relays of the host's new events.
+          crons: props.pds.lexiconHandle || relays.length > 0 ? ["*/10 * * * *"] : undefined,
+          // The PDS reaches only its PLC directory and the relays it names, over the public internet even on the deployment's own zone.
           compatibility: { ...compatibility, flags: [...compatibility.flags, "global_fetch_strictly_public"] },
           workersDev: false,
           // Like the Gateway's, its logs go only to the operator's tail when there is one.
@@ -348,6 +357,9 @@ export const assertGsvPds = (pds: GsvPdsProps): void => {
   if (pds.lexiconHandle !== undefined
     && !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(pds.lexiconHandle)) {
     throw new Error("The PDS lexicon handle must be a lowercase domain name");
+  }
+  if (pds.relays?.some((relay) => !isHttpsOrigin(relay))) {
+    throw new Error("The PDS relays must be HTTPS origins, such as https://bsky.network");
   }
 };
 

@@ -110,6 +110,62 @@ export async function verifyCommit(event: CommitClaim, didKey: string): Promise<
   expect((await tree.getPointer()).equals(event.prevData)).toBe(true);
 }
 
+/** The CID of the signed commit a #sync's CAR holds, which a relay takes as the repository's head at the event's revision. */
+export async function syncedCommit(event: { rev: string; blocks: Uint8Array }): Promise<string> {
+  const { root, blocks } = await readCarWithRoot(event.blocks);
+  const { obj: commit } = await getAndParseByDef(blocks, root, def.commit);
+  expect(commit.rev).toBe(event.rev);
+  return root.toString();
+}
+
+/** The hostnames the reference relay takes in requestCrawl: a DNS name, without a scheme, port or path. */
+const RELAY_HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const crawlRequest = z.object({ hostname: z.string() });
+const serverDescription = z.object({ did: z.string(), availableUserDomains: z.array(z.string()) });
+
+/**
+ * A relay as the reference relay meets a host. A host asks it to crawl with
+ * com.atproto.sync.requestCrawl, naming its hostname; the relay checks that the
+ * host answers describeServer before it accepts, and then follows the host's
+ * firehose from its live end.
+ */
+export class FakeRelay {
+  /** Each hostname the relay was asked to crawl, in order. */
+  readonly requests: string[] = [];
+  /** The XRPC error the relay answers with instead of accepting, if any. */
+  refusal: { status: number; error: string } | null = null;
+
+  constructor(
+    readonly origin: string,
+    /** Answers a GET of the host's XRPC methods, as the network reaches them by URL. */
+    private readonly host: (url: string) => Promise<Response>,
+  ) {}
+
+  async handle(request: Request): Promise<Response> {
+    if (request.method !== "POST" || new URL(request.url).pathname !== "/xrpc/com.atproto.sync.requestCrawl") {
+      return Response.json({ error: "MethodNotImplemented" }, { status: 501 });
+    }
+    // The relay binds a JSON body only when the request says it is JSON.
+    const body = request.headers.get("Content-Type") === "application/json" ? crawlRequest.safeParse(await request.json()) : null;
+    if (!body?.success) return relayError(400, "BadRequest", "invalid body");
+    const { hostname } = body.data;
+    this.requests.push(hostname);
+    if (this.refusal) return relayError(this.refusal.status, this.refusal.error, "Refused");
+    if (!RELAY_HOSTNAME.test(hostname)) return relayError(400, "BadRequest", "hostname field empty or invalid");
+    const described = await this.host(`https://${hostname}/xrpc/com.atproto.server.describeServer`);
+    if (!described.ok || !serverDescription.safeParse(await described.json()).success) {
+      return relayError(400, "HostNotFound", "host server unreachable");
+    }
+    return new Response(null);
+  }
+}
+
+/** An XRPC error as the relay's server sends it, with the length a small body arrives with. */
+function relayError(status: number, error: string, message: string): Response {
+  const body = new TextEncoder().encode(JSON.stringify({ error, message }));
+  return new Response(body, { status, headers: { "Content-Type": "application/json", "Content-Length": String(body.byteLength) } });
+}
+
 function readFrame(bytes: Uint8Array): Frame {
   const [rawHeader, rest] = decodeFirst(bytes);
   const { op, t } = header.parse(rawHeader);
