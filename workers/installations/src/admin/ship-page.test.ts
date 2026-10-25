@@ -281,7 +281,7 @@ describe("operator audit log", () => {
     const { http, service, insight } = stack();
     const installationId = await createShip(http, service, "unchanged");
     const refused = await http.handle(form(`/admin/installations/${installationId}/reset`, {
-      operationId: `reset_${crypto.randomUUID()}`, confirmHandle: "wrong",
+      operationId: `reset_${crypto.randomUUID()}`, confirmHandle: "wrong", reason: "owner asked",
     }));
     expect(refused?.status).not.toBe(201);
     const events = (await insight.audit.list({ installationId, page: 1 })).events;

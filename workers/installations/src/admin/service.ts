@@ -15,6 +15,15 @@ export type IssuedAdminInstallation = {
 /** The hosting operator supplies this identity; an HTTP caller cannot choose it. */
 export type OperatorRegistryPrincipal = { id: string; email: string; displayName: string };
 
+/** What resetting a Ship does to its person, which an operator reads before confirming one. */
+export const RESET_CONSEQUENCES: readonly string[] = [
+  "The person gets a new Ship at the same address and can't return to this one. They set it up again from a new activation link, and sessions, devices, messengers and background work on this Ship stop.",
+  "They get a new identity on the open network: the new Ship registers a new DID.",
+  "Their contacts end, and each one needs a new invitation.",
+  "Their public profile and records stop being served, and leave the open network when this Ship's data is erased.",
+  "Nothing is erased yet: this Ship's data is kept as pending deletion until a separate deletion removes it.",
+];
+
 export class InstallationAdminService extends InstallationAdminStore {
   private readonly resets: InstallationResetCoordinator;
 
