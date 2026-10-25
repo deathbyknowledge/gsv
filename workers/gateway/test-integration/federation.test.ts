@@ -35,6 +35,10 @@ describe("Ship-to-Ship integration", () => {
   let secondOrigin: URL;
   let first: GSVClient;
   let second: GSVClient;
+  let network: TestShipNetwork;
+  /** The second space's Ship after an operator reset, once a test starts it. */
+  let successorHarness: TestHarness | undefined;
+  let successor: GSVClient | undefined;
 
   beforeAll(async () => {
     firstHarness = createGatewayTestHarness({ network: { domain: FIRST_DOMAIN } });
@@ -55,7 +59,7 @@ describe("Ship-to-Ship integration", () => {
 
     // The Workers' own requests leave through this process's fetch, so the test serves the
     // open network: the DID directory, each Ship at its address, and each Ship's repository host.
-    const network = new TestShipNetwork().install();
+    network = new TestShipNetwork().install();
     for (const [harness, domain, handle] of [
       [firstHarness, FIRST_DOMAIN, FIRST_HANDLE],
       [secondHarness, SECOND_DOMAIN, SECOND_HANDLE],
@@ -76,9 +80,11 @@ describe("Ship-to-Ship integration", () => {
   afterAll(async () => {
     first?.close();
     second?.close();
+    successor?.close();
     await Promise.all([
       firstHarness?.close(),
       secondHarness?.close(),
+      successorHarness?.close(),
     ]);
     vi.restoreAllMocks();
   });
@@ -581,6 +587,57 @@ describe("Ship-to-Ship integration", () => {
     expect(history).toContain("selfie.png");
     expect(history).not.toContain("/resources/resource%3A");
     await first.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { shipHandlesMessages: false } });
+  });
+
+  it("keeps a contact while the directory can't be reached, and ends it once a reset Ship holds its address", async () => {
+    const contact = await waitForContact(first);
+    // An operator resets the second space: its address reaches a new Ship, which makes its own DID at sign-in.
+    const harness = createGatewayTestHarness({ network: { domain: SECOND_DOMAIN } });
+    successorHarness = harness;
+    const origin = loopbackOrigin((await harness.listen()).url);
+    const response = await harness.getWorker("gsv-test-dependencies").fetch(
+      "http://gsv-test-dependencies/__test/default-origin", { method: "POST", body: origin.origin },
+    );
+    expect(response.status).toBe(204);
+    network.hosts.set(SECOND_HANDLE, servedBy((url, init) => harness.fetch(url, init)));
+    network.hosts.set(`pds.${SECOND_DOMAIN}`, servedBy((url, init) => harness.getWorker("gsv-test-dependencies").fetch(url, init)));
+    await setup(origin, SECOND_USER, "second_ship");
+    const client = connectedClient(origin, SECOND_USER, "federation-successor-client");
+    successor = client;
+    await client.connect();
+    const successorDid = await poll(async () => (await client.atproto.identity({})).identity?.did ?? null, "the reset Ship's DID");
+    expect(successorDid).not.toBe(contact.remoteDid);
+
+    // The new Ship refuses a call addressed to the old DID, but without the directory nothing proves the old Ship gone.
+    network.plcReachable = false;
+    const unconfirmed = await first.contact.send({ contactId: contact.id, text: "Are you still there?", idempotencyKey: "integration-gone-unconfirmed" });
+    await expect.poll(async () => (await first.contact.delivery.get({ deliveryId: unconfirmed.deliveryId })).delivery?.state, { timeout: 20_000 }).toBe("failed");
+    expect((await waitForContact(first, undefined, true, contact.id)).state).toBe("active");
+
+    network.plcReachable = true;
+    const confirmed = await first.contact.send({ contactId: contact.id, text: "Hello?", idempotencyKey: "integration-gone-confirmed" });
+    await waitForContact(first, undefined, true, contact.id, "revoked");
+    expect((await first.contact.delivery.get({ deliveryId: confirmed.deliveryId })).delivery).toMatchObject({
+      state: "failed", lastError: "Contact was revoked", retryable: false,
+    });
+    expect(messagesWithText(await first.conversation.history({ conversationId: contact.conversationId, limit: 100 }), "Welcome to the conversation")).toHaveLength(1);
+  });
+
+  it("ends a contact once its Ship's space is deleted and its DID tombstoned", async () => {
+    const harness = successorHarness;
+    const client = successor;
+    if (!harness || !client) throw new Error("The reset Ship isn't running");
+    const did = (await client.atproto.identity({})).identity?.did;
+    const invite = await first.contact.invite.create({ expiresInSeconds: 300 });
+    await client.contact.invite.accept({ code: invite.code });
+    const contact = await waitForContact(first, did);
+    // The space is deleted: its address reaches no Ship, then erasure tombstones its DID.
+    network.hosts.set(SECOND_HANDLE, () => new Response("Not Found", { status: 404 }));
+    const erased = await harness.getWorker("gsv-test-dependencies").fetch("http://gsv-test-dependencies/__test/erase-identity", { method: "POST" });
+    expect(erased.status).toBe(204);
+    const sent = await first.contact.send({ contactId: contact.id, text: "Still there?", idempotencyKey: "integration-gone-deleted" });
+    await waitForContact(first, undefined, true, contact.id, "revoked");
+    expect((await first.contact.delivery.get({ deliveryId: sent.deliveryId })).delivery).toMatchObject({ state: "failed", lastError: "Contact was revoked" });
   });
 });
 

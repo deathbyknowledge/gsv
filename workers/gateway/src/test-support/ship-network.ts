@@ -84,6 +84,20 @@ export class TestShipNetwork {
     return didKey.slice("did:key:".length);
   }
 
+  /** Replaces the services an account's document names, keeping its keys and handle. */
+  async setServices(target: TestDidAccount, services: Record<string, Service>): Promise<void> {
+    const signing = await Secp256k1PrivateKey.importRaw(fromHex(target.signingHex));
+    await this.submit(target.did, await signOperation({
+      type: "plc_operation",
+      prev: await this.headCid(target.did),
+      rotationKeys: [await target.rotation.exportPublicKey("did")],
+      verificationMethods: { atproto: await signing.exportPublicKey("did") },
+      alsoKnownAs: [`at://${target.handle}`],
+      services,
+    }, target.rotation));
+    target.services = services;
+  }
+
   async deactivate(target: TestDidAccount): Promise<void> {
     await this.submit(target.did, await signTombstone({ type: "plc_tombstone", prev: await this.headCid(target.did) }, target.rotation));
   }

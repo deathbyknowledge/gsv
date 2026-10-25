@@ -32,6 +32,9 @@ export type ResolvedDid = {
 /** A DID that does not exist, was deactivated, or whose history or document doesn't verify. */
 export class DidNotResolvedError extends Error {}
 
+/** A did:plc whose verified history ends in a tombstone, which deactivates it for good. */
+export class DidDeactivatedError extends DidNotResolvedError {}
+
 /** The directory could not be reached or answered with an error; a cached document, if any, still stands. */
 export class DidDirectoryUnavailableError extends Error {}
 
@@ -197,7 +200,8 @@ async function plcDocument(did: `did:plc:${string}`, ctx: KernelContext): Promis
     throw new DidNotResolvedError(`${did}'s history doesn't verify: ${error instanceof Error ? error.message : String(error)}`);
   }
   const head = canonical.at(-1)?.operation;
-  if (!head || head.type === "plc_tombstone") throw new DidNotResolvedError(`${did} was deactivated`);
+  if (head?.type === "plc_tombstone") throw new DidDeactivatedError(`${did} was deactivated`);
+  if (!head) throw new DidNotResolvedError(`${did} has no operations`);
   const { alsoKnownAs, verificationMethods, services } = normalizeOp(head);
   return {
     id: did,
