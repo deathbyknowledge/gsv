@@ -6,7 +6,7 @@ import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { z } from "zod";
 
 const operatorReasonSchema = z.string().max(500).nullish();
-import type { InstallationAdminService } from "./service";
+import { RESET_CONSEQUENCES, type InstallationAdminService } from "./service";
 
 type AdminService = Pick<InstallationAdminService,
   "listInstallations" | "getInstallation" | "create" | "reissueOnboarding" | "resetInstallation" | "setInstallationState"
@@ -64,12 +64,7 @@ export class InstallationAdminApi {
           return json({ installationId, state });
         }
         if (action === "reset") {
-          const body = await readJsonObject(request);
-          const reason = readOperatorReason(body.reason);
-          const input = {
-            operationId: requireString(body.operationId, "operationId"),
-            confirmHandle: requireString(body.confirmHandle, "confirmHandle"),
-          };
+          const { input, reason } = readResetRequest(await readJsonObject(request));
           const reset = await this.audited(request, { name: "ship.reset", installationId, reason },
             () => this.service.resetInstallation(installationId, input),
             (result) => ({ detail: { replacementInstallationId: result.installation.installationId } }));
@@ -79,6 +74,7 @@ export class InstallationAdminApi {
       return json({ error: "Not Found" }, 404);
     } catch (error) {
       if (error instanceof AdminForbiddenError) return json({ error: "Forbidden" }, 403);
+      if (error instanceof UnconfirmedResetError) return json({ error: error.message, consequences: [...RESET_CONSEQUENCES] }, 400);
       const message = error instanceof Error ? error.message : "";
       if (["handle ", "installation", "operationId ", "request ", "JSON ", "query ", "state ", "page "]
         .some((prefix) => message.startsWith(prefix))) return json({ error: message }, 400);
@@ -99,6 +95,19 @@ export function readInstallationListQuery(url: URL): AdminInstallationListQuery 
   const page = pageValue ? Number(pageValue) : 1;
   if (!Number.isSafeInteger(page) || page < 1 || page > 1_000_000) throw new Error("page is invalid");
   return { query, state: state ?? null, page };
+}
+
+/** A reset whose operator hasn't typed the handle or given a reason; its refusal says what a reset does. */
+export class UnconfirmedResetError extends Error {}
+
+/** A reset request from a form or JSON, once its operator has typed the Ship's handle and given a reason. */
+export function readResetRequest(values: { operationId?: JsonValue; confirmHandle?: JsonValue; reason?: JsonValue }) {
+  const operationId = requireString(values.operationId, "operationId");
+  const reason = readOperatorReason(values.reason)?.trim();
+  if (!reason) throw new UnconfirmedResetError("request reason is required");
+  const confirmHandle = values.confirmHandle;
+  if (String(confirmHandle) !== confirmHandle || !confirmHandle) throw new UnconfirmedResetError("confirmHandle is required");
+  return { input: { operationId, confirmHandle }, reason };
 }
 
 function readOperatorReason(value: JsonValue | undefined): string | null {

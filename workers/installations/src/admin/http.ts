@@ -4,7 +4,7 @@ import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { AdminInstallation, AdminInstallationList, AdminInstallationListQuery, AdminInstallationSummary } from "../administration";
 import { hasExpectedOrigin, json, noStoreHeaders, readRequestBody, requireString } from "../http";
 import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
-import { InstallationAdminApi, readInstallationListQuery } from "./api";
+import { InstallationAdminApi, readInstallationListQuery, readResetRequest, UnconfirmedResetError } from "./api";
 import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type ShipView } from "./installations-page";
 import { adminAuditPage } from "./audit-page";
 import type { AdminAuditRecorder, OperatorAuditResult, ShipInsight } from "./insight";
@@ -128,11 +128,10 @@ export class InstallationAdminHttp<
         }
         if (route[2] === "reset") {
           const form = await readAdminForm(request);
-          const input = {
-            operationId: requireString(form.get("operationId"), "operationId"),
-            confirmHandle: requireString(form.get("confirmHandle"), "confirmHandle"),
-          };
-          const issued = await this.audited(request, { name: "ship.reset", installationId, reason: form.get("reason") },
+          const { input, reason } = readResetRequest({
+            operationId: form.get("operationId"), confirmHandle: form.get("confirmHandle"), reason: form.get("reason"),
+          });
+          const issued = await this.audited(request, { name: "ship.reset", installationId, reason },
             () => this.service.resetInstallation(installationId, input),
             (result) => ({ detail: { replacementInstallationId: result.installation.installationId } }));
           return adminInstallationPage(issued.installation, issued, undefined, false, 201, this.presentation, await this.shipView(issued.installation));
@@ -242,6 +241,7 @@ function isAdminApiPath(pathname: string): boolean {
 
 function installationAdminFailure(error: Error) {
   const message = error.message;
+  if (error instanceof UnconfirmedResetError) return { message, status: 400 };
   if (["handle ", "installation", "operationId ", "request ", "form ", "query ", "state ", "page "]
     .some((prefix) => message.startsWith(prefix))) return { message, status: 400 };
   return { message: "The operator request could not be completed.", status: 503 };

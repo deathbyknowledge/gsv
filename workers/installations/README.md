@@ -25,8 +25,10 @@ suppress referrer disclosure when opened.
 The API uses `/admin/api/installations` for listing and creation, and
 `/admin/api/installations/:id` for details. POST actions are `onboarding`,
 `lifecycle` and `reset`. Mutations require the exact configured Origin; creation
-and reset retain their operation ids, and reset requires the current handle as
-confirmation. JSON and HTML form bodies are bounded while reading. JSON claim
+and reset retain their operation ids. A reset requires the current handle as
+confirmation and a reason; without either, the API answers 400 with the
+`consequences` that the reset form lists before its confirmation. JSON and HTML
+form bodies are bounded while reading. JSON claim
 responses are never cached and suppress referrer disclosure.
 
 Production access requires an RS256 Cloudflare Access JWT matching

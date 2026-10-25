@@ -105,7 +105,10 @@ can leave the seam disabled or attach a consumer for their own backend.
 
 If an Accounts call fails during setup authorization, activation, or recovery,
 Gateway emits `installation.setup.failed` with a diagnostic ID, the stage,
-an allowed error type, and duration. A setup step that fails after the request is
+an allowed error type, and duration. When Accounts can't prepare a self-service
+signup, it emits the same event at the `activation` stage and keeps the cause in
+that signup's provisioning record; the person sees the diagnostic ID as the
+reference. A setup step that fails after the request is
 accepted, such as a filesystem write while the home is laid out, emits the same event
 with the `setup` stage and the step's name. Either way, the response includes the
 diagnostic ID. The person can retry a failed step with the same credentials: a step

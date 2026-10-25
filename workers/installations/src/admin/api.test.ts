@@ -9,6 +9,13 @@ import { InstallationAdminService, type IssuedAdminInstallation } from "./servic
 
 const origin = "http://localhost:8976";
 const registry = { id: "principal_test_operator", email: "operator@example.com", displayName: "Operator" };
+/** What a reset tells its operator before they confirm it. */
+const RESET_CONSEQUENCES_STATED = expect.arrayContaining([
+  expect.stringContaining("a new Ship"),
+  expect.stringContaining("a new identity on the open network"),
+  expect.stringContaining("contacts end"),
+  expect.stringContaining("public profile and records"),
+]);
 
 function stack() {
   const accounts = new AccountStore(env.INSTALLATIONS_DB, "example.com");
@@ -68,7 +75,7 @@ it("runs fresh operator administration, setup and reset without commercial servi
   expect((await api.handle(request(`${firstPath}/lifecycle`, { state: "restricted" })))?.status).toBe(200);
   await expect(accounts.resolveHostname("one.example.com")).resolves.toMatchObject({ state: "restricted" });
   expect((await api.handle(request(`${firstPath}/lifecycle`, { state: "active" })))?.status).toBe(200);
-  const replacement = await issue(api, `${firstPath}/reset`, { operationId: "reset_one", confirmHandle: "one" });
+  const replacement = await issue(api, `${firstPath}/reset`, { operationId: "reset_one", confirmHandle: "one", reason: "owner asked" });
   expect(replacement.installation.installationId).not.toBe(first.installation.installationId);
   expect(replacement.reset).toEqual({ previousInstallationId: first.installation.installationId, dataDeletionState: "pending" });
   await finishSetup(replacement);
@@ -79,6 +86,30 @@ it("runs fresh operator administration, setup and reset without commercial servi
   const detail = await api.handle(request(`/${replacement.installation.installationId}`));
   await expect(detail?.json()).resolves.toMatchObject({ state: "active", handle: "one" });
   expect((await env.INSTALLATIONS_DB.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'managed_inference_%'").all()).results).toEqual([]);
+});
+
+it("refuses a reset until its operator types the handle and gives a reason, and says what a reset does", async () => {
+  const { api, service } = stack();
+  const created = await issue(api, "", { operationId: "create_careful", handle: "careful" });
+  await finishSetup(created);
+  const path = `/${created.installation.installationId}/reset`;
+  const reset = vi.spyOn(service, "resetInstallation");
+  for (const [body, error] of [
+    [{ operationId: "reset_careful", confirmHandle: "careful" }, "request reason is required"],
+    [{ operationId: "reset_careful", confirmHandle: "careful", reason: "  " }, "request reason is required"],
+    [{ operationId: "reset_careful", reason: "owner asked" }, "confirmHandle is required"],
+  ] as const) {
+    const refused = await api.handle(request(path, body));
+    expect(refused?.status).toBe(400);
+    await expect(refused?.json()).resolves.toEqual({ error, consequences: RESET_CONSEQUENCES_STATED });
+  }
+  const tooLong = await api.handle(request(path, { operationId: "reset_careful", confirmHandle: "careful", reason: "x".repeat(501) }));
+  expect(tooLong?.status).toBe(400);
+  expect(reset).not.toHaveBeenCalled();
+  await expect(service.getInstallation(created.installation.installationId)).resolves.toMatchObject({ state: "active" });
+
+  const replacement = await issue(api, path, { operationId: "reset_careful", confirmHandle: "careful", reason: "owner asked" });
+  expect(replacement.reset?.previousInstallationId).toBe(created.installation.installationId);
 });
 
 it("refuses unconfigured public access and cross-origin mutations before creating state", async () => {

@@ -248,6 +248,7 @@ td strong, td small { display: block; } td small { margin-top: 6px; color: #8585
 .form-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .form-actions label { min-width: 180px; flex: 1; }
 .danger-zone { border-color: #513137; background: #130d10; }
+.consequences { margin: 0; padding-left: 18px; color: #c4c4ce; font: 13px/1.55 system-ui, sans-serif; } .consequences li + li { margin-top: 6px; }
 .subtitle { margin: 8px 0 0; font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
 .definition-list small { color: #858593; }
 .badge-ok, .badge-online { border-color: #315f4b; color: #9de0be; background: #0d1713; } .badge-error, .badge-aborted, .badge-offline { border-color: #743b42; color: #efafb5; background: #1a0e10; }

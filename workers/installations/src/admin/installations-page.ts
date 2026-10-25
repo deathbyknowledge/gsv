@@ -4,7 +4,7 @@ import type {
   AdminInstallationSummary,
 } from "../administration";
 import { ADMIN_VISIBLE_INSTALLATION_STATES } from "../administration";
-import type { IssuedAdminInstallation } from "./service";
+import { RESET_CONSEQUENCES, type IssuedAdminInstallation } from "./service";
 import type { AdminNavigationItem } from "./page";
 import type { OperatorRun, OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
 import type { OperatorAuditEvent, ShipContext, ShipHealth } from "./insight";
@@ -321,17 +321,17 @@ function resetPanel(
   }
   const operationId = `reset_${crypto.randomUUID()}`;
   return `<section class="panel danger-zone"><p class="eyebrow">FRESH SHIP</p><h2>Reset ${escapeHtml(installation.handle)}</h2>
-    <p>Reset assigns this handle to a new Ship ID and starts activation again. Existing sessions and background work stop because the previous Ship becomes inactive.</p>
-    <p><strong>This does not delete the previous Ship's stored data.</strong> It records that data as pending deletion so a separate deletion operation can remove it from every owning service.</p>
+    <p>Before you confirm, this is what a reset does:</p>
+    <ul class="consequences">${RESET_CONSEQUENCES.map((consequence) => `<li>${escapeHtml(consequence)}</li>`).join("")}</ul>
     <form class="form-actions" method="post" action="${installationPath}/reset">
       <input type="hidden" name="operationId" value="${escapeHtml(operationId)}">
-      ${reasonField()}
+      ${reasonField(true)}
       <label><span>Type ${escapeHtml(installation.handle)} to confirm</span><input name="confirmHandle" required autocomplete="off" value=""></label>
       <button class="danger" type="submit">Reset and issue activation link</button>
     </form>
   </section>`;
 }
 
-function reasonField(): string {
-  return `<label><span>Reason (optional, kept in the audit log)</span><input name="reason" maxlength="500" autocomplete="off" value=""></label>`;
+function reasonField(required = false): string {
+  return `<label><span>Reason (${required ? "required" : "optional"}, kept in the audit log)</span><input name="reason"${required ? " required" : ""} maxlength="500" autocomplete="off" value=""></label>`;
 }

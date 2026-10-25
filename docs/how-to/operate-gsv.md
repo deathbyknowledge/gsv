@@ -120,6 +120,31 @@ preserves the owner-authentication secret. Keep the deployment state on
 redeploy so existing verification and session records remain usable. Owner
 verification mail is independent of a Ship's messaging adapters.
 
+## Reset a Ship {#reset-a-ship}
+
+A reset gives the same person a fresh Ship under the same handle, and it can't
+be undone. The **Reset** panel on the Ship's administration page says what it
+does before you confirm:
+
+- The person gets a new Ship at the same address and can't return to the old
+  one. They set it up again from a new activation link, and sessions, devices,
+  messengers and background work on the old Ship stop.
+- They get a new identity on the open network: the new Ship registers a new
+  DID.
+- Their contacts end, and each one needs a new invitation.
+- Their public profile and records stop being served, and leave the open
+  network when the old Ship's data is erased.
+- Nothing is erased yet. The old Ship's data is kept as pending deletion until
+  a separate deletion removes it; see
+  [Connect services and verify cleanup](#connect-services-and-verify-cleanup).
+
+Give a reason, which the audit log keeps, and type the Ship's handle to
+confirm. The page then shows the new Ship's activation link once; give it to
+the person.
+
+The operator API needs the same handle and reason. Without either it answers
+400 and lists what a reset does, and a retried reset doesn't make another Ship.
+
 ## Check on a Ship {#check-on-a-ship}
 
 Each Ship's administration page shows its handle, mail address, hostnames and
@@ -150,7 +175,8 @@ works.
 Accounts records every operator change in an audit log: creating a Ship,
 reissuing its setup link, suspending, reactivating, resetting, and each
 deletion step. Each entry names the operator and the action, plus any reason
-the operator gave. Suspend and reset forms take an optional reason. A Ship's
+the operator gave. Suspending and reactivating take an optional reason, and a
+reset requires one. A Ship's
 page lists its recent entries, and `<admin-origin>/admin/audit` lists every
 entry. Entries outlive the Ship they describe. They name it only by Ship ID and
 hold no owner data.
