@@ -12,7 +12,7 @@ import { getRepoCar } from "../src/cirrus/repo/sync";
 import { verifyCommit } from "./relay";
 
 const DID = "did:web:repo.test";
-const NOTE = "space.ship.note";
+const NOTE = "com.example.note";
 
 async function testSigner(): Promise<{ didKey: string; signingKey: string }> {
   const keypair = await Secp256k1Keypair.create({ exportable: true });

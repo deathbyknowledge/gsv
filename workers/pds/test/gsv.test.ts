@@ -14,7 +14,7 @@ import { FakeAccounts } from "./accounts";
 import { FakePlcDirectory } from "./plc";
 import { deliver, errorOf, installFakePlc, read, rejection, upload } from "./support";
 
-const NOTE = "space.ship.note";
+const NOTE = "com.example.note";
 
 let plc: FakePlcDirectory;
 let accounts: FakeAccounts;

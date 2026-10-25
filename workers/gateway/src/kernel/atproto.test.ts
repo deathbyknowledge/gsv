@@ -9,8 +9,8 @@ import type { KernelContext } from "./context";
 
 const OWNER: ProcessIdentity = { uid: 1000, gid: 1000, gids: [100, 1000], username: "alice", home: "/home/alice", cwd: "/home/alice" };
 const ACCOUNT = { did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", handle: "alice.ship.space", host: "https://pds.ship.space" };
-const NOTE: PublicRecordWrite = { action: "put", collection: "space.ship.note", rkey: "first", record: { $type: "space.ship.note", text: "hello" } };
-const COMMIT = { commit: { cid: "bafycommit", rev: "3l2" }, results: [{ uri: `at://${ACCOUNT.did}/space.ship.note/first`, cid: "bafyrecord" }] };
+const NOTE: PublicRecordWrite = { action: "put", collection: "com.example.note", rkey: "first", record: { $type: "com.example.note", text: "hello" } };
+const COMMIT = { commit: { cid: "bafycommit", rev: "3l2" }, results: [{ uri: `at://${ACCOUNT.did}/com.example.note/first`, cid: "bafyrecord" }] };
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -147,7 +147,7 @@ describe("writing records", () => {
   it("asks for a batch only as large as the approval can show", async () => {
     const send = approval(true);
     const { ctx } = context(shipProcess());
-    const write = { ...NOTE, record: { $type: "space.ship.note", text: "x".repeat(64 * 1024) } };
+    const write = { ...NOTE, record: { $type: "com.example.note", text: "x".repeat(64 * 1024) } };
     await expect(handleAtprotoWrite({ writes: [write] }, ctx)).rejects.toThrow("exceed 64 KiB");
     expect(send).not.toHaveBeenCalled();
   });

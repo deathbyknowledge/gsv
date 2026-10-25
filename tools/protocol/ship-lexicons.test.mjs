@@ -272,7 +272,7 @@ test("the check finds space.ship NSIDs written into code, but not in comments, m
     "src/template.mjs": "export const deliver = `space.ship.deliver`;\n",
     "src/definition.ts": '\n\nexport const message = { $type: "space.ship.deliver#message" };\n',
     "src/comment.ts": "// space.ship.profile is a record.\n/** Calls `space.ship.deliver`. */\nexport const value = 1;\n",
-    "src/message.ts": 'export const message = "a collection such as space.ship.note";\n',
+    "src/message.ts": 'export const message = "a record such as space.ship.profile";\n',
     "src/generated/ship.ts": 'export const PROFILE = "space.ship.profile";\n',
     "src/profile.test.ts": 'export const PROFILE = "space.ship.profile";\n',
     "test-integration/profile.ts": 'export const PROFILE = "space.ship.profile";\n',

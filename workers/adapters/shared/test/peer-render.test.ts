@@ -164,9 +164,9 @@ describe("renderAdapterSend", () => {
         handle: "alice",
         address: "alice.ship.space",
         writes: [
-          { action: "create", collection: "space.ship.note", record: { $type: "space.ship.note", text: "the note itself" } },
-          { action: "put", collection: "space.ship.note", rkey: "pinned", record: { $type: "space.ship.note" } },
-          { action: "delete", collection: "space.ship.note", rkey: "old" },
+          { action: "create", collection: "com.example.note", record: { $type: "com.example.note", text: "the note itself" } },
+          { action: "put", collection: "com.example.note", rkey: "pinned", record: { $type: "com.example.note" } },
+          { action: "delete", collection: "com.example.note", rkey: "old" },
         ],
       },
       purpose: "publish your trip photo with a short note",
@@ -190,7 +190,7 @@ describe("renderAdapterSend", () => {
     const described = createAdapterHilPresentation({ ...context, hil: withoutPurpose }, withoutPurpose).action;
     expect(described).toBe(
       "Publish to the open network as @alice (alice.ship.space).\n"
-        + "add space.ship.note, add or replace space.ship.note/pinned, remove space.ship.note/old",
+        + "add com.example.note, add or replace com.example.note/pinned, remove com.example.note/old",
     );
     expect(described).not.toContain("the note itself");
 

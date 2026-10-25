@@ -7,7 +7,7 @@ import { startProcessRuntimeHarness } from "./process-runtime-harness";
 /** The fixture PDS as these tests read it back: each installation's committed batches of writes. */
 type FixturePds = { getInstallation(installationId: string): Promise<{ commits(): Promise<PublicRecordWrite[][]> }> };
 
-const NOTE = { action: "put" as const, collection: "space.ship.note", rkey: "first", record: { $type: "space.ship.note", text: "hello" } };
+const NOTE = { action: "put" as const, collection: "com.example.note", rkey: "first", record: { $type: "com.example.note", text: "hello" } };
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
 
 describe("publishing to the open network", () => {
@@ -31,7 +31,7 @@ describe("publishing to the open network", () => {
 
       const write = { ...NOTE, record: { ...NOTE.record, picture: blob } };
       const commit = await runtime.client.atproto.write({ writes: [write] });
-      expect(commit.results).toEqual([{ uri: "at://did:plc:dddddddddddddddddddddddd/space.ship.note/first", cid: "bafyrecord2" }]);
+      expect(commit.results).toEqual([{ uri: "at://did:plc:dddddddddddddddddddddddd/com.example.note/first", cid: "bafyrecord2" }]);
       expect(await committed(runtime.harness)).toEqual([profile, [write]]);
       await expect(runtime.client.atproto.write({ writes: [{ action: "delete", collection: "space.ship.profile", rkey: "self" }] }))
         .rejects.toThrow("space.ship.profile is your profile; change it in People");
@@ -73,10 +73,10 @@ describe("the Ship publishing to the open network", () => {
       await runtime.client.sys.config.set({ key: `users/${ship.uid}/ai/tools/approval`, value: JSON.stringify({ default: "auto", rules: [] }) });
       await runtime.client.proc.observe({ pid: ship.pid });
       const publish = (rkey: string) => ({ kind: "tool-calls" as const, calls: [{ id: `publish-${rkey}`, name: "Shell", arguments: {
-        input: `atproto put space.ship.note ${rkey} --json '{"text":"hello"}'`, purpose: "Publish the note",
+        input: `atproto put com.example.note ${rkey} --json '{"text":"hello"}'`, purpose: "Publish the note",
       } }] });
       const finish = { kind: "tool-calls" as const, calls: [{ id: "finish", name: "Send", arguments: { yield: true } }] };
-      const written = { action: "put", collection: "space.ship.note", rkey: "approved", record: { $type: "space.ship.note", text: "hello" } };
+      const written = { action: "put", collection: "com.example.note", rkey: "approved", record: { $type: "com.example.note", text: "hello" } };
 
       for (const [rkey, decision] of [["denied", "deny"], ["approved", "approve"]] as const) {
         runtime.ai.enqueue(publish(rkey), finish);

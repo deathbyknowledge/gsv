@@ -128,14 +128,14 @@ describe("publishing to the open network", () => {
       handle: "alice",
       address: "alice.ship.space",
       writes: [
-        { action: "create", collection: "space.ship.post", record: { $type: "space.ship.post", cover: file("a"), gallery: [file("b"), { nested: file("a") }] } },
-        { action: "put", collection: "space.ship.post", rkey: "pinned", record: { $type: "space.ship.post", clip: file("c", "video/mp4") } },
+        { action: "create", collection: "com.example.post", record: { $type: "com.example.post", cover: file("a"), gallery: [file("b"), { nested: file("a") }] } },
+        { action: "put", collection: "com.example.post", rkey: "pinned", record: { $type: "com.example.post", clip: file("c", "video/mp4") } },
       ],
     }));
     expect(publication).toEqual({
       handle: "alice",
       address: "alice.ship.space",
-      changes: [{ action: "create", record: "space.ship.post" }, { action: "put", record: "space.ship.post/pinned" }],
+      changes: [{ action: "create", record: "com.example.post" }, { action: "put", record: "com.example.post/pinned" }],
       files: [
         { cid: "a", mimeType: "image/png", size: 10 },
         { cid: "b", mimeType: "image/png", size: 10 },

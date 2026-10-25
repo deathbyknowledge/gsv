@@ -310,7 +310,7 @@ export const SHIP_WIRE_FIXTURES = {
     ["a policy of 65 characters", { contactPolicy: x(65) }, refuse],
     ["a policy of 33 two-byte letters, 66 bytes", { contactPolicy: ACCENT.repeat(33) }, refuse],
     ["no policy", { contactPolicy: undefined }, refuse],
-    ["another record type", { $type: "space.ship.post" }, refuse],
+    ["another record type", { $type: "com.example.post" }, refuse],
     ["no record type", { $type: undefined }, refuse],
     ["a PNG picture", { avatar: AVATAR }, accept],
     ["a JPEG picture", { avatar: { ...AVATAR, mimeType: "image/jpeg" } }, accept],

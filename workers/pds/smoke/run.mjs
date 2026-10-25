@@ -23,7 +23,7 @@ const run = promisify(execFile);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const wrangler = join(dirname(createRequire(import.meta.url).resolve("wrangler/package.json")), "bin", "wrangler.js");
 const goat = process.env.GOAT ?? "goat";
-const COLLECTION = "space.ship.note";
+const COLLECTION = "com.example.note";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const { stdout: version } = await run(goat, ["--version"]);
