@@ -317,32 +317,38 @@ composition adds with the PDS; see
 
 ## Audit Ships' identities {#audit-identities}
 
-If you suspect `GSV_PLC_ROTATION_KEY` has leaked, have the open-network host
-check every Ship's DID at once, with the key in your environment:
+Every ten minutes the open-network host reads the PLC directory's feed of new
+operations, and reads a Ship's DID log again only when the feed lists a change
+to it. If you suspect `GSV_PLC_ROTATION_KEY` has leaked, see what that has
+found, with the key in your environment:
 
 ```sh
 npm run pds:identities -- audit --pds https://pds.<domain>
 ```
 
-The host reads each DID's log in the PLC directory again, one read a second,
-and judges it as it does before a Ship's writes. Add `--reads-per-second` with
-a number up to 10 to go faster. If the directory answers 429, the command waits
-as long as its `Retry-After` asks, or backs off from ten seconds to five
-minutes when it names no time, then resumes where it stopped. While it runs it
-prints only counts.
-
+The command reads no Ship's log itself. It prints how far the host has read the
+feed, any wait the directory asked for, and why the last run failed, if it did.
 The host follows a change that a person's sheet or your paper key signed. Any
 other change makes it step aside for that Ship, refusing its writes and
 signatures; a change your rotation key signed that the host never submitted is
 reported as `leaked-key`. Once a sheet or your paper key undoes such a change,
-the host follows the undo and serves the Ship, so the audit also looks among
-each DID's undone operations. One your rotation key signed that the host never
-submitted is reported under `undoneLeaks`, with the time of the undo. When the
-command finishes, it lists only the Ships the host steps aside for, by DID and
-handle, with the operation that decided and the public key that signed it, the
-undone leaks by DID and handle, and any DIDs it couldn't read. Its last line
-gives the counts. When the audit found a leak of your rotation key, undone or
-not, that line ends with `the host key has leaked; rotate it`.
+the host follows the undo and serves the Ship, and the leak stays under
+`undoneLeaks` with the time of the undo. The command lists the Ships the host
+stepped aside for, by DID and handle, with the operation that decided and the
+public key that signed it, and the undone leaks by DID and handle. Its last
+line gives the counts. When the host found a leak of your rotation key, undone
+or not, that line ends with `the host key has leaked; rotate it`.
+
+The host's first reading of the feed begins 72 hours back, the longest any key
+can wait to undo a change. To have the host read one Ship's log again now, for
+an older change or to confirm a repair, name its DID:
+
+```sh
+npm run pds:identities -- audit --pds https://pds.<domain> --did did:plc:<id>
+```
+
+If the directory answers 429, the command says how long it asked the host to
+wait; run it again then.
 
 ## Review reports {#review-reports}
 

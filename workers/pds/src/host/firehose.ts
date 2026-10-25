@@ -4,6 +4,7 @@ import { DurableObject } from "cloudflare:workers";
 import { decode, encode } from "../cirrus/cbor-compat";
 import type { AccountStatus, SeqEvent } from "../cirrus/repo/sequencer";
 import type { HostEnv } from "./env";
+import { identityFeed, readIdentityFeed, type FeedBounds, type HostedIdentity, type IdentityFeed } from "./identity-feed";
 import { crawlDue, requestCrawl, type IntroductionCursor, type RelayRequest } from "./relays";
 import { migrate } from "./schema";
 
@@ -90,6 +91,9 @@ type RepoRow = {
  * once, and sends it to every subscriber.
  */
 export class HostFirehose extends DurableObject<HostEnv> {
+  /** The run reading the PLC directory's feed, while one is. */
+  private following: Promise<IdentityFeed> | null = null;
+
   constructor(ctx: DurableObjectState, env: HostEnv) {
     super(ctx, env);
     migrate(ctx.storage, "host_firehose", MIGRATIONS);
@@ -177,11 +181,28 @@ export class HostFirehose extends DurableObject<HostEnv> {
     return { repos: page.map(repoState), cursor: rows.length > limit ? page.at(-1)?.did : undefined };
   }
 
-  /** The repositories this host holds, with the names of the objects that hold them, in DID order. */
-  async listHosted(limit: number, cursor?: string): Promise<{ hosted: HostedEntry[]; cursor?: string }> {
-    const rows = this.ctx.storage.sql.exec<RepoRow>("SELECT * FROM repos WHERE did > ? ORDER BY did LIMIT ?", cursor ?? "", limit + 1).toArray();
-    const page = rows.slice(0, limit);
-    return { hosted: page.map((row) => ({ ...repoState(row), name: row.name })), cursor: rows.length > limit ? page.at(-1)?.did : undefined };
+  /**
+   * Has each identity the host holds follow what the PLC directory's feed
+   * lists for it; see `readIdentityFeed`. A host that holds none reads
+   * nothing, and a caller while a run reads waits for that run.
+   */
+  async followIdentities(bounds?: FeedBounds): Promise<IdentityFeed> {
+    if (!this.ctx.storage.sql.exec<{ held: number }>("SELECT EXISTS (SELECT 1 FROM repos) AS held").one().held) {
+      return identityFeed(this.ctx.storage.kv);
+    }
+    const hosted = (dids: string[]) => this.ctx.storage.sql.exec<HostedIdentity>(
+      "SELECT did, name FROM repos WHERE did IN (SELECT value FROM json_each(?))",
+      JSON.stringify(dids),
+    ).toArray();
+    this.following ??= readIdentityFeed(this.env, this.ctx.storage.kv, hosted, bounds).finally(() => {
+      this.following = null;
+    });
+    return this.following;
+  }
+
+  /** How far the host has read the PLC directory's feed, and what it found there. */
+  async identityFeed(): Promise<IdentityFeed> {
+    return identityFeed(this.ctx.storage.kv);
   }
 
   /** Whether the host holds a repository's directory entry, by the name of the object that holds it. */
@@ -409,6 +430,11 @@ export class HostFirehose extends DurableObject<HostEnv> {
 export async function announceToRelays(env: HostEnv): Promise<void> {
   const relays = [...new Set((env.PDS_RELAYS ?? "").split(",").map((relay) => relay.trim()).filter(Boolean))];
   await env.FIREHOSE.getByName(FIREHOSE_NAME).announce(relays, new URL(env.PDS_ORIGIN).host);
+}
+
+/** Has the host's firehose have each identity the host holds follow its changes in the PLC directory. */
+export async function followIdentityChanges(env: HostEnv): Promise<void> {
+  await env.FIREHOSE.getByName(FIREHOSE_NAME).followIdentities();
 }
 
 /** Encodes an outbox event as a subscribeRepos frame that carries the host's sequence number. */

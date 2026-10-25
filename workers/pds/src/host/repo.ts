@@ -107,8 +107,6 @@ const KEEP_DELIVERED = 100;
 const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 5 * 60_000;
 const STAGED_BLOB_TTL_MS = 6 * 60 * 60_000;
-/** How long a write or signature relies on the host's last read of its DID's log. */
-const IDENTITY_CHECK_TTL_MS = 60 * 60_000;
 /** The operations the host remembers having signed or adopted; an undo reaches back 72 hours, far fewer than this. */
 const KNOWN_OPERATIONS = 64;
 const IDENTITY_EVENTS = 20;
@@ -172,7 +170,7 @@ type IdentityUpdate = { head: IdentityHead; ownerRecoveryKey: DidKeyString | nul
 
 /** What the host last read at the head of its DID's log, and the changes it found there that it didn't sign. */
 export type IdentityCheck = {
-  /** When the host last read the log, or tried to. */
+  /** When the host last read the log. */
   checkedAt: number;
   /** The change the host steps aside for, refusing every write and signature; null while it follows the head. */
   steppedAside: IdentityEvent | null;
@@ -184,13 +182,16 @@ export type IdentityCheck = {
 export type IdentityEvent = { at: number; outcome: "adopted" | StepAside; head: string; operation: string; signedBy: DidKeyString };
 
 /**
- * What the operator's audit learns of one identity: whether the host could
- * read its log, what it steps aside for and any leak of its key an undo hid,
- * or that the directory asked the host to wait, with the seconds it named.
+ * What the host learns when the PLC directory's feed or the operator has it
+ * read its DID's log again: that every operation the feed listed was one the
+ * host signed or adopted, so it read nothing; what it steps aside for and any
+ * leak of its key an undo hid; or that the directory asked it to wait, with
+ * the seconds it named.
  */
-export type IdentityAudit =
+export type IdentityFollow =
+  | { outcome: "known" }
   | {
-      outcome: "read" | "unread";
+      outcome: "read";
       did: string;
       handle: string;
       steppedAside: IdentityEvent | null;
@@ -290,7 +291,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
     const repo = await this.requireRepo();
     refuseTakendown(repo);
     if (!await repo.storage.getActive()) throw new Error(`RepoDeactivated: ${repo.account.did} cannot sign calls`);
-    await this.requireIdentity(repo.account, false);
+    await this.requireIdentity(repo.account);
     return signServiceAuth(repo.account.did, repo.account.signingKey, request);
   }
 
@@ -306,7 +307,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
       await this.requireLive();
       const repo = await this.requireRepo();
       refuseTakendown(repo);
-      if ((await this.checkIdentity(true)).check.steppedAside) throw new IdentityChangedError(repo.account.did);
+      if ((await this.checkIdentity(repo.account)).check.steppedAside) throw new IdentityChangedError(repo.account.did);
       const account = await this.acceptIdentity(repo.account);
       const operations = account.identity?.operations ?? [];
       const known = account.identity ?? { head: await genesisHead(account.genesis), ownerRecoveryKey: null, accepted: true, operations };
@@ -329,20 +330,21 @@ export class HostedRepo extends DurableObject<HostEnv> {
     return (await this.ctx.storage.get<IdentityCheck>(IDENTITY_CHECK_KEY)) ?? null;
   }
 
-  /** Reads the DID's log again for the operator's audit; null without an account. */
-  async auditIdentity(): Promise<IdentityAudit | null> {
-    return this.serialize(async (): Promise<IdentityAudit | null> => {
+  /**
+   * Reads the DID's log again and follows its head, for the PLC directory's
+   * feed or the operator. When every one of `operations`, those the feed
+   * listed for the DID, is an operation the host signed or adopted, it reads
+   * nothing. Null without an account.
+   */
+  async followIdentity(operations?: readonly string[]): Promise<IdentityFollow | null> {
+    return this.serialize(async (): Promise<IdentityFollow | null> => {
       const account = await this.storedAccount();
       if (!account) return null;
+      const known = await knownOperations(account);
+      if (operations?.every((cid) => known.includes(cid))) return { outcome: "known" };
       try {
-        const { check, found } = await this.checkIdentity(true);
-        return {
-          outcome: found ? "read" : "unread",
-          did: account.did,
-          handle: account.handle,
-          steppedAside: check.steppedAside,
-          undoneLeaks: found?.undoneLeaks ?? [],
-        };
+        const { check, found } = await this.checkIdentity(account);
+        return { outcome: "read", did: account.did, handle: account.handle, steppedAside: check.steppedAside, undoneLeaks: found.undoneLeaks };
       } catch (error) {
         if (error instanceof DirectoryBusyError) return { outcome: "busy", retryAfter: error.retryAfter };
         throw error;
@@ -757,42 +759,27 @@ export class HostedRepo extends DurableObject<HostEnv> {
   }
 
   /**
-   * Refuses while the host steps aside for a change to its DID. Once the last
-   * read of the DID's log is an hour old, it reads it again in the write
-   * queue, which `queued` callers are already in.
+   * Refuses while the host steps aside for a change to its DID, as its last
+   * read of the DID's log found. Reads nothing: the host reads the log before
+   * it submits an operation of its own, and when the PLC directory's feed
+   * lists an operation for the DID.
    */
-  private async requireIdentity(account: StoredAccount, queued: boolean): Promise<void> {
-    let check = await this.ctx.storage.get<IdentityCheck>(IDENTITY_CHECK_KEY);
-    if (!check || Date.now() - check.checkedAt >= IDENTITY_CHECK_TTL_MS) {
-      const read = () => this.checkIdentity(false);
-      check = (queued ? await read() : await this.serialize(read)).check;
-    }
-    if (check.steppedAside) throw new IdentityChangedError(account.did);
+  private async requireIdentity(account: StoredAccount): Promise<void> {
+    if ((await this.ctx.storage.get<IdentityCheck>(IDENTITY_CHECK_KEY))?.steppedAside) throw new IdentityChangedError(account.did);
   }
 
   /**
-   * Reads the DID's log, unless `fresh` is false and the last read is less
-   * than an hour old, and judges its head with `checkHead`. The host adopts a
-   * change keys it trusts made and records it; for any other it steps aside.
-   * A failed read keeps the last answer for the hour, but a fresh one the
-   * directory answers with 429 throws, for its caller to repeat once it has
-   * waited. Returns the answer with what `checkHead` found, or null when the
-   * host kept the last answer. Runs in the write queue.
+   * Reads the DID's log and judges its head with `checkHead`. The host adopts
+   * a change keys it trusts made and records it; for any other it steps
+   * aside. A failed read throws, and a directory that answers 429 throws
+   * `DirectoryBusyError`, for the caller to repeat once it has waited. Returns
+   * the answer with what `checkHead` found. Runs in the write queue.
    */
-  private async checkIdentity(fresh: boolean): Promise<{ check: IdentityCheck; found: HeadCheck | null }> {
+  private async checkIdentity(account: StoredAccount): Promise<{ check: IdentityCheck; found: HeadCheck }> {
     const stored = (await this.ctx.storage.get<IdentityCheck>(IDENTITY_CHECK_KEY)) ?? { checkedAt: 0, steppedAside: null, events: [] };
-    const account = await this.storedAccount();
-    if (!account || (!fresh && Date.now() - stored.checkedAt < IDENTITY_CHECK_TTL_MS)) return { check: stored, found: null };
     const checkedAt = Date.now();
     const operations = account.identity?.operations ?? [];
-    let found: HeadCheck;
-    try {
-      found = await checkHead(this.env, account.did, [(await genesisHead(account.genesis)).cid, ...operations], account.signingDidKey);
-    } catch (error) {
-      if (fresh && error instanceof DirectoryBusyError) throw error;
-      console.error("Identity check failed; the host reads its DID's log again in an hour", error);
-      return { check: await this.saveCheck({ ...stored, checkedAt }), found: null };
-    }
+    const found = await checkHead(this.env, account.did, await knownOperations(account), account.signingDidKey);
     if (found.outcome === "own") return { check: await this.saveCheck({ ...stored, checkedAt, steppedAside: null }), found };
     if (found.outcome === "adopted") {
       const operatorKeys = [...account.genesis.rotationKeys, ...this.env.PLC_RECOVERY_KEY ? [this.env.PLC_RECOVERY_KEY] : []];
@@ -1029,7 +1016,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
 
   private async commit(repo: OpenRepo, writes: RepoWrite[]): Promise<CommitResult> {
     refuseTakendown(repo);
-    await this.requireIdentity(repo.account, true);
+    await this.requireIdentity(repo.account);
     const prepared = await this.prepare(repo, writes);
     const promoted = await this.promote(repo, prepared);
     const before = await repo.storage.getRev();
@@ -1249,6 +1236,11 @@ function eventType(value: string): OutboxEvent["type"] {
 /** Whether an at-identifier names this account: its DID, or its handle in any case. */
 function identifies(account: StoredAccount, identifier: string): boolean {
   return identifier === account.did || identifier.toLowerCase() === account.handle;
+}
+
+/** The CIDs of the operations the host signed or adopted for the account's DID, genesis first. */
+async function knownOperations(account: StoredAccount): Promise<string[]> {
+  return [(await genesisHead(account.genesis)).cid, ...account.identity?.operations ?? []];
 }
 
 /** Whether a string is a CID in its canonical form, optionally of one codec. */

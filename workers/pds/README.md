@@ -12,7 +12,11 @@ worker's schedule has `HostFirehose` ask the relays the deployment names in
 keeps each relay's last answer; `src/host/relays.ts` decides when and asks.
 From the run after a relay first accepts, the firehose introduces the accounts
 it already held, 200 a run in DID order, at the latest commit it keeps for each
-active repository, so no `HostedRepo` wakes. The host imports nothing from GSV.
+active repository, so no `HostedRepo` wakes. The schedule also has the
+firehose read the PLC directory's feed of operations after where its last run
+stopped, in `src/host/identity-feed.ts`, and wake only the `HostedRepo` of a
+DID the feed lists, which reads its DID's log unless it signed or adopted every
+listed operation. The host imports nothing from GSV.
 
 `src/gsv/` connects the host to a GSV deployment. Each installation's
 repository object is named by its installation ID and keeps its blobs under
@@ -48,13 +52,11 @@ only a short-lived token signed with the host's PLC rotation key opens it:
 `create` registers the account for the handle the deployment configures, and
 `publish` writes each lexicon whose record changed. Once the operator has
 published, the worker's schedule publishes a deploy's changes. The same token,
-for an audit, opens `POST /operator/identities`: `npm run pds:identities` reads
-every hosted identity's log again, a page per request and one read a second
-unless the operator asks for more, and reports the ones the host steps aside
-for and any undone leak: an operation the host's key signed that the host never
-submitted, which an undo later nullified. When the directory answers 429, the
-page ends there with the wait it asked for, and the command resumes once it has
-waited. The documents
+for an audit, opens `POST /operator/identities`: `npm run pds:identities`
+reports what reading the PLC directory's feed has found, the identities the
+host stepped aside for and any undone leak: an operation the host's key signed
+that the host never submitted, which an undo later nullified. It reads no
+identity's log unless the operator names one DID to read again. The documents
 are the files in `lexicons/`, which `src/gsv/generated/ship-lexicons.ts`
 imports; `npm run protocol:generate` writes that list.
 
@@ -138,10 +140,16 @@ follow the operations in force, and the paper key can still undo the tombstone.
 The identity check tests change a DID's log behind the host's back: a leaked
 host key's one- and two-step changes, a sheet that moves the identity, the
 person's undo with an old sheet, their own new sheet and the operator's
-paper-key repair. They also cover reading at most once an hour, a failed read,
-and the operator's audit: its pace, a page the directory answers with 429, and
-which undone operations it reports: a leaked key's, after the person's sheet or
-the paper key undid it, but not the host's own or another key's.
+paper-key repair, each found by the feed or by the host's next operation. They
+check that the host reads the log before its own operations and never before a
+write or a Ship call, and that a failed read refuses only the operation. The
+feed tests use the fake directory's `/export`: reading only the logs of hosted
+identities another key changed, a page at a time with a run's limit, beginning
+72 hours back, waiting out a 429 on a page or on a log read, backing off,
+keeping a failure, keeping a leak whether an undo came before the feed listed
+it or after, and not counting the host's own or another key's undone
+operations. The operator's audit reports the feed without reading any log, and
+reads one DID's log again when named.
 
 The relay tests answer `requestCrawl` as the reference relay does, checking the
 host's `describeServer` through the worker before accepting. They cover asking

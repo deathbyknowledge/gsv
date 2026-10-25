@@ -114,7 +114,7 @@ describe("announcing the host to relays", () => {
     expect(Object.keys(await requested(host))).toEqual([kept.origin]);
     await scheduled(undefined);
     await scheduled("");
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect([kept.requests, dropped.requests]).toEqual([[HOST], [HOST]]);
     expect(await requested(host)).toEqual({});
     // A relay named again is asked at once.
     await scheduled(`${kept.origin},${dropped.origin}`);

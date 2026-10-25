@@ -304,7 +304,7 @@ function hostRotationKey(env: HostEnv): Promise<Secp256k1PrivateKey> {
 }
 
 /** Reads from the directory, turning its 429 into a `DirectoryBusyError` with the wait its Retry-After names. */
-const readUnlessBusy: typeof fetch = async (input, init) => {
+export const readUnlessBusy: typeof fetch = async (input, init) => {
   const response = await fetch(input, init);
   if (response.status !== 429) return response;
   await response.body?.cancel();
