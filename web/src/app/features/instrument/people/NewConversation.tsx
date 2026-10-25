@@ -51,8 +51,9 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   const existing = profile ? contacts.find((contact) => contact.state === "active" && contact.remoteDid === profile.did) : undefined;
   const canResolve = connected && !!account && canConfigure(account, "profile.resolve");
   const canSend = connected && !!account && canConfigure(account, "approach.create");
-  const bytes = new TextEncoder().encode(draft.text.trim()).length;
-  const valid = !!displayName.trim() && !!draft.text.trim() && bytes <= 32_768 && draft.shipHandlesMessages !== null;
+  /* a request's text counts UTF-16 code units, as its textarea's maxLength does */
+  const tooLong = draft.text.trim().length > 32_768;
+  const valid = !!displayName.trim() && !!draft.text.trim() && !tooLong && draft.shipHandlesMessages !== null;
   const error = resolve.error ?? send.error;
 
   return <section class="people-compose" aria-label={t("people.compose.label")}>
@@ -86,7 +87,7 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
           <label>{t("people.compose.displayName")}<input value={displayName} maxLength={80} autoComplete="off" disabled={busy} onInput={(event) => onChange({ ...draft, displayName: event.currentTarget.value })} /></label>
           <label>{t("people.compose.message")}<textarea value={draft.text} rows={5} maxLength={32_768} disabled={busy} onInput={(event) => onChange({ ...draft, text: event.currentTarget.value })}
             onKeyDown={submitOnEnter} /></label>
-          {bytes > 32_768 && <p class="people-error" role="alert">{t("people.composer.tooLong")}</p>}
+          {tooLong && <p class="people-error" role="alert">{t("people.composer.tooLong")}</p>}
           <p class="people-note">{t("people.compose.afterAccept")}</p>
           <ContactHandlingChoice value={draft.shipHandlesMessages} disabled={busy || !account || !canConfigure(account, "contact.preferences.update")} onChange={(shipHandlesMessages) => onChange({ ...draft, shipHandlesMessages })} />
           <button class="ibtn is-primary" type="submit" disabled={!canSend || busy || !valid}>{send.isPending ? <LoadingState>{t("people.compose.sending")}</LoadingState> : t("people.compose.send")}</button>

@@ -227,6 +227,29 @@ describe("message requests", () => {
     expect((await incomingRequests(bob)).map((request) => request.peerDid)).toEqual([alice.account.did]);
   });
 
+  it("sends a request whose text runs past 32 KiB of UTF-8 but within 32,768 UTF-16 code units", async () => {
+    // 語 takes three UTF-8 bytes, so 20,000 of them are about 60 KB.
+    const text = "語".repeat(20_000);
+    const { approach } = await alice.run((ctx) => handleApproachCreate({ ...request(profile), text }, held(ctx)));
+    await alice.run((ctx) => processApproachMaintenance(held(ctx)));
+    expect((await alice.run((ctx) => ctx.approaches.get(approach.id)))?.summary.delivery).toBe("received");
+    const [received] = await incomingRequests(bob);
+    const history = await getConversationById(bob.installationId, received.conversationId).history();
+    expect(history.messages.map((message) => message.text)).toEqual([text]);
+  });
+
+  it("takes in a request whose text runs past 32 KiB of UTF-8 but within 32,768 UTF-16 code units", async () => {
+    const content = {
+      requestId: "request:long", profileCid: profile.cid, name: "Alice", messageId: "msg:long",
+      text: "語".repeat(20_000), createdAtMs: Date.now(), expiresAtMs: Date.now() + 60_000,
+    };
+    const response = await callShipMethod(alice.account, bob, SEND_MESSAGE_REQUEST, content);
+    expect([response.status, await response.json()]).toEqual([200, { state: "received" }]);
+    const [received] = await incomingRequests(bob);
+    const history = await getConversationById(bob.installationId, received.conversationId).history();
+    expect(history.messages.map((message) => message.text)).toEqual([content.text]);
+  });
+
   it("lets only the person a request went to accept it, and a block ends it", async () => {
     const sent = await sendRequest();
     const forged = await callShipMethod(mallory.account, alice, ACCEPT_MESSAGE_REQUEST, { requestId: sent.requestId, name: "Bob" });
@@ -328,8 +351,8 @@ describe("reporting a message request", () => {
   });
 
   it("includes the longest message a request can carry, in any script", async () => {
-    // The Kernel keeps a request of at most 32,768 UTF-8 bytes, whichever way the request came.
-    const text = `${"語".repeat(10_922)}ok`;
+    // A request carries at most 32,768 UTF-16 code units, whichever way it came, and 語 takes three UTF-8 bytes.
+    const text = "語".repeat(32_768);
     await alice.run(async (ctx) => {
       await handleApproachCreate({ ...request(profile), text }, held(ctx));
       await processApproachMaintenance(held(ctx));

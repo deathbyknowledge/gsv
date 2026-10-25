@@ -86,8 +86,9 @@ export class ApproachStore {
       const { content } = input;
       if (content.expiresAtMs <= now || content.expiresAtMs - content.createdAtMs > APPROACH_LIFETIME_MS
         || content.createdAtMs > now + 5 * 60_000 || !content.text.trim()) throw new Error("Message request content or expiry is invalid");
+      // Ships count a request's text in UTF-16 code units; the pending-text budget counts the UTF-8 bytes it stores.
+      if (content.text.length > 32_768) throw new Error("Message request exceeds the text limit");
       const bytes = new TextEncoder().encode(content.text).length;
-      if (bytes > 32_768) throw new Error("Message request exceeds the text limit");
       if (this.unresolved(input.ownerUid, input.remoteDid)) throw new ApproachAdmissionError("collision", "A message request is already pending for this person");
       this.requireCapacity(input.ownerUid, input.direction, bytes);
       admit();
