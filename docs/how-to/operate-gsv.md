@@ -272,6 +272,12 @@ sets the same state again: Accounts changes nothing, tells relays, and records
 the attempt in the audit log. Through the operator JSON API, send the same
 state again.
 
+Suspending, reactivating, resetting or retiring a Ship also tells the Ship
+itself at once, so it stops or resumes its work without waiting. If the Ship
+can't be told, a suspension or reactivation keeps its new state and the error
+says the Ship hasn't confirmed. Accounts keeps telling it every minute until it
+does, and **Try again** tells it straight away.
+
 ## Take down what a Ship publishes {#take-down-what-a-ship-publishes}
 
 When a Ship publishes something that breaks your rules, you can take down just
