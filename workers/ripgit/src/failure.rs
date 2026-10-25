@@ -158,11 +158,9 @@ pub fn answer(
 ) -> Result<Response> {
     let diagnostic_id = random_uuid();
     let kind = FailureKind::of(error);
-    console_error!(
-        "[ripgit] {} failed ({} error, diagnostic {diagnostic_id}): {error}",
-        route.as_str(),
-        kind.as_str()
-    );
+    let (failure, diagnostic) = log_lines(route, kind, &diagnostic_id, error);
+    console_error!("{failure}");
+    console_log!("{diagnostic}");
     if let Some(installation_id) = installation_id.filter(|_| telemetry_enabled(env)) {
         let occurred_at = Date::now().as_millis();
         let record = telemetry_record(
@@ -186,6 +184,27 @@ pub fn answer(
         "message": bounded(&error.to_string()),
     }))?
     .with_status(500))
+}
+
+/// The error line and the line after it. The diagnostic ID has a line of its own, because the
+/// operator's tail fingerprints error lines: failures with the same cause then group together.
+fn log_lines(
+    route: Route,
+    kind: FailureKind,
+    diagnostic_id: &str,
+    error: &Error,
+) -> (String, String) {
+    (
+        format!(
+            "[ripgit] {} failed ({} error): {error}",
+            route.as_str(),
+            kind.as_str()
+        ),
+        format!(
+            "[ripgit] {} failure above has diagnostic {diagnostic_id}",
+            route.as_str()
+        ),
+    )
 }
 
 /// Matches the Gateway's reading of the same deployment variable.
@@ -367,6 +386,29 @@ mod tests {
                     },
                 },
             })
+        );
+    }
+
+    #[test]
+    fn logs_identical_failures_alike_and_their_diagnostics_apart() {
+        let error = Error::JsError("SQLITE_FULL".into());
+        let (first, first_diagnostic) = log_lines(
+            Route::Apply,
+            FailureKind::Runtime,
+            "11111111-1111-4111-8111-111111111111",
+            &error,
+        );
+        let (second, _) = log_lines(
+            Route::Apply,
+            FailureKind::Runtime,
+            "22222222-2222-4222-8222-222222222222",
+            &error,
+        );
+        assert_eq!(first, second);
+        assert_eq!(first, "[ripgit] apply failed (runtime error): SQLITE_FULL");
+        assert_eq!(
+            first_diagnostic,
+            "[ripgit] apply failure above has diagnostic 11111111-1111-4111-8111-111111111111"
         );
     }
 

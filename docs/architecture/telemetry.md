@@ -122,8 +122,9 @@ inspection; exception text never enters the response or telemetry.
 
 ripgit answers an error that escapes its Worker or a Repository object with
 `500` and a JSON body that names the failure kind, a fresh diagnostic ID and the
-cause, bounded to 1,024 bytes. It logs the whole cause with the same ID and,
-when telemetry is enabled, emits `ripgit.request.failed` with the ID, a closed
+cause, bounded to 1,024 bytes. It logs the whole cause as an error, and the same
+ID on the line after it, so a consumer's error fingerprint groups failures with
+the same cause. When telemetry is enabled, it also emits `ripgit.request.failed` with the ID, a closed
 route class such as `apply` or `git-upload-pack`, the kind and the duration. The
 record never includes the cause, a path or a repository name. Each failure is
 reported once, where it happened: the Worker passes on a Repository object's
