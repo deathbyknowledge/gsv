@@ -11,8 +11,8 @@ worker's schedule has `HostFirehose` ask the relays the deployment names in
 `PDS_RELAYS` to crawl the host when a request to each is due, and the firehose
 keeps each relay's last answer; `src/host/relays.ts` decides when and asks.
 From the run after a relay first accepts, the firehose introduces the accounts
-it already held, 200 a run in DID order, reading each one's head from its
-`HostedRepo`. The host imports nothing from GSV.
+it already held, 200 a run in DID order, at the latest commit it keeps for each
+active repository, so no `HostedRepo` wakes. The host imports nothing from GSV.
 
 `src/gsv/` connects the host to a GSV deployment. Each installation's
 repository object is named by its installation ID and keeps its blobs under
@@ -137,9 +137,14 @@ be reached, forgetting a relay the deployment stops naming, and asking the
 relays when publishing lexicons fails, and writing the relay record only when
 it changes. They also cover introducing each active account to a relay that
 joins after it, once across runs and a restart of the firehose and again when
-the relay is named anew; introducing a batch a run, resuming after a restart
-and leaving out accounts listed after the introduction began; and leaving out
-an account taken down while the firehose reads its head.
+the relay is named anew, without calling any `HostedRepo`; introducing a batch
+a run, resuming after a restart and leaving out accounts listed after the
+introduction began; sharing each batch among relays at the same point while a
+relay that joins later waits; and leaving out an account taken down or deleted
+while the relays answer. They check that the firehose keeps each active
+repository's latest commit as the commit-only CAR a `#sync` carries, drops it
+on a takedown or erasure, and fills it in for repositories from before it kept
+commits from the frames it retains, introducing the rest without `#sync`.
 
 Uploads stream in with a declared size, up to 48 MiB. The host hashes the bytes
 as they arrive, names the staged copy by the resulting CID, and keeps one

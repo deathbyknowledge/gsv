@@ -2,6 +2,8 @@
 export type HostMigration = {
   id: number;
   statements: readonly string[];
+  /** Fills what the statements added from what the component already stores, in the same transaction. */
+  backfill?: (sql: SqlStorage) => void;
 };
 
 /** Applies each migration of a component once, in order, in one transaction. */
@@ -17,6 +19,7 @@ export function migrate(storage: DurableObjectStorage, component: string, migrat
     for (const migration of migrations) {
       if (applied.has(migration.id)) continue;
       for (const statement of migration.statements) storage.sql.exec(statement);
+      migration.backfill?.(storage.sql);
       storage.sql.exec("INSERT INTO host_schema (component, id) VALUES (?, ?)", component, migration.id);
     }
   });
