@@ -226,6 +226,12 @@ error is marked "Returned an error". If the outcome could not be written after
 the change ran, the change is still reported as done and its entry reads
 "Outcome not recorded"; check the Ship's current state.
 
+On a deployment that runs the open-network host, suspending a Ship also tells
+relays that its account is suspended, and reactivating it tells them the
+account is active again. If the PDS can't be reached, the Ship keeps its new
+state and the request returns an error. To tell relays, set the same state
+again through the operator JSON API.
+
 ## Take down what a Ship publishes {#take-down-what-a-ship-publishes}
 
 When a Ship publishes something that breaks your rules, you can take down just

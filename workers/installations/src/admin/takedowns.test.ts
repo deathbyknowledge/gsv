@@ -44,6 +44,7 @@ function moderationPds(timeoutMs?: number) {
       ? { subject: { $type: "com.atproto.repo.strongRef" as const, uri: PROFILE, cid: "bafyreiprofile" }, takedown: { applied: false } }
       : null),
     locateRepository: vi.fn(async (_did: string) => null),
+    reconcileAccountStatus: vi.fn(async (_installationId: string) => {}),
   } satisfies PdsModerationService;
   return { pds, takedowns, moderation: new ShipTakedowns(pds, timeoutMs) };
 }

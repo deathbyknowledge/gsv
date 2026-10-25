@@ -30,6 +30,20 @@ any other state as suspended. A restricted installation keeps its identity, so
 the PDS still creates its DID when the Kernel asks, but signs, publishes and
 serves nothing for it until it is active again.
 
+Relays hear of a suspension. Once Accounts restricts or reactivates an
+installation, it asks the PDS through `PDS_MODERATION` to follow, and the PDS
+reads the state back from Accounts. Suspending sends `#account` with
+`active: false` and `status: "suspended"`. Reactivating sends `#account`
+active, `#identity`, and `#sync` at the repository's head, so a relay that
+dropped the account's events while it was suspended fetches it again.
+`getRepoStatus` and `listRepos` report the same status. If Accounts changes
+the state again meanwhile, the PDS follows that too: it reads the state after
+each change until two reads agree. An account created for a restricted
+installation starts suspended. A takedown outranks a suspension: the account
+reads as `takendown` until the operator restores it, then as `suspended`. If
+the PDS can't follow, Accounts keeps the new state and the operator's request
+fails; repeating it tells the PDS.
+
 ## Identity
 
 A Ship's account is a `did:plc` whose handle is the Ship's hostname, such as
@@ -216,7 +230,8 @@ read it serves:
   acceptance it was sending fails at once instead of retrying, and its person
   reads why. Other Ships can still call it, so its contacts' messages keep
   arriving. Restoring the account tells relays it is active again and sends its
-  identity and current commit.
+  identity and current commit, unless the Ship is suspended: then it tells
+  relays that the account is suspended.
 - A record taken down reads as missing: `getRecord` answers `RecordNotFound`
   and `listRecords` leaves it out. Its commit stays in the signed repository,
   so `sync.getRepo` and the record's proof from `sync.getRecord` still verify,

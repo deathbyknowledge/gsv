@@ -167,7 +167,9 @@ owns who may publish, approval and the collections features reserve; the PDS
 owns signing, files and the firehose. Accounts' `PDS_MODERATION` binding carries
 the `operator-moderation` authority, through which the operator takes down and
 restores what a Ship publishes; the PDS holds each takedown and honours it in
-every read it serves.
+every read it serves. After Accounts restricts or reactivates an installation,
+it asks the PDS through the same binding to follow, so relays hear of the
+suspension.
 Gateway's `REQUEST_REPORTS` binding reaches Accounts' `RequestReportsEntrypoint`
 with the `kernel-report` authority in deployment-owned props, so only the
 Kernel files a person's report of a message request; Accounts owns the
