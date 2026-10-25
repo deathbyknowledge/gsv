@@ -19,6 +19,7 @@ import { FIREHOSE_NAME, type OutboxEvent, type RepoHead, type RepoState } from "
 import {
   checkHead,
   didDocument,
+  DirectoryBusyError,
   genesisHead,
   IdentityChangedError,
   mintIdentity,
@@ -180,8 +181,14 @@ export type IdentityCheck = {
 /** A change at the head of the DID's log that the host didn't sign: the head, the operation that decided, and the key that signed it. */
 export type IdentityEvent = { at: number; outcome: "adopted" | StepAside; head: string; operation: string; signedBy: DidKeyString };
 
-/** What the operator's audit learns of one identity: whether the host could read its log, and what it steps aside for. */
-export type IdentityAudit = { did: string; handle: string; read: boolean; steppedAside: IdentityEvent | null };
+/**
+ * What the operator's audit learns of one identity: whether the host could
+ * read its log and what it steps aside for, or that the directory asked the
+ * host to wait, with the seconds it named.
+ */
+export type IdentityAudit =
+  | { outcome: "read" | "unread"; did: string; handle: string; steppedAside: IdentityEvent | null }
+  | { outcome: "busy"; retryAfter: number | null };
 
 type OpenRepo = {
   account: StoredAccount;
@@ -293,11 +300,16 @@ export class HostedRepo extends DurableObject<HostEnv> {
 
   /** Reads the DID's log again for the operator's audit; null without an account. */
   async auditIdentity(): Promise<IdentityAudit | null> {
-    return this.serialize(async () => {
+    return this.serialize(async (): Promise<IdentityAudit | null> => {
       const account = await this.storedAccount();
       if (!account) return null;
-      const { check, read } = await this.checkIdentity(true);
-      return { did: account.did, handle: account.handle, read, steppedAside: check.steppedAside };
+      try {
+        const { check, read } = await this.checkIdentity(true);
+        return { outcome: read ? "read" : "unread", did: account.did, handle: account.handle, steppedAside: check.steppedAside };
+      } catch (error) {
+        if (error instanceof DirectoryBusyError) return { outcome: "busy", retryAfter: error.retryAfter };
+        throw error;
+      }
     });
   }
 
@@ -734,7 +746,9 @@ export class HostedRepo extends DurableObject<HostEnv> {
    * Reads the DID's log, unless `fresh` is false and the last read is less
    * than an hour old, and judges its head with `checkHead`. The host adopts a
    * change keys it trusts made and records it; for any other it steps aside.
-   * A failed read keeps the last answer for the hour. Runs in the write queue.
+   * A failed read keeps the last answer for the hour, but a fresh one the
+   * directory answers with 429 throws, for its caller to repeat once it has
+   * waited. Runs in the write queue.
    */
   private async checkIdentity(fresh: boolean): Promise<{ check: IdentityCheck; read: boolean }> {
     const stored = (await this.ctx.storage.get<IdentityCheck>(IDENTITY_CHECK_KEY)) ?? { checkedAt: 0, steppedAside: null, events: [] };
@@ -746,6 +760,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
     try {
       found = await checkHead(this.env, account.did, [(await genesisHead(account.genesis)).cid, ...operations], account.signingDidKey);
     } catch (error) {
+      if (fresh && error instanceof DirectoryBusyError) throw error;
       console.error("Identity check failed; the host reads its DID's log again in an hour", error);
       return { check: await this.saveCheck({ ...stored, checkedAt }), read: false };
     }

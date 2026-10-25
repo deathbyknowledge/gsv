@@ -70,6 +70,17 @@ export class IdentityChangedError extends Error {
   }
 }
 
+/** The directory answered 429: the host reads it too often. */
+export class DirectoryBusyError extends Error {
+  /** The seconds the directory asked the host to wait, or null when it named none. */
+  readonly retryAfter: number | null;
+
+  constructor(retryAfter: number | null) {
+    super("DirectoryBusy: the PLC directory asked this host to wait before reading again");
+    this.retryAfter = retryAfter;
+  }
+}
+
 /** The DID document a did:plc directory serves for a hosted account. */
 export type DidDocument = {
   "@context": string[];
@@ -201,9 +212,11 @@ export function ownerRecoveryKeyOf(rotationKeys: readonly DidKeyString[], operat
  * signed by one of them, and the host then trusts the keys that operation
  * ranks above its own, or all of them once its key is gone. An operation the
  * host's key signed is one this host never submitted, so the key has leaked.
+ * A directory that answers 429 throws `DirectoryBusyError`.
  */
 export async function checkHead(env: HostEnv, did: DidPlcString, known: readonly string[], signingKey: DidKeyString): Promise<HeadCheck> {
-  const { canonical } = await processIndexedEntryLog(did, await new PlcClient({ serviceUrl: env.PLC_URL }).getAuditLog(did));
+  const plc = new PlcClient({ serviceUrl: env.PLC_URL, fetch: readUnlessBusy });
+  const { canonical } = await processIndexedEntryLog(did, await plc.getAuditLog(did));
   const start = canonical.findLastIndex((entry) => known.includes(entry.cid));
   const base = canonical[start];
   const head = canonical.at(-1);
@@ -271,6 +284,22 @@ async function operationCid(operation: Operation): Promise<string> {
 
 function hostRotationKey(env: HostEnv): Promise<Secp256k1PrivateKey> {
   return Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY));
+}
+
+/** Reads from the directory, turning its 429 into a `DirectoryBusyError` with the wait its Retry-After names. */
+const readUnlessBusy: typeof fetch = async (input, init) => {
+  const response = await fetch(input, init);
+  if (response.status !== 429) return response;
+  await response.body?.cancel();
+  throw new DirectoryBusyError(retryAfterSeconds(response.headers.get("Retry-After")));
+};
+
+/** The seconds a Retry-After header asks for, in seconds or as an HTTP date; null when it names none. */
+function retryAfterSeconds(header: string | null): number | null {
+  const value = header?.trim() ?? "";
+  if (/^\d+$/.test(value)) return Number(value);
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, Math.ceil((at - Date.now()) / 1000));
 }
 
 /** The keys an operation ranks above the host's, which the host trusts to change the identity next: all of them once the host's key is gone. */

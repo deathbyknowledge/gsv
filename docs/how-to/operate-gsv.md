@@ -304,14 +304,19 @@ check every Ship's DID at once, with the key in your environment:
 npm run pds:identities -- audit --pds https://pds.<domain>
 ```
 
-The host reads each DID's log in the PLC directory again, at most four reads a
-second, and judges it as it does before a Ship's writes. It follows a change
-that a person's sheet or your paper key signed. Any other change makes it step
-aside for that Ship, refusing its writes and signatures; a change your rotation
-key signed that the host never submitted is reported as `leaked-key`. The
-command lists only the Ships the host steps aside for, by DID and handle, with
-the operation that decided and the public key that signed it, and any DIDs it
-couldn't read.
+The host reads each DID's log in the PLC directory again, one read a second,
+and judges it as it does before a Ship's writes. Add `--reads-per-second` with
+a number up to 10 to go faster. If the directory answers 429, the command waits
+as long as its `Retry-After` asks, or backs off from ten seconds to five
+minutes when it names no time, then resumes where it stopped. While it runs it
+prints only counts.
+
+The host follows a change that a person's sheet or your paper key signed. Any
+other change makes it step aside for that Ship, refusing its writes and
+signatures; a change your rotation key signed that the host never submitted is
+reported as `leaked-key`. When the command finishes, it lists only the Ships
+the host steps aside for, by DID and handle, with the operation that decided
+and the public key that signed it, and any DIDs it couldn't read.
 
 ## Review reports {#review-reports}
 

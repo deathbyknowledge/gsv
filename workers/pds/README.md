@@ -45,8 +45,10 @@ only a short-lived token signed with the host's PLC rotation key opens it:
 `publish` writes each lexicon whose record changed. Once the operator has
 published, the worker's schedule publishes a deploy's changes. The same token,
 for an audit, opens `POST /operator/identities`: `npm run pds:identities` reads
-every hosted identity's log again, a page per request, and reports the ones the
-host steps aside for. The documents
+every hosted identity's log again, a page per request and one read a second
+unless the operator asks for more, and reports the ones the host steps aside
+for. When the directory answers 429, the page ends there with the wait it
+asked for, and the command resumes once it has waited. The documents
 are the files in `lexicons/`, which `src/gsv/generated/ship-lexicons.ts`
 imports; `npm run protocol:generate` writes that list.
 
@@ -131,7 +133,7 @@ The identity check tests change a DID's log behind the host's back: a leaked
 host key's one- and two-step changes, a sheet that moves the identity, the
 person's undo with an old sheet, their own new sheet and the operator's
 paper-key repair. They also cover reading at most once an hour, a failed read,
-and the operator's audit.
+and the operator's audit: its pace, and a page the directory answers with 429.
 
 The relay tests answer `requestCrawl` as the reference relay does, checking the
 host's `describeServer` through the worker before accepting. They cover asking

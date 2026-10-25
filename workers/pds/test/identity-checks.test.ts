@@ -35,7 +35,13 @@ const stepAside = z.strictObject({
   operation: z.string(),
   signedBy: z.string(),
 });
-const report = z.strictObject({ checked: z.number(), steppedAside: z.array(stepAside), unread: z.array(z.string()), cursor: z.optional(z.string()) });
+const report = z.strictObject({
+  checked: z.number(),
+  steppedAside: z.array(stepAside),
+  unread: z.array(z.string()),
+  cursor: z.optional(z.string()),
+  retryAfter: z.optional(z.nullable(z.number())),
+});
 
 let plc: FakePlcDirectory;
 let notes = 0;
@@ -242,6 +248,11 @@ describe("the host's reads of its DID's log", () => {
 });
 
 describe("the operator's identity audit", () => {
+  beforeEach(() => {
+    // The audit's pause before each read passes at once; the pacing test reads how long each asked for.
+    vi.spyOn(scheduler, "wait").mockResolvedValue(undefined);
+  });
+
   it("reads every hosted identity's log again and reports only those the host steps aside for", async () => {
     const clean = await hostedAccount("clean.ship.test");
     const leaked = await hostedAccount("audited.ship.test");
@@ -267,6 +278,39 @@ describe("the operator's identity audit", () => {
     }]);
     expect(await rejection(write(leaked.repo))).toContain("IdentityChanged");
     await write(clean.repo);
+  });
+
+  it("reads one identity a second unless the operator asks for up to ten", async () => {
+    await deliver((await hostedAccount("paced.ship.test")).repo);
+    await audit({ limit: 1 });
+    await audit({ limit: 1, readsPerSecond: 10 });
+    expect(vi.mocked(scheduler.wait).mock.calls).toEqual([[1000], [100]]);
+    expect(await errorOf(audit({ limit: 1, readsPerSecond: 11 }))).toBe("InvalidRequest");
+  });
+
+  it("ends a page where the directory answers 429, with the wait it asks for, and resumes there", async () => {
+    await deliver((await hostedAccount("busy.ship.test")).repo);
+    await deliver((await hostedAccount("busier.ship.test")).repo);
+    const firstPage = report.parse(await (await audit({ limit: 1 })).json());
+
+    // A refused first read leaves the page empty, and the next one starts where it did.
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 429, headers: { "Retry-After": "30" } }));
+    expect(report.parse(await (await audit({ limit: 1 })).json())).toEqual({ checked: 0, steppedAside: [], unread: [], retryAfter: 30 });
+
+    // A refused second read ends the page after the first, whether the wait comes as an HTTP date or not at all.
+    const refusals: Array<{ headers: Record<string, string>; retryAfter: number | null }> = [
+      { headers: { "Retry-After": new Date(Date.now() + 45_000).toUTCString() }, retryAfter: 45 },
+      { headers: {}, retryAfter: null },
+    ];
+    for (const { headers, retryAfter } of refusals) {
+      vi.mocked(fetch)
+        .mockImplementationOnce(async (input, init) => plc.handle(new Request(input, init)))
+        .mockResolvedValueOnce(new Response(null, { status: 429, headers }));
+      expect(report.parse(await (await audit({ limit: 2 })).json())).toEqual({ ...firstPage, retryAfter });
+    }
+    const resumed = report.parse(await (await audit({ limit: 1, cursor: firstPage.cursor })).json());
+    expect(resumed.checked).toBe(1);
+    expect(resumed.retryAfter).toBeUndefined();
   });
 
   it("opens only with an operator token for the audit", async () => {
@@ -341,9 +385,10 @@ async function submitAs(did: DidPlcString, base: { cid: string }, state: Identit
   await new PlcClient({ serviceUrl: env.PLC_URL }).submitOperation(did, await signOperation({ type: "plc_operation", prev: base.cid, ...state }, key));
 }
 
-async function audit(page: { limit: number; cursor?: string }): Promise<Response> {
+async function audit(page: { limit: number; cursor?: string; readsPerSecond?: number }): Promise<Response> {
   const query = new URLSearchParams({ limit: String(page.limit) });
   if (page.cursor) query.set("cursor", page.cursor);
+  if (page.readsPerSecond) query.set("readsPerSecond", String(page.readsPerSecond));
   return post(`/operator/identities?${query}`, { aud: env.PDS_ORIGIN, act: "audit" });
 }
 

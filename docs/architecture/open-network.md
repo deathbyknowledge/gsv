@@ -83,9 +83,12 @@ The PDS records each adoption and step-aside with the head, the operation that
 decided it and the key that signed it, for the Kernel or the operator to read
 later; it tells nobody yet. When the operator suspects the rotation key has
 leaked, `npm run pds:identities -- audit` reads every hosted identity's log
-again, at most four reads a second, and lists only the identities the PDS steps
-aside for and those it couldn't read. [Audit Ships'
-identities](../how-to/operate-gsv.md#audit-identities) is the procedure.
+again, one read a second unless the operator asks for up to ten, and lists only
+the identities the PDS steps aside for and those it couldn't read. When the
+directory answers 429, the audit waits as long as its `Retry-After` asks, or
+backs off when it names no time, then resumes at the identity it refused.
+[Audit Ships' identities](../how-to/operate-gsv.md#audit-identities) is the
+procedure.
 
 ## Calls between Ships
 

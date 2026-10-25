@@ -1,7 +1,7 @@
 import * as z from "zod/mini";
 import { parseQuery, XrpcError } from "../host/xrpc";
 import type { PdsEnv } from "./env";
-import { AUDIT_PAGE, auditIdentities } from "./identity-audit";
+import { AUDIT_PAGE, AUDIT_READS_PER_SECOND, auditIdentities, MAX_AUDIT_READS_PER_SECOND } from "./identity-audit";
 import { createLexiconAccount, lexiconAccount, publishLexicons } from "./lexicons";
 import { OperatorTokenError, verifyOperatorToken, type OperatorClaims } from "./operator-token";
 
@@ -13,6 +13,7 @@ export const IDENTITY_AUDIT_PATH = "/operator/identities";
 
 const auditQuery = z.object({
   limit: z._default(z.coerce.number().check(z.int(), z.gte(1), z.lte(AUDIT_PAGE)), AUDIT_PAGE),
+  readsPerSecond: z._default(z.coerce.number().check(z.int(), z.gte(1), z.lte(MAX_AUDIT_READS_PER_SECOND)), AUDIT_READS_PER_SECOND),
   cursor: z.optional(z.string()),
 });
 
@@ -40,10 +41,8 @@ export async function handleOperator(request: Request, env: PdsEnv): Promise<Res
         const published = await publishLexicons(env);
         return Response.json({ ...await lexiconAccount(env), published });
       }
-      case "audit": {
-        const { limit, cursor } = parseQuery(auditQuery, url);
-        return Response.json(await auditIdentities(env, limit, cursor));
-      }
+      case "audit":
+        return Response.json(await auditIdentities(env, parseQuery(auditQuery, url)));
     }
   } catch (error) {
     if (error instanceof XrpcError) return error.response();
