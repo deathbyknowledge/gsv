@@ -229,8 +229,10 @@ the change ran, the change is still reported as done and its entry reads
 On a deployment that runs the open-network host, suspending a Ship also tells
 relays that its account is suspended, and reactivating it tells them the
 account is active again. If the PDS can't be reached, the Ship keeps its new
-state and the request returns an error. To tell relays, set the same state
-again through the operator JSON API.
+state and the error says that relays weren't told. **Try again** on the error
+sets the same state again: Accounts changes nothing, tells relays, and records
+the attempt in the audit log. Through the operator JSON API, send the same
+state again.
 
 ## Take down what a Ship publishes {#take-down-what-a-ship-publishes}
 

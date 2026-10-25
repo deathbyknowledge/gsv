@@ -42,7 +42,8 @@ each change until two reads agree. An account created for a restricted
 installation starts suspended. A takedown outranks a suspension: the account
 reads as `takendown` until the operator restores it, then as `suspended`. If
 the PDS can't follow, Accounts keeps the new state and the operator's request
-fails; repeating it tells the PDS.
+fails; the Ship page's **Try again**, or the same request sent again, tells the
+PDS.
 
 ## Identity
 

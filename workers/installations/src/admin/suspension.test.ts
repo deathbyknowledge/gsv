@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 import { AccountStore } from "../store";
 import { InstallationOnboardingStore } from "../onboarding";
@@ -9,6 +9,11 @@ import { ShipInsight } from "./insight";
 import { InstallationAdminService } from "./service";
 
 const origin = "http://localhost:8976";
+const NOT_TOLD = "The Ship is suspended, but its open-network host could not be told.";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 /**
  * The deployment's PDS as Accounts' moderation binding reaches it. Each time
@@ -75,27 +80,62 @@ describe("suspending a Ship on the open network", () => {
     expect(followed).toEqual([{ installationId, state: "restricted" }, { installationId, state: "active" }]);
   });
 
-  it("returns an error when the PDS can't follow, keeping the new state, and suspending again completes it", async () => {
+  it("keeps the new state when the PDS can't follow, and the error page's Try again tells it", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { pds, followed } = moderationPds();
     const ships = stack(pds);
     const { http, service, insight } = ships;
     const installationId = await activeShip(ships, "unfollowed");
+    const path = `/admin/installations/${installationId}/lifecycle`;
     pds.reconcileAccountStatus.mockRejectedValueOnce(new Error("PDS unavailable"));
 
-    const failed = await http.handle(form(`/admin/installations/${installationId}/lifecycle`, { state: "restricted" }));
+    const failed = await http.handle(form(path, { state: "restricted", reason: "abuse" }));
     expect(failed?.status).toBe(503);
-    expect(warn).toHaveBeenCalledWith("[Operator] Admin request failed:", `/admin/installations/${installationId}/lifecycle`,
-      expect.objectContaining({ exceptionMessage: "PDS unavailable" }));
+    const page = await failed!.text();
+    const retry = tryAgain(page);
+    expect(retry).toEqual({ method: "post", action: path, values: { reason: "abuse", state: "restricted" } });
+    expect(page).toContain(NOT_TOLD);
+    expect(warn).toHaveBeenCalledWith("[Operator] Admin request failed:", path, expect.objectContaining({ exceptionCause: "PDS unavailable" }));
     expect((await service.getInstallation(installationId))?.state).toBe("restricted");
-    const [refused] = (await insight.audit.list({ installationId, page: 1 })).events;
-    expect(refused).toMatchObject({ action: "ship.suspend", outcome: "error" });
 
-    const repeated = await http.handle(form(`/admin/installations/${installationId}/lifecycle`, { state: "restricted" }));
+    // Trying again sets the state Accounts already holds, tells the PDS, and is audited on its own.
+    const repeated = await http.handle(form(retry!.action, retry!.values));
     expect(repeated?.status).toBe(303);
+    expect(repeated?.headers.get("location")).toBe(`/admin/installations/${installationId}`);
     expect(followed).toEqual([{ installationId, state: "restricted" }]);
-    const [completed] = (await insight.audit.list({ installationId, page: 1 })).events;
-    expect(completed).toMatchObject({ action: "ship.suspend", outcome: "completed" });
-    warn.mockRestore();
+    expect((await service.getInstallation(installationId))?.state).toBe("restricted");
+    expect((await insight.audit.list({ installationId, page: 1 })).events.slice(0, 2)).toMatchObject([
+      { action: "ship.suspend", outcome: "completed", reason: "abuse" },
+      { action: "ship.suspend", outcome: "error", reason: "abuse" },
+    ]);
+  });
+
+  it("answers the JSON API with the same error, and setting the same state again there tells the PDS", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { pds, followed } = moderationPds();
+    const ships = stack(pds);
+    const installationId = await activeShip(ships, "apifollow");
+    const path = `/admin/api/installations/${installationId}/lifecycle`;
+    pds.reconcileAccountStatus.mockRejectedValueOnce(new Error("PDS unavailable"));
+
+    const failed = await ships.http.handle(api(path, { state: "restricted" }));
+    expect(failed?.status).toBe(503);
+    expect(await failed!.json()).toEqual({ error: NOT_TOLD });
+    const repeated = await ships.http.handle(api(path, { state: "restricted" }));
+    expect(repeated?.status).toBe(200);
+    expect(await repeated!.json()).toEqual({ installationId, state: "restricted" });
+
+    pds.reconcileAccountStatus.mockRejectedValueOnce(new Error("PDS unavailable"));
+    const unfollowed = await ships.http.handle(api(path, { state: "active" }));
+    expect(await unfollowed!.json()).toEqual({ error: "The Ship is reactivated, but its open-network host could not be told." });
+    expect(followed).toEqual([{ installationId, state: "restricted" }]);
   });
 });
+
+/** The page's Try again form, as a browser submits it. */
+function tryAgain(page: string): { method: string; action: string; values: Record<string, string> } | undefined {
+  const form = page.split("<form").slice(1).map((chunk) => chunk.slice(0, chunk.indexOf("</form>"))).find((chunk) => chunk.includes(">Try again<"));
+  if (!form) return undefined;
+  const values = Object.fromEntries([...form.matchAll(/name="([^"]+)"[^>]*value="([^"]*)"/g)].map(([, name, value]) => [name, value]));
+  return { method: /method="([^"]*)"/.exec(form)?.[1] ?? "", action: /action="([^"]*)"/.exec(form)?.[1] ?? "", values };
+}

@@ -7,7 +7,7 @@ import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { z } from "zod";
 
 const operatorReasonSchema = z.string().max(500).nullish();
-import { RESET_CONSEQUENCES, type InstallationAdminService } from "./service";
+import { OpenNetworkFollowError, RESET_CONSEQUENCES, type InstallationAdminService } from "./service";
 
 type AdminService = Pick<InstallationAdminService,
   "listInstallations" | "getInstallation" | "create" | "reissueOnboarding" | "resetInstallation" | "setInstallationState"
@@ -89,7 +89,7 @@ export class InstallationAdminApi {
       if (["handle ", "installation", "operationId ", "request ", "JSON ", "query ", "state ", "page "]
         .some((prefix) => message.startsWith(prefix))) return json({ error: message }, 400);
       console.warn("[Operator] Admin request failed:", url.pathname, exceptionDiagnostics(error));
-      return json({ error: "The operator request could not be completed." }, 503);
+      return json({ error: error instanceof OpenNetworkFollowError ? error.message : "The operator request could not be completed." }, 503);
     }
   }
 }

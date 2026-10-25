@@ -5,11 +5,11 @@ import type { AdminInstallation, AdminInstallationList, AdminInstallationListQue
 import { hasExpectedOrigin, json, noStoreHeaders, readRequestBody, requireString } from "../http";
 import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
 import { InstallationAdminApi, readConfirmedAction, readInstallationListQuery, UnconfirmedActionError } from "./api";
-import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type ShipView } from "./installations-page";
+import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type LifecycleRetry, type ShipView } from "./installations-page";
 import { adminAuditPage } from "./audit-page";
 import type { AdminAuditRecorder, OperatorAuditResult, ShipInsight } from "./insight";
 import { adminErrorPage, adminStylesheet, adminTimeScript } from "./page";
-import type { IssuedAdminInstallation } from "./service";
+import { OpenNetworkFollowError, type IssuedAdminInstallation } from "./service";
 import { InstallationDeletionHttp } from "../deletion-http";
 import type { AccountsDeletionRuntime } from "../deletion-runtime";
 import type { RequestReports } from "../request-reports";
@@ -70,6 +70,7 @@ export class InstallationAdminHttp<
     const route = /^\/admin\/installations\/([^/]+)(?:\/(onboarding|lifecycle|reset|takedowns|takedowns\/restore))?$/.exec(url.pathname);
     let createFormInput: AdminCreateFormInput | undefined;
     let usernamePolicyInput: UsernamePolicyInput | undefined;
+    let lifecycleRetry: LifecycleRetry | undefined;
     try {
       if (url.pathname === "/admin/styles.css" && (request.method === "GET" || head)) return adminStylesheet(head);
       if (url.pathname === "/admin/time.js" && (request.method === "GET" || head)) return adminTimeScript(head);
@@ -121,8 +122,9 @@ export class InstallationAdminHttp<
           const form = await readAdminForm(request);
           const state = form.get("state");
           if (state !== "active" && state !== "restricted") throw new Error("installation state is invalid");
+          lifecycleRetry = { state, reason: form.get("reason") };
           await this.audited(request,
-            { name: state === "restricted" ? "ship.suspend" : "ship.reactivate", installationId, reason: form.get("reason") },
+            { name: state === "restricted" ? "ship.suspend" : "ship.reactivate", installationId, reason: lifecycleRetry.reason },
             () => this.service.setInstallationState(installationId, state));
           return adminRedirect(`/admin/installations/${encodeURIComponent(installationId)}`);
         }
@@ -170,7 +172,7 @@ export class InstallationAdminHttp<
         catch { installation = null; }
         if (installation) {
           return adminInstallationPage(installation, undefined, failure.message, false, failure.status, this.presentation,
-            await this.shipView(installation));
+            await this.shipView(installation), error instanceof OpenNetworkFollowError ? lifecycleRetry : undefined);
         }
       }
       return adminErrorPage(failure.message, failure.status, head, this.presentation.navigation);
@@ -253,6 +255,7 @@ function isAdminApiPath(pathname: string): boolean {
 export function installationAdminFailure(error: Error) {
   const message = error.message;
   if (error instanceof UnconfirmedActionError) return { message, status: 400 };
+  if (error instanceof OpenNetworkFollowError) return { message, status: 503 };
   if (["handle ", "installation", "operationId ", "request ", "form ", "query ", "state ", "page "]
     .some((prefix) => message.startsWith(prefix))) return { message, status: 400 };
   return { message: "The operator request could not be completed.", status: 503 };

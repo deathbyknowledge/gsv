@@ -25,6 +25,14 @@ export const RESET_CONSEQUENCES: readonly string[] = [
   "Nothing is erased yet: this Ship's data is kept as pending deletion until a separate deletion removes it.",
 ];
 
+/** Accounts kept a Ship's new lifecycle state, but the deployment's PDS could not follow it. */
+export class OpenNetworkFollowError extends Error {
+  constructor(readonly state: "active" | "restricted", options: ErrorOptions) {
+    super(`The Ship is ${state === "restricted" ? "suspended" : "reactivated"}, but its open-network host could not be told.`, options);
+    this.name = "OpenNetworkFollowError";
+  }
+}
+
 export class InstallationAdminService extends InstallationAdminStore {
   private readonly resets: InstallationResetCoordinator;
 
@@ -48,7 +56,11 @@ export class InstallationAdminService extends InstallationAdminStore {
    */
   override async setInstallationState(installationId: string, state: "active" | "restricted"): Promise<void> {
     await super.setInstallationState(installationId, state);
-    await this.pds?.reconcileAccountStatus(installationId);
+    try {
+      await this.pds?.reconcileAccountStatus(installationId);
+    } catch (error) {
+      throw new OpenNetworkFollowError(state, { cause: error });
+    }
   }
 
   getUsernamePolicy(): Promise<UsernamePolicyLists> {
