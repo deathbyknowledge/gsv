@@ -11,10 +11,16 @@ export const AUDIT_READS_PER_SECOND = 1;
 /** The most reads a second the operator can ask the audit for. */
 export const MAX_AUDIT_READS_PER_SECOND = 10;
 
-/** One page of the operator's audit: how many identities it read, those the host steps aside for, and those it couldn't read. */
+/**
+ * One page of the operator's audit: how many identities it read, those the
+ * host steps aside for, the leaks of its key that an undo hid, and the
+ * identities it couldn't read.
+ */
 export type IdentityAuditPage = {
   checked: number;
   steppedAside: Array<IdentityEvent & { did: string; handle: string }>;
+  /** Each operation the host's key signed that the host never submitted and an undo later nullified. */
+  undoneLeaks: Array<{ did: string; handle: string; nullifiedAt: string }>;
   unread: string[];
   /** Where the next page starts; absent from the last page. */
   cursor?: string;
@@ -30,16 +36,18 @@ export type IdentityAuditPage = {
 /**
  * Reads again the log of each identity on a page of the host's directory, one
  * at a time and at most `readsPerSecond` a second, judging it as each
- * repository's own check does. A suspected leak of the host's rotation key is
- * the reason to run it. The page names only the identities the host steps
- * aside for and those it couldn't read, by DID and handle.
+ * repository's own check does, and looking among the operations an undo
+ * nullified for those the host's key signed that the host never submitted.
+ * A suspected leak of the host's rotation key is the reason to run it. The
+ * page names only the identities it finds and those it couldn't read, by DID
+ * and handle.
  */
 export async function auditIdentities(
   env: PdsEnv,
   { limit, readsPerSecond, cursor }: { limit: number; readsPerSecond: number; cursor?: string },
 ): Promise<IdentityAuditPage> {
   const { hosted, cursor: next } = await env.FIREHOSE.getByName(FIREHOSE_NAME).listHosted(limit, cursor);
-  const page: IdentityAuditPage = { checked: 0, steppedAside: [], unread: [], cursor: next };
+  const page: IdentityAuditPage = { checked: 0, steppedAside: [], undoneLeaks: [], unread: [], cursor: next };
   let resume = cursor;
   for (const { did, name } of hosted) {
     await scheduler.wait(1000 / readsPerSecond);
@@ -50,6 +58,7 @@ export async function auditIdentities(
     page.checked += 1;
     if (audited.outcome === "unread") page.unread.push(audited.did);
     if (audited.steppedAside) page.steppedAside.push({ did: audited.did, handle: audited.handle, ...audited.steppedAside });
+    for (const nullifiedAt of audited.undoneLeaks) page.undoneLeaks.push({ did: audited.did, handle: audited.handle, nullifiedAt });
   }
   return page;
 }

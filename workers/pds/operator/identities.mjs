@@ -14,9 +14,13 @@ import { signOperatorToken } from "../src/gsv/operator-token.ts";
  * ends the page there; the command waits as long as the directory's Retry-After
  * asks, or backs off when it names no time, and resumes at the identity it
  * refused. While it runs, the command prints only counts. It then prints the
- * identities the host steps aside for and any it couldn't read, by DID and
- * handle. Each request is signed with the host's PLC rotation key, read from
- * GSV_PLC_ROTATION_KEY or the variable --key-env names; the key is never printed.
+ * identities the host steps aside for, the undone leaks (operations the host's
+ * key signed that the host never submitted, which an undo later nullified) and
+ * any identity it couldn't read, by DID and handle, and a summary line of
+ * counts. Any leak of the key, undone or not, ends that line with "the host key
+ * has leaked; rotate it". Each request is signed with the host's PLC rotation
+ * key, read from GSV_PLC_ROTATION_KEY or the variable --key-env names; the key
+ * is never printed.
  */
 
 const USAGE = "Use audit --pds <https-origin> [--reads-per-second <1-10>] [--key-env <variable>]";
@@ -39,7 +43,7 @@ if (!/^([1-9]|10)$/.test(values["reads-per-second"])) fail("--reads-per-second m
 const rotationKey = process.env[values["key-env"]] ?? "";
 if (!/^[0-9a-f]{64}$/.test(rotationKey)) fail(`${values["key-env"]} must hold the PDS's PLC rotation key, as 64 lowercase hex characters`);
 
-const report = { checked: 0, steppedAside: [], unread: [] };
+const report = { checked: 0, steppedAside: [], undoneLeaks: [], unread: [] };
 let cursor;
 let backoffMs = FIRST_BACKOFF_MS;
 for (;;) {
@@ -53,12 +57,13 @@ for (;;) {
   if (!response.ok) fail(`${body.error}: ${body.message}`);
   report.checked += body.checked;
   report.steppedAside.push(...body.steppedAside);
+  report.undoneLeaks.push(...body.undoneLeaks);
   report.unread.push(...body.unread);
   cursor = body.cursor;
   if (body.retryAfter === undefined) {
-    progress();
     backoffMs = FIRST_BACKOFF_MS;
     if (!cursor) break;
+    progress();
     continue;
   }
   const waitMs = body.retryAfter === null ? backoffMs : body.retryAfter * 1000;
@@ -67,10 +72,12 @@ for (;;) {
   await sleep(waitMs);
 }
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+const leaked = report.undoneLeaks.length > 0 || report.steppedAside.some((event) => event.outcome === "leaked-key");
+progress(leaked ? "the host key has leaked; rotate it" : undefined);
 
 /** Prints the audit's counts so far, and a note. */
 function progress(note) {
-  const counts = `Checked ${report.checked}, stepped aside ${report.steppedAside.length}, unread ${report.unread.length}`;
+  const counts = `Checked ${report.checked}, stepped aside ${report.steppedAside.length}, undone leaks ${report.undoneLeaks.length}, unread ${report.unread.length}`;
   process.stderr.write(`${note ? `${counts}; ${note}` : counts}\n`);
 }
 

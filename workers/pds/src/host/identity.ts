@@ -6,12 +6,13 @@ import {
   normalizeOp,
   PlcClient,
   PlcClientError,
-  processIndexedEntryLog,
+  processIndexedEntry,
   signOperation,
   signTombstone,
   validateIncomingOp,
   type CompatibleOperationOrTombstone,
   type DidPlcString,
+  type IndexedEntryWithSigner,
   type Operation,
   type Service,
   type UnsignedOperation,
@@ -54,14 +55,19 @@ export type IdentityState = Omit<UnsignedOperation, "type" | "prev">;
  */
 export type StepAside = "leaked-key" | "untrusted-key" | "moved";
 
-/** What a host makes of the head of its DID's log. */
-export type HeadCheck =
+/**
+ * What a host makes of the head of its DID's log, and when an undo nullified
+ * an operation the host's key signed that the host never submitted: a leak of
+ * the key that no longer shows among the operations in force.
+ */
+export type HeadCheck = (
   /** The head is an operation the host signed or adopted. */
   | { outcome: "own" }
   /** Keys the host trusts signed every operation since its own, and the identity still names this host: the host follows the head. */
   | { outcome: "adopted"; head: IdentityHead; signedBy: DidKeyString }
   /** The host steps aside for the head, because of `operation`. */
-  | { outcome: StepAside; head: string; operation: string; signedBy: DidKeyString };
+  | { outcome: StepAside; head: string; operation: string; signedBy: DidKeyString }
+) & { undoneLeaks: string[] };
 
 /** The directory's log has moved past the head the host recorded, so someone else changed the identity. */
 export class IdentityChangedError extends Error {
@@ -212,30 +218,41 @@ export function ownerRecoveryKeyOf(rotationKeys: readonly DidKeyString[], operat
  * signed by one of them, and the host then trusts the keys that operation
  * ranks above its own, or all of them once its key is gone. An operation the
  * host's key signed is one this host never submitted, so the key has leaked.
- * A directory that answers 429 throws `DirectoryBusyError`.
+ * Such an operation that an undo nullified is a leak the walk can't see;
+ * `undoneLeaks` gives when each was undone. A directory that answers 429
+ * throws `DirectoryBusyError`.
  */
 export async function checkHead(env: HostEnv, did: DidPlcString, known: readonly string[], signingKey: DidKeyString): Promise<HeadCheck> {
   const plc = new PlcClient({ serviceUrl: env.PLC_URL, fetch: readUnlessBusy });
-  const { canonical } = await processIndexedEntryLog(did, await plc.getAuditLog(did));
+  const hostKey = await (await hostRotationKey(env)).exportPublicKey("did");
+  // Replays the log as processIndexedEntryLog does, keeping when each nullified operation was undone.
+  let canonical: IndexedEntryWithSigner[] = [];
+  const undoneLeaks: string[] = [];
+  for (const entry of await plc.getAuditLog(did)) {
+    const replayed = await processIndexedEntry(did, canonical, entry);
+    canonical = replayed.ops;
+    for (const undone of replayed.nullified) {
+      if (undone.signedBy === hostKey && !known.includes(undone.cid)) undoneLeaks.push(entry.createdAt);
+    }
+  }
   const start = canonical.findLastIndex((entry) => known.includes(entry.cid));
   const base = canonical[start];
   const head = canonical.at(-1);
   if (!base || !head) throw new Error(`The directory's log for ${did} doesn't begin with this host's genesis`);
-  if (base === head) return { outcome: "own" };
-  const hostKey = await (await hostRotationKey(env)).exportPublicKey("did");
+  if (base === head) return { outcome: "own", undoneLeaks };
   let trusted = keysAboveHost(base.operation, hostKey);
   for (const entry of canonical.slice(start + 1)) {
     if (!trusted.includes(entry.signedBy)) {
       const outcome = entry.signedBy === hostKey ? "leaked-key" : "untrusted-key";
-      return { outcome, head: head.cid, operation: entry.cid, signedBy: entry.signedBy };
+      return { outcome, head: head.cid, operation: entry.cid, signedBy: entry.signedBy, undoneLeaks };
     }
     trusted = keysAboveHost(entry.operation, hostKey);
   }
   const state = head.operation;
   if (state.type !== "plc_operation" || !namesHost(state, env.PDS_ORIGIN) || state.verificationMethods.atproto !== signingKey) {
-    return { outcome: "moved", head: head.cid, operation: head.cid, signedBy: head.signedBy };
+    return { outcome: "moved", head: head.cid, operation: head.cid, signedBy: head.signedBy, undoneLeaks };
   }
-  return { outcome: "adopted", head: { cid: head.cid, operation: state }, signedBy: head.signedBy };
+  return { outcome: "adopted", head: { cid: head.cid, operation: state }, signedBy: head.signedBy, undoneLeaks };
 }
 
 /**

@@ -183,11 +183,18 @@ export type IdentityEvent = { at: number; outcome: "adopted" | StepAside; head: 
 
 /**
  * What the operator's audit learns of one identity: whether the host could
- * read its log and what it steps aside for, or that the directory asked the
- * host to wait, with the seconds it named.
+ * read its log, what it steps aside for and any leak of its key an undo hid,
+ * or that the directory asked the host to wait, with the seconds it named.
  */
 export type IdentityAudit =
-  | { outcome: "read" | "unread"; did: string; handle: string; steppedAside: IdentityEvent | null }
+  | {
+      outcome: "read" | "unread";
+      did: string;
+      handle: string;
+      steppedAside: IdentityEvent | null;
+      /** When an undo nullified each operation the host's key signed that the host never submitted. */
+      undoneLeaks: string[];
+    }
   | { outcome: "busy"; retryAfter: number | null };
 
 type OpenRepo = {
@@ -304,8 +311,14 @@ export class HostedRepo extends DurableObject<HostEnv> {
       const account = await this.storedAccount();
       if (!account) return null;
       try {
-        const { check, read } = await this.checkIdentity(true);
-        return { outcome: read ? "read" : "unread", did: account.did, handle: account.handle, steppedAside: check.steppedAside };
+        const { check, found } = await this.checkIdentity(true);
+        return {
+          outcome: found ? "read" : "unread",
+          did: account.did,
+          handle: account.handle,
+          steppedAside: check.steppedAside,
+          undoneLeaks: found?.undoneLeaks ?? [],
+        };
       } catch (error) {
         if (error instanceof DirectoryBusyError) return { outcome: "busy", retryAfter: error.retryAfter };
         throw error;
@@ -748,12 +761,13 @@ export class HostedRepo extends DurableObject<HostEnv> {
    * change keys it trusts made and records it; for any other it steps aside.
    * A failed read keeps the last answer for the hour, but a fresh one the
    * directory answers with 429 throws, for its caller to repeat once it has
-   * waited. Runs in the write queue.
+   * waited. Returns the answer with what `checkHead` found, or null when the
+   * host kept the last answer. Runs in the write queue.
    */
-  private async checkIdentity(fresh: boolean): Promise<{ check: IdentityCheck; read: boolean }> {
+  private async checkIdentity(fresh: boolean): Promise<{ check: IdentityCheck; found: HeadCheck | null }> {
     const stored = (await this.ctx.storage.get<IdentityCheck>(IDENTITY_CHECK_KEY)) ?? { checkedAt: 0, steppedAside: null, events: [] };
     const account = await this.storedAccount();
-    if (!account || (!fresh && Date.now() - stored.checkedAt < IDENTITY_CHECK_TTL_MS)) return { check: stored, read: true };
+    if (!account || (!fresh && Date.now() - stored.checkedAt < IDENTITY_CHECK_TTL_MS)) return { check: stored, found: null };
     const checkedAt = Date.now();
     const operations = account.identity?.operations ?? [];
     let found: HeadCheck;
@@ -762,9 +776,9 @@ export class HostedRepo extends DurableObject<HostEnv> {
     } catch (error) {
       if (fresh && error instanceof DirectoryBusyError) throw error;
       console.error("Identity check failed; the host reads its DID's log again in an hour", error);
-      return { check: await this.saveCheck({ ...stored, checkedAt }), read: false };
+      return { check: await this.saveCheck({ ...stored, checkedAt }), found: null };
     }
-    if (found.outcome === "own") return { check: await this.saveCheck({ ...stored, checkedAt, steppedAside: null }), read: true };
+    if (found.outcome === "own") return { check: await this.saveCheck({ ...stored, checkedAt, steppedAside: null }), found };
     if (found.outcome === "adopted") {
       const operatorKeys = [...account.genesis.rotationKeys, ...this.env.PLC_RECOVERY_KEY ? [this.env.PLC_RECOVERY_KEY] : []];
       await this.saveAccount({ ...account, identity: {
@@ -774,13 +788,13 @@ export class HostedRepo extends DurableObject<HostEnv> {
         operations: [...operations, found.head.cid].slice(-KNOWN_OPERATIONS),
       } });
       const event: IdentityEvent = { at: checkedAt, outcome: "adopted", head: found.head.cid, operation: found.head.cid, signedBy: found.signedBy };
-      return { check: await this.saveCheck({ checkedAt, steppedAside: null, events: [...stored.events, event].slice(-IDENTITY_EVENTS) }), read: true };
+      return { check: await this.saveCheck({ checkedAt, steppedAside: null, events: [...stored.events, event].slice(-IDENTITY_EVENTS) }), found };
     }
     const { outcome, head, operation, signedBy } = found;
     const same = stored.steppedAside?.outcome === outcome && stored.steppedAside.head === head && stored.steppedAside.operation === operation;
-    if (same) return { check: await this.saveCheck({ ...stored, checkedAt }), read: true };
+    if (same) return { check: await this.saveCheck({ ...stored, checkedAt }), found };
     const event: IdentityEvent = { at: checkedAt, outcome, head, operation, signedBy };
-    return { check: await this.saveCheck({ checkedAt, steppedAside: event, events: [...stored.events, event].slice(-IDENTITY_EVENTS) }), read: true };
+    return { check: await this.saveCheck({ checkedAt, steppedAside: event, events: [...stored.events, event].slice(-IDENTITY_EVENTS) }), found };
   }
 
   private async saveCheck(check: IdentityCheck): Promise<IdentityCheck> {

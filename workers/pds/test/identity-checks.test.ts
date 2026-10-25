@@ -12,6 +12,7 @@ import { fromBase16 } from "@atcute/multibase";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { PdsEnv } from "../src/gsv/env";
+import { AUDIT_PAGE } from "../src/gsv/identity-audit";
 import { signOperatorToken, type OperatorRequest } from "../src/gsv/operator-token";
 import type { IdentityState } from "../src/host/identity";
 import { HostedRepo } from "../src/host/repo";
@@ -38,6 +39,7 @@ const stepAside = z.strictObject({
 const report = z.strictObject({
   checked: z.number(),
   steppedAside: z.array(stepAside),
+  undoneLeaks: z.array(z.strictObject({ did: z.string(), handle: z.string(), nullifiedAt: z.string() })),
   unread: z.array(z.string()),
   cursor: z.optional(z.string()),
   retryAfter: z.optional(z.nullable(z.number())),
@@ -295,7 +297,7 @@ describe("the operator's identity audit", () => {
 
     // A refused first read leaves the page empty, and the next one starts where it did.
     vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 429, headers: { "Retry-After": "30" } }));
-    expect(report.parse(await (await audit({ limit: 1 })).json())).toEqual({ checked: 0, steppedAside: [], unread: [], retryAfter: 30 });
+    expect(report.parse(await (await audit({ limit: 1 })).json())).toEqual({ checked: 0, steppedAside: [], undoneLeaks: [], unread: [], retryAfter: 30 });
 
     // A refused second read ends the page after the first, whether the wait comes as an HTTP date or not at all.
     const refusals: Array<{ headers: Record<string, string>; retryAfter: number | null }> = [
@@ -311,6 +313,68 @@ describe("the operator's identity audit", () => {
     const resumed = report.parse(await (await audit({ limit: 1, cursor: firstPage.cursor })).json());
     expect(resumed.checked).toBe(1);
     expect(resumed.retryAfter).toBeUndefined();
+  });
+
+  it("reports a leak of the host's key that the person's sheet undid, while the host follows the undo", async () => {
+    const { repo, did } = await hostedAccount("undone-leak.ship.test");
+    await deliver(repo);
+    const owner = await sheet();
+    await repo.setOwnerRecoveryKey(owner.did);
+    const known = await head(did);
+    await submitAs(did, known, { ...stateOf(known.operation), rotationKeys: [await hostKey(), owner.did] }, await hostKeypair());
+    // The sheet builds on the host's operation and nullifies the leaked key's.
+    await submitAs(did, known, stateOf(known.operation), owner.key);
+    const undo = await head(did);
+
+    expect(await findings(did)).toEqual({
+      steppedAside: [], unread: [], undoneLeaks: [{ did, handle: "undone-leak.ship.test", nullifiedAt: undo.createdAt }],
+    });
+  });
+
+  it("doesn't report an operation of the host's own that the person's sheet undid", async () => {
+    const { repo, did } = await hostedAccount("own-undone.ship.test");
+    await deliver(repo);
+    const old = await sheet();
+    await repo.setOwnerRecoveryKey(old.did);
+    const before = await head(did);
+    await repo.setOwnerRecoveryKey((await sheet()).did);
+    const swap = await head(did);
+    await submitAs(did, before, stateOf(before.operation), old.key);
+    expect(await nullified(did)).toEqual([swap.cid]);
+
+    expect(await findings(did)).toEqual({ steppedAside: [], unread: [], undoneLeaks: [] });
+  });
+
+  it("doesn't report an operation another key signed that the person's sheet undid", async () => {
+    const paper = await Secp256k1PrivateKeyExportable.createKeypair();
+    const { repo, did } = await hostedAccount("paper-undone.ship.test", await paper.exportPublicKey("did"));
+    await deliver(repo);
+    const owner = await sheet();
+    await repo.setOwnerRecoveryKey(owner.did);
+    const known = await head(did);
+    await submitAs(did, known, stateOf(known.operation), paper);
+    const papered = await head(did);
+    await submitAs(did, known, stateOf(known.operation), owner.key);
+    expect(await nullified(did)).toEqual([papered.cid]);
+
+    expect(await findings(did)).toEqual({ steppedAside: [], unread: [], undoneLeaks: [] });
+  });
+
+  it("still reports the leak after the host follows the operator's paper-key repair", async () => {
+    const paper = await Secp256k1PrivateKeyExportable.createKeypair();
+    const { repo, did } = await hostedAccount("paper-audited.ship.test", await paper.exportPublicKey("did"));
+    await deliver(repo);
+    const genesis = await head(did);
+    await submitAs(did, genesis, { ...stateOf(genesis.operation), alsoKnownAs: ["at://taken.example"] }, await hostKeypair());
+    expect(await rejection(write(repo))).toContain("IdentityChanged");
+    await submitAs(did, genesis, stateOf(genesis.operation), paper);
+    const repaired = await head(did);
+    anHourPasses();
+    await write(repo);
+
+    expect(await findings(did)).toEqual({
+      steppedAside: [], unread: [], undoneLeaks: [{ did, handle: "paper-audited.ship.test", nullifiedAt: repaired.createdAt }],
+    });
   });
 
   it("opens only with an operator token for the audit", async () => {
@@ -383,6 +447,17 @@ function stateOf(operation: CompatibleOperationOrTombstone): IdentityState {
 /** Signs and submits an operation on `base` with a key other than the host's own submissions. */
 async function submitAs(did: DidPlcString, base: { cid: string }, state: IdentityState, key: PrivateKey): Promise<void> {
   await new PlcClient({ serviceUrl: env.PLC_URL }).submitOperation(did, await signOperation({ type: "plc_operation", prev: base.cid, ...state }, key));
+}
+
+/** What a whole audit, page by page, finds of one DID. */
+async function findings(did: string) {
+  const pages = [report.parse(await (await audit({ limit: AUDIT_PAGE })).json())];
+  while (pages.at(-1)?.cursor) pages.push(report.parse(await (await audit({ limit: AUDIT_PAGE, cursor: pages.at(-1)?.cursor })).json()));
+  return {
+    steppedAside: pages.flatMap((page) => page.steppedAside).filter((found) => found.did === did),
+    unread: pages.flatMap((page) => page.unread).filter((found) => found === did),
+    undoneLeaks: pages.flatMap((page) => page.undoneLeaks).filter((found) => found.did === did),
+  };
 }
 
 async function audit(page: { limit: number; cursor?: string; readsPerSecond?: number }): Promise<Response> {

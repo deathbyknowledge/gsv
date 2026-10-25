@@ -314,9 +314,15 @@ prints only counts.
 The host follows a change that a person's sheet or your paper key signed. Any
 other change makes it step aside for that Ship, refusing its writes and
 signatures; a change your rotation key signed that the host never submitted is
-reported as `leaked-key`. When the command finishes, it lists only the Ships
-the host steps aside for, by DID and handle, with the operation that decided
-and the public key that signed it, and any DIDs it couldn't read.
+reported as `leaked-key`. Once a sheet or your paper key undoes such a change,
+the host follows the undo and serves the Ship, so the audit also looks among
+each DID's undone operations. One your rotation key signed that the host never
+submitted is reported under `undoneLeaks`, with the time of the undo. When the
+command finishes, it lists only the Ships the host steps aside for, by DID and
+handle, with the operation that decided and the public key that signed it, the
+undone leaks by DID and handle, and any DIDs it couldn't read. Its last line
+gives the counts. When the audit found a leak of your rotation key, undone or
+not, that line ends with `the host key has leaked; rotate it`.
 
 ## Review reports {#review-reports}
 

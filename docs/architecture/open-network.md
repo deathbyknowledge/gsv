@@ -84,9 +84,13 @@ decided it and the key that signed it, for the Kernel or the operator to read
 later; it tells nobody yet. When the operator suspects the rotation key has
 leaked, `npm run pds:identities -- audit` reads every hosted identity's log
 again, one read a second unless the operator asks for up to ten, and lists only
-the identities the PDS steps aside for and those it couldn't read. When the
-directory answers 429, the audit waits as long as its `Retry-After` asks, or
-backs off when it names no time, then resumes at the identity it refused.
+the identities the PDS steps aside for, any undone leaks and the identities it
+couldn't read. An undone leak is an operation the host's key signed that the
+PDS never submitted, which a person's sheet or the paper key later nullified.
+The PDS follows the undo, so only the audit, which also reads the nullified
+operations, finds that leak. When the directory answers 429, the audit waits as
+long as its `Retry-After` asks, or backs off when it names no time, then
+resumes at the identity it refused.
 [Audit Ships' identities](../how-to/operate-gsv.md#audit-identities) is the
 procedure.
 
