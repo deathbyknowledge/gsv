@@ -1,4 +1,4 @@
-import type { ProfileFields, ProfileState } from "@humansandmachines/gsv/protocol";
+import { SHIP_PROFILE_COLLECTION, SHIP_PROFILE_RKEY, type ProfileFields, type ProfileState, type PublicTakedown } from "@humansandmachines/gsv/protocol";
 import type { ProfilePicture } from "./profilePicture";
 
 export type ProfileEdit = { revision: number; fields: ProfileFields };
@@ -45,4 +45,22 @@ export function profileUnpublished(state: ProfileState): boolean {
 export function profileVisibility(state: ProfileState): "private" | "requests" | "invitation" {
   if (!state.published) return "private";
   return state.published.contactPolicy === "requests" ? "requests" : "invitation";
+}
+
+/** What a takedown covers, as the person knows it. */
+export type TakedownSubject = { kind: "account" | "profile" | "picture" | "file" } | { kind: "record"; uri: string };
+
+/** Names a takedown as the person knows it: their whole Ship, their profile or its picture, or something else their Ship published. */
+export function takedownSubject({ subject }: PublicTakedown, avatarCid?: string): TakedownSubject {
+  switch (subject.$type) {
+    case "com.atproto.admin.defs#repoRef": return { kind: "account" };
+    case "com.atproto.repo.strongRef":
+      return subject.uri.endsWith(`/${SHIP_PROFILE_COLLECTION}/${SHIP_PROFILE_RKEY}`) ? { kind: "profile" } : { kind: "record", uri: subject.uri };
+    case "com.atproto.admin.defs#repoBlobRef": return { kind: subject.cid === avatarCid ? "picture" : "file" };
+  }
+}
+
+/** Whether no one can see the person's profile because their operator took down their whole Ship or the profile itself. */
+export function profileTakenDown(takedowns: readonly PublicTakedown[]): boolean {
+  return takedowns.some((takedown) => ["account", "profile"].includes(takedownSubject(takedown).kind));
 }

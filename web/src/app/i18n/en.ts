@@ -986,6 +986,17 @@ export const en = {
   "people.profile.noticePrivate": "To make it private, choose edit, then unpublish. People can still connect with you through a private invitation link.",
   "people.profile.noticeDismiss": "got it",
   "people.profile.noticeFailed": "Couldn't save that. Try again.",
+  "people.profile.takenDownLabel": "Taken down",
+  "people.profile.takedownTitle": "Your operator took something down",
+  "people.profile.takedownBody": "People on the open network can't see it anymore. Only your operator can restore it, so contact them if you think it's a mistake.",
+  "people.profile.takedownAccount": "Your whole Ship on the open network. Until your operator restores it, your profile isn't public, and neither you nor your Ship can publish or send messages to your contacts.",
+  "people.profile.takedownProfile": "Your public profile",
+  "people.profile.takedownPicture": "Your profile picture",
+  "people.profile.takedownRecord": "Something your Ship published: {uri}",
+  "people.profile.takedownFile": "A file your Ship published",
+  "people.profile.takedownReason": "Reason: {reason}",
+  "people.profile.takedownNoReason": "Your operator gave no reason.",
+  "people.profile.takedownSince": "Since {date}",
 
   // People: welcome
   "people.welcome.kicker": "YOUR PEOPLE. YOUR SHIPS.",

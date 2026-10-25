@@ -992,6 +992,17 @@ export const ptBR = {
   "people.profile.noticePrivate": "Para torná-lo privado, escolha editar e depois deixar de publicar. As pessoas ainda podem se conectar com você por um link de convite privado.",
   "people.profile.noticeDismiss": "entendi",
   "people.profile.noticeFailed": "Não foi possível salvar. Tente de novo.",
+  "people.profile.takenDownLabel": "Removido",
+  "people.profile.takedownTitle": "Seu operador removeu algo",
+  "people.profile.takedownBody": "Ninguém na rede aberta consegue ver isso agora. Só seu operador pode restaurar, então fale com seu operador se você acha que é um engano.",
+  "people.profile.takedownAccount": "Seu Ship inteiro na rede aberta. Até seu operador restaurar, seu perfil não fica público, e nem você nem seu Ship podem publicar ou enviar mensagens para seus contatos.",
+  "people.profile.takedownProfile": "Seu perfil público",
+  "people.profile.takedownPicture": "Sua foto de perfil",
+  "people.profile.takedownRecord": "Algo que seu Ship publicou: {uri}",
+  "people.profile.takedownFile": "Um arquivo que seu Ship publicou",
+  "people.profile.takedownReason": "Motivo: {reason}",
+  "people.profile.takedownNoReason": "Seu operador não informou um motivo.",
+  "people.profile.takedownSince": "Desde {date}",
 
   // People: welcome
   "people.welcome.kicker": "SUA GENTE. SEUS SHIPS.",

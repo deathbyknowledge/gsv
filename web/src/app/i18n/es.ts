@@ -987,6 +987,17 @@ export const es = {
   "people.profile.noticePrivate": "Para hacerlo privado, elige editar y luego dejar de publicar. La gente aún puede conectar contigo mediante un enlace de invitación privado.",
   "people.profile.noticeDismiss": "entendido",
   "people.profile.noticeFailed": "No se ha podido guardar. Vuelve a intentarlo.",
+  "people.profile.takenDownLabel": "Retirado",
+  "people.profile.takedownTitle": "Tu operador ha retirado algo",
+  "people.profile.takedownBody": "En la red abierta ya no se puede ver. Solo tu operador puede restaurarlo, así que contacta con tu operador si crees que es un error.",
+  "people.profile.takedownAccount": "Todo tu Ship en la red abierta. Hasta que tu operador lo restaure, tu perfil no es público y ni tú ni tu Ship podéis publicar ni enviar mensajes a tus contactos.",
+  "people.profile.takedownProfile": "Tu perfil público",
+  "people.profile.takedownPicture": "Tu foto de perfil",
+  "people.profile.takedownRecord": "Algo que ha publicado tu Ship: {uri}",
+  "people.profile.takedownFile": "Un archivo que ha publicado tu Ship",
+  "people.profile.takedownReason": "Motivo: {reason}",
+  "people.profile.takedownNoReason": "Tu operador no ha indicado ningún motivo.",
+  "people.profile.takedownSince": "Desde el {date}",
 
   // People: welcome
   "people.welcome.kicker": "TU GENTE. TUS SHIPS.",
