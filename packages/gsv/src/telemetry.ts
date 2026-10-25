@@ -441,7 +441,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
 export type TelemetryEventOwnership = Record<z.infer<typeof telemetryEventSchema>["name"], readonly z.infer<typeof telemetryComponentSchema>[]>;
 export const telemetryEventComponents = {
   "memory.review.admission.failed": ["gateway"],
-  "installation.setup.failed": ["gateway"],
+  "installation.setup.failed": ["gateway", "accounts"],
   "inference.client.finished": ["gateway", "inference"],
   "inference.metadata.finished": ["gateway", "inference", "accounts"],
   "entitlements.refresh.finished": ["inference", "search", "mail"],

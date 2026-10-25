@@ -61,10 +61,17 @@ describe("telemetry contract", () => {
       properties: { diagnosticId: "11111111-1111-4111-8111-111111111111", stage: "recovery", outcome: "failed", errorType: "TypeError", durationMs: 12 },
     };
     assert.ok(telemetryRecordSchema.safeParse(createTelemetryRecord({ ...INPUT, event })).success);
-    assert.throws(() => createTelemetryRecord({ ...INPUT, component: "accounts", event }));
+    assert.throws(() => createTelemetryRecord({ ...INPUT, component: "mail", event }));
     for (const extra of [{ cause: "private" }, { errorType: "private-provider-value" }, { diagnosticId: "private" }]) {
       assert.throws(() => createTelemetryRecord({ ...INPUT, event: { ...event, properties: { ...event.properties, ...extra } } }));
     }
+  });
+  it("accepts a self-service signup that Accounts couldn't activate", () => {
+    const event = {
+      stream: "operational", name: "installation.setup.failed",
+      properties: { diagnosticId: "11111111-1111-4111-8111-111111111111", stage: "activation", outcome: "failed", errorType: "unknown", durationMs: 12 },
+    };
+    assert.ok(telemetryRecordSchema.safeParse(createTelemetryRecord({ ...INPUT, component: "accounts", event })).success);
   });
   it("names the setup step a failed setup stopped at, from a closed list", () => {
     const event = {

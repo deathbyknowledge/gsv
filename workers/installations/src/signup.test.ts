@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import type { D1Migration } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
+import { telemetryRecordSchema } from "@humansandmachines/gsv/telemetry";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationSignup } from "./signup";
@@ -133,5 +134,29 @@ describe("open registration", () => {
     await db.prepare("UPDATE installations SET reservation_expires_at = 1 WHERE id = ?").bind(space.installationId).run();
     policy.prepare.mockResolvedValue(undefined);
     expect((await managed.prepare(operationId, principalId, name)).onboardingToken).toBeTruthy();
+  });
+
+  it("reports a failed activation to telemetry under the reference it keeps", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const principalId = await owner(), operationId = crypto.randomUUID();
+    const policy = { prepare: async (): Promise<void> => { throw new Error("Plan service unavailable"); } };
+    const managed = new InstallationSignup(db, accounts, onboarding, true, policy, { GSV_TELEMETRY_ENABLED: "1" });
+    await expect(managed.prepare(operationId, principalId, handle())).rejects.toThrow("Reference:");
+    const space = (await accounts.getReservationByOperation(operationId))!;
+    const failure = await db.prepare("SELECT last_error FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ last_error: string }>();
+    const records = log.mock.calls.flatMap(([value]) => {
+      const record = telemetryRecordSchema.safeParse(value);
+      return record.success ? [record.data] : [];
+    });
+    expect(records).toEqual([expect.objectContaining({
+      component: "accounts", installationId: space.installationId,
+      event: { stream: "operational", name: "installation.setup.failed", properties: expect.objectContaining({
+        diagnosticId: JSON.parse(failure!.last_error).diagnosticId, stage: "activation", outcome: "failed",
+      }) },
+    })]);
+    expect(warn).not.toHaveBeenCalled();
+    log.mockRestore();
+    warn.mockRestore();
   });
 });
