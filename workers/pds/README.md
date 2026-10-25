@@ -126,8 +126,8 @@ The deletion tests cover the deletion authority, what quiescing refuses and
 announces, resumable erasure, the DID tombstone, and deletion discovery. The
 lexicon tests cover the operator's token, creating the account once, the
 handles it refuses, publishing only what changed and never deleting, the
-schedule, and how public reads, the Kernel's binding and deletion discovery
-see the account.
+schedule, publishing held while the account is taken down, and how public
+reads, the Kernel's binding and deletion discovery see the account.
 
 ## Smoke check
 

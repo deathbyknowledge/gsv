@@ -313,7 +313,10 @@ The first publish is the operator's too, with `npm run pds:lexicons --
 publish`. After it, the PDS checks every ten minutes and publishes, in one
 commit, each lexicon whose record differs from the deployed release's. It never
 deletes a record, so a lexicon a later release drops stays published.
-`npm run pds:lexicons -- status` lists the lexicons waiting to go out.
+`npm run pds:lexicons -- status` lists the lexicons waiting to go out. Like a
+Ship's account, it refuses writes while the host has it taken down: `publish`
+answers `RepoTakendown`, and the schedule writes nothing and logs that
+publishing is held until the takedown is lifted.
 
 ## Deletion
 
