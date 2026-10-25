@@ -1,5 +1,5 @@
 import { GSVClient, GsvClientError } from "@humansandmachines/gsv";
-import type { GsvRequestArguments } from "@humansandmachines/gsv";
+import type { GsvRequestArguments, GsvWebSocketConstructor } from "@humansandmachines/gsv";
 import type {
   ConnectArgs,
   SysSetupArgs,
@@ -132,7 +132,7 @@ describe("gateway authentication integration", () => {
     });
   });
 
-  it("waits after repeated wrong passwords, refusing even the right one, while signed-in sessions and tokens keep working", async () => {
+  it("waits after repeated wrong passwords from one address, refusing even the right one there, while other addresses, signed-in sessions and tokens keep working", async () => {
     await setup();
     const signedIn = createClient({ username: USERNAME, password: PASSWORD, peer: peerInfo("signed-in-before") });
     await signedIn.connect();
@@ -160,9 +160,11 @@ describe("gateway authentication integration", () => {
     await expect(signedIn.proc.list()).resolves.toBeDefined();
     const tokenUser = createClient({ username: USERNAME, token: issued.token.token, peer: peerInfo("token-while-waiting") });
     await expect(tokenUser.connect()).resolves.toMatchObject({ peer: { principal: { kind: "human", account: { uid: 1000 } } } });
+    const elsewhere = createClient({ username: USERNAME, password: PASSWORD, peer: peerInfo("right-from-elsewhere"), WebSocket: socketFrom("198.51.100.20") });
+    await expect(elsewhere.connect()).resolves.toMatchObject({ peer: { principal: { kind: "human", account: { uid: 1000 } } } });
   });
 
-  it("gives one address twenty wrong passwords an hour across the Ship's accounts", async () => {
+  it("gives one address twenty wrong passwords an hour across the Ship's accounts, counting an IPv6 /64 as one address", async () => {
     await setup();
     const tries = [...Array<string>(4).fill(USERNAME), ...Array<string>(4).fill("root"), ...Array<string>(12).fill("nobody")];
     for (const [attempt, username] of tries.entries()) {
@@ -170,13 +172,15 @@ describe("gateway authentication integration", () => {
         protocol: 4,
         peer: peerInfo(`address-${attempt}`),
         auth: { username, password: `wrong-${attempt}` },
-      })).rejects.toMatchObject({ code: 401 });
+      }, attempt % 2 === 0 ? "2001:db8:1:2::a" : "2001:db8:1:2::b")).rejects.toMatchObject({ code: 401 });
     }
     await expect(connectOnce({
       protocol: 4,
       peer: peerInfo("address-right"),
       auth: { username: USERNAME, password: PASSWORD },
-    })).rejects.toMatchObject({ code: 429, message: expect.stringContaining("Too many sign-in attempts") });
+    }, "2001:db8:1:2::c")).rejects.toMatchObject({ code: 429, message: expect.stringContaining("Too many sign-in attempts") });
+    const otherNetwork = createClient({ username: USERNAME, password: PASSWORD, peer: peerInfo("other-network"), WebSocket: socketFrom("2001:db8:1:3::a") });
+    await expect(otherNetwork.connect()).resolves.toMatchObject({ peer: { principal: { kind: "human", account: { uid: 1000 } } } });
   });
 
   it("enrolls an exact device through a resumable invitation without exposing a human credential", async () => {
@@ -447,8 +451,8 @@ describe("gateway authentication integration", () => {
     return client;
   }
 
-  function connectOnce(args: GsvRequestArguments): Promise<never> {
-    const client = new GSVClient();
+  function connectOnce(args: GsvRequestArguments, address?: string): Promise<never> {
+    const client = new GSVClient(address ? { WebSocket: socketFrom(address) } : undefined);
     const call: string = "sys.connect";
     return client.requestOnce(webSocketUrl(baseUrl), call, args)
       .then(() => {
@@ -472,6 +476,18 @@ describe("gateway authentication integration", () => {
     });
   }
 });
+
+// SAFETY: Node's WebSocket also takes an init object with headers in place of protocols.
+const NodeWebSocket = WebSocket as new (url: string, init?: string | string[] | { headers: Record<string, string> }) => WebSocket;
+
+/** Sockets that Cloudflare would report as coming from `address`. */
+function socketFrom(address: string): GsvWebSocketConstructor {
+  return class extends NodeWebSocket {
+    constructor(url: string | URL) {
+      super(String(url), { headers: { "CF-Connecting-IP": address } });
+    }
+  };
+}
 
 function peerInfo(id: string, implementsList: string[] = []): ConnectArgs["peer"] {
   return {

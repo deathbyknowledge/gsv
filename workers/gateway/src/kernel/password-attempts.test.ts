@@ -48,6 +48,16 @@ describe("password attempts", () => {
     });
   });
 
+  it("keeps each address's run to itself, so an address that waits never delays another", async () => {
+    await withAttempts((attempts) => {
+      for (let count = 0; count < 5; count++) attempt(attempts, "1000", "address-a");
+      expect(attempt(attempts, "1000", "address-a", true)).toBe(30_000);
+      expect(attempt(attempts, "1000", "address-b", true)).toBeNull();
+      // The right password from another address forgives only that address's run.
+      expect(attempt(attempts, "1000", "address-a", true)).toBe(30_000);
+    });
+  });
+
   it("forgets a run fifteen minutes after its last wrong password", async () => {
     await withAttempts((attempts, clock) => {
       for (let count = 0; count < 4; count++) attempt(attempts, "1000", null);
@@ -81,9 +91,26 @@ describe("password attempts", () => {
     });
   });
 
-  it("takes back a right password's count from its address", async () => {
+  it("gives one account a hundred wrong passwords an hour across every address", async () => {
+    await withAttempts((attempts, clock) => {
+      // Five from each of twenty addresses, so no address's own run or count stops them.
+      for (let address = 0; address < 20; address++) {
+        for (let count = 0; count < 5; count++) {
+          expect(attempt(attempts, "1000", `address-${address}`)).toBeNull();
+          clock.now += 1_000;
+        }
+      }
+      // The next waits, even with the right password, until the hour frees a slot.
+      expect(attempt(attempts, "1000", "address-new", true)).toBe(60 * MINUTE - 100_000);
+      expect(attempt(attempts, "0", "address-new", true)).toBeNull();
+      clock.now += 60 * MINUTE - 100_000;
+      expect(attempt(attempts, "1000", "address-new", true)).toBeNull();
+    });
+  });
+
+  it("takes back a right password's count from its account and address", async () => {
     await withAttempts((attempts) => {
-      for (let count = 0; count < 40; count++) expect(attempt(attempts, null, "address-a", true)).toBeNull();
+      for (let count = 0; count < 120; count++) expect(attempt(attempts, "1000", "address-a", true)).toBeNull();
     });
   });
 
@@ -105,13 +132,35 @@ describe("password attempts", () => {
     });
   });
 
+  it("counts addresses in one IPv6 /64 as one address", async () => {
+    await withAttempts(async (attempts) => {
+      const first = await attempts.source("2001:db8:1:2::a");
+      const second = await attempts.source("2001:0DB8:0001:0002:ffff:ffff:ffff:ffff");
+      expect(second).toBe(first);
+      expect(await attempts.source("2001:db8:1:3::a")).not.toBe(first);
+      for (let count = 0; count < 10; count++) attempt(attempts, null, first);
+      for (let count = 0; count < 10; count++) attempt(attempts, null, second);
+      expect(attempt(attempts, null, await attempts.source("2001:db8:1:2::c"))).toBe(60 * MINUTE);
+    });
+  });
+
+  it("counts an IPv4-mapped IPv6 address as its IPv4 address, and IPv4 exactly", async () => {
+    await withAttempts(async (attempts) => {
+      const ipv4 = await attempts.source("203.0.113.7");
+      expect(await attempts.source("::ffff:203.0.113.7")).toBe(ipv4);
+      expect(await attempts.source("::FFFF:cb00:7107")).toBe(ipv4);
+      expect(await attempts.source("203.0.113.8")).not.toBe(ipv4);
+    });
+  });
+
   it("sweeps away records that no longer matter as attempts arrive", async () => {
     await withAttempts((attempts, clock, kv) => {
       for (let count = 0; count < 12; count++) attempt(attempts, `${2000 + count}`, `address-${count}`);
       clock.now += 61 * MINUTE;
-      for (let count = 0; count < 4; count++) attempt(attempts, "1000", "address-live");
+      for (let count = 0; count < 5; count++) attempt(attempts, "1000", "address-live");
       const left = [...kv.list({ prefix: "sign-in:" })].map(([key]) => key).filter((key) => key !== "sign-in:sweep");
-      expect(left.sort()).toEqual(["sign-in:account:1000", "sign-in:source:address-live"]);
+      expect(left.length).toBeGreaterThan(0);
+      expect(left.filter((key) => !key.includes(":1000") && !key.endsWith(":address-live"))).toEqual([]);
     });
   });
 

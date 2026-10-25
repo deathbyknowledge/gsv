@@ -46,7 +46,7 @@ describe("signing in with a password", () => {
     });
   });
 
-  it("answers git with 429 and Retry-After while the account waits, and never counts a token as a wrong password", async () => {
+  it("answers git with 429 and Retry-After while the account waits at an address, and never counts a token as a wrong password", async () => {
     await withShip(async (kernel) => {
       const issued = await kernel.auth.issueToken({ uid: 1000, kind: "human", label: "git" });
       for (let count = 0; count < 12; count++) {
@@ -58,8 +58,9 @@ describe("signing in with a password", () => {
         await expect(gitRead(kernel, `wrong-${count}`)).resolves.toEqual({ ok: false, status: 401, message: "Authentication failed" });
       }
       await expect(gitRead(kernel, PASSWORD)).resolves.toEqual({ ok: false, status: 429, message: WAITING, retryAfterSeconds: 30 });
-      // A token still works while passwords wait.
+      // A token, or the right password from another address, still works while that address waits.
       await expect(gitRead(kernel, issued.token)).resolves.toMatchObject({ ok: true, username: USERNAME });
+      await expect(gitRead(kernel, PASSWORD, "198.51.100.5")).resolves.toMatchObject({ ok: true, username: USERNAME });
     });
   });
 
