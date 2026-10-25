@@ -365,6 +365,16 @@ describe("a Ship its host took down", () => {
     expect(await alice.run((ctx) => contactFor(ctx, bob).state)).toBe("active");
     expect(await send(bob, alice, { text: "Are you there?" })).toBe("delivered");
   });
+
+  it("refuses an invitation with the reason, and accepts the same one once restored", async () => {
+    const { code } = await mallory.run((ctx) => handleContactInviteCreate({}, ctx));
+    network.takenDown.add(alice.account.did);
+    await expect(alice.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx)))
+      .rejects.toThrow("Your Ship is taken down on the open network, so it can't reach other Ships");
+    network.takenDown.delete(alice.account.did);
+    await alice.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx));
+    expect(await alice.run((ctx) => contactFor(ctx, mallory).state)).toBe("active");
+  });
 });
 
 /** Connects two spaces' people through an invitation. */
