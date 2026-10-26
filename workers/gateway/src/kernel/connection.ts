@@ -14,7 +14,7 @@ export type KernelConnectionState = {
   credentialMethod?: "password" | "token";
   credentialEpoch?: number;
   observedProcessIds?: string[];
-  /** The keyed hash of the client's address, which paces its sign-in attempts. */
+  /** The keyed hash of the client's address, which paces its sign-in attempts and recovery sheet password checks. */
   source?: string;
 };
 
