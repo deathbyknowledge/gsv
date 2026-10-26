@@ -164,7 +164,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
 {
   "setupMode": true,
   "next": "sys.setup",
-  "setupFeatures": ["language"]
+  "setupFeatures": ["language", "profile"]
 }
 ```
 
@@ -185,8 +185,10 @@ unfinished space receives fresh setup authorization after owner verification.
 Setup-mode and provisioning responses advertise optional setup fields through
 `details.setupFeatures`. Web and Desktop probe `sys.connect` before sending an
 initial `language` in `sys.setup`, and include it only when `"language"` is
-advertised. An older Gateway without this feature still accepts account creation
-with the existing setup fields.
+advertised. `"profile"` appears only on a Gateway with an open-network host; the
+web then asks whether the owner's profile is public and sends `profile`. An older
+Gateway without these features still accepts account creation with the existing
+setup fields.
 
 ---
 
