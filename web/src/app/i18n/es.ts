@@ -1469,7 +1469,7 @@ export const es = {
   "shell.pairing.cancelled": "Esta invitación se ha cancelado.",
   "shell.pairing.newInvitation": "nueva invitación",
   "shell.pairing.invitation": "Invitación para {name} · {id}. Caduca a las {time}.",
-  "shell.pairing.extensionSteps": "Descarga y descomprime la extensión. En {extensions}, activa el modo de desarrollador y carga su carpeta. Haz clic en el icono de Your Ship de la barra de herramientas, o búscalo en el botón Extensiones, y pega esta invitación en su panel.",
+  "shell.pairing.extensionSteps": "La extensión Your Ship aún no está en Chrome Web Store, así que la añades a Chrome en modo de desarrollador. Descárgala y descomprímela. Abre {extensions}, activa el Modo de desarrollador, elige Cargar descomprimida y selecciona la carpeta descomprimida. Haz clic en el icono de Your Ship de la barra de herramientas, o búscalo en el botón Extensiones, y pega esta invitación en su panel. Permite que tu Ship trabaje en este navegador con tu sesión iniciada. Puedes pausarla desde su panel cuando quieras.",
   "shell.pairing.downloadExtension": "descargar extensión",
   "shell.pairing.copyInvitation": "copiar invitación",
   "shell.pairing.openTerminal": "Abre {app} en el ordenador que quieras conectar.",

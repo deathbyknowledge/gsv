@@ -1474,7 +1474,7 @@ export const ptBR = {
   "shell.pairing.cancelled": "Este convite foi cancelado.",
   "shell.pairing.newInvitation": "novo convite",
   "shell.pairing.invitation": "Convite para {name} · {id}. Expira às {time}.",
-  "shell.pairing.extensionSteps": "Baixe e descompacte a extensão. Em {extensions}, ative o modo de desenvolvedor e carregue a pasta dela. Clique no ícone Your Ship na barra de ferramentas, ou encontre-o no botão Extensões, e cole este convite no painel dela.",
+  "shell.pairing.extensionSteps": "A extensão Your Ship ainda não está na Chrome Web Store, então você a adiciona ao Chrome no modo do desenvolvedor. Baixe e descompacte o arquivo. Abra {extensions}, ative o Modo do desenvolvedor, escolha Carregar sem compactação e selecione a pasta descompactada. Clique no ícone Your Ship na barra de ferramentas, ou encontre-o no botão Extensões, e cole este convite no painel dela. Ela permite que seu Ship trabalhe neste navegador, conectado como você. Você pode pausá-la no painel dela quando quiser.",
   "shell.pairing.downloadExtension": "baixar extensão",
   "shell.pairing.copyInvitation": "copiar convite",
   "shell.pairing.openTerminal": "Abra {app} no computador que você quer conectar.",

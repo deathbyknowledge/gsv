@@ -594,9 +594,11 @@ manage the human owner's invitations. See [Connect devices](../how-to/connect-de
 
 For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
 The URL opens `https://ship.space/browser?release=RELEASE` for the gateway's
-release. Download and unzip the extension, load its folder from
-`chrome://extensions` with developer mode enabled, then open **Your Ship** from
-the toolbar or Extensions button and paste `code` into its panel.
+release. The extension is not in the Chrome Web Store yet, so it is added in
+developer mode: download and unzip it, turn on **Developer mode** in
+`chrome://extensions`, choose **Load unpacked** and pick the unzipped folder, then
+open **Your Ship** from the toolbar or Extensions button and paste `code` into
+its panel.
 
 Open **Work**, click **connect** beside Connections, name the computer and create an invitation.
 After installing Ship, paste the provided command:
