@@ -375,8 +375,9 @@
   left: 0;
   top: 0;
   font-size: var(--prompt-font-size, 1em);
-  width: calc(1ch + 0.02em);
+  width: 2px;
   height: 1em;
+  box-shadow: none;
   pointer-events: none;
 }
 .prompt-line textarea:focus ~ .block-caret { animation-play-state: running; }
@@ -453,6 +454,8 @@
 /* ---------- the light theme: the same identity on paper ----------
  * Tokens only. Glows and the scanlines belong to phosphor and switch off; the star field turns to
  * ink-colored glyphs at the same density. Toggled by the shell with the l key, or the system setting. */
+.instrument.is-scale-075 { --type-scale: .75; }
+.instrument.is-scale-085 { --type-scale: .85; }
 .instrument.is-scale-15 { --type-scale: 1.5; }
 .instrument.is-scale-2 { --type-scale: 2; }
 /* Design system fields (input, text area, select) sit on a raised surface in the app: white in light. */

@@ -99,6 +99,8 @@ Each responsibility shows a short status and its next check; tap it to read the
 full waiting explanation, inspect details or ask Ship about it. Your draft stays
 intact while you look. Event-driven policies live in **Settings → Standing responsibilities**.
 
+The message input uses a thin purple caret to show where you are typing.
+
 The **+** menu attaches files, finds people and files, and prepares requests to
 create a routine, connect a computer or start a browser. These requests and
 **ask Ship** controls add ordinary editable text to your draft. Review or change
@@ -131,6 +133,10 @@ The Settings sidebar highlights the section you're viewing.
 Under **Appearance**, choose **Match system** to follow this device's light or
 dark appearance. An explicit theme choice applies to both sign-in and the app.
 Before you choose, **Default** keeps sign-in dark and the app light.
+
+Outside a text field, press **x** to cycle through 75%, 85%, 100%, 150% and 200%
+sizes. The smallest size uses compact message text and tighter spacing to fit
+more conversation on screen. The choice is remembered on this device.
 
 The Desktop app also includes **Settings → Voice** for its microphone, shortcuts,
 and spoken replies. Enable **Handsfree mode** to talk to your Ship from any page
@@ -184,6 +190,9 @@ While reconnecting, you can keep editing your draft and adding attachments.
 Sending becomes available when the connection returns; your draft is not sent automatically.
 The header stays above the scrolling content. Tap a message once to select it
 and show its timestamp and copy action.
+With a mouse, hovering over an older message brightens it immediately.
+Consecutive messages from the latest sender stay bright together when they are
+no more than five minutes apart.
 Scrolling selects the message nearest the center, switching to the first or latest message
 at either end. On phones, the down arrow on the right returns to the latest message.
 Text actions have a subtle underline. The **+** menu groups file and person references under

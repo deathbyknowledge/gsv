@@ -63,6 +63,7 @@ import {
   answerAttribution,
   answerHistorySnapshot,
   awaitingFirstMessage,
+  brightMessageIndices,
   defaultPlace,
   momentsFromConversation,
   momentTime,
@@ -654,6 +655,17 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     enabled: connected && Boolean(onMemory) && hasMemoryRead,
   });
 
+  const initialMessageSequence = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (ready && initialMessageSequence.current === null) {
+      initialMessageSequence.current = Math.max(0, ...conversation.rows.map((row) => row.conversationSequence ?? 0));
+    }
+  }, [ready, conversation.rows]);
+  const receivedMessages = useMemo(() => new Set(conversation.rows
+    .filter((row) => initialMessageSequence.current !== null
+      && row.role === "assistant" && (row.conversationSequence ?? 0) > initialMessageSequence.current)
+    .map((row) => row.id)), [conversation.rows, ready]);
+
   const seenMomentsRef = useRef<Set<string> | null>(null);
   const streamedMomentsRef = useRef<Set<string>>(new Set());
   /* the committed message lands under a new id, so a reply that streamed is also known by its run */
@@ -1027,7 +1039,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} onFold={pin} />
         ) : moment.text ? (
           <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0}
-            opened={streamed(moment)} onClick={onTextClick} onFold={pin} />
+            opened={streamed(moment) || receivedMessages.has(moment.id)} onClick={onTextClick} onFold={pin} />
         ) : moment.thinking || moment.streaming ? (
           <div class="text">{waking ? <WakingUp /> : null}<ThinkingMark tick={tick} /></div>
         ) : null}
@@ -1050,7 +1062,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
-    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed,
+    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed, receivedMessages,
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t, waking]);
 
   /* the status line */
@@ -1058,8 +1070,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   /* the cloud is always listed; once places are known and it is alone, it is not a choice, so it reads as plain text and offers to connect a place */
   const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
 
-  const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
-    moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
+  const brightMessages = useMemo(() => brightMessageIndices(moments), [moments]);
+  const latestMessageIndex = brightMessages[0] ?? -1;
   const historyFailure = conversation.historyError ? (
     <div class="zen-history-status is-err" role="alert">
       <span>{t("chat.history.failed", { error: conversation.historyError.message })}</span>
@@ -1122,7 +1134,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                   );
                 }
                 return (
-                  <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${selection === index ? " is-focus" : ""}`}>
+                  <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${brightMessages.includes(index) ? " is-recent" : ""}${selection === index ? " is-focus" : ""}`}>
                     {messageBodies[index]}
                   </div>
                 );

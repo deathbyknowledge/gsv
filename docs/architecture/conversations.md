@@ -22,6 +22,21 @@ The Chat transcript scrolls vertically. Long words, URLs and compaction notes wr
 reading column; wide tables and code blocks scroll horizontally within their own bounds.
 Ship replies use ordinary line wrapping rather than paragraph balancing, filling each line
 with the words that fit. Explicit line breaks in a message remain intact.
+
+The smallest `x` size, 75%, uses 15px rendered message text and tighter vertical
+spacing for a compact conversation overview. Older messages stay more readable
+in this mode. The size choice is stored on the current device.
+On devices that support hover, pointing at an older message restores its full
+brightness at every text size without changing the selected message or scroll position.
+The latest message and consecutive messages from the same sender stay fully bright
+when each adjacent pair is at most five minutes apart. A different sender or a longer
+gap ends the group; work receipts and internal notes do not split it. The latest
+owner message and its consecutive group remain bright after Ship replies.
+New Ship replies open fully, including replies delivered whole without streaming.
+Refreshing the loaded history keeps those replies open; fetching older messages
+does not automatically expand them.
+
+
 Chat and contact history mark the top scroll boundary with a lavender line only
 while it intersects text, clearing the line in gaps between text and messages.
 Chat's scroll boundary spans the full view width while its messages retain their reading column.
@@ -54,7 +69,7 @@ states when relevant. Expand it to read the complete command, output and termina
 A very long message in Chat folds behind **read more** once it has finished arriving, and **show
 less** folds it again. Folding uses the rendered height at the current width and text size:
 messages up to eighteen line-heights remain whole; longer messages show twelve line-heights
-with a short fade at the end. A reply the user watched stream in stays open. Opening or folding
+with a short fade at the end. Newly received replies stay open, including messages delivered without streaming. Opening or folding
 keeps the reading position, and the message text itself is unchanged. Selected text uses a solid
 lavender highlight with contrasting text in both themes.
 Inside the prompt, selected text stays light on a stronger purple highlight. Selecting a range

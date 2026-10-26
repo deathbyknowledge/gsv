@@ -61,7 +61,7 @@ function distanceForPath(path: string): Distance {
 }
 
 const SCALE_KEY = "gsv.instrument.scale";
-const SCALES = [1, 1.5, 2] as const;
+const SCALES = [0.75, 0.85, 1, 1.5, 2] as const;
 type Scale = (typeof SCALES)[number];
 
 function storedScale(): Scale {
@@ -297,7 +297,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   }, [cycleScale, move, openSearch, status.state, toggleTheme]);
 
   return (
-    <div ref={viewportRef} class={`instrument${theme === "light" ? " is-light" : ""}${scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
+    <div ref={viewportRef} class={`instrument${theme === "light" ? " is-light" : ""}${scale === 0.75 ? " is-scale-075" : scale === 0.85 ? " is-scale-085" : scale === 1.5 ? " is-scale-15" : scale === 2 ? " is-scale-2" : ""}`}>
       <InstrumentBackdrop />
       <WireSync />
       <div class="instrument-viewport">
