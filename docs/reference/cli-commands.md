@@ -593,7 +593,7 @@ Ship's release. `targets pair list` and `targets pair cancel INVITATION_ID`
 manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
 
 For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
-The URL opens `https://gsv.space/browser?release=RELEASE` for the gateway's
+The URL opens `https://ship.space/browser?release=RELEASE` for the gateway's
 release. Download and unzip the extension, load its folder from
 `chrome://extensions` with developer mode enabled, then open **Your Ship** from
 the toolbar or Extensions button and paste `code` into its panel.
