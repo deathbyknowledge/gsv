@@ -3,7 +3,7 @@ import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { PrincipalRecord } from "./store";
 
 export const productEmailChoice = z.strictObject({
-  wordingVersion: z.literal("ship-product-updates-2026-10-23"),
+  wordingVersion: z.literal("ship-product-updates-2026-10-26"),
   locale: z.enum(["en", "es", "pt-BR"]),
 });
 export type ProductEmailChoice = z.infer<typeof productEmailChoice>;

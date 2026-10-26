@@ -1240,7 +1240,7 @@ export const ptBR = {
   "session.policy.privacyPolicies": "Confira as políticas do seu operador sobre compartilhamento, retenção, acesso, correção e exclusão.",
 
   // Session: age and policy consent
-  "session.productEmails.choice": "Quero receber novidades do Ship por email. Opcional; cancele quando quiser.",
+  "session.productEmails.choice": "Quero ficar por dentro das novidades do Ship",
   "session.consent.age": "Confirmo que tenho 18 anos ou mais.",
   "session.consent.ageTerms": "Confirmo que tenho 18 anos ou mais e concordo com os {terms}.",
   "session.consent.agePrivacy": "Confirmo que tenho 18 anos ou mais e declaro ciência da {privacy}.",

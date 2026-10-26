@@ -72,7 +72,7 @@ describe("desktop owner API", () => {
     const handle = `test-${crypto.randomUUID()}`;
     expect(await (await f.request(`/handle?value=${handle.toUpperCase()}`, f.sessionSecret)).json()).toEqual({ available: true });
     const input: JsonObject = { operationId, handle: handle.toUpperCase() };
-    if (optedIn) input.productEmails = { wordingVersion: "ship-product-updates-2026-10-23", locale: "en" };
+    if (optedIn) input.productEmails = { wordingVersion: "ship-product-updates-2026-10-26", locale: "en" };
     expect((await f.request("/spaces", undefined, input)).status).toBe(401);
     const first = await (await f.request("/spaces", f.sessionSecret, input)).json<{ origin: string; onboardingToken: string }>();
     expect(first.origin).toBe(`https://${handle}.${initialSession.spaceDomain}`);

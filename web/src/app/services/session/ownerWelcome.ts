@@ -16,7 +16,7 @@ export type WelcomeStorage = { save(revision: string, value: WelcomeState | null
 type OwnerFetch = (url: string, init: {
   method: "GET" | "POST"; headers: Record<string, string>; credentials: "omit"; cache: "no-store"; body?: string; signal: AbortSignal;
 }) => Promise<Pick<Response, "ok" | "status" | "text">>;
-export type ProductEmailChoice = { wordingVersion: "ship-product-updates-2026-10-23"; locale: "en" | "es" | "pt-BR" };
+export type ProductEmailChoice = { wordingVersion: "ship-product-updates-2026-10-26"; locale: "en" | "es" | "pt-BR" };
 type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
   | { operationId: string; handle: string; productEmails?: ProductEmailChoice } | Record<string, never>;

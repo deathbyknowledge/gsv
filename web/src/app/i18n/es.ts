@@ -1235,7 +1235,7 @@ export const es = {
   "session.policy.privacyPolicies": "Consulta las políticas de tu operador sobre uso compartido, conservación, acceso, rectificación y eliminación.",
 
   // Session: age and policy consent
-  "session.productEmails.choice": "Envíame novedades de Ship por email. Opcional; puedes darte de baja cuando quieras.",
+  "session.productEmails.choice": "Quiero estar al día con las novedades de Ship",
   "session.consent.age": "Confirmo que tengo 18 años o más.",
   "session.consent.ageTerms": "Confirmo que tengo 18 años o más y acepto los {terms}.",
   "session.consent.agePrivacy": "Confirmo que tengo 18 años o más y he leído la {privacy}.",

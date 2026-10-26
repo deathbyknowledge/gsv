@@ -5,7 +5,7 @@ import { queueProductEmail, runProductEmailJobs } from "./product-email";
 
 const db = env.INSTALLATIONS_DB;
 const config = { GSV_PRODUCT_EMAIL_ENABLED: "true", BUTTONDOWN_API_KEY: "test-key" };
-const choice = { wordingVersion: "ship-product-updates-2026-10-23", locale: "en" } as const;
+const choice = { wordingVersion: "ship-product-updates-2026-10-26", locale: "en" } as const;
 async function fixture() {
   const id = crypto.randomUUID();
   const owner = await new AccountStore(db, "example.com").createPrincipal({ principalId: id, email: `${id}@example.com`, displayName: "Owner", verified: true });

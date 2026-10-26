@@ -1234,7 +1234,7 @@ export const en = {
   "session.policy.privacyPolicies": "Check your operator's policies on sharing, retention, access, corrections, and deletion.",
 
   // Session: age and policy consent
-  "session.productEmails.choice": "Email me Ship product updates. Optional; unsubscribe at any time.",
+  "session.productEmails.choice": "Keep me posted on what’s new with Ship",
   "session.consent.age": "I confirm that I’m 18 or older.",
   "session.consent.ageTerms": "I confirm that I’m 18 or older and agree to the {terms}.",
   "session.consent.agePrivacy": "I confirm that I’m 18 or older and acknowledge the {privacy}.",

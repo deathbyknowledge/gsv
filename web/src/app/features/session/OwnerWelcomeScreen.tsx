@@ -69,7 +69,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     try {
       const locale = currentLocale();
       const choice: ProductEmailChoice | undefined = productEmails && !invitation
-        ? { wordingVersion: "ship-product-updates-2026-10-23", locale: locale === "es" || locale === "pt-BR" ? locale : "en" } : undefined;
+        ? { wordingVersion: "ship-product-updates-2026-10-26", locale: locale === "es" || locale === "pt-BR" ? locale : "en" } : undefined;
       const prepared = await client.prepare(chosen, operationId, choice);
       await onConnect(prepared.origin, prepared.onboardingToken);
     } catch (failure) {

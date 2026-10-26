@@ -142,7 +142,7 @@ describe("owner welcome", () => {
         expect(init.headers.authorization).toMatch(/^Bearer [a-f0-9]{64}$/);
         const body = JSON.parse(init.body!);
         expect(body).toMatchObject({ operationId: store.snapshot().value!.operationId, handle: "spacecowboy" });
-        expect(body.productEmails).toEqual(resumed ? { wordingVersion: "ship-product-updates-2026-10-23", locale: "en" } : undefined);
+        expect(body.productEmails).toEqual(resumed ? { wordingVersion: "ship-product-updates-2026-10-26", locale: "en" } : undefined);
         return prepared("spacecowboy");
       }
       throw new Error(`Unexpected request: ${url}`);

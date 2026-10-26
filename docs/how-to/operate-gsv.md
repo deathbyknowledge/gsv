@@ -400,7 +400,7 @@ fresh deployment end to end before giving anyone a Ship on it.
 
 ## Optional signup emails
 
-During signup, people can optionally check **Email me Ship product updates**.
+During signup, people can optionally check **Keep me posted on what’s new with Ship**.
 The box starts unchecked and is separate from the required account agreement.
 Accounts queues only explicit choices made when creating a Ship with a verified
 email. Sign-in and email verification alone never subscribe anyone.
