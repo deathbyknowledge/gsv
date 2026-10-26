@@ -46,7 +46,7 @@ import {
 import { formatAiModelStackLabel } from "../context/formatters";
 import { formatGenerationFailure } from "../history/event-renderer";
 import {
-  nextAiConfigFallback, classifyAssistantTurn, type AssistantTurnClassification,
+  nextAiConfigFallback, remainingAiConfigFallbacks, classifyAssistantTurn, type AssistantTurnClassification,
 } from "../run-tick-policy";
 import {
   describeAssistantResponseFailure, hasRawToolCallMarkupOutput, isRetryableAssistantResponseFailure,
@@ -1355,9 +1355,11 @@ export class ProcessRun {
       reason: diagnosticReason,
     };
     control.prepared.activeConfig = fallback.config;
+    // The run's later model calls start from the fallback, so it keeps the rest of the stack.
+    const config = { ...fallback.config, fallbacks: remainingAiConfigFallbacks(control.primaryConfig, control.fallbackConfigs, control.fallbackIndex) };
     const run = this.host.mutateActiveRun(runId, (active) => ({
       ...active,
-      config: fallback.config,
+      config,
     }));
     if (!run) return "stopped";
     control.prepared.run = run;
