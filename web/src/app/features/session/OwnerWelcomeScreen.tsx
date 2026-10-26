@@ -257,7 +257,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           </div>
           {consentError && <p class="gsv-owner-consent-error" id={`${consentId}-error`} role="alert">{t("session.consent.required")}</p>}
         </div>}
-        {step === "claim" && !invitation && <div class="gsv-owner-consent-row">
+        {step === "claim" && !invitation && <div class="gsv-owner-consent gsv-owner-consent-row">
           <input id={marketingId} type="checkbox" checked={productEmails} disabled={busy} onChange={(event) => setProductEmails(event.currentTarget.checked)} />
           <label for={marketingId}>{t("session.productEmails.choice")}</label>
         </div>}
