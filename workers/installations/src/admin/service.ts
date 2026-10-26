@@ -50,9 +50,10 @@ export class InstallationAdminService extends InstallationAdminStore {
   }
 
   /**
-   * Suspends or reactivates the installation, then has the deployment's PDS
-   * follow. If the PDS can't, the request fails with the new state kept, and
-   * repeating it tells the PDS.
+   * Suspends or reactivates the installation, then tells its Kernel and the
+   * deployment's PDS through the change's notice. If the Kernel can't be told,
+   * the request fails with the new state kept; the cron keeps telling both
+   * until they follow, and repeating the request tells them at once.
    */
   override async setInstallationState(installationId: string, state: "active" | "restricted"): Promise<void> {
     await super.setInstallationState(installationId, state);

@@ -82,7 +82,8 @@ export const UNREACHABLE: ManagedInstallationWorkGate = {
 };
 
 /**
- * One Durable Object's view of its Accounts admission. It remembers an active
+ * One Durable Object's view of its admission, which `ask` answers: from
+ * Accounts for a Kernel, or from its Kernel for a Process. It remembers an active
  * answer for a minute and shares one lookup among concurrent callers. A refusal
  * or a failed lookup is never remembered, so an outage fails closed.
  */
@@ -93,7 +94,7 @@ export class ManagedInstallationGate {
   /** `ask` answers for the installation without throwing; a failure is a refusal. */
   constructor(private readonly ask: () => Promise<ManagedInstallationWorkGate>) {}
 
-  /** `fresh` asks Accounts even after a recent confirmation, for calls that grant new authority. */
+  /** `fresh` asks again even after a recent confirmation, for calls that grant new authority. */
   async check(options: { fresh?: boolean } = {}): Promise<ManagedInstallationWorkGate> {
     if (!options.fresh && this.confirmedAt !== undefined && Date.now() - this.confirmedAt < ACTIVE_CONFIRMATION_MS) {
       return { allowed: true };
@@ -103,7 +104,7 @@ export class ManagedInstallationGate {
     return await this.lookup;
   }
 
-  /** Forgets the last confirmation, so the next check asks Accounts. */
+  /** Forgets the last confirmation, so the next check asks again. */
   invalidate(): void {
     this.confirmedAt = undefined;
   }
