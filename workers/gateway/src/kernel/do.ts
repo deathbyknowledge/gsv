@@ -92,6 +92,7 @@ import { rejectBeforeDispatch } from "./request-rejection";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid, principalOf, requirePrincipal } from "./context";
+import { allowInOwnerApprovalPolicy, readOwnerApprovalPolicy } from "./approval-policy";
 import {
   connectedPeerContext,
   httpPeerContext,
@@ -1113,6 +1114,22 @@ export class Kernel extends DurableObject<GatewayEnv> {
       console.warn("[Kernel] Process run stream ended before completion");
     });
     return true;
+  }
+
+  /** The owner's current approval policy, read again before a process asks. */
+  async readProcessApprovalPolicy(processId: string): Promise<string | null> {
+    this.retirement.assertActive();
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) throw new Error("Unknown process");
+    return readOwnerApprovalPolicy(this.config, resolveCallerOwnerUid(ctx));
+  }
+
+  /** The owner chose "Always allow" on this process's request; every process of theirs follows it. */
+  async allowProcessTool(processId: string, allow: { match: string; target: string }): Promise<boolean> {
+    this.retirement.assertActive();
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) throw new Error("Unknown process");
+    return allowInOwnerApprovalPolicy(this.config, resolveCallerOwnerUid(ctx), allow);
   }
 
   /** Runtime approval metadata; target discovery is not an extra agent capability. */

@@ -229,11 +229,12 @@ action's purpose comes first, with command or request details folded underneath.
 The **full request** fold preserves every argument, including structured MCP
 parameters, mail bodies and execution options. Requests without a readable
 summary still expose their complete request in the details fold.
-Shell approvals on a specific target also offer **Always allow**. Its tooltip
-explains that this remembers all shell commands on that target for the
-requesting Ship or helper, not just the displayed command. The memory lives in
-that process, so a replaced Ship asks again. Other helpers and targets still use
-their own permission rules; ordinary approval and denial never remember a rule.
+Approvals on a specific target also offer **Always allow**. Its tooltip names
+what it covers: every request of that kind on that target, for Ship and every
+helper, not just the displayed one. It adds a rule to the owner's approval
+policy, shown in **Settings → Permissions**; see
+[Always allow](../reference/configuration.md#always-allow). Ordinary approval
+and denial never add a rule.
 
 Web and Desktop present a failed run, and a failure reported above the composer, as a plain-language
 summary with a recommended next step, such as trying again, waiting a few minutes or restarting the

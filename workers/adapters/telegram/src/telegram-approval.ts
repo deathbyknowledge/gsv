@@ -158,7 +158,7 @@ async function finishTelegramCallback(
 function resolutionText(resolution: AdapterHilResolution | undefined): string {
   switch (resolution) {
     case "approve": return "Allowed once.";
-    case "approve_always": return "Allowed for this conversation.";
+    case "approve_always": return "Allowed from now on. Change this in Settings → Permissions.";
     case "deny": return "Blocked.";
     default: return "This approval is no longer pending.";
   }

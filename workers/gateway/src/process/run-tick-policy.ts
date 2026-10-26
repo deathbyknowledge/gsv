@@ -107,6 +107,37 @@ export function nextAiConfigFallback(
   return null;
 }
 
+/**
+ * The models a run keeps once it moves to `fallbacks[index - 1]`: the ones after it, then the one
+ * it moved from, so a later failure in the same run can still fall back.
+ */
+export function remainingAiConfigFallbacks(
+  primary: AiConfigResult,
+  fallbacks: NonNullable<AiConfigResult["fallbacks"]>,
+  nextIndex: number,
+): NonNullable<AiConfigResult["fallbacks"]> {
+  return [...fallbacks.slice(nextIndex), fallbackFromAiConfig(primary)];
+}
+
+function fallbackFromAiConfig(config: AiConfigResult): NonNullable<AiConfigResult["fallbacks"]>[number] {
+  const fallback: NonNullable<AiConfigResult["fallbacks"]>[number] = {
+    provider: config.provider,
+    model: config.model,
+    apiKey: config.apiKey,
+    providerStyle: config.providerStyle,
+    transportTarget: config.transportTarget,
+    reasoning: config.reasoning,
+    maxTokens: config.maxTokens,
+    contextWindowTokens: config.contextWindowTokens,
+    contextWindowSource: config.contextWindowSource,
+    generationTimeoutMs: config.generationTimeoutMs,
+    generationStreaming: config.generationStreaming,
+  };
+  if (config.baseUrl) fallback.baseUrl = config.baseUrl;
+  if (config.openAiCodex) fallback.openAiCodex = config.openAiCodex;
+  return fallback;
+}
+
 function parseRunControlShellCall(toolCall: ToolCall): RunControlCall | null {
   if (toolCall.name !== "Shell") return null;
   const args = terminalShellToolArgsSchema.safeParse(toolCall.arguments);
