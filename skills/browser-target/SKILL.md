@@ -147,7 +147,7 @@ Cloud-only `instance` and `browser` management commands run on `gsv`, not on the
 browser target. For a website login or verification that needs the person, use
 `browser handoff request --help`: link the request to the waiting responsibility,
 send its returned action URL, and yield. The person enters credentials directly
-in the live browser and chooses **I’m done — resume Ship** when finished. Keep
+in the live browser and chooses **I’m done, resume Ship** when finished. Keep
 credentials out of chat. The handoff saves website state before reopening the
 waiting work. Ordinary live viewing does not pause browser automation.
 
