@@ -152,7 +152,21 @@ Ship can use cloud browsers without per-action approval by default. To change
 that, select **Cloud browsers** under **Settings → Permissions** and choose
 **Ask** or **Block**; personal computers and browsers keep their existing rules.
 
-On wider screens, open **Help** in the header and choose **Search Chat** to find earlier messages.
+Hover over or focus a top-right navigation button to see a short explanation.
+Press **w** outside a text field to open Work.
+
+The **?** Help panel (also available in the mobile menu) introduces what Ship can
+help with. **Talking to Ship** expands example requests; the other getting-started
+rows open WhatsApp connections, Memory, Permissions and your operator's privacy
+policy, when one is configured for your installation. **Keyboard shortcuts** replaces
+Help with Search Chat, general shortcuts and shortcuts for the current screen;
+**← Help** returns to getting started. Use **×** in the top-right corner to close
+either panel. **Need more help?** opens the existing
+Feedback form through **Feedback**, when feedback is available, and links to the
+Ship manual inside Memory, email support and the community Discord.
+
+Open **Help** in the header or mobile menu, choose **Keyboard shortcuts**, and choose
+**Search Chat** to find earlier messages.
 Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search in browse
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns you to where you were, with your draft.
