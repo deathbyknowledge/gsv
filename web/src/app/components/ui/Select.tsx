@@ -171,6 +171,12 @@ export function Select(props: SelectProps) {
   const pick = (i: number) => {
     const option = opts[i];
     if (!option) return;
+    // Re-picking the current option is a no-op, as with a native select: close without reporting a change.
+    if (i === idx) {
+      setOpen(false);
+      triggerRef.current?.focus();
+      return;
+    }
     if (!controlled) {
       setInternalIdx(i);
     }
