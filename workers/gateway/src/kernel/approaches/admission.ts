@@ -74,7 +74,7 @@ export async function handleApproachCreate(input: ApproachCreateArgs, ctx: Kerne
     if (toolOwner) {
       // The question names the person by handle, and a profile that has changed or closed is refused before anyone is asked.
       const { handle } = await requestableProfile(args, ctx);
-      await authorizeNestedOperation({ ...ctx, toolOwner }, "approach.create", jsonObjectSchema.parse({ recipient: handle, ...args }), "ask");
+      await authorizeNestedOperation({ ...ctx, toolOwner }, "approach.create", jsonObjectSchema.parse({ recipient: handle, ...args }));
     }
   }
   return await ctx.coordinateFederationContact(`approach-send:${ownerUid}:${args.idempotencyKey}`, () => createApproach(args, ownerUid, ctx));

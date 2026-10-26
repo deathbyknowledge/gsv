@@ -349,7 +349,6 @@ describe("console agent service", () => {
 
   it("persists selected behavior config when creating an agent", async () => {
     const { client, createAccount, setConfig } = createMockClient(42);
-    const approval = JSON.stringify({ default: "deny", rules: [] });
 
     await createConsoleAgent(client, {
       name: "Scout Agent",
@@ -357,7 +356,6 @@ describe("console agent service", () => {
       description: "Tracks fleet signals.",
       model: "model-entry:nemotron-3",
       reasoning: "high",
-      approval,
       files: [
         {
           label: "PERSONA",
@@ -384,10 +382,6 @@ describe("console agent service", () => {
       value: "nemotron-3",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/tools/approval",
-      value: approval,
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(3, {
       key: "users/42/ai/reasoning",
       value: "high",
     });
@@ -402,7 +396,6 @@ describe("console agent service", () => {
       description: "",
       model: "",
       reasoning: "",
-      approval: "",
       files: [],
     });
 
@@ -416,7 +409,6 @@ describe("console agent service", () => {
       uid: 42,
       model: "",
       reasoning: "",
-      approval: "",
     });
 
     expect(setConfig).toHaveBeenNthCalledWith(1, {
@@ -424,10 +416,6 @@ describe("console agent service", () => {
       value: "",
     });
     expect(setConfig).toHaveBeenNthCalledWith(2, {
-      key: "users/42/ai/tools/approval",
-      value: "",
-    });
-    expect(setConfig).toHaveBeenNthCalledWith(3, {
       key: "users/42/ai/reasoning",
       value: "",
     });

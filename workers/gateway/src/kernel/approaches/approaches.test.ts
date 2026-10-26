@@ -146,7 +146,7 @@ describe("message requests", () => {
     expect(authorize).toHaveBeenCalledWith(alice.installationId, "proc:ship", expect.objectContaining({
       call: "proc.tool.authorize",
       args: expect.objectContaining({
-        syscall: "approach.create", defaultAction: "ask",
+        syscall: "approach.create",
         args: expect.objectContaining({ recipient: "bob.ship.test", did: bob.account.did }),
       }),
     }));
@@ -164,7 +164,7 @@ describe("message requests", () => {
     await expect(alice.run((ctx) => handleApproachCreate({ ...request(profile), shipHandlesMessages: false }, asShipSyscall(ctx)))).rejects.toThrow("not approved");
     expect(authorize).toHaveBeenCalledWith(alice.installationId, "proc:ship", expect.objectContaining({
       call: "proc.tool.authorize",
-      args: expect.objectContaining({ runId: "run:direct", requestId: "req:direct", syscall: "approach.create", defaultAction: "ask" }),
+      args: expect.objectContaining({ runId: "run:direct", requestId: "req:direct", syscall: "approach.create" }),
     }));
     expect(await alice.run((ctx) => ctx.approaches.list(SPACE_OWNER_UID, { direction: "outgoing", limit: 10 }))).toEqual([]);
   });
