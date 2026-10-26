@@ -44,7 +44,8 @@ for target selectors and custom policies.
 
 When a Process calls a syscall through one of its capability tools, the tool
 accepts one extra argument, `purpose`: a single sentence written for the person,
-saying why the call is being made. It is a tool argument, not a syscall
+addressing them as "you" and saying what the call achieves for them rather than
+how it works. It is a tool argument, not a syscall
 argument. It never appears in a wire `args` object and is not part of any
 signature below: the runtime lifts it off the arguments before dispatch,
 collapses whitespace, and caps it at 400 characters. The person sees it in an
