@@ -32,6 +32,34 @@ const fieldOf = (tree: ComponentChildren, label: string) => collectNodes(tree).f
 const agree = (tree: ComponentChildren) => act(() => checkboxOf(tree).props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>));
 
 describe("owner welcome", () => {
+  it("omits Back on public signup and links sign-in Back to the homepage", async () => {
+    const store = memory();
+    const client = new OwnerWelcome(store.snapshot(), store, ORIGIN);
+    const root = createTestRoot("Public signup navigation");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: false, homeHref: "https://example.com/", load: async () => client, onConnect: vi.fn() });
+      return null;
+    }
+    const button = (label: string) => collectNodes(tree).find((node) => node.type === "button" && node.props["aria-label"] === label)!;
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(button("Create your Ship").props.disabled).toBe(false));
+      await act(() => { button("Open Ship").props.onClick?.(); });
+      expect(collectNodes(tree).find((node) => node.type === "a" && collectText(node) === "Back")?.props.href).toBe("https://example.com/");
+    } finally { await root.unmount(); }
+    const claim = createTestRoot("Public signup claim navigation");
+    function Claim() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: false, initialStep: "claim", homeHref: "https://example.com/", load: async () => client, onConnect: vi.fn() });
+      return null;
+    }
+    try {
+      await claim.render(<Claim />);
+      await vi.waitFor(() => expect(fieldOf(tree, "Email")?.props.disabled).toBe(false));
+      expect(collectNodes(tree).some((node) => ["button", "a"].includes(String(node.type)) && collectText(node) === "Back")).toBe(false);
+    } finally { await claim.unmount(); }
+  });
+
   it.each([false, true])("offers signup only to a friend without an existing Space (existing: %s)", async (existing) => {
     const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), challenge: null, operationId: null, handle: null, contactInvite: "friend-invitation" });
     const fetcher = vi.fn(async (_url: string) => session([], existing ? [{ handle: "friend", canonicalOrigin: "https://friend.example.com", state: "active" }] : []));

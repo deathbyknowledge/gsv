@@ -400,7 +400,12 @@ fresh deployment end to end before giving anyone a Ship on it.
 
 ## Optional signup emails
 
-During signup, people can optionally check **Keep me posted on what’s new with Ship**.
+The web signup header links to the configured primary domain. The handle/email
+form has no Back button; other public signup steps link Back to that homepage.
+Link to `/owner/signup/?view=welcome` to offer both creating a Ship and opening
+an existing one by email or space address.
+
+During signup, people can optionally check **Email me occasionally with fun new Ship updates**.
 The box starts unchecked and is separate from the required account agreement.
 Accounts queues only explicit choices made when creating a Ship with a verified
 email. Sign-in and email verification alone never subscribe anyone.

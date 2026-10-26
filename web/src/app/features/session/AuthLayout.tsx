@@ -16,10 +16,11 @@ import "./AuthLayout.css";
 const SharedAuthScene = createContext(false);
 
 /** Keep one animation alive while local sign-in, recovery, and setup panels change. */
-export function AuthScene({ children, setup = false, layout = "ship" }: {
+export function AuthScene({ children, setup = false, layout = "ship", homeHref }: {
   children: ComponentChildren;
   setup?: boolean;
   layout?: "ship" | "welcome";
+  homeHref?: string;
 }) {
   const t = useT();
   const { theme, toggleTheme } = useColorTheme("dark");
@@ -29,7 +30,7 @@ export function AuthScene({ children, setup = false, layout = "ship" }: {
       <InstrumentBackdrop />
       <div class="instrument-viewport">
         <header class="instrument-top gsv-auth-header">
-          <div class="gsv-auth-identity"><Wordmark /><PlatformIdentity /></div>
+          <div class="gsv-auth-identity">{homeHref ? <a href={homeHref} class="gsv-auth-home"><Wordmark /></a> : <Wordmark />}<PlatformIdentity /></div>
           <button type="button" onClick={toggleTheme} aria-label={t(theme === "light" ? "session.scene.toDark" : "session.scene.toLight")}>
             {t(theme === "light" ? "settings.appearance.dark" : "settings.appearance.light")}
           </button>

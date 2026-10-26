@@ -5,7 +5,7 @@ import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
 import { OwnerWelcome, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
 import { DesktopAppLink } from "./DesktopAppLink";
 import { SignupDialog } from "./SignupDialog";
-import { presumedSpaceDomain, signupDestination } from "./navigation";
+import { presumedSpaceDomain, signupDestination, signupHomepage } from "./navigation";
 import { publicDeployment } from "../app/services/deployment";
 import { captureContactInvitation } from "./invitation";
 import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
@@ -13,6 +13,7 @@ import { pendingContactInvitation, contactInvitationPreview, clearContactInvitat
 import { t } from "../app/i18n/locale";
 
 export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise<WelcomeSnapshot> }, accountsOrigin: string): Promise<VNode> {
+  const welcome = new URLSearchParams(window.location.search).get("view") === "welcome";
   let contactInvitation = pendingContactInvitation();
   let client: OwnerWelcome | undefined;
   let load: () => Promise<OwnerWelcome>;
@@ -22,7 +23,7 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
     const candidate = new OwnerWelcome(snapshot, storage, accountsOrigin);
     await captureContactInvitation(candidate, contactInvitation);
     const resume = new URLSearchParams(window.location.search).get("resume") === "1";
-    if (!resume || contactInvitation) await candidate.save({ flow: "create" });
+    if (!resume || contactInvitation) await candidate.save({ flow: welcome && !contactInvitation ? "open" : "create" });
     client = candidate;
     load = async () => candidate;
   } catch (error) {
@@ -56,9 +57,10 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
       <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={async (event) => {
         event.preventDefault(); await leave("/owner/signup/?resume=1");
       }}>{t("signup.openShip")}</a></section></AuthLayout>
-    : <OwnerWelcomeScreen ready resume initialStep={contactInvitation ? "email" : "claim"} compact={!!contactInvitation}
+    : <OwnerWelcomeScreen ready resume={!welcome} initialStep={contactInvitation ? "email" : welcome ? "welcome" : "claim"} compact={!!contactInvitation}
+      homeHref={contactInvitation ? undefined : signupHomepage(accountsOrigin)}
       spaceDomain={publicDeployment().primaryDomain ?? presumedSpaceDomain(new URL(accountsOrigin).hostname)}
       invitation={preview && "name" in preview ? preview : undefined} chooseSpace={!!contactInvitation}
-      addressPanel={contactInvitation ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
+      addressPanel={contactInvitation || welcome ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
       load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</Frame>;
 }
