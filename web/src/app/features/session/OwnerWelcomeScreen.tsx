@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { AuthLayout } from "./AuthLayout";
 import { Button } from "../../components/ui/Button";
@@ -40,6 +40,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const [consentTouched, setConsentTouched] = useState(false);
   const consentId = useId();
   const [code, setCode] = useState("");
+  const codeInput = useRef<HTMLInputElement>(null);
   const [handle, setHandle] = useState("");
   const [handleError, setHandleError] = useState("");
   const [availability, setAvailability] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
@@ -105,6 +106,11 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     // Signing in or restoring a session does not imply agreement to create a space.
     setHandle(client.state.handle ?? ""); setStep("claim");
   };
+
+  useLayoutEffect(() => {
+    // The code field can mount while sending/restoring is still disabling the form.
+    if (step === "code" && !busy) codeInput.current?.focus();
+  }, [step, busy]);
 
   useEffect(() => {
     if (!ready) return;
@@ -247,7 +253,7 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           {consentError && <p class="gsv-owner-consent-error" id={`${consentId}-error`} role="alert">{t("session.consent.required")}</p>}
         </div>}
         {step === "code" && <TextInput label={t("session.welcome.code")} value={code} onChange={(value) => setCode(value.replace(/\D/g, "").slice(0, 6))} disabled={busy}
-          placeholder="000000" inputProps={{ autoFocus: true, inputMode: "numeric", autoComplete: "one-time-code", maxLength: 6 }} />}
+          placeholder="000000" inputProps={{ ref: codeInput, autoFocus: true, inputMode: "numeric", autoComplete: "one-time-code", maxLength: 6 }} />}
         {step === "spaces" && <>
           <p class="desktop-welcome-detail">{owner?.email}</p>
           {owner?.spaces.map((space) => <Button key={space.canonicalOrigin} label={space.handle} variant="secondary" block disabled={busy}
