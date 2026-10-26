@@ -126,9 +126,11 @@ seconds, capped by a shorter generation timeout. A model's context limit is the
 same for every Ship, so each gateway isolate shares its answers among Kernels:
 successful metadata for an hour (up to 256 provider/model pairs), and a failed
 or timed-out lookup for 30 seconds, during which configuration takes the last
-known limit, or none. Late replies are not cached. A routing change, such as a
-new default model, can therefore take up to an hour to appear in newly
-resolved configuration. An active run retains its resolved configuration.
+known limit, or none. Late replies are not cached. The deployment's default
+model, `gsv`/`default`, is kept for two minutes instead, so switching the
+default, say during an outage, reaches newly resolved configuration within two
+minutes; a routing change for a named model can take up to an hour. An active
+run retains its resolved configuration.
 Generation admission, permissions, credentials and usage checks remain
 independent of this metadata cache.
 

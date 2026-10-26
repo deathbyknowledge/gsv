@@ -1,10 +1,17 @@
+import { GSV_INFERENCE_MODEL, GSV_INFERENCE_PROVIDER } from "@humansandmachines/gsv/services/inference";
 import type { InferenceExecutionService } from "@humansandmachines/gsv/services/inference-execution";
 import { emitTelemetry, type TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
 import { raceWithAbort } from "../shared/abort";
 import { TimeoutError } from "./timeout";
 
-/** How long a model's context window stands; it changes only when a deploy changes the model or the deployment's default. */
+/** How long a named model's context window stands; it changes only when a deploy changes the model. */
 const KNOWN_TTL_MS = 60 * 60_000;
+/**
+ * How long the deployment's default model's window stands. An operator may
+ * switch the default, say during an outage, to a model with a smaller window,
+ * and new runs then pace compaction by it within two minutes.
+ */
+const DEFAULT_MODEL_TTL_MS = 2 * 60_000;
 /** How long runs take the last known value, or unknown, after a lookup fails, before one asks again. */
 const FAILED_TTL_MS = 30_000;
 const CACHE_MAX_ENTRIES = 256;
@@ -57,7 +64,8 @@ export class ModelMetadataResolver {
         const rpc = pending as typeof pending & { [Symbol.dispose]?: () => void };
         try { rpc[Symbol.dispose]?.(); } catch { /* Timeout remains terminal if disposal fails. */ }
       } });
-      remember(cache, key, { value: metadata.contextWindowTokens, refreshAt: startedAt + KNOWN_TTL_MS });
+      const ttlMs = provider === GSV_INFERENCE_PROVIDER && model === GSV_INFERENCE_MODEL ? DEFAULT_MODEL_TTL_MS : KNOWN_TTL_MS;
+      remember(cache, key, { value: metadata.contextWindowTokens, refreshAt: startedAt + ttlMs });
       outcome = "ok";
       return metadata.contextWindowTokens;
     } catch (error) {

@@ -16,17 +16,17 @@ function fixture() {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("Kernel model metadata", () => {
-  it("refreshes successful metadata after an hour without extending expiry on reads", async () => {
+  it("refreshes a named model's metadata after an hour without extending expiry on reads", async () => {
     vi.useFakeTimers();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { resolver, resolveModel, env } = fixture();
-    expect(await resolver.resolve("gsv", "default", 180_000)).toBe(262_144);
-    resolveModel.mockResolvedValue({ provider: "gsv", model: "default", contextWindowTokens: 131_072 });
+    expect(await resolver.resolve("workers-ai", "@cf/zai-org/glm-5.3-flash", 180_000)).toBe(262_144);
+    resolveModel.mockResolvedValue({ provider: "workers-ai", model: "@cf/zai-org/glm-5.3-flash", contextWindowTokens: 131_072 });
     await vi.advanceTimersByTimeAsync(3_599_999);
-    expect(await resolver.resolve("gsv", "default", 180_000)).toBe(262_144);
+    expect(await resolver.resolve("workers-ai", "@cf/zai-org/glm-5.3-flash", 180_000)).toBe(262_144);
     expect(resolveModel).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(1);
-    expect(await resolver.resolve("gsv", "default", 180_000)).toBe(131_072);
+    expect(await resolver.resolve("workers-ai", "@cf/zai-org/glm-5.3-flash", 180_000)).toBe(131_072);
     expect(resolveModel).toHaveBeenCalledTimes(2);
     expect(env.INFERENCE_EXECUTION.getExecutor).not.toHaveBeenCalled();
     const records = log.mock.calls.map(([record]) => telemetryRecordSchema.parse(record));
@@ -39,6 +39,21 @@ describe("Kernel model metadata", () => {
     expect(first.name).toBe("inference.metadata.finished");
     if (first.name !== "inference.metadata.finished") throw new Error("unexpected telemetry event");
     expect(resolveModel.mock.calls[0][2]).toEqual({ installationId: "inst_metadata", lookupId: first.properties.lookupId });
+  });
+
+  it("asks again for the deployment's default model after two minutes, so a switched default reaches new runs", async () => {
+    vi.useFakeTimers();
+    const { resolver, resolveModel, env } = fixture();
+    env.GSV_TELEMETRY_ENABLED = false;
+    expect(await resolver.resolve("gsv", "default", 180_000)).toBe(262_144);
+    // The operator switches the default, say during an outage, to a model with a smaller window.
+    resolveModel.mockResolvedValue({ provider: "gsv", model: "default", contextWindowTokens: 131_072 });
+    await vi.advanceTimersByTimeAsync(119_999);
+    expect(await resolver.resolve("gsv", "default", 180_000)).toBe(262_144);
+    expect(resolveModel).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await resolver.resolve("gsv", "default", 180_000)).toBe(131_072);
+    expect(resolveModel).toHaveBeenCalledTimes(2);
   });
 
   it("separates providers and model names, shares them among a deployment's Kernels, and bounds cache growth", async () => {
