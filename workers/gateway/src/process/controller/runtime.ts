@@ -1102,13 +1102,9 @@ export class ProcessController {
     };
   }
 
-  private rememberHilApproval(
-    args: ProcHilArgs,
-    pending: PendingHilRecord,
-    run: RunState,
-  ): boolean {
+  private async rememberHilApproval(args: ProcHilArgs, pending: PendingHilRecord): Promise<boolean> {
     return args.decision === "approve" && args.remember === true
-      ? this.host.tools.rememberToolApproval(pending, run)
+      ? await this.host.tools.rememberToolApproval(pending)
       : false;
   }
 
@@ -1142,8 +1138,8 @@ export class ProcessController {
     run: RunState,
     approval: CodeModeApprovalWaiter,
   ): Promise<ProcHilResult> {
-    const remembered = this.rememberHilApproval(args, pending, run);
     this.host.store.tools.clearPendingHil(args.decision === "approve" ? "ok" : "denied");
+    const remembered = await this.rememberHilApproval(args, pending);
     if (args.decision === "approve") {
       this.host.tools.rememberApprovedRead(pending, pending.runId);
     } else {
@@ -1197,8 +1193,8 @@ export class ProcessController {
     run: RunState,
     toolCall: ToolCallRecord,
   ): Promise<ProcHilResult> {
-    const remembered = this.rememberHilApproval(args, pending, run);
     this.host.store.tools.clearPendingHil(args.decision === "approve" ? "ok" : "denied");
+    const remembered = await this.rememberHilApproval(args, pending);
     if (args.decision === "approve") {
       this.host.tools.rememberApprovedRead(pending, pending.runId);
       const dispatchReady = await this.host.tools.beginToolDispatch(

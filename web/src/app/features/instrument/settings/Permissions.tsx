@@ -42,7 +42,6 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
   return <section class="settings-permissions" aria-labelledby="settings-permissions-title">
     <h1 id="settings-permissions-title">{t("settings.permissions.title")}</h1>
     <p class="settings-intro">{t("settings.permissions.intro")}</p>
-    <p class="settings-muted">{t("settings.permissions.mailHint")}</p>
     <SettingsError error={config.error ?? error ?? save.error} />
     {config.isPending && connected && <LoadingState variant="panel">{t("settings.permissions.loading")}</LoadingState>}
     {targetQuery.error && <p class="settings-muted" role="status">{t("settings.permissions.targetsUnavailable")}</p>}

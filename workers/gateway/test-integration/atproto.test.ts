@@ -130,7 +130,7 @@ describe("the Ship publishing to the open network", () => {
       const ship = (await runtime.client.proc.list({})).processes.find(({ personal }) => personal);
       if (!ship) throw new Error("Setup did not create Ship");
       await runtime.configureAi(ship.pid);
-      await runtime.client.sys.config.set({ key: `users/${ship.uid}/ai/tools/approval`, value: JSON.stringify({ default: "auto", rules: [] }) });
+      await runtime.client.sys.config.set({ key: `users/${ship.uid}/ai/tools/approval`, value: JSON.stringify({ default: "auto", rules: [{ match: "atproto.write", action: "ask" }] }) });
       await runtime.client.proc.observe({ pid: ship.pid });
       const publish = (rkey: string) => ({ kind: "tool-calls" as const, calls: [{ id: `publish-${rkey}`, name: "Shell", arguments: {
         input: `atproto put com.example.note ${rkey} --json '{"text":"hello"}'`, purpose: "Publish the note",

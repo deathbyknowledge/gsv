@@ -9,7 +9,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import {
   approvedRun, deferred, okProcessResponse, runInProcess, ROOT_IDENTITY, initProcess, makeReq,
-  registerToolBlock, terminalTestConfig, type ProcessTestValue,
+  registerToolBlock, terminalTestConfig, type ProcessTestValue, followRunApprovalPolicy,
 } from "./do-test-harness";
 
 function startCancellableCodeModeRun(process: any, requestId: string) {
@@ -252,6 +252,7 @@ describe("CodeMode tool calls", () => {
       const approvals: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
       let dispatched = false;
 
+      followRunApprovalPolicy(process);
       process.runs.active = {
         runId: "run-codemode-fetch-approval",
         approvalPolicy: {
@@ -314,6 +315,7 @@ describe("CodeMode tool calls", () => {
     await runInProcess(stub, async (process) => {
       let requestedApproval = false;
       let dispatched = false;
+      followRunApprovalPolicy(process, { default: "ask", rules: [] });
       process.runs.active = {
         runId: "run-codemode-fetch-capability",
       };
@@ -412,6 +414,7 @@ describe("CodeMode tool calls", () => {
     await runInProcess(stub, async (process) => {
       let stopChecks = 0;
 
+      followRunApprovalPolicy(process);
       process.runs.active = {
         runId: "run-codemode-fetch-stopped-after-fetch",
         config: {
