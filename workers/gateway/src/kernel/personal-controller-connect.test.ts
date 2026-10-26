@@ -98,6 +98,8 @@ describe("Kernel personal controller connect lifecycle", () => {
         })),
       },
       config: { get: vi.fn(() => null) },
+      env: {},
+      defer: vi.fn(),
     };
     const connection = { id: "connection-1", setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);
@@ -110,6 +112,8 @@ describe("Kernel personal controller connect lifecycle", () => {
     await kernel.connectionRuntime.handleSysConnect(connection, connectFrame());
 
     expect(ensurePersonalControllerMock).toHaveBeenCalledWith(PROCESS_IDENTITY.uid, ctx);
+    // The default profile publishes in the background, so sign-in doesn't wait on the open-network host.
+    expect(ctx.defer).toHaveBeenCalledWith(expect.any(Promise));
     expect(ensurePersonalControllerMock.mock.invocationCallOrder[0])
       .toBeLessThan(kernel.connectionRuntime.activateConnection.mock.invocationCallOrder[0]);
     expect(kernel.connectionRuntime.activateConnection).toHaveBeenCalledOnce();
@@ -182,6 +186,7 @@ describe("Kernel personal controller connect lifecycle", () => {
         conversations: { ensureShip: () => ({ id: "conv:ship", ownerUid: 1000, kind: "ship" }) },
         // The default profile was already applied; this test covers onboarding recovery only.
         config: { get: vi.fn(() => dismissed ? "1" : null), getExplicit: () => "1" },
+        env: {},
         responsibilities, welcome: onboarding, reconcileResponsibilityWake: vi.fn(() => wake),
         defer: (promise: Promise<unknown>) => deferred.push(promise),
       };

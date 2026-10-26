@@ -2,11 +2,12 @@ import { ADMIN_VISIBLE_INSTALLATION_STATES, type AdminInstallationListQuery } fr
 import { hasExpectedOrigin, json, noStoreHeaders, readJsonObject, requireString, type JsonValue } from "../http";
 import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
 import type { AdminAuditRecorder } from "./insight";
+import { runTakedownAction, type ShipTakedowns } from "./takedowns";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { z } from "zod";
 
 const operatorReasonSchema = z.string().max(500).nullish();
-import type { InstallationAdminService } from "./service";
+import { OpenNetworkFollowError, RESET_CONSEQUENCES, type InstallationAdminService } from "./service";
 
 type AdminService = Pick<InstallationAdminService,
   "listInstallations" | "getInstallation" | "create" | "reissueOnboarding" | "resetInstallation" | "setInstallationState"
@@ -19,12 +20,13 @@ export class InstallationAdminApi {
     private readonly access: InstallationAdminAccess,
     private readonly origin: string,
     private readonly audited: AdminAuditRecorder = async (_request, _action, mutation) => await mutation(),
+    private readonly takedowns?: ShipTakedowns,
   ) {}
 
   async handle(request: Request): Promise<Response | null> {
     const url = new URL(request.url);
     const collection = url.pathname === "/admin/api/installations";
-    const route = /^\/admin\/api\/installations\/([^/]+)(?:\/(onboarding|lifecycle|reset))?$/.exec(url.pathname);
+    const route = /^\/admin\/api\/installations\/([^/]+)(?:\/(onboarding|lifecycle|reset|takedowns|takedowns\/restore))?$/.exec(url.pathname);
     if (!collection && !route) return null;
     if (!await this.access.allows(request)) {
       return new Response("Forbidden", { status: 403, headers: noStoreHeaders({ "content-type": "text/plain; charset=utf-8" }) });
@@ -49,6 +51,10 @@ export class InstallationAdminApi {
         const installation = await this.service.getInstallation(installationId);
         return installation ? json(installation) : json({ error: "Not Found" }, 404);
       }
+      if (request.method === "GET" && action === "takedowns" && this.takedowns) {
+        const repository = await this.takedowns.repository(installationId);
+        return repository ? json(repository) : json({ error: "Not Found" }, 404);
+      }
       if (request.method === "POST") {
         if (action === "onboarding") {
           const issued = await this.audited(request, { name: "ship.setup-link.reissue", installationId },
@@ -64,26 +70,26 @@ export class InstallationAdminApi {
           return json({ installationId, state });
         }
         if (action === "reset") {
-          const body = await readJsonObject(request);
-          const reason = readOperatorReason(body.reason);
-          const input = {
-            operationId: requireString(body.operationId, "operationId"),
-            confirmHandle: requireString(body.confirmHandle, "confirmHandle"),
-          };
+          const { input, reason } = readConfirmedAction(await readJsonObject(request));
           const reset = await this.audited(request, { name: "ship.reset", installationId, reason },
             () => this.service.resetInstallation(installationId, input),
             (result) => ({ detail: { replacementInstallationId: result.installation.installationId } }));
           return json(reset, 201);
         }
+        if ((action === "takedowns" || action === "takedowns/restore") && this.takedowns) {
+          return json(await runTakedownAction(this.takedowns, this.audited, request, installationId,
+            action === "takedowns" ? "takedown" : "restore", await readJsonObject(request)));
+        }
       }
       return json({ error: "Not Found" }, 404);
     } catch (error) {
       if (error instanceof AdminForbiddenError) return json({ error: "Forbidden" }, 403);
+      if (error instanceof UnconfirmedActionError) return json({ error: error.message, consequences: [...RESET_CONSEQUENCES] }, 400);
       const message = error instanceof Error ? error.message : "";
       if (["handle ", "installation", "operationId ", "request ", "JSON ", "query ", "state ", "page "]
         .some((prefix) => message.startsWith(prefix))) return json({ error: message }, 400);
       console.warn("[Operator] Admin request failed:", url.pathname, exceptionDiagnostics(error));
-      return json({ error: "The operator request could not be completed." }, 503);
+      return json({ error: error instanceof OpenNetworkFollowError ? error.message : "The operator request could not be completed." }, 503);
     }
   }
 }
@@ -99,6 +105,22 @@ export function readInstallationListQuery(url: URL): AdminInstallationListQuery 
   const page = pageValue ? Number(pageValue) : 1;
   if (!Number.isSafeInteger(page) || page < 1 || page > 1_000_000) throw new Error("page is invalid");
   return { query, state: state ?? null, page };
+}
+
+/**
+ * A reset or retirement whose operator hasn't typed the Ship's handle or given
+ * a reason; its refusal says what the action does.
+ */
+export class UnconfirmedActionError extends Error {}
+
+/** A reset or retirement request, once its operator has typed the Ship's handle and given a reason. */
+export function readConfirmedAction(values: { operationId?: JsonValue; confirmHandle?: JsonValue; reason?: JsonValue }) {
+  const operationId = requireString(values.operationId, "operationId");
+  const reason = readOperatorReason(values.reason)?.trim();
+  if (!reason) throw new UnconfirmedActionError("request reason is required");
+  const confirmHandle = values.confirmHandle;
+  if (String(confirmHandle) !== confirmHandle || !confirmHandle) throw new UnconfirmedActionError("confirmHandle is required");
+  return { input: { operationId, confirmHandle }, reason };
 }
 
 function readOperatorReason(value: JsonValue | undefined): string | null {

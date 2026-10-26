@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import type { JsonObject, JsonValue, AdapterPairConfirmResult } from "@humansandmachines/gsv/protocol";
+import type { JsonObject, JsonValue, AdapterPairConfirmResult, ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -194,11 +194,10 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
       key: "users/1000/ai/models",
       value: JSON.stringify({ version: 1, models: [{
         id: "failure-fixture",
-        name: "Unavailable metadata",
-        provider: "custom",
-        model: "integration-metadata-error",
-        baseUrl: "https://fixture.invalid",
-        providerStyle: "openai-chat-completions",
+        name: "Disconnected ChatGPT account",
+        provider: "openai-codex",
+        model: "gpt-5.5",
+        oauthAccountKey: "disconnected",
         transportTarget: "gsv",
       }] }),
     });
@@ -224,8 +223,19 @@ describe("W6 real messenger → Gateway → Kernel admission", () => {
       .parse(await ok(owner, "conversation.history", { conversationId: conversation.id }));
     expect(history.messages.some((message) => message.text === notice)).toBe(false);
     const processHistory = JSON.stringify(await ok(owner, "proc.history", { pid: ship.pid, format: 2 }));
-    expect(processHistory).toContain("Fixture model metadata unavailable");
-    expect(JSON.stringify(wires)).not.toContain("Fixture model metadata unavailable");
+    expect(processHistory).toContain("The selected ChatGPT account is not connected");
+    expect(JSON.stringify(wires)).not.toContain("The selected ChatGPT account is not connected");
+    // The first message also opened the welcome. Its review run fails as well, but no message started that run.
+    const events = async () => {
+      // SAFETY: Format 2 history returns the public typed record projection.
+      const { records } = await ok(owner, "proc.history", { pid: ship.pid, format: 2 }) as { records: ProcHistoryRecord[] };
+      return records.flatMap((record) => record.kind === "event" ? [{ runId: record.runId, kind: record.payload.kind }] : []);
+    };
+    const review = (await until(events, (rows) => rows.some((row) => row.kind === "responsibility.ready"
+      && rows.some((failure) => failure.kind === "runtime.failed" && failure.runId === row.runId))))
+      .find((row) => row.kind === "responsibility.ready")!.runId;
+    const storage = await worker().getDurableObjectStorage("KERNEL", { name: installation("first") });
+    await until(() => storage.exec("SELECT run_id FROM run_routes WHERE run_id = ? UNION ALL SELECT id FROM cf_agents_schedules WHERE callback = 'onAdapterRouteDelivery'", review), (rows) => rows.length === 0);
     expect((await messages("telegram")).filter((row) => row.body.text === notice)).toHaveLength(1);
   });
 

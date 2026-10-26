@@ -159,11 +159,9 @@ function makeContact(): FederationContactRecord {
     ownerUid: IDENTITY.uid,
     state: "active",
     generation: "generation:friend",
-    remoteShipId: "ship:friend",
-    remoteSubject: { id: "subject:friend", displayName: "Flynn" },
-    remoteOrigin: "https://flynn.example",
-    remotePublicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" },
-    sharedSecret: "secret",
+    remoteDid: "did:plc:flynnaaaaaaaaaaaaaaaaaaa",
+    remoteName: "Flynn",
+    remoteHandle: "flynn.example",
     conversationId: "conversation:friend",
     threadId: "thread:friend",
     createdAtMs: 1,
@@ -273,6 +271,7 @@ function makeContext(options?: {
   }
   return focusedFixture<KernelContext>({
     broadcastToUserUid: vi.fn(),
+    didDocuments: focusedFixture<KernelContext["didDocuments"]>({ deactivated: vi.fn(() => new Set<string>()) }),
     env: testEnv,
     modelMetadata: new ModelMetadataResolver(testEnv, installationIdentity.installationId),
     installationId: installationIdentity.installationId,
@@ -1091,6 +1090,34 @@ describe("native shell capability discovery", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toBe("abc\ndefgh\nabcdefgh\ncd");
     expect(result.stderr).toBe("1+1 records in\n1+1 records out\n5 bytes copied\n");
+  });
+
+  it("keeps every byte written through a redirection", async () => {
+    const everyByte = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==";
+    const result = await handleShellExec(
+      {
+        input: [
+          "cd \"$HOME\"",
+          `printf '%s' '${everyByte}' > all.b64`,
+          "base64 -d all.b64 > all.bin",
+          "base64 -d all.b64 >> twice.bin && base64 -d all.b64 >> twice.bin",
+          "cat all.bin > copy.bin",
+          "printf 'é' > accent.txt",
+          "wc -c < all.bin && wc -c < twice.bin && wc -c < copy.bin && wc -c < accent.txt",
+          "sha256sum all.bin twice.bin copy.bin",
+        ].join(" && "),
+      },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    const lines = result.stdout.trim().split("\n").map((line) => line.trim());
+    expect(lines.slice(0, 4)).toEqual(["256", "512", "256", "2"]);
+    expect(lines.slice(4).map((line) => line.split(/\s+/)[0])).toEqual([
+      "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+      "110009dcee21620b166f3abfecb5eff7a873be729d1c2d53822e7acc5f34eb9b",
+      "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+    ]);
   });
 
   it("truncates the destination unless dd is told conv=notrunc", async () => {
@@ -4381,7 +4408,7 @@ describe("native administration shell commands", () => {
       }],
     });
     expect(contacts).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(contacts.stdout).toContain("contact:friend\tactive\tAlice\tship:friend");
+    expect(contacts.stdout).toContain("contact:friend\tactive\tAlice\t@flynn.example");
     expect(help).toMatchObject({ status: "completed", exitCode: 0 });
     expect(help.stdout).toContain("contact invite create");
     expect(list).toHaveBeenCalledWith(IDENTITY.uid, false);
@@ -4487,13 +4514,7 @@ describe("native administration shell commands", () => {
           id: "msg:one",
           conversationId: conversation.id,
           sequence: 1,
-          author: {
-            kind: "contact",
-            contactId: contact.id,
-            shipId: contact.remoteShipId,
-            subjectId: contact.remoteSubject.id,
-            displayName: contact.remoteSubject.displayName,
-          },
+          author: { kind: "contact", contactId: contact.id, displayName: contact.remoteName },
           text: "hello from Flynn",
           origin: { kind: "federation", contactId: contact.id, deliveryId: "delivery:one" },
           createdAt: 1,
@@ -4504,7 +4525,8 @@ describe("native administration shell commands", () => {
     });
     const ctx = makeContext({
       capabilities: ["shell.exec", "contact.list", "conversation.history"],
-      federation: { list: vi.fn(() => [contact]) },
+      // Its Ship was already checked this hour.
+      federation: { list: vi.fn(() => [contact]), getByConversation: vi.fn(() => contact), consumeRateLimits: vi.fn(() => Date.now() + 60_000) },
       procs: {
         get: vi.fn(() => makeProcess({
           processId: "proc:ship",

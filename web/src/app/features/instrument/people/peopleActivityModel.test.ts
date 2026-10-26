@@ -4,14 +4,14 @@ import { conversationNotice, peopleConversations } from "./peopleActivityModel";
 import type { PeopleActivity } from "./usePeopleActivity";
 
 const contact: ContactSummary = {
-  id: "contact:ada", ownerUid: 1000, state: "active", generation: "one", remoteShipId: "ship:ada",
-  remoteSubject: { id: "subject:ada", displayName: "Ada Lovelace" }, remoteOrigin: "https://ada.example",
+  id: "contact:ada", ownerUid: 1000, state: "active", generation: "one", remoteDid: "did:plc:adaaaaaaaaaaaaaaaaaaaaaa",
+  remoteName: "Ada Lovelace", remoteHandle: "ada.example",
   conversationId: "conversation:ada", localAlias: "Ada", createdAtMs: 1, updatedAtMs: 1,
 };
 function message(sequence: number): ConversationMessage {
   return { id: `message:${sequence}`, sequence, conversationId: contact.conversationId, text: `Message ${sequence}`, createdAt: sequence,
-    author: { kind: "contact", contactId: contact.id, shipId: "ship:ada", subjectId: "subject:ada", displayName: "Ada" },
-    social: { threadId: "thread:ada", reference: { actor: { shipId: "ship:ada", subjectId: "subject:ada" }, messageId: `remote:${sequence}` }, provenance: { kind: "human" } },
+    author: { kind: "contact", contactId: contact.id, displayName: "Ada" },
+    social: { threadId: "thread:ada", reference: { did: "did:plc:adaaaaaaaaaaaaaaaaaaaaaa", messageId: `remote:${sequence}` }, provenance: { kind: "human" } },
     origin: { kind: "federation", contactId: contact.id, deliveryId: `delivery:${sequence}` } };
 }
 function activity(sequence = 2): PeopleActivity {

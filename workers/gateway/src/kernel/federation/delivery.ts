@@ -11,6 +11,7 @@ import type {
 } from "../federation-store";
 import { isReadyFederationOutbox } from "../federation-store";
 import { MAX_DELIVERY_AGE_MS } from "./limits";
+import { ShipTakenDownError } from "../ships/errors";
 import { FederationHttpError } from "./errors";
 
 export function currentFederationDeliveryContact(
@@ -109,6 +110,7 @@ export function deliveryRetryDelayMs(attempt: number): number {
 }
 
 export function isTerminalFederationError(cause: unknown): boolean {
+  if (cause instanceof ShipTakenDownError) return true;
   return cause instanceof FederationHttpError
     && cause.status >= 400
     && cause.status < 500

@@ -1,0 +1,81 @@
+{
+  "lexicon": 1,
+  "id": "space.ship.sendMessageRequest",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Someone who read this Ship's public profile asks to talk. The request must name the profile record the Ship publishes now.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["requestId", "profileCid", "name", "messageId", "text", "createdAtMs", "expiresAtMs"],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "profileCid": {
+              "type": "string",
+              "description": "The CID of the profile record its sender read.",
+              "format": "cid"
+            },
+            "name": {
+              "type": "string",
+              "description": "The sender's name, as the recipient will see it. At most 80 UTF-16 code units.",
+              "minLength": 1,
+              "maxLength": 240,
+              "maxGraphemes": 80
+            },
+            "messageId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "text": {
+              "type": "string",
+              "description": "The first message. At most 32,768 UTF-16 code units.",
+              "minLength": 1,
+              "maxLength": 98304,
+              "maxGraphemes": 32768
+            },
+            "createdAtMs": {
+              "type": "integer",
+              "description": "When the sender sent it, in milliseconds since the Unix epoch.",
+              "minimum": 1
+            },
+            "expiresAtMs": {
+              "type": "integer",
+              "description": "When the request lapses unanswered, in milliseconds since the Unix epoch.",
+              "minimum": 1
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["state"],
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "received"
+            }
+          }
+        }
+      },
+      "errors": [
+        {
+          "name": "NotFound",
+          "description": "This Ship takes no message requests from the caller for this profile now."
+        },
+        {
+          "name": "Conflict",
+          "description": "A message request between these people is already pending. Retry after the Retry-After interval."
+        }
+      ]
+    }
+  }
+}

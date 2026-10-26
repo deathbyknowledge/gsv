@@ -24,7 +24,7 @@ const settle = (action: () => void) => act(async () => {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 });
 
-async function mounted() {
+async function mounted(send = vi.fn<(text: string) => boolean | Promise<boolean>>(() => true)) {
   const input = installBrowserAudio();
   const client = new GSVClient({ url: "ws://voice.test" });
   const response = deferred<{ data: { text: string; provider: string; model: string } }>();
@@ -37,7 +37,7 @@ async function mounted() {
     focus: vi.fn(),
   } };
   function Probe({ scope, enabled }: { scope: string; enabled: boolean }) {
-    control = useBrowserVoice({ client, prompt, pid: "p-ship", scope, enabled });
+    control = useBrowserVoice({ client, prompt, pid: "p-ship", scope, enabled, send });
     return null;
   }
   const root = createTestRoot("browser voice");
@@ -47,7 +47,7 @@ async function mounted() {
   const start = () => settle(() => { void control.start(); });
   const stop = () => settle(() => control.stop());
   const finish = (text = "spoken words") => settle(() => response.resolve({ data: { text, provider: "test", model: "test" } }));
-  return { input, request, response, prompt, render, start, stop, finish, root, control: () => control, value: () => value };
+  return { input, request, response, prompt, send, render, start, stop, finish, root, control: () => control, value: () => value };
 }
 
 describe("web voice composition", () => {
@@ -73,16 +73,52 @@ describe("web voice composition", () => {
     expect(app.prompt.current.focus).toHaveBeenCalledOnce();
     expect(app.control().phase).toBe("idle");
     expect(app.request).toHaveBeenCalledOnce();
+    expect(app.send).not.toHaveBeenCalled();
   });
 
-  it("Enter stops recording and waits for review before allowing submission", async () => {
+  it("Enter sends the composed transcript and clears the prompt", async () => {
     const app = await mounted();
     await app.start();
     await settle(() => expect(app.control().interceptSubmit()).toBe(true));
     expect(app.control().phase).toBe("transcribing");
+    expect(app.control().sending).toBe(true);
     expect(app.control().interceptSubmit()).toBe(true);
+    expect(app.send).not.toHaveBeenCalled();
     await app.finish();
+    expect(app.send).toHaveBeenCalledExactlyOnceWith("typed spoken words");
+    expect(app.value()).toBe("");
+    expect(app.control().phase).toBe("idle");
     expect(app.control().interceptSubmit()).toBe(false);
+  });
+
+  it("pause keeps the transcript in the prompt without sending", async () => {
+    const app = await mounted();
+    await app.start();
+    await app.stop();
+    expect(app.control().sending).toBe(false);
+    await app.finish();
+    expect(app.value()).toBe("typed spoken words");
+    expect(app.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps the draft in the prompt when the send is refused", async () => {
+    const app = await mounted(vi.fn(() => false));
+    await app.start();
+    await settle(() => app.control().finish());
+    await app.finish();
+    expect(app.send).toHaveBeenCalledExactlyOnceWith("typed spoken words");
+    expect(app.value()).toBe("typed spoken words");
+    expect(app.control().phase).toBe("idle");
+  });
+
+  it("returns to command mode after sending a dictated command", async () => {
+    const app = await mounted();
+    app.prompt.current.setValue("$ ");
+    await app.start();
+    await settle(() => app.control().finish());
+    await app.finish("pwd");
+    expect(app.send).toHaveBeenCalledExactlyOnceWith("$ pwd");
+    expect(app.value()).toBe("$ ");
   });
 
   it.each(["cancel", "scope", "unmount"])("discards stale transcription after %s", async (reason) => {
@@ -97,6 +133,7 @@ describe("web voice composition", () => {
     await app.finish();
     expect(app.value()).toBe("typed");
     expect(app.prompt.current.focus).not.toHaveBeenCalled();
+    expect(app.send).not.toHaveBeenCalled();
   });
 
   it("releases a late permission grant after leaving Zen", async () => {

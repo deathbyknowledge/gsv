@@ -1,15 +1,15 @@
-import type { ApproachEnvelope, ApproachWithdrawal } from "@humansandmachines/gsv/protocol";
-import { approachReceiptSchema } from "@humansandmachines/gsv/protocol";
+import type { SendMessageRequestInput } from "@humansandmachines/gsv/protocol";
+import { SEND_MESSAGE_REQUEST, sendMessageRequestOutputSchema, WITHDRAW_MESSAGE_REQUEST } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type { ApproachRecord } from "../approach-store";
 import { APPROACH_RECEIPT_MS } from "../approach-store";
-import { localShipDocumentV2 } from "../federation/protocol";
-import { fetchFederationJson } from "../federation/http";
 import { FederationHttpError, PublicFederationError } from "../federation/errors";
+import { ShipTakenDownError } from "../ships/errors";
+import { callShipProcedure } from "../ships/xrpc";
 import { getConversationById } from "../../shared/utils";
 import { appendApproachMessage } from "./admission";
-import { acceptApproach, deliverApproachConfirmation } from "./pairing";
-import { APPROACH_PATH, APPROACH_WITHDRAW_PATH, approachLock, requireApproachAvailable, sameActor, sameApproach, signApproachValue, verifyApproachValue } from "./shared";
+import { acceptApproach } from "./pairing";
+import { approachLock, requireApproachAvailable } from "./shared";
 
 export async function processApproachMaintenance(ctx: KernelContext): Promise<void> {
   for (const scheduled of ctx.approaches.due()) {
@@ -36,12 +36,11 @@ export async function processApproachMaintenance(ctx: KernelContext): Promise<vo
           else if (record.summary.state === "withdrawn") await deliverWithdrawal(record, ctx);
         } else if (record.summary.state === "accepting") {
           await acceptApproach(record, ctx);
-        } else if (record.summary.state === "accepted") {
-          await deliverApproachConfirmation(record, ctx);
         }
       } catch (error) {
-        const terminal = (error instanceof FederationHttpError || error instanceof PublicFederationError)
-          && [400, 401, 403, 404, 410, 413].includes(error.status);
+        const terminal = error instanceof ShipTakenDownError
+          || ((error instanceof FederationHttpError || error instanceof PublicFederationError)
+            && [400, 401, 403, 404, 410, 413].includes(error.status));
         ctx.approaches.defer(record.summary.id, record.summary.revision, terminal);
         ctx.broadcastToUserUid(record.ownerUid, "approach.changed");
       }
@@ -51,34 +50,22 @@ export async function processApproachMaintenance(ctx: KernelContext): Promise<vo
 
 async function deliverApproach(record: ApproachRecord, ctx: KernelContext): Promise<void> {
   const current = requireApproachAvailable(record, ctx);
-  if (!current.pendingText || !current.setupToken) throw new Error("Message request delivery payload is unavailable");
-  const document = await localShipDocumentV2(ctx);
-  const packet: ApproachEnvelope = await signApproachValue({
-    version: 2, domain: "gsv-federation/2/approach", document,
-    content: { ...current.metadata, text: current.pendingText }, setup: { token: current.setupToken },
-  } satisfies Omit<ApproachEnvelope, "signature">, ctx);
+  if (!current.pendingText || !current.profileCid) throw new Error("Message request delivery payload is unavailable");
+  const input: SendMessageRequestInput = {
+    requestId: current.summary.requestId, profileCid: current.profileCid, name: current.localDisplayName,
+    messageId: current.messageId, text: current.pendingText, createdAtMs: current.sentAtMs, expiresAtMs: current.summary.expiresAtMs,
+  };
+  sendMessageRequestOutputSchema.parse(await callShipProcedure(current.summary.peerDid, SEND_MESSAGE_REQUEST, input, ctx));
   requireApproachAvailable(current, ctx);
-  const receipt = approachReceiptSchema.parse(await fetchFederationJson(`${current.remoteOrigin}${APPROACH_PATH}`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(packet),
-  }, ctx));
-  await verifyApproachValue(receipt, current.remotePublicKey);
-  if (!sameApproach(receipt.reference, current.summary.reference) || !sameActor(receipt.recipient, current.metadata.recipient)
-    || receipt.fingerprint !== current.fingerprint) throw new Error("Message request receipt does not match the send");
   ctx.approaches.deliveryReceived(current.summary.id, current.summary.revision);
   ctx.broadcastToUserUid(current.ownerUid, "approach.changed");
 }
 
 async function deliverWithdrawal(record: ApproachRecord, ctx: KernelContext): Promise<void> {
-  const document = await localShipDocumentV2(ctx);
-  const packet: ApproachWithdrawal = await signApproachValue({
-    version: 2, domain: "gsv-federation/2/approach-withdrawal", document,
-    reference: record.summary.reference, recipient: record.metadata.recipient,
-  } satisfies Omit<ApproachWithdrawal, "signature">, ctx);
   try {
-    await fetchFederationJson(`${record.remoteOrigin}${APPROACH_WITHDRAW_PATH}`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(packet),
-    }, ctx);
+    await callShipProcedure(record.summary.peerDid, WITHDRAW_MESSAGE_REQUEST, { requestId: record.summary.requestId }, ctx);
   } catch (error) {
+    // A request the other Ship no longer holds needs no withdrawal.
     if (!(error instanceof FederationHttpError) || ![404, 410].includes(error.status)) throw error;
   }
   ctx.approaches.deliveryReceived(record.summary.id, record.summary.revision);
@@ -89,13 +76,9 @@ function approachOverdue(record: ApproachRecord, now = Date.now()): boolean {
   return !record.summary.acceptedAtMs && expiry <= now;
 }
 
-/** Expires one overdue request and retires its invitation; the caller holds the request's lock. */
+/** Expires one overdue request; the caller holds the request's lock. */
 function expireApproach(record: ApproachRecord, ctx: KernelContext): void {
-  const expired = ctx.federation.transaction(() => {
-    const updated = ctx.approaches.expire(record.summary.id)!;
-    retireInvitation(updated, ctx);
-    return updated;
-  });
+  const expired = ctx.approaches.expire(record.summary.id)!;
   ctx.broadcastToUserUid(expired.ownerUid, "approach.changed");
 }
 
@@ -105,12 +88,6 @@ export async function expireOverdueApproach(record: ApproachRecord, ctx: KernelC
     const current = ctx.approaches.get(record.summary.id);
     if (current && approachOverdue(current)) expireApproach(current, ctx);
   });
-}
-
-function retireInvitation(record: ApproachRecord, ctx: KernelContext): void {
-  if (!record.setupInviteId) return;
-  const invitation = ctx.federation.invite(record.setupInviteId);
-  if (invitation?.state === "issued" && invitation.expiresAtMs > Date.now()) ctx.federation.cancelInvite(invitation.inviteId, record.ownerUid);
 }
 
 async function collectApproach(record: ApproachRecord, ctx: KernelContext): Promise<void> {

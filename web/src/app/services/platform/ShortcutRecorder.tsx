@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { shortcutFromKey, shortcutLabel } from "./shortcutKeys";
+import { shortcutFromKey, shortcutFromMouse, shortcutLabel } from "./shortcutKeys";
 import { useT, type TextKey } from "../../i18n/locale";
 
 export function ShortcutRecorder({ label, value, disabled, capture, onChange }: {
@@ -23,8 +23,21 @@ export function ShortcutRecorder({ label, value, disabled, capture, onChange }: 
   useEffect(() => () => { if (held.current) { held.current = false; void capture(false); } }, [capture]);
   useEffect(() => {
     if (!listening) return;
+    // The webview treats the mouse back and forward buttons as navigation; while recording they only explain.
+    const mouse = (event: MouseEvent) => {
+      const result = shortcutFromMouse(event);
+      if (!result) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.type === "mousedown") setError(result.error ?? null);
+    };
+    const mouseEvents = ["mousedown", "mouseup", "pointerdown", "pointerup", "auxclick"] as const;
     window.addEventListener("blur", finish);
-    return () => window.removeEventListener("blur", finish);
+    for (const type of mouseEvents) window.addEventListener(type, mouse, true);
+    return () => {
+      window.removeEventListener("blur", finish);
+      for (const type of mouseEvents) window.removeEventListener(type, mouse, true);
+    };
   }, [listening]);
   useEffect(() => { if (disabled) finish(); }, [disabled]);
   return <div class="native-shortcut-field">

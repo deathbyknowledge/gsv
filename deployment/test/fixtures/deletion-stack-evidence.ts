@@ -6,7 +6,8 @@ import type { MailService } from "@humansandmachines/gsv/services/mail";
 import { z } from "zod";
 
 type ProbeEnvironment = { INFERENCE_SERVICE: InferenceExecutionService; MAIL_SERVICE: MailService;
-  INFERENCE_EXECUTORS: { getByName(name: string): InferenceExecutor } };
+  INFERENCE_EXECUTORS: { getByName(name: string): InferenceExecutor };
+  PDS_REPOS: { getByName(name: string): { create(handle: string, blobPrefix: string): Promise<{ did: string; handle: string }> } } };
 
 /** Local-only external-store fixture. Real operators must supply their own evidence verifier. */
 export default class LocalDeletionEvidence extends WorkerEntrypoint<ProbeEnvironment> {
@@ -24,6 +25,7 @@ export default class LocalDeletionEvidence extends WorkerEntrypoint<ProbeEnviron
       })),
       inference: await rejection(() => this.env.INFERENCE_SERVICE.getExecutor(installationId)),
       mail: await rejection(() => this.env.MAIL_SERVICE.listIntakes({ installationId }, {})),
+      pds: await rejection(() => this.env.PDS_REPOS.getByName(installationId).create("late.example.invalid", `installations/${installationId}/`)),
     });
   }
 }

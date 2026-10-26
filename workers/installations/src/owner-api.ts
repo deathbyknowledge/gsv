@@ -4,6 +4,7 @@ import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } f
 import { InstallationOwnerStore } from "./owner-store";
 import { InstallationSignup, type PendingSetup } from "./signup";
 import { sendOwnerVerification } from "./owner-verification";
+import type { OwnerEmailSender } from "./owner-verification-email";
 import { parseBaseDomain } from "./domain";
 
 const secret = z.string().regex(/^[a-f0-9]{64}$/);
@@ -17,12 +18,12 @@ type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>
   | { email: string; expiresAt: number; spaceDomain: string; spaces: Awaited<ReturnType<InstallationOwnerStore["spaces"]>>; setups: PendingSetup[]; signupEnabled: boolean; invites: never[] }
   | Awaited<ReturnType<InstallationSignup["prepare"]>>
   | { ok: true } | { available: boolean }
-  | { error: string; code?: OwnerAuthErrorCode | "signed_out" | "space_exists"; retryAt?: number };
+  | { error: string; code?: OwnerAuthErrorCode | "signed_out" | "space_exists" | "handle_unavailable"; retryAt?: number };
 
 /** Explicit bearer authentication; browser cookies never authorize this native API. */
 export class InstallationOwnerApi {
   constructor(private readonly auth: InstallationOwnerAuthStore, private readonly owners: InstallationOwnerStore,
-    private readonly signup: InstallationSignup, private readonly mail: SendEmail, private readonly from: string,
+    private readonly signup: InstallationSignup, private readonly mail: SendEmail, private readonly sender: OwnerEmailSender,
     private readonly origin: string, private readonly baseDomain: string) {}
 
   async handle(request: Request): Promise<Response | null> {
@@ -34,7 +35,7 @@ export class InstallationOwnerApi {
     try {
       if (request.method === "POST" && url.pathname === "/owner/api/code") {
         const input = challenge.parse(await readJsonObject(request));
-        const result = await sendOwnerVerification(this.auth, this.mail, this.from, {
+        const result = await sendOwnerVerification(this.auth, this.mail, this.sender, {
           ...input, purpose: "login", ip: request.headers.get("cf-connecting-ip") ?? "local",
         });
         return json(result, result.deliveryStatus === "sent" ? 200 : result.deliveryStatus === "sending" ? 202 : 503);
@@ -75,6 +76,9 @@ export class InstallationOwnerApi {
       }
       if (error instanceof Error && error.message === "handle is invalid") {
         return json({ error: "Use letters, numbers or hyphens. Start and end with a letter or number." }, 400);
+      }
+      if (error instanceof Error && (error.message === "handle is unavailable" || error.message.startsWith("handle is reserved"))) {
+        return json({ error: "This username is unavailable. Choose another.", code: "handle_unavailable" }, 400);
       }
       if (error instanceof Error && error.message.startsWith("You already have a Ship")) {
         return json({ error: error.message, code: "space_exists" }, 409);

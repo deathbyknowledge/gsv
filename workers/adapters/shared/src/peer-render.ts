@@ -11,6 +11,18 @@ export type RenderedAdapterSend = {
   hil?: ProcHilRequest;
 };
 
+const publicationSchema = z.object({
+  handle: z.string(),
+  address: z.string(),
+  writes: z.array(z.object({
+    action: z.enum(["create", "put", "delete"]),
+    collection: z.string(),
+    rkey: z.optional(z.string()),
+  })),
+});
+
+const PUBLICATION_CHANGES = { create: "add", put: "add or replace", delete: "remove" } as const;
+
 export type AdapterHilPresentation = {
   action: string;
   scope?: "work" | "personal";
@@ -99,7 +111,13 @@ function processModePrefix(context: AdapterDeliveryContext): string {
  */
 function summarizeAdapterHilRequest(request: ProcHilRequest): string {
   const purpose = safePlainDetail(request.purpose, 400);
-  if (purpose) return asSentence(purpose);
+  if (purpose) {
+    // Whatever the model wrote, a publish names the address the Kernel publishes under.
+    const publisher = request.syscall === "atproto.write" ? publishingAs(request.args) : null;
+    return publisher
+      ? `${asSentence(purpose)}\nPublishes to the open network as ${publisher}.`
+      : asSentence(purpose);
+  }
   const summary = asSentence(describeAdapterHilRequest(request));
   const detail = adapterHilRequestDetail(request);
   return detail ? `${summary}\n${detail}` : summary;
@@ -126,6 +144,10 @@ function describeAdapterHilRequest(request: ProcHilRequest): string {
       if (replyToMessageId) return `reply to stored email ${replyToMessageId}`;
       return "send an email";
     }
+    case "atproto.write": {
+      const publisher = publishingAs(request.args);
+      return publisher ? `publish to the open network as ${publisher}` : "publish to the open network";
+    }
     default: return `use ${safePlainDetail(request.toolName, 80) ?? "a tool"} ${place}`;
   }
 }
@@ -138,8 +160,24 @@ function adapterHilRequestDetail(request: ProcHilRequest): string | null {
     case "fs.edit":
     case "fs.delete": return safeQuotedDetail(request.args.path, 512);
     case "net.fetch": return safeQuotedDetail(request.args.url, 512);
+    case "atproto.write": {
+      const publication = publicationSchema.safeParse(request.args);
+      return publication.success
+        ? safePlainDetail(publication.data.writes.map(({ action, collection, rkey }) =>
+          `${PUBLICATION_CHANGES[action]} ${rkey === undefined ? collection : `${collection}/${rkey}`}`).join(", "), 600)
+        : null;
+    }
     default: return null;
   }
+}
+
+/** The handle a publish speaks as, with the address it stands for: `@alice (alice.ship.space)`. */
+function publishingAs(args: ProcHilRequest["args"]): string | null {
+  const publication = publicationSchema.safeParse(args);
+  if (!publication.success) return null;
+  const handle = safePlainDetail(publication.data.handle, 80);
+  const address = safePlainDetail(publication.data.address, 253);
+  return handle && address ? `@${handle} (${address})` : null;
 }
 
 function asSentence(text: string): string {

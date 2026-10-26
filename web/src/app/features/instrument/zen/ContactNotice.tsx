@@ -7,6 +7,7 @@ import { sendContactMessage } from "../../../services/contacts/contactsService";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { StagedResourceUpload } from "../../../services/gateway/stagedResources";
 import { canConfigure } from "../settings/settingsModel";
+import { entersToSend } from "../shared/enterToSend";
 import { t as translate, useT, type Translate } from "../../../i18n/locale";
 import { ZenMedia } from "./ZenMedia";
 import "../shared/senderBadge.css";
@@ -156,7 +157,8 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
         onInput={(event: JSX.TargetedEvent<HTMLTextAreaElement>) => {
           onDraft({ ...draft, text: event.currentTarget.value });
           if (state !== "sending") setState("idle");
-        }} />
+        }}
+        onKeyDown={(event) => { if (entersToSend(event)) void send(); }} />
       <div class="send">
         <button type="button" class="ibtn is-primary" disabled={!maySend || !body || tooLong || state === "sending" || undelivered} onClick={() => void send()}>
           {state === "sending" ? t("chat.sending") : t("chat.contact.sendTo", { name })}

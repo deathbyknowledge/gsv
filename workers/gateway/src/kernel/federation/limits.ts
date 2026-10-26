@@ -1,4 +1,4 @@
-import type { FederationDeliveryEnvelope } from "@humansandmachines/gsv/protocol";
+import type { FederationDeliveryPayload } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type { FederationContactRecord, FederationRateLimit } from "../federation-store";
 import { PublicFederationError } from "./errors";
@@ -34,20 +34,14 @@ export function pruneFederationState(ctx: KernelContext, now: number): void {
   });
 }
 
+/** Room for one more contact, unless `remoteDid` is one already; a reconnection takes no new room. */
 export function assertContactCapacity(
   ownerUid: number,
-  remoteShipId: string | undefined,
-  remoteSubjectId: string | undefined,
+  remoteDid: string | undefined,
   ctx: KernelContext,
   publicRequest = false,
 ): void {
-  if (
-    remoteShipId
-    && remoteSubjectId
-    && ctx.federation.getByRemote(ownerUid, remoteShipId, remoteSubjectId)
-  ) {
-    return;
-  }
+  if (remoteDid && ctx.federation.getByRemote(ownerUid, remoteDid)) return;
   if (
     ctx.federation.contactCount(ownerUid) >= MAX_CONTACTS_PER_OWNER
     || ctx.federation.contactCount() >= MAX_CONTACTS_PER_INSTALLATION
@@ -102,7 +96,7 @@ export function consumeOutboundDeliveryRate(
 
 export function assertInboundCapacity(
   contact: FederationContactRecord,
-  payload: FederationDeliveryEnvelope["payload"],
+  payload: FederationDeliveryPayload,
   ctx: KernelContext,
   now: number,
 ): void {

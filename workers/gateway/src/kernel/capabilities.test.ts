@@ -115,6 +115,7 @@ describe("CapabilityStore", () => {
         "ai.text.generate",
         "ai.transcription.create",
         "approach.*",
+        "atproto.*",
         "codemode.*",
         "contact.*",
         "conversation.*",

@@ -192,6 +192,7 @@ export default defineConfig({
             { text: "Targets", link: "/architecture/targets" },
             { text: "Rust Host Applications", link: "/architecture/rust-host-applications" },
             { text: "Resource References", link: "/architecture/resource-references" },
+            { text: "The Open Network", link: "/architecture/open-network" },
           ],
         },
         {

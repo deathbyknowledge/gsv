@@ -147,6 +147,8 @@ notification. No recurring timer or history query drives this feed.
 Open **Settings → Logs** to inspect the complete list and an individual
 action's arguments, outcome and failure details. Rows for Ship and for
 helpers open Work's inspector. Work retains its compact activity summaries.
+The Logs introduction explains that entries show what Ship did, when it happened,
+and whether it succeeded, with details available by selecting an entry.
 On phones, each Logs entry stacks its action, outcome, connection and time without horizontal
 scrolling. Tap the entry for its arguments, purpose and process; **raw** switches the action
 label to the syscall name.
@@ -165,6 +167,9 @@ inspectable in the owning user's ledger arguments like other syscall inputs.
 An explicit `sys.browser.profile.save` is labeled “save browser state”; its
 arguments identify the instance, while cookies and website storage stay inside
 the instance service and never enter ledger arguments.
+Open-network calls read as what they did, such as “published to the open
+network” for `atproto.write`. Its arguments hold the published records; an
+uploaded file's bytes travel as a body and never enter them.
 
 ## Cost
 

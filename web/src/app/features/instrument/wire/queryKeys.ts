@@ -13,6 +13,7 @@ export const INSTRUMENT_MEMORY_KEY = ["instrument", "memory"] as const;
 export const INSTRUMENT_CONTACTS_KEY = ["instrument", "contacts"] as const;
 export const INSTRUMENT_CONTACT_BLOCKS_KEY = ["instrument", "contact-blocks"] as const;
 export const INSTRUMENT_PROFILE_KEY = ["instrument", "profile"] as const;
+export const INSTRUMENT_TAKEDOWNS_KEY = ["instrument", "takedowns"] as const;
 export const INSTRUMENT_APPROACHES_KEY = ["instrument", "approaches"] as const;
 export const INSTRUMENT_CONTACT_INVITES_KEY = ["instrument", "contact-invites"] as const;
 

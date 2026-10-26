@@ -252,6 +252,16 @@ import type {
   SignalWatchResult,
 } from "./signal";
 import type {
+  AtprotoBlobReadArgs,
+  AtprotoBlobReadResult,
+  AtprotoBlobUploadArgs,
+  AtprotoBlobUploadResult,
+  AtprotoIdentityArgs,
+  AtprotoIdentityResult,
+  AtprotoWriteArgs,
+  AtprotoWriteResult,
+} from "./atproto";
+import type {
   MailSendArgs,
   MailSendResult,
   MailStatusArgs,
@@ -282,8 +292,6 @@ import type {
 import type {
   ContactAliasSetArgs,
   ContactAliasSetResult,
-  ContactIdentityArgs,
-  ContactIdentityResult,
   ContactInviteAcceptArgs,
   ContactInviteAcceptResult,
   ContactInviteCancelArgs,
@@ -322,9 +330,10 @@ import type {
 import type {
   ProfileGetArgs, ProfileGetResult, ProfileUpdateArgs, ProfileUpdateResult,
   ProfilePublishArgs, ProfilePublishResult, ProfileUnpublishArgs, ProfileUnpublishResult,
-  ProfileResolveArgs, ProfileResolveResult,
+  ProfileResolveArgs, ProfileResolveResult, ProfileAvatarSetArgs, ProfileAvatarSetResult,
+  ProfileAvatarRemoveArgs, ProfileAvatarRemoveResult, ProfileAvatarReadArgs, ProfileAvatarReadResult,
 } from "./profile";
-import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachRetryArgs } from "./approach";
+import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachReportArgs, ApproachRetryArgs } from "./approach";
 
 export type SyscallDomains = {
   "fs.read": { args: FsReadArgs; result: FsReadResult };
@@ -365,14 +374,22 @@ export type SyscallDomains = {
   "profile.publish": { args: ProfilePublishArgs; result: ProfilePublishResult };
   "profile.unpublish": { args: ProfileUnpublishArgs; result: ProfileUnpublishResult };
   "profile.resolve": { args: ProfileResolveArgs; result: ProfileResolveResult };
+  "profile.avatar.set": { args: ProfileAvatarSetArgs; result: ProfileAvatarSetResult };
+  "profile.avatar.remove": { args: ProfileAvatarRemoveArgs; result: ProfileAvatarRemoveResult };
+  "profile.avatar.read": { args: ProfileAvatarReadArgs; result: ProfileAvatarReadResult };
+
+  "atproto.identity": { args: AtprotoIdentityArgs; result: AtprotoIdentityResult };
+  "atproto.write": { args: AtprotoWriteArgs; result: AtprotoWriteResult };
+  "atproto.blob.upload": { args: AtprotoBlobUploadArgs; result: AtprotoBlobUploadResult };
+  "atproto.blob.read": { args: AtprotoBlobReadArgs; result: AtprotoBlobReadResult };
 
   "approach.create": { args: ApproachCreateArgs; result: ApproachResult };
   "approach.get": { args: ApproachGetArgs; result: ApproachResult };
   "approach.list": { args: ApproachListArgs; result: ApproachListResult };
   "approach.decide": { args: ApproachDecideArgs; result: ApproachResult };
   "approach.retry": { args: ApproachRetryArgs; result: ApproachResult };
+  "approach.report": { args: ApproachReportArgs; result: ApproachResult };
 
-  "contact.identity": { args: ContactIdentityArgs; result: ContactIdentityResult };
   "contact.invite.create": { args: ContactInviteCreateArgs; result: ContactInviteCreateResult };
   "contact.invite.accept": { args: ContactInviteAcceptArgs; result: ContactInviteAcceptResult };
   "contact.invite.list": { args: ContactInviteListArgs; result: ContactInviteListResult };

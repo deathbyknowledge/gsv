@@ -25,8 +25,10 @@ suppress referrer disclosure when opened.
 The API uses `/admin/api/installations` for listing and creation, and
 `/admin/api/installations/:id` for details. POST actions are `onboarding`,
 `lifecycle` and `reset`. Mutations require the exact configured Origin; creation
-and reset retain their operation ids, and reset requires the current handle as
-confirmation. JSON and HTML form bodies are bounded while reading. JSON claim
+and reset retain their operation ids. A reset requires the current handle as
+confirmation and a reason; without either, the API answers 400 with the
+`consequences` that the reset form lists before its confirmation. JSON and HTML
+form bodies are bounded while reading. JSON claim
 responses are never cached and suppress referrer disclosure.
 
 Production access requires an RS256 Cloudflare Access JWT matching
@@ -150,9 +152,11 @@ Resolvers may instead fetch evidence references from their owned storage.
 The existing operator authentication and exact mutation Origin protect these JSON
 routes under `/admin/api/installations/:id/deletion`:
 
-- `POST /retire` takes `operationId` and `confirmHandle` to close admission for
-  explicit deletion without creating a replacement. A required reset preparation
-  must finish first. Retired reset sources already have closed admission.
+- `POST /retire` takes `operationId`, `confirmHandle` and a `reason`, which the
+  audit log keeps, to close admission for explicit deletion without creating a
+  replacement. Without the handle or a reason it answers 400 with the
+  `consequences` of retiring. A required reset preparation must finish first.
+  Retired reset sources already have closed admission.
 - `POST /inspect` takes the shared lifecycle inspection request and probes only
   through the trusted gateway discovery capability.
 - `POST /inventory` registers a manifest, or `{ manifest, evidence }` where each

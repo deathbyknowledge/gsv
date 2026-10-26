@@ -1,4 +1,4 @@
-import type { ComponentChildren, VNode } from "preact";
+import type { ComponentChildren, RefObject, VNode } from "preact";
 import { act } from "preact/test-utils";
 import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
 import { GatewayProvider, WEB_PEER } from "../../../services/gateway/GatewayProvider";
@@ -13,7 +13,7 @@ async function reportContent(index: number) {
   return JSON.parse(await bodyToText(fixture.request.mock.calls[index][2]!.body!));
 }
 
-const fixture = { available: true, request: vi.fn<GSVClient["request"]>() };
+const fixture = { available: true, openRequest: 0, request: vi.fn<GSVClient["request"]>() };
 const listeners = new Set<(status: GsvClientStatus) => void>();
 const connectedStatus: GsvClientStatus = { state: "connected", url: null, username: null, connectionId: "test", message: null };
 
@@ -30,7 +30,7 @@ type ElementProps = {
 };
 let tree: ComponentChildren;
 let root: ReturnType<typeof createTestRoot>;
-function Harness() { tree = Feedback({ view: "zen" }); return null; }
+function Harness() { tree = Feedback({ view: "zen", openRequest: fixture.openRequest }); return null; }
 function element(type: string): VNode<ElementProps> {
   // SAFETY: these are the explicitly named elements returned by Feedback above.
   const node = collectNodes(tree).find((candidate) => candidate.type === type) as VNode<ElementProps> | undefined;
@@ -54,6 +54,7 @@ function mockActivity() {
 beforeEach(() => {
   vi.stubGlobal("document", {});
   fixture.available = true;
+  fixture.openRequest = 0;
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn(), location: { protocol: "https:", host: "example.com" }, sessionStorage: { getItem: () => null, setItem: () => {} } });
   listeners.clear();
   vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue(connectedStatus);
@@ -78,6 +79,21 @@ describe("feedback", () => {
     fixture.available = false;
     await mount();
     expect(collectNodes(tree)).toHaveLength(0);
+  });
+
+  it("opens the existing dialog from Help without losing its draft or sending", async () => {
+    await mount();
+    await type("A draft started from the header");
+    const node = collectNodes(tree).find((candidate) => candidate.type === "dialog")!;
+    // SAFETY: Feedback owns this dialog ref; the hook only uses open, showModal and close.
+    const ref = node.ref as RefObject<Pick<HTMLDialogElement, "open" | "showModal" | "close">>;
+    const dialog = { open: false, showModal: vi.fn(() => { dialog.open = true; }), close: vi.fn(() => { dialog.open = false; }) };
+    ref.current = dialog;
+    fixture.openRequest = 1;
+    await mount();
+    expect(dialog.showModal).toHaveBeenCalledOnce();
+    expect(element("textarea").props.value).toBe("A draft started from the header");
+    expect(fixture.request).not.toHaveBeenCalled();
   });
 
   it("shows the dialog without sending when reviewing a preview", async () => {

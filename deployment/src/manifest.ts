@@ -1,7 +1,7 @@
 import * as z from "zod/mini";
 import { installationResourceKindSchema } from "@humansandmachines/gsv/services/lifecycle-discovery";
 
-export const GSV_DEPLOYMENT_MANIFEST_VERSION = 3;
+export const GSV_DEPLOYMENT_MANIFEST_VERSION = 4;
 
 const durableObjectSchema = z.strictObject({
   binding: z.string().check(z.minLength(1), z.maxLength(128)),
@@ -65,6 +65,7 @@ const runtimeDeploymentSchema = z.strictObject({
   installationsBundle: z.string().check(z.minLength(1)),
   installationsMigrations: z.string().check(z.minLength(1)),
   inferenceBundle: z.string().check(z.minLength(1)),
+  pdsBundle: z.string().check(z.minLength(1)),
 });
 
 export const gsvDeploymentManifestSchema = z.strictObject({

@@ -54,7 +54,7 @@ offline warnings and reconnecting. Its keyboard return hint is Send; iOS's nativ
 field-navigation accessory bar remains controlled by the browser.
 
 On narrow screens, the header uses one row with a menu button. The same view
-actions open in a vertical menu with touch-sized rows; the Help button is hidden.
+actions and Help open in a vertical menu with touch-sized rows.
 Choosing a view, tapping outside or pressing Escape closes the menu.
 The menu button retains the unread People indicator while navigation is closed.
 
@@ -155,6 +155,12 @@ remembers a denial.
 
 Chat owns the conversation. Dismissing the welcome card records the owner's choice and wakes Ship through its initial onboarding responsibility; a failed request leaves the card available to retry. Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
 
+After the first welcome card is dismissed, the empty Ship chat shows a centered,
+muted privacy message until either person starts the conversation. It never
+appears in helper conversations, over existing messages, or while history is
+loading or unavailable. The notice sits behind the transcript without intercepting
+pointer input.
+
 The composer puts send beside the draft and keeps one action row below: attachments
 and the current connection on the left, platform voice controls on the right.
 The current connection opens the existing connections and live-browser
@@ -218,6 +224,11 @@ People supports creating and accepting invitations, pending invitation cancellat
 
 Settings owns model order and creation, permissions, instructions, and integrations. See [Settings](settings/README.md). Work keeps connection actions available for computers and browsers; People keeps invitations and first-message requests available.
 
+Settings → Preferences → Appearance includes a **Show stars** checkbox. The choice
+is remembered on this device and also applies to sign-in. Hiding the stars
+unmounts their renderer and stops its animation while retaining the shared layout.
+Help’s navigation reference points to this setting in plain language.
+
 Processes update from owner-scoped registry signals even when created or run from another client. WireSync patches known runtime states and exits locally; new processes and changed labels reload only the process list. A change cancels any older list snapshot before it can overwrite current state. Closed lists become stale without background reads, and reconnect recovers missed changes. Raw run events remain for explicit Process observation, and registry-only notices do not reload history.
 
 Only interactive processes offer a conversation action. Logs links for Ship and helper rows, and delegated responsibility assignees, select the Work inspector; Ship assignees retain the direct Ship shortcut.
@@ -226,9 +237,13 @@ Chat accepts attachments through the + button beside the prompt, paste, or drag-
 
 Reconnecting leaves the Chat prompt editable and retains its text, focus and attachments. Send is disabled, and the shared submission handler rejects messages and direct commands until the gateway reconnects. Reconnecting never sends the draft automatically.
 
-The shell keeps one star field and one header mounted across Chat, People, Work, Memory and Settings. The field uses the same density and opacity throughout. The shell also owns the browser tab: while the tab is hidden or the window lacks focus, each Ship message committed in that time raises a count, the title reads "(N) GSV" and the favicon carries an accent dot, with nothing animated; viewing the tab again clears both. Contact messages count only when the Kernel's private attention policy permits. The person's own messages, helpers' work conversations, and history loaded on first paint or reconnect never count. Navigation has five fixed view shortcuts: c for Chat, f for Work, m for Memory, p for People and s for Settings. Each key and header button always opens its named view. Help offers Search Chat from every view; Ctrl+K opens Chat search from any view, including while writing a draft. Content transitions do not fade or remount the header. Helper conversations keep their label and return-to-Ship action beside the wordmark. The prompt has no permanent status strip. Connection and send errors appear when needed; ordinary model and target readiness stay out of the composer. Approvals and run activity remain in the transcript, and model attribution remains with the message. Work presents Connections and Helpers. Files open from a connection; responsibilities and routines open in Chat. Logs is in Settings.
+The shell keeps one star field and one header mounted across Chat, People, Work, Memory and Settings. The field uses the same density and opacity throughout. The shell also owns the browser tab: while the tab is hidden or the window lacks focus, each Ship message committed in that time raises a count, the title reads "(N) GSV" and the favicon carries an accent dot, with nothing animated; viewing the tab again clears both. Contact messages count only when the Kernel's private attention policy permits. The person's own messages, helpers' work conversations, and history loaded on first paint or reconnect never count. Navigation has five fixed view shortcuts: c for Chat, w for Work, m for Memory, p for People and s for Settings. Each key and header button always opens its named view. Help offers Search Chat from every view; Ctrl+K opens Chat search from any view, including while writing a draft. Content transitions do not fade or remount the header. Helper conversations keep their label and return-to-Ship action beside the wordmark. The prompt has no permanent status strip. Connection and send errors appear when needed; ordinary model and target readiness stay out of the composer. Approvals and run activity remain in the transcript, and model attribution remains with the message. Work presents Connections and Helpers. Files open from a connection; responsibilities and routines open in Chat. Logs is in Settings.
 
-Header controls have transparent backgrounds so they follow the pane underneath. Keyboard focus uses an underline on controls and table labels. Work has no permanent footer: Help lists its shortcuts. Work’s command action opens Chat on the selected target, with a direct-shell prompt ready to type.
+Header controls have transparent backgrounds so they follow the pane underneath. Navigation controls use the shared Hint tooltip on hover and keyboard focus to explain each destination. Keyboard focus uses an underline on controls and table labels. Work has no permanent footer: Help lists its shortcuts. Work’s command action opens Chat on the selected target, with a direct-shell prompt ready to type.
+
+The `x` shortcut cycles through 75%, 85%, 100%, 150% and 200% interface sizes, with
+100% as the default. The 75% size uses 15px rendered message text, smaller gaps
+between messages and less fading of older messages for a compact overview.
 
 The shared animated star field draws crisp glyphs without blurred text shadows.
 In the WebKitGTK prototype, removing just that shadow restored navigation and
@@ -241,7 +256,7 @@ scale. Resizing reveals or crops the same sky around its centre. Projection is
 cached; only visible glyphs are mounted, and resize retains their elements and
 twinkle phase. The sphere is not recomputed during animation.
 
-Chat opens in browse mode at the latest message. Typing any printable key that no shortcut claims focuses the prompt and lands in it, as does pasting text or files; clicking the prompt works too. Escape leaves input and stays in browse when already there. Keys held with a modifier, the shell's and Chat's shortcut letters, and the keys of a pending approval do not start typing. An explicit command or message prefill, target picker, or attachment action focuses the prompt. Mode changes install their keyboard handlers before paint, and reconnecting preserves an existing browse position. Help lists navigation and appearance controls plus shortcuts for the current view, separating Chat browse and input behavior. Chat browse uses j/k for messages and activity, gg for the start of loaded history and G for the latest messages. App shortcuts must work on a compact keyboard without a number pad or extended navigation keys. Ctrl+u/d still scroll half a page and Shift+Enter still inserts a new line, but neither is listed in Help. A sent message keeps the line breaks a person typed; runs of blank lines fold to one.
+Chat opens in browse mode at the latest message. Typing any printable key that no shortcut claims focuses the prompt and lands in it, as does pasting text or files; clicking the prompt works too. Escape leaves input and stays in browse when already there. Keys held with a modifier, the shell's and Chat's shortcut letters, and the keys of a pending approval do not start typing. An explicit command or message prefill, target picker, or attachment action focuses the prompt. Mode changes install their keyboard handlers before paint, and reconnecting preserves an existing browse position. Help puts getting-started guidance first and opens navigation and appearance shortcuts plus the current view’s shortcuts in a separate panel view, separating Chat browse and input behavior. Chat browse uses j/k for messages and activity, gg for the start of loaded history and G for the latest messages. App shortcuts must work on a compact keyboard without a number pad or extended navigation keys. Ctrl+u/d still scroll half a page and Shift+Enter still inserts a new line, but neither is listed in Help. A sent message keeps the line breaks a person typed; runs of blank lines fold to one.
 
 Chat follows the bottom until the reader scrolls away. A small latest button appears above the composer while the transcript is away from the bottom and returns to the newest message. Focusing the prompt does not resume following; sending a message, running a command, pressing G or scrolling back to the bottom does. Reading retains the visible message and its offset through new replies, growing content, composer and viewport resizing, detail expansion, older-page insertion and reconnects. Keyboard navigation to a long message aligns its beginning below the header. Reaching the top loads earlier conversation and process history; loaded pages remain available across reconnects. Scroll ownership belongs to Chat, while the shared conversation hook owns page retention.
 
@@ -307,7 +322,7 @@ transcript text temporarily restores older messages to full opacity so their
 selection stays legible.
 The prompt keeps selected letters light on a stronger purple highlight. Its native
 caret tint returns while a range is selected so iOS can draw the selection and
-drag handles; the block cursor returns when the selection collapses.
+drag handles; the thin purple insertion caret returns when the selection collapses.
 
 People opens the conversation list. A counted Requests entry opens incoming first-message decisions, with sent and past requests secondary; Contacts in the heading opens the private address book. Both offer a direct return to conversations. New conversation filters saved people locally or opens a public profile address. These are separate jobs rather than equal tabs. Conversation selection, scroll and drafts stay mounted while visiting Requests or Contacts, with hidden queries paused.
 
@@ -382,3 +397,5 @@ left sidebar. It uses the same retained view and draft protection as conversatio
 The sidebar list scrolls independently of this link. Save and publish remain
 separate; `/profile` is the public address without an alias choice. Existing
 published aliases continue to resolve. Profile queries share the signal-updated cache.
+
+Help introduces Ship, expands example requests inline, and links to the existing Messenger connections, Memory, Permissions and the operator's configured privacy policy. The privacy row uses `publicDeployment().privacyUrl` and is omitted when no policy is configured. Keyboard shortcuts replaces the Help content with Search Chat, general shortcuts and the current screen’s shortcuts; a back action restores Help. Switching views moves keyboard focus to the back action or the shortcuts button and resets the panel scroll. The support footer opens the manual inside Memory, email support and the community Discord. When feedback is available, Feedback closes Help and opens the existing header Feedback dialog, preserving any report draft. Native disclosures and links retain keyboard access, and modifier labels follow the platform without changing the shortcuts.

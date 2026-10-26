@@ -16,6 +16,7 @@ import type { PasswdEntry } from "../auth/passwd";
 import { parsePasswd, serializePasswd } from "../auth/passwd";
 import type { ShadowEntry } from "../auth/shadow";
 import { parseShadow, serializeShadow, isLocked, makeShadowEntry, hashToken, verify } from "../auth/shadow";
+import { passwordWaitMessage, type PasswordAttempts } from "./password-attempts";
 import type { GroupEntry } from "../auth/group";
 import { parseGroup, serializeGroup, resolveGids } from "../auth/group";
 
@@ -29,7 +30,8 @@ export type AuthIdentity = {
 
 export type AuthResult =
   | { ok: true; identity: AuthIdentity }
-  | { ok: false; error: string };
+  /** `waitMs` is set when the password went unchecked because too many attempts came first. */
+  | { ok: false; error: string; waitMs?: number };
 
 /** A token authenticates as exactly the principal kind it was issued for. */
 export type AuthTokenKind = "human" | "machine" | "service";
@@ -87,7 +89,7 @@ type TokenAuthOptions = {
 };
 
 export class AuthStore {
-  constructor(private readonly sql: SqlStorage) {}
+  constructor(private readonly sql: SqlStorage, private readonly attempts?: PasswordAttempts) {}
 
   credentialEpoch(uid: number): number {
     return this.sql.exec<{ credential_epoch: number }>("SELECT credential_epoch FROM account_access WHERE uid = ?", uid).toArray()[0]?.credential_epoch ?? 0;
@@ -391,8 +393,20 @@ export class AuthStore {
   // Authentication
   // ---------------------------------------------------------------------------
 
-  async authenticate(username: string, credential: string): Promise<AuthResult> {
+  /**
+   * Checks a password, paced per account and per source: the keyed hash of
+   * the client's address, when the caller knows it.
+   */
+  async authenticate(username: string, credential: string, source: string | null = null): Promise<AuthResult> {
     const user = this.getPasswdByUsername(username);
+    const attempt = this.attempts?.begin(user ? String(user.uid) : null, source);
+    if (attempt && !attempt.allowed) return { ok: false, error: passwordWaitMessage(attempt.waitMs), waitMs: attempt.waitMs };
+    const result = await this.checkPassword(user, username, credential);
+    attempt?.settle(result.ok);
+    return result;
+  }
+
+  private async checkPassword(user: PasswdEntry | null, username: string, credential: string): Promise<AuthResult> {
     if (!user) return { ok: false, error: "Unknown user" };
     if (this.isAccountDisabled(user.uid)) return { ok: false, error: "Authentication failed" };
     if (user.uid !== 0 && this.getHumanAccount()?.uid !== user.uid) return { ok: false, error: "Authentication failed" };

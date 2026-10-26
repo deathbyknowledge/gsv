@@ -172,7 +172,7 @@ function fixture(storage: DurableObjectStorage) {
     ({ id: `task:${when.getTime()}`, time: Math.floor(when.getTime() / 1_000) }));
   const contact = {
     id: "contact:remote", ownerUid: OWNER, generation: "1", conversationId: "conv:remote", state: "active", blocked: false,
-    remoteSubject: { displayName: "Remote" }, preferences: { shipHandlesMessages: true },
+    remoteName: "Remote", preferences: { shipHandlesMessages: true },
   };
   const federation = {
     get: (_contactId: string) => contact,

@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { administerOperatorBootstrap } from "../src/operator-bootstrap.ts";
 import type { MigrationD1Row } from "../src/installation-migration-d1.ts";
-import { deletionStackHarness, STACK } from "./fixtures/deletion-stack-harness.ts";
+import { deletionStackHarness, serveTestPlc, STACK } from "./fixtures/deletion-stack-harness.ts";
 
 type Harness = ReturnType<typeof deletionStackHarness>;
 type Worker = ReturnType<Harness["getWorker"]>;
@@ -17,6 +17,7 @@ describe("public onboarding activation recovery", () => {
   let harness: Harness;
   let socket: Socket | undefined;
   beforeAll(async () => {
+    serveTestPlc();
     harness = deletionStackHarness();
     await harness.listen();
     await harness.getWorker(STACK.accounts).applyD1Migrations("INSTALLATIONS_DB");
@@ -24,6 +25,7 @@ describe("public onboarding activation recovery", () => {
   afterAll(async () => {
     if (socket?.readyState === 1) socket.close(1000, "test complete");
     await harness?.close();
+    vi.restoreAllMocks();
   });
 
   it("finishes locally committed setup after an operator rotates its onboarding bearer", async () => {

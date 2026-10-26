@@ -187,6 +187,31 @@ describe("native input subscription", () => {
     expect(app.value()).toBe("$ ");
   });
 
+  it("sends the dictated draft and pauses capture through the host's finish", async () => {
+    const app = await mounted();
+    app.prompt.current.setValue("typed ");
+    await app.start();
+    await act(() => app.control().send());
+    expect(app.input.command).toHaveBeenLastCalledWith("view-1", { kind: "finish", request_id: 10 });
+    expect(app.send).not.toHaveBeenCalled();
+    await app.push(2, { ...idle(), events: [
+      { id: 2, request_id: 10, segment_id: 0, kind: "final", action: "send", text: "hello there" },
+    ] });
+    expect(app.send).toHaveBeenCalledExactlyOnceWith("typed hello there");
+    expect(app.value()).toBe("");
+    expect(app.control().capturing).toBe(false);
+  });
+
+  it("does not request a send before dictation is listening", async () => {
+    const app = await mounted();
+    await act(() => app.control().send());
+    await app.push(1, { ...idle(), voice: { ...voice(""), phase: "loading" }, events: [
+      { id: 1, request_id: 10, segment_id: 0, kind: "started", action: null, text: "" },
+    ] });
+    await act(() => timers.at(-1)!());
+    expect(app.input.command).not.toHaveBeenCalled();
+  });
+
   it("retains rejected submissions and stops dictation without replaying the send", async () => {
     const app = await mounted();
     app.prompt.current.setValue("$ ");
@@ -220,6 +245,24 @@ describe("native input subscription", () => {
     expect(app.send).not.toHaveBeenCalled();
     expect(app.value()).toBe("hello");
     expect(app.disposals[0]).toHaveBeenCalledOnce();
+  });
+
+  it("restores the pre-dictation draft when dictation is cancelled on purpose", async () => {
+    const app = await mounted();
+    app.prompt.current.setValue("typed: ");
+    await app.start();
+    expect(app.value()).toBe("typed: hello");
+    await act(() => { app.control().cancel(true); });
+    expect(app.value()).toBe("typed: ");
+    expect(app.input.command).toHaveBeenLastCalledWith(expect.anything(), { kind: "cancel" });
+  });
+
+  it("keeps dictated words when capture ends for another reason", async () => {
+    const app = await mounted();
+    app.prompt.current.setValue("typed: ");
+    await app.start();
+    await act(() => { app.control().cancel(); });
+    expect(app.value()).toBe("typed: hello");
   });
 
   it("keeps live dictated text after a helper failure and ignores its late final", async () => {

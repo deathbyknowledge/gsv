@@ -100,6 +100,29 @@ describe("approval card", () => {
     expect(text).not.toContain("$");
   });
 
+  it("names who a publish speaks as, every change, and the files its records carry", async () => {
+    const picture = { $type: "blob", ref: { $link: "bafkreipicture" }, mimeType: "image/png", size: 2_097_152 };
+    const tree = await approvalCardTree({ ...props, request: { ...request, syscall: "atproto.write", target: "gsv", args: {
+      handle: "alice",
+      address: "alice.ship.space",
+      writes: [
+        { action: "put", collection: "com.example.note", rkey: "first", record: { $type: "com.example.note", text: "hello", picture } },
+        { action: "delete", collection: "com.example.note", rkey: "old" },
+      ],
+    } } });
+    const text = collectText(tree);
+    expect(text).toContain("Publish to the open network");
+    expect(text).toMatch(/Publishes to the open network as\s+@alice/);
+    expect(text).toContain("add or replace com.example.note/first");
+    expect(text).toContain("remove com.example.note/old");
+    const nodes = collectNodes(tree);
+    const handle = nodes.find((node) => node.type === Hint && collectText(node) === "@alice");
+    expect(handle?.props.text).toBe("alice.ship.space");
+    // Each file the records carry renders once, keyed by its CID.
+    expect(nodes.filter((node) => node.key === "bafkreipicture")).toHaveLength(1);
+    expect(collectText(nodes.find((node) => node.props.class === "machine-rail"))).toBe("com.example.note/first · com.example.note/old");
+  });
+
   it.each<{ syscall: string; args: JsonObject }>([
     { syscall: "sys.mcp.call", args: { serverId: "calendar", name: "update_event", arguments: { attendees: ["guest@example.com"], notify: false, retries: 0, location: null } } },
     { syscall: "shell.exec", args: { input: "python task.py", cwd: "/home/user/project", env: { MODE: "write" }, timeout: 60 } },

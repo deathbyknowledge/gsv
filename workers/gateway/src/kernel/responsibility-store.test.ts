@@ -80,6 +80,42 @@ describe("ResponsibilityStore", () => {
     });
   });
 
+  it("backs off recovery wakes while Ship leaves work untouched and starts over once it changes", async () => {
+    await withStore((store) => {
+      const created = store.create(createInput()).record;
+      const deliver = (now: number) => {
+        const batch = store.createReadyBatch(OWNER_UID, now);
+        expect(batch?.responsibilities.map(({ id }) => id)).toEqual([created.id]);
+        store.markBatchDelivered(batch!.id);
+      };
+      const retryDelays = (from: number, count: number) => {
+        const delays: number[] = [];
+        let now = from;
+        for (let retry = 0; retry < count; retry += 1) {
+          const wakeAt = store.nextWakeAt(OWNER_UID, now)!;
+          delays.push(wakeAt - now);
+          now = wakeAt;
+          deliver(now);
+        }
+        return { delays, now };
+      };
+      deliver(1_000);
+      const untouched = retryDelays(1_000, 5);
+      expect(untouched.delays).toEqual([5 * 60_000, 15 * 60_000, 60 * 60_000, 6 * 60 * 60_000, 6 * 60 * 60_000]);
+
+      store.update({
+        ownerUid: OWNER_UID, id: created.id, actor: USER_ACTOR, observedByShip: false,
+        patch: { title: "Look at this again" }, now: untouched.now + 1,
+      });
+      deliver(untouched.now + 1);
+      const changed = retryDelays(untouched.now + 1, 3);
+      expect(changed.delays).toEqual([5 * 60_000, 15 * 60_000, 60 * 60_000]);
+
+      store.markEventDelivered(OWNER_UID, [created.id], changed.now + 1);
+      expect(retryDelays(changed.now + 1, 2).delays).toEqual([5 * 60_000, 15 * 60_000]);
+    });
+  });
+
   it("preserves explicit check times, including an intentional clear", async () => {
     await withStore((store) => {
       const created = store.create(createInput({ nextCheckAtMs: 3 * DAY_MS, observedByShip: true })).record;

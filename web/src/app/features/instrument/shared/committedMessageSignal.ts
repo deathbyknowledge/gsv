@@ -16,7 +16,7 @@ export const committedMessageSchema = z.object({
     ]),
     /* absent on request-state lines and on messages from v1 peers */
     social: z.object({
-      reference: z.object({ actor: z.object({ shipId: z.string(), subjectId: z.string() }), messageId: z.string() }),
+      reference: z.object({ did: z.string(), messageId: z.string() }),
       provenance: z.object({ kind: z.enum(["human", "process"]) }),
     }).optional(),
   }),

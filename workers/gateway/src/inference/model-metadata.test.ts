@@ -56,15 +56,38 @@ describe("Kernel model metadata", () => {
     expect(resolveModel).toHaveBeenCalledTimes(69);
   });
 
-  it("does not cache failures or export exception text or model names", async () => {
+  it("answers unknown after a failed lookup without caching it or exporting exception text or model names", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { resolver, resolveModel } = fixture();
     resolveModel.mockRejectedValueOnce(new Error("private diagnostic detail"));
-    await expect(resolver.resolve("custom", "private-model", 180_000)).rejects.toThrow("private diagnostic detail");
+    await expect(resolver.resolve("custom", "private-model", 180_000)).resolves.toBeNull();
     await expect(resolver.resolve("custom", "private-model", 180_000)).resolves.toBe(262_144);
     expect(resolveModel).toHaveBeenCalledTimes(2);
     expect(log.mock.calls.map(([record]) => record.event.properties.outcome)).toEqual(["error", "ok"]);
     expect(JSON.stringify(log.mock.calls)).not.toContain("private");
+  });
+
+  it("keeps the last known value when a refresh fails", async () => {
+    vi.useFakeTimers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { resolver, resolveModel } = fixture();
+    expect(await resolver.resolve("gsv", "default", 180_000)).toBe(262_144);
+    await vi.advanceTimersByTimeAsync(60_000);
+    resolveModel.mockRejectedValueOnce(new Error("accounts unavailable"));
+    expect(await resolver.resolve("gsv", "default", 180_000)).toBe(262_144);
+    resolveModel.mockImplementationOnce(() => new Promise(() => {}));
+    const timedOut = resolver.resolve("gsv", "default", 180_000);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(timedOut).resolves.toBe(262_144);
+    resolveModel.mockResolvedValueOnce({ provider: "gsv", model: "default", contextWindowTokens: 131_072 });
+    expect(await resolver.resolve("gsv", "default", 180_000)).toBe(131_072);
+    expect(resolveModel).toHaveBeenCalledTimes(4);
+    expect(log.mock.calls.map(([record]) => record.event.properties)).toEqual([
+      expect.objectContaining({ outcome: "ok", cache: "miss" }),
+      expect.objectContaining({ outcome: "error", cache: "miss" }),
+      expect.objectContaining({ outcome: "timeout", cache: "miss" }),
+      expect.objectContaining({ outcome: "ok", cache: "miss" }),
+    ]);
   });
 
   it("allows a lookup to finish between five and ten seconds", async () => {
@@ -80,7 +103,7 @@ describe("Kernel model metadata", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("does not cache a late RPC result after timing out and disposing it", async () => {
+  it("answers unknown after a timeout and does not cache the late RPC result it disposed", async () => {
     vi.useFakeTimers();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { resolver, resolveModel } = fixture();
@@ -89,9 +112,9 @@ describe("Kernel model metadata", () => {
     resolveModel.mockImplementationOnce(() => Object.assign(new Promise<InferenceModelMetadata>((resolve) => {
       finish = resolve;
     }), { [Symbol.dispose]: dispose }));
-    const failed = expect(resolver.resolve("gsv", "default", 180_000)).rejects.toThrow("timed out after 10000ms");
+    const timedOut = resolver.resolve("gsv", "default", 180_000);
     await vi.advanceTimersByTimeAsync(10_000);
-    await failed;
+    await expect(timedOut).resolves.toBeNull();
     expect(dispose).toHaveBeenCalledOnce();
     finish({ provider: "gsv", model: "default", contextWindowTokens: 123 });
     await Promise.resolve();

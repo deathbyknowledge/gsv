@@ -7,6 +7,8 @@ const RESERVED_HANDLES = new Set([
   "deploy",
   "docs",
   "install",
+  "lexicons",
+  "pds",
   "signup",
   "staging",
   "www",

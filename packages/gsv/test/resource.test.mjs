@@ -53,6 +53,11 @@ test("federation messages are complete and byte-bounded before delivery admissio
     messageId: "message:remote",
     threadId: "thread:shared",
     text: "Hello",
+    social: {
+      threadId: "thread:shared",
+      reference: { did: "did:plc:aliceaaaaaaaaaaaaaaaaaaa", messageId: "message:remote" },
+      provenance: { kind: "human" },
+    },
   };
   const resource = {
     id: "resource:remote",

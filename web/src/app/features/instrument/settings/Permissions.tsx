@@ -6,8 +6,8 @@ import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleTargets } from "../../../services/system/consoleService";
 import { APPROVAL_ACTIONS, actionLabel, humanToolCapabilityLabel, targetOptionValue, targetFromOptionValue } from "../../../components/ui/agentToolApprovalOptions";
-import { LoadingState } from "../../../components/ui/Spinner";
 import { Select } from "../../../components/ui/Select";
+import { LoadingState } from "../../../components/ui/Spinner";
 import { defaultApprovalPolicyForConfig } from "../../../domain/system/consoleAgentBehavior";
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import { canConfigure, readSettingsPolicy, settingsAction, settingsPolicySchema, SETTINGS_CONFIG_KEY, type SettingsPolicy } from "./settingsModel";
@@ -17,6 +17,7 @@ import { useT } from "../../../i18n/locale";
 
 export function Permissions({ account, active, onDirty }: SettingsSectionProps) {
   const t = useT();
+  const actionOptions = APPROVAL_ACTIONS.map((action) => ({ label: actionLabel(action), value: action }));
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const config = useQuery({ queryKey: SETTINGS_CONFIG_KEY, queryFn: () => loadConsoleConfig(client), enabled: connected && active });
@@ -39,9 +40,8 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
     onError: () => cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }),
     onSuccess: async () => { await cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }); setDraft(null); setSaved(true); },
   });
-  const actionOptions = APPROVAL_ACTIONS.map((action) => ({ label: actionLabel(action), value: action }));
   const update = (next: SettingsPolicy) => { setDraft({ inherited: false, policy: next, base: draft?.base ?? original }); setSaved(false); setError(null); };
-  return <section aria-labelledby="settings-permissions-title">
+  return <section class="settings-permissions" aria-labelledby="settings-permissions-title">
     <h1 id="settings-permissions-title">{t("settings.permissions.title")}</h1>
     <p class="settings-intro">{t("settings.permissions.intro")}</p>
     <p class="settings-muted">{t("settings.permissions.mailHint")}</p>
@@ -74,12 +74,17 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
           <ol class="settings-rules">{policy.rules.map((rule, index) => {
             const options = permissionOptionsForRule(rule, targets);
             return <li key={index}>
-            <div class="settings-rule-field is-tool">
-              <Select block label={t("settings.permissions.tool")} ariaLabel={t("settings.permissions.ruleTool", { number: index + 1 })} options={options.tools} selected={rule.match} placeholder={t("settings.permissions.chooseTool")} disabled={usesDefault} onSelect={(value) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, match: value } : entry) })} />
+            <div class="settings-rule-move">
+              <button class="settings-text-action" type="button" aria-label={t("settings.permissions.moveUp")} title={t("settings.permissions.moveUp")} disabled={usesDefault || index === 0} onClick={() => { const rules = [...policy.rules]; [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]]; update({ ...policy, rules }); }}>↑</button>
+              <button class="settings-text-action" type="button" aria-label={t("settings.permissions.moveDown")} title={t("settings.permissions.moveDown")} disabled={usesDefault || index === policy.rules.length - 1} onClick={() => { const rules = [...policy.rules]; [rules[index + 1], rules[index]] = [rules[index], rules[index + 1]]; update({ ...policy, rules }); }}>↓</button>
+            </div>
+            <div class="settings-rule-tool">
+              <Select block size="small" label={t("settings.permissions.tool")} ariaLabel={t("settings.permissions.ruleTool", { number: index + 1 })} options={options.tools} selected={rule.match} placeholder={t("settings.permissions.chooseTool")} disabled={usesDefault} onSelect={(value) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, match: value } : entry) })} />
               {options.customToolLabel && <p class="settings-field-note">{options.customToolLabel}</p>}
+              <button class="settings-text-action settings-rule-remove" type="button" disabled={usesDefault} onClick={() => update({ ...policy, rules: policy.rules.filter((_, at) => at !== index) })}>{t("common.remove")}</button>
             </div>
             <div class="settings-rule-field">
-              <Select block label={t("settings.permissions.target")} ariaLabel={t("settings.permissions.ruleTarget", { number: index + 1 })} options={options.targets} selected={targetOptionValue(rule.target)} disabled={usesDefault} onSelect={(value) => {
+              <Select block size="small" label={t("settings.permissions.target")} ariaLabel={t("settings.permissions.ruleTarget", { number: index + 1 })} options={options.targets} selected={targetOptionValue(rule.target)} disabled={usesDefault} onSelect={(value) => {
                 const target = targetFromOptionValue(value);
                 const next: SettingsPolicy["rules"][number] = { match: rule.match, action: rule.action };
                 if (target) next.target = target;
@@ -87,13 +92,8 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
               }} />
               {rule.target && !isToolApprovalTargetSelector(rule.target) && <p class="settings-field-note">{rule.target}</p>}
             </div>
-            <div class="settings-rule-field is-action">
-              <Select block label={t("settings.permissions.action")} ariaLabel={t("settings.permissions.ruleAction", { number: index + 1 })} options={actionOptions} selected={rule.action} disabled={usesDefault} onSelect={(value) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, action: settingsAction(value) } : entry) })} />
-            </div>
-            <div class="settings-actions">
-              <button class="settings-text-action" type="button" disabled={usesDefault || index === 0} onClick={() => { const rules = [...policy.rules]; [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]]; update({ ...policy, rules }); }}>{t("settings.permissions.moveUp")}</button>
-              <button class="settings-text-action" type="button" disabled={usesDefault} onClick={() => update({ ...policy, rules: policy.rules.filter((_, at) => at !== index) })}>{t("common.remove")}</button>
-            </div>
+            <Select block size="small" label={t("settings.permissions.action")} ariaLabel={t("settings.permissions.ruleAction", { number: index + 1 })} options={actionOptions} selected={rule.action} disabled={usesDefault} onSelect={(value) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, action: settingsAction(value) } : entry) })} />
+
           </li>;
           })}</ol>
           <div class="settings-actions">

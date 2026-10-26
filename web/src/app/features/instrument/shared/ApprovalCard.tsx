@@ -1,10 +1,25 @@
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import type { Ref } from "preact";
 import { Hint } from "../../../components/ui/Tooltip";
-import { useT } from "../../../i18n/locale";
-import { hilDetailLabel, hilRequestLine, hilRequestSentence } from "../../../services/chat/domain/hil";
+import { rich, useT, type TextKey } from "../../../i18n/locale";
+import { useMediaObjectUrl } from "../../../services/chat/hooks/useChatMediaSource";
+import { usePublishedFile } from "../../../services/chat/hooks/useChatProcesses";
+import {
+  hilDetailLabel,
+  hilPublication,
+  hilRequestLine,
+  hilRequestSentence,
+  type HilPublication,
+  type HilPublishedFile,
+} from "../../../services/chat/domain/hil";
 import { commandLine } from "./commandLine";
 import "./approvalCard.css";
+
+const CHANGE_LABELS = {
+  create: "shell.approval.publishCreate",
+  put: "shell.approval.publishPut",
+  delete: "shell.approval.publishDelete",
+} satisfies Record<HilPublication["changes"][number]["action"], TextKey>;
 
 export type ApprovalCardProps = {
   request: ProcHilRequest;
@@ -20,10 +35,14 @@ export type ApprovalCardProps = {
   onDecide: (decision: "approve" | "deny", remember?: boolean) => void;
 };
 
-/** Ship's pending approval: what it wants to do in the person's words, the raw request folded beneath. */
+/**
+ * Ship's pending approval: what it wants to do in the person's words, the raw request folded beneath.
+ * A publish also names who it speaks as, every change it makes, and the files its records carry.
+ */
 export function ApprovalCard({ request, who, place, label, disabled = false, shortcuts = true, approveRef, onInspect, onDecide }: ApprovalCardProps) {
   const t = useT();
   const line = hilRequestLine(request);
+  const publication = hilPublication(request);
   const heading = <>{label ?? t("shell.approval.label")} · {place}</>;
   const exactDetails = <pre class="approval-exact">{JSON.stringify({ syscall: request.syscall, target: request.target, args: request.args }, null, 2)}</pre>;
   return (
@@ -32,6 +51,17 @@ export function ApprovalCard({ request, who, place, label, disabled = false, sho
         {onInspect ? <button type="button" onClick={onInspect} title={t("shell.approval.inspect")}>{heading}</button> : heading}
       </div>
       <p class="ask">{hilRequestSentence(request, place)}</p>
+      {publication ? <div class="approval-publish">
+        <p>{rich(t("shell.approval.publishAs"), {
+          handle: <Hint text={publication.address}><span class="approval-handle" tabIndex={0}>{`@${publication.handle}`}</span></Hint>,
+        })}</p>
+        <ul>
+          {publication.changes.map((change, index) => <li key={index}>{t(CHANGE_LABELS[change.action], { record: change.record })}</li>)}
+        </ul>
+        {publication.files.length > 0 ? <div class="approval-files">
+          {publication.files.map((file) => <PublishedFile key={file.cid} file={file} />)}
+        </div> : null}
+      </div> : null}
       <details class="fold">
         <summary>{hilDetailLabel(request)}</summary>
         {line ? <>
@@ -63,4 +93,17 @@ export function ApprovalCard({ request, who, place, label, disabled = false, sho
       </div>
     </div>
   );
+}
+
+/** A picture shows as itself; any other file, or a picture that cannot load, by its type and size. */
+function PublishedFile({ file }: { file: HilPublishedFile }) {
+  const t = useT();
+  const picture = usePublishedFile(file.mimeType.startsWith("image/") ? file : null);
+  const source = useMediaObjectUrl(picture.data);
+  const megabytes = file.size >= 1024 * 1024;
+  const size = (file.size / (megabytes ? 1024 * 1024 : 1024)).toLocaleString(undefined, { maximumFractionDigits: 1 });
+  const label = t(megabytes ? "shell.approval.fileMegabytes" : "shell.approval.fileKilobytes", { type: file.mimeType, size });
+  return source
+    ? <figure class="approval-file"><img src={source} alt={t("shell.approval.publishPicture")} /><figcaption>{label}</figcaption></figure>
+    : <span class="approval-file">{label}</span>;
 }

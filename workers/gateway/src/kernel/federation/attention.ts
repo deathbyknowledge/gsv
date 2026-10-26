@@ -1,4 +1,5 @@
 import type { ConversationMessage, JsonObject, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type { FederationContactRecord, FederationInboxRecord, FederationOutboxLocalMessage } from "../federation-store";
 import type { ShipEvent } from "../ship-event-store";
@@ -13,7 +14,7 @@ export function bindContactReply(contact: FederationContactRecord, message: Fede
   requireContactCaller(ctx, true);
   const work = handleResponsibilityGet({ id: responsibilityId }, ctx).responsibility;
   if (work.assignee.kind !== "ship" || terminal(work)) throw new Error("Replies must continue an open Ship responsibility");
-  ctx.federation.bindReplyWait(contact, message.messageId, message.social?.reference.actor, work.id);
+  ctx.federation.bindReplyWait(contact, message.messageId, work.id);
 }
 
 /**
@@ -43,7 +44,9 @@ export function admitContactMessage(contact: FederationContactRecord, inbox: Fed
     const current = ctx.federation.get(contact.id);
     if (!current || current.generation !== inbox.contactGeneration || current.state !== "active" || current.blocked) return false;
     if (!ctx.federation.claimMessageAttention(inbox)) return false;
-    const reply = ctx.federation.replyResponsibilities(current, message.social?.replyTo);
+    // Work waits on this Ship's own messages, so a reply quoting the contact's waits on none.
+    const replyTo = message.social?.replyTo;
+    const reply = replyTo && replyTo.did !== ctx.shipIdentity.current() ? [] : ctx.federation.replyResponsibilities(current, replyTo);
     // A message without an explicit reply is unambiguous only while one task is awaiting this contact.
     const task = reply.length === 1 ? ctx.responsibilities.get(current.ownerUid, reply[0]) : null;
     let work: ResponsibilityRecord | null = null;
@@ -56,7 +59,7 @@ export function admitContactMessage(contact: FederationContactRecord, inbox: Fed
       contactGeneration: current.generation,
       conversationId: message.conversationId,
       messageId: message.id,
-      from: current.localAlias ?? current.remoteSubject.displayName,
+      from: contactDisplayName(current),
       text: message.text,
       responsibilityId: work.id,
       ledgerRevision: ctx.responsibilities.revision(current.ownerUid),
@@ -108,7 +111,7 @@ function pendingMessages(contact: FederationContactRecord, ctx: KernelContext): 
   const existing = standingHandling(contact, ctx);
   if (existing) return attend(existing, ctx);
   return ctx.responsibilities.create({
-    ownerUid: contact.ownerUid, title: `Pending messages from ${contact.localAlias ?? contact.remoteSubject.displayName}`,
+    ownerUid: contact.ownerUid, title: `Pending messages from ${contactDisplayName(contact)}`,
     details: { contactId: contact.id, conversationId: contact.conversationId, contactGeneration: contact.generation },
     source: actor, audience: { conversationIds: [contact.conversationId] }, assignee: { kind: "ship" },
     state: "open", priority: "normal", dedupeKey: `${handoffPrefix(contact)}${crypto.randomUUID()}`,

@@ -66,7 +66,7 @@ it("runs fresh installation administration through the public screens without co
   expect(suspended?.headers.get("cache-control")).toBe("no-store");
   expect(await html(await http.handle(new Request(`${origin}${path}`)))).toContain("Reactivate owner");
   expect((await http.handle(form(`${path}/lifecycle`, { state: "active" })))?.status).toBe(303);
-  const reset = await html(await http.handle(form(`${path}/reset`, { operationId: "reset_html_owner", confirmHandle: "owner" })), 201);
+  const reset = await html(await http.handle(form(`${path}/reset`, { operationId: "reset_html_owner", confirmHandle: "owner", reason: "owner asked" })), 201);
   expect(reset).toContain("pending deletion");
   expect(reset).toContain("reset itself did not erase it");
   expect(claim(reset).hash).not.toBe(reissued.hash);
@@ -80,6 +80,42 @@ it("runs fresh installation administration through the public screens without co
   expect(api?.headers.get("referrer-policy")).toBe("no-referrer");
   await expect(api?.json()).resolves.toMatchObject({ installationId: replacement.installationId, state: "provisioning" });
   expect((await env.INSTALLATIONS_DB.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'managed_inference_%'").all()).results).toEqual([]);
+});
+
+it("points to recovery and says what a reset does before the operator confirms one, and resets nothing without a reason", async () => {
+  const { onboarding, service, http } = stack();
+  const created = await service.create({ operationId: "create_cautious", handle: "cautious" });
+  const installationId = created.installation.installationId;
+  const authorized = await onboarding.authorize({ installationId, token: new URL(created.onboarding.onboardingUrl).hash.slice(1) });
+  if (!authorized.ok) throw new Error("Expected valid onboarding");
+  await onboarding.complete({ installationId, claimId: authorized.claimId });
+  const path = `/admin/installations/${installationId}`;
+  const page = await html(await http.handle(new Request(`${origin}${path}`)));
+  const panel = page.slice(page.indexOf("FRESH SHIP"));
+  const confirmation = panel.indexOf('name="confirmHandle"');
+  for (const consequence of ["a new Ship", "a new identity on the open network", "contacts end", "public profile and records"]) {
+    expect(panel.indexOf(consequence)).toBeGreaterThan(-1);
+    expect(panel.indexOf(consequence)).toBeLessThan(confirmation);
+  }
+  expect(panel.slice(0, confirmation)).toMatch(/<input name="reason" required/);
+  // A person who only lost access recovers their Ship instead, which keeps it.
+  expect(panel.indexOf("Recover your Ship")).toBeGreaterThan(-1);
+  expect(panel.indexOf("Recover your Ship")).toBeLessThan(panel.indexOf("a new identity on the open network"));
+  expect(panel).toContain("keeps their Ship, contacts and DID");
+
+  const reset = vi.spyOn(service, "resetInstallation");
+  for (const [values, error] of [
+    [{ confirmHandle: "cautious" }, "request reason is required"],
+    [{ confirmHandle: "cautious", reason: "  " }, "request reason is required"],
+    [{ reason: "owner asked" }, "confirmHandle is required"],
+  ] as const) {
+    const refused = await html(await http.handle(form(`${path}/reset`, { operationId: "reset_cautious", ...values })), 400);
+    expect(refused).toContain(error);
+    expect(refused).toContain("contacts end");
+  }
+  expect(reset).not.toHaveBeenCalled();
+  await expect(service.getInstallation(installationId)).resolves.toMatchObject({ state: "active" });
+  await html(await http.handle(form(`${path}/reset`, { operationId: "reset_cautious", confirmHandle: "cautious", reason: "owner asked" })), 201);
 });
 
 it("admits neither reads nor mutations before authentication and exact-origin validation", async () => {

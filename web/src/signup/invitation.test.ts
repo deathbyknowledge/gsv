@@ -9,8 +9,8 @@ describe("signup contact handoff", () => {
   it("restores the contact after browser restart while retaining the signup operation", async () => {
     let snapshot: WelcomeSnapshot = { revision: "initial", value: null };
     const storage = { save: async (_revision: string, value: WelcomeSnapshot["value"]) => snapshot = { revision: "saved", value } };
-    const contact = encodeContactInvitation({ version: 1, origin: "https://sponsor.example", shipId: "ship:sponsor",
-      subject: { id: "subject:sponsor", displayName: "Sponsor" }, token: "x".repeat(43), expiresAtMs: Date.now() + 60_000 });
+    const contact = encodeContactInvitation({ version: 2, did: "did:plc:sponsoraaaaaaaaaaaaaaaaa", handle: "sponsor.example",
+      name: "Sponsor", token: "x".repeat(43), expiresAtMs: Date.now() + 60_000 });
     const first = new OwnerWelcome(snapshot, storage, origin);
     await captureContactInvitation(first, contact);
     await first.save({ operationId: "signup-operation" });

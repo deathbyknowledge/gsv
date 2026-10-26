@@ -7,17 +7,19 @@ import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_APPROACHES_KEY, INSTRUMENT_CONTACT_BLOCKS_KEY, instrumentContactConversationKey } from "../wire/queryKeys";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { approachStatus, requestMayRetry } from "./peopleModel";
+import { approachStatus, requestMayReport, requestMayRetry } from "./peopleModel";
 import { ContactHandlingChoice } from "./ContactHandlingChoice";
+import { ReportRequest } from "./ReportRequest";
 import { useT } from "../../../i18n/locale";
 
-export function MessageRequest({ request, account, onOpen }: {
-  request: ApproachSummary; account: ConsoleAccount | undefined; onOpen: (contactId: string) => void;
+export function MessageRequest({ request, account, shipTakenDown, onOpen }: {
+  request: ApproachSummary; account: ConsoleAccount | undefined; shipTakenDown: boolean; onOpen: (contactId: string) => void;
 }) {
   const t = useT();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [blockConfirm, setBlockConfirm] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const [shipHandlesMessages, setShipHandlesMessages] = useState<boolean | null>(null);
   const opened = useRef(request.state === "accepted");
   useEffect(() => {
@@ -40,13 +42,13 @@ export function MessageRequest({ request, account, onOpen }: {
   }, onSuccess: refresh });
   const retry = useMutation({ mutationFn: () => client.approach.retry({ approachId: request.id, expectedRevision: request.revision }), onSuccess: refresh });
   const blockedQuery = useQuery({
-    queryKey: [...INSTRUMENT_CONTACT_BLOCKS_KEY, request.peer], enabled: allowed("contact.block.list"),
-    queryFn: () => client.contact.block.list({ actor: request.peer }),
+    queryKey: [...INSTRUMENT_CONTACT_BLOCKS_KEY, request.peerDid], enabled: allowed("contact.block.list"),
+    queryFn: () => client.contact.block.list({ did: request.peerDid }),
   });
   const blocked = !!blockedQuery.data?.blocks.length;
   const canBlock = allowed("contact.block.set") && !!blockedQuery.data;
   const block = useMutation({
-    mutationFn: () => client.contact.block.set({ actor: request.peer, blocked: !blocked }),
+    mutationFn: () => client.contact.block.set({ did: request.peerDid, blocked: !blocked }),
     onSuccess: async () => { setBlockConfirm(false); await Promise.all([refresh(), cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACT_BLOCKS_KEY })]); },
   });
   const pending = decide.isPending || retry.isPending || block.isPending;
@@ -57,7 +59,7 @@ export function MessageRequest({ request, account, onOpen }: {
   return <section class="people-request" aria-labelledby="message-request-title">
     <div class="people-kicker">{t(request.direction === "incoming" ? "people.request.from" : "people.request.to")}</div>
     <h1 id="message-request-title">{request.displayName}</h1>
-    <p class="people-status" role="status">{t(approachStatus(request))}</p>
+    <p class="people-status" role="status">{t(approachStatus(request, shipTakenDown))}</p>
     {history.isFetching && !history.data && request.messageSequence !== undefined && <LoadingState variant="panel">{t("people.request.loadingFirst")}</LoadingState>}
     {!allowed("conversation.history") && connected && <p class="people-note">{t("people.request.noRead")}</p>}
     {text !== undefined && <article class="people-first-message"><p>{text}</p><time dateTime={new Date(request.createdAtMs).toISOString()}>{new Date(request.createdAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time></article>}
@@ -71,11 +73,16 @@ export function MessageRequest({ request, account, onOpen }: {
       <p class="people-note">{t("people.request.waiting")}</p>
       <button class="people-action" disabled={!allowed("approach.decide") || pending} onClick={() => decide.mutate("withdraw")}>{t("people.request.withdraw")}</button>
     </div>}
+    {request.reportedAtMs !== undefined && <p class="people-note">{t("people.report.reported", { date: new Date(request.reportedAtMs).toLocaleDateString(undefined, { dateStyle: "medium" }) })}</p>}
+    {requestMayReport(request) && allowed("approach.report") && (reporting
+      ? <ReportRequest request={request} canBlock={canBlock && !blocked} onClose={() => setReporting(false)}
+        onReported={(alsoBlock) => { setReporting(false); if (alsoBlock) block.mutate(); }} />
+      : <div class="people-decision"><button class="people-action is-danger" disabled={pending} onClick={() => setReporting(true)}>{t("people.report.open")}</button></div>)}
     {requestMayRetry(request) && <div class="people-decision"><button class="ibtn" disabled={!allowed("approach.retry") || pending} onClick={() => retry.mutate()}>{t(retry.isPending ? "people.retrying" : "people.retry")}</button></div>}
     {request.contactId && request.state === "accepted" && <button class="ibtn is-primary" onClick={() => onOpen(request.contactId!)}>{t("people.request.openConversation")}</button>}
     {error && <p class="people-error" role="alert">{error.message}</p>}
     <details class="people-identity"><summary>{t("people.connection.title")}</summary>
-      <dl><dt>{t("people.request.shipIdentity")}</dt><dd>{request.peer.shipId}</dd><dt>{t("people.request.personIdentity")}</dt><dd>{request.peer.subjectId}</dd></dl>
+      <dl>{request.peerHandle && <><dt>{t("people.request.handle")}</dt><dd>{request.peerHandle}</dd></>}<dt>{t("people.request.identity")}</dt><dd>{request.peerDid}</dd></dl>
       {blockConfirm ? <div class="people-decision"><p>{t(blocked ? "people.connection.confirmUnblock" : "people.request.confirmBlock")}</p><div class="people-actions"><button class="people-action is-danger" disabled={!canBlock || pending} onClick={() => block.mutate()}>{t(blocked ? "people.unblock" : "people.block")}</button><button class="people-action" disabled={pending} onClick={() => setBlockConfirm(false)}>{t("common.cancel")}</button></div></div>
         : <button class="people-action is-danger" disabled={!canBlock || pending} onClick={() => setBlockConfirm(true)}>{t(blocked ? "people.request.unblockPerson" : "people.request.blockPerson")}</button>}
     </details>

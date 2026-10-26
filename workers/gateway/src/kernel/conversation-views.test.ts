@@ -10,16 +10,17 @@ import { runSqlMigrations } from "../schema/runner";
 import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT, runKernelSqlMigrations } from "./schema/migrations";
 
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "person", home: "/home/person", cwd: "/home/person" };
+const REMOTE_DID = "did:plc:remoteaaaaaaaaaaaaaaaaaa";
 
 describe("private inbox state", () => {
   it("selects unread attention before pagination and respects private read, mute, block and connection state", async () => {
     await runWithRealKernelSql((sql, storage) => {
       const { ctx, registry, contact } = fixture(storage);
       registry.recordContactMessage({ id: "unread", conversationId: contact.conversationId, sequence: 1,
-        author: { kind: "contact", contactId: contact.id, shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id, displayName: "Remote" },
+        author: { kind: "contact", contactId: contact.id, displayName: "Remote" },
         text: "Waiting while you were away", origin: { kind: "federation", contactId: contact.id, deliveryId: "delivery:one" }, createdAt: Date.now(),
       }, false);
-      const newer = ctx.federation.activateContact({ ...contact, remoteShipId: "ship:newer", remoteSubject: { id: "subject:newer", displayName: "Newer" },
+      const newer = ctx.federation.activateContact({ ownerUid: OWNER.uid, remoteDid: "did:plc:neweraaaaaaaaaaaaaaaaaaa", remoteName: "Newer",
         generation: "generation:newer", threadId: "thread:newer" });
       registry.ensureContact(1000, "Newer", newer.conversationId);
       registry.recordContactMessage({ id: "outgoing", conversationId: newer.conversationId, sequence: 1,
@@ -31,9 +32,9 @@ describe("private inbox state", () => {
       sql.exec("UPDATE federation_contacts SET muted = 1 WHERE contact_id = ?", contact.id);
       expect(waiting()).toEqual([]);
       sql.exec("UPDATE federation_contacts SET muted = 0 WHERE contact_id = ?", contact.id);
-      ctx.federation.setActorBlock(1000, { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id }, true);
+      ctx.federation.setBlock(1000, REMOTE_DID, true);
       expect(waiting()).toEqual([]);
-      ctx.federation.setActorBlock(1000, { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id }, false);
+      ctx.federation.setBlock(1000, REMOTE_DID, false);
       expect(waiting()).toHaveLength(1);
       sql.exec("UPDATE federation_contacts SET state = 'revoked' WHERE contact_id = ?", contact.id);
       expect(waiting()).toEqual([]);
@@ -49,7 +50,7 @@ describe("private inbox state", () => {
       const { ctx, registry, contact } = fixture(storage);
       const message = (sequence: number): ConversationMessage => ({
         id: `message:${sequence}`, conversationId: contact.conversationId, sequence,
-        author: { kind: "contact", contactId: contact.id, shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id, displayName: "Person" },
+        author: { kind: "contact", contactId: contact.id, displayName: "Person" },
         text: "hello".repeat(100), origin: { kind: "federation", contactId: contact.id, deliveryId: `delivery:${sequence}` }, createdAt: Date.now() + sequence,
       });
       registry.recordContactMessage(message(1), false);
@@ -94,11 +95,18 @@ describe("private inbox state", () => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();
       runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 62));
-      const { registry, contact } = fixture(storage);
-      registry.recordSequence(contact.conversationId, 42);
+      // The contact as a Ship recorded it before private views.
+      sql.exec(`INSERT INTO federation_contacts (
+        contact_id, owner_uid, state, generation, remote_ship_id, remote_subject_id, remote_display_name,
+        remote_origin, remote_public_key_json, shared_secret, conversation_id, thread_id, created_at, updated_at
+      ) VALUES ('contact:old', ?, 'active', 'generation:one', 'ship:remote', 'subject:remote', 'Remote',
+        'https://remote.example', '{}', 'fixture-secret', 'conv:old', 'thread:one', 1, 2)`, OWNER.uid);
+      const registry = new ConversationRegistry(storage.sql);
+      registry.ensureContact(OWNER.uid, "Remote", "conv:old");
+      registry.recordSequence("conv:old", 42);
       runKernelSqlMigrations(storage);
       runKernelSqlMigrations(storage);
-      expect(registry.inboxEntry(1000, contact.conversationId)).toMatchObject({
+      expect(registry.inboxEntry(1000, "conv:old")).toMatchObject({
         conversation: { latestSequence: 42 }, view: { readThroughSequence: 42 }, unread: false, preview: null,
       });
       expect(sql.exec("SELECT COUNT(*) AS n FROM federation_contacts").toArray()[0].n).toBe(1);
@@ -110,9 +118,7 @@ function fixture(storage: DurableObjectStorage) {
   const registry = new ConversationRegistry(storage.sql);
   const federation = new FederationStore(storage);
   const contact = federation.activateContact({
-    ownerUid: OWNER.uid, remoteShipId: "ship:remote", remoteSubject: { id: "subject:remote", displayName: "Remote" },
-    remoteOrigin: "https://remote.example", remotePublicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" },
-    sharedSecret: "secret", generation: "generation:one", threadId: "thread:one",
+    ownerUid: OWNER.uid, remoteDid: REMOTE_DID, remoteName: "Remote", generation: "generation:one", threadId: "thread:one",
   });
   registry.ensureContact(OWNER.uid, "Remote", contact.conversationId);
   const context = {

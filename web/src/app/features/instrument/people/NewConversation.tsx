@@ -6,8 +6,9 @@ import { useViewActive } from "../../../services/navigation/ViewActivity";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { approachSendIntent, profileAddress as resolveProfileAddress, profileAddressLabel, type ApproachDraft } from "./peopleModel";
+import { approachSendIntent, handleLabel, profileAddress as resolveProfileAddress, type ApproachDraft } from "./peopleModel";
 import { ContactHandlingChoice } from "./ContactHandlingChoice";
+import { submitOnEnter } from "../shared/enterToSend";
 import { useT } from "../../../i18n/locale";
 
 export function NewConversation({ account, draft, onChange, onSent, onBusy, contacts, onOpen, onInvitation }: {
@@ -28,10 +29,10 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   latest.current = draft;
   const displayName = draft.displayName ?? (account?.displayName || account?.gecos || account?.username || "");
   const saved = contacts.filter((contact) => contact.state === "active" && contact.preferences?.saved !== false
-    && `${contactDisplayName(contact)} ${contact.remoteOrigin}`.toLocaleLowerCase().includes(draft.url.trim().replace(/^@/, "").toLocaleLowerCase()))
+    && `${contactDisplayName(contact)} ${contact.remoteHandle ?? ""}`.toLocaleLowerCase().includes(draft.url.trim().replace(/^@/, "").toLocaleLowerCase()))
     .sort((a, b) => contactDisplayName(a).localeCompare(contactDisplayName(b)));
   const resolve = useMutation({
-    mutationFn: (url: string) => client.profile.resolve({ url }),
+    mutationFn: (address: string) => client.profile.resolve({ address }),
     onSuccess: ({ profile }) => onChange({ ...latest.current, profile, url: profile.url }),
   });
   const send = useMutation({
@@ -47,11 +48,12 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   const busy = resolve.isPending || send.isPending;
   useEffect(() => { onBusy(busy); return () => onBusy(false); }, [busy, onBusy]);
   const profile = draft.profile;
-  const existing = profile ? contacts.find((contact) => contact.state === "active" && contact.remoteShipId === profile.actor.shipId && contact.remoteSubject.id === profile.actor.subjectId) : undefined;
+  const existing = profile ? contacts.find((contact) => contact.state === "active" && contact.remoteDid === profile.did) : undefined;
   const canResolve = connected && !!account && canConfigure(account, "profile.resolve");
   const canSend = connected && !!account && canConfigure(account, "approach.create");
-  const bytes = new TextEncoder().encode(draft.text.trim()).length;
-  const valid = !!displayName.trim() && !!draft.text.trim() && bytes <= 32_768 && draft.shipHandlesMessages !== null;
+  /* a request's text counts UTF-16 code units, as its textarea's maxLength does */
+  const tooLong = draft.text.trim().length > 32_768;
+  const valid = !!displayName.trim() && !!draft.text.trim() && !tooLong && draft.shipHandlesMessages !== null;
   const error = resolve.error ?? send.error;
 
   return <section class="people-compose" aria-label={t("people.compose.label")}>
@@ -66,12 +68,12 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
     </form>
     {!profile && <>
       {saved.length > 0 ? <ul class="people-recipient-list" aria-label={t("people.compose.saved")}>{saved.map((contact) => <li key={contact.id}>
-        <button class="people-recipient" disabled={busy} onClick={() => onOpen(contact.id)}><span>{contactDisplayName(contact)}</span><small>{profileAddressLabel(contact.remoteOrigin)}</small></button>
+        <button class="people-recipient" disabled={busy} onClick={() => onOpen(contact.id)}><span>{contactDisplayName(contact)}</span>{contact.remoteHandle && <small>{handleLabel(contact.remoteHandle)}</small>}</button>
       </li>)}</ul> : draft.url.trim() && !profileAddress && <p class="people-note">{t("people.compose.noMatch")}</p>}
     </>}
     {profile && <>
       <div class="people-profile-preview">
-        <span class="people-kicker">{profileAddressLabel(profile.origin)}</span>
+        <span class="people-kicker">{handleLabel(profile.handle)}</span>
         <h2>{profile.displayName}</h2>{profile.about && <p>{profile.about}</p>}
       </div>
       {existing ? <button class="ibtn is-primary" onClick={() => onOpen(existing.id)}>{t("people.compose.openExisting")}</button>
@@ -83,8 +85,9 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
           onChange({ ...draft, intent }); send.mutate(intent);
         }}>
           <label>{t("people.compose.displayName")}<input value={displayName} maxLength={80} autoComplete="off" disabled={busy} onInput={(event) => onChange({ ...draft, displayName: event.currentTarget.value })} /></label>
-          <label>{t("people.compose.message")}<textarea value={draft.text} rows={5} maxLength={32_768} disabled={busy} onInput={(event) => onChange({ ...draft, text: event.currentTarget.value })} /></label>
-          {bytes > 32_768 && <p class="people-error" role="alert">{t("people.composer.tooLong")}</p>}
+          <label>{t("people.compose.message")}<textarea value={draft.text} rows={5} maxLength={32_768} disabled={busy} onInput={(event) => onChange({ ...draft, text: event.currentTarget.value })}
+            onKeyDown={submitOnEnter} /></label>
+          {tooLong && <p class="people-error" role="alert">{t("people.composer.tooLong")}</p>}
           <p class="people-note">{t("people.compose.afterAccept")}</p>
           <ContactHandlingChoice value={draft.shipHandlesMessages} disabled={busy || !account || !canConfigure(account, "contact.preferences.update")} onChange={(shipHandlesMessages) => onChange({ ...draft, shipHandlesMessages })} />
           <button class="ibtn is-primary" type="submit" disabled={!canSend || busy || !valid}>{send.isPending ? <LoadingState>{t("people.compose.sending")}</LoadingState> : t("people.compose.send")}</button>

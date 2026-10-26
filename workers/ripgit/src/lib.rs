@@ -1,5 +1,6 @@
 mod api;
 mod diff;
+mod failure;
 mod git;
 mod hyperspace;
 mod pack;
@@ -82,7 +83,9 @@ async fn forward_hyperspace_request(
     let owner = parts[2];
     let repo = parts[3];
     let do_name = repository_do_name(installation_id, owner, repo);
-    retirement::register(env, installation_id, &do_name).await?;
+    if let Some(failure) = retirement::register(env, installation_id, &do_name).await? {
+        return Ok(failure);
+    }
     let namespace = env.durable_object("REPOSITORY")?;
     let id = namespace.id_from_name(&do_name)?;
     let stub = id.get_stub()?;
@@ -115,16 +118,26 @@ async fn forward_hyperspace_request(
 
 #[event(fetch)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+    let started_at = Date::now().as_millis();
+    let route = failure::Route::of(&req.method(), &req.path());
+    let installation_id = installation_id_from_request(&req).ok();
+    match serve(req, &env).await {
+        Ok(response) => Ok(response),
+        Err(error) => failure::answer(&error, &env, installation_id.as_deref(), route, started_at),
+    }
+}
+
+async fn serve(req: Request, env: &Env) -> Result<Response> {
     let url = req.url()?;
     let path = url.path();
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     if path.starts_with("/.gsv/discovery/") {
         let action = path.rsplit('/').next().unwrap_or("");
-        return retirement::forward_discovery(req, &env, action).await;
+        return retirement::forward_discovery(req, env, action).await;
     }
     if path.starts_with("/.gsv/installation/") {
         let action = path.rsplit('/').next().unwrap_or("");
-        return retirement::forward_lifecycle(req, &env, action).await;
+        return retirement::forward_lifecycle(req, env, action).await;
     }
     if path.starts_with("/.gsv/") {
         return Response::error("Not found", 404);
@@ -140,12 +153,14 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         && !parts[2].is_empty()
         && !parts[3].is_empty()
     {
-        return forward_hyperspace_request(req, &env, &url, &parts, &installation_id).await;
+        return forward_hyperspace_request(req, env, &url, &parts, &installation_id).await;
     }
 
     if parts.len() >= 2 && !parts[0].is_empty() && !parts[1].is_empty() {
         let do_name = repository_do_name(&installation_id, parts[0], parts[1]);
-        retirement::register(&env, &installation_id, &do_name).await?;
+        if let Some(failure) = retirement::register(env, &installation_id, &do_name).await? {
+            return Ok(failure);
+        }
         let mut req = req.clone_mut()?;
         req.headers_mut()?
             .set(retirement::RESOURCE_HEADER, &do_name)?;
@@ -182,7 +197,25 @@ impl DurableObject for Repository {
         }
     }
 
-    async fn fetch(&self, mut req: Request) -> Result<Response> {
+    async fn fetch(&self, req: Request) -> Result<Response> {
+        let started_at = Date::now().as_millis();
+        let route = failure::Route::of(&req.method(), &req.path());
+        let installation_id = installation_id_from_request(&req).ok();
+        match self.serve(req).await {
+            Ok(response) => Ok(response),
+            Err(error) => failure::answer(
+                &error,
+                &self.env,
+                installation_id.as_deref(),
+                route,
+                started_at,
+            ),
+        }
+    }
+}
+
+impl Repository {
+    async fn serve(&self, mut req: Request) -> Result<Response> {
         if req.url()?.path() == "/.gsv/resource/inspect" {
             return self.sql.inspect();
         }
@@ -418,9 +451,7 @@ impl DurableObject for Repository {
             _ => Response::error("Not Found", 404),
         }
     }
-}
 
-impl Repository {
     fn advertise_refs(&self, service: &str) -> Result<Response> {
         let content_type = format!("application/x-{}-advertisement", service);
 
