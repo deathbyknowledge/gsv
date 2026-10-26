@@ -26,6 +26,8 @@
 }
 .gsv-auth-header button { min-height: 36px; padding-inline: 8px; }
 .gsv-auth-home { text-decoration: none; }
+.gsv-auth-header-actions { display: flex; align-items: center; gap: 16px; }
+.gsv-auth-header-actions a { text-transform: none; letter-spacing: 0; }
 .gsv-auth-composition {
   position: absolute;
   inset: var(--instrument-header-height) 0 0;

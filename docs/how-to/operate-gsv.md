@@ -402,7 +402,8 @@ fresh deployment end to end before giving anyone a Ship on it.
 
 The web signup header links to the configured primary domain. The handle/email
 form has no Back button; other public signup steps link Back to that homepage.
-Link to `/owner/signup/?view=welcome` to offer both creating a Ship and opening
+**Already have a Ship?** in the signup top bar links to
+`/owner/signup/?view=welcome`, which offers both creating a Ship and opening
 an existing one by email or space address.
 
 During signup, people can optionally check **Email me occasionally with cool Ship updates**.

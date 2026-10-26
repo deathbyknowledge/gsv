@@ -1,5 +1,5 @@
 import { Fragment, type VNode } from "preact";
-import { AuthLayout } from "../app/features/session/AuthLayout";
+import { AuthLayout, AuthScene } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
 import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
 import { OwnerWelcome, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
@@ -52,7 +52,8 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
   };
   // A friend's invitation opens as a centered card; ordinary signup lives on the page so the rest of it stays usable.
   const Frame = contactInvitation ? SignupDialog : Fragment;
-  return <Frame>{invitationError
+  return <AuthScene layout="welcome" homeHref={signupHomepage(accountsOrigin)} headerActions={!contactInvitation && !welcome
+    ? <a class="gsv-auth-link" href="/owner/signup/?view=welcome">{t("session.welcome.alreadyHaveShip")}</a> : undefined}><Frame>{invitationError
     ? <AuthLayout visible><section class="desktop-welcome"><h1>{t("session.contact.title")}</h1><p role="alert">{invitationError}</p>
       <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={async (event) => {
         event.preventDefault(); await leave("/owner/signup/?resume=1");
@@ -62,5 +63,5 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
       spaceDomain={publicDeployment().primaryDomain ?? presumedSpaceDomain(new URL(accountsOrigin).hostname)}
       invitation={preview && "name" in preview ? preview : undefined} chooseSpace={!!contactInvitation}
       addressPanel={contactInvitation || welcome ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
-      load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</Frame>;
+      load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</Frame></AuthScene>;
 }

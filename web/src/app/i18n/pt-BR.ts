@@ -1191,6 +1191,7 @@ export const ptBR = {
   "session.welcome.invited": "Você recebeu um convite para o Ship",
   "session.welcome.join": "Junte-se ao Ship",
   "session.welcome.create": "Criar seu Ship",
+  "session.welcome.alreadyHaveShip": "Já tem um Ship?",
   "session.welcome.createDetail": "Escolha um nome de usuário e confirme seu e-mail",
   "session.welcome.emailTitle": "Seu e-mail",
   "session.welcome.checkEmail": "Confira seu e-mail",

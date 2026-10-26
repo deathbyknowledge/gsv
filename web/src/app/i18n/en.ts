@@ -1185,6 +1185,7 @@ export const en = {
   "session.welcome.invited": "You’re invited to Ship",
   "session.welcome.join": "Join Ship",
   "session.welcome.create": "Create your Ship",
+  "session.welcome.alreadyHaveShip": "Already have a Ship?",
   "session.welcome.createDetail": "Pick a handle, confirm your email",
   "session.welcome.emailTitle": "Your email",
   "session.welcome.checkEmail": "Check your email",
