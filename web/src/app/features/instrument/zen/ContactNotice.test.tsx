@@ -1,10 +1,16 @@
+import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
 import type { ContactSummary } from "@humansandmachines/gsv/protocol";
+import type { ComponentChildren, JSX, VNode } from "preact";
+import { useState } from "preact/hooks";
+import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
-import { ContactNoticePanel, noticeName, preview, replyIntentFor, type ContactNotice, type ContactNoticeMessage } from "./ContactNotice";
+import type { ConsoleAccount } from "../../../domain/system/consoleModels";
+import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
+import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
+import { ContactNoticePanel, ContactReplyBox, EMPTY_REPLY, noticeName, preview, replyIntentFor, type ContactNotice, type ContactNoticeMessage } from "./ContactNotice";
 
 let root: ReturnType<typeof createTestRoot> | undefined;
-afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlobals(); });
+afterEach(async () => { await root?.unmount(); root = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 function message(sequence: number, text: string, byShip = false): ContactNoticeMessage {
   return { id: `message:${sequence}`, conversationId: "conversation:ada", sequence, text, createdAt: sequence, media: [],
@@ -86,5 +92,63 @@ describe("the contact notice", () => {
   it("falls back to the name the peer sent when the contact is not loaded", () => {
     expect(noticeName(notice, undefined)).toBe("Ada Lovelace");
     expect(noticeName(notice, contact)).toBe("Ada");
+  });
+});
+
+const owner: ConsoleAccount = { uid: 1000, username: "owner", displayName: "Owner", relation: "self", runnable: false, gecos: "", capabilities: ["*"] };
+function status(state: GsvClientStatus["state"]): GsvClientStatus {
+  return { state, url: "wss://space.example/ws", username: "owner", connectionId: null, message: null };
+}
+type ReplyElementProps = {
+  value?: string;
+  disabled?: boolean;
+  children?: ComponentChildren;
+  onClick?: () => void;
+  /* preact/compat, which the interface translator loads, may rename a textarea's onInput to oninput */
+  onInput?: (event: JSX.TargetedInputEvent<HTMLTextAreaElement>) => void;
+  oninput?: (event: JSX.TargetedInputEvent<HTMLTextAreaElement>) => void;
+};
+
+describe("the contact reply box", () => {
+  it("keeps the reply editable while reconnecting and only holds the send", async () => {
+    const statuses = new Set<(next: GsvClientStatus) => void>();
+    vi.spyOn(GSVClient.prototype, "getStatus").mockImplementation(() => status("connected"));
+    vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation((listener) => { statuses.add(listener); return () => { statuses.delete(listener); }; });
+    const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(() => deferred<never>().promise);
+    vi.stubGlobal("document", {});
+    vi.stubGlobal("window", { location: { protocol: "https:", host: "space.example", search: "" }, sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } });
+    let tree: ComponentChildren;
+    function Harness() {
+      const [draft, setDraft] = useState(EMPTY_REPLY);
+      tree = ContactReplyBox({ notice, contact, account: owner, draft, onDraft: setDraft, onSent: () => {} });
+      return null;
+    }
+    root = createTestRoot("Contact reply box");
+    await root.render(<GatewayProvider><Harness /></GatewayProvider>);
+    // SAFETY: the textarea and button are the intrinsic elements the reply box renders.
+    const element = (type: string) => collectNodes(tree).find((node) => node.type === type) as VNode<ReplyElementProps> | undefined;
+    const reply = () => element("textarea")?.props;
+    const sendButton = () => element("button")?.props;
+    const type = (value: string) => act(() => {
+      // SAFETY: the handler reads only currentTarget.value from the event.
+      const input = { currentTarget: { value } } as JSX.TargetedInputEvent<HTMLTextAreaElement>;
+      (reply()?.onInput ?? reply()?.oninput)?.(input);
+    });
+
+    await act(() => { for (const listener of statuses) listener(status("disconnected")); });
+    expect(reply()?.disabled).toBe(false);
+    await type("yes, go ahead");
+    expect(reply()?.value).toBe("yes, go ahead");
+    expect(sendButton()?.disabled).toBe(true);
+    expect(collectText(tree)).toContain("Reconnecting...");
+    await act(() => { sendButton()?.onClick?.(); });
+    expect(request).not.toHaveBeenCalled();
+
+    await act(() => { for (const listener of statuses) listener(status("connected")); });
+    expect(reply()?.value).toBe("yes, go ahead");
+    expect(reply()?.disabled).toBe(false);
+    expect(sendButton()?.disabled).toBe(false);
+    expect(collectText(tree)).not.toContain("Reconnecting...");
+    expect(request).not.toHaveBeenCalled();
   });
 });

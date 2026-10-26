@@ -117,8 +117,10 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
   /* a send the Kernel recorded as undelivered, or a failure in its own words */
   const [error, setError] = useState<{ kind: "undelivered" } | { kind: "failed"; text: string } | null>(null);
   const name = noticeName(notice, contact);
-  const maySend = connected && !!account && !!contact && contact.state === "active" && !contact.blocked
+  /* who may write here; a dropped connection only holds the send, so the person keeps typing */
+  const mayReply = !!account && !!contact && contact.state === "active" && !contact.blocked
     && canConfigure(account, "contact.send") && (account.uid === 0 || account.uid === contact.ownerUid);
+  const maySend = connected && mayReply;
   const body = draft.text.trim();
   const tooLong = new TextEncoder().encode(draft.text).length > MAX_REPLY_BYTES;
   /* the Kernel recorded this exact text as a failed delivery; the chat has the retry, new text is a new message */
@@ -153,7 +155,7 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
           {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId="" />)}
         </div>
       ))}</div>
-      <textarea class="reply" rows={2} aria-label={t("chat.contact.replyTo", { name })} placeholder={t("chat.contact.replyPlaceholder", { name })} value={draft.text} disabled={!maySend || state === "sending"}
+      <textarea class="reply" rows={2} aria-label={t("chat.contact.replyTo", { name })} placeholder={t("chat.contact.replyPlaceholder", { name })} value={draft.text} disabled={!mayReply || state === "sending"}
         onInput={(event: JSX.TargetedEvent<HTMLTextAreaElement>) => {
           onDraft({ ...draft, text: event.currentTarget.value });
           if (state !== "sending") setState("idle");
@@ -163,7 +165,8 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
         <button type="button" class="ibtn is-primary" disabled={!maySend || !body || tooLong || state === "sending" || undelivered} onClick={() => void send()}>
           {state === "sending" ? t("chat.sending") : t("chat.contact.sendTo", { name })}
         </button>
-        {!maySend && <span>{t(!contact ? "chat.contact.notLoaded" : contact.state !== "active" ? "chat.contact.ended" : "chat.contact.cannotSend")}</span>}
+        {!mayReply && <span>{t(!contact ? "chat.contact.notLoaded" : contact.state !== "active" ? "chat.contact.ended" : "chat.contact.cannotSend")}</span>}
+        {mayReply && !connected && <span role="status">{t("chat.reconnecting")}</span>}
         {tooLong && <span class="error">{t("chat.contact.tooLong")}</span>}
         {error && <span class="error" role="alert">{error.kind === "undelivered" ? t("chat.contact.undelivered") : error.text}</span>}
       </div>
