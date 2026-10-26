@@ -61,7 +61,8 @@ export async function serveAtprotoDid(
     return new Response("Public repository unavailable", { status: 503, headers: { "cache-control": "no-store" } });
   }
   dids.delete(hostname);
-  // A host claims no handle for an account it has taken down, as Bluesky's PDS answers.
+  // A host claims no handle for an account it has taken down, as Bluesky's PDS answers; a remembered DID
+  // holds for a minute, so this takes hold within a minute of the takedown.
   if (!account || account.status === "takendown" || account.handle !== hostname) return notFound();
   dids.set(hostname, { installationId, did: account.did, confirmedAt: askedAt });
   for (const oldest of dids.keys()) {

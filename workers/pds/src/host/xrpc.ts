@@ -6,7 +6,7 @@ import { FIREHOSE_NAME } from "./firehose";
 
 export const XRPC_PREFIX = "/xrpc/";
 
-/** Whether the deployment serves a repository's public data, by the name of the object that holds it. */
+/** Whether Accounts admits an installation's repository, as `src/gsv/admission.ts` reads it. */
 export type Admission = "active" | AccountStatus;
 
 /** XRPC reads a hosted repository serves, with the parameter that names the repository. */
@@ -76,8 +76,8 @@ export function parseQuery<T extends z.ZodMiniType>(schema: T, url: URL): z.outp
 /**
  * Serves a host's public XRPC reads. Host methods answer here; a repository
  * read goes to the object that holds the repository, once the host directory
- * finds it and the deployment admits it, so an unknown DID never addresses an
- * object.
+ * finds it, so an unknown DID never addresses an object; the repository
+ * decides from its own state whether it serves the read.
  */
 export async function handleXrpc(request: Request, env: HostEnv): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });

@@ -645,7 +645,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
         );
       }
       await this.scheduleApproachMaintenance();
-      // every start of the Kernel makes sure the ledger's daily housekeeping is pending
+      // while the ledger holds a line, every start of the Kernel makes sure its daily housekeeping is pending
       if (!this.ledger.isEmpty()) this.ledgerHousekeepingArmed = await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     });
   }
@@ -1936,7 +1936,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   /**
-   * The daily task is armed when the Kernel starts; every hundredth line
+   * The daily task is armed when the Kernel starts with lines in the ledger,
+   * or by the first line after it was empty; every hundredth line
    * counts the window and pulls the task nearer when it is over its bound.
    */
   async armLedgerRotation(seq: number): Promise<void> {
@@ -1971,7 +1972,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
    * The ledger's housekeeping: stale lines close, lines past retention leave
    * the window before anything rotates, so no segment carries them, a window
    * over its bound rotates, and segments past retention go. It comes back in
-   * a minute while there is more to do, and daily otherwise.
+   * a minute while there is more to do, daily while the ledger holds lines,
+   * and not at all once it is empty.
    */
   async onLedgerRotate(reason: string, runningTaskId?: string): Promise<void> {
     let drained = true;

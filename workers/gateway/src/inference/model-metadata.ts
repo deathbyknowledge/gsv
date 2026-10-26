@@ -23,7 +23,7 @@ type CachedContextWindow = { value: number | null; refreshAt: number };
 const contextWindows = new WeakMap<InferenceExecutionService, Map<string, CachedContextWindow>>();
 
 /**
- * One Kernel's metadata only. Never caches credentials, admission or in-flight RPCs.
+ * Model metadata only, shared by every Kernel in the isolate. Never caches credentials, admission or in-flight RPCs.
  * The context window only paces compaction, so a failed or slow lookup answers with
  * the last known value, however old, or unknown, and never fails the run.
  */
