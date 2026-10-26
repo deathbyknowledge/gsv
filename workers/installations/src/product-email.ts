@@ -30,10 +30,10 @@ export async function runProductEmailJobs(db: D1Database, env: ProductEmailEnvir
     .bind(now).all<Signup>();
   for (const row of pending.results) {
     const claim = await db.prepare(`UPDATE product_email_signups SET attempts=attempts+1,due_at=?
-      WHERE email=? AND completed_at IS NULL AND due_at<=? AND EXISTS (
+      WHERE email=? AND request_id=? AND completed_at IS NULL AND due_at<=? AND EXISTS (
         SELECT 1 FROM principals p WHERE p.id=principal_id AND p.state='active'
           AND p.primary_email_normalized=product_email_signups.email AND p.email_verified_at IS NOT NULL) RETURNING attempts`)
-      .bind(Date.now() + 120_000, row.email, now).first<{ attempts: number }>();
+      .bind(Date.now() + 120_000, row.email, row.request_id, now).first<{ attempts: number }>();
     if (!claim) continue;
     try {
       const headers = { Authorization: `Token ${env.BUTTONDOWN_API_KEY}`, "Content-Type": "application/json",
@@ -49,12 +49,12 @@ export async function runProductEmailJobs(db: D1Database, env: ProductEmailEnvir
         if (!response.ok) throw new Error(`buttondown_http_${response.status}`);
       } else if (!existing.ok) throw new Error(`buttondown_http_${existing.status}`);
       // Existing subscribers, including unsubscribed/blocked addresses, are never changed.
-      await db.prepare(`UPDATE product_email_signups SET completed_at=?,ip=NULL,last_error=NULL WHERE email=? AND attempts=?`)
-        .bind(Date.now(), row.email, claim.attempts).run();
+      await db.prepare(`UPDATE product_email_signups SET completed_at=?,ip=NULL,last_error=NULL WHERE email=? AND request_id=? AND attempts=?`)
+        .bind(Date.now(), row.email, row.request_id, claim.attempts).run();
     } catch (cause) {
-      await db.prepare("UPDATE product_email_signups SET due_at=?,last_error=? WHERE email=? AND attempts=?")
+      await db.prepare("UPDATE product_email_signups SET due_at=?,last_error=? WHERE email=? AND request_id=? AND attempts=?")
         .bind(Date.now() + Math.min(86_400_000, 30_000 * 2 ** Math.min(claim.attempts - 1, 11)),
-          JSON.stringify({ diagnosticId: crypto.randomUUID(), ...exceptionDiagnostics(cause) }), row.email, claim.attempts).run();
+          JSON.stringify({ diagnosticId: crypto.randomUUID(), ...exceptionDiagnostics(cause) }), row.email, row.request_id, claim.attempts).run();
     }
   }
 }
