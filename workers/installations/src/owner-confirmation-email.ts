@@ -1,4 +1,4 @@
-import type { OwnerConfirmationChange, OwnerNotice, OwnerNoticeUndo } from "@humansandmachines/gsv/services/owner-confirmations";
+import type { OwnerConfirmationChange, OwnerNotice } from "@humansandmachines/gsv/services/owner-confirmations";
 import { ownerEmailHtml } from "./owner-verification-email";
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -7,12 +7,12 @@ const ACTIONS = {
   replaced: "make a new recovery sheet",
   removed: "remove your recovery sheet",
 } satisfies Record<OwnerConfirmationChange, string>;
-/** What to do about a change the owner didn't make, promising an undo only from a key that can make one. */
-const ADVICE = {
-  operator: "If it was you, there’s nothing to do. If it wasn’t, reply within 3 days and we’ll undo it.",
-  "previous-sheet": "If it was you, there’s nothing to do. If it wasn’t, reply straight away. For 3 days, your previous sheet can still undo it.",
-  none: "If it was you, there’s nothing to do. If it wasn’t, reply straight away.",
-} satisfies Record<OwnerNoticeUndo, string>;
+/**
+ * What to do about a change the owner didn't make. The host signs a change only
+ * where the operator's recovery key outranks its own, so the operator can undo
+ * it for the directory's 72 hours; a late reply leaves too little time to act.
+ */
+const ADVICE = "If it was you, there’s nothing to do. If it wasn’t, reply straight away. We can undo it for 3 days.";
 
 /** The code that confirms one change to a Ship's recovery sheet. */
 export function ownerConfirmationEmail(change: OwnerConfirmationChange, code: string, expiresAt: number, now: number) {
@@ -27,8 +27,8 @@ export function ownerConfirmationEmail(change: OwnerConfirmationChange, code: st
   };
 }
 
-/** Tells the owner a recovery sheet change was made, and who can still undo one they didn’t make. */
-export function ownerNoticeEmail(notice: Pick<OwnerNotice, "change" | "ship" | "sheetCode" | "undo">, now: number) {
+/** Tells the owner a recovery sheet change was made, and what to do about one they didn’t make. */
+export function ownerNoticeEmail(notice: Pick<OwnerNotice, "change" | "ship" | "sheetCode">, now: number) {
   const subject = {
     made: `A recovery sheet was made for @${notice.ship}`,
     replaced: `A new recovery sheet was made for @${notice.ship}`,
@@ -40,11 +40,10 @@ export function ownerNoticeEmail(notice: Pick<OwnerNotice, "change" | "ship" | "
     removed: `removed the recovery sheet with sheet code ${notice.sheetCode}`,
   }[notice.change];
   const body = `On ${moment(now)}, someone signed in to your Ship ${done}.`;
-  const advice = ADVICE[notice.undo];
   return {
     subject,
-    text: `${body}\n\n${advice}\n\nShip`,
-    html: ownerEmailHtml([{ text: body }, { text: advice }]),
+    text: `${body}\n\n${ADVICE}\n\nShip`,
+    html: ownerEmailHtml([{ text: body }, { text: ADVICE }]),
   };
 }
 

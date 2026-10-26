@@ -100,12 +100,12 @@ describe("publishing for an installation", () => {
     expect(await repository.ownerRecoveryKey()).toEqual({ ownerRecoveryKey: null, pending: false });
 
     const [first, second] = await Promise.all([sheetKey(), sheetKey()]);
-    expect(await repository.setOwnerRecoveryKey(first)).toEqual({ ownerRecoveryKey: first, operatorCanUndo: false });
+    expect(await repository.setOwnerRecoveryKey(first)).toEqual({ ownerRecoveryKey: first });
     expect(await repository.ownerRecoveryKey()).toEqual({ ownerRecoveryKey: first, pending: false });
-    expect(await repository.setOwnerRecoveryKey(second)).toEqual({ ownerRecoveryKey: second, operatorCanUndo: false });
+    expect(await repository.setOwnerRecoveryKey(second)).toEqual({ ownerRecoveryKey: second });
     const last = plc.operations(account.did).at(-1);
     expect(last?.type === "plc_operation" && last.rotationKeys[0]).toBe(second);
-    expect(await repository.setOwnerRecoveryKey(null)).toEqual({ ownerRecoveryKey: null, operatorCanUndo: false });
+    expect(await repository.setOwnerRecoveryKey(null)).toEqual({ ownerRecoveryKey: null });
     expect(await repository.ownerRecoveryKey()).toEqual({ ownerRecoveryKey: null, pending: false });
 
     const restricted = accounts.add("restricted");

@@ -12,7 +12,7 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HostedRepo", "HostFirehose"] }],
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "gsv-pds-smoke-blobs" }],
-  // run.mjs sets the origins for the port it picks, and a fresh PLC_ROTATION_KEY.
+  // run.mjs sets the origins for the port it picks, and a fresh PLC_ROTATION_KEY and PLC_RECOVERY_KEY.
   "vars": {
     "PDS_ORIGIN": "http://127.0.0.1:9",
     "PLC_URL": "http://127.0.0.1:9"

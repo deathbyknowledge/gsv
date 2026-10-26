@@ -28,7 +28,7 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_INFERENCE_API_KEY`, `GSV_INFERENCE_BASE_URL` | Optional operator provider credentials and endpoint. |
 | `GSV_DELETION_CATALOG_FILE` | Path to a JSON array declaring current and historical external resources for deletion; see below. |
 | `GSV_PLC_ROTATION_KEY` | Runs the [open-network host](../architecture/open-network.md#deployment) at `pds.<domain>`. The secp256k1 private key, as 64 lowercase hex characters, that signs every Ship's DID operations; generate it once and keep it secret. |
-| `GSV_PLC_RECOVERY_KEY` | Optional `did:key` of an offline key that outranks the rotation key in every new DID. For a DID that lists it, a recovery sheet change's notice promises the owner that a reply within 3 days gets the change undone, so keep the key where you can use it in time. |
+| `GSV_PLC_RECOVERY_KEY` | Required with `GSV_PLC_ROTATION_KEY`: the `did:key` of an offline key that outranks the rotation key in every DID. Generate it once and keep its private half offline, such as on paper. Each recovery sheet change's email promises the owner that you can undo the change for 3 days, so keep the key where you can use it in time. |
 | `GSV_PLC_URL` | The did:plc directory the host registers DIDs with and Ships read them from; defaults to `https://plc.directory`. |
 | `GSV_PDS_CONTACT_EMAIL` | Optional public address where relays and other services can reach you about the host. The host's `describeServer` answer names it. |
 | `GSV_PDS_PRIVACY_POLICY_URL`, `GSV_PDS_TERMS_OF_SERVICE_URL` | Optional HTTPS links to your privacy policy and terms of service, which `describeServer` lists. |

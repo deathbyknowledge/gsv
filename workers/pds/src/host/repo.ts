@@ -253,10 +253,11 @@ export class HostedRepo extends DurableObject<HostEnv> {
    * Lists the account owner's recovery key first among its DID's rotation
    * keys, in place of any earlier one, or removes it given null. The host's
    * rotation key signs the change on the operation the host last recorded; an
-   * identity changed elsewhere since gets none. Says whether the operator's
-   * recovery key can undo the change.
+   * identity changed elsewhere since gets none. It signs only where the
+   * operator's recovery key can undo the change, so a change the owner didn't
+   * make can always be undone.
    */
-  async setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: DidKeyString | null; operatorCanUndo: boolean }> {
+  async setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: DidKeyString | null }> {
     const next = key === null ? null : parseOwnerRecoveryKey(key);
     return this.serialize(async () => {
       await this.requireLive();
@@ -267,8 +268,10 @@ export class HostedRepo extends DurableObject<HostEnv> {
       // The directory ranks a change's signer in the operation before it. A
       // sheet change keeps the operator's keys in order, so the recorded head
       // ranks them the same, even when it is that change.
-      const result = { ownerRecoveryKey: next, operatorCanUndo: await operatorCanUndo(this.env, known.head.operation.rotationKeys) };
-      if (next === known.ownerRecoveryKey) return result;
+      if (next === known.ownerRecoveryKey) return { ownerRecoveryKey: next };
+      if (!await operatorCanUndo(this.env, known.head.operation.rotationKeys)) {
+        throw new Error("OperatorKeyMissing: the identity doesn't list the operator's recovery key above the host's, so nothing could undo the change");
+      }
       if (next !== null && known.head.operation.rotationKeys.includes(next)) {
         throw new Error("InvalidRecoveryKey: the identity already lists that key");
       }
@@ -277,7 +280,7 @@ export class HostedRepo extends DurableObject<HostEnv> {
         rotationKeys: withOwnerRecoveryKey(state.rotationKeys, known.ownerRecoveryKey, next),
       }));
       await this.acceptIdentity(await this.saveAccount({ ...account, identity: { head, ownerRecoveryKey: next, accepted: false } }));
-      return result;
+      return { ownerRecoveryKey: next };
     });
   }
 

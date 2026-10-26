@@ -12,8 +12,11 @@ export interface HostEnv {
   PLC_URL: string;
   /** Hex secp256k1 private key that signs this host's PLC operations. */
   PLC_ROTATION_KEY: string;
-  /** did:key of an offline recovery key, ranked above the rotation key in every new DID. */
-  PLC_RECOVERY_KEY?: string;
+  /**
+   * did:key of the operator's offline recovery key, ranked above the rotation
+   * key in every DID, so the operator can undo what the host's key signs.
+   */
+  PLC_RECOVERY_KEY: string;
   /** Public address where the network can reach the host's operator, named by describeServer. */
   PDS_CONTACT_EMAIL?: string;
   /** The operator's privacy policy and terms of service, linked from describeServer. */

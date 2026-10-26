@@ -37,7 +37,7 @@ describe("making, replacing and removing the recovery sheet", () => {
     expect(done).toEqual({ status: "done", sheet: { code: SHEET_CODE, madeAt: expect.any(Number), pending: false } });
     expect(repository.setOwnerRecoveryKey).toHaveBeenCalledExactlyOnceWith(SHEET);
     expect(confirmations.notifyOwner).toHaveBeenCalledExactlyOnceWith({
-      installationId: "inst_alice", purpose: "recovery-sheet", change: "made", ship: ACCOUNT.handle, sheetCode: SHEET_CODE, undo: "none",
+      installationId: "inst_alice", purpose: "recovery-sheet", change: "made", ship: ACCOUNT.handle, sheetCode: SHEET_CODE,
     });
     expect(await handleRecoveryGet(ctx)).toEqual({ available: true, identity: { did: ACCOUNT.did, handle: ACCOUNT.handle }, sheet: done.status === "done" ? done.sheet : null });
   });
@@ -54,8 +54,8 @@ describe("making, replacing and removing the recovery sheet", () => {
     expect(replacing).not.toBe(removing);
     expect(await handleRecoverySet({ key: null }, ctx, confirmation(CODE))).toEqual({ status: "done", sheet: null });
     expect(repository.setOwnerRecoveryKey.mock.calls).toEqual([[NEXT_SHEET], [null]]);
-    expect(confirmations.notifyOwner.mock.calls.map(([notice]) => [notice.change, notice.sheetCode, notice.undo])).toEqual([
-      ["replaced", NEXT_SHEET_CODE, "previous-sheet"], ["removed", NEXT_SHEET_CODE, "previous-sheet"],
+    expect(confirmations.notifyOwner.mock.calls.map(([notice]) => [notice.change, notice.sheetCode])).toEqual([
+      ["replaced", NEXT_SHEET_CODE], ["removed", NEXT_SHEET_CODE],
     ]);
   });
 
@@ -77,19 +77,6 @@ describe("making, replacing and removing the recovery sheet", () => {
     expect(repository.setOwnerRecoveryKey).toHaveBeenCalledExactlyOnceWith(SHEET);
     await handleRecoverySet({ key: SHEET }, ctx, confirmation());
     expect(confirmations.notifyOwner).toHaveBeenCalledOnce();
-  });
-
-  it.each<[string, string | null, string | null, boolean, string]>([
-    ["a first sheet, where the identity lists the operator's key above the host's", null, SHEET, true, "operator"],
-    ["a first sheet, where it doesn't", null, SHEET, false, "none"],
-    ["a new sheet, where it doesn't", SHEET, NEXT_SHEET, false, "previous-sheet"],
-    ["a removal, where it doesn't", SHEET, null, false, "previous-sheet"],
-    ["a new sheet, where it does", SHEET, NEXT_SHEET, true, "operator"],
-  ])("tells Accounts who can still undo %s", async (_, from, to, operatorCanUndo, undo) => {
-    const { ctx, confirmations } = harness({ key: from, operatorCanUndo });
-    await handleRecoverySet({ key: to }, ctx, confirmation());
-    await handleRecoverySet({ key: to }, ctx, confirmation(CODE));
-    expect(confirmations.notifyOwner).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ undo }));
   });
 
   it("keeps the change when its notice can't be sent", async () => {
@@ -241,7 +228,7 @@ function confirmation(code?: string, password = PASSWORD) {
 
 function harness(options: {
   account?: boolean; key?: string | null; pending?: boolean; request?: OwnerConfirmationRequestResult;
-  credentialEpoch?: number; operatorCanUndo?: boolean; waitMs?: number; overrides?: Partial<KernelContext>;
+  credentialEpoch?: number; waitMs?: number; overrides?: Partial<KernelContext>;
 } = {}) {
   const listed = { ownerRecoveryKey: options.key ?? null, pending: options.pending ?? false };
   const repository = {
@@ -250,7 +237,7 @@ function harness(options: {
     ownerRecoveryKey: vi.fn(async () => options.account === false ? null : { ...listed }),
     setOwnerRecoveryKey: vi.fn(async (key: string | null) => {
       Object.assign(listed, { ownerRecoveryKey: key, pending: false });
-      return { ownerRecoveryKey: key, operatorCanUndo: options.operatorCanUndo ?? false };
+      return { ownerRecoveryKey: key };
     }),
     [Symbol.dispose]: vi.fn(),
   };

@@ -135,15 +135,14 @@ verified address for the owner, or fails, the change is refused.
 The host's rotation key signs each change, so for 72 hours a key ranked above
 it in the operation before can undo it. The previous sheet can undo its
 replacement or removal. The operator's recovery key, `GSV_PLC_RECOVERY_KEY`,
-can undo any of the three, but it is optional, and only DIDs created while it
-is configured list it. Without it, nothing can undo a first sheet that someone
-else made. After each change Accounts emails the owner its sheet code, from
-`GSV_OWNER_EMAIL_FROM` with replies to `GSV_OWNER_EMAIL_REPLY_TO`, so a change
-the owner didn't make reaches the operator while its recovery key can still
-undo it. The host says whether the operation before the change lists the
-operator's key above its own, and only then does the email promise that a reply
-within 3 days gets the change undone. Otherwise it asks for a reply straight
-away, and says the previous sheet can still undo the change when there was one.
+can undo any of the three. A deployment that runs the PDS requires it, and
+every DID lists it above the host's key. The host signs a sheet change only
+when the operation before it lists that key above its own, so a first sheet
+someone else made can always be undone; on a DID created under another
+operator key the change fails with `OperatorKeyMissing`. After each change
+Accounts emails the owner its sheet code, from `GSV_OWNER_EMAIL_FROM` with
+replies to `GSV_OWNER_EMAIL_REPLY_TO`, and asks for a reply straight away to a
+change the owner didn't make, which the operator can undo for 3 days.
 
 A reset gives the Ship a new identity, and the sheet stays with the old one. A
 deletion's tombstone is an operation like any other, so the sheet can undo it

@@ -159,14 +159,11 @@ describe("the Kernel's confirmation binding", () => {
     expect(mail.sent.every((message) => message.to === ship.email)).toBe(true);
   });
 
-  it.each([
-    ["the operator's key can undo it", "operator", "If it was you, there’s nothing to do. If it wasn’t, reply within 3 days and we’ll undo it."],
-    ["only the previous sheet can", "previous-sheet", "If it was you, there’s nothing to do. If it wasn’t, reply straight away. For 3 days, your previous sheet can still undo it."],
-    ["nothing can", "none", "If it was you, there’s nothing to do. If it wasn’t, reply straight away."],
-  ] as const)("promises to undo a change only when %s", async (_, undo, advice) => {
+  it("asks for a reply straight away to a change the owner didn't make, which the operator can undo for 3 days", async () => {
     const ship = await activeShip();
     const mail = mailbox();
-    await entrypoint("kernel-owner-confirmation", mail).notifyOwner(notice(ship.installationId, "replaced", undo));
+    await entrypoint("kernel-owner-confirmation", mail).notifyOwner(notice(ship.installationId, "replaced"));
+    const advice = "If it was you, there’s nothing to do. If it wasn’t, reply straight away. We can undo it for 3 days.";
     expect(mail.sent[0]!.text?.split("\n\n")[1]).toBe(advice);
     expect(mail.sent[0]!.html).toContain(advice);
   });
@@ -219,8 +216,8 @@ function request(installationId: string): OwnerConfirmationRequest {
   return { ...subject(installationId), change: "made", ship: "ada.ship.test" };
 }
 
-function notice(installationId: string, change: "made" | "replaced" | "removed", undo: OwnerNotice["undo"] = "operator"): OwnerNotice {
-  return { installationId, purpose: "recovery-sheet", change, ship: "ada.ship.test", sheetCode: "K7Q-P2M", undo };
+function notice(installationId: string, change: "made" | "replaced" | "removed"): OwnerNotice {
+  return { installationId, purpose: "recovery-sheet", change, ship: "ada.ship.test", sheetCode: "K7Q-P2M" };
 }
 
 async function activeShip(verified = true): Promise<{ installationId: string; email: string }> {

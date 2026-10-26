@@ -8,16 +8,6 @@ export type OwnerConfirmationPurpose = typeof OWNER_CONFIRMATION_PURPOSES[number
 export const OWNER_CONFIRMATION_CHANGES = ["made", "replaced", "removed"] as const;
 export type OwnerConfirmationChange = typeof OWNER_CONFIRMATION_CHANGES[number];
 
-/**
- * Who can still undo a change, for the 72 hours the directory allows, which
- * the notice tells the owner:
- * - `operator`: the operator's recovery key, which the identity lists above the host's key that signed the change;
- * - `previous-sheet`: only the sheet the change replaced or removed;
- * - `none`: nothing.
- */
-export const OWNER_NOTICE_UNDOS = ["operator", "previous-sheet", "none"] as const;
-export type OwnerNoticeUndo = typeof OWNER_NOTICE_UNDOS[number];
-
 const installationIdSchema = z.string().min(1).max(160);
 const purposeSchema = z.enum(OWNER_CONFIRMATION_PURPOSES);
 /** The SHA-256, in hex, of exactly what the change does; a code confirms that change and no other. */
@@ -53,7 +43,6 @@ export const ownerNoticeSchema = z.strictObject({
   ship: shipSchema,
   /** The public sheet code of the sheet made, or of the one removed. */
   sheetCode: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{3}-[0-9A-HJKMNP-TV-Z]{3}$/),
-  undo: z.enum(OWNER_NOTICE_UNDOS),
 });
 export type OwnerNotice = z.infer<typeof ownerNoticeSchema>;
 

@@ -113,7 +113,7 @@ class InstallationRepository extends RpcTarget implements PublicRepository {
     return await this.repo.ownerRecoveryKey();
   }
 
-  async setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: string | null; operatorCanUndo: boolean }> {
+  async setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: string | null }> {
     if (!this.publishing) throw new Error(NOT_PUBLISHING);
     return await this.repo.setOwnerRecoveryKey(key);
   }
