@@ -925,7 +925,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "adapter.pair.info": {
       const { adapter } = z.object({ adapter: z.string() }).parse(args);
       return respond(id, { adapter, accountId: `mock-${adapter}`, configured: true,
-        ...(adapter === "whatsapp" ? { instructions: "https://wa.me/31612345678?text=%2Flink" } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
+        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink" } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
     }
     case "adapter.pair.inspect": {
       const { adapter, code } = z.object({ adapter: z.string(), code: z.string() }).parse(args);

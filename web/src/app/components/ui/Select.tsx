@@ -102,13 +102,14 @@ export function Select(props: SelectProps) {
   }, [open]);
 
   const arr = Array.isArray(options) ? options.filter((x) => x != null) : null;
-  const opts = (arr && arr.length ? arr : [o0, o1, o2]).map(normalizeSelectOption);
+  /* only a missing list falls back to the catalogue's three demo options; a supplied empty list stays empty */
+  const opts = (arr ?? [o0, o1, o2]).map(normalizeSelectOption);
 
   const controlled = props.value !== undefined || selected !== undefined;
   const selectedIdx = selected !== undefined ? opts.findIndex((option) => option.value === selected) : -1;
   const rawIdx = selected !== undefined ? selectedIdx : controlled ? props.value ?? 0 : internalIdx;
   /* -1 means nothing chosen yet: the trigger shows the placeholder and the list opens on its first row */
-  const idx = rawIdx < 0 ? -1 : Math.max(0, Math.min(Number(rawIdx) || 0, opts.length - 1));
+  const idx = rawIdx < 0 || opts.length === 0 ? -1 : Math.max(0, Math.min(Number(rawIdx) || 0, opts.length - 1));
   const current = idx >= 0 ? opts[idx] : null;
   const isOpen = open && !disabled;
 
@@ -168,12 +169,14 @@ export function Select(props: SelectProps) {
   };
 
   const pick = (i: number) => {
+    const option = opts[i];
+    if (!option) return;
     if (!controlled) {
       setInternalIdx(i);
     }
     setOpen(false);
     onChange?.(i);
-    onSelect?.(opts[i].value);
+    onSelect?.(option.value);
     triggerRef.current?.focus();
   };
 
@@ -265,7 +268,8 @@ export function Select(props: SelectProps) {
             ref={listRef}
             role="listbox"
             tabIndex={-1}
-            aria-labelledby={hasFldLabel && label.length > 0 ? labelId : undefined}
+            aria-label={ariaLabel || undefined}
+            aria-labelledby={!ariaLabel && hasFldLabel && label.length > 0 ? labelId : undefined}
             aria-activedescendant={optId(highlight)}
             onKeyDown={onListKeyDown}
             style={{
