@@ -1,5 +1,6 @@
 import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import type { Ref } from "preact";
+import { InfoTip } from "../../../components/ui/InfoTip";
 import { Hint } from "../../../components/ui/Tooltip";
 import { humanToolCapabilityLabel } from "../../../components/ui/agentToolApprovalOptions";
 import { rich, useT, type TextKey } from "../../../i18n/locale";
@@ -39,6 +40,7 @@ export type ApprovalCardProps = {
 /**
  * Ship's pending approval: what it wants to do in the person's words, the raw request folded beneath.
  * A publish also names who it speaks as, every change it makes, and the files its records carry.
+ * Secondary notes (where to inspect it, that nothing runs yet) live in tooltips to keep the card short.
  */
 export function ApprovalCard({ request, who, place, label, disabled = false, shortcuts = true, approveRef, onInspect, onDecide }: ApprovalCardProps) {
   const t = useT();
@@ -49,7 +51,10 @@ export function ApprovalCard({ request, who, place, label, disabled = false, sho
   return (
     <div class="zen-approval">
       <div class="q">
-        {onInspect ? <button type="button" onClick={onInspect} title={t("shell.approval.inspect")}>{heading}</button> : heading}
+        {onInspect ? <Hint text={t("shell.approval.inspect")} position="top-start">
+          <button type="button" onClick={onInspect}>{heading}</button>
+        </Hint> : <span>{heading}</span>}
+        <InfoTip text={t("shell.approval.waiting")} label={t("shell.approval.about")} />
       </div>
       <p class="ask">{hilRequestSentence(request, place)}</p>
       {publication ? <div class="approval-publish">
@@ -90,7 +95,6 @@ export function ApprovalCard({ request, who, place, label, disabled = false, sho
             <button type="button" class="remember" disabled={disabled} onClick={() => { if (!disabled) onDecide("approve", true); }}>{t("shell.approval.alwaysAllow")}</button>
           </Hint>
         ) : null}
-        <span>{t("shell.approval.waiting")}</span>
       </div>
     </div>
   );
