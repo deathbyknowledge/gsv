@@ -58,7 +58,21 @@ export function handleProfileGet(ctx: KernelContext): ProfileGetResult {
   return { profile: { ...state, ...(handle ? { handle } : undefined) } };
 }
 
-/** A profile is named by the Ship's handle, public and open to message requests unless its owner chooses otherwise. */
+/** Set from setup until the profile the owner chose to make public is published. */
+function publicChoiceKey(ownerUid: number): string {
+  return `users/${ownerUid}/profile/publish_chosen`;
+}
+
+/**
+ * Records the profile choice made at setup. Either way the default draft is saved; a public
+ * choice is published at sign-in, which retries until the open-network host takes it.
+ */
+export function recordSetupProfileChoice(ownerUid: number, choice: "public" | "private", ctx: KernelContext): void {
+  ctx.profiles.update(ownerUid, 0, defaultProfileDraft(ownerUid, ctx));
+  if (choice === "public") ctx.config.set(publicChoiceKey(ownerUid), "1");
+}
+
+/** A new profile is named by the Ship's handle and open to message requests, and is public only once its owner chooses. */
 function defaultProfileDraft(ownerUid: number, ctx: KernelContext): ProfileFields {
   const account = ctx.auth.getPasswdByUid(ownerUid)!;
   const displayName = ctx.installationIdentity?.handle || account.gecos || account.username;
@@ -80,39 +94,31 @@ export function personName(ownerUid: number, ctx: KernelContext): string {
 }
 
 /**
- * Publish the owner's profile once by default, and write a profile published
- * before profiles were records to the Ship's repository. Runs on every human
- * sign-in. The default applies only once, so a later unpublish stays private;
- * after that, sign-in only adds the Bluesky copy a published profile is
- * missing, once the host's takedowns allow it. Any saved profile is the
- * owner's own choice: a draft, a published profile and one they unpublished
- * before this default existed are left alone. Without an open-network host
- * nothing publishes, so the default waits for one.
+ * Writes what a published profile is missing whenever the owner uses their
+ * Ship, from sign-in or any other surface such as a messenger: a record
+ * published before profiles were records, or the Bluesky copy, once the host's
+ * takedowns allow it. It publishes only a profile the owner chose to make
+ * public at setup. Once nothing is missing, this reads only the Kernel.
  */
-export async function ensureDefaultProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
+export async function ensurePublishedProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
   if (!ctx.env.PDS || !profileOwnerActive(ownerUid, ctx)) return;
-  const key = `users/${ownerUid}/profile/default_published`;
-  if (!ctx.profiles.pendingPublication(ownerUid) && ctx.config.getExplicit(key) === "1" && profileMirrored(ownerUid, ctx)) return;
+  const chosen = ctx.config.getExplicit(publicChoiceKey(ownerUid)) === "1";
+  if (!chosen && !ctx.profiles.pendingPublication(ownerUid) && profileMirrored(ownerUid, ctx)) return;
   await publishInBackground(ctx, async (background) => {
-    await applyDefaultProfile(ownerUid, key, background);
+    if (chosen) await publishChosenProfile(ownerUid, background);
+    await publishPendingProfile(ownerUid, background);
     await mirrorPublishedProfile(ownerUid, background);
   });
 }
 
-/**
- * Writes what a published profile is missing when the owner's existing Ship is
- * used from any surface, such as a messenger: a record published before
- * profiles were records, or the Bluesky copy, once the host's takedowns allow
- * it. The default is left to sign-in. Once nothing is missing, this reads only
- * the Kernel.
- */
-export async function ensurePublishedProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
-  if (!ctx.env.PDS || !profileOwnerActive(ownerUid, ctx)) return;
-  if (!ctx.profiles.pendingPublication(ownerUid) && profileMirrored(ownerUid, ctx)) return;
-  await publishInBackground(ctx, async (background) => {
-    await publishPendingProfile(ownerUid, background);
-    await mirrorPublishedProfile(ownerUid, background);
-  });
+/** Publishes the profile chosen as public at setup, as its owner has since edited it, unless it already is. */
+async function publishChosenProfile(ownerUid: number, ctx: KernelContext): Promise<void> {
+  const draft = ctx.profiles.draft(ownerUid);
+  if (draft && !ctx.profiles.published(ownerUid)) {
+    await publishProfileRevision(ownerUid, draft.revision, ctx);
+    ctx.broadcastToUserUid(ownerUid, "profile.changed");
+  }
+  ctx.config.delete(publicChoiceKey(ownerUid));
 }
 
 /** Publishes away from the caller, within the time the open-network host gets for it. */
@@ -138,25 +144,6 @@ export async function publishPendingProfile(ownerUid: number, ctx: KernelContext
     ctx.profiles.publish(ownerUid, pending.revision, cid, pending.record, null, mirror);
   });
   ctx.broadcastToUserUid(ownerUid, "profile.changed");
-}
-
-async function applyDefaultProfile(ownerUid: number, key: string, ctx: KernelContext): Promise<void> {
-  await publishPendingProfile(ownerUid, ctx);
-  const applied = ctx.config.getExplicit(key);
-  if (applied === "1") return;
-  const existing = ctx.profiles.draft(ownerUid);
-  // "pending" marks a default draft this hook wrote but has not published yet: a failure between the
-  // two retries on the next sign-in, while a draft the owner saved themselves is left alone.
-  const retry = applied === "pending" && existing && !ctx.profiles.published(ownerUid) && existing.revision === 1;
-  if (!existing || retry) {
-    if (!existing) {
-      ctx.config.set(key, "pending");
-      ctx.profiles.update(ownerUid, 0, defaultProfileDraft(ownerUid, ctx));
-    }
-    await publishProfileRevision(ownerUid, 1, ctx);
-    ctx.broadcastToUserUid(ownerUid, "profile.changed");
-  }
-  ctx.config.set(key, "1");
 }
 
 export function handleProfileUpdate(args: ProfileUpdateArgs, ctx: KernelContext): ProfileGetResult {

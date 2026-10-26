@@ -5,6 +5,8 @@ import { AuthLayout } from "./AuthLayout";
 import { PolicyConsentLabel } from "./PolicyLinks";
 import { SessionError } from "./SessionChrome";
 import type { SetupAccount } from "./sessionDomain";
+import type { SetupStep } from "./useSessionScreensState";
+import { publicDeployment } from "../../services/deployment";
 import { rich, useT } from "../../i18n/locale";
 import "./SetupScreen.css";
 
@@ -14,9 +16,16 @@ type SetupScreenProps = {
   space: string;
   /** The owner was sent here straight from signup. */
   arrivedFromSignup?: boolean;
-  step: "credentials" | "consent";
+  step: SetupStep;
+  /** Whether this step's button activates the Ship rather than moving on. */
+  lastStep: boolean;
   /** False when signup already collected the terms agreement. */
   consentRequired: boolean;
+  /** Whether steps follow the password: the profile choice, the terms, or both. */
+  secondStep: boolean;
+  profile: "public" | "private" | null;
+  profileError: string | null;
+  onProfile: (choice: "public" | "private") => void;
   password: string;
   passwordConfirm: string;
   consent: boolean;
@@ -32,9 +41,18 @@ type SetupScreenProps = {
   onSubmit: (event: Event) => void;
 };
 
-export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, step, consentRequired, password, passwordConfirm, consent, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
+/** What a public profile on the open network means, in the docs this deployment links to. */
+function profileDocsUrl(): string {
+  const docsRoot = publicDeployment().docsUrl;
+  return docsRoot
+    ? new URL("how-to/contact-people#your-profile", docsRoot.endsWith("/") ? docsRoot : `${docsRoot}/`).href
+    : "https://github.com/deathbyknowledge/gsv/blob/main/docs/how-to/contact-people.md#your-profile";
+}
+
+export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, step, lastStep, secondStep, profile, profileError, onProfile, password, passwordConfirm, consent, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
   const t = useT();
   const consentId = useId();
+  const profileId = useId();
   const [noticeDismissed, setNoticeDismissed] = useState(false);
   const dot = space.indexOf(".");
   const [handle, domain] = dot > 0 ? [space.slice(0, dot), space.slice(dot)] : [space, ""];
@@ -45,14 +63,12 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
         <Alert variant="success" text={t("session.setup.created")} onDismiss={() => setNoticeDismissed(true)} />
       </div>}
       <div class={`gsv-setup-head${credentials ? "" : " is-consent"}`}>
-        {consentRequired && <div class="gsv-setup-meta">
-          <p class="gsv-setup-space">{space}</p>
-          <p class="gsv-setup-progress">{t("session.setup.progress", { step: credentials ? 1 : 2, total: 2 })}</p>
-        </div>}
+        {secondStep && <p class="gsv-setup-space">{space}</p>}
         <h1 id="setup-heading" class={credentials ? "gsv-setup-greeting" : undefined} data-setup-heading tabIndex={-1}>{credentials
           ? rich(t("session.setup.welcome"), { space: <span class="gsv-setup-host">{handle}<span class="gsv-setup-domain">{domain}</span></span> })
-          : t("session.setup.beforeYouBegin")}</h1>
+          : t(step === "profile" ? "session.setup.profile.title" : "session.setup.beforeYouBegin")}</h1>
         {credentials ? <p>{t("session.setup.choosePassword")}</p> : null}
+        {step === "profile" ? <p>{rich(t("session.setup.profile.intro"), { handle: <strong>@{handle}</strong> })}</p> : null}
       </div>
       <form class="gsv-setup-form" data-session-setup-form aria-busy={busy} noValidate onSubmit={onSubmit}>
         {credentials ? <>
@@ -65,7 +81,19 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
             status={fieldErrors.passwordConfirm ? "error" : "none"} message={fieldErrors.passwordConfirm}
             placeholder={t("session.setup.confirmPlaceholder")} onChange={onPasswordConfirm}
             inputProps={{ autoComplete: "new-password", maxLength: 1024, "data-setup-password-confirm": true, onBlur: (event) => onFieldBlur("passwordConfirm", event.relatedTarget) }} />
-        </> : <div class="gsv-setup-agreement">
+        </> : step === "profile" ? <fieldset class={`gsv-setup-profile${profileError ? " is-error" : ""}`}
+          aria-labelledby="setup-heading" aria-describedby={profileError ? `${profileId}-error` : undefined}>
+          {(["public", "private"] as const).map((choice) => <label key={choice} class="gsv-setup-profile-option">
+            <input type="radio" name={profileId} value={choice} checked={profile === choice} disabled={busy}
+              aria-invalid={profileError ? true : undefined} onChange={() => onProfile(choice)} />
+            <span>
+              <strong>{t(choice === "public" ? "session.setup.profile.public" : "session.setup.profile.private")}</strong>
+              <span>{t(choice === "public" ? "session.setup.profile.publicDetail" : "session.setup.profile.privateDetail")}</span>
+            </span>
+          </label>)}
+          <p><a href={profileDocsUrl()} target="_blank" rel="noopener noreferrer">{t("session.setup.profile.learnMore")}</a></p>
+          {profileError ? <p class="gsv-setup-consent-error" id={`${profileId}-error`} role="alert">{profileError}</p> : null}
+        </fieldset> : <div class="gsv-setup-agreement">
           <div class="gsv-setup-disclosure">
             <p>{t("session.setup.aboutShip")}</p>
             <p>{t("session.setup.aboutAccess")}</p>
@@ -85,12 +113,12 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
         </div>}
         <SessionError message={error} />
         <div class="gsv-setup-actions">
-          {step === "consent" ? <button type="button" class="ibtn" disabled={busy} onClick={onBack}>{t("session.back")}</button> : null}
+          {!credentials ? <button type="button" class="ibtn" disabled={busy} onClick={onBack}>{t("session.back")}</button> : null}
           <button type="submit" class="ibtn is-primary" data-setup-submit disabled={busy}
             onPointerDown={(event) => { if (event.button === 0) onSubmitPointerDown(); }}>
             {busy ? <span role="status" aria-label={t("session.setup.opening")}>
               <span aria-hidden="true">{t("session.setup.opening")}<span class="gsv-setup-loading-dots"><span>.</span><span>.</span><span>.</span></span></span>
-            </span> : t(credentials && consentRequired ? "session.continue" : "session.setup.activate")}
+            </span> : t(lastStep ? "session.setup.activate" : "session.continue")}
           </button>
         </div>
       </form>

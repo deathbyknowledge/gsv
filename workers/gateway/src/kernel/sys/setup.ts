@@ -18,6 +18,7 @@ import { ensureAccountHomeLayout } from "../account-home";
 import { gsvInferenceFeaturesFromEnv } from "../../inference/features";
 import { ensurePersonalController } from "../personal-controller";
 import { normalizeLanguage } from "../language";
+import { recordSetupProfileChoice } from "../profiles";
 import { getConversationById } from "../../shared/utils";
 import {
   aiModelApiKeyConfigKey,
@@ -290,6 +291,9 @@ export async function handleSysSetup(
   const aiModels = setupAiModelStack(ai);
   const timezone = parseTimezone(args);
   const language = args.language === undefined ? undefined : normalizeLanguage(args.language);
+  if (args.profile !== undefined && args.profile !== "public" && args.profile !== "private") {
+    throw new Error("profile must be public or private");
+  }
   const machine = parseMachineConfig(args);
   const rootPassword = readOptionalString(args.rootPassword);
   if (rootPassword && rootPassword.length < 8) {
@@ -381,6 +385,7 @@ export async function handleSysSetup(
         config.set("config/server/timezone", timezone);
       }
       if (language !== undefined) config.set(`users/${uid}/locale/language`, language);
+      if (args.profile !== undefined) recordSetupProfileChoice(uid, args.profile, ctx);
     });
 
     await timeSetupStep(timings, "write-ai-config", () => {

@@ -1112,9 +1112,16 @@ export const en = {
 
   // Session: account setup
   "session.setup.created": "Your Ship has been created.",
-  "session.setup.progress": "Step {step} of {total}",
   "session.setup.welcome": "Welcome to {space}",
   "session.setup.beforeYouBegin": "Before you begin",
+  "session.setup.profile.title": "Your profile",
+  "session.setup.profile.intro": "Your Ship has a profile named {handle}. Choose who can see it. Nothing is published until you do.",
+  "session.setup.profile.public": "Public",
+  "session.setup.profile.publicDetail": "Anyone can find you by your handle and send you a message request.",
+  "session.setup.profile.private": "Private",
+  "session.setup.profile.privateDetail": "Only people you invite can reach you. You can publish later in People.",
+  "session.setup.profile.learnMore": "What a public profile means",
+  "session.setup.profile.required": "Choose public or private.",
   "session.setup.choosePassword": "Choose a password.",
   "session.setup.password": "Password",
   "session.setup.passwordPlaceholder": "At least 8 characters",

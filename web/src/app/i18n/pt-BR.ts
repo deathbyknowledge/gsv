@@ -1118,9 +1118,16 @@ export const ptBR = {
 
   // Session: account setup
   "session.setup.created": "Seu Ship foi criado.",
-  "session.setup.progress": "Etapa {step} de {total}",
   "session.setup.welcome": "Boas-vindas a {space}",
   "session.setup.beforeYouBegin": "Antes de começar",
+  "session.setup.profile.title": "Seu perfil",
+  "session.setup.profile.intro": "Seu Ship tem um perfil com o nome {handle}. Escolha quem pode vê-lo. Nada é publicado até você escolher.",
+  "session.setup.profile.public": "Público",
+  "session.setup.profile.publicDetail": "Qualquer pessoa pode encontrar você pelo seu nome de usuário e enviar uma solicitação de mensagem.",
+  "session.setup.profile.private": "Privado",
+  "session.setup.profile.privateDetail": "Só as pessoas que você convidar podem falar com você. Você pode publicar depois em Contatos.",
+  "session.setup.profile.learnMore": "O que significa um perfil público",
+  "session.setup.profile.required": "Escolha público ou privado.",
   "session.setup.choosePassword": "Escolha uma senha.",
   "session.setup.password": "Senha",
   "session.setup.passwordPlaceholder": "Pelo menos 8 caracteres",

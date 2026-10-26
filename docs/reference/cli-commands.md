@@ -380,8 +380,8 @@ automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
 `contact` manages relationships with people on other Ships.
-`contact find @HANDLE|ADDRESS` reads a published public profile. Profiles are
-public by default, but an unavailable profile does not establish whether the Ship
+`contact find @HANDLE|ADDRESS` reads a published public profile. An unavailable
+profile does not establish whether the Ship
 exists: the address may be mistyped, the Ship elsewhere, or the profile private.
 Private invitations work without a published profile or an existing contact.
 `contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]`
