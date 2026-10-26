@@ -23,7 +23,7 @@ it("lets a fresh device pin Light directly instead of presenting it as already s
   let signInTheme: string;
   function Harness() {
     tree = ThemePreference();
-    signInTheme = useColorTheme("dark").theme;
+    signInTheme = useColorTheme("light").theme;
     return null;
   }
   // SAFETY: Appearance renders one native select with a native change handler.
@@ -33,7 +33,7 @@ it("lets a fresh device pin Light directly instead of presenting it as already s
     expect(select().props.value).toBe("");
     expect(collectText(tree)).toContain("Default");
     expect(stored.has("gsv.instrument.theme")).toBe(false);
-    expect(signInTheme!).toBe("dark");
+    expect(signInTheme!).toBe("light");
 
     // SAFETY: The select's handler reads only currentTarget.value.
     await act(() => select().props.onChange?.({ currentTarget: { value: "light" } } as JSX.TargetedEvent<HTMLSelectElement>));
