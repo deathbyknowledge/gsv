@@ -236,6 +236,31 @@ verification bound to the exact recovery attempt. An ordinary owner session is
 insufficient. Accounts authorizes the operation; the Kernel changes local root
 credentials. Verification mail is independent of the space being recovered.
 
+## Owner confirmations
+
+Some changes only the owner should make, such as their
+[recovery sheet](open-network.md#recovery-sheets). The Kernel confirms them
+with a code that Accounts emails the owner, through
+`InstallationOwnerConfirmationService` in
+[`services/owner-confirmations.ts`](https://github.com/deathbyknowledge/gsv/blob/main/packages/gsv/src/services/owner-confirmations.ts).
+Only the Kernel's binding reaches it: its deployment-owned props carry the
+`kernel-owner-confirmation` authority, and the Kernel names its own installation.
+
+| Method | Result |
+|---|---|
+| `requestOwnerConfirmation` | Emails the owner's verified address a six-digit code for one exact change, named by the hash the Kernel gives, and answers `sent` with the address masked. It answers `wait` when a code went out in the last minute or five did in the last hour, `no-address` when the owner has no verified address, and `not-configured` when Accounts sends no owner email at all. |
+| `confirmOwnerConfirmation` | Checks a code against the newest open code for that change. A code works once, for ten minutes, and five wrong tries use it up. |
+| `notifyOwner` | Emails the owner that the change was made, with what it was and who can still undo it. |
+
+Accounts keeps each code only as a keyed hash in `owner_confirmations`, and its
+cron forgets a code an hour after sending it, once it can neither be used nor
+pace another. Mail goes from `GSV_OWNER_EMAIL_FROM`, with replies to
+`GSV_OWNER_EMAIL_REPLY_TO`. A delivery failure reports only its outcome, never
+the address or the message. An Accounts Worker composed from
+`@humansandmachines/gsv-installations` exports `OwnerConfirmationsEntrypoint`
+from its `owner-confirmations` module and runs `forgetOwnerConfirmations` on its
+cron.
+
 ## Schema
 
 Shipped migration files are immutable. Cloudflare D1 enforces foreign keys

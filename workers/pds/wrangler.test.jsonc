@@ -27,6 +27,6 @@
     "PLC_URL": "https://plc.test"
   },
   "secrets": {
-    "required": ["PLC_ROTATION_KEY"]
+    "required": ["PLC_ROTATION_KEY", "PLC_RECOVERY_KEY"]
   }
 }

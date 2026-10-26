@@ -50,6 +50,7 @@ import {
 } from "./proc-handlers";
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleAtprotoBlobRead, handleAtprotoBlobUpload, handleAtprotoIdentity, handleAtprotoWrite } from "./atproto";
+import { handleRecoveryGet, handleRecoverySet } from "./recovery-sheet";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
 import { handleInstanceRequest } from "./sys/instance";
@@ -789,6 +790,12 @@ async function dispatchKernel(
         break;
       case "atproto.blob.upload":
         data = await handleAtprotoBlobUpload(frame.args, ctx, frame.body);
+        break;
+      case "atproto.recovery.get":
+        data = await handleRecoveryGet(ctx);
+        break;
+      case "atproto.recovery.set":
+        data = await handleRecoverySet(frame.args, ctx, frame.body);
         break;
       case "atproto.blob.read":
         return {

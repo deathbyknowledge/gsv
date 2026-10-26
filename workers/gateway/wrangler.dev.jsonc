@@ -116,6 +116,14 @@
       }
     },
     {
+      "binding": "INSTALLATION_OWNER_CONFIRMATIONS",
+      "service": "gsv-installations-dev",
+      "entrypoint": "OwnerConfirmationsEntrypoint",
+      "props": {
+        "authority": "kernel-owner-confirmation"
+      }
+    },
+    {
       "binding": "INFERENCE_EXECUTION",
       "service": "gsv-inference-public-dev"
     },

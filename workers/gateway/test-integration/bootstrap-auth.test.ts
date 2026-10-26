@@ -1,5 +1,5 @@
 import { GSVClient, GsvClientError } from "@humansandmachines/gsv";
-import type { GsvRequestArguments, GsvWebSocketConstructor } from "@humansandmachines/gsv";
+import type { GsvRequestArguments } from "@humansandmachines/gsv";
 import type {
   ConnectArgs,
   SysSetupArgs,
@@ -9,7 +9,7 @@ import type {
 import { createPairingCredential, createPairingSecret, decodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createGatewayTestHarness, webSocketUrl } from "./harness";
+import { createGatewayTestHarness, socketFrom, webSocketUrl } from "./harness";
 const INTEGRATION_INSTALLATION_ID = "inst_integration_default";
 
 const USERNAME = "auth-user";
@@ -476,18 +476,6 @@ describe("gateway authentication integration", () => {
     });
   }
 });
-
-// SAFETY: Node's WebSocket also takes an init object with headers in place of protocols.
-const NodeWebSocket = WebSocket as new (url: string, init?: string | string[] | { headers: Record<string, string> }) => WebSocket;
-
-/** Sockets that Cloudflare would report as coming from `address`. */
-function socketFrom(address: string): GsvWebSocketConstructor {
-  return class extends NodeWebSocket {
-    constructor(url: string | URL) {
-      super(String(url), { headers: { "CF-Connecting-IP": address } });
-    }
-  };
-}
 
 function peerInfo(id: string, implementsList: string[] = []): ConnectArgs["peer"] {
   return {

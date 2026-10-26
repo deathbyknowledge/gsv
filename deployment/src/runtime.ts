@@ -53,8 +53,8 @@ export type GsvPdsProps = {
   plcUrl: string;
   /** Hex secp256k1 key that signs the PDS's directory operations. */
   rotationKey: Cloudflare.Workers.WorkerBindingProps[string];
-  /** did:key of an offline key that outranks the rotation key in every new DID. */
-  recoveryKey?: Cloudflare.Workers.WorkerBindingProps[string];
+  /** did:key of the operator's offline key, which outranks the rotation key in every DID. */
+  recoveryKey: Cloudflare.Workers.WorkerBindingProps[string];
   /** Public address where relays and other services can reach the operator. */
   contactEmail?: string;
   /** The operator's privacy policy and terms of service, as HTTPS URLs. */
@@ -181,6 +181,10 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
     serviceBindings.REQUEST_REPORTS = Cloudflare.WorkerEntrypoint(directory, {
       entrypoint: "RequestReportsEntrypoint", props: { authority: "kernel-report" },
     });
+    // Only the Kernel's binding may email its owner a code for a change and check it.
+    serviceBindings.INSTALLATION_OWNER_CONFIRMATIONS = Cloudflare.WorkerEntrypoint(directory, {
+      entrypoint: "OwnerConfirmationsEntrypoint", props: { authority: "kernel-owner-confirmation" },
+    });
     if (props.services?.entitlements) {
       serviceBindings.ENTITLEMENTS = props.services.entitlements;
     }
@@ -202,8 +206,8 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
         PDS_ORIGIN: props.pds.origin,
         PLC_URL: props.pds.plcUrl,
         PLC_ROTATION_KEY: props.pds.rotationKey,
+        PLC_RECOVERY_KEY: props.pds.recoveryKey,
       };
-      if (props.pds.recoveryKey) pdsEnv.PLC_RECOVERY_KEY = props.pds.recoveryKey;
       if (props.pds.contactEmail) pdsEnv.PDS_CONTACT_EMAIL = props.pds.contactEmail;
       if (props.pds.privacyPolicyUrl) pdsEnv.PDS_PRIVACY_POLICY_URL = props.pds.privacyPolicyUrl;
       if (props.pds.termsOfServiceUrl) pdsEnv.PDS_TERMS_OF_SERVICE_URL = props.pds.termsOfServiceUrl;

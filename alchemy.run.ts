@@ -81,10 +81,14 @@ export default Alchemy.Stack("gsv", {
   if (plcRotationKey && !/^[0-9a-f]{64}$/.test(Redacted.value(plcRotationKey))) {
     throw new Error("GSV_PLC_ROTATION_KEY must be a secp256k1 private key in 64 lowercase hex characters");
   }
+  // The recovery key is the public half of the operator's offline key, which can undo what the rotation key signs.
+  if (plcRotationKey && !plcRecoveryKey) {
+    throw new Error("GSV_PLC_ROTATION_KEY requires GSV_PLC_RECOVERY_KEY, the did:key of the operator's offline recovery key");
+  }
   if (plcRecoveryKey && (!plcRotationKey || !Redacted.value(plcRecoveryKey).startsWith("did:key:"))) {
     throw new Error("GSV_PLC_RECOVERY_KEY must be a did:key, and requires GSV_PLC_ROTATION_KEY");
   }
-  const pds = plcRotationKey ? {
+  const pds = plcRotationKey && plcRecoveryKey ? {
     workerName: `${prefix}-pds`, bucketName: `${prefix}-pds-blobs`, workerBundle: manifest.runtime.pdsBundle,
     origin: `https://pds.${domain}`, plcUrl: yield* Config.String("GSV_PLC_URL").pipe(Config.withDefault("https://plc.directory")),
     rotationKey: plcRotationKey, recoveryKey: plcRecoveryKey,

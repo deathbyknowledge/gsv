@@ -30,6 +30,9 @@ const PROCESS_IDENTITY = {
   cwd: "/home/sam",
 };
 
+/** The keyed hash of the address the connection signed in from. */
+const SIGN_IN_SOURCE = "5f0c2a9e41d7b8a3c6e2f1d0a9b8c7d6";
+
 function connectFrame(): RequestFrame<"sys.connect"> {
   return {
     type: "req",
@@ -101,7 +104,7 @@ describe("Kernel personal controller connect lifecycle", () => {
       env: {},
       defer: vi.fn(),
     };
-    const connection = { id: "connection-1", setState: vi.fn() };
+    const connection = { id: "connection-1", state: { step: "pending", source: SIGN_IN_SOURCE }, setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);
     kernel.connectionRuntime.activateConnection = vi.fn();
     kernel.connectionRuntime.broadcastTargetStatus = vi.fn();
@@ -117,6 +120,9 @@ describe("Kernel personal controller connect lifecycle", () => {
     expect(ensurePersonalControllerMock.mock.invocationCallOrder[0])
       .toBeLessThan(kernel.connectionRuntime.activateConnection.mock.invocationCallOrder[0]);
     expect(kernel.connectionRuntime.activateConnection).toHaveBeenCalledOnce();
+    // A password checked later in the session counts with the address it signed in from.
+    expect(kernel.connectionRuntime.activateConnection)
+      .toHaveBeenCalledWith(connection, expect.objectContaining({ step: "connected", source: SIGN_IN_SOURCE }));
     expect(kernel.transport.sendOk).toHaveBeenCalledWith(
       connection,
       "connect-1",
@@ -136,7 +142,7 @@ describe("Kernel personal controller connect lifecycle", () => {
       },
       conversations: { ensureShip: vi.fn() },
     };
-    const connection = { id: "connection-1", setState: vi.fn() };
+    const connection = { id: "connection-1", state: { step: "pending" }, setState: vi.fn() };
     kernel.buildContext = vi.fn(() => ctx);
     kernel.connectionRuntime.activateConnection = vi.fn();
     kernel.connectionRuntime.broadcastTargetStatus = vi.fn();
@@ -190,7 +196,7 @@ describe("Kernel personal controller connect lifecycle", () => {
         responsibilities, welcome: onboarding, reconcileResponsibilityWake: vi.fn(() => wake),
         defer: (promise: Promise<unknown>) => deferred.push(promise),
       };
-      const connection = { id: "connection-1", setState: vi.fn() };
+      const connection = { id: "connection-1", state: { step: "pending" }, setState: vi.fn() };
       kernel.buildContext = vi.fn(() => ctx);
       kernel.connectionRuntime.activateConnection = vi.fn();
       kernel.connectionRuntime.reconcileOwnedIdentities = vi.fn();
@@ -273,7 +279,7 @@ describe("Kernel personal controller connect lifecycle", () => {
         void promise;
       }),
     };
-    const connection = { id: "connection-1", setState: vi.fn() };
+    const connection = { id: "connection-1", state: { step: "pending" }, setState: vi.fn() };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     kernel.buildContext = vi.fn(() => ctx);

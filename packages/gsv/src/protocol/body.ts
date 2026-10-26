@@ -43,6 +43,7 @@ export const BODY_SYSCALL_NAMES = [
   "profile.avatar.read",
   "atproto.blob.upload",
   "atproto.blob.read",
+  "atproto.recovery.set",
   "ai.transcription.create",
   "ai.image.read",
   "ai.image.generate",

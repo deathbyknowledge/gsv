@@ -33,6 +33,7 @@ export * from "./syscalls/contact";
 export * from "./contact-invitation";
 export * from "./syscalls/profile";
 export type * from "./syscalls/atproto";
+export { recoverySheetCode } from "./recovery-sheet";
 export * from "./syscalls/approach";
 export * from "./social";
 export * from "./approaches";

@@ -295,6 +295,7 @@ const SYSCALL_NAMES = [
   "profile.avatar.remove",
   "atproto.identity",
   "atproto.write",
+  "atproto.recovery.get",
   "approach.create",
   "approach.get",
   "approach.list",

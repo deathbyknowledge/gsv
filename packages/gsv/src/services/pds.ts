@@ -53,6 +53,22 @@ export interface PublicRepository {
   readBlob(cid: string): Promise<PublicBlob | null>;
   /** What the host has taken down of the repository, and why; every public read leaves it out. */
   takedowns(): Promise<PublicTakedown[]>;
+  /**
+   * The owner's recovery key the identity lists first among its rotation keys,
+   * and whether the host has signed that change without the directory taking
+   * it yet; null until the installation's first outward act creates the account.
+   */
+  ownerRecoveryKey(): Promise<{ ownerRecoveryKey: string | null; pending: boolean } | null>;
+  /**
+   * Lists the owner's recovery key, a P-256 or secp256k1 did:key, first among
+   * the identity's rotation keys in place of any earlier one, or removes it
+   * given null. The host's rotation key signs the change. It refuses while the
+   * installation can't publish, and an identity changed elsewhere gets none.
+   * It also refuses, with `OperatorKeyMissing`, unless the identity lists the
+   * operator's recovery key above the host's, so the operator can undo the
+   * change for the directory's 72 hours.
+   */
+  setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: string | null }>;
   [Symbol.dispose]?(): void;
 }
 

@@ -13,7 +13,7 @@ import { startOpenAiFixture, type OpenAiFixture } from "./openai-fixture";
 import type { IntegrationState } from "./fixtures/dependencies";
 
 const USERNAME = "process-runtime-user";
-const PASSWORD = "process-runtime-password";
+export const PASSWORD = "process-runtime-password";
 const USER_UID = 1000;
 const MODEL_ID = "integration-model";
 

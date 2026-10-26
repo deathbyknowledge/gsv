@@ -20,6 +20,7 @@ export type OperatorRegistryPrincipal = { id: string; email: string; displayName
 export const RESET_CONSEQUENCES: readonly string[] = [
   "The person gets a new Ship at the same address and can't return to this one. They set it up again from a new activation link, and sessions, devices, messengers and background work on this Ship stop.",
   "They get a new identity on the open network: the new Ship registers a new DID.",
+  "Their recovery sheet stays with the old identity, so they make a new sheet afterwards.",
   "Their contacts end, and each one needs a new invitation.",
   "Their public profile and records stop being served, and leave the open network when this Ship's data is erased.",
   "Nothing is erased yet: this Ship's data is kept as pending deletion until a separate deletion removes it.",

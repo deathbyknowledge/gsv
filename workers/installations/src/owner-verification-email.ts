@@ -12,7 +12,19 @@ export function ownerVerificationEmail(purpose: OwnerAuthPurpose, code: string, 
   return {
     subject: `Your Ship ${label} code`,
     text: `${introduction}\n\n${code}\n\n${expiry}\n\n${footer}\n\nShip`,
-    html: `<!doctype html>
+    html: ownerEmailHtml([{ text: introduction }, { text: code, style: "code" }, { text: expiry }, { text: footer, style: "note" }]),
+  };
+}
+
+/** One paragraph of an owner email: plain, the code to type, or a quieter note. */
+export type OwnerEmailBlock = { text: string; style?: "code" | "note" };
+
+/** An owner email's HTML: its paragraphs in order, on Ship's card, signed by Ship. */
+export function ownerEmailHtml(blocks: OwnerEmailBlock[]): string {
+  const paragraphs = blocks.map(({ text, style }) => style === "code"
+    ? `<p style="margin:0 0 24px;padding:20px 12px;background-color:#f0eef8;text-align:center;"><strong style="font-family:'Courier New',Courier,monospace;font-size:36px;line-height:44px;letter-spacing:6px;color:#221e44;">${escapeHtml(text)}</strong></p>`
+    : `<p style="margin:0 0 24px;${style === "note" ? "font-size:14px;line-height:22px;color:#6d6899;" : ""}">${escapeHtml(text)}</p>`);
+  return `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="margin:0;padding:0;background-color:#f4f3fb;color:#1b1836;">
@@ -20,16 +32,12 @@ export function ownerVerificationEmail(purpose: OwnerAuthPurpose, code: string, 
     <tr><td align="center" style="padding:32px 16px;">
       <table role="presentation" width="480" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:480px;background-color:#ffffff;">
         <tr><td style="padding:32px 24px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:24px;color:#1b1836;">
-          <p style="margin:0 0 24px;">${escapeHtml(introduction)}</p>
-          <p style="margin:0 0 24px;padding:20px 12px;background-color:#f0eef8;text-align:center;"><strong style="font-family:'Courier New',Courier,monospace;font-size:36px;line-height:44px;letter-spacing:6px;color:#221e44;">${escapeHtml(code)}</strong></p>
-          <p style="margin:0 0 24px;">${escapeHtml(expiry)}</p>
-          <p style="margin:0 0 24px;font-size:14px;line-height:22px;color:#6d6899;">${escapeHtml(footer)}</p>
+          ${paragraphs.join("\n          ")}
           <p style="margin:0;font-weight:bold;color:#5a52a8;">Ship</p>
         </td></tr>
       </table>
     </td></tr>
   </table>
 </body>
-</html>`,
-  };
+</html>`;
 }

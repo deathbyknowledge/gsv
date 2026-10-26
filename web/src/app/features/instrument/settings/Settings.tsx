@@ -17,6 +17,7 @@ import { Mcp } from "./Mcp";
 import { OwnerAccess, PersonalPasswordReset } from "./OwnerAccess";
 import { Logs } from "./Logs";
 import { DesktopVoiceSettings } from "./DesktopVoiceSettings";
+import { RECOVERY_SHEET_QUERY, RecoverySheet } from "./recovery/RecoverySheet";
 import { useT, type TextKey } from "../../../i18n/locale";
 import "./settings.css";
 
@@ -26,7 +27,7 @@ export type SettingsProps = {
   onInspectProcess: (pid: string) => void;
 };
 
-const SECTIONS = ["preferences", "voice", "standing", "permissions", "instructions", "messengers", "mcp", "logs", "sign-in"] as const;
+const SECTIONS = ["preferences", "voice", "standing", "permissions", "instructions", "messengers", "mcp", "recovery-sheet", "logs", "sign-in"] as const;
 type Section = typeof SECTIONS[number];
 const SECTION_LABELS = {
   preferences: "settings.section.preferences",
@@ -36,6 +37,7 @@ const SECTION_LABELS = {
   instructions: "settings.section.instructions",
   messengers: "settings.section.messengers",
   mcp: "settings.section.mcp",
+  "recovery-sheet": "settings.section.recoverySheet",
   logs: "settings.section.logs",
   "sign-in": "settings.section.signIn",
 } satisfies Record<Section, TextKey>;
@@ -50,7 +52,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
   const requestedSection = () => SECTIONS.find((entry) => entry === new URLSearchParams(window.location.search).get("section") && (entry !== "voice" || desktop)) ?? "preferences";
   const [section, setSection] = useState<Section>(requestedSection);
   useLayoutEffect(() => { if (active) setSection(requestedSection()); }, [active, location.revision, desktop]);
-  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, voice: false, standing: false, permissions: false, instructions: false, messengers: false, mcp: false, logs: false, "sign-in": false });
+  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, voice: false, standing: false, permissions: false, instructions: false, messengers: false, mcp: false, "recovery-sheet": false, logs: false, "sign-in": false });
   const preferencesDirty = useCallback((value: boolean) => setDirty((old) => old.preferences === value ? old : { ...old, preferences: value }), []);
   const permissionsDirty = useCallback((value: boolean) => setDirty((old) => old.permissions === value ? old : { ...old, permissions: value }), []);
   const instructionsDirty = useCallback((value: boolean) => setDirty((old) => old.instructions === value ? old : { ...old, instructions: value }), []);
@@ -67,9 +69,12 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
   }, [hasDrafts]);
   const accounts = useQuery({ queryKey: ["accounts", "gsv-console"], queryFn: () => loadConsoleAccounts(client), enabled: connected });
   const account = accounts.data?.find((entry) => entry.relation === "self");
+  // Offered only once the Ship has its identity on the open network, and only to the person.
+  const recoverySheet = useQuery({ queryKey: RECOVERY_SHEET_QUERY, queryFn: () => client.atproto.recovery.get({}), enabled: connected && account !== undefined && account.uid !== 0, retry: false });
+  const sheetIdentity = recoverySheet.data?.available ? recoverySheet.data.identity : null;
   return <main class="settings" aria-label={t("settings.title")}>
     <div class="settings-body">
-      <nav class="settings-sections" aria-label={t("settings.sections")} data-scroll-edge>{SECTIONS.filter((entry) => (entry !== "sign-in" || account?.uid === 0) && (entry !== "voice" || desktop)).map((entry) => <button class="ibtn" aria-current={section === entry ? "page" : undefined} onClick={() => navigateApp(`/chat/settings?section=${entry}`)} key={entry}>{t(SECTION_LABELS[entry])}{dirty[entry] ? " ·" : ""}</button>)}</nav>
+      <nav class="settings-sections" aria-label={t("settings.sections")} data-scroll-edge>{SECTIONS.filter((entry) => (entry !== "sign-in" || account?.uid === 0) && (entry !== "voice" || desktop) && (entry !== "recovery-sheet" || sheetIdentity !== null)).map((entry) => <button class="ibtn" aria-current={section === entry ? "page" : undefined} onClick={() => navigateApp(`/chat/settings?section=${entry}`)} key={entry}>{t(SECTION_LABELS[entry])}{dirty[entry] ? " ·" : ""}</button>)}</nav>
       <div class="settings-content" data-scroll-edge>
         <div class="settings-account"><span>{account?.username ?? t("settings.yourSession")}</span><button class="settings-text-action" type="button" onClick={() => {
           if (onSignOut) { onSignOut(); return; }
@@ -90,6 +95,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
           <div hidden={section !== "instructions"}><Instructions account={account} active={active && section === "instructions"} onDirty={instructionsDirty} /></div>
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={active && section === "messengers"} /></div>
           <div hidden={section !== "mcp"}><Mcp account={account} active={active && section === "mcp"} onDirty={mcpDirty} /></div>
+          {recoverySheet.data && sheetIdentity && <div hidden={section !== "recovery-sheet"}><RecoverySheet status={{ ...recoverySheet.data, identity: sheetIdentity }} active={active && section === "recovery-sheet"} /></div>}
           <RetainedView active={active && section === "logs"}><Logs account={account} onProcess={onInspectProcess} /></RetainedView>
           {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>{t("settings.signIn.title")}</h1><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
         </div>}

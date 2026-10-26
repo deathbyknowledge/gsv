@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
 import {
   P256PrivateKeyExportable,
   Secp256k1PrivateKey,
@@ -13,6 +14,7 @@ import {
   genesisHead,
   MAX_ROTATION_KEYS,
   mintIdentity,
+  operatorCanUndo,
   registerGenesis,
   signNextOperation,
   submitNextOperation,
@@ -100,15 +102,34 @@ describe("an owner's recovery key", () => {
     const first = await ownerKey("p256");
     const second = await ownerKey("secp256k1");
 
+    const operator = env.PLC_RECOVERY_KEY;
+
     expect(await repo.setOwnerRecoveryKey(first)).toEqual({ ownerRecoveryKey: first });
-    expect(lastRotationKeys(did)).toEqual([first, host]);
+    expect(lastRotationKeys(did)).toEqual([first, operator, host]);
     expect(await repo.setOwnerRecoveryKey(second)).toEqual({ ownerRecoveryKey: second });
-    expect(lastRotationKeys(did)).toEqual([second, host]);
+    expect(lastRotationKeys(did)).toEqual([second, operator, host]);
     // Asking for the key the identity already lists signs nothing.
     expect(await repo.setOwnerRecoveryKey(second)).toEqual({ ownerRecoveryKey: second });
     expect(await repo.setOwnerRecoveryKey(null)).toEqual({ ownerRecoveryKey: null });
-    expect(lastRotationKeys(did)).toEqual([host]);
+    expect(lastRotationKeys(did)).toEqual([operator, host]);
     expect(plc.operations(did)).toHaveLength(4);
+  });
+
+  it("isn't changed on an identity where the operator's recovery key couldn't undo the change", async () => {
+    const name = crypto.randomUUID();
+    const repo = env.REPOS.getByName(name);
+    // Minted under another operator key, as before the operator configured or replaced theirs.
+    const other = await ownerKey("secp256k1");
+    await runInDurableObject(repo, (instance) => {
+      Object.assign(instance, { env: { ...env, PLC_RECOVERY_KEY: other } });
+    });
+    const { did } = await repo.create("unrecoverable.ship.test", `installations/${name}/`);
+    await runInDurableObject(repo, (instance) => {
+      Object.assign(instance, { env });
+    });
+
+    expect(await rejection(repo.setOwnerRecoveryKey(await ownerKey()))).toContain("OperatorKeyMissing");
+    expect(plc.operations(did)).toHaveLength(1);
   });
 
   it("must be a P-256 or secp256k1 did:key the identity doesn't already list", async () => {
@@ -159,7 +180,7 @@ describe("an owner's recovery key", () => {
     // Building on the addition, where the owner's key outranks the host key that signed the removal, undoes it.
     plc.elapse(71 * HOUR_MS);
     await submitAs(did, added, stateOf(added.operation), owner);
-    expect(lastRotationKeys(did)).toEqual([ownerDid, await hostRotationKey()]);
+    expect(lastRotationKeys(did)).toEqual([ownerDid, env.PLC_RECOVERY_KEY, await hostRotationKey()]);
     expect(await rejection(repo.setOwnerRecoveryKey(await ownerKey()))).toContain("IdentityChanged");
     expect(plc.operations(did)).toHaveLength(3);
   });
@@ -173,7 +194,20 @@ describe("an owner's recovery key", () => {
 
     plc.elapse(73 * HOUR_MS);
     expect(await rejection(submitAs(did, added, stateOf(added.operation), owner))).toContain("dispute");
-    expect(lastRotationKeys(did)).toEqual([await hostRotationKey()]);
+    expect(lastRotationKeys(did)).toEqual([env.PLC_RECOVERY_KEY, await hostRotationKey()]);
+  });
+
+  it("is said to be undoable by the operator's paper key only where the identity lists that key above the host's", async () => {
+    const host = await hostRotationKey();
+    const withPaper = { ...env, PLC_RECOVERY_KEY: PAPER };
+    expect(await operatorCanUndo(withPaper, [FIRST, PAPER, host])).toBe(true);
+    expect(await operatorCanUndo(withPaper, [PAPER, host])).toBe(true);
+    // A DID created before the operator configured the key doesn't list it.
+    expect(await operatorCanUndo(withPaper, [FIRST, host])).toBe(false);
+    // Ranked below the host's key, the paper key can't undo what the host's key signs.
+    expect(await operatorCanUndo(withPaper, [FIRST, host, PAPER])).toBe(false);
+    // Under another operator key, no listed key is the operator's.
+    expect(await operatorCanUndo(env, [FIRST, PAPER, host])).toBe(false);
   });
 
   it("can be undone, within 72 hours of its addition, by the operator's paper key", async () => {

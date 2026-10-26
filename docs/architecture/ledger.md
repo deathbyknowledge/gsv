@@ -167,7 +167,10 @@ arguments identify the instance, while cookies and website storage stay inside
 the instance service and never enter ledger arguments.
 Open-network calls read as what they did, such as “published to the open
 network” for `atproto.write`. Its arguments hold the published records; an
-uploaded file's bytes travel as a body and never enter them.
+uploaded file's bytes travel as a body and never enter them. Recovery sheet
+calls read “checked the recovery sheet” and “changed the recovery sheet”; a
+change's password and emailed code travel as a body too, so its arguments hold
+only the sheet's public key.
 
 ## Cost
 

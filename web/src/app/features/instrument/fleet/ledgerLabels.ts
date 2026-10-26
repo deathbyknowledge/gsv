@@ -48,6 +48,8 @@ const labels = {
   "atproto.write": "fleet.ledger.atprotoWrite",
   "atproto.blob.upload": "fleet.ledger.atprotoBlobUpload",
   "atproto.blob.read": "fleet.ledger.atprotoBlobRead",
+  "atproto.recovery.get": "fleet.ledger.atprotoRecoveryGet",
+  "atproto.recovery.set": "fleet.ledger.atprotoRecoverySet",
   "contact.invite.create": "fleet.ledger.contactInviteCreate",
   "contact.invite.accept": "fleet.ledger.contactInviteAccept",
   "contact.invite.list": "fleet.ledger.contactInviteList",

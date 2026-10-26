@@ -62,9 +62,9 @@ export type DidDocument = {
 
 /**
  * Creates a did:plc that names this host as its PDS, plus any other services
- * the account offers. The host's rotation key signs it; a configured recovery
- * key outranks the rotation key, so its holder can reverse a host operation
- * during PLC's recovery window.
+ * the account offers. The host's rotation key signs it; the operator's
+ * recovery key outranks the rotation key, so its holder can reverse a host
+ * operation during PLC's recovery window.
  */
 export async function mintIdentity(env: HostEnv, handle: string, services: Record<string, Service> = {}): Promise<RepoIdentity> {
   const signing = await Secp256k1PrivateKeyExportable.createKeypair();
@@ -74,7 +74,7 @@ export async function mintIdentity(env: HostEnv, handle: string, services: Recor
   const genesis = await signOperation({
     type: "plc_operation",
     prev: null,
-    rotationKeys: env.PLC_RECOVERY_KEY ? [recoveryKey(env.PLC_RECOVERY_KEY), hostKey] : [hostKey],
+    rotationKeys: [recoveryKey(env.PLC_RECOVERY_KEY), hostKey],
     verificationMethods: { atproto: signingDidKey },
     alsoKnownAs: [`at://${handle}`],
     services: { atproto_pds: { type: "AtprotoPersonalDataServer", endpoint: env.PDS_ORIGIN }, ...services },
@@ -160,6 +160,17 @@ export async function submitNextOperation(env: HostEnv, did: DidPlcString, next:
 export function withOwnerRecoveryKey(rotationKeys: readonly DidKeyString[], previous: DidKeyString | null, next: DidKeyString | null): DidKeyString[] {
   const operators = rotationKeys.filter((key) => key !== previous);
   return next === null ? operators : operators.toSpliced(OWNER_RECOVERY_KEY_RANK, 0, next);
+}
+
+/**
+ * Whether the operator's recovery key can undo, for 72 hours, an operation
+ * the host's key signs after one that lists `rotationKeys`: the directory
+ * lets only a key ranked above the signer undo it. A DID created before the
+ * operator configured or replaced the key doesn't list it.
+ */
+export async function operatorCanUndo(env: HostEnv, rotationKeys: readonly DidKeyString[]): Promise<boolean> {
+  const operator = rotationKeys.findIndex((key) => key === env.PLC_RECOVERY_KEY);
+  return operator >= 0 && operator < rotationKeys.indexOf(await (await hostRotationKey(env)).exportPublicKey("did"));
 }
 
 /** An owner's recovery key: a did:key of a kind PLC verifies, P-256 or secp256k1. */

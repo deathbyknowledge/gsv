@@ -19,8 +19,8 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_ALLOW_RESOURCE_DELETION` | Explicit physical resource deletion opt-in; defaults to `false`, including in CI. |
 | `GSV_ACCESS_MODE` | `operator` or `access`; defaults to `operator`. |
 | `GSV_ACCESS_TEAM_DOMAIN`, `GSV_ACCESS_AUDIENCE` | Required for Cloudflare Access mode. |
-| `GSV_OWNER_EMAIL_FROM` | Verified sending address for native email-code owner sign-in, My Ships and recovery. |
-| `GSV_OWNER_EMAIL_REPLY_TO` | Optional reply address for owner verification mail; defaults to the sender when omitted. |
+| `GSV_OWNER_EMAIL_FROM` | Verified sending address for native email-code owner sign-in, My Ships, recovery, and the codes and notices for [recovery sheet](recovery-sheet.md) changes. Without it, a Ship's password alone confirms a sheet change. |
+| `GSV_OWNER_EMAIL_REPLY_TO` | Optional reply address for owner verification mail; defaults to the sender when omitted. An owner who didn't make a recovery sheet change replies here. |
 | `GSV_OWNER_EMAIL_ALLOWED_RECIPIENTS` | Optional comma-separated recipient restriction for owner verification mail, useful on staging. |
 | `GSV_OWNER_OIDC_ISSUER`, `GSV_OWNER_OIDC_CLIENT_ID`, `GSV_OWNER_OIDC_CLIENT_SECRET` | Optional owner identity provider for account linking and root recovery; issuer and client ID must be supplied together. |
 | `GSV_ADAPTERS` | Comma-separated operator-enabled adapter IDs; empty by default. |
@@ -28,7 +28,7 @@ Alchemy's Cloudflare account/authentication and set these deployment inputs:
 | `GSV_INFERENCE_API_KEY`, `GSV_INFERENCE_BASE_URL` | Optional operator provider credentials and endpoint. |
 | `GSV_DELETION_CATALOG_FILE` | Path to a JSON array declaring current and historical external resources for deletion; see below. |
 | `GSV_PLC_ROTATION_KEY` | Runs the [open-network host](../architecture/open-network.md#deployment) at `pds.<domain>`. The secp256k1 private key, as 64 lowercase hex characters, that signs every Ship's DID operations; generate it once and keep it secret. |
-| `GSV_PLC_RECOVERY_KEY` | Optional `did:key` of an offline key that outranks the rotation key in every new DID. |
+| `GSV_PLC_RECOVERY_KEY` | Required with `GSV_PLC_ROTATION_KEY`: the `did:key` of an offline key that outranks the rotation key in every DID. Generate it once and keep its private half offline, such as on paper. Each recovery sheet change's email promises the owner that you can undo the change for 3 days, so keep the key where you can use it in time. |
 | `GSV_PLC_URL` | The did:plc directory the host registers DIDs with and Ships read them from; defaults to `https://plc.directory`. |
 | `GSV_PDS_CONTACT_EMAIL` | Optional public address where relays and other services can reach you about the host. The host's `describeServer` answer names it. |
 | `GSV_PDS_PRIVACY_POLICY_URL`, `GSV_PDS_TERMS_OF_SERVICE_URL` | Optional HTTPS links to your privacy policy and terms of service, which `describeServer` lists. |

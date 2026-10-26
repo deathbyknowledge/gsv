@@ -1260,6 +1260,58 @@ references within six hours expires. `atproto.blob.read` returns one of the
 Ship's own files, including one no record references yet, as the response body.
 Approval previews use it.
 
+### Recovery sheet
+
+A [recovery sheet](../how-to/recovery-sheet.md) keeps the Ship's identity the
+person's own. The person's browser makes the sheet and sends only its public
+half: a P-256 `did:key`, which the identity lists first among its rotation
+keys. Only the person signed in to the Ship, in their own session, can call
+these. The Ship's process, Crew, tools, CodeMode, apps, messengers, machines
+and root are refused whatever their capabilities. A sheet is offered only once
+the Ship has its identity; `available` is false before that, and without the
+`PDS` or `INSTALLATION_OWNER_CONFIRMATIONS` binding.
+
+```ts
+type AtprotoRecoverySyscalls = {
+  "atproto.recovery.get": {
+    args: Record<string, never>;
+    result: { available: boolean; identity: { did: string; handle: string } | null; sheet: RecoverySheet | null };
+  };
+  "atproto.recovery.set": {
+    args: { key: string | null };   // the sheet's did:key, or null to remove it
+    result:
+      | { status: "done"; sheet: RecoverySheet | null }
+      | { status: "code-sent"; to: string; expiresAt: number; retryAt: number }
+      | { status: "refused"; reason: "password" | "code-expired" | "no-address" }
+      | { status: "refused"; reason: "attempts" | "wait"; retryAt: number }
+      | { status: "refused"; reason: "code"; attemptsLeft: number };
+  };
+};
+
+type RecoverySheet = {
+  code: string;            // the public sheet code printed on it, such as "E35-BAN"
+  madeAt: number | null;   // null for a sheet this Ship holds no record of making
+  pending: boolean;        // the host signed the change and the directory hasn't taken it yet
+};
+```
+
+`atproto.recovery.set` takes the person's password, and later the code
+Accounts emails them, as a JSON request body `{ password, code? }`, so neither
+enters the syscall ledger. A call without a code asks Accounts to email one for
+exactly this change and returns `code-sent`; the same call with the code makes
+the change. Each code works once, for that change only, and expires after ten
+minutes. Accounts sends at most one a minute and five an hour, and five wrong
+codes use one up. The password is paced with
+[signing in](websocket-protocol.md#sys-connect), counted for the person and the
+address their session signed in from; while a wait applies, the password isn't
+checked and the call answers `attempts` until `retryAt`. Each change is then
+emailed to the person with its sheet code and who can still undo it.
+
+The password alone makes the change only when the deployment's Accounts sends
+no email at all. When Accounts is pacing codes, can't reach the person or
+fails, the change is refused. Asking again for a change the directory hasn't
+taken yet finishes it without a new code.
+
 ## Processes: `proc.*`
 
 Requests forwarded to a Process preserve its protocol error code and retryability.

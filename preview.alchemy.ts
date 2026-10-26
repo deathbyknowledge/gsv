@@ -14,6 +14,8 @@ const prefix = `gsv-${repositoryId}-pr-${pullRequest}`;
 // These tracked paths can be read on destroy without building or downloading the Workers.
 const { runtime } = gsvRuntimeManifestSchema.parse(JSON.parse(readFileSync(new URL("./deployment/runtime.json", import.meta.url), "utf8")));
 const hostname = z.string().max(253).regex(/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/);
+/** The public half of a key generated once and discarded, for previews' disposable PLC directory. */
+const PREVIEW_PLC_RECOVERY_KEY = "did:key:zQ3shgHzrAHhAq5cNDnJKZ4Hxu8hNwjJ74Brjqj6jwSwDAri6";
 
 export default Alchemy.Stack(`gsv-previews-${repositoryId}`, {
   providers: Cloudflare.providers(),
@@ -46,6 +48,8 @@ export default Alchemy.Stack(`gsv-previews-${repositoryId}`, {
   const pds = plcUrl ? {
     workerName: `${prefix}-pds`, bucketName: `${prefix}-pds-blobs`, workerBundle: runtime.pdsBundle,
     origin: `https://pds.${domain}`, plcUrl, rotationKey: yield* Alchemy.makeRandom("PreviewPlcRotationKey", { bytes: 32 }),
+    // A disposable directory needs no real operator key: no one holds this one's private half.
+    recoveryKey: PREVIEW_PLC_RECOVERY_KEY,
   } : undefined;
 
   const policy = yield* Cloudflare.Access.Policy("PreviewAccessPolicy", {

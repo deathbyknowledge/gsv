@@ -56,7 +56,7 @@ describe("hosted repository", () => {
     expect(plc.operations(account.did)).toEqual([expect.objectContaining({
       type: "plc_operation",
       prev: null,
-      rotationKeys: [await hostRotationKey()],
+      rotationKeys: [env.PLC_RECOVERY_KEY, await hostRotationKey()],
       verificationMethods: { atproto: await signingDidKey(account.did) },
       alsoKnownAs: [`at://${handle}`],
       services: { atproto_pds: { type: "AtprotoPersonalDataServer", endpoint: env.PDS_ORIGIN } },

@@ -26,6 +26,8 @@ import { ShipTakedowns } from "./admin/takedowns";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
 import { RequestReports } from "./request-reports";
 export { RequestReportsEntrypoint } from "./request-reports";
+import { forgetOwnerConfirmations } from "./owner-confirmations";
+export { OwnerConfirmationsEntrypoint } from "./owner-confirmations";
 
 export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment & OperatorEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
@@ -33,6 +35,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     await cleanExpiredOwnerAuthentication(this.env);
     await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)).resumePending();
     await new RequestReports(this.env.INSTALLATIONS_DB).forgetClosedMessages();
+    await forgetOwnerConfirmations(this.env.INSTALLATIONS_DB);
   }
 
   async fetch(request: Request): Promise<Response> {

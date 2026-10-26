@@ -1,5 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { GsvWebSocketConstructor } from "@humansandmachines/gsv";
 import {
   createTestHarness,
   type TestHarness,
@@ -119,6 +120,7 @@ export function integrationGatewayConfig(options: {
       { binding: "RIPGIT", service: DEPENDENCY_WORKER },
       { binding: "INSTALLATION_DIRECTORY", service: options.managedServices?.accounts ?? DEPENDENCY_WORKER },
       { binding: "REQUEST_REPORTS", service: DEPENDENCY_WORKER, entrypoint: "IntegrationRequestReports" },
+      { binding: "INSTALLATION_OWNER_CONFIRMATIONS", service: DEPENDENCY_WORKER, entrypoint: "IntegrationOwnerConfirmations" },
     ].filter((binding) => options.workersAi !== false || binding.binding !== "AI"),
   };
 }
@@ -408,4 +410,16 @@ export function webSocketUrl(baseUrl: URL): string {
   const url = new URL("/ws", baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
+}
+
+// SAFETY: Node's WebSocket also takes an init object with headers in place of protocols.
+const NodeWebSocket = WebSocket as new (url: string, init?: string | string[] | { headers: Record<string, string> }) => WebSocket;
+
+/** Sockets that Cloudflare would report as coming from `address`. */
+export function socketFrom(address: string): GsvWebSocketConstructor {
+  return class extends NodeWebSocket {
+    constructor(url: string | URL) {
+      super(String(url), { headers: { "CF-Connecting-IP": address } });
+    }
+  };
 }

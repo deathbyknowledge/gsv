@@ -1,0 +1,24 @@
+.recovery-sheet-rules { max-width: 42rem; margin: 0 0 2rem; padding-left: 1.25rem; line-height: 1.7; }
+.recovery-sheet-rules li + li { margin-top: .5rem; }
+.recovery-sheet-paper { max-width: 42rem; margin: 0 0 1.5rem; padding: 1.5rem; border: 1px solid var(--border); background: var(--void); }
+.recovery-sheet-paper h2 { margin: 0 0 .75rem; }
+.recovery-sheet-identity { margin: 0 0 1rem; color: var(--text-dim); font-size: .75rem; overflow-wrap: anywhere; }
+.recovery-sheet-words { list-style: none; margin: 1.5rem 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem 1.5rem; font-family: var(--gsv-font-mono); }
+.recovery-sheet-words li { display: flex; gap: .6rem; min-width: 0; color: var(--text-hi); }
+.recovery-sheet-words span { min-width: 1.4rem; text-align: right; color: var(--text-dim); }
+.recovery-sheet-qr { display: flex; align-items: center; gap: 1rem; }
+.recovery-sheet-qr svg { flex: 0 0 auto; width: 9rem; height: 9rem; shape-rendering: crispEdges; }
+.recovery-sheet-use { margin-bottom: 0; font-size: .8rem; overflow-wrap: anywhere; }
+.recovery-sheet-code { font-family: var(--gsv-font-mono); letter-spacing: .08em; color: var(--text-hi); }
+.recovery-sheet-confirm { max-width: 42rem; padding: 1rem 0; border-top: 1px solid var(--border); }
+.recovery-sheet-confirm h2 { margin-top: 0; }
+@container instrument (max-width: 520px) {
+  .recovery-sheet-words { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .recovery-sheet-qr { align-items: flex-start; flex-direction: column; }
+}
+/* Printing shows only the sheet, in black on white. */
+@media print {
+  body.recovery-sheet-printing * { visibility: hidden !important; }
+  body.recovery-sheet-printing .recovery-sheet-paper, body.recovery-sheet-printing .recovery-sheet-paper * { visibility: visible !important; color: #000 !important; }
+  body.recovery-sheet-printing .recovery-sheet-paper { position: fixed; inset: 0; max-width: none; margin: 0; padding: 1.5cm; border: 0; background: #fff; }
+}

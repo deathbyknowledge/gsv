@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { Secp256k1PrivateKeyExportable } from "@atcute/crypto";
 
 const run = promisify(execFile);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -41,7 +42,7 @@ let passed = false;
 try {
   // A fresh rotation key for this run; the host's other settings point at the smoke session.
   const envFile = join(work, "host.env");
-  await writeFile(envFile, `PLC_ROTATION_KEY=${randomBytes(32).toString("hex")}\nPDS_ORIGIN=${host}\nPLC_URL=${smoke}\n`, { mode: 0o600 });
+  await writeFile(envFile, `PLC_ROTATION_KEY=${randomBytes(32).toString("hex")}\nPLC_RECOVERY_KEY=${await (await Secp256k1PrivateKeyExportable.createKeypair()).exportPublicKey("did")}\nPDS_ORIGIN=${host}\nPLC_URL=${smoke}\n`, { mode: 0o600 });
   sessions.push(
     await startSession("smoke", ["-c", "smoke/wrangler.jsonc", "--port", smokePort, "--inspector-port", smokeInspector]),
     await startSession("host", ["-c", "smoke/pds.jsonc", "--port", hostPort, "--inspector-port", hostInspector, "--env-file", envFile]),
