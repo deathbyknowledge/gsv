@@ -107,43 +107,36 @@ describe("minimal account setup", () => {
     } finally { await screen.unmount(); }
   });
 
-  it("asks for the profile choice as its own step, with no default, before the terms", async () => {
-    const screen = await setupScreen("/onboarding");
-    try {
-      await screen.change({ setupProfileChoice: true });
-      await act(() => {
-        screen.state().setup.onPassword("password123");
-        screen.state().setup.onPasswordConfirm("password123");
-      });
-      await act(() => screen.state().setup.onSubmit(new Event("submit")));
-      expect(screen.state().setup).toMatchObject({ step: "profile", profile: null, profileError: null, lastStep: false });
-      await act(() => screen.state().setup.onSubmit(new Event("submit")));
-      expect(screen.state().setup).toMatchObject({ step: "profile", profileError: "Choose public or private." });
-      await act(() => screen.state().setup.onProfile("private"));
-      await act(() => screen.state().setup.onSubmit(new Event("submit")));
-      expect(screen.state().setup).toMatchObject({ step: "consent", lastStep: true });
-      // Back from the terms returns to the choice, as it was left.
-      await act(() => screen.state().setup.onBack());
-      expect(screen.state().setup).toMatchObject({ step: "profile", profile: "private" });
-      await act(() => screen.state().setup.onSubmit(new Event("submit")));
-      await act(() => screen.state().setup.onConsent(true));
-      await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
-      expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX", profile: "private" });
-    } finally { await screen.unmount(); }
+  it("keeps the profile private unless the owner ticks the opt-in beside the terms", async () => {
+    for (const [ticked, profile] of [[false, "private"], [true, "public"]] as const) {
+      const screen = await setupScreen("/onboarding");
+      try {
+        await screen.change({ setupProfileChoice: true });
+        await act(() => {
+          screen.state().setup.onPassword("password123");
+          screen.state().setup.onPasswordConfirm("password123");
+        });
+        await act(() => screen.state().setup.onSubmit(new Event("submit")));
+        expect(screen.state().setup).toMatchObject({ step: "consent", profileChoice: true, profilePublic: false });
+        await act(() => screen.state().setup.onConsent(true));
+        if (ticked) await act(() => screen.state().setup.onProfilePublic(true));
+        await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
+        expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX", profile });
+      } finally { await screen.unmount(); }
+    }
   });
 
-  it("activates from the profile choice when signup already took the terms", async () => {
+  it("offers the profile opt-in beside the password when signup already took the terms", async () => {
     const screen = await setupScreen("/onboarding");
     try {
       await screen.change({ setupConsentRequired: false, arrivedFromSignup: true, setupProfileChoice: true });
       await act(() => {
         screen.state().setup.onPassword("password123");
         screen.state().setup.onPasswordConfirm("password123");
+        screen.state().setup.onProfilePublic(true);
       });
-      await act(() => screen.state().setup.onSubmit(new Event("submit")));
-      expect(screen.state().setup).toMatchObject({ step: "profile", lastStep: true });
-      await act(() => screen.state().setup.onProfile("public"));
       await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.state().setup.step).toBe("credentials");
       expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX", profile: "public" });
     } finally { await screen.unmount(); }
   });

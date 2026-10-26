@@ -11,8 +11,6 @@ type UseSessionScreensStateOptions = {
 
 const setupHistoryStateSchema = z.object({ gsvSetupConsent: z.boolean() });
 
-export type SetupStep = "credentials" | "profile" | "consent";
-
 export function useSessionScreensState({ session, snapshot }: UseSessionScreensStateOptions) {
   const t = useT();
   const [pendingAction, setPendingAction] = useState<"login" | "setup" | null>(null);
@@ -25,21 +23,16 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [setupPasswordConfirm, setSetupPasswordConfirm] = useState("");
   const [setupConsent, setSetupConsent] = useState(false);
   const [setupConsentTouched, setSetupConsentTouched] = useState(false);
-  const [setupProfile, setSetupProfile] = useState<"public" | "private" | null>(null);
-  const [setupProfileTouched, setSetupProfileTouched] = useState(false);
-  const [setupStep, setSetupStep] = useState<SetupStep>("credentials");
+  const [setupProfilePublic, setSetupProfilePublic] = useState(false);
+  const [setupStep, setSetupStep] = useState<"credentials" | "consent">("credentials");
   const setupSubmitPressed = useRef(false);
   const setupHasConsentEntry = useRef(false);
   const setupHistoryLength = useRef(0);
   const setupErrors = validateSetupAccount({ password: setupPassword, passwordConfirm: setupPasswordConfirm });
   // Self-signup agreed to the terms before arriving; operator-created spaces still confirm them here.
   const setupConsentRequired = snapshot.setupConsentRequired !== false;
-  // Before anything is published, the owner chooses whether their profile is public; no answer is preselected.
+  // A Ship that can publish a profile asks whether it may; left unticked, it stays private.
   const setupProfileChoice = snapshot.setupProfileChoice === true;
-  // The steps after the password share one browser history entry; Back on the screen walks them.
-  const setupLaterSteps: SetupStep[] = [...(setupProfileChoice ? ["profile" as const] : []), ...(setupConsentRequired ? ["consent" as const] : [])];
-  const setupSecondStep = setupLaterSteps.length > 0;
-  const setupSteps: SetupStep[] = ["credentials", ...setupLaterSteps];
   const screenRef = useRef<HTMLElement>(null);
   const busy = snapshot.phase === "authenticating";
   const visibleView = snapshot.phase === "ready" ? "ready"
@@ -60,7 +53,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   }, []);
 
   useEffect(() => {
-    if (visibleView !== "setup" || !setupSecondStep) return;
+    if (visibleView !== "setup" || !setupConsentRequired) return;
     setupHasConsentEntry.current = false;
     const setupUrl = new URL(window.location.href);
     const completedUrl = setupUrl.pathname === "/onboarding" ? new URL("/", setupUrl).href : setupUrl.href;
@@ -69,7 +62,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     const onPopState = () => {
       const state = setupHistoryStateSchema.safeParse(window.history.state);
       outsideUrl = state.success ? null : window.location.href;
-      setSetupStep(state.success && state.data.gsvSetupConsent ? setupLaterSteps[0] ?? "credentials" : "credentials");
+      setSetupStep(state.success && state.data.gsvSetupConsent ? "consent" : "credentials");
     };
     window.addEventListener("popstate", onPopState);
     return () => {
@@ -123,13 +116,13 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
         window.history.forward();
       }
     };
-  }, [visibleView, setupSecondStep]);
+  }, [visibleView, setupConsentRequired]);
 
   useLayoutEffect(() => {
     if (busy) return;
     const root = screenRef.current;
     if (!root || visibleView === "ready" || visibleView === "booting") return;
-    if (visibleView === "setup" && setupStep !== "credentials") {
+    if (visibleView === "setup" && setupStep === "consent") {
       root.querySelector<HTMLElement>("[data-setup-heading]")?.focus();
       return;
     }
@@ -150,9 +143,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       setSetupPasswordConfirm("");
       setSetupTouched({});
       setSetupConsent(false);
+      setSetupProfilePublic(false);
       setSetupConsentTouched(false);
-      setSetupProfile(null);
-      setSetupProfileTouched(false);
       setSetupStep("credentials");
     }
     if (snapshot.phase === "ready") setLoginPassword("");
@@ -176,33 +168,27 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     const account = { password: setupPassword };
     setSetupTouched({ password: true, passwordConfirm: true });
     if (Object.keys(setupErrors).length > 0) {
-      if (setupStep !== "credentials") window.history.back();
+      if (setupStep === "consent") window.history.back();
       setSetupStep("credentials");
       setSetupValidationAttempt((attempt) => attempt + 1);
       return;
     }
-    if (setupStep === "credentials" && setupSecondStep) {
-      window.history.pushState({ gsvSetupConsent: true }, "");
-      setupHasConsentEntry.current = true;
-      setupHistoryLength.current = window.history.length;
-      setSetupStep(setupLaterSteps[0]!);
-      return;
-    }
-    if (setupStep === "profile") {
-      setSetupProfileTouched(true);
-      if (!setupProfile) return;
-    }
-    if (setupStep === "consent") {
+    if (setupConsentRequired) {
+      if (setupStep === "credentials") {
+        window.history.pushState({ gsvSetupConsent: true }, "");
+        setupHasConsentEntry.current = true;
+        setupHistoryLength.current = window.history.length;
+        setSetupStep("consent");
+        return;
+      }
       setSetupConsentTouched(true);
       if (!setupConsent) return;
     }
-    const next = setupSteps[setupSteps.indexOf(setupStep) + 1];
-    if (next) { setSetupStep(next); return; }
     setLoginValidationError(null);
     setPendingAction("setup");
     void session.setup({ ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       language: navigator.languages?.[0] || navigator.language || undefined,
-      ...(setupProfileChoice && setupProfile ? { profile: setupProfile } : undefined) }).catch(() => {
+      ...(setupProfileChoice ? { profile: setupProfilePublic ? "public" : "private" } : undefined) }).catch(() => {
       // Error is reflected through session snapshot.
     });
   };
@@ -224,12 +210,6 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     setup: {
       step: setupStep,
       consentRequired: setupConsentRequired,
-      secondStep: setupSecondStep,
-      lastStep: setupStep === setupSteps[setupSteps.length - 1],
-      profileChoice: setupProfileChoice,
-      profile: setupProfile,
-      profileError: setupProfileTouched && !setupProfile ? t("session.setup.profile.required") : null,
-      onProfile: (choice: "public" | "private") => { setSetupProfile(choice); setSetupProfileTouched(true); },
       error: messageText(snapshot.phase === "setup" ? snapshot.message : null),
       // An untouched field stays quiet until something is typed in it or a submit is attempted.
       fieldErrors: {
@@ -240,14 +220,16 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       passwordConfirm: setupPasswordConfirm,
       consent: setupConsent,
       consentError: setupConsentTouched && !setupConsent ? t("session.consent.required") : null,
+      profileChoice: setupProfileChoice,
+      profilePublic: setupProfilePublic,
+      onProfilePublic: setSetupProfilePublic,
       onPassword: setSetupPassword,
       onPasswordConfirm: setSetupPasswordConfirm,
       onConsent: (checked: boolean) => { setSetupConsent(checked); setSetupConsentTouched(true); },
       onBack: () => {
         if (busy) return;
-        const previous = setupSteps[setupSteps.indexOf(setupStep) - 1] ?? "credentials";
-        if (previous === "credentials") window.history.back();
-        setSetupStep(previous);
+        window.history.back();
+        setSetupStep("credentials");
       },
       onFieldBlur: (field: keyof SetupAccount, next: EventTarget | null) => {
         // Submission validates every field. Showing an error on pointer-down

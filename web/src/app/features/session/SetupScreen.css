@@ -40,16 +40,12 @@
 @media (prefers-reduced-motion: reduce) {
   .gsv-setup-loading-dots span { animation: none; }
 }
-/* the profile choice reads like the consent row: two equal answers, neither preselected */
-.gsv-setup-profile { display: grid; gap: 10px; margin: 0; padding: 0; border: 0; min-width: 0; }
-.gsv-setup-profile legend { padding: 0; margin-bottom: 4px; color: var(--text); font-weight: 600; }
-.gsv-setup-profile p { margin: 0; color: var(--text-dim); }
-.gsv-setup-profile a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
-.gsv-setup-profile-option { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--border-raised); color: var(--text); cursor: pointer; }
-.gsv-setup-profile-option:has(input:checked) { border-color: var(--accent); }
-.gsv-setup-profile-option > span { display: grid; gap: 2px; }
-.gsv-setup-profile-option > span > span { color: var(--text-dim); }
-.gsv-setup-profile-option input { flex: none; width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--accent); cursor: pointer; }
-.gsv-setup-profile-option input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.gsv-setup-profile.is-error .gsv-setup-profile-option { border-color: var(--error); }
-.gsv-setup-profile .gsv-setup-consent-error { margin: 0; }
+/* the profile opt-in reads like the consent row, with its explanation folded away until asked for */
+.gsv-setup-profile { display: grid; gap: 6px; }
+.gsv-setup-recommended { color: var(--text-dim); }
+.gsv-setup-profile-toggle { justify-self: start; margin-left: 26px; padding: 0; border: 0; background: none; color: var(--text-dim); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.gsv-setup-profile-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.gsv-setup-profile-info { display: grid; gap: 8px; margin-left: 26px; padding: 10px 12px; border: 1px solid var(--border-raised); color: var(--text-dim); }
+.gsv-setup-profile-info p { margin: 0; }
+.gsv-setup-profile-info strong { color: var(--text); font-weight: 600; }
+.gsv-setup-profile-info a { justify-self: start; color: var(--text); text-decoration: underline; text-underline-offset: 2px; }

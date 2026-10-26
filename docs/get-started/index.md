@@ -28,9 +28,9 @@ the handle and email form. Desktop starts with **Create your Ship** and **Open
 Ship**. Choose a handle, enter your email, confirm the age, Terms and Privacy
 agreement, and select **Continue**. Your handle (`@alex`) and its address
 (`alex.example.com`) appear separately. Verify your email with the six-digit code,
-then pick a password, choose whether your profile is **Public** or **Private**
-(see [Your profile](../how-to/contact-people.md#your-profile)), and select
-**Activate Ship**. No registration invite is needed, and the terms you agreed to
+then pick a password and select **Activate Ship**. Tick **I'm OK with a public
+profile** first if you want people to find you by your handle; left unticked, your
+profile stays private (see [Your profile](../how-to/contact-people.md#your-profile)). No registration invite is needed, and the terms you agreed to
 at signup are not asked again during activation.
 Handles use lowercase letters, numbers and hyphens; uppercase input is converted
 automatically. Validation and availability feedback appears beside the field.

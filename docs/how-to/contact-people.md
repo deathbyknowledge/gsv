@@ -71,8 +71,10 @@ conversation, opens it directly, and enables further messages and attachments.
 
 ## Your profile {#your-profile}
 
-Setting up your Ship asks whether your profile is **Public** or **Private**, with
-neither chosen for you. A public profile is published on the open network at your
+Setting up your Ship offers **I'm OK with a public profile, so other people's Ships
+can find mine and add me** beside the terms, or beside the password when signup already
+took them. It starts unticked, and **What's the difference?** under it explains both
+choices. Ticked, your profile is public: it is published on the open network at your
 first sign-in, named by your handle and open to message requests, so people can
 add you by handle, and Bluesky and other apps can show it. Those apps and search
 engines can save a copy of a public profile, and a copy they saved may remain
