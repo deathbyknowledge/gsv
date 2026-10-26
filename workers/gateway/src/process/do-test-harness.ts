@@ -11,7 +11,7 @@ import type {
 } from "../protocol/process-frames";
 import { getKernelPtr, getProcessByPid } from "../shared/utils";
 import { resolveToolSyscall } from "../syscalls/constants";
-import { takePurpose } from "./approval";
+import { takePurpose, type ToolApprovalPolicy } from "./approval";
 import type { Process } from "./do";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
@@ -539,4 +539,13 @@ export async function initProcess(
   // SAFETY: test fixture is constructed with the asserted domain shape.
   expect((res as ResponseFrame).ok).toBe(true);
   return stub;
+}
+
+/**
+ * A run asks only after reading its owner's current policy from the Kernel.
+ * Fixtures that set a run policy keep the owner's policy the same, or name it.
+ */
+export function followRunApprovalPolicy(process: Process, policy?: ToolApprovalPolicy): void {
+  vi.spyOn(process.kernel, "readApprovalPolicy")
+    .mockImplementation(async () => JSON.stringify(policy ?? process.runs.active?.approvalPolicy ?? null));
 }

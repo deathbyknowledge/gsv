@@ -47,7 +47,6 @@ export const processApprovalTargetSchema: z.ZodType<ProcessApprovalTarget> = z.o
 export type ProcessToolAuthorizeArgs = ProcessToolOwner & {
   syscall: SyscallName;
   args: JsonObject;
-  defaultAction?: "ask";
   /** Derived from the Kernel's resolved route, never from syscall arguments. */
   target?: ProcessApprovalTarget;
 };

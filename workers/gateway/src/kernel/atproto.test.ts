@@ -74,7 +74,7 @@ describe("writing records", () => {
     expect(send).toHaveBeenCalledExactlyOnceWith("inst_alice", "proc:ship", expect.objectContaining({
       call: "proc.tool.authorize",
       args: expect.objectContaining({
-        runId: "run", requestId: "request", syscall: "atproto.write", defaultAction: "ask",
+        runId: "run", requestId: "request", syscall: "atproto.write",
         args: { handle: "alice", address: "alice.ship.space", writes: [NOTE] },
       }),
     }));

@@ -193,8 +193,7 @@ export const ptBR = {
 
   // Settings: permissions
   "settings.permissions.title": "Permissões",
-  "settings.permissions.intro": "Escolha quando o Ship e seus ajudantes devem perguntar antes de usar uma capacidade. Destinos mais específicos têm prioridade, depois capacidades mais específicas; a ordem da lista desempata. As capacidades concedidas à conta continuam definindo o limite máximo.",
-  "settings.permissions.mailHint": "O e-mail precisa de uma regra explícita de Permitir para enviar sem perguntar, mesmo quando o padrão é Permitir.",
+  "settings.permissions.intro": "Escolha quando o Ship e seus ajudantes devem perguntar antes de usar uma capacidade. “Sempre permitir” em um pedido adiciona uma regra aqui. Destinos mais específicos têm prioridade, depois capacidades mais específicas; a ordem da lista desempata. As capacidades concedidas à conta continuam definindo o limite máximo.",
   "settings.permissions.loading": "Carregando permissões…",
   "settings.permissions.targetsUnavailable": "Não foi possível carregar os nomes dos destinos. Os IDs de destino salvos continuam disponíveis.",
   "settings.permissions.unsupported": "Esta política salva contém campos que este editor não consegue alterar com segurança. Ela foi mantida sem alterações.",
@@ -1390,7 +1389,7 @@ export const ptBR = {
   "shell.approval.fullRequest": "solicitação completa",
   "shell.approval.run": "Permitir uma vez",
   "shell.approval.deny": "Bloquear",
-  "shell.approval.alwaysAllowHint": "Permite que esta conversa execute qualquer comando de terminal em {place} sem perguntar de novo. As outras conversas continuam perguntando.",
+  "shell.approval.alwaysAllowHint": "Para de perguntar antes de “{capability}” em {place}, para o Ship e todos os ajudantes. Você pode mudar isso em Configurações → Permissões.",
   "shell.approval.alwaysAllow": "Sempre permitir",
   "shell.approval.waiting": "nada é executado até você responder",
   "shell.approval.publishAs": "Publica na rede aberta como {handle}",

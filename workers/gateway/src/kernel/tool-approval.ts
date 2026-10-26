@@ -17,7 +17,6 @@ export async function authorizeNestedOperation(
   ctx: KernelContext,
   syscall: SyscallName,
   args: JsonObject,
-  defaultAction?: "ask",
   send: typeof sendFrameToProcess = sendFrameToProcess,
   target?: ProcessApprovalTarget,
 ): Promise<void> {
@@ -27,7 +26,7 @@ export async function authorizeNestedOperation(
   signal?.throwIfAborted();
   const id = `approval:${crypto.randomUUID()}`;
   const response = await raceWithAbort(send(ctx.installationId, ctx.processId, {
-    type: "req", id, call: "proc.tool.authorize", args: { ...ctx.toolOwner, syscall, args, defaultAction, target },
+    type: "req", id, call: "proc.tool.authorize", args: { ...ctx.toolOwner, syscall, args, target },
   }), signal, {
     onAbort: () => {
       ctx.defer(send(ctx.installationId, ctx.processId!, {

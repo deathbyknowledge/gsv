@@ -26,13 +26,13 @@ describe("Kernel nested approval ownership", () => {
   it("leaves direct human work and already-approved direct tool dispatch alone", async () => {
     const ctx = context();
     delete ctx.toolOwner;
-    await authorizeNestedOperation(ctx, "mail.send", {}, undefined, send);
+    await authorizeNestedOperation(ctx, "mail.send", {}, send);
     expect(send).not.toHaveBeenCalled();
   });
 
   it("fails closed when the owning Process denies the actual destination", async () => {
     send.mockResolvedValue({ type: "res", id: "reply", ok: true, data: { approved: false } });
-    await expect(authorizeNestedOperation(context(), "fs.transfer.receive", { target: "laptop", path: "/tmp/a" }, undefined, send)).rejects.toThrow("not approved");
+    await expect(authorizeNestedOperation(context(), "fs.transfer.receive", { target: "laptop", path: "/tmp/a" }, send)).rejects.toThrow("not approved");
     expect(send).toHaveBeenCalledWith("installation", "process", expect.objectContaining({
       call: "proc.tool.authorize", args: expect.objectContaining({ runId: "run", requestId: "outer", syscall: "fs.transfer.receive", args: { target: "laptop", path: "/tmp/a" } }),
     }));
@@ -41,7 +41,7 @@ describe("Kernel nested approval ownership", () => {
   it("settles cancellation even when the Process cancellation RPC never returns", async () => {
     send.mockImplementation(() => new Promise(() => {}));
     const controller = new AbortController();
-    const waiting = authorizeNestedOperation(context(controller.signal), "sys.mcp.call", {}, undefined, send);
+    const waiting = authorizeNestedOperation(context(controller.signal), "sys.mcp.call", {}, send);
     const rejected = expect(waiting).rejects.toThrow("cancelled");
     controller.abort(new Error("cancelled"));
     await rejected;
