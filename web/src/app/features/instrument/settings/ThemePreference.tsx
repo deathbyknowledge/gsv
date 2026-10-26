@@ -1,4 +1,5 @@
 import { useColorTheme, type ColorThemePreference } from "../../../components/ui/useColorTheme";
+import { useStarsPreference } from "../shared/useStarsPreference";
 import { useT, type TextKey } from "../../../i18n/locale";
 
 const THEME_OPTIONS: ReadonlyArray<{ value: ColorThemePreference; label: TextKey }> = [
@@ -11,7 +12,8 @@ const THEME_OPTIONS: ReadonlyArray<{ value: ColorThemePreference; label: TextKey
 export function ThemePreference() {
   const t = useT();
   const { preference, setPreference } = useColorTheme("light");
-  return <div class="settings-form">
+  const { showStars, setStars } = useStarsPreference();
+  return <div class="settings-form settings-appearance">
     <h2>{t("settings.appearance.title")}</h2>
     <label>{t("settings.appearance.theme")}<select value={preference ?? ""} onChange={(event) => {
       const option = THEME_OPTIONS.find((candidate) => candidate.value === event.currentTarget.value);
@@ -20,6 +22,7 @@ export function ThemePreference() {
       {preference === null && <option value="" disabled>{t("settings.appearance.default")}</option>}
       {THEME_OPTIONS.map((option) => <option key={option.value} value={option.value}>{t(option.label)}</option>)}
     </select></label>
+    <label class="settings-check"><input type="checkbox" checked={showStars} onChange={(event) => setStars(event.currentTarget.checked)} />{t("settings.appearance.showStars")}</label>
     <p class="settings-muted">{t("settings.appearance.hint")}</p>
   </div>;
 }

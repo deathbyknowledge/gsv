@@ -22,12 +22,22 @@ Sensitive final path segments include `api_key`, `secret`, `token`, `password`, 
 
 The Instrument theme is not stored here. **Settings → preferences → Appearance** chooses Match system, Light or Dark for the current browser only; other devices and agents are unaffected. The `l` key switches directly between Light and Dark.
 
+Appearance appears first and applies immediately. The remaining Preferences
+fields share one sticky **Save changes** action for model order, reasoning,
+language and timezone. All draft values are validated before writing. Writes
+use the existing per-key configuration boundary; if a write fails, the draft
+is retained and saved values are refreshed so remaining changes can be retried.
+Changing Settings sections, navigating to another app view, or using browser
+Back/Forward prompts before leaving unsaved preferences. Leaving preserves
+the draft until it is saved, discarded, or the session ends. Reload and sign-out
+retain their unsaved-work warnings.
+
 ## Language
 
 `users/{uid}/locale/language` stores the owner's language preference as a
 BCP 47 tag, such as `es` or `es-MX`. Web and Desktop setup detect it from the client's
 preferred browser language. Change it under **Settings → Preferences → Language**,
-or ask Ship to change it. Clearing it leaves the conversation to establish Ship's language.
+or ask Ship to change it. The dropdown offers English, Spanish and Portuguese. Regional saved codes display their matching supported language; opening Preferences does not rewrite them. Other language codes remain valid through the configuration interface.
 Invalid tags are rejected and valid tags are canonicalized.
 
 Ship receives the preference through `{{user.language}}` in runtime context. Later

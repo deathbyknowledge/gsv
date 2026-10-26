@@ -29,6 +29,11 @@ to another Ship, redeeming the code moves that connection to this Ship.
 Send another message in the messenger after connecting to start talking to Ship.
 
 You can also connect through **Settings → Messengers**, using the steps below.
+WhatsApp appears first, followed by Telegram. Slack and Discord carry a small
+**Coming soon** label and their Connect and Reconnect controls are disabled,
+even when the deployment enables pairing. Existing links can still be inspected
+or disconnected. The Slack and Discord instructions below describe the adapter
+flows used through Ship; they are not currently available in Settings.
 
 ## Telegram
 
@@ -67,7 +72,7 @@ a command from an older prompt.
 
 ## Slack
 
-1. In Ship, open **Messengers → Slack** and choose **Install Ship in Slack**.
+1. Ask Ship for the Slack connection instructions and open its installation link.
 2. Approve the official Ship app for the intended Slack workspace. If another
    member already installed it there, you can continue with that installation.
 3. Mention `@GSV` in a channel, or send the app a direct message. Ship sends a

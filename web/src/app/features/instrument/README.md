@@ -224,6 +224,11 @@ People supports creating and accepting invitations, pending invitation cancellat
 
 Settings owns model order and creation, permissions, instructions, and integrations. See [Settings](settings/README.md). Work keeps connection actions available for computers and browsers; People keeps invitations and first-message requests available.
 
+Settings → Preferences → Appearance includes a **Show stars** checkbox. The choice
+is remembered on this device and also applies to sign-in. Hiding the stars
+unmounts their renderer and stops its animation while retaining the shared layout.
+Help’s navigation reference points to this setting in plain language.
+
 Processes update from owner-scoped registry signals even when created or run from another client. WireSync patches known runtime states and exits locally; new processes and changed labels reload only the process list. A change cancels any older list snapshot before it can overwrite current state. Closed lists become stale without background reads, and reconnect recovers missed changes. Raw run events remain for explicit Process observation, and registry-only notices do not reload history.
 
 Only interactive processes offer a conversation action. Logs links for Ship and helper rows, and delegated responsibility assignees, select the Work inspector; Ship assignees retain the direct Ship shortcut.

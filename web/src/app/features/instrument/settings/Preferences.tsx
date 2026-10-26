@@ -9,11 +9,13 @@ import { reasoningOptions } from "../../../domain/reasoning";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { aiProviderDisplayLabel } from "../../../domain/aiProviders";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { loadConsoleConfig, loadConsoleModels, saveConsoleConfig, saveConsoleConfigEntries } from "../../../services/system/consoleService";
+import { loadConsoleConfig, loadConsoleModels, saveConsoleConfigEntries } from "../../../services/system/consoleService";
 import { inheritedReasoningForAccount } from "../../../domain/system/consoleAgentBehavior";
 import { editableModelSource, modelProfilesFromListing, type ConsoleModelProfile } from "../../../domain/system/consoleSettings";
 import { modelProfileChangeWrites } from "./modelProfiles";
-import { configuredModelOrder, modelOrderWrites, moveModel, moveModelTo, orderedModels, useModelFirst, type ModelStackDraft } from "./modelStack";
+import { configuredModelOrder, moveModel, moveModelTo, orderedModels, useModelFirst, type ModelStackDraft } from "./modelStack";
+import { preferenceWrites } from "./preferenceWrites";
+import { usePreferencesLeavePrompt } from "./usePreferencesLeavePrompt";
 import { canConfigure, SETTINGS_CONFIG_KEY, SETTINGS_MODELS_KEY } from "./settingsModel";
 import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./settingsShared";
 import { useT } from "../../../i18n/locale";
@@ -30,8 +32,8 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
   const [removingModel, setRemovingModel] = useState<string | null>(null);
   const [modelDraftDirty, setModelDraftDirty] = useState(false);
-  const [timezoneDirty, setTimezoneDirty] = useState(false);
-  const [languageDirty, setLanguageDirty] = useState(false);
+  const [timezoneDraft, setTimezoneDraft] = useState<string | null>(null);
+  const [languageDraft, setLanguageDraft] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const drag = useRef<{ id: string; x: number; y: number; moved: boolean; to: number | null } | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -45,23 +47,30 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
   const reasoningKey = `users/${account.uid}/ai/reasoning`;
   const originalReasoning = config.data?.find((entry) => entry.key === reasoningKey)?.value ?? "";
   const reasoning = reasoningDraft ?? originalReasoning;
+  const originalLanguage = config.data?.find((entry) => entry.key === `users/${account.uid}/locale/language`)?.value ?? "";
+  const originalTimezone = config.data?.find((entry) => entry.key === `users/${account.uid}/locale/timezone`)?.value ?? "";
+  const language = languageDraft ?? originalLanguage;
+  const timezone = timezoneDraft ?? originalTimezone;
+  const preferencesDirty = orderDirty || reasoning !== originalReasoning || language !== originalLanguage || timezone !== originalTimezone;
   const effortOptions = reasoningOptions(inheritedReasoningForAccount(config.data ?? [], account.uid, account.uid));
 
   const refresh = () => Promise.all([
     cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }),
     cache.invalidateQueries({ queryKey: SETTINGS_MODELS_KEY }),
   ]);
-  const saveOrder = useMutation({
-    mutationFn: async (draft: ModelStackDraft) => {
-      if (!models.data || !config.data || !stackEditable) throw new Error(t("settings.models.unavailable"));
-      await saveConsoleConfigEntries(client, { entries: modelOrderWrites(models.data, config.data, account.uid, draft) });
+  const discard = () => {
+    setOrderDraft(null); setReasoningDraft(null); setLanguageDraft(null); setTimezoneDraft(null);
+    setSaved(null);
+  };
+  const savePreferences = useMutation({
+    mutationFn: async () => {
+      if (!config.data || !editable) throw new Error(t("settings.models.unavailable"));
+      const entries = preferenceWrites({ uid: account.uid, config: config.data, models: models.data,
+        order: orderDirty ? orderDraft : null, reasoning, language, timezone });
+      await saveConsoleConfigEntries(client, { entries });
     },
-    onSuccess: async () => { await refresh(); setOrderDraft(null); setSaved("models"); },
+    onSuccess: async () => { await refresh(); discard(); setSaved("preferences"); },
     onError: async () => { await refresh(); },
-  });
-  const saveReasoning = useMutation({
-    mutationFn: (value: string) => saveConsoleConfig(client, { key: reasoningKey, value }),
-    onSuccess: async () => { await refresh(); setReasoningDraft(null); setSaved("reasoning"); },
   });
   const removeModel = useMutation({
     mutationFn: async (profile: ConsoleModelProfile) => {
@@ -71,14 +80,16 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     onSuccess: async () => { await refresh(); setRemovingModel(null); setExpandedModel(null); setSaved("model-removed"); },
     onError: async () => { await refresh(); },
   });
-  const saving = saveOrder.isPending || saveReasoning.isPending || removeModel.isPending;
-  useSettingsDirty(orderDirty || reasoning !== originalReasoning || modelDraftDirty || timezoneDirty || languageDirty || saving, onDirty);
-  const updateOrder = (next: ModelStackDraft) => { setOrderDraft(next); setSaved(null); saveOrder.reset(); };
+  const saving = savePreferences.isPending || removeModel.isPending;
+  useSettingsDirty(preferencesDirty || modelDraftDirty || saving, onDirty);
+  usePreferencesLeavePrompt(active && (preferencesDirty || modelDraftDirty || saving));
+  const updateOrder = (next: ModelStackDraft) => { setOrderDraft(next); setSaved(null); savePreferences.reset(); };
 
-  return <section aria-labelledby="settings-preferences-title">
+  return <section class="settings-preferences" aria-labelledby="settings-preferences-title">
     <h1 id="settings-preferences-title">{t("settings.preferences.title")}</h1>
     <p class="settings-intro">{t("settings.preferences.intro", { name: account.displayName || account.username })}</p>
-    <SettingsError error={config.error ?? models.error ?? saveOrder.error ?? saveReasoning.error ?? removeModel.error} />
+    {!modelEditor && <ThemePreference />}
+    <SettingsError error={config.error ?? models.error ?? removeModel.error} />
     {connected && (config.isPending || models.isPending) && <LoadingState variant="panel">{t("settings.preferences.loading")}</LoadingState>}
     {!canConfigure(account, "sys.config.set") && <p class="settings-muted">{t("settings.preferences.readOnly")}</p>}
     {modelEditor && models.data && config.data ? <ModelEditor key={modelEditor.profile?.id ?? "new"} account={account} config={config.data} models={models.data} profile={modelEditor.profile} active={active} onDirty={setModelDraftDirty} onCancel={() => {
@@ -90,10 +101,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     {saved === "model-updated" && <p role="status">{t("settings.models.updated")}</p>}
     {saved === "model-removed" && <p role="status">{t("settings.models.removed")}</p>}
     <p class="settings-muted">{t("settings.models.fallbackHint")}</p>
-    <form class="settings-form" aria-label={t("settings.models.title")} onSubmit={(event) => {
-      event.preventDefault();
-      if (stackEditable && order && orderDirty && !saving) saveOrder.mutate(order);
-    }}>
+    <div class="settings-form">
       <ol class="settings-model-stack" aria-label={t("settings.models.fallbackOrder")}>{rows.map((model, index) => {
         const own = model.source === editableModelSource(account.uid);
         const profile = models.data && modelProfilesFromListing(models.data, [], account.uid).find((entry) => entry.id === model.id);
@@ -161,24 +169,25 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
       {models.data?.models.length === 0 && <p>{t("settings.models.none")}</p>}
       {rows.length > 1 && <p class="settings-muted">{t("settings.models.dragHint")}</p>}
       <div class="settings-actions">
-        <button class="ibtn" disabled={!stackEditable || saving || !orderDirty} type="submit">{saveOrder.isPending ? <LoadingState>{t("common.saving")}</LoadingState> : t("settings.models.saveOrder")}</button>
-        {orderDirty && <button class="settings-text-action" type="button" disabled={saving} onClick={() => { setOrderDraft(null); saveOrder.reset(); }}>{t("common.discardChanges")}</button>}
         {order?.customized && <button class="settings-text-action" type="button" disabled={!stackEditable || saving} onClick={() => { if (models.data) updateOrder({ ids: models.data.models.map((model) => model.id), customized: false }); }}>{t("settings.models.useConfigured")}</button>}
-        {saved === "models" && <span role="status">{t("common.saved")}</span>}
       </div>
-    </form>
+    </div>
     </>}
-    {!modelEditor && <form class="settings-form" aria-label={t("settings.reasoning.label")} onSubmit={(event) => { event.preventDefault(); if (editable && !saving) saveReasoning.mutate(reasoning); }}>
-      <label>{t("settings.reasoning.label")}<select value={reasoning} disabled={!editable || saving} onChange={(event) => { setReasoningDraft(event.currentTarget.value); setSaved(null); saveReasoning.reset(); }}>
+    {!modelEditor && <div class="settings-form">
+      <label>{t("settings.reasoning.label")}<select value={reasoning} disabled={!editable || saving} onChange={(event) => { setReasoningDraft(event.currentTarget.value); setSaved(null); savePreferences.reset(); }}>
         {reasoning && !effortOptions.some((option) => option.value === reasoning) && <option value={reasoning}>{t("settings.unavailableOption", { value: reasoning })}</option>}
         {effortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select></label>
-      <div class="settings-actions"><button class="ibtn" disabled={!editable || saving || reasoning === originalReasoning} type="submit">{saveReasoning.isPending ? <LoadingState>{t("common.saving")}</LoadingState> : t("settings.reasoning.save")}</button>
-        {saved === "reasoning" && <span role="status">{t("common.saved")}</span>}
+    </div>}
+    {!modelEditor && config.data && <Language value={language} editable={editable && !saving} onChange={(value) => { setLanguageDraft(value); setSaved(null); savePreferences.reset(); }} />}
+    {!modelEditor && config.data && <Timezone value={timezone} fallback={config.data.find((entry) => entry.key === "config/server/timezone")?.value ?? "UTC"} editable={editable && !saving} onChange={(value) => { setTimezoneDraft(value); setSaved(null); savePreferences.reset(); }} />}
+    {!modelEditor && <div class="settings-save-bar" role="region" aria-label={t("settings.preferences.save")}>
+      <div class="settings-actions">
+        <span role="status">{t(saved === "preferences" ? "common.saved" : preferencesDirty ? "settings.preferences.unsaved" : "settings.preferences.noChanges")}</span>
+        {preferencesDirty && <button class="settings-text-action" type="button" disabled={saving} onClick={() => { discard(); savePreferences.reset(); }}>{t("common.discardChanges")}</button>}
+        <button class="ibtn is-primary" type="button" disabled={!editable || saving || !preferencesDirty || (orderDirty && !stackEditable)} onClick={() => savePreferences.mutate()}>{t(savePreferences.isPending ? "common.saving" : "settings.preferences.save")}</button>
       </div>
-    </form>}
-    {!modelEditor && config.data && <Language uid={account.uid} original={config.data.find((entry) => entry.key === `users/${account.uid}/locale/language`)?.value ?? ""} editable={editable} onDirty={setLanguageDirty} />}
-    {!modelEditor && config.data && <Timezone uid={account.uid} original={config.data.find((entry) => entry.key === `users/${account.uid}/locale/timezone`)?.value ?? ""} fallback={config.data.find((entry) => entry.key === "config/server/timezone")?.value ?? "UTC"} editable={editable} onDirty={setTimezoneDirty} />}
-    {!modelEditor && <ThemePreference />}
+      <SettingsError error={savePreferences.error} />
+    </div>}
   </section>;
 }

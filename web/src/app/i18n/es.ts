@@ -101,6 +101,15 @@ export const es = {
 
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (no disponible)",
+  "settings.preferences.leaveUnsaved": "Tienes preferencias sin guardar. ¿Salir sin guardar? Tus cambios se conservarán aquí.",
+  "settings.preferences.noChanges": "No hay cambios sin guardar",
+  "settings.preferences.unsaved": "Cambios sin guardar",
+  "settings.preferences.save": "Guardar cambios",
+  "settings.account.title": "Cuenta",
+  "settings.account.deleteTitle": "Eliminar tu cuenta",
+  "settings.account.deleteRequest": "Para eliminar tu cuenta, escribe a {email} y la eliminaremos manualmente por ti.",
+  "settings.account.deleteExplanation": "Ship sigue en acceso anticipado, así que aún no hemos añadido una opción para que elimines tu cuenta directamente.",
+
   "settings.preferences.title": "Preferencias",
   "settings.preferences.intro": "Valores predeterminados para {name}. Los ayudantes sin ajustes propios heredan estos valores.",
   "settings.preferences.loading": "Cargando preferencias…",
@@ -148,9 +157,12 @@ export const es = {
   "settings.reasoning.save": "guardar esfuerzo",
 
   // Settings: language, timezone and appearance
+  "settings.language.invalid": "Introduce un código de idioma válido, como es-MX.",
+  "settings.language.code": "Código de idioma",
+  "settings.language.custom": "Otro idioma…",
   "settings.language.label": "Idioma",
   "settings.language.placeholder": "Automático",
-  "settings.language.hint": "Ship empieza hablando en este idioma y la interfaz lo usa cuando hay traducción. Elige una sugerencia o introduce un código de idioma, como es-ES. Puedes pedirle a Ship que cambie de idioma cuando quieras.",
+  "settings.language.hint": "Ship y la interfaz usan este idioma. Puedes pedirle a Ship que cambie cuando quieras.",
   "settings.language.save": "guardar idioma",
   "settings.language.useDevice": "usar el idioma de este dispositivo",
   "settings.timezone.label": "Zona horaria",
@@ -164,6 +176,7 @@ export const es = {
   "settings.appearance.system": "Igual que el sistema",
   "settings.appearance.light": "Claro",
   "settings.appearance.dark": "Oscuro",
+  "settings.appearance.showStars": "Mostrar estrellas",
   "settings.appearance.hint": "Se guarda solo en este dispositivo, no en tu cuenta. Pulsa la tecla l fuera de un campo de texto para cambiar entre claro y oscuro.",
 
   // Settings: standing responsibilities
@@ -196,6 +209,7 @@ export const es = {
   "settings.permissions.ruleTarget": "Destino de la regla {number}",
   "settings.permissions.action": "Acción",
   "settings.permissions.ruleAction": "Acción de la regla {number}",
+  "settings.permissions.moveDown": "bajar",
   "settings.permissions.moveUp": "subir",
   "settings.permissions.addRule": "añadir regla",
   "settings.permissions.save": "guardar política",
@@ -242,6 +256,7 @@ export const es = {
   "settings.instructions.gone": "Este archivo de instrucciones ya no está disponible.",
 
   // Settings: messengers
+  "settings.messengers.comingSoon": "Próximamente",
   "settings.messengers.title": "Mensajería",
   "settings.messengers.intro": "Elige dónde hablas con tu Ship.",
   "settings.messengers.telegram": "Habla con tu Ship desde Telegram.",
@@ -446,6 +461,7 @@ export const es = {
   "settings.recovery.setUp": "configurar recuperación",
 
   // Settings: logs
+  "settings.logs.intro": "Consulta qué ha hecho Ship, cuándo y si ha funcionado. Selecciona una entrada para ver los detalles.",
   "settings.logs.title": "Registros",
   "settings.logs.activity": "Actividad",
   "settings.logs.history": "Historial de llamadas al sistema",
@@ -1313,7 +1329,7 @@ export const es = {
   "shell.help.discord": "Comunidad de Discord",
   "shell.help.search": "Buscar en Chat",
   "shell.help.views": "Vistas y apariencia",
-  "shell.help.viewsHint": "Los atajos de navegación funcionan fuera de los campos de texto y de los formularios de conexión y de modelo.",
+  "shell.help.viewsHint": "Los atajos de navegación funcionan cuando no estás escribiendo ni configurando una conexión o un modelo de IA. Ve a Configuración para desactivar las estrellas de fondo.",
   "shell.help.memory": "Memoria",
   "shell.help.people": "Personas",
   "shell.help.theme": "Cambiar entre claro y oscuro",
