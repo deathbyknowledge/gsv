@@ -12,7 +12,7 @@ import {
 } from "../src/manifest.ts";
 
 const manifest = {
-  version: 3 as const,
+  version: 4 as const,
   runtime: {
     gatewayBundle: "gateway.js",
     webAssets: "assets",
@@ -20,6 +20,7 @@ const manifest = {
     installationsBundle: "installations.js",
     installationsMigrations: "migrations",
     inferenceBundle: "inference.js",
+    pdsBundle: "pds.js",
   },
   adapters: [{
     id: "matrix",
@@ -89,6 +90,12 @@ describe("deployment manifest", () => {
     expect(() => gsvDeploymentManifestSchema.parse({ ...manifest,
       adapters: [{ ...adapter, deployment: { ...deployment, optionalVariables: ["room-alias"] } }],
     })).toThrow();
+  });
+
+  it("refuses a version 3 manifest, which carries no PDS bundle", () => {
+    const { pdsBundle: _pdsBundle, ...runtime } = manifest.runtime;
+    expect(() => gsvDeploymentManifestSchema.parse({ ...manifest, version: 3, runtime })).toThrow();
+    expect(() => gsvDeploymentManifestSchema.parse({ ...manifest, runtime })).toThrow();
   });
 
   it("rejects the old variant manifest instead of choosing a runtime implicitly", () => {

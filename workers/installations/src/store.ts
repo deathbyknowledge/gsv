@@ -1,3 +1,4 @@
+import { normalizeUsernamePolicy } from "./username-policy";
 import type {
   InstallationDirectoryResult,
   InstallationIdentity,
@@ -116,6 +117,8 @@ export class AccountStore {
     handle: string;
     provisionVersion?: number;
     ownerSetup?: boolean;
+    /** Trusted operator allocation only; public request bodies never supply this. */
+    allowReservedHandle?: boolean;
   }): Promise<InstallationReservation> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
     const operationId = parseOpaqueId(input.operationId, "operationId");
@@ -148,6 +151,8 @@ export class AccountStore {
            SELECT ?, id, ?, ?, 'reserved', ?, ?, ?, ?
            FROM principals
            WHERE id = ? AND state = 'active' AND email_verified_at IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM username_policy WHERE normalized_handle = ?
+               AND (kind = 'blocked' OR ? = 0))
              AND (? = 0 OR NOT EXISTS (SELECT 1 FROM installations i
                WHERE i.owner_principal_id = principals.id AND i.state NOT IN ('cancelled', 'deleted')))`,
         ).bind(
@@ -159,6 +164,8 @@ export class AccountStore {
           now,
           input.ownerSetup ? 1 : 0,
           principalId,
+          normalizeUsernamePolicy(handle),
+          input.allowReservedHandle ? 1 : 0,
           input.ownerSetup ? 1 : 0,
         ),
         this.db.prepare(
@@ -189,7 +196,8 @@ export class AccountStore {
       const claimed = await this.db.prepare(
         "SELECT id FROM installations WHERE handle = ? OR canonical_origin = ? LIMIT 1",
       ).bind(handle, identity.canonicalOrigin).first<{ id: string }>();
-      if (claimed) {
+      if (claimed || await this.db.prepare("SELECT 1 FROM username_policy WHERE normalized_handle = ? AND (kind = 'blocked' OR ? = 0)")
+        .bind(normalizeUsernamePolicy(handle), input.allowReservedHandle ? 1 : 0).first()) {
         throw new Error("handle is unavailable");
       }
       const principal = await this.getPrincipal(principalId);

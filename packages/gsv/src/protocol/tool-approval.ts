@@ -62,5 +62,6 @@ export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
     { match: "sched.add", action: "ask" },
     { match: "sched.update", action: "ask" },
     { match: "approach.create", action: "ask" },
+    { match: "atproto.write", action: "ask" },
   ],
 };

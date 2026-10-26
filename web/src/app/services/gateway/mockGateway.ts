@@ -26,10 +26,13 @@
  *   /reply     a plain reply is committed (finishing an open step first)
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
+ *   /approve-publish   a publish to the open network carrying a picture; y/n decides
+ *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
  *   anything else is committed as your message and answered briefly a second later
  */
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import type { ProfileState } from "@humansandmachines/gsv/protocol";
+import { contactSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import {
   wireFrameSchemas,
   buildBinaryFrame,
@@ -37,6 +40,10 @@ import {
   BINARY_FRAME_END,
   type AccountSummary,
   type AiTextContent,
+  type ApproachSummary,
+  type ContactSendResult,
+  type ContactSummary,
+  type ConversationInboxEntry,
   type AiThinkingContent,
   type AiToolCall,
   type ConnectResult,
@@ -55,6 +62,7 @@ import {
   type ScheduleRecord,
   type SysLedgerLine,
   type SysTargetSummary,
+  type AiTranscriptionCreateResult,
   type SysTokenCreateResult,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
@@ -120,7 +128,7 @@ const SHIP = { pid: "p-ship", uid: 1001, username: "ship", home: "/home/ship" };
 const PROFILE_URL = `https://${OWNER.username}.ship.space/profile`;
 /** The owner's own profile, public by default with an empty bio, editable in memory. */
 let ownProfile: ProfileState = {
-  revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests", representation: "human" }, published: { url: PROFILE_URL, revision: 1, contactPolicy: "requests" }, handle: OWNER.username,
+  revision: 1, url: PROFILE_URL, draft: { displayName: OWNER.username, about: "", contactPolicy: "requests" }, published: { url: PROFILE_URL, cid: "bafyreimockprofile1", revision: 1, contactPolicy: "requests" }, handle: OWNER.username,
 };
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
@@ -164,7 +172,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "sys.pair.create", "fs.read", "sys.config.set"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -173,6 +181,33 @@ const responsibilityBase = {
   assignee: { kind: "ship" as const }, priority: "normal" as const, revision: 1,
   createdAtMs: at(1, 9, 0), updatedAtMs: at(0, 8, 0),
 };
+const approaches: ApproachSummary[] = [];
+/* one contact with an unread message, so the chat shows a contact notice with its reply box */
+const MARA_CONTACT_ID = "mock-contact-mara";
+const MARA_CONVERSATION = "c-mara";
+const MARA_DID = "did:plc:maraaaaaaaaaaaaaaaaaaaaa";
+const OWN_DID = "did:plc:esteveaaaaaaaaaaaaaaaaaa";
+const maraContact: ContactSummary = { id: MARA_CONTACT_ID, ownerUid: OWNER.uid, state: "active", generation: "1", remoteDid: MARA_DID,
+  remoteName: "Mara", remoteHandle: "mara.ship.space", conversationId: MARA_CONVERSATION,
+  createdAtMs: at(3, 9, 0), updatedAtMs: at(0, 8, 12), lastReceivedAtMs: at(0, 8, 12) };
+const maraThread: ConversationMessage[] = [{ id: "mara-1", conversationId: MARA_CONVERSATION, sequence: 1,
+  author: { kind: "contact", contactId: MARA_CONTACT_ID, displayName: "Mara" },
+  text: "Are we still on for the studio visit on Thursday? I can bring the revised quote.",
+  social: { threadId: "mara-thread", reference: { did: MARA_DID, messageId: "mara-1" }, provenance: { kind: "human" } },
+  origin: { kind: "federation", contactId: MARA_CONTACT_ID, deliveryId: "mara-delivery-1" }, createdAt: at(0, 8, 12) }];
+const maraView = { readThroughSequence: 0, archived: false, revision: 1 };
+/* a retry with the same idempotency key replays the first answer, as the Kernel replays its outbox record; the
+   in-flight promise is stored before the hash resolves so two overlapping retries cannot both append */
+const maraSends = new Map<string, Promise<ContactSendResult>>();
+function maraConversation(): ConversationSummary {
+  return { id: MARA_CONVERSATION, kind: "contact", ownerUid: OWNER.uid, title: "Mara", latestSequence: maraThread.length, createdAt: at(3, 9, 0), updatedAt: maraThread.at(-1)!.createdAt };
+}
+function maraInboxEntry(): ConversationInboxEntry {
+  const latest = maraThread.at(-1)!;
+  const latestIncoming = [...maraThread].reverse().find((message) => message.author.kind === "contact")?.sequence ?? 0;
+  return { conversation: maraConversation(), contactId: MARA_CONTACT_ID, view: { ...maraView }, unread: latestIncoming > maraView.readThroughSequence,
+    latestIncomingSequence: latestIncoming, preview: { id: latest.id, sequence: latest.sequence, author: latest.author, createdAt: latest.createdAt, text: latest.text, attachmentCount: 0 } };
+}
 const responsibilities: ResponsibilityRecord[] = [
   { ...responsibilityBase, id: "mock-notes", title: "Organise the notes from this week", state: "active", assignee: { kind: "process", processId: HELPER.pid }, details: { outcome: "Keep the action items together and archive the older notes." } },
   { ...responsibilityBase, id: "mock-pricing", title: "Follow up on pricing with Mara", state: "waiting", blocker: "Waiting for Mara’s reply", details: { outcome: "Confirm the revised quote before Thursday." } },
@@ -205,7 +240,7 @@ type Step = {
   thought: string;
   place: "studio" | "gsv";
   tool: "Shell" | "Read" | "Write" | "Search" | "mail.send";
-  syscall: "shell.exec" | "fs.read" | "fs.write" | "fs.search" | "mail.send";
+  syscall: "shell.exec" | "fs.read" | "fs.write" | "fs.search" | "mail.send" | "atproto.write";
   args: JsonObject;
   purpose?: string;
   /** How long the tool runs, before a little jitter. */
@@ -253,6 +288,10 @@ const RUN_LONG_REPLY = [
   "There is no routine for cache cleaning yet. I can clear caches older than a week tonight and add a weekly clean next to the backup entry, which should keep the drive under 80%. Say the word.",
 ].join("\n\n");
 
+/** The picture a mock publish carries; small enough to arrive in one frame. */
+const PUBLISHED_PICTURE = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160"><rect width="240" height="160" fill="#1d2b3a"/><circle cx="182" cy="44" r="18" fill="#ffd24d"/><path d="M0 160 72 70l46 54 34-38 88 74Z" fill="#7a8fa6"/></svg>';
+const PUBLISHED_PICTURE_CID = "bafkreimockpicture";
+
 const GRANOLA_COMMAND = "pgrep -fl Granola 2>/dev/null; echo \"---\"; osascript -e 'tell application \"System Events\" to tell process \"Granola\" to get name of every window' 2>&1 | head -5";
 
 function approvalFor(trigger: string): ApprovalScenario | null {
@@ -278,6 +317,21 @@ function approvalFor(trigger: string): ApprovalScenario | null {
         ms: 900, output: { ok: true, messageId: "mock-mail-1" },
       },
       approved: "Sent Mike the contract follow-up.", denied: "Not sent. The draft is still here if you want to change it.",
+    };
+  }
+  if (trigger === "/approve-publish") {
+    const record = {
+      $type: "com.example.note", text: "Back from the coast. The light at six was something else.",
+      picture: { $type: "blob", ref: { $link: PUBLISHED_PICTURE_CID }, mimeType: "image/svg+xml", size: PUBLISHED_PICTURE.length },
+    };
+    return {
+      step: {
+        think: "", thought: "Ask before publishing the note publicly.", place: "gsv", tool: "Shell", syscall: "atproto.write",
+        purpose: "publish your trip photo with a short note",
+        args: { handle: "esteve", address: "esteve.ship.space", writes: [{ action: "create", collection: "com.example.note", record }] },
+        ms: 900, output: { commit: { cid: "bafymockcommit", rev: "3mockrev" }, results: [{ uri: "at://did:plc:mock/com.example.note/3mockrev", cid: "bafymockrecord" }] },
+      },
+      approved: "Published your note with the photo.", denied: "Not published. Nothing went to the open network.",
     };
   }
   if (trigger === "/approve-file") {
@@ -769,7 +823,8 @@ function refuse(id: string, code: number, message: string): string {
   return JSON.stringify({ type: "res", id, ok: false, error: { code, message } });
 }
 
-function route(socket: MockSocket, id: string, call: string, args: JsonValue): string {
+/* a case may answer later, as the real Kernel does for work that hashes or waits; the socket delivers either */
+function route(socket: MockSocket, id: string, call: string, args: JsonValue): string | Promise<string> {
   switch (call) {
     case "sys.connect":
       world.sockets.add(socket);
@@ -833,6 +888,10 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "conversation.forProcess": return respond(id, { conversation: conversation(pidArgs.parse(args).pid) });
     case "conversation.history": {
       const { conversationId, beforeSequence = Infinity, afterSequence, limit = 100 } = conversationArgs.parse(args);
+      if (conversationId === MARA_CONVERSATION) {
+        const messages = maraThread.filter((message) => message.sequence < beforeSequence && message.sequence > (afterSequence ?? 0)).slice(-limit);
+        return respond(id, { conversation: maraConversation(), messages, hasMore: false });
+      }
       const ship = conversationId === SHIP_CONVERSATION;
       const all = ship ? world.messages : [];
       const eligible = all.filter((message) => message.sequence < beforeSequence && message.sequence > (afterSequence ?? 0));
@@ -855,17 +914,70 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       const sent = receive(input.text);
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
     }
-    case "contact.list": return respond(id, { contacts: [] });
+    case "ai.transcription.create": {
+      // The audio body is dropped (bodies are not carried here); the transcript is a fixture.
+      const transcript: AiTranscriptionCreateResult = { text: "Can you check the studio backup and tell me if it finished", language: "en", duration: 3.2, provider: "mock", model: "mock-transcribe" };
+      return respond(id, transcript);
+    }
+    case "contact.list": return respond(id, { contacts: fresh ? [] : [maraContact] });
+    case "conversation.inbox": {
+      const { attentionOnly, archived = false } = z.object({ attentionOnly: z.boolean().optional(), archived: z.boolean().optional() }).parse(args);
+      const entry = maraInboxEntry();
+      const listed = !fresh && entry.view.archived === archived && (!attentionOnly || entry.unread);
+      return respond(id, { entries: listed ? [entry] : [] });
+    }
+    case "conversation.view.update": {
+      const { conversationId, readThroughSequence } = z.object({ conversationId: z.string(), readThroughSequence: z.number().optional() }).parse(args);
+      if (conversationId !== MARA_CONVERSATION) throw new Error(`Unexpected conversation ${conversationId}`);
+      if (readThroughSequence !== undefined) maraView.readThroughSequence = Math.max(maraView.readThroughSequence, readThroughSequence);
+      maraView.revision += 1;
+      broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, viewOnly: true });
+      return respond(id, { entry: maraInboxEntry() });
+    }
+    case "contact.send": {
+      const { contactId, text, idempotencyKey = crypto.randomUUID() } = z.object({ contactId: z.string(), text: z.string(), idempotencyKey: z.string().optional() }).parse(args);
+      if (contactId !== MARA_CONTACT_ID) throw new Error(`Unexpected contact ${contactId}`);
+      let send = maraSends.get(idempotencyKey);
+      /* the same id the client predicts for its pending bubble, so history replaces it instead of doubling it */
+      if (!send) {
+        send = contactSendMessageId(contactId, maraContact.generation, idempotencyKey).then((messageId): ContactSendResult => {
+          const sequence = maraThread.length + 1;
+          maraThread.push({ id: messageId, conversationId: MARA_CONVERSATION, sequence, author: { kind: "user", uid: OWNER.uid }, text,
+            social: { threadId: "mara-thread", reference: { did: OWN_DID, messageId }, provenance: { kind: "human" } },
+            origin: { kind: "client", clientId: "web" }, createdAt: Date.now() });
+          broadcast("conversation.changed", { conversationId: MARA_CONVERSATION, latestSequence: sequence });
+          return { deliveryId: `mara-delivery-${sequence}`, conversationId: MARA_CONVERSATION, state: "delivered" };
+        });
+        maraSends.set(idempotencyKey, send);
+      }
+      return send.then((result) => respond(id, result));
+    }
+    /* a message request sent from People: kept in this tab so the requests view can list it */
+    case "approach.create": {
+      const { displayName, did } = z.object({ displayName: z.string(), did: z.string() }).parse(args);
+      const now = Date.now();
+      const approach: ApproachSummary = { id: `mock-approach-${approaches.length + 1}`, direction: "outgoing",
+        requestId: `mock-approach-${approaches.length + 1}`, peerDid: did, displayName,
+        conversationId: `approach:${approaches.length + 1}`, state: "pending", revision: 1, delivery: "received",
+        createdAtMs: now, updatedAtMs: now, expiresAtMs: now + 7 * 24 * 3_600_000 };
+      approaches.push(approach);
+      return respond(id, { approach });
+    }
+    case "approach.list": {
+      const { direction, status = "active" } = z.object({ direction: z.enum(["incoming", "outgoing"]), status: z.enum(["active", "history"]).optional() }).parse(args);
+      const pending = (approach: ApproachSummary) => ["preparing", "pending", "accepting"].includes(approach.state);
+      return respond(id, { approaches: direction === "outgoing" ? approaches.filter((approach) => pending(approach) === (status === "active")) : [] });
+    }
     case "profile.get": return respond(id, { profile: ownProfile });
     case "profile.update": {
       const { draft } = z.object({ expectedRevision: z.number(), draft: z.object({
-        displayName: z.string(), about: z.string(), contactPolicy: z.enum(["requests", "invitation", "closed"]), representation: z.enum(["human", "human-and-ship"]),
+        displayName: z.string(), about: z.string(), contactPolicy: z.enum(["requests", "invitation", "closed"]),
       }) }).parse(args);
       ownProfile = { ...ownProfile, revision: ownProfile.revision + 1, draft };
       return respond(id, { profile: ownProfile });
     }
     case "profile.publish": {
-      ownProfile = { ...ownProfile, published: { url: PROFILE_URL, revision: ownProfile.revision, contactPolicy: ownProfile.draft.contactPolicy } };
+      ownProfile = { ...ownProfile, published: { url: PROFILE_URL, cid: `bafyreimockprofile${ownProfile.revision}`, revision: ownProfile.revision, contactPolicy: ownProfile.draft.contactPolicy } };
       return respond(id, { profile: ownProfile });
     }
     case "profile.unpublish": {
@@ -873,11 +985,17 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { profile: ownProfile });
     }
     case "profile.resolve": {
-      const { url } = z.object({ url: z.string().url() }).parse(args);
-      const origin = new URL(url).origin;
-      return respond(id, { profile: { version: 1, origin, url: `${origin}/profile`, actor: { shipId: "mock-person", subjectId: "owner" },
-        displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests", representation: "human-and-ship", revision: 1,
-        publishedAtMs: Date.now() } });
+      const { address } = z.object({ address: z.string() }).parse(args);
+      const handle = /^https?:\/\//i.test(address) ? new URL(address).host : address.replace(/^@/, "");
+      return respond(id, { profile: { did: MARA_DID, handle, cid: "bafyreimockmara", url: `https://${handle}/profile`,
+        displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests" } });
+    }
+    case "atproto.identity": return respond(id, { identity: { did: OWN_DID, handle: "esteve.ship.space", host: "https://pds.ship.space" }, takedowns: [] });
+    case "atproto.blob.read": {
+      const { cid } = z.object({ cid: z.string() }).parse(args);
+      return cid === PUBLISHED_PICTURE_CID
+        ? socket.textResponse(id, { mimeType: "image/svg+xml", size: PUBLISHED_PICTURE.length }, PUBLISHED_PICTURE)
+        : refuse(id, 404, `No file with CID ${cid} on this Ship`);
     }
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
@@ -981,13 +1099,14 @@ class MockSocket extends EventTarget implements WebSocket {
     const frame = wireFrameSchemas.request.safeParse(JSON.parse(text.data));
     if (!frame.success) return; // cancels and other signals need no answer
     const { id, call, args } = frame.data;
-    let reply: string;
-    try {
-      reply = route(this, id, call, args);
-    } catch (error) {
-      reply = refuse(id, 400, error instanceof Error ? error.message : "Bad request");
-    }
-    queueMicrotask(() => this.deliverText(reply));
+    const deliver = async () => {
+      try {
+        this.deliverText(await route(this, id, call, args));
+      } catch (error) {
+        this.deliverText(refuse(id, 400, error instanceof Error ? error.message : "Bad request"));
+      }
+    };
+    queueMicrotask(() => { void deliver(); });
   }
 
   close(code = 1000, reason = ""): void {

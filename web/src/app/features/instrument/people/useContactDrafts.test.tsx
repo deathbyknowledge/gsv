@@ -22,8 +22,8 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const contact: ContactSummary = {
-  id: "contact:one", ownerUid: 1000, state: "active", generation: "generation:one", remoteShipId: "ship:one",
-  remoteSubject: { id: "subject:one", displayName: "Person" }, remoteOrigin: "https://person.example",
+  id: "contact:one", ownerUid: 1000, state: "active", generation: "generation:one", remoteDid: "did:plc:personaaaaaaaaaaaaaaaaaa",
+  remoteName: "Person", remoteHandle: "person.example",
   conversationId: "conversation:one", createdAtMs: 1, updatedAtMs: 1,
 };
 const accepted: ContactSendResult = { deliveryId: "delivery:one", conversationId: contact.conversationId, state: "queued" };
@@ -62,7 +62,7 @@ describe("optimistic human contact sends", () => {
     send.mockRejectedValueOnce(new Error("Connection lost")).mockResolvedValue(accepted);
     const view = await mounted();
     try {
-      const reference = { actor: { shipId: "ship:one", subjectId: "subject:one" }, messageId: "message:original" };
+      const reference = { did: "did:plc:personaaaaaaaaaaaaaaaaaa", messageId: "message:original" };
       await act(() => view.current.update(contact.id, { text: "A reply", reply: { reference, author: "Person", preview: "Original" } }));
       await act(async () => { await view.current.send(contact); });
       const pending = view.current.drafts.get(contact.id)!.sent[0];

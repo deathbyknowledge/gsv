@@ -29,13 +29,23 @@ trusted Worker service bindings.
 A found identity contains `installationId`, `handle`, `canonicalOrigin`, and
 `state`. Only `installationId` is the security identity. A handle or hostname
 may move to a replacement installation after reset; old credentials and
-delayed work remain scoped to the retired id.
+delayed work remain scoped to the retired id. A handle is one lowercase DNS
+label. Accounts refuses handles reserved for the deployment's own hostnames:
+`deploy`, `docs`, `install`, `lexicons` (the account that publishes Ship's
+lexicons), `pds` (the open-network host), `signup`, `staging` and `www`.
 
 Public clients cannot choose an installation id for an ordinary request.
 The gateway resolves the request hostname before addressing a Kernel.
 Adapters resolve a durable, generation-fenced identity link; background work
 uses its stored installation identity. Passing an arbitrary id through a
 service call is not a replacement for those admission checks.
+
+An operator that runs its own Accounts Worker composes it from
+`@humansandmachines/gsv-installations`. Besides the methods above, that Worker
+exports a `RequestReportsEntrypoint` that files through `fileKernelReport` on
+its own database, runs `RequestReports.forgetClosedMessages()` on its cron, and
+gives `InstallationAdminHttp` its `ShipTakedowns` and `RequestReports`, so the
+operator admin has its Takedowns panel and Reports queue.
 
 ## Resolution and admission
 
@@ -74,7 +84,9 @@ two seconds is recorded as a diagnostic and fails closed with a retryable
 "Ship is briefly unreachable" error, because an outage cannot be told apart
 from a suspension. Accounts does not notify a Kernel when it restricts or
 resets an installation, so already-authenticated traffic observes those
-changes within a minute.
+changes within a minute. Accounts does tell the deployment's PDS when it
+restricts or reactivates an installation, so relays hear of the suspension;
+see [the open network](open-network.md).
 
 Accounts also holds an operator binding to the Gateway for the Ship health
 view in administration. The Gateway resolves the installation through the
@@ -157,6 +169,34 @@ delivery and again during verification, and rejects new Space allocations before
 reservation. Existing credentials can still sign in and admitted setups can resume.
 The managed composition uses this to prevent GSV mailboxes from registering more Spaces.
 
+Operators manage reserved and blocked public usernames at **Administration → Signup**
+(`/admin/signup`). Accounts stores both lists; edits take effect immediately without
+redeployment. Enter one name per line or separate entries with commas (up to 500
+per list). Each form field accepts up to 16,000 characters; both lists can be saved
+together at that size, including accented names. Reserved names are available only
+for operator-controlled installations created through administration. Blocked names
+are unavailable for all new allocations,
+including operator creation, and take precedence over reserved entries.
+Configured service hostnames and built-in routes remain protected.
+
+Policy matching compares the **entire** name after lowercasing, Unicode NFKD accent
+removal, and removal of hyphens, underscores, dots and whitespace. Both candidates
+and list entries use this comparison. It never changes stored usernames, syntax
+rules or uniqueness: an ordinary `alice-smith` remains distinct from `alicesmith`.
+Both lists start empty. Operators add their own entries in administration and
+can add targeted spelling evasions as encountered. Context-dependent terms should
+be assessed when reported rather than automatically blocked solely for an
+ambiguous meaning.
+
+Availability reports both categories as unavailable to signup. Accounts checks
+policy atomically when reserving a new installation, preventing direct creation
+or concurrent list edits from bypassing the check. Existing installations, admitted
+setup retries and resets retain their handles. There is no public handle rename
+or new-installation import path today; any such path must enforce this same policy
+before assigning a new public handle, without using its normalization for uniqueness.
+Only authenticated operators can edit the lists, with same-origin mutation checks
+and an audit event when operator auditing is configured.
+
 Contact invitations remain entirely Kernel-owned. The browser carries a pending
 contact link through signup and local setup, then presents the normal acceptance
 and message-handling choice. Creating, cancelling or accepting a contact invitation
@@ -173,13 +213,16 @@ policy copying and disablement remain service-owned.
 Pending deletion means data remains stored. Accounts durably coordinates
 quiesce and erase operations across the captured resource inventory, including
 pending resets inherited from an older source. Kernel, Process, Conversation,
-R2, ripgit, adapters, mail, inference and cloud instances report their own cleanup receipts.
+R2, ripgit, adapters, mail, inference, cloud instances and the open-network host report their own cleanup receipts.
 Instance coordinators are installation-owned resources in discovery and deletion;
 they do not require adapter peer-inventory import. Their lifecycle owner stops
 browsers and erases profiles and temporary files before confirming live erasure.
 Cloud computer objects also appear as `instance-computer` resources. Their owner
 destroys the container before confirming erasure or releasing its reservation;
 late start and health completions cannot reactivate a retired object.
+The open-network host's repository objects and its one host object need no
+import either. Its owner tells relays the account is deleted and tombstones the
+Ship's DID; see [deletion on the open network](open-network.md#deletion).
 Missing inventory or owner evidence prevents a claim of completed erasure.
 Stale work cannot recreate data after its owner has retired the identity.
 
@@ -199,6 +242,13 @@ Shipped migration files are immutable. Cloudflare D1 enforces foreign keys
 during migrations; a table rebuild must preserve the relationships rather
 than disabling them. See [D1 foreign-key behavior](https://developers.cloudflare.com/d1/sql-api/foreign-keys/)
 and [D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/).
+
+For upgrades from the seeded username policy, keep migration `0028_username_policy.sql`
+unchanged and apply `0029_remove_username_policy_starters.sql` before serving the
+updated Accounts worker. Fresh installations finish with empty lists. The forward
+migration removes only exact starter rows, preserving added or modified entries.
+If the audit log records a completed or pending operator policy save, it preserves
+the entire policy, including starter names the operator retained.
 
 ## Preferred domains and accepted aliases
 

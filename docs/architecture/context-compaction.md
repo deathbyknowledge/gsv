@@ -45,6 +45,12 @@ context epoch, and opaque generation-context identity derived from the effective
 system prompt and offered tools. A matching model response from another epoch or
 from an IPC/interactive context variant cannot confirm the live prompt prefix.
 
+A context window set in the model configuration takes precedence. Otherwise the
+Gateway asks the inference service and caches the answer for a minute. If that
+lookup fails or misses its ten-second deadline, the run continues with the last
+value it learned for that model, however old, or with an unknown window; a
+metadata lookup never fails a run.
+
 An unknown model context window produces unknown pressure, not an invented
 limit. If the provider reports that the assembled request exceeds its context
 window, the Process applies the same history policy regardless of the estimate.

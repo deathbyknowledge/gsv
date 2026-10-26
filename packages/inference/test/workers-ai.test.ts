@@ -333,6 +333,23 @@ describe("shared Workers AI inference", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it.each([401, 402, 403])("moves to the next route when a provider refuses our account with HTTP %i", async (status) => {
+    const run = vi.fn<NonNullable<AiBinding["fetch"]>>()
+      .mockResolvedValueOnce(new Response("402: Credit limit exceeded", { status }))
+      .mockResolvedValueOnce(completionResponse(SECOND_MODEL.modelId, "gen_fallback"));
+    const generation = createWorkersAiGeneration(REQUEST, testBinding(run).binding);
+    expect(await generation.result(FALLBACK_ROUTING)).toMatchObject({ stopReason: "stop", responseId: "gen_fallback" });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(generation.attempts()[0]).toMatchObject({ providerStatusCode: status, failure: { retryable: false } });
+  });
+
+  it.each([400, 413])("does not move a rejected request (HTTP %i) to the next route", async (status) => {
+    const run = vi.fn(async () => new Response("rejected", { status }));
+    const generation = createWorkersAiGeneration(REQUEST, testBinding(run).binding);
+    expect(await generation.result(FALLBACK_ROUTING)).toMatchObject({ stopReason: "error" });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it("does not repeat an accepted single-provider stream, even before visible output", async () => {
     const run = vi.fn(async () => new Response("data: not-json\n\n", {
       headers: { "content-type": "text/event-stream" },

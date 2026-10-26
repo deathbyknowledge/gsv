@@ -48,6 +48,7 @@ trusted PR branches and `main`. Set these environment variables:
 | `GSV_PREVIEW_ACCESS_EMAIL_DOMAINS` | Comma-separated allowed email domains |
 | `GSV_PREVIEW_ACCESS_EMAILS` | Optional comma-separated exact addresses; one domain or address is required |
 | `GSV_PREVIEW_INFERENCE_MODEL` | Optional Workers AI model; defaults to `@cf/zai-org/glm-5.3-flash` |
+| `GSV_PREVIEW_PLC_URL` | Optional disposable did:plc directory. When set, each preview runs the open-network host at `pds.<preview domain>` with its own generated rotation key; `plc.directory` is refused |
 
 Set environment secret **`GSV_PREVIEW_CLOUDFLARE_API_TOKEN`** for the chosen
 account and zone, with permissions for Workers, D1, R2, Workers AI, Access

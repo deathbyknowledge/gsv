@@ -4,10 +4,11 @@ import type {
   AdminInstallationSummary,
 } from "../administration";
 import { ADMIN_VISIBLE_INSTALLATION_STATES } from "../administration";
-import type { IssuedAdminInstallation } from "./service";
+import { RESET_CONSEQUENCES, type IssuedAdminInstallation } from "./service";
 import type { AdminNavigationItem } from "./page";
 import type { OperatorRun, OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
 import type { OperatorAuditEvent, ShipContext, ShipHealth } from "./insight";
+import { takedownSubjectKey, takedownSubjectKind, type ShipOpenNetwork, type TakedownSubjectKind } from "./takedowns";
 import {
   adminPageResponse,
   auditTable,
@@ -22,7 +23,7 @@ import {
 } from "./page";
 
 /** What the Ship page shows beyond the installation record; absent when no insight is configured. */
-export type ShipView = { context: ShipContext; health: ShipHealth };
+export type ShipView = { context: ShipContext; health: ShipHealth; openNetwork?: ShipOpenNetwork };
 
 const SLOW_STEP_MS = 60_000;
 
@@ -93,6 +94,9 @@ export function adminNewInstallationPage(
   });
 }
 
+/** A lifecycle change Accounts kept but couldn't finish, which the operator can submit again. */
+export type LifecycleRetry = { state: "active" | "restricted"; reason: string | null };
+
 export function adminInstallationPage<Detail extends AdminInstallation>(
   installation: Detail,
   issued?: IssuedAdminInstallation,
@@ -101,6 +105,7 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
   status = 200,
   presentation: Pick<InstallationAdminPresentation<Detail>, "navigation" | "overview" | "panel"> = {},
   ship?: ShipView,
+  retry?: LifecycleRetry,
 ): Response {
   const installationPath = `/admin/installations/${encodeURIComponent(installation.installationId)}`;
   const host = hostOf(installation.canonicalOrigin);
@@ -118,7 +123,7 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
         <div><p class="eyebrow">SHIP</p><h1>${escapeHtml(installation.handle)}</h1><p class="subtitle">${subtitle.map(escapeHtml).join(" · ")}</p></div>
         <div class="actions">${stateBadge(installation.state)}<a class="button secondary" href="${escapeHtml(installation.canonicalOrigin)}" target="_blank" rel="noreferrer">Open Ship</a></div>
       </div>
-      ${error ? errorNotice(error) : ""}
+      ${error ? errorNotice(error, retry ? lifecycleRetryForm(installationPath, retry) : "") : ""}
       ${issued ? onboardingNotice(issued) : ""}
       ${presentation.overview?.(installation) ?? ""}
       <div class="grid">
@@ -135,6 +140,7 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
         ${provisioningPanel(installation, installationPath)}
         ${lifecyclePanel(installation, installationPath)}
         ${resetPanel(installation, installationPath)}
+        ${ship?.openNetwork ? takedownPanel(ship.openNetwork, installationPath) : ""}
       </div>
     </section>`,
   });
@@ -321,17 +327,60 @@ function resetPanel(
   }
   const operationId = `reset_${crypto.randomUUID()}`;
   return `<section class="panel danger-zone"><p class="eyebrow">FRESH SHIP</p><h2>Reset ${escapeHtml(installation.handle)}</h2>
-    <p>Reset assigns this handle to a new Ship ID and starts activation again. Existing sessions and background work stop because the previous Ship becomes inactive.</p>
-    <p><strong>This does not delete the previous Ship's stored data.</strong> It records that data as pending deletion so a separate deletion operation can remove it from every owning service.</p>
+    <p><strong>If the person only lost access, don't reset.</strong> Recovery keeps their Ship, contacts and DID: they sign in to My Ships with the owner email under Ship details and choose Recover your Ship, which resets the administrator password.</p>
+    <p>Before you confirm, this is what a reset does:</p>
+    <ul class="consequences">${RESET_CONSEQUENCES.map((consequence) => `<li>${escapeHtml(consequence)}</li>`).join("")}</ul>
     <form class="form-actions" method="post" action="${installationPath}/reset">
       <input type="hidden" name="operationId" value="${escapeHtml(operationId)}">
-      ${reasonField()}
+      ${reasonField(true)}
       <label><span>Type ${escapeHtml(installation.handle)} to confirm</span><input name="confirmHandle" required autocomplete="off" value=""></label>
       <button class="danger" type="submit">Reset and issue activation link</button>
     </form>
   </section>`;
 }
 
-function reasonField(): string {
-  return `<label><span>Reason (optional, kept in the audit log)</span><input name="reason" maxlength="500" autocomplete="off" value=""></label>`;
+const SUBJECT_LABELS = { account: "Whole account", record: "Record", blob: "File" } satisfies Record<TakedownSubjectKind, string>;
+
+/** What the Ship publishes on the open network that its host has taken down, and the form that takes more down. */
+function takedownPanel(network: ShipOpenNetwork, installationPath: string): string {
+  const heading = `<p class="eyebrow">OPEN NETWORK</p><h2>Takedowns</h2>`;
+  if (network.kind === "unavailable") {
+    return `<section class="panel" id="takedowns">${heading}<p>The Ship's open-network host could not be read: <strong>${escapeHtml(network.reason)}</strong>.</p></section>`;
+  }
+  if (network.kind === "none") {
+    return `<section class="panel" id="takedowns">${heading}<p>This Ship has no repository on the open network yet; it gets one with its first published profile or Ship-to-Ship call.</p></section>`;
+  }
+  const { did, handle, takedowns } = network.repository;
+  const rows = takedowns.map(({ subject, reason, at, ref }) => `<tr>
+      <td><strong>${SUBJECT_LABELS[takedownSubjectKind(subject)]}</strong><small class="select-all">${escapeHtml(takedownSubjectKey(subject))}</small></td>
+      <td>${reason ? escapeHtml(reason) : "—"}</td>
+      <td>${formatDate(at)}<small>${escapeHtml(ref)}</small></td>
+      <td><form method="post" action="${installationPath}/takedowns/restore"><input type="hidden" name="subject" value="${escapeHtml(takedownSubjectKey(subject))}">
+        ${reasonField()}
+        <div class="form-actions"><button class="secondary" type="submit">Restore</button></div></form></td>
+    </tr>`).join("");
+  return `<section class="panel danger-zone" id="takedowns">${heading}
+    <p>Readers on the open network stop seeing what you take down. While its account is down, the Ship can't publish or call other Ships. Its person sees each takedown in People, with your reason.</p>
+    <dl class="definition-list"><dt>DID</dt><dd class="select-all">${escapeHtml(did)}</dd><dt>Handle</dt><dd>${escapeHtml(handle)}</dd></dl>
+    ${takedowns.length
+      ? `<div class="table-wrap"><table class="audit"><thead><tr><th>Taken down</th><th>Reason</th><th>Since</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : "<p>Nothing is taken down.</p>"}
+    <form class="stack" method="post" action="${installationPath}/takedowns">
+      <label><span>Take down</span><select name="subject">${Object.entries(SUBJECT_LABELS).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label>
+      <label><span>Record AT URI, for a record</span><input name="uri" maxlength="2048" autocomplete="off" placeholder="at://${escapeHtml(did)}/space.ship.profile/self" value=""></label>
+      <label><span>File CID, for a file</span><input name="cid" maxlength="128" autocomplete="off" placeholder="bafkrei…" value=""></label>
+      <label><span>Reason (required; the Ship's person reads it)</span><input name="reason" required maxlength="500" autocomplete="off" value=""></label>
+      <div class="form-actions"><button class="danger" type="submit">Take down</button></div>
+    </form>
+  </section>`;
+}
+
+/** Submits the same lifecycle change again, with the reason the operator gave. */
+function lifecycleRetryForm(installationPath: string, retry: LifecycleRetry): string {
+  const reason = retry.reason ? `<input type="hidden" name="reason" value="${escapeHtml(retry.reason)}">` : "";
+  return `<form class="form-actions" method="post" action="${installationPath}/lifecycle">${reason}<button type="submit" name="state" value="${retry.state}">Try again</button></form>`;
+}
+
+function reasonField(required = false): string {
+  return `<label><span>Reason (${required ? "required" : "optional"}, kept in the audit log)</span><input name="reason"${required ? " required" : ""} maxlength="500" autocomplete="off" value=""></label>`;
 }

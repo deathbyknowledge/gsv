@@ -22,12 +22,22 @@ Sensitive final path segments include `api_key`, `secret`, `token`, `password`, 
 
 The Instrument theme is not stored here. **Settings → preferences → Appearance** chooses Match system, Light or Dark for the current browser only; other devices and agents are unaffected. The `l` key switches directly between Light and Dark.
 
+Appearance appears first and applies immediately. The remaining Preferences
+fields share one sticky **Save changes** action for model order, reasoning,
+language and timezone. All draft values are validated before writing. Writes
+use the existing per-key configuration boundary; if a write fails, the draft
+is retained and saved values are refreshed so remaining changes can be retried.
+Changing Settings sections, navigating to another app view, or using browser
+Back/Forward prompts before leaving unsaved preferences. Leaving preserves
+the draft until it is saved, discarded, or the session ends. Reload and sign-out
+retain their unsaved-work warnings.
+
 ## Language
 
 `users/{uid}/locale/language` stores the owner's language preference as a
 BCP 47 tag, such as `es` or `es-MX`. Web and Desktop setup detect it from the client's
 preferred browser language. Change it under **Settings → Preferences → Language**,
-or ask Ship to change it. Clearing it leaves the conversation to establish Ship's language.
+or ask Ship to change it. The dropdown offers English, Spanish and Portuguese. Regional saved codes display their matching supported language; opening Preferences does not rewrite them. Other language codes remain valid through the configuration interface.
 Invalid tags are rejected and valid tags are canonicalized.
 
 Ship receives the preference through `{{user.language}}` in runtime context. Later
@@ -190,13 +200,16 @@ Default policy (`default` is `auto`; the runtime, the Process fallback, and the 
 | `{ "route": "instance", "platform": "browser" }`, Ship-provisioned browsers | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `{ "route": "instance", "platform": "linux" }`, Ship-provisioned computers | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `targets/*`, connected computers and browsers | `fs.read`, `fs.search`, `fs.transfer.stat`, `fs.transfer.send` | every other `fs.*` call, `shell.exec`, `net.fetch` |
-| any target | `web.search` | `sys.mcp.call`, `mail.send`, `sched.add`, `sched.update`, `approach.create` |
+| any target | `web.search` | `sys.mcp.call`, `mail.send`, `sched.add`, `sched.update`, `approach.create`, `atproto.write` |
 
 `sched.add` and `sched.update` are checked only when a schedule runs a command;
 message reminders never ask. `approach.create` is the Ship sending a first
-message request to someone who is not a contact yet. Every decision comes from
-the rules: mail, MCP tools, scheduled commands and message requests ask because
-the default rules say so, and a rule can change that like any other.
+message request to someone who is not a contact yet. `atproto.write` is the
+Ship publishing records to the [open network](/architecture/open-network);
+uploading a file does not ask, because nothing serves it until an approved write
+publishes a record that references it. Every decision comes from the rules:
+mail, MCP tools, scheduled commands, message requests and network writes ask
+because the default rules say so, and a rule can change that like any other.
 
 Native work in the cloud home and Ship-provisioned browsers proceeds without asking. Connected personal browsers and computers still ask before changing files, running commands, or making network requests. Capability grants, ownership checks, and browser sign-in handoffs still apply. A cloud browser may retain website logins; use an Ask or Block rule for **Cloud browsers**, or for one target, to restrict its use.
 

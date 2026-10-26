@@ -81,11 +81,31 @@ export type OperatorShipSnapshotResult =
   | { found: true; snapshot: OperatorShipSnapshot }
   | { found: false };
 
+export const operatorTakedownsChangedRequestSchema = z.strictObject({
+  version: z.literal(1),
+  installationId: identity,
+});
+export type OperatorTakedownsChangedRequest = z.infer<typeof operatorTakedownsChangedRequestSchema>;
+
+/**
+ * What became of the copy of the Ship's profile that Bluesky shows: deleted,
+ * written again as the host's takedowns allow, or already as they make it.
+ */
+export const profileCopyChangeSchema = z.enum(["removed", "updated", "unchanged"]);
+export type ProfileCopyChange = z.infer<typeof profileCopyChangeSchema>;
+
+export type OperatorTakedownsChangedResult =
+  | { found: true; copy: ProfileCopyChange }
+  | { found: false };
+
 /**
  * Bound only to Accounts for its operator pages. Returns metadata about a
  * Ship's health and recent work: counts, timings, names and outcomes. It never
  * returns message text, tool arguments or output, prompts or file contents.
+ * It also tells a Ship when the operator's takedowns of it change.
  */
 export interface OperatorGatewayService {
   operatorShipSnapshot(input: OperatorShipSnapshotRequest): Promise<OperatorShipSnapshotResult>;
+  /** Has the Ship bring Bluesky's copy of its profile in line with its host's takedowns, after the operator changed them. */
+  operatorTakedownsChanged(input: OperatorTakedownsChangedRequest): Promise<OperatorTakedownsChangedResult>;
 }

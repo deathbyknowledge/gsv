@@ -201,6 +201,8 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
         && userFrame.payload.aborted !== true
         // Process already commits its own correction-exhausted notice.
         && userFrame.payload.reason !== "message.action.missing"
+        // The notice answers the message that started the run; a fallback or scheduled route has none.
+        && route.replyToId
       ) {
         await this.host.adapterDelivery.queueAdapterRouteDelivery(route, {
           type: "sig",

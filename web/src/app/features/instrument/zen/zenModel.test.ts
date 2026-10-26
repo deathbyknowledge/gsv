@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SHELL_KEYS } from "../shared/shellKeys";
 import type { ConversationMessage, ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
 import { conversationMessageRow } from "../../../services/chat/domain/conversations";
 import type { ChatTranscriptRow, ChatTranscriptValue } from "../../../services/chat/domain/transcript";
@@ -12,6 +13,8 @@ import {
   answerHistorySnapshot,
   argumentThatMatters,
   awaitingFirstMessage,
+  latestMessageGroup,
+  brightMessageIndices,
   defaultPlace,
   formatSeconds,
   linkPlaceReferences,
@@ -1047,6 +1050,53 @@ describe("memoryPagesForMoment", () => {
   });
 });
 
+describe("latestMessageGroup", () => {
+  const message = (role: Moment["role"], timestamp: number | null, extra: Partial<Moment> = {}): Moment =>
+    ({ id: `${role}-${timestamp}`, role, timestamp, text: "hello", streaming: false, thinking: false,
+      runId: null, activities: [], narration: "", ...extra });
+
+  it.each(["human", "ship"] as const)("keeps consecutive %s messages bright, including the five-minute boundary", (role) => {
+    expect(latestMessageGroup([message(role, 0), message(role, 300_000), message(role, 600_000)])).toEqual([2, 1, 0]);
+    expect(latestMessageGroup([message(role, 0), message(role, 300_001)])).toEqual([1]);
+  });
+
+  it("keeps the latest owner group bright after Ship replies without reviving earlier turns", () => {
+    expect(brightMessageIndices([message("human", 0), message("ship", 1), message("human", 2), message("human", 3), message("ship", 4)])).toEqual([4, 3, 2]);
+    expect(brightMessageIndices([message("human", 0), message("ship", 600_001, { streaming: true })])).toEqual([1, 0]);
+    expect(brightMessageIndices([message("ship", 0), message("human", 1)])).toEqual([1]);
+  });
+
+  it("starts a new group when the sender changes", () => {
+    expect(latestMessageGroup([message("ship", 0), message("human", 1), message("ship", 2)])).toEqual([2]);
+    expect(latestMessageGroup([message("human", 0), message("ship", 1), message("human", 2)])).toEqual([2]);
+  });
+
+  it("ignores work and notes between messages and after the latest one", () => {
+    expect(latestMessageGroup([
+      message("ship", 0), message("note", 1), message("ship", 2, { text: "", thinking: true }),
+      message("ship", 3), message("ship", 4, { text: "" }),
+    ])).toEqual([3, 0]);
+  });
+
+  it("includes attachments and an incoming stream", () => {
+    expect(latestMessageGroup([
+      message("ship", 0, { text: "", media: [{ kind: "image" }] }),
+      message("ship", 1, { text: "", streaming: true }),
+    ])).toEqual([1, 0]);
+  });
+
+  it("does not infer proximity from missing or out-of-order timestamps", () => {
+    expect(latestMessageGroup([message("human", null), message("human", 1)])).toEqual([1]);
+    expect(latestMessageGroup([message("human", 1), message("human", null)])).toEqual([1]);
+    expect(latestMessageGroup([message("human", 2), message("human", 1)])).toEqual([1]);
+  });
+
+  it("has no bright messages when the transcript only contains work or notes", () => {
+    expect(latestMessageGroup([])).toEqual([]);
+    expect(latestMessageGroup([message("note", 0), message("ship", 1, { text: "", thinking: true })])).toEqual([]);
+  });
+});
+
 describe("awaitingFirstMessage", () => {
   const moment = (partial: Partial<Moment> & { id: string; role: Moment["role"] }): Moment =>
     ({ text: "", streaming: false, thinking: false, runId: null, timestamp: 1, activities: [], narration: "", ...partial });
@@ -1228,15 +1278,15 @@ describe("conversation attachments", () => {
 });
 
 describe("startsWriting", () => {
-  const claimed = new Set(["j", "k", "g", "G", "o", "c", "f", "m", "p", "s", "l", "x", "?"]);
+  const claimed = new Set(["j", "k", "g", "G", "o", ...SHELL_KEYS]);
   const press = (key: string, held: Partial<Omit<KeyPress, "key">> = {}): KeyPress => ({ key, ctrlKey: false, metaKey: false, altKey: false, ...held });
 
   it("starts on a plain printable character, capitals and symbols included", () => {
-    for (const key of ["a", "A", "1", "@", "$", "/", ",", "z", "\u00e9", "\ud83d\ude00"]) expect(startsWriting(press(key), claimed)).toBe(true);
+    for (const key of ["a", "f", "A", "1", "@", "$", "/", ",", "z", "\u00e9", "\ud83d\ude00"]) expect(startsWriting(press(key), claimed)).toBe(true);
   });
 
   it("leaves claimed shortcut keys to their owners", () => {
-    for (const key of ["j", "G", "?", "c", "f", "m", "p", "s"]) expect(startsWriting(press(key), claimed)).toBe(false);
+    for (const key of ["j", "G", "?", "c", "w", "m", "p", "s"]) expect(startsWriting(press(key), claimed)).toBe(false);
   });
 
   it("ignores command modifiers, whitespace and named keys", () => {

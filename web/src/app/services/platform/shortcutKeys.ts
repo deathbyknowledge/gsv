@@ -6,14 +6,13 @@ export function shortcutDefaults(platform = navigator.platform ?? "") {
     : { talk: "Ctrl+Shift+Space", stop: "Ctrl+Alt+Escape" };
 }
 
-type ShortcutKey = Pick<KeyboardEvent, "code" | "key" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey" | "repeat" | "isComposing" | "getModifierState">;
+type ShortcutKey = Pick<KeyboardEvent, "code" | "key" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey" | "repeat" | "isComposing">;
 /** A recorded shortcut, a cancelled recording, or the message that explains why a key cannot be used. */
 type ShortcutCapture = { cancel?: true; error?: TextKey; shortcut?: string };
 export function shortcutFromKey(event: ShortcutKey): ShortcutCapture {
   if (event.repeat || event.isComposing || /^(Control|Shift|Alt|Meta|OS|Fn)/.test(event.code)) return {};
   const modified = event.ctrlKey || event.altKey || event.shiftKey || event.metaKey;
   if (!modified && (event.key === "Escape" || event.key === "Tab")) return { cancel: true };
-  if (event.key === "Dead" || event.getModifierState("AltGraph")) return { error: "desktop.shortcut.errors.altGr" };
   if (!/^(Key[A-Z]|Digit[0-9]|F([1-9]|1[0-9]|2[0-4])|Space|Enter|Escape|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(Up|Down|Left|Right)|Backquote|Backslash|BracketLeft|BracketRight|Comma|Equal|Minus|Period|Quote|Semicolon|Slash)$/.test(event.code)) {
     return { error: "desktop.shortcut.errors.unsupported" };
   }
@@ -21,6 +20,11 @@ export function shortcutFromKey(event: ShortcutKey): ShortcutCapture {
     return { error: "desktop.shortcut.errors.modifier" };
   }
   return { shortcut: [event.ctrlKey && "Ctrl", event.altKey && "Alt", event.shiftKey && "Shift", event.metaKey && "Super", event.code].filter(Boolean).join("+") };
+}
+
+/** The mouse back and forward buttons cannot be global shortcuts; while recording they must not navigate either. */
+export function shortcutFromMouse(event: Pick<MouseEvent, "button">): ShortcutCapture | null {
+  return event.button === 3 || event.button === 4 ? { error: "desktop.shortcut.errors.mouse" } : null;
 }
 
 export function shortcutLabel(shortcut: string, platform = navigator.platform ?? ""): string {

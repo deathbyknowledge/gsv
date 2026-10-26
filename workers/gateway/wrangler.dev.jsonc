@@ -108,6 +108,14 @@
       }
     },
     {
+      "binding": "REQUEST_REPORTS",
+      "service": "gsv-installations-dev",
+      "entrypoint": "RequestReportsEntrypoint",
+      "props": {
+        "authority": "kernel-report"
+      }
+    },
+    {
       "binding": "INFERENCE_EXECUTION",
       "service": "gsv-inference-public-dev"
     },
@@ -115,6 +123,10 @@
       "binding": "RIPGIT",
       "service": "gsv-ripgit-dev"
     }
+  ],
+  // The Gateway's rough budget for each source of Ship-to-Ship calls to each Ship.
+  "ratelimits": [
+    { "name": "SHIP_CALLS", "namespace_id": "7001", "simple": { "limit": 250, "period": 10 } }
   ],
   "worker_loaders": [
     {

@@ -22,6 +22,21 @@ The Chat transcript scrolls vertically. Long words, URLs and compaction notes wr
 reading column; wide tables and code blocks scroll horizontally within their own bounds.
 Ship replies use ordinary line wrapping rather than paragraph balancing, filling each line
 with the words that fit. Explicit line breaks in a message remain intact.
+
+The smallest `x` size, 75%, uses 15px rendered message text and tighter vertical
+spacing for a compact conversation overview. Older messages stay more readable
+in this mode. The size choice is stored on the current device.
+On devices that support hover, pointing at an older message restores its full
+brightness at every text size without changing the selected message or scroll position.
+The latest message and consecutive messages from the same sender stay fully bright
+when each adjacent pair is at most five minutes apart. A different sender or a longer
+gap ends the group; work receipts and internal notes do not split it. The latest
+owner message and its consecutive group remain bright after Ship replies.
+New Ship replies open fully, including replies delivered whole without streaming.
+Refreshing the loaded history keeps those replies open; fetching older messages
+does not automatically expand them.
+
+
 Chat and contact history mark the top scroll boundary with a lavender line only
 while it intersects text, clearing the line in gaps between text and messages.
 Chat's scroll boundary spans the full view width while its messages retain their reading column.
@@ -54,11 +69,17 @@ states when relevant. Expand it to read the complete command, output and termina
 A very long message in Chat folds behind **read more** once it has finished arriving, and **show
 less** folds it again. Folding uses the rendered height at the current width and text size:
 messages up to eighteen line-heights remain whole; longer messages show twelve line-heights
-with a short fade at the end. A reply the user watched stream in stays open. Opening or folding
+with a short fade at the end. Newly received replies stay open, including messages delivered without streaming. Opening or folding
 keeps the reading position, and the message text itself is unchanged. Selected text uses a solid
 lavender highlight with contrasting text in both themes.
 Inside the prompt, selected text stays light on a stronger purple highlight. Selecting a range
 restores the native selection tint and handles on iOS; a collapsed selection uses the block cursor.
+
+After the first welcome card is dismissed, the empty Ship chat shows centered,
+muted privacy copy behind the transcript. It clears when the owner writes or
+Ship starts replying. The notice is not a conversation message and is not sent
+to the model. It does not appear in helpers, over existing messages, or while
+history is loading or unavailable, and does not intercept pointer input.
 
 ## Conversation kinds
 
@@ -191,6 +212,11 @@ and stays visible while the Process continues working. The tool result identifie
 remaining work and confirms that the message was sent, so Ship can finish or defer the
 work and yield without sending the same reply again.
 
+The Process holds Ship to that. A repeat of the message is not sent again; it only asks to
+yield again. Each refused yield counts against the run's run-control attempts, the same
+limit a refused bare yield uses, so a run that keeps failing to handle the work ends with an
+error rather than looping.
+
 New Ship approval notifications use the same reply preference and authorized messenger fallback.
 Delegated Work retains its inherited approval route. An already queued adapter delivery keeps its
 chosen destination through retries; changing activity does not replay old notifications.
@@ -249,8 +275,9 @@ Object:
   segment in installation-scoped R2.
 - SQLite retains the segment index and idempotency receipts, so history paging and retried appends
   remain stable across the hot/archive boundary.
-- Contact messages retain authenticated origin, authorship and reply references. Their origin index
-  maps an immutable remote message identity to the local sequence even after archival.
+- Contact messages retain authenticated origin, authorship and reply references. The origin names
+  the sending Ship by its DID, and the origin index maps that DID and the immutable remote message
+  identity to the local sequence even after archival.
 - Conversation messages store immutable resource references. The Process retains an exact source
   revision in the run-as agent archive before committing it, so the bytes remain readable after
   temporary Process cleanup without a second conversation-owned copy.
@@ -288,8 +315,8 @@ native saves apply to the attachment blobs resolved by the authenticated fronten
 
 ## Search
 
-Chat opens conversation search from its header action or with `Ctrl+K` from any view.
-`/` in browse mode and `Ctrl/Cmd+F` in Chat remain available. People uses the same search
+Chat opens conversation search through **Help → Keyboard shortcuts → Search Chat**, or with `Ctrl+K` from any view.
+`/` in browse mode and `Ctrl/Cmd+F` in Chat remain available. The unmodified `w` key opens Work outside text fields; `f` is available for ordinary typing. People uses the same search
 dialog and syscall for the selected contact conversation. Selecting a result shows the
 original message and surrounding messages in the dialog, preserving the conversation position and
 any draft when the dialog closes.

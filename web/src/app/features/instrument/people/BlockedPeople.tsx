@@ -21,7 +21,7 @@ export function BlockedPeople({ account }: { account: ConsoleAccount | undefined
     getNextPageParam: (page) => page.nextCursor,
   });
   const unblock = useMutation({
-    mutationFn: (actor: NonNullable<ContactBlockListArgs["actor"]>) => client.contact.block.set({ actor, blocked: false }),
+    mutationFn: (did: string) => client.contact.block.set({ did, blocked: false }),
     onSuccess: () => cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACT_BLOCKS_KEY }),
   });
   const entries = blocks.data?.pages.flatMap((page) => page.blocks) ?? [];
@@ -29,9 +29,9 @@ export function BlockedPeople({ account }: { account: ConsoleAccount | undefined
     <p class="people-note">{t("people.blocked.hint")}</p>
     {blocks.isLoading && <LoadingState>{t("common.loading")}</LoadingState>}
     {blocks.data && !entries.length && <p class="people-note">{t("people.blocked.none")}</p>}
-    {entries.map((entry) => <div class="people-block-entry" key={`${entry.actor.shipId}/${entry.actor.subjectId}`}>
-      <div class="people-actions"><span>{entry.displayName ?? t("people.blocked.unknown")}</span><button class="people-action" disabled={!allowed("contact.block.set") || unblock.isPending} onClick={() => unblock.mutate(entry.actor)}>{t("people.unblock")}</button></div>
-      <details><summary>{t("people.blocked.identity")}</summary><p>{entry.actor.shipId}<br />{entry.actor.subjectId}</p></details>
+    {entries.map((entry) => <div class="people-block-entry" key={entry.did}>
+      <div class="people-actions"><span>{entry.displayName ?? t("people.blocked.unknown")}</span><button class="people-action" disabled={!allowed("contact.block.set") || unblock.isPending} onClick={() => unblock.mutate(entry.did)}>{t("people.unblock")}</button></div>
+      <details><summary>{t("people.blocked.identity")}</summary><p>{entry.did}</p></details>
     </div>)}
     {blocks.hasNextPage && <button class="people-action" disabled={blocks.isFetchingNextPage} onClick={() => void blocks.fetchNextPage()}>{t("people.more")}</button>}
     {(blocks.error ?? unblock.error) && <p class="people-error" role="alert">{(blocks.error ?? unblock.error)?.message}</p>}

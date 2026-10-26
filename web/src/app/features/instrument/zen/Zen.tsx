@@ -63,6 +63,7 @@ import {
   answerAttribution,
   answerHistorySnapshot,
   awaitingFirstMessage,
+  brightMessageIndices,
   defaultPlace,
   momentsFromConversation,
   momentTime,
@@ -420,6 +421,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const [placesOpen, setPlacesOpen] = useState(false);
   const placesRef = useRef<HTMLDivElement>(null);
   const placeButtonRef = useRef<HTMLButtonElement>(null);
+  /* Safari doesn't focus a button on tap, so pressing the trigger blurs the menu with no relatedTarget;
+     the blur must not close what the click is about to toggle. Set on press, consumed by that blur or the click. */
+  const placeTriggerPressed = useRef(false);
   useDismissOnOutsideClick(placesOpen, () => [placesRef.current, placeButtonRef.current], () => setPlacesOpen(false));
   useLayoutEffect(() => {
     if (!active) setPlacesOpen(false);
@@ -609,6 +613,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   /* a Ship that has never spoken: the owner's own chat, the welcome dismissed, all history loaded and none of it missing, with no words from Ship yet; what they read meanwhile is the waking line */
   const waking = ready && !pidProp && !welcomeOpen && !conversation.historyError && !processRuntime.history.isError
     && !conversation.hasMore && !processRuntime.hasOlderHistory && awaitingFirstMessage(moments);
+  const showFirstOpenPrivacy = waking && !moments.some((moment) => moment.role === "human" || moment.text || moment.media?.length);
 
   /* the glyph thinking mark moves on the same clock as settling text; the dot keeps its own time in the stylesheet */
   const marking = THINKING_MARK === "glyphs" && moments.some((moment) => !moment.text && (moment.thinking || moment.streaming));
@@ -649,6 +654,17 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     queryFn: () => listLibraryCollections(client),
     enabled: connected && Boolean(onMemory) && hasMemoryRead,
   });
+
+  const initialMessageSequence = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (ready && initialMessageSequence.current === null) {
+      initialMessageSequence.current = Math.max(0, ...conversation.rows.map((row) => row.conversationSequence ?? 0));
+    }
+  }, [ready, conversation.rows]);
+  const receivedMessages = useMemo(() => new Set(conversation.rows
+    .filter((row) => initialMessageSequence.current !== null
+      && row.role === "assistant" && (row.conversationSequence ?? 0) > initialMessageSequence.current)
+    .map((row) => row.id)), [conversation.rows, ready]);
 
   const seenMomentsRef = useRef<Set<string> | null>(null);
   const streamedMomentsRef = useRef<Set<string>>(new Set());
@@ -766,6 +782,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const voiceInput = useRef<NativeVoiceHandle>(null);
   const nativePanels = useRef<HTMLDivElement>(null);
   const voiceSurface = useRef<HTMLDivElement>(null);
+  const voiceFeedback = useRef<HTMLDivElement>(null);
   const [recordingVoice, setRecordingVoice] = useState(false);
 
   const runDirectly = useCallback(
@@ -1022,7 +1039,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
           <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} onFold={pin} />
         ) : moment.text ? (
           <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0}
-            opened={streamed(moment)} onClick={onTextClick} onFold={pin} />
+            opened={streamed(moment) || receivedMessages.has(moment.id)} onClick={onTextClick} onFold={pin} />
         ) : moment.thinking || moment.streaming ? (
           <div class="text">{waking ? <WakingUp /> : null}<ThinkingMark tick={tick} /></div>
         ) : null}
@@ -1045,7 +1062,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
-    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed,
+    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed, receivedMessages,
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t, waking]);
 
   /* the status line */
@@ -1053,8 +1070,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   /* the cloud is always listed; once places are known and it is alone, it is not a choice, so it reads as plain text and offers to connect a place */
   const cloudAlone = !!targetsQuery.data && !targetsQuery.isError && selectorPlaces.length === 1;
 
-  const latestMessageIndex = useMemo(() => moments.reduce((latest, moment, index) =>
-    moment.role === "human" || (moment.role === "ship" && (moment.text !== "" || moment.media?.length || moment.streaming)) ? index : latest, -1), [moments]);
+  const brightMessages = useMemo(() => brightMessageIndices(moments), [moments]);
+  const latestMessageIndex = brightMessages[0] ?? -1;
   const historyFailure = conversation.historyError ? (
     <div class="zen-history-status is-err" role="alert">
       <span>{t("chat.history.failed", { error: conversation.historyError.message })}</span>
@@ -1076,6 +1093,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       {draggingFiles && <div class="zen-drop-hint">{t("chat.composer.drop")}</div>}
 
       <div class="zen-body">
+        {showFirstOpenPrivacy && <div class="zen-first-open-privacy"><p>{t("chat.firstOpenPrivacy")}</p></div>}
         {helperEmpty ? (
           <div class="zen-empty"><p>{t("chat.history.helperEmpty")}</p></div>
         ) : !ready ? (
@@ -1116,7 +1134,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                   );
                 }
                 return (
-                  <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${selection === index ? " is-focus" : ""}`}>
+                  <div key={moment.id} data-index={index} data-moment-id={moment.id} class={`zen-moment ${moment.role === "human" ? "is-human" : "is-ship"}${!moment.text && !moment.media?.length && !moment.streaming ? " is-work" : ""}${pending ? " is-pending" : ""}${materialising ? " is-materialising" : ""}${index < latestMessageIndex ? " is-older" : ""}${brightMessages.includes(index) ? " is-recent" : ""}${selection === index ? " is-focus" : ""}`}>
                     {messageBodies[index]}
                   </div>
                 );
@@ -1258,7 +1276,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               onKeyDown={(event) => {
                 if (event.key === "Escape" && placesOpen) { event.preventDefault(); event.stopPropagation(); setPlacesOpen(false); }
               }}
-              onClick={() => { setPickerQuery(null); setPlacesOpen((open) => !open); }}>
+              onPointerDown={() => { placeTriggerPressed.current = true; }}
+              onPointerCancel={() => { placeTriggerPressed.current = false; }}
+              onClick={() => { placeTriggerPressed.current = false; setPickerQuery(null); setPlacesOpen((open) => !open); }}>
               <span class={`zen-place-status${currentPlace.online ? " is-online" : ""}`} aria-hidden="true" />
               <span class="zen-place-label">{currentPlace.label}</span>
               <span class="zen-place-chevron" aria-hidden="true" />
@@ -1269,11 +1289,13 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                 enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen}
                 send={onSubmit} />
                 : <BrowserVoiceControls ref={voiceInput} prompt={promptRef} client={client} pid={pid}
-                  surfaceHost={voiceSurface} onActiveChange={setRecordingVoice}
+                  surfaceHost={voiceSurface} feedbackHost={voiceFeedback} onActiveChange={setRecordingVoice}
                   scope={voiceScope}
-                  enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen && !outbox.sending} />}
+                  enabled={active && connected && pid !== null && pendingHil === null && !searchOpen && !context && !addOpen && !outbox.sending}
+                  send={onSubmit} />}
             </div>
           </div>
+          <div ref={voiceFeedback} />
           <span class="zen-connection-status" role="status">{connected ? "" : t("chat.reconnecting")}</span>
           <div ref={placesRef} id="zen-places" class="zen-place-section" hidden={!placesOpen}
             onKeyDown={(event) => {
@@ -1281,6 +1303,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
               if (event.key === "Escape") { event.preventDefault(); setPlacesOpen(false); placeButtonRef.current?.focus(); }
             }}
             onBlur={(event) => {
+              if (placeTriggerPressed.current) { placeTriggerPressed.current = false; return; }
               const next = event.relatedTarget;
               if (next !== placeButtonRef.current && (!(next instanceof Node) || !event.currentTarget.contains(next))) setPlacesOpen(false);
             }}>

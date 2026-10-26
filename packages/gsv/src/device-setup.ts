@@ -49,7 +49,7 @@ export function cliReleaseLabel(release: string): string {
 }
 
 export function browserExtensionDownloadUrl(release: string): string {
-  return `https://github.com/deathbyknowledge/gsv/releases/download/${releaseRef(release)}/gsv-browser-extension.zip`;
+  return `https://ship.space/browser?release=${releaseRef(release)}`;
 }
 
 function cliReleaseSelector(release: string): { name: "GSV_CHANNEL" | "GSV_VERSION"; value: string } {

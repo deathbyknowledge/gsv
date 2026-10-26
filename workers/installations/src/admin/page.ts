@@ -26,7 +26,9 @@ export function adminPageResponse(input: {
       <a class="brand" href="/admin/installations"><strong>Ship</strong><span>administration</span></a>
       <nav aria-label="Operator navigation">
         ${navLink("/admin/installations", "Ships", input.section === "installations")}
+        ${navLink("/admin/reports", "Reports", input.section === "reports")}
         ${(input.navigation ?? []).map((item) => navLink(item.href, item.label, input.section === item.section)).join("")}
+        ${navLink("/admin/signup", "Signup", input.section === "signup")}
         ${navLink("/admin/audit", "Audit", input.section === "audit")}
       </nav>
       <small>private operator surface</small>
@@ -85,8 +87,9 @@ export function onboardingNotice(issued: IssuedAdminInstallation): string {
   </section>`;
 }
 
-export function errorNotice(message: string): string {
-  return `<section class="notice error" role="alert"><p class="eyebrow">REQUEST NOT COMPLETED</p><p>${escapeHtml(message)}</p></section>`;
+/** An error, with any form that acts on it. */
+export function errorNotice(message: string, action = ""): string {
+  return `<section class="notice error" role="alert"><p class="eyebrow">REQUEST NOT COMPLETED</p><p>${escapeHtml(message)}</p>${action}</section>`;
 }
 
 export function stateBadge(value: string): string {
@@ -223,7 +226,7 @@ p { color: #a7a7b2; font: 13px/1.55 system-ui, sans-serif; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 .filters { display: grid; grid-template-columns: minmax(220px, 1fr) 190px auto auto; align-items: end; gap: 10px; }
 label { display: grid; gap: 8px; color: #c4c4ce; font-size: 12px; }
-input, select { width: 100%; border: 1px solid #3a3a46; padding: 11px 12px; color: #fff; background: #08080c; font: inherit; }
+input, select, textarea { width: 100%; border: 1px solid #3a3a46; padding: 11px 12px; color: #fff; background: #08080c; font: inherit; }
 button, .button { display: inline-block; border: 1px solid #716bea; padding: 10px 14px; color: #fff; background: #34306f; font: inherit; line-height: normal; text-align: center; text-decoration: none; cursor: pointer; }
 button.secondary, .button.secondary { border-color: #3d3d49; background: #17171e; } button.danger, .button.danger { border-color: #743b42; background: #481f25; }
 .table-wrap { overflow-x: auto; border: 1px solid #292932; }
@@ -247,11 +250,14 @@ td strong, td small { display: block; } td small { margin-top: 6px; color: #8585
 .form-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .form-actions label { min-width: 180px; flex: 1; }
 .danger-zone { border-color: #513137; background: #130d10; }
+.consequences { margin: 0; padding-left: 18px; color: #c4c4ce; font: 13px/1.55 system-ui, sans-serif; } .consequences li + li { margin-top: 6px; }
 .subtitle { margin: 8px 0 0; font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
 .definition-list small { color: #858593; }
 .badge-ok, .badge-online { border-color: #315f4b; color: #9de0be; background: #0d1713; } .badge-error, .badge-aborted, .badge-offline { border-color: #743b42; color: #efafb5; background: #1a0e10; }
 .timeline td, .audit td { padding: 10px 14px; vertical-align: top; }
 details summary { cursor: pointer; color: #c4c4ce; } .flag { color: #f1c48a; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; } .tabs a[aria-current="page"] { border-color: #716bea; background: #34306f; }
+.reported-message { white-space: pre-wrap; overflow-wrap: anywhere; color: #e8e8ef; }
 .steps { margin: 10px 0 0; padding-left: 18px; font: 11px/1.7 ui-monospace, monospace; color: #a7a7b2; }
 .steps span { color: #6f6f7c; } .steps .step-slow { color: #f1c48a; } .steps .step-error { color: #efafb5; }
 @media (max-width: 760px) { .topbar { flex-wrap: wrap; gap: 8px 18px; padding: 12px 18px 0; } .topbar nav { order: 3; width: 100%; height: 44px; } .topbar nav a { padding: 0 10px; } .topbar small { display: none; } main { padding: 32px 16px 60px; } .page-heading { align-items: start; flex-direction: column; } .filters { grid-template-columns: 1fr; } .grid, .metrics { grid-template-columns: 1fr; } .metric { border-right: 0; border-bottom: 1px solid #292932; } .metric:last-child { border-bottom: 0; } .notice { grid-template-columns: 1fr; } .notice .button, .notice code, .notice small { grid-column: 1; } .definition-list { grid-template-columns: 1fr; } .definition-list dt { padding-bottom: 3px; border-bottom: 0; } .definition-list dd { padding-top: 3px; } }

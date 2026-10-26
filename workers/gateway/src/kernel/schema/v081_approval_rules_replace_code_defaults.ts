@@ -3,7 +3,7 @@ import type { SqlMigration } from "../../schema/runner";
 const STORED_POLICIES = "(key = 'config/ai/tools/approval' OR key LIKE 'users/%/ai/tools/approval')";
 
 /**
- * Mail, schedules and approaches used to ask from code when a saved policy
+ * Mail, schedules, approaches and network writes used to ask from code when a saved policy
  * allowed by default and named no rule for them. Those asks are now ordinary
  * default rules, so saved policies gain the same rule where code supplied it.
  */
@@ -36,7 +36,7 @@ const RULE_COVERS_GSV = `
   END`;
 
 /**
- * Mail, schedules and approaches used to ask from code when a saved policy
+ * Mail, schedules, approaches and network writes used to ask from code when a saved policy
  * allowed by default and named no rule for them. Those asks are now ordinary
  * default rules, so saved policies gain the same rule where code supplied it.
  */
@@ -59,8 +59,8 @@ function askWhereCodeDid(syscall: string): string {
   `;
 }
 
-export const KERNEL_V072_APPROVAL_RULES_REPLACE_CODE_DEFAULTS: SqlMigration = {
-  id: 72,
+export const KERNEL_V081_APPROVAL_RULES_REPLACE_CODE_DEFAULTS: SqlMigration = {
+  id: 81,
   name: "approval_rules_replace_code_defaults",
-  statements: ["mail.send", "sched.add", "sched.update", "approach.create"].map(askWhereCodeDid),
+  statements: ["mail.send", "sched.add", "sched.update", "approach.create", "atproto.write"].map(askWhereCodeDid),
 };

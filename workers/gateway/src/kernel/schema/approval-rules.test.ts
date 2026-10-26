@@ -4,13 +4,13 @@ import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
 import { parseToolApprovalPolicy, resolveToolApproval } from "../../process/approval";
 import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT, runKernelSqlMigrations } from "./migrations";
 
-const CODE_ASKS = ["mail.send", "sched.add", "sched.update", "approach.create"];
+const CODE_ASKS = ["mail.send", "sched.add", "sched.update", "approach.create", "atproto.write"];
 
 describe("approval rules replacing code defaults", () => {
-  it("keeps every saved policy deciding mail, schedules and approaches as it did", async () => {
+  it("keeps every saved policy deciding mail, schedules, approaches and network writes as it did", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();
-      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 72));
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 81));
       const saved = {
         "users/1000/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "shell.exec", target: "laptop", action: "ask" }] }),
         "users/1001/ai/tools/approval": JSON.stringify({ default: "ask", rules: [] }),

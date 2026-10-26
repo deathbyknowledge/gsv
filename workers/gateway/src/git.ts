@@ -1,3 +1,4 @@
+import { parseRipgitFailure, ripgitFailureReference } from "./fs/ripgit/client";
 import { removeUntrustedRipgitInstallationHeader } from "./installation/ripgit";
 
 type BasicAuth = {
@@ -149,4 +150,14 @@ export async function buildGitProxyRequest(
     init.body = request.body;
   }
   return new Request(targetUrl.toString(), init);
+}
+
+/** An outside caller learns that the request failed and the reference an operator can trace, never the cause. */
+export async function publicGitResponse(response: Response): Promise<Response> {
+  if (response.status < 500) return response;
+  const failure = parseRipgitFailure(await response.text().catch(() => ""));
+  return new Response(failure ? `Repository request failed (${ripgitFailureReference(failure)})` : "Repository request failed", {
+    status: response.status,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
 }

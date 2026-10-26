@@ -47,7 +47,7 @@ export function syncFederationRequestResponsibility(input: {
     state: input.request.state,
     revision: input.request.revision,
     exchangeState: input.request.exchange?.state ?? "unconfirmed",
-    remoteDisplayName: input.contact.remoteSubject.displayName,
+    remoteDisplayName: input.contact.remoteName,
     contentTrust: input.remoteInput ? "untrusted" : "local",
     ...(input.deliveryId ? { latestDeliveryId: input.deliveryId } : undefined),
   };

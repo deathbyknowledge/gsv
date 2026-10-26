@@ -1,0 +1,27 @@
+{
+  // The host as a deployment runs it. The operator composition bundles it from
+  // here and supplies the origins, the directory binding and the PLC keys.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gsv-pds",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [
+      { "name": "REPOS", "class_name": "HostedRepo" },
+      { "name": "FIREHOSE", "class_name": "HostFirehose" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HostedRepo", "HostFirehose"] }],
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "gsv-pds-blobs" }],
+  "vars": {
+    "PDS_ORIGIN": "https://pds.example.com",
+    "PLC_URL": "https://plc.directory"
+  },
+  "services": [{ "binding": "INSTALLATION_DIRECTORY", "service": "gsv-installations" }],
+  "secrets": {
+    "required": ["PLC_ROTATION_KEY"]
+  }
+}

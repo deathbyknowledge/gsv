@@ -27,6 +27,7 @@ import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stabl
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
+import { checkContactWhenOpened } from "./federation/gone-ships";
 import { ensurePersonalController } from "./personal-controller";
 import { withInitialOnboarding } from "./onboarding-responsibility";
 import { resolveSelectedMessageTarget } from "./targets";
@@ -93,6 +94,8 @@ export async function handleConversationHistory(
   if (history.latestSequence > conversation.latestSequence) {
     ctx.conversations.recordSequence(conversation.id, history.latestSequence);
   }
+  const contact = conversation.kind === "contact" ? ctx.federation.getByConversation(conversation.id) : null;
+  if (contact) checkContactWhenOpened(contact, ctx);
   return {
     conversation: ctx.conversations.get(conversation.id)!,
     messages: history.messages,

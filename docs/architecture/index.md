@@ -168,6 +168,11 @@ the physical Repository Durable Object name. Public Git paths remain
 `/git/{owner}/{repo}.git`. Every repository object is scoped to the immutable
 installation identity; historical unscoped names are not a runtime fallback.
 
+An unexpected ripgit failure answers `500` with its failure kind, a diagnostic
+ID and its cause. The Kernel keeps all three in the error it raises; the public
+Git paths show only the kind and the ID. See
+[Telemetry](./telemetry.md#coverage-and-failure-boundaries).
+
 GSV uses repositories for more than source control:
 
 - `{username}/home` stores user-global knowledge and context.
@@ -263,6 +268,8 @@ of chat integrations.
   contract used by Messages, Processes, adapters, Web, and Desktop.
 - [Telemetry](./telemetry.md) defines the optional provider-neutral event seam
   and its privacy boundary.
+- [The open network](./open-network.md) describes the public repository each
+  Ship can publish to, and the Kernel boundary that decides what is published.
 
 ## Deferred design proposals
 

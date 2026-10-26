@@ -151,6 +151,54 @@ describe("renderAdapterSend", () => {
     expect(reply.action).not.toContain("private reply body");
   });
 
+  it("names who a publish speaks as, whatever the model wrote", () => {
+    const request = {
+      pid: "proc-1",
+      requestId: "request-publish",
+      runId: "run-1",
+      callId: "call-publish",
+      toolName: "Shell",
+      syscall: "atproto.write",
+      target: "gsv",
+      args: {
+        handle: "alice",
+        address: "alice.ship.space",
+        writes: [
+          { action: "create", collection: "com.example.note", record: { $type: "com.example.note", text: "the note itself" } },
+          { action: "put", collection: "com.example.note", rkey: "pinned", record: { $type: "com.example.note" } },
+          { action: "delete", collection: "com.example.note", rkey: "old" },
+        ],
+      },
+      purpose: "publish your trip photo with a short note",
+      createdAt: 1,
+    } as const;
+    const context = {
+      deliveryId: "run-1:hil:request-publish",
+      accountId: "account-1",
+      actorId: "actor-1",
+      surface: { kind: "dm" as const, id: "surface-1" },
+      processId: "proc-1",
+      runId: "run-1",
+      processMode: "ship" as const,
+      hil: request,
+    };
+
+    expect(createAdapterHilPresentation(context, request).action).toBe(
+      "Publish your trip photo with a short note.\nPublishes to the open network as @alice (alice.ship.space).",
+    );
+    const withoutPurpose = { ...request, purpose: undefined };
+    const described = createAdapterHilPresentation({ ...context, hil: withoutPurpose }, withoutPurpose).action;
+    expect(described).toBe(
+      "Publish to the open network as @alice (alice.ship.space).\n"
+        + "add com.example.note, add or replace com.example.note/pinned, remove com.example.note/old",
+    );
+    expect(described).not.toContain("the note itself");
+
+    const malformed = { ...withoutPurpose, args: { handle: "alice" } };
+    expect(createAdapterHilPresentation({ ...context, hil: malformed }, malformed).action)
+      .toBe("Publish to the open network.");
+  });
+
   it("sanitizes and bounds hostile email approval details", () => {
     const request = {
       pid: "proc-1",
