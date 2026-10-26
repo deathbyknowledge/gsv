@@ -19,6 +19,12 @@ export interface SelectProps {
   o2?: string;
   options?: SelectOption[];
   value?: number;
+  /** Select by option value instead of index; `onSelect` reports the chosen value. */
+  selected?: string;
+  /** Shown in the trigger while `selected` matches no option. */
+  placeholder?: string;
+  /** Accessible name for the trigger when there is no visible label (repeated rows). */
+  ariaLabel?: string;
   size?: SelectSize;
   disabled?: boolean;
   width?: number;
@@ -31,6 +37,7 @@ export interface SelectProps {
   status?: SelectStatus;
   message?: string;
   onChange?: (index: number) => void;
+  onSelect?: (value: string) => void;
 }
 
 const SIZE_CLASS = {
@@ -59,6 +66,10 @@ export function Select(props: SelectProps) {
     status = "none",
     message = "",
     onChange,
+    onSelect,
+    selected,
+    placeholder = "",
+    ariaLabel = "",
   } = props;
 
   const fieldId = useId();
@@ -78,12 +89,27 @@ export function Select(props: SelectProps) {
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
+  // The page scrolling under an open list closes it, as a native select does; the list's own scrolling does not.
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = (e: Event) => {
+      // SAFETY: a scroll event targets the element or document that scrolled.
+      if (listRef.current && e.target instanceof Node && listRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("scroll", onScroll, true);
+    return () => document.removeEventListener("scroll", onScroll, true);
+  }, [open]);
+
   const arr = Array.isArray(options) ? options.filter((x) => x != null) : null;
   const opts = (arr && arr.length ? arr : [o0, o1, o2]).map(normalizeSelectOption);
 
-  const controlled = props.value !== undefined;
-  const rawIdx = controlled ? props.value ?? 0 : internalIdx;
-  const idx = Math.max(0, Math.min(Number(rawIdx) || 0, opts.length - 1));
+  const controlled = props.value !== undefined || selected !== undefined;
+  const selectedIdx = selected !== undefined ? opts.findIndex((option) => option.value === selected) : -1;
+  const rawIdx = selected !== undefined ? selectedIdx : controlled ? props.value ?? 0 : internalIdx;
+  /* -1 means nothing chosen yet: the trigger shows the placeholder and the list opens on its first row */
+  const idx = rawIdx < 0 ? -1 : Math.max(0, Math.min(Number(rawIdx) || 0, opts.length - 1));
+  const current = idx >= 0 ? opts[idx] : null;
   const isOpen = open && !disabled;
 
   const req = requirement && requirement !== "none" ? requirement : "";
@@ -103,7 +129,7 @@ export function Select(props: SelectProps) {
   const listId = `${fieldId}-list`;
   const optId = (i: number) => `${fieldId}-opt-${i}`;
 
-  const triggerLabelledBy = (hasFldLabel && label.length > 0 ? `${labelId} ` : "") + triggerId;
+  const triggerLabelledBy = ariaLabel ? undefined : (hasFldLabel && label.length > 0 ? `${labelId} ` : "") + triggerId;
   const describedByParts: string[] = [];
   if (description.length > 0) describedByParts.push(descId);
   if (hasStatus) describedByParts.push(msgId);
@@ -112,7 +138,7 @@ export function Select(props: SelectProps) {
   // When opening, focus the listbox and highlight the current value.
   useEffect(() => {
     if (isOpen) {
-      setHighlight(idx);
+      setHighlight(Math.max(0, idx));
       listRef.current?.focus();
     }
   }, [isOpen]);
@@ -127,7 +153,7 @@ export function Select(props: SelectProps) {
 
   const openList = () => {
     if (disabled) return;
-    setHighlight(idx);
+    setHighlight(Math.max(0, idx));
     setOpen(true);
   };
 
@@ -147,6 +173,7 @@ export function Select(props: SelectProps) {
     }
     setOpen(false);
     onChange?.(i);
+    onSelect?.(opts[i].value);
     triggerRef.current?.focus();
   };
 
@@ -215,14 +242,15 @@ export function Select(props: SelectProps) {
           aria-haspopup="listbox"
           aria-expanded={isOpen}
           aria-controls={listId}
+          aria-label={ariaLabel || undefined}
           aria-labelledby={triggerLabelledBy}
           aria-describedby={triggerDescribedBy}
           onClick={toggle}
           onKeyDown={onTriggerKeyDown}
         >
-          <span class="gsv-sel-val">
-            <span>{opts[idx].label}</span>
-            {opts[idx].description ? <small>{opts[idx].description}</small> : null}
+          <span class={`gsv-sel-val${current ? "" : " is-placeholder"}`}>
+            <span>{current ? current.label : placeholder}</span>
+            {current?.description ? <small>{current.description}</small> : null}
           </span>
           <span style={{ marginLeft: "auto", display: "flex" }}>
             <svg width="9" height="6" viewBox="0 0 9 6" aria-hidden="true">
@@ -301,7 +329,7 @@ export function Select(props: SelectProps) {
       {hasStatus ? (
         <div class="gsv-fld-stat">
           <span class="gsv-fld-dot" aria-hidden="true" />
-          <span class="gsv-fld-msg gsv-sublabel" id={msgId}>{message}</span>
+          <span class="gsv-fld-msg gsv-sublabel" id={msgId} role={rawStatus === "error" ? "alert" : undefined}>{message}</span>
         </div>
       ) : null}
     </div>

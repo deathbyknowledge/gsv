@@ -7,6 +7,7 @@ import { Language } from "./Language";
 import { useRef, useState } from "preact/hooks";
 import { reasoningOptions } from "../../../domain/reasoning";
 import { LoadingState } from "../../../components/ui/Spinner";
+import { Select } from "../../../components/ui/Select";
 import { aiProviderDisplayLabel } from "../../../domain/aiProviders";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleModels, saveConsoleConfig, saveConsoleConfigEntries } from "../../../services/system/consoleService";
@@ -169,10 +170,17 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     </form>
     </>}
     {!modelEditor && <form class="settings-form" aria-label={t("settings.reasoning.label")} onSubmit={(event) => { event.preventDefault(); if (editable && !saving) saveReasoning.mutate(reasoning); }}>
-      <label>{t("settings.reasoning.label")}<select value={reasoning} disabled={!editable || saving} onChange={(event) => { setReasoningDraft(event.currentTarget.value); setSaved(null); saveReasoning.reset(); }}>
-        {reasoning && !effortOptions.some((option) => option.value === reasoning) && <option value={reasoning}>{t("settings.unavailableOption", { value: reasoning })}</option>}
-        {effortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select></label>
+      <Select
+        block
+        label={t("settings.reasoning.label")}
+        disabled={!editable || saving}
+        selected={reasoning}
+        onSelect={(value) => { if (value === reasoning) return; setReasoningDraft(value); setSaved(null); saveReasoning.reset(); }}
+        options={[
+          ...(reasoning && !effortOptions.some((option) => option.value === reasoning) ? [{ label: t("settings.unavailableOption", { value: reasoning }), value: reasoning }] : []),
+          ...effortOptions.map((option) => ({ label: option.label, value: option.value })),
+        ]}
+      />
       <div class="settings-actions"><button class="ibtn" disabled={!editable || saving || reasoning === originalReasoning} type="submit">{saveReasoning.isPending ? <LoadingState>{t("common.saving")}</LoadingState> : t("settings.reasoning.save")}</button>
         {saved === "reasoning" && <span role="status">{t("common.saved")}</span>}
       </div>

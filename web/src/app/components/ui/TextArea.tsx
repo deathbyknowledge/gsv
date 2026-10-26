@@ -126,7 +126,8 @@ export function TextArea(props: TextAreaProps) {
         disabled={disabled}
         readOnly={readonly}
         spellcheck={false}
-        aria-labelledby={hasLabelRow && label.length > 0 ? `${fieldId}-label` : undefined}
+        // A caller's own accessible name wins over the visible label, as in TextInput.
+        aria-labelledby={hasLabelRow && label.length > 0 && !textareaProps?.["aria-label"] ? `${fieldId}-label` : undefined}
         aria-describedby={describedBy}
         aria-invalid={effectiveStatus === "error" ? true : undefined}
         // SAFETY: Component boundary provides the asserted DOM/test shape.
@@ -141,7 +142,7 @@ export function TextArea(props: TextAreaProps) {
           {hasStatusMsg ? (
             <span class="gsv-ta-right">
               <span class="gsv-ta-dot" />
-              <span class="gsv-ta-msg gsv-sublabel" id={`${fieldId}-msg`}>{effectiveMessage}</span>
+              <span class="gsv-ta-msg gsv-sublabel" id={`${fieldId}-msg`} role={effectiveStatus === "error" ? "alert" : undefined}>{effectiveMessage}</span>
             </span>
           ) : null}
           {showCounter ? <span class="gsv-ta-counter gsv-sublabel">{counterText}</span> : null}

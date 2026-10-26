@@ -164,7 +164,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "sys.pair.create", "fs.read", "sys.config.set"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -854,6 +854,23 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { message: sent.message, handlerPid: SHIP.pid, runId: sent.runId });
     }
     case "contact.list": return respond(id, { contacts: [] });
+    /* Settings › Messengers: every messenger is deployed and unlinked, so each pairing flow can be looked at */
+    case "adapter.list": return respond(id, { adapters: ["telegram", "slack", "discord", "whatsapp"].map((adapter) => ({ adapter, available: true, enabled: true, canLink: true,
+      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true, accounts: [] })) });
+    case "adapter.pair.info": {
+      const { adapter } = z.object({ adapter: z.string() }).parse(args);
+      return respond(id, { adapter, accountId: `mock-${adapter}`, configured: true,
+        ...(adapter === "whatsapp" ? { instructions: "https://wa.me/31612345678?text=%2Flink" } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
+    }
+    case "adapter.pair.inspect": {
+      const { adapter, code } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
+      if (!code.trim()) throw new Error("That code is empty.");
+      return respond(id, { adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", surfaceId: "mock-surface", actorName: "Esteve", actorHandle: "+31 6 12345678", expiresAt: Date.now() + 600_000, linked: false });
+    }
+    case "adapter.pair.confirm": {
+      const { adapter } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
+      return respond(id, { paired: true, adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", surfaceId: "mock-surface", uid: OWNER.uid });
+    }
     case "profile.get": return respond(id, { profile: ownProfile });
     case "profile.update": {
       const { draft } = z.object({ expectedRevision: z.number(), draft: z.object({

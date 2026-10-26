@@ -7,6 +7,7 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleTargets } from "../../../services/system/consoleService";
 import { APPROVAL_ACTIONS, actionLabel, humanToolCapabilityLabel, targetOptionValue, targetFromOptionValue } from "../../../components/ui/agentToolApprovalOptions";
 import { LoadingState } from "../../../components/ui/Spinner";
+import { Select } from "../../../components/ui/Select";
 import { defaultApprovalPolicyForConfig } from "../../../domain/system/consoleAgentBehavior";
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import { canConfigure, readSettingsPolicy, settingsAction, settingsPolicySchema, SETTINGS_CONFIG_KEY, type SettingsPolicy } from "./settingsModel";
@@ -38,6 +39,7 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
     onError: () => cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }),
     onSuccess: async () => { await cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }); setDraft(null); setSaved(true); },
   });
+  const actionOptions = APPROVAL_ACTIONS.map((action) => ({ label: actionLabel(action), value: action }));
   const update = (next: SettingsPolicy) => { setDraft({ inherited: false, policy: next, base: draft?.base ?? original }); setSaved(false); setError(null); };
   return <section aria-labelledby="settings-permissions-title">
     <h1 id="settings-permissions-title">{t("settings.permissions.title")}</h1>
@@ -68,23 +70,26 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
           if (policy) { setDraft({ inherited: event.currentTarget.checked, policy, base: draft?.base ?? original }); setSaved(false); }
         }} />{t("settings.permissions.useInherited")}</label>
         {policy && <>
-          <label>{t("settings.permissions.default")}<select value={policy.default} disabled={usesDefault} onChange={(event) => update({ ...policy, default: settingsAction(event.currentTarget.value) })}>
-            {APPROVAL_ACTIONS.map((action) => <option key={action} value={action}>{actionLabel(action)}</option>)}
-          </select></label>
+          <Select block label={t("settings.permissions.default")} options={actionOptions} selected={policy.default} disabled={usesDefault} onSelect={(value) => update({ ...policy, default: settingsAction(value) })} />
           <ol class="settings-rules">{policy.rules.map((rule, index) => {
             const options = permissionOptionsForRule(rule, targets);
             return <li key={index}>
-            <label>{t("settings.permissions.tool")}<select aria-label={t("settings.permissions.ruleTool", { number: index + 1 })} value={rule.match} disabled={usesDefault} onChange={(event) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, match: event.currentTarget.value } : entry) })}>
-              {!rule.match && <option value="" disabled>{t("settings.permissions.chooseTool")}</option>}
-              {options.tools.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>{options.customToolLabel && <small>{options.customToolLabel}</small>}</label>
-            <label>{t("settings.permissions.target")}<select aria-label={t("settings.permissions.ruleTarget", { number: index + 1 })} value={targetOptionValue(rule.target)} disabled={usesDefault} onChange={(event) => {
-              const target = targetFromOptionValue(event.currentTarget.value);
-              const next: SettingsPolicy["rules"][number] = { match: rule.match, action: rule.action };
-              if (target) next.target = target;
-              update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? next : entry) });
-            }}>{options.targets.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>{rule.target && !isToolApprovalTargetSelector(rule.target) && <small>{rule.target}</small>}</label>
-            <label>{t("settings.permissions.action")}<select aria-label={t("settings.permissions.ruleAction", { number: index + 1 })} value={rule.action} disabled={usesDefault} onChange={(event) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, action: settingsAction(event.currentTarget.value) } : entry) })}>{APPROVAL_ACTIONS.map((action) => <option key={action} value={action}>{actionLabel(action)}</option>)}</select></label>
+            <div class="settings-rule-field is-tool">
+              <Select block label={t("settings.permissions.tool")} ariaLabel={t("settings.permissions.ruleTool", { number: index + 1 })} options={options.tools} selected={rule.match} placeholder={t("settings.permissions.chooseTool")} disabled={usesDefault} onSelect={(value) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, match: value } : entry) })} />
+              {options.customToolLabel && <p class="settings-field-note">{options.customToolLabel}</p>}
+            </div>
+            <div class="settings-rule-field">
+              <Select block label={t("settings.permissions.target")} ariaLabel={t("settings.permissions.ruleTarget", { number: index + 1 })} options={options.targets} selected={targetOptionValue(rule.target)} disabled={usesDefault} onSelect={(value) => {
+                const target = targetFromOptionValue(value);
+                const next: SettingsPolicy["rules"][number] = { match: rule.match, action: rule.action };
+                if (target) next.target = target;
+                update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? next : entry) });
+              }} />
+              {rule.target && !isToolApprovalTargetSelector(rule.target) && <p class="settings-field-note">{rule.target}</p>}
+            </div>
+            <div class="settings-rule-field is-action">
+              <Select block label={t("settings.permissions.action")} ariaLabel={t("settings.permissions.ruleAction", { number: index + 1 })} options={actionOptions} selected={rule.action} disabled={usesDefault} onSelect={(value) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, action: settingsAction(value) } : entry) })} />
+            </div>
             <div class="settings-actions">
               <button class="settings-text-action" type="button" disabled={usesDefault || index === 0} onClick={() => { const rules = [...policy.rules]; [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]]; update({ ...policy, rules }); }}>{t("settings.permissions.moveUp")}</button>
               <button class="settings-text-action" type="button" disabled={usesDefault} onClick={() => update({ ...policy, rules: policy.rules.filter((_, at) => at !== index) })}>{t("common.remove")}</button>

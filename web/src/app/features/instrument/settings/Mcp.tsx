@@ -1,4 +1,6 @@
 import { LoadingState } from "../../../components/ui/Spinner";
+import { Select } from "../../../components/ui/Select";
+import { TextInput } from "../../../components/ui/TextInput";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
@@ -78,18 +80,21 @@ export function Mcp({ account, active, onDirty }: SettingsSectionProps) {
     <SettingsError error={add.error} />
     <form aria-label={t("settings.mcp.newTitle")} onSubmit={(event) => { event.preventDefault(); if (connected && !add.isPending && canConfigure(account, "sys.mcp.add")) add.mutate(); }}>
       <fieldset disabled={!connected || !canConfigure(account, "sys.mcp.add") || add.isPending}>
-        <label>{t("settings.mcp.name")}<input autoFocus value={name} required onInput={(event) => setName(event.currentTarget.value)} placeholder={t("settings.mcp.namePlaceholder")} /></label>
-        <label>{t("settings.mcp.url")}<input type="url" value={url} required onInput={(event) => setUrl(event.currentTarget.value)} placeholder="https://example.com/mcp" /></label>
-        <label>{t("settings.mcp.transport")}<select value={transport} onChange={(event) => {
-          const value = event.currentTarget.value;
+        <TextInput label={t("settings.mcp.name")} placeholder={t("settings.mcp.namePlaceholder")} value={name} requirement="required" onChange={setName} inputProps={{ autoFocus: true, required: true }} />
+        <TextInput label={t("settings.mcp.url")} placeholder="https://example.com/mcp" type="url" value={url} requirement="required" onChange={setUrl} inputProps={{ required: true }} />
+        <Select block label={t("settings.mcp.transport")} selected={transport} options={[
+          { label: t("settings.mcp.transportAuto"), value: "auto" },
+          { label: t("settings.mcp.transportStreamable"), value: "streamable-http" },
+          { label: t("settings.mcp.transportSse"), value: "sse" },
+        ]} onSelect={(value) => {
           if (value === "auto" || value === "streamable-http" || value === "sse") setTransport(value);
-        }}><option value="auto">{t("settings.mcp.transportAuto")}</option><option value="streamable-http">{t("settings.mcp.transportStreamable")}</option><option value="sse">{t("settings.mcp.transportSse")}</option></select></label>
+        }} />
         <details class="settings-mcp-options">
           <summary>{t("settings.mcp.headers")}{headers.some((header) => header.name || header.value) ? ` · ${headers.filter((header) => header.name || header.value).length}` : ""}</summary>
           <p class="settings-muted">{t("settings.mcp.headersHint")}</p>
           {headers.map((header, index) => <div class="settings-mcp-header" key={header.id}>
-            <label>{t("settings.mcp.headerName")}<input aria-label={t("settings.mcp.headerNameLabel", { number: index + 1 })} value={header.name} placeholder="Authorization" autoComplete="off" spellcheck={false} onInput={(event) => { const name = event.currentTarget.value; setHeaders((rows) => rows.map((row) => row.id === header.id ? { ...row, name } : row)); }} /></label>
-            <label>{t("settings.mcp.headerValue")}<input aria-label={t("settings.mcp.headerValueLabel", { number: index + 1 })} type="password" value={header.value} placeholder={t("settings.mcp.valuePlaceholder")} autoComplete="off" spellcheck={false} onInput={(event) => { const value = event.currentTarget.value; setHeaders((rows) => rows.map((row) => row.id === header.id ? { ...row, value } : row)); }} /></label>
+            <TextInput label={t("settings.mcp.headerName")} placeholder="Authorization" value={header.name} inputProps={{ "aria-label": t("settings.mcp.headerNameLabel", { number: index + 1 }), autoComplete: "off", spellcheck: false }} onChange={(name) => setHeaders((rows) => rows.map((row) => row.id === header.id ? { ...row, name } : row))} />
+            <TextInput label={t("settings.mcp.headerValue")} placeholder={t("settings.mcp.valuePlaceholder")} type="password" value={header.value} inputProps={{ "aria-label": t("settings.mcp.headerValueLabel", { number: index + 1 }), autoComplete: "off", spellcheck: false }} onChange={(value) => setHeaders((rows) => rows.map((row) => row.id === header.id ? { ...row, value } : row))} />
             <button class="settings-text-action" type="button" aria-label={t("settings.mcp.removeHeader", { number: index + 1 })} onClick={() => setHeaders((rows) => rows.filter((row) => row.id !== header.id))}>{t("common.remove")}</button>
           </div>)}
           {!parsedHeaders.ok && <p class="settings-error" role="alert">{parsedHeaders.error}</p>}

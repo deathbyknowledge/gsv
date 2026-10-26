@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { saveConsoleConfig } from "../../../services/system/consoleService";
+import { TextInput } from "../../../components/ui/TextInput";
 import { SETTINGS_CONFIG_KEY } from "./settingsModel";
 import { SettingsError, useSettingsDirty } from "./settingsShared";
 import { useT } from "../../../i18n/locale";
@@ -25,7 +26,7 @@ export function Timezone({ uid, original, fallback, editable, onDirty }: { uid: 
   });
   useSettingsDirty(value !== original || save.isPending, onDirty);
   return <form class="settings-form" aria-label={t("settings.timezone.label")} onSubmit={(event) => { event.preventDefault(); if (editable && !save.isPending) save.mutate(); }}>
-    <label>{t("settings.timezone.label")}<input value={value} placeholder={fallback} disabled={!editable || save.isPending} onInput={(event) => { setDraft(event.currentTarget.value); save.reset(); }} /></label>
+    <TextInput label={t("settings.timezone.label")} placeholder={fallback} value={value} disabled={!editable || save.isPending} onChange={(next) => { setDraft(next); save.reset(); }} />
     <p class="settings-muted">{t("settings.timezone.hint")}</p>
     <div class="settings-actions"><button class="ibtn" type="submit" disabled={!editable || save.isPending || value === original}>{t(save.isPending ? "common.saving" : "settings.timezone.save")}</button><button type="button" class="settings-text-action" disabled={!editable || save.isPending} onClick={() => { setDraft(Intl.DateTimeFormat().resolvedOptions().timeZone); save.reset(); }}>{t("settings.timezone.useDevice")}</button>{save.isSuccess && <span role="status">{t("common.saved")}</span>}</div>
     <SettingsError error={save.error} />
