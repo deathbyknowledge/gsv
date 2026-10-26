@@ -2528,6 +2528,8 @@ Target watch delivery is handled by the Kernel when the target connects or disco
 
 Target connection events use the registered `target.connection` payload. The Kernel derives target identity and connection state from its authenticated connection lifecycle and rechecks the watching process's capability and target access before delivery. A `person` event enters typed Process history and notifies observing surfaces without starting a model run. `model` and `both` events use the ordinary Process event wake path. Machine peers cannot inject these internal event deliveries or claim another target's identity.
 
+The Kernel also records each notice it sends to the owner's messenger as an `owner.notified` event in their Ship's history: the topic (`contact.message`, `contact.request` or `contact.invite.accepted`), the channel, the contact and the notice text exactly as the owner received it. It is `model`-audience and starts no run; an active run receives it as an ordinary runtime event. Only the Kernel produces it, through the same internal delivery.
+
 ```ts
 type SignalSyscalls = {
   "signal.watch": {
