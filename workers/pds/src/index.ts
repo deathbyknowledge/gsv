@@ -16,7 +16,8 @@ export default {
     ? handleOperator(request, env)
     : handleXrpc(request, env, (name) => admitRepository(env.INSTALLATION_DIRECTORY, name)),
   // A deploy's lexicons take over once the operator has published.
-  // Relays hear of the host's new events. Each job runs whatever the other does, and a failure fails the run.
+  // Relays hear of the host's new events, and hosted identities follow the PLC feed.
+  // Each job runs whatever the others do, and a failure fails the run.
   scheduled: async (_controller, env) => {
     const failed = (await Promise.allSettled([republishLexicons(env), announceToRelays(env), followIdentityChanges(env)]))
       .flatMap((job) => job.status === "rejected" ? [job.reason] : []);

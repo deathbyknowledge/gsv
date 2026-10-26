@@ -76,9 +76,10 @@ Every change after the genesis goes through one function. It signs the next
 operation on the head of the DID's log that the PDS last recorded, and carries
 forward every field the change leaves alone. The PDS keeps the signed operation
 until the directory has it, so a retry after a lost response submits the same
-operation instead of signing another. A log that has moved past the recorded
-head means someone else changed the identity, and the PDS signs nothing on it:
-the change fails with `IdentityChanged`.
+operation instead of signing another. When the log has moved past the
+recorded head, the PDS checks the newer operations as described below: it
+builds on a head it adopts, and signs nothing on an identity it steps aside
+from, where the change fails with `IdentityChanged`.
 
 The PDS also notices changes it didn't make. It reads the DID's audit log
 right before it submits an operation of its own, and when the PLC directory's

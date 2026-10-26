@@ -363,7 +363,7 @@ function requested(firehose: DurableObjectStub<HostFirehose>): Promise<Record<st
   return runInDurableObject(firehose, (_instance, state) => state.storage.kv.get<Record<string, RelayRequest>>("relays") ?? {});
 }
 
-/** Watches every write a firehose makes to its synchronous storage, which keeps only the relay record. */
+/** Watches every write a firehose makes to its synchronous storage, which keeps only the relay and identity-feed records. */
 function kvWrites(firehose: DurableObjectStub<HostFirehose>): Promise<MockInstance<SyncKvStorage["put"]>> {
   return runInDurableObject(firehose, (_instance, state) =>
     // SAFETY: a SyncKvStorage's methods live on its prototype, which every object's storage shares.

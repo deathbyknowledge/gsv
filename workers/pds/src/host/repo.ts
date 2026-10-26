@@ -298,8 +298,9 @@ export class HostedRepo extends DurableObject<HostEnv> {
   /**
    * Lists the account owner's recovery key first among its DID's rotation
    * keys, in place of any earlier one, or removes it given null. The host's
-   * rotation key signs the change on the operation the host last recorded; an
-   * identity changed elsewhere since gets none.
+   * rotation key signs the change on the head of the DID's log, once a read
+   * of the log right before shows every newer operation is one the host
+   * trusts and adopts; an identity it has stepped aside from gets none.
    */
   async setOwnerRecoveryKey(key: string | null): Promise<{ ownerRecoveryKey: DidKeyString | null }> {
     const next = key === null ? null : parseOwnerRecoveryKey(key);
