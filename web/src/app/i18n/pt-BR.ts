@@ -1782,6 +1782,7 @@ export const ptBR = {
   "chat.event.approval": "{pid} está aguardando sua aprovação de {syscall} em {target}.",
   "chat.event.returned": "De volta do ajudante {pid}.",
   "chat.event.connected": "{target} conectado.",
+  "chat.event.ownerNotified": "Avisou você pelo {channel}: {text}",
   "chat.event.disconnected": "{target} desconectado.",
   "chat.event.wake": "Um evento do ambiente de execução chegou enquanto esta conversa estava ocupada.",
   "chat.tool.waitingInput": "Aguardando a entrada da ferramenta.",

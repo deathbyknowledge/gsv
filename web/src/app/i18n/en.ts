@@ -1776,6 +1776,7 @@ export const en = {
   "chat.event.approval": "{pid} is waiting for your approval of {syscall} on {target}.",
   "chat.event.returned": "Returned from helper {pid}.",
   "chat.event.connected": "{target} connected.",
+  "chat.event.ownerNotified": "Notified you on {channel}: {text}",
   "chat.event.disconnected": "{target} disconnected.",
   "chat.event.wake": "A runtime event arrived while this conversation was busy.",
   "chat.tool.waitingInput": "Waiting for tool input.",

@@ -434,7 +434,7 @@ function adapterSendServiceAvailable(ctx: KernelContext, adapter: string): boole
   return bindingSchema.safeParse(binding).success;
 }
 
-function adapterDisplayName(adapter: string): string {
+export function adapterDisplayName(adapter: string): string {
   if (adapter === "whatsapp") return "WhatsApp";
   if (adapter === "discord") return "Discord";
   return adapter.charAt(0).toUpperCase() + adapter.slice(1);

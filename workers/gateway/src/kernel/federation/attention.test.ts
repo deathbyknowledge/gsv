@@ -5,6 +5,7 @@ import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
 import { FederationStore, type FederationContactRecord, type FederationOutboxLocalMessage } from "../federation-store";
 import { ResponsibilityStore } from "../responsibility-store";
+import { OwnerNoticeStore } from "../owner-notice-store";
 import { ShipEventStore } from "../ship-event-store";
 import { admitContactMessage, admitQueuedContactEvent, bindContactReply, endContactHandling } from "./attention";
 import { handleContactPreferencesUpdate } from "./preferences";
@@ -23,6 +24,39 @@ describe("contact attention admission", () => {
       expect(admitContactMessage(contact, incoming.inbox, incoming.message, ctx)).toBe(false);
       expect(admitContactMessage(contact, incoming.inbox, incoming.message, ctx)).toBe(false);
       expect(ctx.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([]);
+    });
+  });
+
+  it("tells the person's messenger about each message they handle, once", async () => {
+    await runWithRealKernelSql((_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      const first = receive(contact, ctx, "human");
+      const second = receive(contact, ctx, "human", undefined, 2);
+      expect(admitContactMessage(contact, first.inbox, first.message, ctx)).toBe(false);
+      expect(admitContactMessage(contact, first.inbox, first.message, ctx)).toBe(false);
+      expect(admitContactMessage(contact, second.inbox, second.message, ctx)).toBe(false);
+      expect(ctx.ownerNotices.next(OWNER.uid)).toMatchObject({
+        topic: "contact.message", pendingCount: 2,
+        subject: { contactId: contact.id, contactGeneration: contact.generation, conversationId: contact.conversationId, from: "Remote", preview: "Friday works" },
+      });
+      expect(ctx.shipEvents.next(OWNER.uid)).toBeNull();
+    });
+  });
+
+  it("sends no notice for a muted contact or one Ship handles", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { muted: true } }, ctx);
+      const quiet = receive(contact, ctx, "human");
+      admitContactMessage(ctx.federation.get(contact.id)!, quiet.inbox, quiet.message, ctx);
+      expect(ctx.ownerNotices.next(OWNER.uid)).toBeNull();
+
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 2, patch: { muted: false, shipHandlesMessages: true } }, ctx);
+      const handled = receive(contact, ctx, "human", undefined, 2);
+      expect(admitContactMessage(ctx.federation.get(contact.id)!, handled.inbox, handled.message, ctx)).toBe(true);
+      expect(ctx.ownerNotices.next(OWNER.uid)).toBeNull();
     });
   });
 
@@ -268,6 +302,7 @@ describe("contact attention admission", () => {
 function context(storage: DurableObjectStorage): KernelContext {
   const result = {
     federation: new FederationStore(storage), responsibilities: new ResponsibilityStore(storage), shipEvents: new ShipEventStore(storage),
+    ownerNotices: new OwnerNoticeStore(storage),
     peer: testPeer({ kind: "human", account: OWNER, calls: ["contact.*", "r12y.*"] }),
     callerOwnerUid: OWNER.uid, connection: {},
     auth: { getPasswdByUid: () => OWNER, getShadowByUsername: () => ({ hash: "unlocked" }), isPersonalAgentUid: () => false },
@@ -301,14 +336,14 @@ function outgoing(contact: FederationContactRecord): FederationOutboxLocalMessag
     social: { threadId: contact.threadId, reference: { did: LOCAL_DID, messageId }, provenance: { kind: "human" } } };
 }
 
-function receive(contact: FederationContactRecord, ctx: KernelContext, kind: "human" | "process", replyTo?: OriginMessageRef) {
+function receive(contact: FederationContactRecord, ctx: KernelContext, kind: "human" | "process", replyTo?: OriginMessageRef, sequence = 1) {
   const messageId = `msg:${crypto.randomUUID()}`;
   const deliveryId = `delivery:${crypto.randomUUID()}`;
   const social = { threadId: contact.threadId, reference: { did: REMOTE_DID, messageId },
     provenance: kind === "human" ? { kind: "human" as const } : { kind: "process" as const, processId: "proc:remote" }, ...(replyTo ? { replyTo } : undefined) };
   const inbox = ctx.federation.receive({ contactId: contact.id, contactGeneration: contact.generation, deliveryId,
     payload: { kind: "message", messageId, threadId: contact.threadId, text: "Friday works", social }, payloadHash: messageId }).record;
-  const message: ConversationMessage = { id: messageId, sequence: 1, conversationId: contact.conversationId, text: "Friday works", social,
+  const message: ConversationMessage = { id: messageId, sequence, conversationId: contact.conversationId, text: "Friday works", social,
     author: { kind: "contact", contactId: contact.id, displayName: "Remote" },
     origin: { kind: "federation", contactId: contact.id, deliveryId }, createdAt: Date.now() };
   return { inbox, message };
