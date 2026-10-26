@@ -649,6 +649,20 @@ describe("the owner's profile at sign-in", () => {
     });
   });
 
+  it("lets a later publish or unpublish in People replace a public choice that hasn't published yet", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      recordSetupProfileChoice(OWNER.uid, "public", ctx);
+      repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
+      await expect(ensurePublishedProfile(OWNER.uid, ctx)).rejects.toThrow("unavailable");
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
+      handleProfileUpdate({ expectedRevision: 2, draft: { ...DRAFT, about: "Kept private" } }, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+    });
+  });
+
   it("retries a public choice at the next sign-in after a failed publish", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);

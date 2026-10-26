@@ -211,6 +211,8 @@ async function publishProfileRevision(ownerUid: number, revision: number, ctx: K
     const { cid, mirror } = await putProfileRecord(ctx, record, avatar, (takedowns) => blueskyMirror(record, takedowns, ctx));
     // The repository now holds this revision, so it is recorded even if the draft moved on meanwhile.
     ctx.profiles.publish(ownerUid, revision, cid, record, avatar, mirror);
+    // A publish settles a public choice from setup that hadn't published yet.
+    ctx.config.delete(publicChoiceKey(ownerUid));
   });
 }
 
@@ -290,6 +292,8 @@ export async function handleProfileUnpublish(args: ProfileUnpublishArgs, ctx: Ke
     if (ctx.profiles.published(ownerUid)) await deleteProfileRecord(ctx);
     // The record is gone from the repository, so the profile is private whatever the draft became meanwhile.
     ctx.profiles.unpublish(ownerUid);
+    // Making it private replaces a public choice from setup that hadn't published yet.
+    ctx.config.delete(publicChoiceKey(ownerUid));
   });
   ctx.broadcastToUserUid(ownerUid, "profile.changed");
   return handleProfileGet(ctx);

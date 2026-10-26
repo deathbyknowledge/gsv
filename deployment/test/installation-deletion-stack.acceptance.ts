@@ -62,7 +62,8 @@ describe("public multi-worker deletion acceptance", () => {
   }
   async function setup(handle: string, token?: string, account = username, credential = password) {
     const socket = await openSocket(handle);
-    if (token) await ok(socket, "sys.setup", { username, password, onboardingToken: token });
+    // Both owners make their profile public, which gives each Ship its DID at sign-in.
+    if (token) await ok(socket, "sys.setup", { username, password, onboardingToken: token, profile: "public" });
     await ok(socket, "sys.connect", { protocol: 4, peer: { id: `deletion-${handle}-${account}`, version: "1", platform: "test" }, auth: { username: account, password: credential } });
     return socket;
   }
@@ -113,7 +114,7 @@ describe("public multi-worker deletion acceptance", () => {
     const pds = harness.getWorker<PdsEnvironment>(STACK.pds);
     const dids = new Map<string, string>();
     for (const [installationId, socket] of [[a.installationId, socketA], [b.installation.installationId, socketB]] as const) {
-      // Signing in publishes the person's profile, which gives the Ship its DID.
+      // Signing in publishes the profile its owner chose to make public, which gives the Ship its DID.
       await until(async () => identitySchema.parse(await ok(socket, "atproto.identity", {})).identity !== null);
       const did = identitySchema.parse(await ok(socket, "atproto.identity", {})).identity!.did;
       dids.set(installationId, did);
