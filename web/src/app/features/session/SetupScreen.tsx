@@ -110,10 +110,12 @@ function ProfileOptIn({ checked, busy, onChange }: { checked: boolean; busy: boo
     <div class="gsv-setup-consent-row">
       <input id={id} type="checkbox" checked={checked} disabled={busy} data-setup-profile
         onChange={(event) => onChange(event.currentTarget.checked)} />
-      <label for={id}>{t("session.setup.profile.optIn")} <span class="gsv-setup-recommended">{t("session.setup.profile.recommended")}</span></label>
+      <span>
+        <label for={id}>{t("session.setup.profile.optIn")} <em class="gsv-setup-recommended">{t("session.setup.profile.recommended")}</em></label>
+        {" "}<button type="button" class="gsv-setup-profile-toggle" aria-expanded={explained} aria-controls={`${id}-info`}
+          onClick={() => setExplained((open) => !open)}>{t("session.setup.profile.difference")}</button>
+      </span>
     </div>
-    <button type="button" class="gsv-setup-profile-toggle" aria-expanded={explained} aria-controls={`${id}-info`}
-      onClick={() => setExplained((open) => !open)}>{t("session.setup.profile.difference")}</button>
     {explained && <div class="gsv-setup-profile-info" id={`${id}-info`}>
       <p><strong>{t("session.setup.profile.public")}</strong> {t("session.setup.profile.publicDetail")}</p>
       <p><strong>{t("session.setup.profile.private")}</strong> {t("session.setup.profile.privateDetail")}</p>

@@ -42,8 +42,8 @@
 }
 /* the profile opt-in reads like the consent row, with its explanation folded away until asked for */
 .gsv-setup-profile { display: grid; gap: 6px; }
-.gsv-setup-recommended { color: var(--text-dim); }
-.gsv-setup-profile-toggle { justify-self: start; margin-left: 26px; padding: 0; border: 0; background: none; color: var(--text-dim); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.gsv-setup-recommended { font-style: italic; }
+.gsv-setup-profile-toggle { display: inline; padding: 0; border: 0; background: none; color: var(--text-dim); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .gsv-setup-profile-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .gsv-setup-profile-info { display: grid; gap: 8px; margin-left: 26px; padding: 10px 12px; border: 1px solid var(--border-raised); color: var(--text-dim); }
 .gsv-setup-profile-info p { margin: 0; }
