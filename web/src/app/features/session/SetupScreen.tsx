@@ -6,7 +6,6 @@ import { PolicyConsentLabel } from "./PolicyLinks";
 import { SessionError } from "./SessionChrome";
 import type { SetupAccount } from "./sessionDomain";
 import { rich, useT } from "../../i18n/locale";
-import { publicDeployment } from "../../services/deployment";
 import "./SetupScreen.css";
 
 type SetupScreenProps = {
@@ -102,14 +101,6 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
   </AuthLayout>;
 }
 
-/** What a public profile on the open network means, in the docs this deployment links to. */
-function profileDocsUrl(): string {
-  const docsRoot = publicDeployment().docsUrl;
-  return docsRoot
-    ? new URL("how-to/contact-people#your-profile", docsRoot.endsWith("/") ? docsRoot : `${docsRoot}/`).href
-    : "https://github.com/deathbyknowledge/gsv/blob/main/docs/how-to/contact-people.md#your-profile";
-}
-
 /** Asks, beside the step that activates the Ship, whether its profile may be public; unticked, nothing is published. */
 function ProfileOptIn({ checked, busy, onChange }: { checked: boolean; busy: boolean; onChange: (checked: boolean) => void }) {
   const t = useT();
@@ -126,7 +117,6 @@ function ProfileOptIn({ checked, busy, onChange }: { checked: boolean; busy: boo
     {explained && <div class="gsv-setup-profile-info" id={`${id}-info`}>
       <p><strong>{t("session.setup.profile.public")}</strong> {t("session.setup.profile.publicDetail")}</p>
       <p><strong>{t("session.setup.profile.private")}</strong> {t("session.setup.profile.privateDetail")}</p>
-      <a href={profileDocsUrl()} target="_blank" rel="noreferrer">{t("session.setup.profile.learnMore")}</a>
     </div>}
   </div>;
 }

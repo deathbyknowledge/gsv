@@ -48,4 +48,3 @@
 .gsv-setup-profile-info { display: grid; gap: 8px; margin-left: 26px; padding: 10px 12px; border: 1px solid var(--border-raised); color: var(--text-dim); }
 .gsv-setup-profile-info p { margin: 0; }
 .gsv-setup-profile-info strong { color: var(--text); font-weight: 600; }
-.gsv-setup-profile-info a { justify-self: start; color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
