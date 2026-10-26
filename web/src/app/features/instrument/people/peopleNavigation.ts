@@ -8,6 +8,10 @@ export type PeopleRoute = {
   direction: "incoming" | "outgoing";
   history: boolean;
   archived: boolean;
+  /** The profile view opens as the public page; edit mode shows the form. */
+  edit: boolean;
+  /** Edit mode opened from "complete bio" starts in the bio field. */
+  focusBio: boolean;
 };
 
 export function readPeopleRoute(search: string): PeopleRoute {
@@ -21,6 +25,8 @@ export function readPeopleRoute(search: string): PeopleRoute {
     direction: params.get("direction") === "outgoing" ? "outgoing" : "incoming",
     history: params.get("history") === "1",
     archived: params.get("archived") === "1",
+    edit: view === "profile" && params.get("edit") === "1",
+    focusBio: view === "profile" && params.get("edit") === "1" && params.get("focus") === "bio",
   };
 }
 
@@ -36,6 +42,10 @@ export function peoplePath(route: Partial<PeopleRoute>): string {
     if (route.requestId) params.set("request", route.requestId);
     if (route.direction === "outgoing") params.set("direction", "outgoing");
     if (route.history) params.set("history", "1");
+  }
+  if (view === "profile" && route.edit) {
+    params.set("edit", "1");
+    if (route.focusBio) params.set("focus", "bio");
   }
   return `/people${params.size ? `?${params}` : ""}`;
 }

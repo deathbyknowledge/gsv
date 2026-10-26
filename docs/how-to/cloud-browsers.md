@@ -197,7 +197,10 @@ Every instance has a fixed lifetime. Reusing it does not extend that lifetime
 or reserve more time. Ship or you can stop it sooner with **stop browser**.
 A stopped or failed instance stays terminal; another start creates another browser
 with a new eight-character ID. Export useful files before stopping: temporary
-files disappear. Stopped browsers leave the ordinary Work list. `instance list
+files disappear. Stopped browsers leave the ordinary Work list and `target list`,
+even with offline targets included: a finished instance never comes back online.
+Its target ID still resolves for an exact request, such as polling a saved shell
+session. `instance list
 --all` includes your 64 most recently created terminal browsers alongside active
 ones. Inventory omits per-site save issues; `instance get ID` retrieves recent
 details. Older instances retain their identity, status and start-request receipts

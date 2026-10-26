@@ -1028,6 +1028,7 @@ describe("proc handlers", () => {
       auth: makePersonalAgentAuth(),
       config: { get: vi.fn(() => "1002") },
       welcome: { createdAt: vi.fn() },
+      defer: vi.fn(),
       responsibilities: {
         getByDedupeKey: vi.fn(() => null),
       },
@@ -1099,6 +1100,7 @@ describe("proc handlers", () => {
       auth: makePersonalAgentAuth(),
       config: { get: vi.fn(() => "1002") },
       welcome: { createdAt: vi.fn() },
+      defer: vi.fn(),
       responsibilities: {
         getByDedupeKey: vi.fn(() => null),
       },

@@ -1,7 +1,9 @@
+import { normalizeUsernamePolicy } from "./username-policy";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { parseOpaqueId } from "./domain";
 import { OwnerAuthError } from "./owner-auth-store";
+import { queueProductEmail, type ProductEmailChoice } from "./product-email";
 import { emitTelemetry, exceptionDiagnostics, type TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
 
 export type PendingSetup = { operationId: string; handle: string; origin: string };
@@ -27,11 +29,17 @@ export class InstallationSignup {
   }
 
   async available(value: string): Promise<boolean> {
-    const handle = this.accounts.validateHandle(value);
-    return !await this.db.prepare("SELECT 1 FROM installations WHERE handle = ?").bind(handle).first();
+    let handle: string;
+    try { handle = this.accounts.validateHandle(value); }
+    catch (error) {
+      if (error instanceof Error && error.message.startsWith("handle is reserved")) return false;
+      throw error;
+    }
+    return !await this.db.prepare(`SELECT 1 FROM installations WHERE handle = ?
+      UNION ALL SELECT 1 FROM username_policy WHERE normalized_handle = ? LIMIT 1`).bind(handle, normalizeUsernamePolicy(handle)).first();
   }
 
-  async prepare(operationIdValue: string, principalIdValue: string, handle: string) {
+  async prepare(operationIdValue: string, principalIdValue: string, handle: string, productEmails?: ProductEmailChoice, ip?: string) {
     const operationId = parseOpaqueId(operationIdValue, "operationId");
     const principalId = parseOpaqueId(principalIdValue, "principalId");
     const principal = await this.accounts.getPrincipal(principalId);
@@ -49,6 +57,7 @@ export class InstallationSignup {
     try {
       await this.policy?.prepare({ operationId, installationId: space.installationId });
       const issued = await this.onboarding.begin(space.installationId, Date.now(), "resume");
+      if (productEmails) await queueProductEmail(this.db, principal, productEmails, ip);
       await this.db.prepare("UPDATE provisioning_operations SET last_error = NULL WHERE operation_id = ?").bind(operationId).run();
       return { origin: space.canonicalOrigin, handle: space.handle,
         onboardingToken: new URL(issued.onboardingUrl).hash.slice(1), expiresAt: issued.expiresAt };

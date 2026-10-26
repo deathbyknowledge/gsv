@@ -39,6 +39,7 @@ if (import.meta.env.DEV) {
 }
 
 let active = activate(locales[0], english);
+export const currentLocale = (): string => active.locale.tag;
 /** The most recently requested language, so a slower earlier load cannot replace a newer choice. */
 let requested = active.locale;
 const listeners = new Set<() => void>();
@@ -117,7 +118,6 @@ function subscribe(listener: () => void): () => void {
 }
 
 /** Translates in the active language. Components use {@link useT} instead, so a language change re-renders them. */
-export const currentLocale = () => active.locale.tag;
 export const t: Translate = (key: MessageKey, values?: MessageValues) => active.translate(key, values);
 
 /** The translator for a component; the component re-renders when the interface language changes. */

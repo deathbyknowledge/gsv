@@ -127,7 +127,6 @@ export default defineConfig({
             { text: "Deploy / Update / Remove", link: "/how-to/deploy" },
             { text: "Deploy with Alchemy", link: "/how-to/deploy-with-alchemy" },
             { text: "Operate a Ship Deployment", link: "/how-to/operate-gsv" },
-            { text: "Product Emails and Service Notices", link: "/how-to/product-email" },
             { text: "Retire a Standalone Deployment", link: "/how-to/standalone-retirement" },
             { text: "Run Ship for Your Organisation", link: "/how-to/organisations" },
             { text: "Personal Access", link: "/how-to/invite-people" },
@@ -193,6 +192,7 @@ export default defineConfig({
             { text: "Targets", link: "/architecture/targets" },
             { text: "Rust Host Applications", link: "/architecture/rust-host-applications" },
             { text: "Resource References", link: "/architecture/resource-references" },
+            { text: "The Open Network", link: "/architecture/open-network" },
           ],
         },
         {

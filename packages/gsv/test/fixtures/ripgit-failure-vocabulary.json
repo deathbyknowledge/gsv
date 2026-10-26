@@ -1,0 +1,18 @@
+{
+  "kinds": ["runtime", "repository", "json", "encoding", "binding", "other"],
+  "routes": [
+    "apply",
+    "import",
+    "hyperspace-read",
+    "read",
+    "git-info-refs",
+    "git-upload-pack",
+    "git-receive-pack",
+    "admin",
+    "delete",
+    "registration",
+    "lifecycle",
+    "discovery",
+    "other"
+  ]
+}

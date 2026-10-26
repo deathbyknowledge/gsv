@@ -2,13 +2,15 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  jsonValueSchema,
+  DELIVER,
+  GET_ATTACHMENT,
   type ConversationMessage,
-  type FederationDeliveryEnvelope,
+  type DeliverInput,
   type FederationDeliveryPayload,
-  type FederationMessageDeliveryV2,
-  type FederationDeliveryEnvelopeV2,
+  type FederationMessageDelivery,
+  type OriginMessageRef,
   type ProcessIdentity,
+  type SocialMessageProvenance,
 } from "@humansandmachines/gsv/protocol";
 import type {
   Conversation,
@@ -20,13 +22,15 @@ import * as utils from "../shared/utils";
 import type { AuthStore } from "./auth-store";
 import { hashPassword, makeShadowEntry } from "../auth/shadow";
 import { testPeer } from "../test-support/peers";
-import * as federationCrypto from "./federation-crypto";
-import type { Kernel } from "./do";
 import {
-  randomBase64Url,
-  signContactEnvelope,
-  sha256Base64Url,
-} from "./federation-crypto";
+  randomPlcDid,
+  serviceAuthToken,
+  signedJwt,
+  TestShipNetwork,
+  tokenClaims,
+  type TestDidAccount,
+} from "../test-support/ship-network";
+import type { Kernel } from "./do";
 import type { FederationContactRecord, FederationStore } from "./federation-store";
 import type { ProcessRegistry } from "./processes";
 import * as personalController from "./personal-controller";
@@ -47,8 +51,6 @@ const OWNER: ProcessIdentity = {
   cwd: "/home/hank",
 };
 const SHIP_PID = "proc:test-ship";
-const REMOTE_SHIP_ID = "ship:remote";
-const REMOTE_SUBJECT_ID = "subject:remote";
 
 type KernelInternals = {
   ctx: DurableObjectState;
@@ -64,17 +66,20 @@ type KernelInternals = {
 };
 
 describe("federation inbound boundary", () => {
+  let network: TestShipNetwork;
+  let remote: TestDidAccount;
+  let localDid: string;
   let kernel: DurableObjectStub<Kernel>;
   let contact: FederationContactRecord;
-  let recipientSubjectId: string;
-  let sharedSecret: string;
   let messages: ConversationMessage[];
   let getConversationById: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
+    network = new TestShipNetwork().install();
+    remote = await network.account("remote.ship.test");
+    localDid = (await network.account("local.example")).did;
     const installationId = `inst_federation_inbound_${crypto.randomUUID()}`;
     kernel = await getKernelByInstallationId(env.KERNEL, installationId);
-    sharedSecret = randomBase64Url(32);
     messages = [];
     vi.spyOn(personalController, "ensurePersonalController")
       .mockResolvedValue(SHIP_PID);
@@ -83,12 +88,13 @@ describe("federation inbound boundary", () => {
         conversationId,
         messages,
       ));
-    const state = await runInDurableObject(kernel, async (instance: Kernel) => {
+    contact = await runInDurableObject(kernel, async (instance: Kernel) => {
       await instance.ensureInstallationIdentity({
         installationId,
         handle: "local",
         canonicalOrigin: "https://local.example",
       });
+      instance.shipIdentity.remember(localDid);
       const internal = kernelInternals(instance);
       internal.auth.addUser({
         username: OWNER.username,
@@ -105,22 +111,15 @@ describe("federation inbound boundary", () => {
         interactive: true,
         isPersonalController: true,
       });
-      const subject = internal.federation.ensureSubject(OWNER.uid, OWNER.username, 1_000);
-      const activated = internal.federation.activateContact({
+      return internal.federation.activateContact({
         ownerUid: OWNER.uid,
-        remoteShipId: REMOTE_SHIP_ID,
-        remoteSubject: { id: REMOTE_SUBJECT_ID, displayName: "Remote" },
-        remoteOrigin: "https://remote.example",
-        remotePublicKey: { kty: "EC", crv: "P-256", x: "remote-x", y: "remote-y" },
-        sharedSecret,
+        remoteDid: remote.did,
+        remoteName: "Remote",
         generation: "generation:current",
         threadId: "thread:shared",
         now: 1_000,
       });
-      return { contact: activated, recipientSubjectId: subject.id };
     });
-    contact = state.contact;
-    recipientSubjectId = state.recipientSubjectId;
   });
 
   afterEach(async () => {
@@ -130,22 +129,13 @@ describe("federation inbound boundary", () => {
     vi.restoreAllMocks();
   });
 
-  it("commits v2 provenance and replays a version-bound receipt without waking Ship", async () => {
+  it("commits a message under its author's DID and answers a repeat without waking Ship", async () => {
     getConversationById.mockRestore();
-    const payload: FederationMessageDeliveryV2 = {
-      kind: "message", messageId: "origin:v2", threadId: contact.threadId, text: "Written by my helper",
-      social: {
-        threadId: contact.threadId,
-        reference: { actor: { shipId: REMOTE_SHIP_ID, subjectId: REMOTE_SUBJECT_ID }, messageId: "origin:v2" },
-        provenance: { kind: "process", processId: "proc:remote-helper" },
-      },
-    };
-    const envelope = await signedV2Envelope(payload, "delivery:v2");
-    const response = await deliverV2(envelope);
-    expect(response.status).toBe(200);
-    const receipt = await response.json();
-    expect(receipt).toMatchObject({ version: 2, domain: "gsv-federation/2/receipt", deliveryId: envelope.deliveryId });
-    expect(await (await deliverV2(envelope)).json()).toEqual(receipt);
+    const payload = message("origin:one", "Written by my helper", { kind: "process", processId: "proc:remote-helper" });
+    const input = delivery(payload, "delivery:one");
+    for (const response of [await deliver(input), await deliver(input)]) {
+      expect([response.status, await response.json()]).toEqual([200, { state: "received" }]);
+    }
     const installationId = await runInDurableObject(kernel, (instance: Kernel) => instance.installationId);
     const conversation = utils.getConversationById(installationId, contact.conversationId);
     const history = await conversation.history();
@@ -155,13 +145,27 @@ describe("federation inbound boundary", () => {
       .toMatchObject({ messageId: history.messages[0]?.id, sequence: 1 });
     expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
 
-    const forged = await signedV2Envelope({ ...payload, social: {
-      ...payload.social, reference: { ...payload.social.reference, actor: { shipId: "ship:someone-else", subjectId: REMOTE_SUBJECT_ID } },
-    } }, "delivery:v2-forged");
-    const rejected = await deliverV2(forged);
-    expect(rejected.status).toBe(409);
-    await rejected.arrayBuffer();
+    // The calling Ship's DID names the author, so a message can't claim another's.
+    const forged = message("origin:forged", "Written by someone else");
+    forged.social.reference.did = randomPlcDid();
+    const rejected = await deliver(delivery(forged, "delivery:forged"));
+    expect([rejected.status, (await rejected.json<{ message: string }>()).message])
+      .toEqual([409, "Message origin does not match this relationship"]);
     expect((await conversation.history()).messages).toHaveLength(1);
+  });
+
+  it("takes a reply that quotes either person in the conversation, and no one else", async () => {
+    const reply = (messageId: string, replyTo: OriginMessageRef) => {
+      const payload = message(messageId, "A reply");
+      payload.social.replyTo = replyTo;
+      return delivery(payload, `delivery:${messageId}`);
+    };
+    expect((await deliver(reply("reply:ours", { did: localDid, messageId: "local:asked" }))).status).toBe(200);
+    expect((await deliver(reply("reply:theirs", { did: remote.did, messageId: "origin:said" }))).status).toBe(200);
+    const outside = await deliver(reply("reply:outside", { did: randomPlcDid(), messageId: "origin:elsewhere" }));
+    expect([outside.status, (await outside.json<{ message: string }>()).message])
+      .toEqual([409, "Reply origin is outside this relationship"]);
+    expect(messages.map(({ social }) => social?.replyTo?.messageId)).toEqual(["local:asked", "origin:said"]);
   });
 
   it.each([
@@ -171,7 +175,7 @@ describe("federation inbound boundary", () => {
     ["incoming", "active", "completed"],
     ["incoming", "accepted", "cancelled"],
     ["outgoing", "offered", "cancelled"],
-  ] as const)("rejects a signed remote %s action from %s to %s without creating a conversation", async (direction, state, next) => {
+  ] as const)("rejects a remote %s action from %s to %s without creating a conversation", async (direction, state, next) => {
     await runInDurableObject(kernel, (instance: Kernel) => {
       instance.federation.createRequest({
         id: "request:local", remoteId: direction === "incoming" ? "request:remote" : undefined,
@@ -179,7 +183,7 @@ describe("federation inbound boundary", () => {
         kind: "task", title: "Participant-owned work", state, createdAtMs: 1_000, updatedAtMs: 1_000,
       });
     });
-    const response = await deliver(await signedEnvelope({
+    const response = await deliver(delivery({
       kind: "request.update", requestId: direction === "incoming" ? "request:remote" : "request:local",
       expectedRevision: 1, state: next,
     }, "delivery:wrong-role"));
@@ -193,26 +197,19 @@ describe("federation inbound boundary", () => {
     });
   });
 
-  it("coordinates concurrent duplicates and replays their signed receipt", async () => {
+  it("coordinates concurrent duplicates and answers every repeat", async () => {
     const receivedAtMs = 50_000;
     vi.spyOn(Date, "now").mockReturnValue(receivedAtMs);
-    const envelope = await signedEnvelope({
-      kind: "message",
-      messageId: "remote-message:1",
-      threadId: contact.threadId,
-      text: "Hello from another Ship",
-    }, "delivery:message");
+    const input = delivery(message("remote-message:1", "Hello from another Ship"), "delivery:message");
 
     const [first, concurrent] = await Promise.all([
-      deliver(envelope),
-      deliver(envelope),
+      deliver(input),
+      deliver(input),
     ]);
-    const replay = await deliver(envelope);
-    expect(first.status).toBe(200);
-    expect(concurrent.status).toBe(200);
-    expect(replay.status).toBe(200);
-    expect(await concurrent.json()).toEqual(await first.clone().json());
-    expect(await replay.json()).toEqual(await first.json());
+    const replay = await deliver(input);
+    for (const response of [first, concurrent, replay]) {
+      expect([response.status, await response.json()]).toEqual([200, { state: "received" }]);
+    }
     expect(messages).toHaveLength(1);
     expect(personalController.ensurePersonalController).not.toHaveBeenCalled();
     await runInDurableObject(kernel, (instance: Kernel) => {
@@ -226,17 +223,17 @@ describe("federation inbound boundary", () => {
     });
   });
 
-  it("rejects new delivery after owner removal while preserving committed replay and another owner", async () => {
-    const accepted = await signedEnvelope({ kind: "message", messageId: "remote:accepted", threadId: contact.threadId, text: "Already admitted" }, "delivery:accepted");
-    const receipt = await (await deliver(accepted)).json();
-    await runInDurableObject(kernel, removeOwner);
+  it("rejects new delivery after owner removal while answering a committed repeat", async () => {
+    const accepted = delivery(message("remote:accepted", "Already admitted"), "delivery:accepted");
     expect((await deliver(accepted)).status).toBe(200);
-    expect(await (await deliver(accepted)).json()).toEqual(receipt);
-    const denied = await signedEnvelope({ kind: "message", messageId: "remote:denied", threadId: contact.threadId, text: "New work" }, "delivery:denied");
+    await runInDurableObject(kernel, removeOwner);
+    const repeat = await deliver(accepted);
+    expect([repeat.status, await repeat.json()]).toEqual([200, { state: "received" }]);
+    const denied = delivery(message("remote:denied", "New work"), "delivery:denied");
     expect((await deliver(denied)).status).toBe(404);
     expect(await runInDurableObject(kernel, (instance: Kernel) => instance.federation.inbox(contact.id, contact.generation, denied.deliveryId))).toBeNull();
     expect(messages).toHaveLength(1);
-    const newRequest = await signedEnvelope({
+    const newRequest = delivery({
       kind: "request",
       request: { id: "request:new", kind: "task", title: "New work", state: "offered", revision: 1 },
     }, "delivery:new-request");
@@ -244,81 +241,44 @@ describe("federation inbound boundary", () => {
     expect(await runInDurableObject(kernel, (instance: Kernel) => (
       instance.federation.inbox(contact.id, contact.generation, newRequest.deliveryId)
     ))).toBeNull();
-
-    const control = await runInDurableObject(kernel, (instance: Kernel) => {
-      instance.auth.addUser({ username: "control", uid: 1001, gid: 1001, gecos: "Control", home: "/home/control", shell: "/bin/init" });
-      const subject = instance.federation.ensureSubject(1001, "Control");
-      return { subject, contact: instance.federation.activateContact({ ownerUid: 1001, remoteShipId: REMOTE_SHIP_ID,
-        remoteSubject: contact.remoteSubject, remoteOrigin: contact.remoteOrigin, remotePublicKey: contact.remotePublicKey,
-        sharedSecret, generation: "generation:control", threadId: "thread:control" }) };
-    });
-    contact = control.contact;
-    recipientSubjectId = control.subject.id;
-    expect((await deliver(await signedEnvelope({ kind: "message", messageId: "remote:control", threadId: contact.threadId, text: "Control work" }, "delivery:control"))).status).toBe(200);
-    expect(messages).toHaveLength(2);
   });
 
   it("rechecks removal after a delivery waits for contact coordination", async () => {
-    const envelope = await signedEnvelope({ kind: "message", messageId: "remote:held", threadId: contact.threadId, text: "Not admitted yet" }, "delivery:held");
+    const input = delivery(message("remote:held", "Not admitted yet"), "delivery:held");
     const status = await runInDurableObject(kernel, async (instance: Kernel) => {
       let release!: () => void;
       const gate = new Promise<void>((resolve) => { release = resolve; });
       const ahead = instance.federationRuntime.coordinateFederationContact(contact.id, () => gate);
-      const pending = instance.fetch(new Request("https://local.example/_gsv/federation/v1/deliver", { method: "POST", body: JSON.stringify(envelope) }));
+      const pending = instance.fetch(await deliveryRequest(input));
       await vi.waitFor(() => expect(instance.federationRuntime.pendingFederationInbound.size).toBe(1));
       await removeOwner(instance);
       release();
       await ahead;
       const response = await pending;
       await response.arrayBuffer();
-      expect(instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId)).toBeNull();
+      expect(instance.federation.inbox(contact.id, contact.generation, input.deliveryId)).toBeNull();
       return response.status;
     });
     expect(status).toBe(404);
     expect(messages).toEqual([]);
   });
 
-  it.each([false, true])("fences new invite claims while preserving accepted receipt replay=%s", async (acceptedBeforeRemoval) => {
-    const remote = env.KERNEL.getByName(`inst_federation_remote_${crypto.randomUUID()}`);
-    const document = await runInDurableObject(remote, (instance: Kernel) => instance.federationIdentity.ensure("https://remote-invite.example"));
-    const token = randomBase64Url(32);
-    const tokenHash = await sha256Base64Url(token);
-    await runInDurableObject(kernel, async (instance: Kernel) => {
-      const local = await instance.federationIdentity.ensure("https://local.example");
-      instance.federation.createInvite({ ownerUid: OWNER.uid, tokenHash, issuingShipId: local.shipId,
-        issuingOrigin: local.origin, expiresAtMs: Date.now() + 60_000 });
-    });
-    const accept = () => new Request("https://local.example/_gsv/federation/v1/invites/accept", { method: "POST", body: JSON.stringify({ version: 1, token, document, subject: { id: "subject:invite", displayName: "Remote invite" } }) });
-    const receipt = acceptedBeforeRemoval ? await (await kernel.fetch(accept())).json() : null;
-    const result = await runInDurableObject(kernel, async (instance: Kernel) => {
-      const sign = instance.federationIdentity.sign.bind(instance.federationIdentity);
-      let release!: () => void;
-      const gate = new Promise<void>((resolve) => { release = resolve; });
-      const signed = vi.spyOn(instance.federationIdentity, "sign").mockImplementation(async (value) => { const result = await sign(value); await gate; return result; });
-      const pending = instance.fetch(accept());
-      await vi.waitFor(() => expect(signed).toHaveBeenCalled());
-      await removeOwner(instance);
-      release();
-      const response = await pending;
-      return { status: response.status, body: await response.json(), invite: instance.federation.inviteByTokenHash(tokenHash)?.state };
-    });
-    expect(result.status).toBe(acceptedBeforeRemoval ? 200 : 410);
-    expect(result.invite).toBe(acceptedBeforeRemoval ? "accepted" : "issued");
-    if (acceptedBeforeRemoval) expect(result.body).toEqual(receipt);
-  });
-
-  it("rejects a new resource lease after removal during signature verification", async () => {
-    const verify = federationCrypto.verifyContactEnvelope;
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const verified = vi.spyOn(federationCrypto, "verifyContactEnvelope").mockImplementation(async (...args) => { const result = await verify(...args); await gate; return result; });
+  it("rejects a new attachment read after removal while the caller's DID is looked up", async () => {
     const open = vi.spyOn(nativeFs, "handleFsTransferSend").mockImplementation(async () => resourceResponse(new ReadableStream({ start(controller) { controller.close(); } })));
     const status = await runInDurableObject(kernel, async (instance: Kernel) => {
       const resource = createLocalResourceGrant(instance.federation, contact);
-      const pending = instance.fetch(await signedResourceRequest(resource.id));
-      await vi.waitFor(() => expect(verified).toHaveBeenCalled());
+      const lookingUp = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const directory = network.plc.handle.bind(network.plc);
+      vi.spyOn(network.plc, "handle").mockImplementation(async (request) => {
+        lookingUp.resolve();
+        await release.promise;
+        return await directory(request);
+      });
+      const pending = instance.fetch(await attachmentRequest(resource.id));
+      await lookingUp.promise;
       await removeOwner(instance);
-      release();
+      release.resolve();
       const response = await pending;
       await response.arrayBuffer();
       return response.status;
@@ -327,33 +287,33 @@ describe("federation inbound boundary", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("rejects tampering and delivery-id reuse before committing another message", async () => {
-    const envelope = await signedEnvelope({
-      kind: "message",
-      messageId: "remote-message:1",
-      threadId: contact.threadId,
-      text: "Original",
-    }, "delivery:message");
-    expect((await deliver(envelope)).status).toBe(200);
+  it("rejects a forged or misdirected token, a stranger, and delivery-id reuse before committing another message", async () => {
+    const mallory = await network.account("mallory.ship.test");
+    const input = delivery(message("remote-message:1", "Original"), "delivery:message");
+    expect((await deliver(input)).status).toBe(200);
 
-    const tampered = { ...envelope, payload: { ...envelope.payload, text: "Tampered" } };
-    expect((await deliver(tampered)).status).toBe(401);
-    const reused = await signedEnvelope({
-      kind: "message",
-      messageId: "remote-message:2",
-      threadId: contact.threadId,
-      text: "Changed with a valid signature",
-    }, "delivery:message");
-    expect((await deliver(reused)).status).toBe(409);
+    const changed = delivery(message("remote-message:2", "Changed"), "delivery:changed");
+    // Only the contact's own key, addressed to this Ship for this method, delivers as the contact.
+    for (const token of [
+      await signedJwt({ typ: "JWT", alg: "ES256K" }, tokenClaims(remote, { did: localDid }, DELIVER), mallory),
+      await serviceAuthToken(remote, { did: localDid }, GET_ATTACHMENT),
+      await serviceAuthToken(remote, mallory, DELIVER),
+    ]) {
+      const refused = await deliver(changed, remote, token);
+      expect(refused.status).toBe(401);
+      await refused.arrayBuffer();
+    }
+    // A Ship that isn't a contact learns nothing about this Ship's contacts.
+    const stranger = await deliver(changed, mallory);
+    expect([stranger.status, (await stranger.json<{ error: string }>()).error]).toEqual([404, "NotFound"]);
+    const reused = await deliver(delivery(message("remote-message:2", "Changed with a valid token"), "delivery:message"));
+    expect([reused.status, (await reused.json<{ message: string }>()).message]).toEqual([409, "Federation delivery id was reused"]);
     expect(messages).toHaveLength(1);
   });
 
   it("rejects malformed resource identifiers before admitting inbox work", async () => {
-    const envelope = await signedEnvelope({
-      kind: "message",
-      messageId: "remote-message:invalid-resource",
-      threadId: contact.threadId,
-      text: "This must not consume inbox capacity",
+    const input = delivery({
+      ...message("remote-message:invalid-resource", "This must not consume inbox capacity"),
       resources: [{
         id: "invalid",
         revision: "revision:remote",
@@ -362,7 +322,7 @@ describe("federation inbound boundary", () => {
       }],
     }, "delivery:invalid-resource");
 
-    expect((await deliver(envelope)).status).toBe(400);
+    expect((await deliver(input)).status).toBe(400);
     expect(await runInDurableObject(kernel, (instance: Kernel) => (
       kernelInternals(instance).federation.pendingInboxCount(contact.id)
     ))).toBe(0);
@@ -370,12 +330,7 @@ describe("federation inbound boundary", () => {
   });
 
   it("rejects incomplete messages before admitting inbox work", async () => {
-    const empty = await signedEnvelope({
-      kind: "message",
-      messageId: "remote-message:empty",
-      threadId: contact.threadId,
-      text: " \t ",
-    }, "delivery:empty-message");
+    const empty = delivery(message("remote-message:empty", " \t "), "delivery:empty-message");
 
     expect((await deliver(empty)).status).toBe(400);
     expect(await runInDurableObject(kernel, (instance: Kernel) => (
@@ -385,7 +340,7 @@ describe("federation inbound boundary", () => {
   });
 
   it("rejects oversized request details before admitting inbox work", async () => {
-    const envelope = await signedEnvelope({
+    const input = delivery({
       kind: "request",
       request: {
         id: "request:oversized",
@@ -397,19 +352,17 @@ describe("federation inbound boundary", () => {
       },
     }, "delivery:oversized-request");
 
-    expect((await deliver(envelope)).status).toBe(400);
+    expect((await deliver(input)).status).toBe(400);
     expect(await runInDurableObject(kernel, (instance: Kernel) => (
       kernelInternals(instance).federation.pendingInboxCount(contact.id)
     ))).toBe(0);
   });
 
   it("rejects an old-generation delivery queued behind contact replacement", async () => {
-    const envelope = await signedEnvelope({
-      kind: "message",
-      messageId: "remote-message:old-generation",
-      threadId: contact.threadId,
-      text: "This must not cross the generation boundary",
-    }, "delivery:old-generation");
+    const input = delivery(
+      message("remote-message:old-generation", "This must not cross the generation boundary"),
+      "delivery:old-generation",
+    );
     const result = await runInDurableObject(kernel, async (instance: Kernel) => {
       const internal = kernelInternals(instance);
       let releaseReplacement!: () => void;
@@ -420,30 +373,20 @@ describe("federation inbound boundary", () => {
         await replacementGate;
         internal.federation.transaction(() => internal.federation.activateContact({
           ownerUid: OWNER.uid,
-          remoteShipId: REMOTE_SHIP_ID,
-          remoteSubject: { id: REMOTE_SUBJECT_ID, displayName: "Remote replacement" },
-          remoteOrigin: "https://remote.example",
-          remotePublicKey: { kty: "EC", crv: "P-256", x: "replacement-x", y: "replacement-y" },
-          sharedSecret: randomBase64Url(32),
+          remoteDid: remote.did,
+          remoteName: "Remote replacement",
           generation: "generation:replacement",
           threadId: "thread:replacement",
           now: 2_000,
         }));
       });
-      const delivery = instance.fetch(new Request(
-        "https://local.example/_gsv/federation/v1/deliver",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(envelope),
-        },
-      ));
+      const pending = instance.fetch(await deliveryRequest(input));
       await vi.waitFor(() => {
         expect(internal.federationRuntime.pendingFederationInbound.size).toBe(1);
       });
       releaseReplacement();
       await replacement;
-      const response = await delivery;
+      const response = await pending;
       await response.arrayBuffer();
       return {
         status: response.status,
@@ -478,7 +421,7 @@ describe("federation inbound boundary", () => {
         cancel: cancelSource,
       });
       const resource = createLocalResourceGrant(instance.federation, contact);
-      const pending = instance.fetch(await signedResourceRequest(resource.id));
+      const pending = instance.fetch(await attachmentRequest(resource.id));
       await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
       expect(state.storage.sql.exec<{ count: number }>(
         "SELECT COUNT(*) AS count FROM federation_resource_reads",
@@ -511,15 +454,12 @@ describe("federation inbound boundary", () => {
       const internal = kernelInternals(instance);
       source = new ReadableStream<Uint8Array>({ cancel: cancelSource });
       const resource = createLocalResourceGrant(internal.federation, contact);
-      const responsePending = instance.fetch(await signedResourceRequest(resource.id));
+      const responsePending = instance.fetch(await attachmentRequest(resource.id));
       await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
       internal.federation.transaction(() => internal.federation.activateContact({
         ownerUid: OWNER.uid,
-        remoteShipId: REMOTE_SHIP_ID,
-        remoteSubject: { id: REMOTE_SUBJECT_ID, displayName: "Remote replacement" },
-        remoteOrigin: "https://remote.example",
-        remotePublicKey: { kty: "EC", crv: "P-256", x: "replacement-x", y: "replacement-y" },
-        sharedSecret: randomBase64Url(32),
+        remoteDid: remote.did,
+        remoteName: "Remote replacement",
         generation: "generation:replacement",
         threadId: "thread:replacement",
         now: 2_000,
@@ -555,7 +495,7 @@ describe("federation inbound boundary", () => {
         cancel: cancelSource,
       });
       const resource = createLocalResourceGrant(internal.federation, contact);
-      const response = await instance.fetch(await signedResourceRequest(resource.id));
+      const response = await instance.fetch(await attachmentRequest(resource.id));
       expect(response.status).toBe(200);
       const reader = response.body!.getReader();
       const reading = reader.read();
@@ -598,7 +538,7 @@ describe("federation inbound boundary", () => {
         throw new Error("Injected Conversation projection failure");
       })
     ));
-    const envelope = await signedEnvelope({
+    const input = delivery({
       kind: "request.update",
       requestId: "request:outgoing",
       expectedRevision: 1,
@@ -606,7 +546,7 @@ describe("federation inbound boundary", () => {
       details: { acceptedBy: "remote" },
     }, "delivery:request-update");
 
-    const failedDelivery = await deliver(envelope);
+    const failedDelivery = await deliver(input);
     expect(failedDelivery.status).toBe(500);
     await failedDelivery.arrayBuffer();
     expect(await runInDurableObject(kernel, (instance: Kernel) => (
@@ -633,7 +573,7 @@ describe("federation inbound boundary", () => {
           payload: JSON.stringify({
             contactId: contact.id,
             contactGeneration: contact.generation,
-            deliveryId: envelope.deliveryId,
+            deliveryId: input.deliveryId,
           }),
         }),
       ]);
@@ -657,19 +597,19 @@ describe("federation inbound boundary", () => {
           payload: JSON.stringify({
             contactId: contact.id,
             contactGeneration: contact.generation,
-            deliveryId: envelope.deliveryId,
+            deliveryId: input.deliveryId,
           }),
         }),
       ]);
       await instance.federationRuntime.onFederationInbox({
         contactId: contact.id,
         contactGeneration: contact.generation,
-        deliveryId: envelope.deliveryId,
+        deliveryId: input.deliveryId,
       });
       expect(kernelInternals(instance).federation.inbox(
         contact.id,
         contact.generation,
-        envelope.deliveryId,
+        input.deliveryId,
       )).toMatchObject({ state: "committed" });
       expect(kernelInternals(instance).federation.request("request:outgoing"))
         .toMatchObject({ revision: 2, state: "accepted", updatedAtMs: localNow });
@@ -685,11 +625,8 @@ describe("federation inbound boundary", () => {
     await runInDurableObject(kernel, async (instance: Kernel) => {
       const other = instance.federation.activateContact({
         ownerUid: OWNER.uid,
-        remoteShipId: "ship:other",
-        remoteSubject: contact.remoteSubject,
-        remoteOrigin: contact.remoteOrigin,
-        remotePublicKey: contact.remotePublicKey,
-        sharedSecret: randomBase64Url(32),
+        remoteDid: randomPlcDid(),
+        remoteName: "Other",
         generation: contact.generation,
         threadId: "thread:other",
       });
@@ -714,10 +651,10 @@ describe("federation inbound boundary", () => {
       { requestId: "request:current", expectedRevision: 1, state: "completed" },
     ] as const;
     for (const [index, update] of updates.entries()) {
-      const envelope = await signedEnvelope({ kind: "request.update", ...update }, `delivery:denied-update-${index}`);
-      expect((await deliver(envelope)).status).toBe(404);
+      const input = delivery({ kind: "request.update", ...update }, `delivery:denied-update-${index}`);
+      expect((await deliver(input)).status).toBe(404);
       expect(await runInDurableObject(kernel, (instance: Kernel) => (
-        instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId)
+        instance.federation.inbox(contact.id, contact.generation, input.deliveryId)
       ))).toBeNull();
     }
     expect(await runInDurableObject(kernel, (instance: Kernel) => (
@@ -740,14 +677,14 @@ describe("federation inbound boundary", () => {
         updatedAtMs: 1_000,
       });
     });
-    const envelope = await signedEnvelope({
+    const input = delivery({
       kind: "request.update",
       requestId: "request:invalid-transition",
       expectedRevision: 1,
       state: "completed",
     }, "delivery:invalid-transition");
 
-    expect((await deliver(envelope)).status).toBe(409);
+    expect((await deliver(input)).status).toBe(409);
     expect(await runInDurableObject(kernel, (instance: Kernel) => {
       const federation = kernelInternals(instance).federation;
       return {
@@ -767,7 +704,7 @@ describe("federation inbound boundary", () => {
   });
 
   it("rejects reused request identities without consuming pending inbox capacity", async () => {
-    const original = await signedEnvelope({
+    const original = delivery({
       kind: "request",
       request: {
         id: "request:reused",
@@ -777,7 +714,7 @@ describe("federation inbound boundary", () => {
         revision: 1,
       },
     }, "delivery:request-original");
-    const changed = await signedEnvelope({
+    const changed = delivery({
       kind: "request",
       request: {
         id: "request:reused",
@@ -815,7 +752,7 @@ describe("federation inbound boundary", () => {
 
     const states = ["accepted", "active", "completed"] as const;
     for (const [index, state] of states.entries()) {
-      const update = await signedEnvelope({
+      const update = delivery({
         kind: "request.update",
         requestId,
         expectedRevision: index + 1,
@@ -869,20 +806,20 @@ describe("federation inbound boundary", () => {
     });
 
     for (const [index, state] of (["accepted", "active", "completed"] as const).entries()) {
-      const envelope = await signedEnvelope({
+      const input = delivery({
         kind: "request.update",
         requestId,
         expectedRevision: index + 1,
         state,
       }, `delivery:source-toggle-${state}`);
-      const response = await deliver(envelope);
+      const response = await deliver(input);
       expect(response.status).toBe(200);
       const receipt = await response.json();
-      expect(await (await deliver(envelope)).json()).toEqual(receipt);
+      expect(await (await deliver(input)).json()).toEqual(receipt);
       await runInDurableObject(kernel, (instance: Kernel) => {
         expect(instance.federation.requestForRemoteUpdate(contact.id, contact.generation, requestId))
           .toMatchObject({ state, revision: index + 2 });
-        expect(instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId))
+        expect(instance.federation.inbox(contact.id, contact.generation, input.deliveryId))
           .toMatchObject({ state: "committed" });
         const responsibilities = instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records;
         expect(responsibilities).toHaveLength(0);
@@ -893,14 +830,9 @@ describe("federation inbound boundary", () => {
 
   it("stores incoming contact text without admitting Ship work", async () => {
     const text = "Private instructions that belong only in Contact history";
-    const envelope = await signedEnvelope({
-      kind: "message",
-      messageId: "remote-message:private",
-      threadId: contact.threadId,
-      text,
-    }, "delivery:private");
+    const input = delivery(message("remote-message:private", text), "delivery:private");
 
-    expect((await deliver(envelope)).status).toBe(200);
+    expect((await deliver(input)).status).toBe(200);
     expect(messages).toEqual([expect.objectContaining({ text })]);
     const responsibility = await runInDurableObject(kernel, (instance: Kernel) => (
       kernelInternals(instance).responsibilities.list({
@@ -921,32 +853,30 @@ describe("federation inbound boundary", () => {
     });
     const wake = vi.spyOn(ShipEventRuntime.prototype, "queue")
       .mockRejectedValueOnce(new Error("Injected scheduler failure"));
-    const envelope = await signedEnvelope({
-      kind: "message", messageId: "message:handoff", threadId: contact.threadId, text: "Continue our conversation",
-    }, "delivery:handoff");
-    const failed = await deliver(envelope);
+    const input = delivery(message("message:handoff", "Continue our conversation"), "delivery:handoff");
+    const failed = await deliver(input);
     expect(failed.status).toBe(500);
     await failed.arrayBuffer();
     const committed = await runInDurableObject(kernel, (instance: Kernel) => {
       const records = instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records;
       expect(records).toHaveLength(1);
-      expect(instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId)?.state).toBe("received");
+      expect(instance.federation.inbox(contact.id, contact.generation, input.deliveryId)?.state).toBe("received");
       return records[0]!;
     });
     expect(wake).toHaveBeenCalledOnce();
     wake.mockRestore();
     await runInDurableObject(kernel, async (instance: Kernel, state) => {
       await instance.federationRuntime.onFederationInbox({
-        contactId: contact.id, contactGeneration: contact.generation, deliveryId: envelope.deliveryId,
+        contactId: contact.id, contactGeneration: contact.generation, deliveryId: input.deliveryId,
       });
-      expect(instance.federation.inbox(contact.id, contact.generation, envelope.deliveryId)?.state).toBe("committed");
+      expect(instance.federation.inbox(contact.id, contact.generation, input.deliveryId)?.state).toBe("committed");
       expect(instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([committed]);
       expect(state.storage.sql.exec("SELECT event_id FROM ship_events").toArray()).toEqual([{ event_id: `contact.message:${messages[0]?.id}` }]);
       expect(state.storage.sql.exec("SELECT 1 FROM cf_agents_schedules WHERE callback = 'onShipEvents'").toArray()).toHaveLength(1);
       expect(state.storage.sql.exec("SELECT 1 FROM cf_agents_schedules WHERE callback = 'onResponsibilityWake'").toArray()).toHaveLength(0);
     });
     expect(messages).toHaveLength(1);
-    const replay = await deliver(envelope);
+    const replay = await deliver(input);
     expect(replay.status).toBe(200);
     await replay.arrayBuffer();
     expect(messages).toHaveLength(1);
@@ -960,17 +890,13 @@ describe("federation inbound boundary", () => {
       await releaseAppend.promise;
     }));
     vi.spyOn(ResponsibilityRuntime.prototype, "reconcileResponsibilityWake").mockResolvedValue();
-    const earlier = await signedEnvelope({
-      kind: "message", messageId: "message:earlier", threadId: contact.threadId, text: "Already arriving",
-    }, "delivery:earlier");
+    const earlier = delivery(message("message:earlier", "Already arriving"), "delivery:earlier");
     await runInDurableObject(kernel, async (instance: Kernel) => {
       instance.auth.setShadow(makeShadowEntry(OWNER.username, await hashPassword("federation-fixture-password")));
       const ctx = instance.buildKernelContext({ peer: testPeer({ account: OWNER, calls: ["contact.*"] }) });
       // SAFETY: this handler only checks that a direct human connection exists.
       ctx.connection = {} as KernelContext["connection"];
-      const pending = instance.fetch(new Request("https://local.example/_gsv/federation/v1/deliver", {
-        method: "POST", body: JSON.stringify(earlier),
-      }));
+      const pending = instance.fetch(await deliveryRequest(earlier));
       await enteredAppend.promise;
       const enabling = handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
       try {
@@ -983,9 +909,7 @@ describe("federation inbound boundary", () => {
       expect(instance.federation.get(contact.id)?.preferences.shipHandlesMessages).toBe(true);
       expect(instance.responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true }).records).toEqual([]);
     });
-    const later = await deliver(await signedEnvelope({
-      kind: "message", messageId: "message:later", threadId: contact.threadId, text: "Arriving after enabling",
-    }, "delivery:later"));
+    const later = await deliver(delivery(message("message:later", "Arriving after enabling"), "delivery:later"));
     expect(later.status).toBe(200);
     await later.arrayBuffer();
     const replay = await deliver(earlier);
@@ -1008,12 +932,9 @@ describe("federation inbound boundary", () => {
       await releaseAppend.promise;
     }));
     vi.spyOn(ResponsibilityRuntime.prototype, "reconcileResponsibilityWake").mockResolvedValue();
-    const earlier = await signedEnvelope({
-      kind: "message", messageId: "message:earlier", threadId: contact.threadId, text: "Arriving before the question",
-    }, "delivery:earlier");
+    const earlier = delivery(message("message:earlier", "Arriving before the question"), "delivery:earlier");
     const workId = await runInDurableObject(kernel, async (instance: Kernel) => {
       instance.auth.setShadow(makeShadowEntry(OWNER.username, await hashPassword("federation-fixture-password")));
-      instance.federation.setProtocol(contact.id, contact.generation, { version: 1, features: [], checkedAtMs: Date.now() });
       const actor = { kind: "human", uid: OWNER.uid } as const;
       const work = instance.responsibilities.create({ ownerUid: OWNER.uid, title: "Arrange Friday's visit", assignee: { kind: "ship" },
         source: actor, actor, state: "waiting", blocker: "Awaiting the contact", priority: "normal", observedByShip: true, now: Date.now() }).record;
@@ -1021,9 +942,7 @@ describe("federation inbound boundary", () => {
       // SAFETY: this handler only checks that a direct human connection exists.
       ctx.connection = {} as KernelContext["connection"];
       ctx.scheduleFederationDelivery = vi.fn(async () => {});
-      const pending = instance.fetch(new Request("https://local.example/_gsv/federation/v1/deliver", {
-        method: "POST", body: JSON.stringify(earlier),
-      }));
+      const pending = instance.fetch(await deliveryRequest(earlier));
       await enteredAppend.promise;
       const waitingForAdmission = Promise.withResolvers<void>();
       const coordinate = ctx.coordinateFederationContact.bind(ctx);
@@ -1042,9 +961,7 @@ describe("federation inbound boundary", () => {
       expect(instance.responsibilities.get(OWNER.uid, work.id)).toEqual(work);
       return work.id;
     });
-    const later = await deliver(await signedEnvelope({
-      kind: "message", messageId: "message:later", threadId: contact.threadId, text: "Friday works",
-    }, "delivery:later"));
+    const later = await deliver(delivery(message("message:later", "Friday works"), "delivery:later"));
     expect(later.status).toBe(200);
     await later.arrayBuffer();
     const updated = await runInDurableObject(kernel, (instance: Kernel) => instance.responsibilities.get(OWNER.uid, workId));
@@ -1062,10 +979,7 @@ describe("federation inbound boundary", () => {
     await seedOutgoingRequest("request:revoked-responsibility", true);
     if (removed) await runInDurableObject(kernel, removeOwner);
 
-    const revocation = await signedEnvelope({
-      kind: "contact.revoked",
-      generation: contact.generation,
-    }, "delivery:revoke-request-responsibility");
+    const revocation = delivery({ kind: "contact.revoked" }, "delivery:revoke-request-responsibility");
     expect((await deliver(revocation)).status).toBe(200);
 
     const state = await runInDurableObject(kernel, (instance: Kernel) => {
@@ -1104,25 +1018,16 @@ describe("federation inbound boundary", () => {
     ]);
   });
 
-  it("replays a revocation receipt after the contact has become inactive", async () => {
-    const revocation = await signedEnvelope({
-      kind: "contact.revoked",
-      generation: contact.generation,
-    }, "delivery:revoke");
-    const first = await deliver(revocation);
-    const replay = await deliver(revocation);
-
-    expect(first.status).toBe(200);
-    expect(replay.status).toBe(200);
-    expect(await replay.json()).toEqual(await first.json());
+  it("answers a repeated revocation after the contact has become inactive", async () => {
+    const revocation = delivery({ kind: "contact.revoked" }, "delivery:revoke");
+    for (const response of [await deliver(revocation), await deliver(revocation)]) {
+      expect([response.status, await response.json()]).toEqual([200, { state: "received" }]);
+    }
     expect(await runInDurableObject(kernel, (instance: Kernel) => (
       kernelInternals(instance).federation.get(contact.id)?.state
     ))).toBe("revoked");
 
-    const duplicate = await signedEnvelope({
-      kind: "contact.revoked",
-      generation: contact.generation,
-    }, "delivery:revoke-duplicate");
+    const duplicate = delivery({ kind: "contact.revoked" }, "delivery:revoke-duplicate");
     expect((await deliver(duplicate)).status).toBe(404);
     expect(await runInDurableObject(kernel, (instance: Kernel) => (
       kernelInternals(instance).federation.inbox(
@@ -1132,29 +1037,21 @@ describe("federation inbound boundary", () => {
       )
     ))).toBeNull();
 
-    const lateMessage = await signedEnvelope({
-      kind: "message",
-      messageId: "remote-message:late",
-      threadId: contact.threadId,
-      text: "Too late",
-    }, "delivery:late");
+    const lateMessage = delivery(message("remote-message:late", "Too late"), "delivery:late");
     expect((await deliver(lateMessage)).status).toBe(404);
   });
 
-  it("rejects a mismatched revocation before admitting inbox work", async () => {
-    const revocation = await signedEnvelope({
-      kind: "contact.revoked",
-      generation: "generation:wrong",
-    }, "delivery:revoke-wrong-generation");
+  it("rejects a revocation for another connection before admitting inbox work", async () => {
+    const revocation = { ...delivery({ kind: "contact.revoked" }, "delivery:revoke-wrong-generation"), generation: "generation:wrong" };
 
-    expect((await deliver(revocation)).status).toBe(409);
-    expect(await runInDurableObject(kernel, (instance: Kernel) => (
-      kernelInternals(instance).federation.inbox(
-        contact.id,
-        contact.generation,
-        revocation.deliveryId,
-      )
-    ))).toBeNull();
+    expect((await deliver(revocation)).status).toBe(404);
+    expect(await runInDurableObject(kernel, (instance: Kernel) => {
+      const federation = kernelInternals(instance).federation;
+      return {
+        state: federation.get(contact.id)?.state,
+        inbox: federation.inbox(contact.id, contact.generation, revocation.deliveryId),
+      };
+    })).toEqual({ state: "active", inbox: null });
   });
 
   it("uses local receipt time when a contact is revoked", async () => {
@@ -1173,14 +1070,16 @@ describe("federation inbound boundary", () => {
           messageId: "local-message:pending",
           threadId: contact.threadId,
           text: "Pending",
+          social: {
+            threadId: contact.threadId,
+            reference: { did: localDid, messageId: "local-message:pending" },
+            provenance: { kind: "human" },
+          },
         },
         now: 1_000,
       });
     });
-    const revocation = await signedEnvelope({
-      kind: "contact.revoked",
-      generation: contact.generation,
-    }, "delivery:revoke-local-time");
+    const revocation = delivery({ kind: "contact.revoked" }, "delivery:revoke-local-time");
 
     expect((await deliver(revocation)).status).toBe(200);
     const state = await runInDurableObject(kernel, (instance: Kernel) => {
@@ -1200,27 +1099,23 @@ describe("federation inbound boundary", () => {
     });
   });
 
-  async function signedEnvelope(
-    payload: FederationDeliveryPayload,
-    deliveryId: string,
-  ): Promise<FederationDeliveryEnvelope> {
-    const unsigned = {
-      version: 1 as const,
-      deliveryId,
-      senderShipId: REMOTE_SHIP_ID,
-      senderSubjectId: REMOTE_SUBJECT_ID,
-      recipientSubjectId,
-      generation: contact.generation,
-      timestampMs: Date.now(),
-      nonce: randomBase64Url(18),
-      payload,
-    };
+  /** A delivery for the contact's current connection. */
+  function delivery(payload: FederationDeliveryPayload, deliveryId: string): DeliverInput {
+    return { deliveryId, generation: contact.generation, payload };
+  }
+
+  /** A message the remote person wrote, named by their Ship's DID. */
+  function message(
+    messageId: string,
+    text: string,
+    provenance: SocialMessageProvenance = { kind: "human" },
+  ): FederationMessageDelivery {
     return {
-      ...unsigned,
-      signature: await signContactEnvelope(
-        sharedSecret,
-        jsonValueSchema.parse(unsigned),
-      ),
+      kind: "message",
+      messageId,
+      threadId: contact.threadId,
+      text,
+      social: { threadId: contact.threadId, reference: { did: remote.did, messageId }, provenance },
     };
   }
 
@@ -1238,57 +1133,26 @@ describe("federation inbound boundary", () => {
     });
   }
 
-  async function signedV2Envelope(payload: FederationMessageDeliveryV2, deliveryId: string): Promise<FederationDeliveryEnvelopeV2> {
-    const unsigned = {
-      version: 2 as const, domain: "gsv-federation/2/delivery" as const, deliveryId,
-      senderShipId: REMOTE_SHIP_ID, senderSubjectId: REMOTE_SUBJECT_ID, recipientSubjectId,
-      generation: contact.generation, timestampMs: Date.now(), nonce: randomBase64Url(18), payload,
-    };
-    return { ...unsigned, signature: await signContactEnvelope(sharedSecret, jsonValueSchema.parse(unsigned)) };
-  }
-
-  async function deliverV2(envelope: FederationDeliveryEnvelopeV2): Promise<Response> {
-    return kernel.fetch(new Request("https://local.example/_gsv/federation/v2/deliver", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(envelope),
-    }));
-  }
-
-  async function deliver(envelope: FederationDeliveryEnvelope): Promise<Response> {
-    return await kernel.fetch(new Request("https://local.example/_gsv/federation/v1/deliver", {
+  /** `space.ship.deliver` from `caller`'s Ship, with a fresh service-auth token unless one is given. */
+  async function deliveryRequest(input: DeliverInput, caller = remote, token?: string): Promise<Request> {
+    return new Request(`https://local.example/xrpc/${DELIVER}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(envelope),
-    }));
+      headers: {
+        authorization: `Bearer ${token ?? await serviceAuthToken(caller, { did: localDid }, DELIVER)}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(input),
+    });
   }
 
-  async function signedResourceRequest(resourceId: string): Promise<Request> {
-    const path = `/_gsv/federation/v1/resources/${encodeURIComponent(resourceId)}`;
-    const timestampMs = Date.now();
-    const nonce = randomBase64Url(18);
-    const fields = {
-      version: 1,
-      method: "GET",
-      path,
-      senderShipId: REMOTE_SHIP_ID,
-      senderSubjectId: REMOTE_SUBJECT_ID,
-      recipientSubjectId,
-      generation: contact.generation,
-      timestampMs,
-      nonce,
-    };
-    return new Request(`https://local.example${path}`, {
-      headers: {
-        "x-gsv-sender-ship": REMOTE_SHIP_ID,
-        "x-gsv-sender-subject": REMOTE_SUBJECT_ID,
-        "x-gsv-recipient-subject": recipientSubjectId,
-        "x-gsv-contact-generation": contact.generation,
-        "x-gsv-timestamp": String(timestampMs),
-        "x-gsv-nonce": nonce,
-        "x-gsv-signature": await signContactEnvelope(
-          sharedSecret,
-          jsonValueSchema.parse(fields),
-        ),
-      },
+  async function deliver(input: DeliverInput, caller = remote, token?: string): Promise<Response> {
+    return await kernel.fetch(await deliveryRequest(input, caller, token));
+  }
+
+  /** `space.ship.getAttachment` from the contact's Ship. */
+  async function attachmentRequest(resourceId: string): Promise<Request> {
+    return new Request(`https://local.example/xrpc/${GET_ATTACHMENT}?id=${encodeURIComponent(resourceId)}`, {
+      headers: { authorization: `Bearer ${await serviceAuthToken(remote, { did: localDid }, GET_ATTACHMENT)}` },
     });
   }
 });
@@ -1344,6 +1208,11 @@ function fakeConversation(
 ): DurableObjectStub<Conversation> {
   const stub = {
     initialize: () => {},
+    resolveOrigin: (reference: OriginMessageRef, threadId: string) => {
+      const found = messages.find(({ social }) => social?.threadId === threadId
+        && social.reference.did === reference.did && social.reference.messageId === reference.messageId);
+      return found ? { messageId: found.id, sequence: found.sequence } : null;
+    },
     append: async (input: ConversationAppendRequest) => {
       await beforeAppend?.();
       const existing = messages.find((message) => message.id === input.messageId);
@@ -1354,6 +1223,7 @@ function fakeConversation(
         sequence: messages.length + 1,
         author: input.author,
         text: input.text,
+        ...(input.social ? { social: input.social } : undefined),
         ...(input.media?.length ? { media: input.media } : undefined),
         origin: input.origin,
         createdAt: input.createdAt,
@@ -1363,6 +1233,7 @@ function fakeConversation(
     },
   };
   // SAFETY: the federation inbound test exercises only Conversation.initialize and append.
+  // Each inbound message also asks resolveOrigin whether its origin already arrived.
   return stub as typeof stub & DurableObjectStub<Conversation>;
 }
 

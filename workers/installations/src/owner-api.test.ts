@@ -1,6 +1,6 @@
+import { UsernamePolicy } from "./username-policy";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
-import { ProductEmailConsent, PRODUCT_EMAIL_WORDING_VERSION } from "./product-email";
 import { AccountStore } from "./store";
 import { InstallationOwnerStore } from "./owner-store";
 import { InstallationOwnerAuthStore } from "./owner-auth-store";
@@ -8,11 +8,12 @@ import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationSignup } from "./signup";
 import { InstallationOwnerApi } from "./owner-api";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
+import { runProductEmailJobs } from "./product-email";
 
 const ORIGIN = "https://accounts.example.com";
 const secret = () => crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
 
-async function fixture(productEmails = false) {
+async function fixture() {
   const accounts = new AccountStore(env.INSTALLATIONS_DB, "example.com");
   const registry = `registry_${crypto.randomUUID()}`;
   await accounts.createPrincipal({ principalId: registry, email: `${registry}@example.com`, displayName: "Registry", verified: true });
@@ -23,10 +24,10 @@ async function fixture(productEmails = false) {
   let code = "";
   const send = vi.fn(async (message: EmailMessage | EmailMessageBuilder): Promise<EmailSendResult> => {
     if (!("subject" in message)) throw new Error("Expected composed mail");
-    code = message.text?.match(/code is ([0-9]{6})\./)?.[1] ?? "";
+    code = message.text?.match(/^([0-9]{6})$/m)?.[1] ?? "";
     return { messageId: crypto.randomUUID() };
   });
-  const makeApi = () => new InstallationOwnerApi(auth, owners, signup, { send }, "accounts@example.com", ORIGIN, "example.com", productEmails ? new ProductEmailConsent(env.INSTALLATIONS_DB) : undefined);
+  const makeApi = () => new InstallationOwnerApi(auth, owners, signup, { send }, { from: "accounts@example.com" }, ORIGIN, "example.com");
   let api = makeApi();
   const request = async (path: string, token?: string, body?: JsonObject, headers: Record<string, string> = {}) => {
     const requestHeaders = new Headers({ "content-type": "application/json", "cf-connecting-ip": registry, ...headers });
@@ -54,11 +55,15 @@ async function fixture(productEmails = false) {
 }
 
 describe("desktop owner API", () => {
-  it("replays lost verification and setup responses without duplicating mail or spaces", async () => {
+  it.each([false, true])("replays verified signup without duplicating mail, spaces or optional marketing (opt-in: %s)", async (optedIn) => {
     const f = await fixture();
     const verify = await f.signIn();
+    const marketing = () => env.INSTALLATIONS_DB.prepare("SELECT * FROM product_email_signups WHERE email=?").bind(f.challenge.email).first();
+    expect(await marketing()).toBeNull();
     f.restart();
     expect(f.send).toHaveBeenCalledTimes(1);
+    expect(f.send.mock.calls[0][0]).toMatchObject({ from: { email: "accounts@example.com", name: "Ship" } });
+    expect(f.send.mock.calls[0][0]).not.toHaveProperty("replyTo");
     expect((await f.request("/verify", undefined, verify)).status).toBe(200);
     const initialSession = await (await f.request("/session", f.sessionSecret)).json<{ spaceDomain: string; spaces: unknown[] }>();
     expect(initialSession.spaceDomain).toBe("example.com");
@@ -66,11 +71,14 @@ describe("desktop owner API", () => {
     const operationId = crypto.randomUUID();
     const handle = `test-${crypto.randomUUID()}`;
     expect(await (await f.request(`/handle?value=${handle.toUpperCase()}`, f.sessionSecret)).json()).toEqual({ available: true });
-    const first = await (await f.request("/spaces", f.sessionSecret, { operationId, handle: handle.toUpperCase() })).json<{ origin: string; onboardingToken: string }>();
+    const input: JsonObject = { operationId, handle: handle.toUpperCase() };
+    if (optedIn) input.productEmails = { wordingVersion: "ship-product-updates-2026-10-23", locale: "en" };
+    expect((await f.request("/spaces", undefined, input)).status).toBe(401);
+    const first = await (await f.request("/spaces", f.sessionSecret, input)).json<{ origin: string; onboardingToken: string }>();
     expect(first.origin).toBe(`https://${handle}.${initialSession.spaceDomain}`);
     expect(await (await f.request(`/handle?value=${handle.toUpperCase()}`, f.sessionSecret)).json()).toEqual({ available: false });
     f.restart();
-    const resumed = await (await f.request("/spaces", f.sessionSecret, { operationId, handle })).json<typeof first>();
+    const resumed = await (await f.request("/spaces", f.sessionSecret, input)).json<typeof first>();
     expect(resumed.origin).toBe(first.origin);
     const owner = await f.auth.session(f.sessionSecret);
     const reservation = await f.accounts.getReservationByOperation(operationId);
@@ -83,6 +91,16 @@ describe("desktop owner API", () => {
     const session = await (await f.request("/session", f.sessionSecret)).json<{ spaces: unknown[]; setups: unknown[] }>();
     expect(session.spaces).toHaveLength(1);
     expect(session.setups).toHaveLength(0);
+    const provider = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(Response.json({ type: "regular" }, { status: 201 }));
+    const config = { GSV_PRODUCT_EMAIL_ENABLED: "true", BUTTONDOWN_API_KEY: "test-key" };
+    await runProductEmailJobs(env.INSTALLATIONS_DB, config, provider);
+    await runProductEmailJobs(env.INSTALLATIONS_DB, config, provider);
+    expect(provider).toHaveBeenCalledTimes(optedIn ? 2 : 0);
+    if (optedIn) {
+      expect(await marketing()).toMatchObject({ email: f.challenge.email, completed_at: expect.any(Number), attempts: 1, ip: null });
+      expect(JSON.parse(String(provider.mock.calls[1][1]?.body))).toMatchObject({ email_address: f.challenge.email, type: "regular" });
+    } else expect(await marketing()).toBeNull();
     expect((await f.request("/logout", f.sessionSecret, {})).status).toBe(200);
     expect((await f.request("/session", f.sessionSecret)).status).toBe(401);
     expect((await f.request("/verify", undefined, verify)).status).toBe(400);
@@ -121,22 +139,22 @@ describe("desktop owner API", () => {
   });
 });
 
-it("signup consent is activated only after verification and preference writes need a bearer session", async () => {
-  const f = await fixture(true); const store = new ProductEmailConsent(env.INSTALLATIONS_DB);
-  const productEmails = { optedIn: true, locale: "en", wordingVersion: PRODUCT_EMAIL_WORDING_VERSION };
-  expect((await f.request("/product-email", undefined, { ...productEmails, revision: 0 })).status).toBe(401);
-  expect((await f.request("/code", undefined, { ...f.challenge, productEmails })).status).toBe(200);
-  expect((await store.preference(f.challenge.email)).optedIn).toBe(false);
-  expect((await f.request("/verify", undefined, { ...f.challenge, sessionSecret: f.sessionSecret, code: "invalid" })).status).toBe(400);
-  expect((await store.preference(f.challenge.email)).optedIn).toBe(false);
-  const { email: _email, ...verification } = f.challenge;
-  expect((await f.request("/verify", undefined, { ...verification, sessionSecret: f.sessionSecret, code: f.code() })).status).toBe(200);
-  expect((await store.preference(f.challenge.email)).optedIn).toBe(true);
-  expect((await f.request("/product-email", f.sessionSecret, { ...productEmails, optedIn: false, revision: 1 })).status).toBe(200);
-  expect((await store.preference(f.challenge.email)).optedIn).toBe(false);
-});
-it("disabled optional marketing never blocks the verification email", async () => {
+it("returns unavailable for normalized policy matches and rejects direct creation with a field error", async () => {
   const f = await fixture();
-  const response = await f.request("/code", undefined, { ...f.challenge, productEmails: { optedIn: true, locale: "en", wordingVersion: PRODUCT_EMAIL_WORDING_VERSION } });
-  expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ productEmailSaved: false, deliveryStatus: "sent" });
+  await f.signIn();
+  const policy = new UsernamePolicy(env.INSTALLATIONS_DB);
+  const initial = await policy.list();
+  try {
+    await policy.replace({ reserved: "Shíp.Support", blocked: "Bád_Name" });
+    for (const handle of ["SHIP-SUPPORT", "BAD-NAME"]) {
+      expect(await (await f.request(`/handle?value=${handle}`, f.sessionSecret)).json()).toEqual({ available: false });
+      const operationId = crypto.randomUUID();
+      const denied = await f.request("/spaces", f.sessionSecret, { operationId, handle });
+      expect(denied.status).toBe(400);
+      expect(await denied.json()).toEqual({ error: "This username is unavailable. Choose another.", code: "handle_unavailable" });
+      expect(await f.accounts.getReservationByOperation(operationId)).toBeNull();
+    }
+  } finally {
+    await policy.replace({ reserved: initial.reserved.join("\n"), blocked: initial.blocked.join("\n") });
+  }
 });

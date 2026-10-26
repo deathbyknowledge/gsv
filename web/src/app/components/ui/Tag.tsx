@@ -14,24 +14,28 @@ export interface TagProps {
   size?: TagSize;
 }
 
-// Transcribed verbatim from Tag.dc.html (literal hex; not all tones map to tokens).
+// Theme tokens, so tags follow the live light/dark theme. Idle uses
+// --text-muted (dark #8c86c8, near the original #9a95cf) because --idle is too
+// faint for text in both themes. Borders are the tone at reduced strength over
+// whatever surface the tag sits on (fitted to the original dark hairlines);
+// accent and idle borders match --border-raised and --border exactly.
 const COLOR = {
-  update: "#ffd24d",
-  online: "#5ef2a0",
-  error: "#ff6f8c",
-  warn: "#e0a64c",
-  info: "#8f8aff",
-  accent: "#b3aeff",
-  idle: "#9a95cf",
+  update: "var(--update)",
+  online: "var(--online)",
+  error: "var(--error)",
+  warn: "var(--warn)",
+  info: "var(--live)",
+  accent: "var(--accent)",
+  idle: "var(--text-muted)",
 };
 const BORDER = {
-  update: "#5a4a1f",
-  online: "#1c4a32",
-  error: "#5a2b3a",
-  warn: "#5a4a1f",
-  info: "#2e2a6a",
-  accent: "#4a449e",
-  idle: "#322e74",
+  update: "color-mix(in srgb, var(--update) 32%, transparent)",
+  online: "color-mix(in srgb, var(--online) 25%, transparent)",
+  error: "color-mix(in srgb, var(--error) 32%, transparent)",
+  warn: "color-mix(in srgb, var(--warn) 38%, transparent)",
+  info: "color-mix(in srgb, var(--live) 30%, transparent)",
+  accent: "var(--border-raised)",
+  idle: "var(--border)",
 };
 
 /** Tag — ported from Tag.dc.html. Badge in boxed or plain form, optional dot. */
@@ -39,7 +43,8 @@ export function Tag({ tone = "update", label: labelProp, boxed = false, dot = fa
   const t = useT();
   const label = labelProp ?? t("ui.tag.label");
   const color = COLOR[tone] ?? COLOR.update;
-  const dotGlow = tone === "idle" ? "none" : `0 0 6px ${color}`;
+  // Neon glow; --gsv-tag-glow (the blur radius) is zeroed on the light themes in Tag.css.
+  const dotGlow = tone === "idle" ? "none" : `0 0 var(--gsv-tag-glow, 6px) ${color}`;
   const dotEl = dot ? (
     <span
       class={pulse ? "gsv-tag-dot--pulse" : undefined}

@@ -49,6 +49,7 @@ import {
   ProcessRequestError,
 } from "./proc-handlers";
 import { handleAccountCreate, handleAccountList } from "./agents";
+import { handleAtprotoBlobRead, handleAtprotoBlobUpload, handleAtprotoIdentity, handleAtprotoWrite } from "./atproto";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
 import { handleInstanceRequest } from "./sys/instance";
@@ -124,9 +125,18 @@ import {
 } from "./adapter-send";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
-import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve } from "./profiles";
+import {
+  handleContactInviteAccept,
+  handleContactInviteCancel,
+  handleContactInviteCreate,
+  handleContactInviteList,
+} from "./federation/invitations";
+import {
+  handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet, handleProfilePublish,
+  handleProfileResolve, handleProfileUnpublish, handleProfileUpdate,
+} from "./profiles";
 import { handleConversationInbox, handleConversationViewGet, handleConversationViewUpdate } from "./conversation-views";
-import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachRetry } from "./approaches/admission";
+import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachReport, handleApproachRetry } from "./approaches/admission";
 import {
   handleSchedulerAdd,
   handleSchedulerList,
@@ -165,11 +175,6 @@ import {
 } from "./conversation-handlers";
 import {
   handleContactAliasSet,
-  handleContactIdentity,
-  handleContactInviteAccept,
-  handleContactInviteCancel,
-  handleContactInviteCreate,
-  handleContactInviteList,
   handleContactDeliveryGet,
   handleContactDeliveryList,
   handleContactDeliveryRetry,
@@ -776,6 +781,22 @@ async function dispatchKernel(
       case "profile.get":
         data = handleProfileGet(ctx);
         break;
+      case "atproto.identity":
+        data = await handleAtprotoIdentity(ctx);
+        break;
+      case "atproto.write":
+        data = await handleAtprotoWrite(frame.args, ctx);
+        break;
+      case "atproto.blob.upload":
+        data = await handleAtprotoBlobUpload(frame.args, ctx, frame.body);
+        break;
+      case "atproto.blob.read":
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleAtprotoBlobRead(frame.args, ctx),
+        };
       case "approach.create":
         data = await handleApproachCreate(frame.args, ctx);
         break;
@@ -791,6 +812,9 @@ async function dispatchKernel(
       case "approach.retry":
         data = await handleApproachRetry(frame.args, ctx);
         break;
+      case "approach.report":
+        data = await handleApproachReport(frame.args, ctx);
+        break;
       case "profile.update":
         data = handleProfileUpdate(frame.args, ctx);
         break;
@@ -803,10 +827,20 @@ async function dispatchKernel(
       case "profile.resolve":
         data = await handleProfileResolve(frame.args, ctx);
         break;
-      // --- contact.* ---
-      case "contact.identity":
-        data = await handleContactIdentity(ctx);
+      case "profile.avatar.set":
+        data = await handleProfileAvatarSet(frame.args, ctx, frame.body);
         break;
+      case "profile.avatar.remove":
+        data = handleProfileAvatarRemove(frame.args, ctx);
+        break;
+      case "profile.avatar.read":
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...handleProfileAvatarRead(frame.args, ctx),
+        };
+      // --- contact.* ---
       case "contact.invite.create":
         data = await handleContactInviteCreate(frame.args, ctx);
         break;
@@ -820,7 +854,7 @@ async function dispatchKernel(
         data = handleContactInviteCancel(frame.args, ctx);
         break;
       case "contact.list":
-        data = handleContactList(frame.args, ctx);
+        data = await handleContactList(frame.args, ctx);
         break;
       case "contact.notice.dismiss":
         data = handleContactNoticeDismiss(ctx);

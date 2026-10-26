@@ -1,6 +1,7 @@
 import { createAssistantMessageEventStream, type AssistantMessage, type ToolCall } from "@humansandmachines/gsv/services/inference-context";
 import { describe, expect, it, vi } from "vitest";
 import type { Process } from "./do";
+import { MAX_TERMINAL_COMMAND_FAILURES } from "./internal/lifecycle";
 import type { MessageRecord } from "./storage/store-codecs";
 import {
   ROOT_IDENTITY, captureSignals, generationRun, initProcess, processTestConfig, runInProcess, testUsage,
@@ -92,6 +93,85 @@ describe("Send text streaming", () => {
       expect(process.run.commitRunControlMessage).toHaveBeenCalledOnce();
       expect(streamed.some(({ phase }) => phase === "aborted")).toBe(false);
       expect(process.runs.active).toBeNull();
+    });
+  });
+
+  it("ends a run whose yield stays blocked, as it ends one whose bare yield is refused", async () => {
+    const pid = "mech-send-blocked-yield-limit";
+    const runId = "run-send-blocked-yield-limit";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      const emitted = captureSignals(process);
+      recordStreamedPhases(process);
+      process.run.scheduleTick = vi.fn(async () => {});
+      process.run.verifyTerminalResponsibilities = vi.fn(async () => ({
+        ok: false as const,
+        error: "The responsibility batch still contains unhandled work: onboarding.",
+      }));
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv:ship", id: "sent-update", text: "Update" }));
+      process.store.messages.appendMessage("user", "Hello.", { runId });
+      process.runs.active = generationRun(runId, processTestConfig(pid), { conversationId: "conv:ship" });
+
+      for (let attempt = 1; attempt <= MAX_TERMINAL_COMMAND_FAILURES; attempt += 1) {
+        expect(process.runs.active?.runId).toBe(runId);
+        const text = `Update ${attempt}`;
+        process.generation = sendStreamGeneration(`send-${attempt}`, [JSON.stringify({ text, yield: true })], { text, yield: true });
+        await process.run.runTick(runId);
+      }
+
+      expect(process.runs.active).toBeNull();
+      expect(process.run.commitRunControlMessage).toHaveBeenCalledTimes(MAX_TERMINAL_COMMAND_FAILURES);
+      const first = process.store.messages.getMessages().find((message) => message.toolCallId === "send-1");
+      expect(first?.content).toContain(`Yield was blocked (attempt 1 of ${MAX_TERMINAL_COMMAND_FAILURES})`);
+      expect(emitted.findLast(({ signal }) => signal === "proc.run.finished")?.payload).toMatchObject({
+        status: "error",
+        reason: "message.command.failed",
+        error: expect.stringContaining("onboarding"),
+      });
+    });
+  });
+
+  it("does not send a reply again while the work that blocked its yield is outstanding", async () => {
+    const pid = "mech-send-blocked-yield-repeat";
+    const runId = "run-send-blocked-yield-repeat";
+    const text = "Hi, I'm Ship. Tell me a little about yourself.";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      const emitted = captureSignals(process);
+      const streamed = recordStreamedPhases(process);
+      process.run.scheduleTick = vi.fn(async () => {});
+      process.run.verifyTerminalResponsibilities = vi.fn(async () => ({
+        ok: false as const,
+        error: "The responsibility batch still contains unhandled work: onboarding.",
+      }));
+      process.run.commitRunControlMessage = vi.fn(async () => ({ conversationId: "conv:ship", id: "sent-welcome", text }));
+      process.store.messages.appendMessage("user", "Hello.", { runId });
+      process.runs.active = generationRun(runId, processTestConfig(pid), { conversationId: "conv:ship" });
+
+      for (const callId of ["welcome", "welcome-again"]) {
+        process.generation = sendStreamGeneration(callId, [JSON.stringify({ text, yield: true })], { text, yield: true });
+        await process.run.runTick(runId);
+      }
+
+      expect(process.run.commitRunControlMessage).toHaveBeenCalledOnce();
+      expect(streamed.filter(({ phase }) => phase === "aborted")).toEqual([
+        expect.objectContaining({ id: `draft:${runId}:welcome-again` }),
+      ]);
+      const repeated = process.store.messages.getMessages().find((message) => message.toolCallId === "welcome-again");
+      expect(repeated?.content).toContain("Message already sent, so not sent again");
+      expect(repeated?.content).toContain(`Yield was blocked (attempt 2 of ${MAX_TERMINAL_COMMAND_FAILURES})`);
+      expect(process.runs.active?.runId).toBe(runId);
+
+      // Once the work is handled, sending the same reply again only yields.
+      process.run.verifyTerminalResponsibilities = vi.fn(async () => ({ ok: true as const, admissionKey: "[]" }));
+      process.generation = sendStreamGeneration("welcome-once-more", [JSON.stringify({ text, yield: true })], { text, yield: true });
+      await process.run.runTick(runId);
+
+      expect(process.run.commitRunControlMessage).toHaveBeenCalledOnce();
+      expect(process.runs.active).toBeNull();
+      expect(emitted.findLast(({ signal }) => signal === "proc.run.finished")?.payload).toMatchObject({ status: "ok", reason: "run.yielded" });
     });
   });
 

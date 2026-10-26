@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { AuthLayout } from "./AuthLayout";
 import { Button } from "../../components/ui/Button";
@@ -6,8 +6,8 @@ import { TextInput } from "../../components/ui/TextInput";
 import { Spinner } from "../../components/ui/Spinner";
 import { WelcomeIllustration } from "./backgrounds/WelcomeIllustration";
 import { PolicyConsentLabel } from "./PolicyLinks";
-import { OwnerWelcome, OwnerApiError, PRODUCT_EMAIL_WORDING_VERSION, type OwnerSession, type PendingSetup, type WelcomeState } from "../../services/session/ownerWelcome";
-import { rich, useT, currentLocale } from "../../i18n/locale";
+import { OwnerWelcome, OwnerApiError, type OwnerSession, type PendingSetup, type WelcomeState, type ProductEmailChoice } from "../../services/session/ownerWelcome";
+import { currentLocale, rich, useT } from "../../i18n/locale";
 import "./LoginScreen.css";
 import "./OwnerWelcomeScreen.css";
 
@@ -20,7 +20,7 @@ type Props = {
   addressPanel?: (options: { disabled: boolean; connect(origin: string): Promise<void> }) => ComponentChildren;
   initialStep?: "welcome" | "claim" | "email";
   chooseSpace?: boolean;
-  invitation?: { name?: string; origin?: string };
+  invitation?: { name?: string; handle?: string };
   compact?: boolean;
   /** Domain shown after the handle before Accounts has stated it; the signed-in session's domain wins. */
   spaceDomain?: string;
@@ -41,8 +41,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   const consentId = useId();
   const marketingId = useId();
   const [productEmails, setProductEmails] = useState(false);
-  const [productEmailWarning, setProductEmailWarning] = useState(false);
   const [code, setCode] = useState("");
+  const codeInput = useRef<HTMLInputElement>(null);
   const [handle, setHandle] = useState("");
   const [handleError, setHandleError] = useState("");
   const [availability, setAvailability] = useState<"idle" | "checking" | "available" | "unavailable">("idle");
@@ -67,7 +67,10 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     if (!chosen || !operationId) { setStep("claim"); return; }
     setCreationAttempt({ operationId, handle: chosen });
     try {
-      const prepared = await client.prepare(chosen, operationId);
+      const locale = currentLocale();
+      const choice: ProductEmailChoice | undefined = productEmails && !invitation
+        ? { wordingVersion: "ship-product-updates-2026-10-23", locale: locale === "es" || locale === "pt-BR" ? locale : "en" } : undefined;
+      const prepared = await client.prepare(chosen, operationId, choice);
       await onConnect(prepared.origin, prepared.onboardingToken);
     } catch (failure) {
       if (client.state.flow === "open") {
@@ -108,6 +111,11 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     // Signing in or restoring a session does not imply agreement to create a space.
     setHandle(client.state.handle ?? ""); setStep("claim");
   };
+
+  useLayoutEffect(() => {
+    // The code field can mount while sending/restoring is still disabling the form.
+    if (step === "code" && !busy) codeInput.current?.focus();
+  }, [step, busy]);
 
   useEffect(() => {
     if (!ready) return;
@@ -179,19 +187,8 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
         await advance(flow);
       } else if (step === "claim") {
         await flow.chooseHandle(handle.trim());
-        const language = currentLocale();
-        const choice = { optedIn: productEmails, wordingVersion: PRODUCT_EMAIL_WORDING_VERSION,
-          locale: language === "es" ? "es" as const : language === "pt-BR" ? "pt-BR" as const : "en" as const };
-        if (owner) {
-          if (productEmails && !invitation) {
-            try { const preference = await flow.productEmailPreference(); await flow.saveProductEmailPreference(choice, preference.revision); }
-            catch { /* Optional marketing must never block account creation. Preferences remain available in Accounts. */ }
-          }
-          await create(flow);
-        } else {
-          const saved = await flow.sendCode(email.trim().toLowerCase(), false, !invitation ? choice : undefined);
-          setProductEmailWarning(productEmails && saved === false); setStep("code");
-        }
+        if (owner) await create(flow);
+        else { await flow.sendCode(email.trim().toLowerCase()); setStep("code"); }
       } else if (step === "email") {
         await flow.sendCode(email.trim().toLowerCase()); setStep("code");
       } else if (step === "code") {
@@ -233,11 +230,10 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
     </div> : <div class={split ? "desktop-welcome-columns" : "desktop-welcome-form"}>
       <div class="desktop-welcome-primary">
       {opening && !compact && <h2>{t(step === "spaces" ? "session.welcome.chooseShip" : "session.welcome.signInWithEmail")}</h2>}
-      {productEmailWarning && <p role="status">{t("session.productEmails.unsaved")}</p>}
       {step === "code" && <p class="desktop-welcome-lede">{t("session.welcome.codeSent", { email: flow?.state.challenge?.email ?? "" })}</p>}
       <form key={step} class="gsv-login-fields" onSubmit={submit} aria-busy={busy}>
         {step === "invitation" && <div class="desktop-welcome-invitation">
-          {invitation?.origin && <p class="desktop-welcome-detail">{invitation.origin}</p>}
+          {invitation?.handle && <p class="desktop-welcome-detail">{invitation.handle}</p>}
           <p>{t("session.welcome.invitationPrompt")}</p>
         </div>}
         {step === "claim" && <div class="desktop-welcome-identity">
@@ -266,10 +262,9 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           <label for={marketingId}>{t("session.productEmails.choice")}</label>
         </div>}
         {step === "code" && <TextInput label={t("session.welcome.code")} value={code} onChange={(value) => setCode(value.replace(/\D/g, "").slice(0, 6))} disabled={busy}
-          placeholder="000000" inputProps={{ autoFocus: true, inputMode: "numeric", autoComplete: "one-time-code", maxLength: 6 }} />}
+          placeholder="000000" inputProps={{ ref: codeInput, autoFocus: true, inputMode: "numeric", autoComplete: "one-time-code", maxLength: 6 }} />}
         {step === "spaces" && <>
           <p class="desktop-welcome-detail">{owner?.email}</p>
-          <a class="gsv-auth-link" href={`${flow?.state.origin}/owner/email-preferences`} target="_blank" rel="noopener">{t("settings.productEmails.title")}</a>
           {owner?.spaces.map((space) => <Button key={space.canonicalOrigin} label={space.handle} variant="secondary" block disabled={busy}
             onClick={() => void run(() => onConnect(space.canonicalOrigin))} />)}
           {owner?.setups.map((setup) => <Button key={setup.operationId}

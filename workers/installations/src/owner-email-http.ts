@@ -5,8 +5,7 @@ import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } f
 import { InstallationOwnerStore } from "./owner-store";
 import { sha256Hex } from "./tokens";
 import { sendOwnerVerification } from "./owner-verification";
-
-import { ProductEmailConsent, PRODUCT_EMAIL_WORDING, PRODUCT_EMAIL_WORDING_VERSION } from "./product-email";
+import type { OwnerEmailSender } from "./owner-verification-email";
 
 type Purpose = "login" | "link" | "recover";
 type ChallengeForm = { challengeId: string; purpose: Purpose; ownerAttemptId?: string; email: string };
@@ -16,9 +15,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Accounts authenticates owners independently of any space or its messaging configuration. */
 export class InstallationOwnerEmailHttp {
   constructor(private readonly auth: InstallationOwnerAuthStore, private readonly owners: InstallationOwnerStore,
-    private readonly mail: SendEmail, private readonly from: string,
+    private readonly mail: SendEmail, private readonly sender: OwnerEmailSender,
     private readonly gateway: InstallationRecoveryGatewayService, private readonly origin: string,
-    private readonly existingIdentityProvider = false, private readonly productEmails?: ProductEmailConsent) {}
+    private readonly existingIdentityProvider = false) {}
 
   async handle(request: Request): Promise<Response | null> {
     const url = new URL(request.url);
@@ -28,7 +27,6 @@ export class InstallationOwnerEmailHttp {
       if (request.method === "GET") {
         if (["/", "/owner", "/owner/"].includes(url.pathname)) return redirect("/owner/spaces");
         if (url.pathname === "/owner/spaces") return await this.spaces(request);
-        if (url.pathname === "/owner/email-preferences") return await this.emailPreferences(request);
         if (["/owner/login", "/owner/link", "/owner/recover"].includes(url.pathname)) return this.startPage(url);
       }
       if (request.method !== "POST") return page("Not found", 404);
@@ -40,7 +38,6 @@ export class InstallationOwnerEmailHttp {
         if (session) await this.auth.logout(session);
         return redirect("/owner/login", [setCookie(SESSION_COOKIE, "", 0)]);
       }
-      if (url.pathname === "/owner/email-preferences") return this.emailPreferences(request, form);
       const challenge = readChallenge(form);
       const browserSecret = cookie(request, browserCookie(challenge.challengeId));
       const sessionSecret = cookie(request, pendingCookie(challenge.challengeId));
@@ -88,7 +85,7 @@ export class InstallationOwnerEmailHttp {
 
   private async sendCode(challenge: ChallengeForm, browserSecret: string, ip: string, resend: boolean): Promise<Response> {
     try {
-      const issued = await sendOwnerVerification(this.auth, this.mail, this.from, { ...challenge, browserSecret, ip, resend });
+      const issued = await sendOwnerVerification(this.auth, this.mail, this.sender, { ...challenge, browserSecret, ip, resend });
       if (issued.deliveryStatus === "failed" && issued.attemptedDelivery) return codePage(challenge, "We could not send the code. Wait a minute, then try sending it again.", 503);
       if (issued.deliveryStatus !== "sent") return codePage(challenge, "Sending is still pending. Wait a minute before trying again.", 202);
       return codePage(challenge, `Check your email for a six-digit code. It expires at ${new Date(issued.expiresAt).toUTCString()}.`);
@@ -124,31 +121,6 @@ export class InstallationOwnerEmailHttp {
     }
   }
 
-  private async emailPreferences(request: Request, form?: URLSearchParams): Promise<Response> {
-    const token = cookie(request, SESSION_COOKIE);
-    const session = token ? await this.auth.session(token) : null;
-    if (!session) return redirect("/owner/login");
-    if (!this.productEmails) return page("<h1>Product email preferences</h1><p>Preferences are temporarily unavailable. Your existing choice is unchanged.</p>", 503);
-    let message = "";
-    let status = 200;
-    if (form) {
-      try {
-        const revision = Number(form.get("revision"));
-        if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("invalid_revision");
-        await this.productEmails.set(session, form.get("productEmails") === "yes", revision, "en", form.get("wordingVersion") ?? "", Date.now(), request.headers.get("cf-connecting-ip") ?? undefined);
-        message = "Your preference is saved.";
-      } catch { message = "Your preference changed or this address is suppressed. Review the current status before trying again."; status = 409; }
-    }
-    await this.productEmails.associate(session);
-    const preference = await this.productEmails.preference(session.email);
-    return page(`<h1>Product email preferences</h1><p>${html(session.email)}</p><p role="status">${html(message)}</p>
-      <p>Status: ${html(preference.status)}${preference.suppressed ? " — this address will not be automatically resubscribed." : ""}</p>
-      <form method="post" action="/owner/email-preferences">${hidden("revision", String(preference.revision))}${hidden("wordingVersion", PRODUCT_EMAIL_WORDING_VERSION)}
-        <label><input type="checkbox" name="productEmails" value="yes"${preference.optedIn ? " checked" : ""}${preference.suppressed ? " disabled" : ""}>${html(PRODUCT_EMAIL_WORDING.en)}</label>
-        <button>Save preference</button></form>
-      <p>Essential account, security and service notices are separate from product updates.</p><a href="/owner/spaces">My Ships</a>`, status);
-  }
-
   private async spaces(request: Request): Promise<Response> {
     const token = cookie(request, SESSION_COOKIE);
     const session = token ? await this.auth.session(token) : null;
@@ -159,7 +131,7 @@ export class InstallationOwnerEmailHttp {
         ? `<a href="${html(space.canonicalOrigin)}">${html(space.handle)}</a>` : html(space.handle)}<small>${html(space.state)}</small></div>
         ${space.state === "active" ? `<a class="secondary" href="/owner/recover?handle=${encodeURIComponent(space.handle)}">Recover your Ship</a>` : ""}</li>`).join("")}</ul>`
         : "<p>No Ships linked yet. Open your Ship and verify your email in Settings → sign-in → Account recovery.</p>"}
-      <nav><a href="/owner/email-preferences">Product email preferences</a><a href="/owner/recover">Recover your Ship</a><form method="post" action="/owner/logout"><button class="text">Sign out</button></form></nav>`);
+      <nav><a href="/owner/recover">Recover your Ship</a><form method="post" action="/owner/logout"><button class="text">Sign out</button></form></nav>`);
   }
 }
 
@@ -209,6 +181,6 @@ function page(content: string, status = 200, cookies: string[] = [], nonce = ran
     `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
   for (const value of cookies) headers.append("set-cookie", value);
   return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark light"><title>Ship · My Ships</title>
-    <style nonce="${nonce}">:root{color-scheme:dark;--bg:#111210;--fg:#dedfd6;--muted:#999d90;--line:#36382f;--accent:#d2e89b}@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#f4f2eb;--fg:#25271f;--muted:#696d5d;--line:#d6d5c9;--accent:#536d28}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace}header{padding:24px 32px;border-bottom:1px solid var(--line)}header a{font-weight:600;letter-spacing:.16em;text-decoration:none}main{max-width:580px;margin:12vh auto;padding:0 24px 48px}h1{font-size:26px;font-weight:600;letter-spacing:-.04em}p{color:var(--muted);overflow-wrap:anywhere}a{color:var(--accent);text-underline-offset:4px}label{display:block;margin:20px 0}input{display:block;width:100%;margin-top:8px;border:1px solid var(--line);background:transparent;color:inherit;font:inherit;padding:12px}input[type=checkbox]{width:auto;display:inline;margin-right:8px}input:focus-visible,button:focus-visible,a:focus-visible{outline:1px solid var(--accent);outline-offset:3px}button{border:1px solid var(--line);background:transparent;color:var(--accent);font:inherit;padding:10px 18px;cursor:pointer}.text{padding:0;border:0;text-decoration:underline;text-underline-offset:4px}nav{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:20px;margin-top:32px}.spaces{list-style:none;padding:0}.spaces li{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 0;border-bottom:1px solid var(--line)}small{display:block;color:var(--muted)}.spaces li>div{min-width:0;overflow-wrap:anywhere}.secondary{font-size:12px;flex-shrink:0}::selection{background:var(--accent);color:var(--bg)}</style></head>
+    <style nonce="${nonce}">:root{color-scheme:dark;--bg:#111210;--fg:#dedfd6;--muted:#999d90;--line:#36382f;--accent:#d2e89b}@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#f4f2eb;--fg:#25271f;--muted:#696d5d;--line:#d6d5c9;--accent:#536d28}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace}header{padding:24px 32px;border-bottom:1px solid var(--line)}header a{font-weight:600;letter-spacing:.16em;text-decoration:none}main{max-width:580px;margin:12vh auto;padding:0 24px 48px}h1{font-size:26px;font-weight:600;letter-spacing:-.04em}p{color:var(--muted);overflow-wrap:anywhere}a{color:var(--accent);text-underline-offset:4px}label{display:block;margin:20px 0}input{display:block;width:100%;margin-top:8px;border:1px solid var(--line);background:transparent;color:inherit;font:inherit;padding:12px}input:focus-visible,button:focus-visible,a:focus-visible{outline:1px solid var(--accent);outline-offset:3px}button{border:1px solid var(--line);background:transparent;color:var(--accent);font:inherit;padding:10px 18px;cursor:pointer}.text{padding:0;border:0;text-decoration:underline;text-underline-offset:4px}nav{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:20px;margin-top:32px}.spaces{list-style:none;padding:0}.spaces li{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 0;border-bottom:1px solid var(--line)}small{display:block;color:var(--muted)}.spaces li>div{min-width:0;overflow-wrap:anywhere}.secondary{font-size:12px;flex-shrink:0}::selection{background:var(--accent);color:var(--bg)}</style></head>
     <body><header><a href="/owner/spaces">Ship</a></header><main>${content}</main></body></html>`, { status, headers });
 }

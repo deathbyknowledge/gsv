@@ -74,7 +74,7 @@ beforeEach(() => {
   signals.clear();
   statuses.clear();
   send.mockReset();
-  vi.stubGlobal("document", {});
+  vi.stubGlobal("document", { addEventListener: () => {}, removeEventListener: () => {} });
   vi.stubGlobal("window", {
     location: { protocol: "https:", host: "space.example" },
     matchMedia: () => ({ matches: true }),
@@ -212,6 +212,7 @@ describe("Zen conversation entry", () => {
       if (!native) {
         expect(zen.props(BrowserVoiceControls).pid).toBe("helper");
         expect(zen.props(BrowserVoiceControls).enabled).toBe(true);
+        expect(zen.props(BrowserVoiceControls).send).toBe(zen.props(PromptLine).onSubmit);
       }
     } finally { await zen.unmount(); }
   });
@@ -419,6 +420,43 @@ describe("Zen conversation entry", () => {
       await vi.waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({
         text: "Keep this draft", selectedTarget: "gsv",
       })));
+    } finally { await zen.unmount(); }
+  });
+
+  it("closes the places menu when its trigger is tapped again, even where a tap does not focus the button", async () => {
+    const zen = await mountedZen(undefined, "laptop");
+    try {
+      const trigger = () => zen.nodes().find((node) => node.type === "button" && node.props.class === "zen-place-trigger")!;
+      const menu = () => zen.nodes().find((node) => node.type === "div" && node.props.id === "zen-places")!;
+      /* the harness mounts no DOM: Node is stubbed for the instanceof check, the trigger ref stays null,
+         the menu itself is "inside", and "outside" stands in for focus landing anywhere else */
+      class FakeNode extends EventTarget { contains(node: EventTarget): boolean { return node === this; } }
+      vi.stubGlobal("Node", FakeNode);
+      const inside = new FakeNode();
+      const outside = new FakeNode();
+      const blur = (relatedTarget: FakeNode | null) => menu().props.onfocusout!({ relatedTarget, currentTarget: inside });
+      await act(() => { trigger().props.onClick!(); });
+      expect(menu().props.hidden).toBe(false);
+
+      // Safari: pointerdown on the trigger, the focused menu item blurs with focus going nowhere, then the click lands.
+      await act(() => { trigger().props.onPointerDown!(); });
+      await act(() => { blur(outside); });
+      expect(menu().props.hidden).toBe(false);
+      await act(() => { trigger().props.onClick!(); });
+      expect(menu().props.hidden).toBe(true);
+
+      // Keyboard: focus leaving the menu without a press on the trigger still closes it.
+      await act(() => { trigger().props.onClick!(); });
+      expect(menu().props.hidden).toBe(false);
+      await act(() => { blur(outside); });
+      expect(menu().props.hidden).toBe(true);
+
+      // Focus moving between items inside the menu keeps it open.
+      await act(() => { trigger().props.onClick!(); });
+      await act(() => { blur(inside); });
+      expect(menu().props.hidden).toBe(false);
+      await act(() => { trigger().props.onClick!(); });
+      expect(menu().props.hidden).toBe(true);
     } finally { await zen.unmount(); }
   });
 
@@ -651,6 +689,9 @@ describe("Zen conversation entry", () => {
     const waking = () => zen.nodes().filter((node) => node.type === WakingUp).length;
     try {
       await vi.waitFor(() => expect(waking()).toBe(1));
+      expect(zen.text()).toContain("We don't use your data to train AI.");
+      expect(zen.text()).toContain("Your conversations stay private.");
+      expect(zen.text()).toContain("Your information belongs to you!");
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
 
       activeRunId = "welcome-run";
@@ -665,6 +706,7 @@ describe("Zen conversation entry", () => {
       });
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe(greeting.text));
       expect(waking()).toBe(0);
+      expect(zen.text()).not.toContain("Your conversations stay private.");
 
       activeRunId = "later-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
@@ -678,6 +720,7 @@ describe("Zen conversation entry", () => {
     try {
       await vi.waitFor(() => expect(zen.props(PromptLine).disabled).toBe(false));
       expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+      expect(zen.text()).not.toContain("Your conversations stay private.");
       activeRunId = "welcome-run";
       await act(() => { for (const listener of signals) listener("proc.run.started", { pid: shipPid, runId: activeRunId }); });
       await vi.waitFor(() => expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(true));
@@ -691,6 +734,7 @@ describe("Zen conversation entry", () => {
     try {
       await vi.waitFor(() => expect(zen.text()).toContain("Could not load your conversation: history unavailable"));
       expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+      expect(zen.text()).not.toContain("Your conversations stay private.");
     } finally { await zen.unmount(); }
   });
 
@@ -701,6 +745,21 @@ describe("Zen conversation entry", () => {
     try {
       await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Are you there?"));
       expect(zen.nodes().some((node) => node.type === WakingUp)).toBe(false);
+      expect(zen.text()).not.toContain("Your conversations stay private.");
+    } finally { await zen.unmount(); }
+  });
+
+  it("clears the privacy message when the owner speaks before Ship", async () => {
+    const zen = await mountedZen();
+    try {
+      await vi.waitFor(() => expect(zen.text()).toContain("Your conversations stay private."));
+      const first = message("user", "Hello Ship");
+      await act(() => {
+        messages = [first];
+        for (const listener of signals) listener("message.committed", { message: first, directed: false });
+      });
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe(first.text));
+      expect(zen.text()).not.toContain("Your conversations stay private.");
     } finally { await zen.unmount(); }
   });
 
@@ -725,6 +784,42 @@ describe("Zen conversation entry", () => {
       expect([...storage.values()]).toEqual([]);
       expect(send).not.toHaveBeenCalled();
     } finally { await reopened.unmount(); }
+  });
+
+  it.each([true, false])("opens a new whole Ship reply without a stream (directed=%s)", async (directed) => {
+    const zen = await mountedZen();
+    try {
+      const reply = message("process", "A long reply.\n".repeat(30));
+      await act(() => { for (const listener of signals) listener("message.committed", { message: reply, directed }); });
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe(reply.text));
+      expect(zen.props(ZenText).opened).toBe(true);
+      messages = [reply];
+      await zen.refreshHistory();
+      expect(zen.props(ZenText).opened).toBe(true);
+    } finally { await zen.unmount(); }
+  });
+
+  it("opens newly received replies without expanding older messages loaded later", async () => {
+    const existing = message("process", "Existing reply", 10);
+    messages = [existing];
+    const zen = await mountedZen();
+    try {
+      const reply = message("process", "A new long reply.\n".repeat(30), 11);
+      await act(() => { for (const listener of signals) listener("message.committed", { message: reply, directed: true }); });
+      await vi.waitFor(() => expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(2));
+      const old = message("process", "An older long reply.\n".repeat(30), 1);
+      messages = [old, existing, reply];
+      await zen.refreshHistory();
+      await vi.waitFor(() => expect(zen.nodes().filter((node) => node.type === ZenText)).toHaveLength(3));
+      const texts = zen.nodes().filter((node) => node.type === ZenText);
+      expect(texts.map((node) => {
+        // SAFETY: These nodes were selected by the exact ZenText component.
+        const props = node.props as Pick<ComponentProps<typeof ZenText>, "text" | "opened">;
+        return [props.text, props.opened];
+      })).toEqual([
+        [old.text, false], [existing.text, false], [reply.text, true],
+      ]);
+    } finally { await zen.unmount(); }
   });
 
   it("shows existing messages immediately, including messages from Ship", async () => {
@@ -759,7 +854,7 @@ describe("Zen conversation entry", () => {
       expect(zen.nodes().some((node) => node.type === ThinkingMark)).toBe(false);
       const prompt = () => zen.props<ComponentProps<typeof PromptLine>>(PromptLine);
       await act(() => { expect(prompt().onSubmit("Help me plan my week")).toBe(true); });
-      expect(zen.props(ZenText).text).toBe("Help me plan my week");
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Help me plan my week"));
       expect(zen.nodes().some((node) => node.props["aria-label"] === "Sending message")).toBe(true);
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
       expect(send).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "canonical-ship",

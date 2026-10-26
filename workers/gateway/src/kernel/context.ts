@@ -12,7 +12,6 @@ import type { ModelMetadataResolver } from "../inference/model-metadata";
 import type { LedgerStore } from "./ledger";
 import type { McpClientManager } from "./mcp-client";
 import type {
-  FederationTransportReceipt,
   BrowserHandoff,
   JsonObject,
   JsonValue,
@@ -43,7 +42,9 @@ import type { ResponsibilityStore } from "./responsibility-store";
 import type { ShipEventStore } from "./ship-event-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import type { FederationStore } from "./federation-store";
-import type { FederationIdentity } from "./federation-crypto";
+import type { DidDocumentStore } from "./ships/did-directory";
+import type { ShipCallNonces } from "./ships/auth";
+import type { ShipIdentity } from "./ships/identity";
 import type { ProfileStore } from "./profile-store";
 import type { ApproachStore } from "./approach-store";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
@@ -86,7 +87,12 @@ export type KernelContext = {
   welcome: InitialOnboarding;
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;
-  federationIdentity: FederationIdentity;
+  /** This Ship's own DID, once its first outward act has created one. */
+  shipIdentity: ShipIdentity;
+  /** Other accounts' DID documents, cached. */
+  didDocuments: DidDocumentStore;
+  /** Nonces of the service-auth tokens this Ship accepted. */
+  shipCallNonces: ShipCallNonces;
   profiles: ProfileStore;
   approaches: ApproachStore;
   scheduleApproachMaintenance: () => Promise<void>;
@@ -139,8 +145,8 @@ export type KernelContext = {
   ) => Promise<void>;
   coordinateFederationInbound: (
     key: string,
-    operation: () => Promise<FederationTransportReceipt>,
-  ) => Promise<FederationTransportReceipt>;
+    operation: () => Promise<void>,
+  ) => Promise<void>;
   coordinateFederationContact: <Value>(
     contactId: string,
     operation: () => Value | Promise<Value>,

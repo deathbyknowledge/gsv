@@ -134,7 +134,10 @@ export async function resolveVisibleTarget(
 ): Promise<TargetDescriptor | null> {
   const local = getVisibleTarget(ctx, targetId, options);
   if (local) return local;
-  const [adapters, instances] = await Promise.all([discoverVisibleAdapterTargets(ctx, options), discoverInstanceTargets(ctx, options)]);
+  const [adapters, instances] = await Promise.all([
+    discoverVisibleAdapterTargets(ctx, options),
+    discoverInstanceTargets(ctx, { ...options, finished: options.includeOffline }),
+  ]);
   return [...adapters.targets, ...instances.targets].find(target => target.targetId === targetId) ?? null;
 }
 

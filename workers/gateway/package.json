@@ -15,6 +15,8 @@
     "test:run": "npm run test:unit && npm run test:integration"
   },
   "devDependencies": {
+    "@atcute/bluesky": "3.2.17",
+    "@atproto/lexicon": "0.6.2",
     "@cloudflare/vitest-pool-workers": "^0.18.0",
     "@cloudflare/workers-types": "^5.20260814.1",
     "tsx": "^4.19.0",
@@ -23,6 +25,11 @@
     "wrangler": "^4.123.0"
   },
   "dependencies": {
+    "@atcute/crypto": "2.4.4",
+    "@atcute/did-plc": "1.0.2",
+    "@atcute/identity": "2.0.2",
+    "@atcute/lexicons": "1.2.7",
+    "@atcute/multibase": "1.2.5",
     "@cfworker/json-schema": "4.1.1",
     "@cloudflare/codemode": "^0.3.4",
     "@humansandmachines/gsv": "file:../../packages/gsv",

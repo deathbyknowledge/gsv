@@ -16,6 +16,7 @@ The current contracts are:
 - `mail`: Gateway mail transport and operational mail inspection
 - `web-search`: optional provider-neutral search implementation for the `gsv` target
 - `instances`: optional provisioned browser targets, saved profiles and human browser control
+- `pds`: optional ATProto host for each installation's public repository
 - `adapters`: external messaging transport discovery and operations
 
 [Installation directory and onboarding](./installation-directory.md)
@@ -83,7 +84,10 @@ adapter over this loop. Changing a funded provider does not change the
 `gsv/default` identity or the Gateway/client contract.
 Routes distinguish the operator's provider identity from the provider's model ID.
 Two providers can therefore serve the same model in an ordered fallback chain,
-with separate credentials, prices and attempt telemetry. Older deployments may
+with separate credentials, prices and attempt telemetry. Before output starts,
+the next route takes over after a transient failure, or after a billing or
+authentication refusal of the operator's provider account; a rejected request
+does not move on. Older deployments may
 omit the provider field until their operator migrates the routing configuration.
 Telemetry producers classify that identity with `inferenceProviderFromName`:
 unknown transports use `other`, preserving the event without exporting arbitrary
@@ -152,6 +156,25 @@ the provider's cancellation RPC. The Gateway defers that notification and
 disposes the acquired target; the service must enforce the supplied deadline.
 Connected providers can advertise `web.search` without this binding or a messaging
 adapter. See [Web search](../reference/web-search.md).
+
+## Open network
+
+An optional `PDS` binding hosts each installation's public ATProto repository.
+Its deployment-owned props carry the `kernel-publish` authority, and the Kernel
+asks only for its own installation; the PDS checks with Accounts that the
+installation is active, and gives a restricted one only its DID. The Kernel
+owns who may publish, approval and the collections features reserve; the PDS
+owns signing, files and the firehose. Accounts' `PDS_MODERATION` binding carries
+the `operator-moderation` authority, through which the operator takes down and
+restores what a Ship publishes; the PDS holds each takedown and honours it in
+every read it serves. After Accounts restricts or reactivates an installation,
+it asks the PDS through the same binding to follow, so relays hear of the
+suspension.
+Gateway's `REQUEST_REPORTS` binding reaches Accounts' `RequestReportsEntrypoint`
+with the `kernel-report` authority in deployment-owned props, so only the
+Kernel files a person's report of a message request; Accounts owns the
+operator's queue and its retention.
+See [The open network](./open-network.md).
 
 ## Cloud instances
 

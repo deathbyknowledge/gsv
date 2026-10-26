@@ -76,8 +76,13 @@
 	"services": [
 		{ "binding": "INSTALLATION_DIRECTORY", "service": "gsv-installations" },
 		{ "binding": "INSTALLATION_OWNERSHIP", "service": "gsv-installations", "entrypoint": "InstallationOwnershipEntrypoint", "props": { "authority": "kernel-owner-link" } },
+		{ "binding": "REQUEST_REPORTS", "service": "gsv-installations", "entrypoint": "RequestReportsEntrypoint", "props": { "authority": "kernel-report" } },
 		{ "binding": "INFERENCE_EXECUTION", "service": "gsv-inference" },
 		{ "binding": "RIPGIT", "service": "ripgit" }
+	],
+	// The Gateway's rough budget for each source of Ship-to-Ship calls to each Ship.
+	"ratelimits": [
+		{ "name": "SHIP_CALLS", "namespace_id": "7001", "simple": { "limit": 250, "period": 10 } }
 	],
 	// CodeMode requires Workers Paid. The CLI omits this binding for Free or
 	// unverified plans; direct Wrangler deployments retain full capabilities.

@@ -141,7 +141,6 @@ message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
 yield
 message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]
-contact identity
 contact find @HANDLE|ADDRESS
 contact list [--all] [--json]
 contact alias CONTACT_ID NAME|--clear
@@ -154,6 +153,12 @@ contact revoke CONTACT_ID
 contact request list [--contact CONTACT_ID] [--all] [--json]
 contact request create --contact CONTACT_ID --kind KIND --title TITLE [--details JSON] [--delivery-id ID]
 contact request update REQUEST_ID --state STATE [--revision N] [--details JSON] [--delivery-id ID]
+atproto identity
+atproto create COLLECTION [--rkey RKEY] (--json RECORD | --file PATH)
+atproto put COLLECTION RKEY (--json RECORD | --file PATH)
+atproto delete COLLECTION RKEY
+atproto apply (--json WRITES | --file PATH)
+atproto blob PATH [--mime TYPE]
 r12y list [--all] [--json]
 r12y show ID
 r12y create --title TITLE [--details JSON] [--parent ID] [--priority PRIORITY] [--due ISO] [--check ISO] [--blocker TEXT] [--dedupe KEY]
@@ -375,15 +380,23 @@ automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
 `contact` manages relationships with people on other Ships.
-`contact find @HANDLE|ADDRESS` reads a published public profile. An unavailable
-profile does not establish whether the Ship exists; private invitations work
-without a published profile or an existing contact.
+`contact find @HANDLE|ADDRESS` reads a published public profile. Profiles are
+public by default, but an unavailable profile does not establish whether the Ship
+exists: the address may be mistyped, the Ship elsewhere, or the profile private.
+Private invitations work without a published profile or an existing contact.
+`contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]`
+sends that profile a first message request, which the person accepts or declines
+in People. The request names the version of the profile it read, so their Ship
+refuses it if they change their profile or stop taking requests before it arrives.
+The signed-in human or their canonical Ship may send it; repeating the same request
+returns the existing one.
 `contact invite create --handling manual|ship` returns a short-lived one-use code and a shareable `url`;
 the other person accepts either while signed in to their own Ship. The default
 lifetime is one hour; `--expires` accepts up to seven days. Pairing and revocation may
 be performed by the signed-in human or their canonical Ship. `contact list` prints the opaque contact id accepted
 by `message send --to`; `message destinations` exposes the same active contacts
-alongside messaging endpoints. `contact alias` changes only the local display
+alongside messaging endpoints. `contact list --all` adds ended contacts, and one
+that ended before DIDs shows `(before DIDs)` as its address. `contact alias` changes only the local display
 name; the remote Ship's authenticated identity remains visible and unchanged.
 
 Creating and accepting through Shell require `--handling manual|ship`. Ship asks
@@ -414,7 +427,10 @@ recipient still chooses their own handling and accepts the invitation.
 
 `contact invite list --all` exposes retained invitation lifecycle metadata but
 never a recoverable code. `message history --with contact:...` reads the Contact
-conversation. A Contact send reports durable local acceptance separately from
+conversation. As opening it in People does, the read then checks whether the
+contact's Ship is gone, at most once an hour for each contact. `contact list`
+makes no lookup: it ends only contacts whose DIDs the directory cache already
+knows were deactivated. A Contact send reports durable local acceptance separately from
 remote confirmation; use `message delivery show` with its delivery id.
 
 When Ship contacts someone for an existing task, pass `--responsibility ID` to
@@ -432,6 +448,24 @@ leaves the exchange unsettled, even if the recorded work state is completed.
 Resources attached with
 `message send --to contact:...` remain immutable references and are streamed by
 the receiving Ship only when opened.
+
+`atproto` publishes public records and files on the [open network](/architecture/open-network)
+under the Ship's address. It works for the signed-in person and their Ship;
+other processes are refused. Nothing publishes while the profile is private,
+and the person approves each of the Ship's writes unless a rule allows it. A record's `$type` defaults
+to its collection. `apply` commits up to ten writes together from a JSON array
+of [`atproto.write`](./syscalls.md#open-network-atproto) changes. To publish a
+picture, upload it with `atproto blob PATH`, which prints a `blob` reference,
+and put that reference in the record:
+
+```bash
+atproto blob trip.jpg
+atproto create com.example.note --file note.json
+```
+
+`atproto identity` prints the Ship's DID and handle, or `null` until the Ship
+first publishes, invites or contacts someone, and what the operator has taken
+down, with the reason they gave. `space.ship.profile` belongs to the profile; change it in People.
 
 Use `sched add --ship` when every firing should become one durable Ship
 responsibility. It works from top-level and process-backed shells. Use
@@ -559,7 +593,7 @@ Ship's release. `targets pair list` and `targets pair cancel INVITATION_ID`
 manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
 
 For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
-The URL opens `https://gsv.space/browser?release=RELEASE` for the gateway's
+The URL opens `https://ship.space/browser?release=RELEASE` for the gateway's
 release. Download and unzip the extension, load its folder from
 `chrome://extensions` with developer mode enabled, then open **Your Ship** from
 the toolbar or Extensions button and paste `code` into its panel.

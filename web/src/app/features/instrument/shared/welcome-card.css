@@ -32,6 +32,9 @@
   line-height: 1;
 }
 .welcome-card .welcome-card-try {
+  /* the card's one action sits on the right, where action buttons are expected */
+  display: block;
+  margin-left: auto;
   min-height: 44px;
   margin-top: 4px;
   padding: 8px 16px;

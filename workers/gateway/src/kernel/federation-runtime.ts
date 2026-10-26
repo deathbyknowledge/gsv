@@ -1,6 +1,3 @@
-import type {
-  FederationTransportReceipt,
-} from "@humansandmachines/gsv/protocol";
 import {
   FEDERATION_INBOX_RECOVERY_RETRY_MS,
   processFederationDelivery,
@@ -15,10 +12,7 @@ import type { Kernel } from "./do";
 export class FederationRuntime {
   constructor(readonly host: Kernel) {}
 
-readonly pendingFederationInbound = new Map<
-    string,
-    Promise<FederationTransportReceipt>
-  >();
+readonly pendingFederationInbound = new Map<string, Promise<void>>();
 
 readonly pendingFederationContacts = new Map<string, Promise<void>>();
 
@@ -52,14 +46,14 @@ async scheduleFederationInbox(
 
 async coordinateFederationInbound(
     key: string,
-    operation: () => Promise<FederationTransportReceipt>,
-  ): Promise<FederationTransportReceipt> {
+    operation: () => Promise<void>,
+  ): Promise<void> {
     const pending = this.pendingFederationInbound.get(key);
     if (pending) return await pending;
     const started = operation();
     this.pendingFederationInbound.set(key, started);
     try {
-      return await started;
+      await started;
     } finally {
       if (this.pendingFederationInbound.get(key) === started) {
         this.pendingFederationInbound.delete(key);

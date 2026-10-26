@@ -58,6 +58,8 @@
 		]
 	},
 	"services": [{ "binding": "INSTALLATION_DIRECTORY", "service": "gateway-test", "entrypoint": "TestInstallationDirectory" }],
+	// Test Kernels resolve DIDs against the fake directory Ship tests install, never plc.directory.
+	"vars": { "PLC_URL": "https://plc.test" },
 	"observability": {
 		"enabled": true
 	},
@@ -67,6 +69,10 @@
 			"binding": "STORAGE",
 			"bucket_name": "gsv-storage-test"
 		}
+	],
+	// The Gateway's rough budget for each source of Ship-to-Ship calls to each Ship.
+	"ratelimits": [
+		{ "name": "SHIP_CALLS", "namespace_id": "7001", "simple": { "limit": 250, "period": 10 } }
 	],
 	"worker_loaders": [
 		{

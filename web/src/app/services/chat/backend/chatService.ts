@@ -71,6 +71,7 @@ import {
   type ChatSendDraft,
   MAX_CHAT_PROCESS_MEDIA_BYTES,
 } from "../domain/processes";
+import type { HilPublishedFile } from "../domain/hil";
 import { randomId } from "../../ids";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 
@@ -268,6 +269,19 @@ export async function readChatProcessMedia(
     path: data.path ?? args.key,
     blob,
   };
+}
+
+const publishedFileSchema = z.object({ mimeType: z.string(), size: z.number().int().nonnegative() });
+
+/** Reads back a file a pending publish references, so the person sees it before it is public. */
+export async function readPublishedFile(client: ChatMediaGsvClient, file: HilPublishedFile): Promise<Blob> {
+  if (file.size > MAX_CHAT_PROCESS_MEDIA_BYTES) {
+    throw new Error(t("chat.resource.tooLarge", { limit: MAX_CHAT_PROCESS_MEDIA_BYTES / (1024 * 1024) }));
+  }
+  const response = await client.request("atproto.blob.read", { cid: file.cid });
+  const data = publishedFileSchema.parse(response.data);
+  if (!response.body) throw new Error("Published file response did not include a body");
+  return await frameBodyToBlob(response.body, { mimeType: data.mimeType, expectedLength: data.size, label: "Published file" });
 }
 
 export async function readChatResource(

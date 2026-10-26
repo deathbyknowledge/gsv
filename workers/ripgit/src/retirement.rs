@@ -321,7 +321,12 @@ async fn request_object(
     .await
 }
 
-pub async fn register(env: &Env, installation_id: &str, resource_name: &str) -> Result<()> {
+/// A 5xx answer is the index's own diagnosed failure, which the caller returns unchanged.
+pub async fn register(
+    env: &Env,
+    installation_id: &str,
+    resource_name: &str,
+) -> Result<Option<Response>> {
     let body = Registration {
         installation_id: installation_id.into(),
         resource_name: resource_name.into(),
@@ -334,10 +339,11 @@ pub async fn register(env: &Env, installation_id: &str, resource_name: &str) -> 
         &body,
     )
     .await?;
-    if response.status_code() != 204 {
-        return Err(Error::RustError("Repository admission is closed".into()));
+    match response.status_code() {
+        204 => Ok(None),
+        status if status >= 500 => Ok(Some(response)),
+        _ => Err(Error::RustError("Repository admission is closed".into())),
     }
-    Ok(())
 }
 
 pub async fn forward_lifecycle(mut request: Request, env: &Env, action: &str) -> Result<Response> {
@@ -487,6 +493,10 @@ pub async fn handle(
                 &input,
             )
             .await?;
+            // The repository already answered its own failure with a diagnostic.
+            if response.status_code() >= 500 {
+                return Ok(response);
+            }
             if response.status_code() != 200 {
                 return Err(Error::RustError("Repository retirement failed".into()));
             }

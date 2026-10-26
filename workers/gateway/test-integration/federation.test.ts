@@ -4,34 +4,45 @@ import {
   GSVClient,
   type GsvBody,
 } from "@humansandmachines/gsv";
-import type {
-  ContactRequestRecord,
-  ContactSendArgs,
-  ContactSendResult,
-  ContactSummary,
-  JsonValue,
-  ConversationHistoryResult,
-  ResourceBlock,
+import {
+  ACCEPT_INVITATION,
+  type ContactRequestRecord,
+  type ContactSendArgs,
+  type ContactSendResult,
+  type ContactSummary,
+  type JsonValue,
+  type ConversationHistoryResult,
+  type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { TestShipNetwork } from "../src/test-support/ship-network";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
 
 const FIRST_USER = "federation-first";
 const SECOND_USER = "federation-second";
 const PASSWORD = "federation-integration-password";
+/** Each Ship's domain on the test network; its address is its installation's handle there. */
+const FIRST_DOMAIN = "alpha.ship.test";
+const SECOND_DOMAIN = "beta.ship.test";
+const FIRST_HANDLE = `default.${FIRST_DOMAIN}`;
+const SECOND_HANDLE = `default.${SECOND_DOMAIN}`;
 
-describe("cross-GSV federation integration", () => {
+describe("Ship-to-Ship integration", () => {
   let firstHarness: TestHarness;
   let secondHarness: TestHarness;
   let firstOrigin: URL;
   let secondOrigin: URL;
   let first: GSVClient;
   let second: GSVClient;
+  let network: TestShipNetwork;
+  /** The second space's Ship after an operator reset, once a test starts it. */
+  let successorHarness: TestHarness | undefined;
+  let successor: GSVClient | undefined;
 
   beforeAll(async () => {
-    firstHarness = createGatewayTestHarness();
-    secondHarness = createGatewayTestHarness();
+    firstHarness = createGatewayTestHarness({ network: { domain: FIRST_DOMAIN } });
+    secondHarness = createGatewayTestHarness({ network: { domain: SECOND_DOMAIN } });
     const [firstListener, secondListener] = await Promise.all([
       firstHarness.listen(),
       secondHarness.listen(),
@@ -46,6 +57,17 @@ describe("cross-GSV federation integration", () => {
       expect(response.status).toBe(204);
     }
 
+    // The Workers' own requests leave through this process's fetch, so the test serves the
+    // open network: the DID directory, each Ship at its address, and each Ship's repository host.
+    network = new TestShipNetwork().install();
+    for (const [harness, domain, handle] of [
+      [firstHarness, FIRST_DOMAIN, FIRST_HANDLE],
+      [secondHarness, SECOND_DOMAIN, SECOND_HANDLE],
+    ] as const) {
+      network.hosts.set(handle, servedBy((url, init) => harness.fetch(url, init)));
+      network.hosts.set(`pds.${domain}`, servedBy((url, init) => harness.getWorker("gsv-test-dependencies").fetch(url, init)));
+    }
+
     await Promise.all([
       setup(firstOrigin, FIRST_USER, "first_ship"),
       setup(secondOrigin, SECOND_USER, "second_ship"),
@@ -58,37 +80,50 @@ describe("cross-GSV federation integration", () => {
   afterAll(async () => {
     first?.close();
     second?.close();
+    successor?.close();
     await Promise.all([
       firstHarness?.close(),
       secondHarness?.close(),
+      successorHarness?.close(),
     ]);
+    vi.restoreAllMocks();
   });
 
-  it("publishes one approved profile and resolves it from an independently routed space", async () => {
-    expect((await first.profile.get({})).profile.published).toBeUndefined();
-    const draft = { displayName: "First person", about: "Published biography", contactPolicy: "requests" as const, representation: "human" as const };
-    await first.profile.update({ expectedRevision: 0, draft });
-    const url = new URL("/profile", firstOrigin).href;
-    const privatePage = await fetch(url);
-    expect(privatePage.status).toBe(404);
-    await privatePage.arrayBuffer();
-    await first.profile.publish({ expectedRevision: 1 });
+  it("publishes a profile open to requests at sign-in, then only what its person publishes, read by another Ship from the open network", async () => {
     await expect.poll(async () => (await first.profile.get({})).profile.published?.revision).toBe(1);
-    const remote = await second.profile.resolve({ url });
-    expect(remote.profile).toMatchObject({ about: draft.about, origin: firstOrigin.origin, revision: 1 });
-    expect(remote.profile).not.toHaveProperty("ownerUid");
-    expect(remote.profile).not.toHaveProperty("username");
-    expect((await second.profile.get({})).profile.published).toBeUndefined();
-    const subjectUrl = new URL(`/_gsv/federation/v2/subjects/${encodeURIComponent(remote.profile.actor.subjectId)}`, firstOrigin);
-    const document = await fetch(subjectUrl);
-    expect(await document.json()).toEqual(remote.profile);
-    await first.profile.update({ expectedRevision: 1, draft: { ...draft, about: "Unpublished revision" } });
-    expect((await second.profile.resolve({ url })).profile.about).toBe(draft.about);
-    await first.profile.unpublish({ expectedRevision: 2 });
-    await expect(second.profile.resolve({ url })).rejects.toThrow("No public profile is available at this address");
-    const unavailableSubject = await fetch(subjectUrl);
-    expect(unavailableSubject.status).toBe(404);
-    await unavailableSubject.arrayBuffer();
+    expect((await first.profile.get({})).profile).toMatchObject({
+      revision: 1, published: { revision: 1, contactPolicy: "requests" }, draft: { contactPolicy: "requests" },
+    });
+    const { identity } = await first.atproto.identity({});
+    expect(identity).toMatchObject({ handle: FIRST_HANDLE, host: `https://pds.${FIRST_DOMAIN}` });
+    // The Ship's address names its DID.
+    const named = await fetch(`https://${FIRST_HANDLE}/.well-known/atproto-did`);
+    expect(await named.text()).toBe(identity?.did);
+    const initial = (await second.profile.resolve({ address: FIRST_HANDLE })).profile;
+    expect(initial).toMatchObject({ did: identity?.did, handle: FIRST_HANDLE, contactPolicy: "requests", url: `https://${FIRST_HANDLE}/profile` });
+    await expect.poll(async () => (await second.profile.get({})).profile.published).toMatchObject({
+      url: `https://${SECOND_HANDLE}/profile`, revision: 1, contactPolicy: "requests",
+    });
+    const draft = { displayName: "First person", about: "Published biography", contactPolicy: "requests" as const };
+    await first.profile.update({ expectedRevision: 1, draft });
+    expect((await second.profile.resolve({ address: FIRST_HANDLE })).profile.cid).toBe(initial.cid);
+    await first.profile.publish({ expectedRevision: 2 });
+    await expect.poll(async () => (await first.profile.get({})).profile.published?.revision).toBe(2);
+    const remote = (await second.profile.resolve({ address: `https://${FIRST_HANDLE}/profile` })).profile;
+    expect(remote).toMatchObject({ did: identity?.did, displayName: draft.displayName, about: draft.about });
+    expect(remote.cid).not.toBe(initial.cid);
+    expect(remote).not.toHaveProperty("ownerUid");
+    expect(remote).not.toHaveProperty("username");
+    await first.profile.update({ expectedRevision: 2, draft: { ...draft, about: "Unpublished revision" } });
+    expect((await second.profile.resolve({ address: `@${FIRST_HANDLE}` })).profile.about).toBe(draft.about);
+    const record = `https://pds.${FIRST_DOMAIN}/xrpc/com.atproto.repo.getRecord?repo=${identity?.did}&collection=space.ship.profile&rkey=self`;
+    expect(await (await fetch(record)).json()).toMatchObject({ value: { displayName: draft.displayName, about: draft.about } });
+    await first.profile.unpublish({ expectedRevision: 3 });
+    await expect(second.profile.resolve({ address: FIRST_HANDLE })).rejects.toThrow("No public profile is available at this address");
+    // Unpublishing removes the record from the open network, not only from this Ship's answers.
+    const removed = await fetch(record);
+    expect(removed.status).toBe(400);
+    expect(await removed.json()).toMatchObject({ error: "RecordNotFound" });
   });
 
   it("pairs two Ships and carries messages, requests, resources, and revocation", async () => {
@@ -108,23 +143,14 @@ describe("cross-GSV federation integration", () => {
       await expect.poll(() => events.filter((event) => event.signal === "contact.invite.changed").length).toBe(invites);
       expect(events.every((event) => event.payload === undefined)).toBe(true);
     };
-    const [firstDiscovery, secondDiscovery] = await Promise.all([
-      fetch(new URL("/.well-known/gsv/federation/v1/ship", firstOrigin)),
-      fetch(new URL("/.well-known/gsv/federation/v1/ship", secondOrigin)),
-    ]);
-    expect(firstDiscovery.status).toBe(200);
-    expect(secondDiscovery.status).toBe(200);
-    const versionedDiscovery = await fetch(new URL("/.well-known/gsv/federation/v2/ship", firstOrigin), { method: "POST" });
-    expect(versionedDiscovery.status).toBe(200);
-    const invalidAcceptance = await fetch(
-      new URL("/_gsv/federation/v1/invites/accept", firstOrigin),
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      },
-    );
-    expect(invalidAcceptance.status).toBe(400);
+    // A Ship's methods take only calls another Ship signed.
+    const unsigned = await fetch(`https://${FIRST_HANDLE}/xrpc/${ACCEPT_INVITATION}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(unsigned.status).toBe(401);
+    await unsigned.arrayBuffer();
 
     const cancelledInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
     await checkSignals(firstSignals, 0, 1);
@@ -139,7 +165,7 @@ describe("cross-GSV federation integration", () => {
     await first.contact.invite.cancel({ inviteId: cancelledInvite.inviteId });
     await checkSignals(firstSignals, 0, 2);
     await expect(second.contact.invite.accept({ code: cancelledInvite.code }))
-      .rejects.toThrow("410");
+      .rejects.toThrow("This invitation was cancelled");
     expect(await first.contact.invite.list({ includeTerminal: true })).toEqual({
       invites: [expect.objectContaining({
         inviteId: cancelledInvite.inviteId,
@@ -183,8 +209,12 @@ describe("cross-GSV federation integration", () => {
     const firstContact = await waitForContact(first);
     const secondContact = currentContacts.contacts[0];
 
-    expect(firstContact.remoteOrigin).toBe(secondOrigin.origin);
-    expect(secondContact.remoteOrigin).toBe(firstOrigin.origin);
+    const [{ identity: firstIdentity }, { identity: secondIdentity }] = await Promise.all([
+      first.atproto.identity({}),
+      second.atproto.identity({}),
+    ]);
+    expect(firstContact).toMatchObject({ remoteDid: secondIdentity?.did, remoteHandle: SECOND_HANDLE });
+    expect(secondContact).toMatchObject({ remoteDid: firstIdentity?.did, remoteHandle: FIRST_HANDLE });
     expect(firstContact.generation).toBe(secondContact.generation);
 
     const aliased = await first.contact.alias.set({
@@ -232,7 +262,7 @@ describe("cross-GSV federation integration", () => {
       author: {
         kind: "contact",
         contactId: secondContact.id,
-        displayName: FIRST_USER,
+        displayName: "First person",
       },
       origin: {
         kind: "federation",
@@ -416,28 +446,28 @@ describe("cross-GSV federation integration", () => {
       patch: { saved: false, muted: true },
     });
     expect(preferences.contact).toMatchObject({ state: "active", preferences: { saved: false, muted: true } });
-    const actor = { shipId: reconnected.remoteShipId, subjectId: reconnected.remoteSubject.id };
-    await second.contact.block.set({ actor, blocked: true });
-    expect((await second.contact.block.list({})).blocks).toEqual([expect.objectContaining({ actor })]);
+    const did = reconnected.remoteDid!;
+    await second.contact.block.set({ did, blocked: true });
+    expect((await second.contact.block.list({})).blocks).toEqual([expect.objectContaining({ did })]);
     expect((await second.contact.list({ includeRevoked: true })).contacts[0]).toMatchObject({ state: "revoked", blocked: true });
     const blockedInvite = await first.contact.invite.create({ expiresInSeconds: 300 });
     await expect(second.contact.invite.accept({ code: blockedInvite.code })).rejects.toThrow("pairing is unavailable");
-    await second.contact.block.set({ actor, blocked: false });
+    await second.contact.block.set({ did, blocked: false });
     expect((await second.contact.list({ includeRevoked: true })).contacts[0]?.state).toBe("revoked");
     expect(messagesWithText(await second.conversation.history({ conversationId: secondContact.conversationId }), messageArgs.text)).toHaveLength(1);
   });
-  it("opens a published profile, requests a conversation, and preserves the first message through acceptance", async () => {
+  it("opens a published profile, sends a message request, and keeps the first message through acceptance", async () => {
     for (const client of [first, second]) {
       const contacts = (await client.contact.list({ includeRevoked: true })).contacts;
       for (const contact of contacts.filter((entry) => entry.state === "active")) await client.contact.revoke({ contactId: contact.id });
     }
     const initial = (await second.profile.get({})).profile;
-    const draft = { displayName: "Second person", about: "Message me about GSV", contactPolicy: "requests" as const, representation: "human" as const };
+    const draft = { displayName: "Second person", about: "Message me about Ship", contactPolicy: "requests" as const };
     const saved = (await second.profile.update({ expectedRevision: initial.revision, draft })).profile;
     await second.profile.publish({ expectedRevision: saved.revision });
     await expect.poll(async () => (await second.profile.get({})).profile.published?.revision, { timeout: 20_000 }).toBe(saved.revision);
-    const profile = (await first.profile.resolve({ url: new URL("/profile", secondOrigin).href })).profile;
-    const input = { profileUrl: profile.url, recipient: profile.actor, profileRevision: profile.revision,
+    const profile = (await first.profile.resolve({ address: SECOND_HANDLE })).profile;
+    const input = { did: profile.did, profileCid: profile.cid,
       displayName: "First person", text: "An intentional first-contact message", idempotencyKey: "integration-approach" };
     const sent = (await first.approach.create(input)).approach;
     expect((await first.approach.create(input)).approach.id).toBe(sent.id);
@@ -558,7 +588,121 @@ describe("cross-GSV federation integration", () => {
     expect(history).not.toContain("/resources/resource%3A");
     await first.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { shipHandlesMessages: false } });
   });
+
+  it("reports a stranger's message request to the operator and declines it without telling its sender", async () => {
+    // The two people are strangers again, so the first can send another request.
+    for (const client of [first, second]) {
+      const contacts = (await client.contact.list({ includeRevoked: true })).contacts;
+      for (const contact of contacts.filter((entry) => entry.state === "active")) await client.contact.revoke({ contactId: contact.id });
+    }
+    const profile = (await first.profile.resolve({ address: SECOND_HANDLE })).profile;
+    const text = "An unwanted first-contact message";
+    const sent = (await first.approach.create({
+      did: profile.did, profileCid: profile.cid, displayName: "First person", text, idempotencyKey: "integration-reported-approach",
+    })).approach;
+    const received = await poll(async () => (await second.approach.list({ direction: "incoming", status: "active" })).approaches
+      .find((entry) => entry.state === "pending") ?? null, "reported request");
+
+    const { approach } = await second.approach.report({ approachId: received.id, category: "harassment", includeMessage: true });
+    expect(approach).toMatchObject({ id: received.id, state: "declined", reportedAtMs: expect.any(Number) });
+    const filed = await reportsFiled(secondHarness);
+    expect(filed).toEqual([{
+      installationId: "inst_integration_default", requestKey: received.id,
+      sender: { did: received.peerDid, handle: FIRST_HANDLE }, category: "harassment", receivedAtMs: received.createdAtMs,
+      message: { displayName: "First person", text }, reportId: expect.stringMatching(/^report_/), reportedAtMs: approach.reportedAtMs,
+    }]);
+    // Reporting it again files nothing new, and the ledger keeps the person's choice but not the message.
+    expect((await second.approach.report({ approachId: received.id, category: "spam", includeMessage: false })).approach).toEqual(approach);
+    expect(await reportsFiled(secondHarness)).toHaveLength(1);
+    const { lines } = await second.sys.ledger.list({ callPrefix: "approach.report", limit: 10 });
+    expect(lines.map((line) => JSON.parse(line.args))).toContainEqual({ approachId: received.id, category: "harassment", includeMessage: true });
+    expect(JSON.stringify(lines)).not.toContain(text);
+    // As with any decline, the sender's request still waits.
+    expect((await first.approach.get({ approachId: sent.id })).approach).toMatchObject({ state: "pending", delivery: "received" });
+    // The two people connect again for the tests that follow.
+    const invite = await first.contact.invite.create({ expiresInSeconds: 300 });
+    await second.contact.invite.accept({ code: invite.code });
+    await waitForContact(first, profile.did);
+  });
+
+  it("keeps a contact while the directory can't be reached, and ends it once a reset Ship holds its address", async () => {
+    const contact = await waitForContact(first);
+    // An operator resets the second space: its address reaches a new Ship, which makes its own DID at sign-in.
+    const harness = createGatewayTestHarness({ network: { domain: SECOND_DOMAIN } });
+    successorHarness = harness;
+    const origin = loopbackOrigin((await harness.listen()).url);
+    const response = await harness.getWorker("gsv-test-dependencies").fetch(
+      "http://gsv-test-dependencies/__test/default-origin", { method: "POST", body: origin.origin },
+    );
+    expect(response.status).toBe(204);
+    network.hosts.set(SECOND_HANDLE, servedBy((url, init) => harness.fetch(url, init)));
+    network.hosts.set(`pds.${SECOND_DOMAIN}`, servedBy((url, init) => harness.getWorker("gsv-test-dependencies").fetch(url, init)));
+    await setup(origin, SECOND_USER, "second_ship");
+    const client = connectedClient(origin, SECOND_USER, "federation-successor-client");
+    successor = client;
+    await client.connect();
+    const successorDid = await poll(async () => (await client.atproto.identity({})).identity?.did ?? null, "the reset Ship's DID");
+    expect(successorDid).not.toBe(contact.remoteDid);
+
+    // The new Ship refuses a call addressed to the old DID, but without the directory nothing proves the old Ship gone.
+    network.plcReachable = false;
+    const unconfirmed = await first.contact.send({ contactId: contact.id, text: "Are you still there?", idempotencyKey: "integration-gone-unconfirmed" });
+    await expect.poll(async () => (await first.contact.delivery.get({ deliveryId: unconfirmed.deliveryId })).delivery?.state, { timeout: 20_000 }).toBe("failed");
+    expect((await waitForContact(first, undefined, true, contact.id)).state).toBe("active");
+
+    network.plcReachable = true;
+    const confirmed = await first.contact.send({ contactId: contact.id, text: "Hello?", idempotencyKey: "integration-gone-confirmed" });
+    await waitForContact(first, undefined, true, contact.id, "revoked");
+    expect((await first.contact.delivery.get({ deliveryId: confirmed.deliveryId })).delivery).toMatchObject({
+      state: "failed", lastError: "Contact was revoked", retryable: false,
+    });
+    expect(messagesWithText(await first.conversation.history({ conversationId: contact.conversationId, limit: 100 }), "Welcome to the conversation")).toHaveLength(1);
+  });
+
+  it("ends a contact once its person opens their conversation and another account holds its Ship's address", async () => {
+    const harness = successorHarness;
+    const client = successor;
+    if (!harness || !client) throw new Error("The reset Ship isn't running");
+    const did = (await client.atproto.identity({})).identity?.did;
+    const invite = await first.contact.invite.create({ expiresInSeconds: 300 });
+    await client.contact.invite.accept({ code: invite.code });
+    const contact = await waitForContact(first, did);
+    // Another account claims the address and serves its Ship there; nothing is sent to it.
+    const holder = await network.account(SECOND_HANDLE);
+    const serve = servedBy((url, init) => harness.fetch(url, init));
+    network.hosts.set(SECOND_HANDLE, (request) => new URL(request.url).pathname === "/.well-known/atproto-did" ? new Response(holder.did) : serve(request));
+    try {
+      expect((await first.conversation.history({ conversationId: contact.conversationId })).conversation.id).toBe(contact.conversationId);
+      await waitForContact(first, undefined, true, contact.id, "revoked");
+    } finally {
+      network.hosts.set(SECOND_HANDLE, serve);
+    }
+  });
+
+  it("ends a contact once its Ship's space is deleted and its DID tombstoned", async () => {
+    const harness = successorHarness;
+    const client = successor;
+    if (!harness || !client) throw new Error("The reset Ship isn't running");
+    const did = (await client.atproto.identity({})).identity?.did;
+    const invite = await first.contact.invite.create({ expiresInSeconds: 300 });
+    await client.contact.invite.accept({ code: invite.code });
+    const contact = await waitForContact(first, did);
+    // The space is deleted: its address reaches no Ship, then erasure tombstones its DID.
+    network.hosts.set(SECOND_HANDLE, () => new Response("Not Found", { status: 404 }));
+    const erased = await harness.getWorker("gsv-test-dependencies").fetch("http://gsv-test-dependencies/__test/erase-identity", { method: "POST" });
+    expect(erased.status).toBe(204);
+    const sent = await first.contact.send({ contactId: contact.id, text: "Still there?", idempotencyKey: "integration-gone-deleted" });
+    await waitForContact(first, undefined, true, contact.id, "revoked");
+    expect((await first.contact.delivery.get({ deliveryId: sent.deliveryId })).delivery).toMatchObject({ state: "failed", lastError: "Contact was revoked" });
+  });
 });
+
+async function reportsFiled(harness: TestHarness): Promise<unknown[]> {
+  const response = await harness.getWorker("gsv-test-dependencies").fetch("http://gsv-test-dependencies/__test/request-reports");
+  const reports: unknown = await response.json();
+  if (!Array.isArray(reports)) throw new Error("The operator's queue answered with no list of reports");
+  return reports;
+}
 
 function loopbackOrigin(value: URL): URL {
   const url = new URL(value);
@@ -585,9 +729,19 @@ function connectedClient(origin: URL, username: string, id: string): GSVClient {
   });
 }
 
+/** A host on the test network that a harness serves, as its Worker sees the request. */
+function servedBy(serve: TestHarness["fetch"]): (request: Request) => Promise<Response> {
+  return async (request) => {
+    // SAFETY: In this Node process the network's requests are Node's own, which the harness takes as its init.
+    const answer = await serve(request.url, request as never);
+    // SAFETY: The harness answers with Node's own Response, the class the network's callers receive.
+    return answer as never;
+  };
+}
+
 async function waitForContact(
   client: GSVClient,
-  remoteShipId?: string,
+  remoteDid?: string,
   includeRevoked = false,
   contactId?: string,
   state?: ContactSummary["state"],
@@ -595,7 +749,7 @@ async function waitForContact(
   return await poll(async () => {
     const contacts = await client.contact.list({ includeRevoked });
     return contacts.contacts.find((contact) => (
-      (!remoteShipId || contact.remoteShipId === remoteShipId)
+      (!remoteDid || contact.remoteDid === remoteDid)
       && (!contactId || contact.id === contactId)
       && (!state || contact.state === state)
     )) ?? null;

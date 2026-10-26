@@ -25,6 +25,7 @@ function memory(initial: WelcomeSnapshot["value"] = null) {
 // SAFETY: The screen's native form owns an Event-based submit handler.
 const formOf = (tree: ComponentChildren) => collectNodes(tree).find((node) => node.type === "form") as VNode<{ onSubmit: (event: Event) => void }>;
 // SAFETY: The screen's only native input is its agreement checkbox.
+// The optional marketing input follows the agreement, which this helper selects.
 const checkboxOf = (tree: ComponentChildren) => collectNodes(tree).find((node) => node.type === "input") as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
 const fieldOf = (tree: ComponentChildren, label: string) => collectNodes(tree).find((node) => node.type === TextInput && node.props.label === label);
 // SAFETY: The handler only reads the checkbox's checked state.
@@ -67,7 +68,7 @@ describe("owner welcome", () => {
     let tree: ComponentChildren;
     function Harness() {
       tree = OwnerWelcomeScreen({ ready: true, resume: true, chooseSpace: true, initialStep: "email", load: async () => client,
-        onConnect: connect, invitation: { name: "Alice", origin: "alice.example.com" }, compact: true });
+        onConnect: connect, invitation: { name: "Alice", handle: "alice.example.com" }, compact: true });
       return null;
     }
     try {
@@ -139,7 +140,9 @@ describe("owner welcome", () => {
       if (url.endsWith("/session")) return session();
       if (url.endsWith("/spaces")) {
         expect(init.headers.authorization).toMatch(/^Bearer [a-f0-9]{64}$/);
-        expect(JSON.parse(init.body!)).toEqual({ operationId: store.snapshot().value!.operationId, handle: "spacecowboy" });
+        const body = JSON.parse(init.body!);
+        expect(body).toMatchObject({ operationId: store.snapshot().value!.operationId, handle: "spacecowboy" });
+        expect(body.productEmails).toEqual(resumed ? { wordingVersion: "ship-product-updates-2026-10-23", locale: "en" } : undefined);
         return prepared("spacecowboy");
       }
       throw new Error(`Unexpected request: ${url}`);
@@ -162,6 +165,9 @@ describe("owner welcome", () => {
       }
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")?.props.disabled).toBe(false));
       expect(collectText(tree)).toContain("Create your Ship");
+      // SAFETY: Signup renders the optional marketing checkbox after the agreement input.
+      const optional = collectNodes(tree).filter((node) => node.type === "input")[1] as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
+      expect(optional.props.checked).toBe(false);
       expect(fieldOf(tree, "Handle")!.props).toMatchObject({ prefix: "@" });
       expect(fieldOf(tree, "Handle")!.props).not.toHaveProperty("suffix");
       expect(collectText(tree)).toMatch(/Your address\s+your-name\s*\.\s*example\.com/);
@@ -171,26 +177,20 @@ describe("owner welcome", () => {
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "success", message: "Available" }));
       await act(() => { fieldOf(tree, "Email")!.props.onChange?.("Owner@Example.com"); });
       expect(checkboxOf(tree).props).toMatchObject({ required: true, checked: false });
-      // SAFETY: the signup tree renders the optional marketing input after the Terms input.
-      const optional = collectNodes(tree).filter((node) => node.type === "input")[1] as VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
-      expect(optional.props.checked).toBe(false);
-      expect(optional.props.required).toBeUndefined();
-      if (resumed) await act(() => {
-        // SAFETY: the input handler reads only currentTarget.checked from this event fixture.
-        const event = { currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>;
-        optional.props.onChange?.(event);
-      });
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       expect(fetcher.mock.calls.some(([url]) => url.endsWith("/code"))).toBe(false);
       expect(checkboxOf(tree).props["aria-invalid"]).toBe(true);
       expect(collectText(tree)).toContain("Confirm your age and agreement to continue.");
 
       await agree(tree);
+      if (resumed) await act(() => {
+        // SAFETY: The checkbox handler reads only currentTarget.checked.
+        optional.props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>);
+      });
       expect(checkboxOf(tree).props["aria-invalid"]).toBeUndefined();
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
       await vi.waitFor(() => expect(fieldOf(tree, "Code")).toBeDefined());
-      const codeRequest = fetcher.mock.calls.find(([url]) => url.endsWith("/code"))!;
-      expect(JSON.parse(codeRequest[1].body!).productEmails).toMatchObject({ optedIn: resumed, wordingVersion: "ship-product-updates-2026-10-23", locale: "en" });
+      expect(JSON.parse(fetcher.mock.calls.find(([url]) => url.endsWith("/code"))![1].body!)).not.toHaveProperty("productEmails");
       expect(store.snapshot().value).toMatchObject({ flow: "create", handle: "spacecowboy", challenge: { email: "owner@example.com" } });
       expect(store.snapshot().value!.operationId).toMatch(/^[0-9a-f-]{36}$/);
       expect(collectText(tree)).toContain("Check your email");
@@ -264,12 +264,15 @@ describe("owner welcome", () => {
     } finally { await root.unmount(); }
   });
 
-  it("returns to the handle when Accounts rejects it at creation", async () => {
+  it.each([
+    { error: "handle is unavailable" },
+    { error: "This username is unavailable. Choose another.", code: "handle_unavailable" },
+  ])("returns to the handle when Accounts rejects it at creation: $error", async (failure) => {
     const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), challenge: null, operationId: "op_taken", handle: "taken" });
     const fetcher = vi.fn(async (url: string) => {
       if (url.includes("/handle?")) return Response.json({ available: true });
       if (url.endsWith("/session")) return session();
-      if (url.endsWith("/spaces")) return Response.json({ error: "handle is unavailable" }, { status: 400 });
+      if (url.endsWith("/spaces")) return Response.json(failure, { status: 400 });
       throw new Error(`Unexpected request: ${url}`);
     });
     const client = new OwnerWelcome(store.snapshot(), store, ORIGIN, fetcher);
@@ -290,9 +293,9 @@ describe("owner welcome", () => {
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.status).toBe("success"));
       await agree(tree);
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
-      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "error", message: "handle is unavailable" }));
+      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "error", message: failure.error }));
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)); });
-      expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "error", message: "handle is unavailable" });
+      expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "error", message: failure.error });
       expect(store.snapshot().value!.operationId).toBe("op_taken");
       expect(onConnect).not.toHaveBeenCalled();
       expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!.props.disabled).toBe(true);
@@ -382,6 +385,7 @@ describe("owner welcome", () => {
       const open = () => collectNodes(tree).find((node) => node.props.label === setup.handle);
       await vi.waitFor(() => expect(open()?.props.disabled).toBe(false));
       expect(fieldOf(tree, "Handle")).toBeUndefined();
+      expect(collectText(tree)).not.toContain("Email me Ship product updates");
       expect(client.state.operationId).toBeNull();
       await act(() => { open()!.props.onClick?.(); });
       await vi.waitFor(() => expect(onConnect).toHaveBeenCalledTimes(2));
@@ -452,7 +456,7 @@ describe("owner welcome", () => {
 
       // The exception belongs to this operation and handle, not to another handle the owner types.
       await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("another-taken-handle"); });
-      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.message).toBe("Already taken"));
+      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.message).toBe("Unavailable"));
       expect(submit().props.disabled).toBe(true);
       await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("my-space"); });
       await vi.waitFor(() => expect(rechecks).toBeGreaterThan(2));

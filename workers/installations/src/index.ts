@@ -10,6 +10,7 @@ import type {
   InstallationOnboardingService,
 } from "@humansandmachines/gsv/services/onboarding";
 import { InstallationSignup } from "./signup";
+import { runProductEmailJobs } from "./product-email";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationAdminHttp } from "./admin/http";
@@ -22,26 +23,24 @@ import { InstallationBootstrapService, parseOperatorAccessMode } from "./bootstr
 import { InstallationOperatorHttp, OperatorInstallationAdminAccess } from "./operator-http";
 import { createAccountsDeletionRuntime } from "./deletion-runtime";
 import { configuredDeletionEnvironment, type DeletionResourceEnvironment } from "./deletion-verifier";
-import { handleProductEmailPublic, runProductEmailJobs } from "./product-email-http";
-import { handleServiceNotices, ServiceNotices } from "./service-notices";
+import { ShipTakedowns } from "./admin/takedowns";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
+import { RequestReports } from "./request-reports";
+export { RequestReportsEntrypoint } from "./request-reports";
 
 export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment & OperatorEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
   async scheduled(): Promise<void> {
     await runProductEmailJobs(this.env.INSTALLATIONS_DB, this.env);
-    if (this.env.GSV_SERVICE_NOTICES_ENABLED === "true" && this.env.OWNER_EMAIL && this.env.GSV_OWNER_EMAIL_FROM)
-      await new ServiceNotices(this.env.INSTALLATIONS_DB).deliver(this.env.OWNER_EMAIL, this.env.GSV_OWNER_EMAIL_FROM);
     await cleanExpiredOwnerAuthentication(this.env);
     await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)).resumePending();
+    await new RequestReports(this.env.INSTALLATIONS_DB).forgetClosedMessages();
   }
 
   async fetch(request: Request): Promise<Response> {
     if (request.method === "GET" && new URL(request.url).pathname === "/health") {
       return Response.json({ status: "healthy" });
     }
-    const productEmails = await handleProductEmailPublic(request, this.env.INSTALLATIONS_DB, this.env, this.env.GSV_ADMIN_ORIGIN);
-    if (productEmails) return productEmails;
     const signup = new InstallationSignup(this.env.INSTALLATIONS_DB, this.accounts(), this.onboarding(), this.env.GSV_SIGNUP_ENABLED === "true", undefined, this.env);
     const ownerResponse = await handleInstallationOwnerRequest(request, this.env, OPERATOR_REGISTRY_PRINCIPAL_ID, signup);
     if (ownerResponse) return ownerResponse;
@@ -49,7 +48,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     const accounts = this.accounts();
     const administration = new InstallationAdminService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), {
         id: OPERATOR_REGISTRY_PRINCIPAL_ID, email: "operator@gsv.invalid", displayName: "Operator registry",
-      }, {});
+      }, {}, this.env.PDS_MODERATION);
     const mode = parseOperatorAccessMode(this.env.GSV_OPERATOR_ACCESS_MODE);
     const bootstrap = new InstallationBootstrapService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), administration, mode);
     const operatorResponse = await new InstallationOperatorHttp(bootstrap, this.env.GSV_ADMIN_ORIGIN, mode).handle(request);
@@ -58,12 +57,12 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
       environment: this.env.ENVIRONMENT, origin: this.env.GSV_ADMIN_ORIGIN,
       teamDomain: this.env.GSV_ADMIN_ACCESS_TEAM_DOMAIN, audience: this.env.GSV_ADMIN_ACCESS_AUD,
     }));
-    const notices = await handleServiceNotices(request, this.env.INSTALLATIONS_DB, access, this.env.GSV_ADMIN_ORIGIN, this.env.GSV_SERVICE_NOTICES_ENABLED === "true");
-    if (notices) return notices;
     const api = new InstallationAdminHttp(administration, access, this.env.GSV_ADMIN_ORIGIN,
       {},
       createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)),
       new ShipInsight(this.env.INSTALLATIONS_DB, { gateway: this.env.OPERATOR_GATEWAY, mailDomain: this.env.GSV_MAIL_DOMAIN }),
+      this.env.PDS_MODERATION ? new ShipTakedowns(this.env.PDS_MODERATION, { gateway: this.env.OPERATOR_GATEWAY }) : undefined,
+      new RequestReports(this.env.INSTALLATIONS_DB),
     );
     const response = await api.handle(request);
     if (response) return response;

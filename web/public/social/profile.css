@@ -1,31 +1,53 @@
 @font-face { font-family: "Host Grotesk"; src: url("/fonts/HostGrotesk-Variable.woff2") format("woff2"); font-weight: 300 800; font-display: swap; }
 @font-face { font-family: "Martian Mono"; src: url("/fonts/MartianMono-Variable.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
-:root { color-scheme: light dark; --bg: #f5f4fa; --text: #292730; --muted: #686370; --line: #d9d5e3; --accent: #6953ca; }
-@media (prefers-color-scheme: dark) { :root { --bg: #101014; --text: #e3dfeb; --muted: #9892a3; --line: #302c38; --accent: #b09be9; } }
+:root { color-scheme: light dark; --panel: #ffffff; --accent-bright: #4a43a0; --bg: #f5f4fa; --text: #292730; --muted: #686370; --line: #d9d5e3; --accent: #6953ca; --glyph: #6b5fd6; --glow: none; --label: #4a4677; --field: #ffffff; --field-border: #c4bee3; --primary: #5a52a8; --primary-hi: #4a43a0; --on-primary: #ffffff; --primary-glow: none; }
+@media (prefers-color-scheme: dark) { :root { --panel: #1a1922; --accent-bright: #cbc7ff; --bg: #101014; --text: #e3dfeb; --muted: #9892a3; --line: #302c38; --accent: #b09be9; --glyph: #8071dd; --glow: 0 0 5px rgba(140, 120, 235, .55), 0 0 14px rgba(110, 95, 209, .28); --label: #b3aee2; --field: #201c4d; --field-border: #4a449e; --primary: #5a52a8; --primary-hi: #6b62c4; --on-primary: #f4f2ff; --primary-glow: 0 0 18px rgba(120, 110, 230, .4); } }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 18px/1.6 "Host Grotesk", system-ui, sans-serif; }
 .public-profile { max-width: 680px; margin: 10vh auto; padding: 28px; overflow-wrap: anywhere; }
-header, footer { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; font: 11px/1.8 "Martian Mono", monospace; color: var(--muted); }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; font: 11px/1.8 "Martian Mono", monospace; color: var(--muted); }
 header { padding-bottom: 32px; border-bottom: 1px solid var(--line); }
-.brand { color: var(--text); letter-spacing: .2em; }
-.status { max-width: 32ch; }
-.alias { margin: 40px 0 8px; color: var(--accent); font: 13px/1.8 "Martian Mono", monospace; }
-h1 { font-size: clamp(32px, 7vw, 54px); line-height: 1.1; font-weight: 500; letter-spacing: -.035em; margin: 0 0 24px; }
+/* The ship.space wordmark: glyph colour, a soft glow in dark, and a brief colour-split glitch. */
+.wordmark { display: inline-block; color: var(--glyph); text-shadow: var(--glow); letter-spacing: .22em; font-size: 12px; font-weight: 500; }
+a.wordmark { text-decoration: none; }
+a.wordmark:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.wordmark.is-glitch { text-shadow: 1px 0 0 rgba(255, 90, 160, .3), -1px 0 0 rgba(90, 200, 255, .28), 0 0 9px rgba(140, 120, 235, .55); transform: translateX(.6px); }
+.restricted { position: relative; display: flex; align-items: center; gap: 8px; margin: 32px 0 0; padding-block: 20px; border-block: 1px solid var(--line); color: var(--muted); }
+.avatar { display: block; width: 96px; height: 96px; margin-top: 40px; border: 1px solid var(--line); object-fit: cover; background: var(--panel); }
+.handle { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 40px 0 24px; }
+.avatar + .handle { margin-top: 20px; }
+h1 { font-size: clamp(32px, 7vw, 54px); line-height: 1.1; font-weight: 500; letter-spacing: -.035em; margin: 0; }
+.copy-status { color: var(--muted); font: 11px/1.8 "Martian Mono", monospace; }
 .about { white-space: pre-wrap; }
-.representation { margin-top: 32px; font-size: 15px; color: var(--muted); }
-footer { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 20px; }
+.about.is-empty { color: var(--muted); }
 a { color: var(--accent); text-underline-offset: 4px; }
 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+@media (max-width: 480px) { .public-profile { margin: 4vh auto; padding: 24px; } }
 .connect { margin-top: 32px; border-block: 1px solid var(--line); padding-block: 20px; }
 .connect summary { color: var(--accent); cursor: pointer; list-style: none; }
 .connect summary::-webkit-details-marker { display: none; }
 .connect summary span { float: right; }
 .connect form { padding-top: 24px; }
-.connect label { display: block; font-size: 14px; margin-bottom: 8px; }
+.connect label { display: block; margin-bottom: 8px; color: var(--label); font: 11px/1.5 "Martian Mono", monospace; }
 .connect-input { display: flex; flex-wrap: wrap; gap: 10px; }
-.connect input { min-width: 0; flex: 1 1 200px; border: 1px solid var(--line); background: transparent; color: var(--text); padding: 12px; font: inherit; font-size: 16px; }
-.connect button { border: 1px solid var(--accent); background: transparent; color: var(--accent); font: inherit; font-size: 14px; padding: 12px 16px; cursor: pointer; }
+.connect input { min-width: 0; flex: 1 1 200px; border: 1px solid var(--field-border); background: var(--field); color: var(--text); padding: 10px 12px; font: 16px/1.55 "Host Grotesk", system-ui, sans-serif; outline: none; transition: border-color .12s, box-shadow .12s; }
+.connect input::placeholder { color: var(--muted); }
+.connect input:hover { border-color: var(--accent); }
+.connect input:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* Primary button type, without upper-casing: the label names Ship, which stays title case. */
+.connect button { border: 1px solid var(--primary-hi); background: var(--primary); color: var(--on-primary); padding: 9px 14px; font: 11px/1.5 "Martian Mono", monospace; letter-spacing: .16em; box-shadow: var(--primary-glow); cursor: pointer; transition: background .12s; }
+.connect button:hover { background: var(--primary-hi); }
+.connect button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .connect p, .connect noscript { font-size: 14px; color: var(--muted); }
 .connect .connect-error { color: var(--text); }
-.connect :focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
-@media (max-width: 480px) { .public-profile { margin: 4vh auto; padding: 24px; } }
+.connect summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+/* Icon buttons and the hint bubble follow the app's design system (IconButton ghost, Tooltip). */
+:is(.copy, .info) { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--label); cursor: pointer; transition: color .12s; }
+:is(.copy, .info):hover { color: var(--accent-bright); }
+:is(.copy, .info):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 50%; }
+.info { width: 22px; height: 22px; cursor: help; }
+.info-bubble { position: absolute; top: calc(100% - 10px); left: var(--bubble-x, 0); z-index: 1; width: max-content; max-width: min(300px, calc(100vw - 40px)); padding: 10px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font: 400 14px/1.6 "Host Grotesk", system-ui, sans-serif; letter-spacing: 0; text-align: left; box-shadow: 0 4px 12px color-mix(in srgb, var(--bg) 45%, transparent); visibility: hidden; opacity: 0; transition: opacity .12s; pointer-events: none; }
+.info-bubble::before { content: ""; position: absolute; top: -4px; left: var(--arrow-x, 16px); width: 7px; height: 7px; margin-left: -3.5px; border: 1px solid var(--line); border-bottom: none; border-right: none; background: var(--panel); transform: rotate(45deg); }
+[data-info-row] { position: relative; }
+/* Escape dismisses a hint even while its icon keeps hover or focus. */
+[data-info-row]:not(.is-dismissed):has(.info:hover, .info:focus) .info-bubble, [data-info-row].is-open .info-bubble { visibility: visible; opacity: 1; }

@@ -228,7 +228,9 @@ export function formatRunControlToolResult(
   if (result.ok) {
     if (result.action === "yield") return "Run yielded";
     if (result.yieldError) {
-      return `Message committed; run remains active. Yield was blocked: ${result.yieldError}\nDo not resend this message. Handle the outstanding work, then yield.`;
+      const sent = result.repeated ? "Message already sent, so not sent again" : "Message committed";
+      const tries = attempt ? ` (attempt ${attempt.count} of ${attempt.limit})` : "";
+      return `${sent}; run remains active. Yield was blocked${tries}: ${result.yieldError}\nDo not resend this message. Handle the outstanding work, then yield.`;
     }
     return result.finish
       ? "Message committed and run yielded"

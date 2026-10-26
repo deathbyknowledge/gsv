@@ -164,6 +164,31 @@ export class ProcessRun {
         responsibilityAdmissionKey: responsibilityCheck.admissionKey,
       };
     }
+    // The person already has this reply: it went out when its yield was refused, so a repeat only asks to yield again.
+    if (command.finish && media.length === 0 && command.text === this.host.runs.active?.blockedYieldText) {
+      const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
+      if (responsibilityCheck.ok) {
+        await this.host.streams.silence(runId, actionId);
+        return {
+          ok: true,
+          action: "yield",
+          finish: true,
+          text: "",
+          delivery: { kind: "none" },
+          responsibilityAdmissionKey: responsibilityCheck.admissionKey,
+        };
+      }
+      await this.host.streams.abortAction(runId, actionId, "The message was already sent");
+      return {
+        ok: true,
+        action: "message",
+        finish: false,
+        text: command.text,
+        delivery: { kind: "none" },
+        repeated: true,
+        yieldError: responsibilityCheck.error,
+      };
+    }
     const sent = await this.executeMessageRunControlAction({
       runId,
       actionId,
@@ -1469,8 +1494,12 @@ export class ProcessRun {
       if (!registration) {
         throw new Error("Run-control tool registration was lost before its result");
       }
-      const updated = result.ok ? active : incrementRunControlFailure(active, result.failureKind);
-      const attempt = result.ok ? null : runControlFailureAttempt(updated, result.failureKind);
+      // A yield the responsibilities refused counts as a refused command even when its message went out.
+      const blockedYield = result.ok && result.yieldError !== undefined;
+      const failureKind = result.ok ? (blockedYield ? "command" : null) : result.failureKind;
+      const counted = failureKind ? incrementRunControlFailure(active, failureKind) : active;
+      const updated = blockedYield ? { ...counted, blockedYieldText: result.text } : counted;
+      const attempt = failureKind ? runControlFailureAttempt(updated, failureKind) : null;
       if (updated !== active) this.host.runs.active = updated;
       const content = formatRunControlToolResult(result, attempt);
       if (result.ok) {
@@ -1815,6 +1844,19 @@ export class ProcessRun {
           status: "error",
           resultText: null,
           error: result.error,
+          usage: persisted.response.usage,
+        },
+      };
+    }
+    // A yield the responsibilities refused ends the run as a refused command does, even though its message went out.
+    if (result.yieldError !== undefined && isRunControlFailureExhausted(run, "command")) {
+      return {
+        kind: "finish",
+        options: {
+          reason: "message.command.failed",
+          status: "error",
+          resultText: null,
+          error: result.yieldError,
           usage: persisted.response.usage,
         },
       };

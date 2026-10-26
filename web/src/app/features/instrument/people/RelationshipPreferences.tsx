@@ -21,12 +21,14 @@ export function RelationshipPreferences({ contact, account, controls }: { contac
   const cache = useQueryClient();
   const [confirm, setConfirm] = useState<"block" | "end" | null>(null);
   const allowed = (syscall: string) => connected && !!account && account.uid >= 1000 && account.uid === contact.ownerUid && canConfigure(account, syscall);
+  // A contact is blocked by DID; one not yet moved to its DID can't be.
+  const mayBlock = allowed("contact.block.set") && !!contact.remoteDid;
   const mayEnd = connected && contact.state === "active" && !!account
     && (account.uid === 0 || account.uid === contact.ownerUid) && canConfigure(account, "contact.revoke");
   const refresh = () => cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACTS_KEY });
   const preferences = contact.preferences;
   const block = useMutation({
-    mutationFn: () => client.contact.block.set({ actor: { shipId: contact.remoteShipId, subjectId: contact.remoteSubject.id }, blocked: !contact.blocked }),
+    mutationFn: (did: string) => client.contact.block.set({ did, blocked: !contact.blocked }),
     onSuccess: async () => { setConfirm(null); await refresh(); },
   });
   const revoke = useMutation({
@@ -53,12 +55,12 @@ export function RelationshipPreferences({ contact, account, controls }: { contac
           : contact.blocked ? "people.connection.confirmUnblock"
             : "people.connection.confirmBlock")}</p>
         <div class="people-actions">
-          <button class="people-action is-danger" disabled={pending || !(confirm === "end" ? mayEnd : allowed("contact.block.set"))} onClick={() => confirm === "end" ? revoke.mutate() : block.mutate()}>{t(confirm === "end" ? "people.connection.end" : contact.blocked ? "people.unblock" : "people.block")}</button>
+          <button class="people-action is-danger" disabled={pending || !(confirm === "end" ? mayEnd : mayBlock)} onClick={() => confirm === "end" ? revoke.mutate() : contact.remoteDid && block.mutate(contact.remoteDid)}>{t(confirm === "end" ? "people.connection.end" : contact.blocked ? "people.unblock" : "people.block")}</button>
           <button class="people-action" disabled={pending} onClick={() => setConfirm(null)}>{t("common.cancel")}</button>
         </div>
       </div> : <div class="people-actions">
         {contact.state === "active" && <button class="people-action is-danger" disabled={pending || !mayEnd} onClick={() => setConfirm("end")}>{t("people.connection.end")}</button>}
-        <button class="people-action is-danger" disabled={pending || !allowed("contact.block.set")} onClick={() => setConfirm("block")}>{t(contact.blocked ? "people.connection.unblockPerson" : "people.connection.blockPerson")}</button>
+        <button class="people-action is-danger" disabled={pending || !mayBlock} onClick={() => setConfirm("block")}>{t(contact.blocked ? "people.connection.unblockPerson" : "people.connection.blockPerson")}</button>
       </div>}
     </details>
     {error && <p class="people-error" role="alert">{error.message}</p>}

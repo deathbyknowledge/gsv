@@ -10,7 +10,7 @@ import { useT } from "../../../i18n/locale";
 import type { Distance } from "../Instrument";
 import "./feedback.css";
 
-export function Feedback({ view }: { view: Distance }) {
+export function Feedback({ view, openRequest = 0 }: { view: Distance; openRequest?: number }) {
   const t = useT();
   const { client, connected } = useGateway();
   const { snapshot } = useSession();
@@ -30,6 +30,12 @@ export function Feedback({ view }: { view: Distance }) {
   const titleId = useId();
   const contactId = useId();
   const detailsId = useId();
+
+  useEffect(() => {
+    if (!openRequest) return;
+    setState((current) => current === "sent" ? "idle" : current);
+    setOpen(true);
+  }, [openRequest]);
 
   useLayoutEffect(() => {
     const element = dialog.current;

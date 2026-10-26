@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { InstallationOwnerAuthStore, OWNER_CODE_RESEND_MS } from "./owner-auth-store";
 import { InstallationOwnerEmailHttp } from "./owner-email-http";
 import { InstallationOwnerStore } from "./owner-store";
-import { ProductEmailConsent, PRODUCT_EMAIL_WORDING_VERSION } from "./product-email";
 import { AccountStore } from "./store";
 import { sha256Hex } from "./tokens";
 
@@ -31,7 +30,7 @@ async function formFields(response: Response): Promise<Form> {
     .map((match) => [match[1], match[2].replaceAll("&amp;", "&").replaceAll("&quot;", '"')]));
 }
 
-async function fixture(productEmails = false) {
+async function fixture() {
   let now = Date.now();
   vi.spyOn(Date, "now").mockImplementation(() => now);
   const suffix = crypto.randomUUID().slice(0, 8);
@@ -49,7 +48,8 @@ async function fixture(productEmails = false) {
   const mail: SendEmail = { send };
   const gateway = { authorizeRootRecovery: vi.fn(async () => ({ authorized: true as const })),
     confirmOwnerLinkAuthorization: vi.fn(async () => ({ authorized: true as const })) };
-  const makeHttp = () => new InstallationOwnerEmailHttp(auth, owners, mail, "accounts@example.com", gateway, ORIGIN, false, productEmails ? new ProductEmailConsent(env.INSTALLATIONS_DB) : undefined);
+  const makeHttp = () => new InstallationOwnerEmailHttp(auth, owners, mail,
+    { from: "login@ship.space", replyTo: "hello@humansandmachin.es" }, gateway, ORIGIN);
   let http = makeHttp();
   const request = async (path: string, cookies: Cookies, form?: Form, origin: string | null = ORIGIN, acceptCookies = true): Promise<Response> => {
     const headers = new Headers({ cookie: cookieHeader(cookies), "cf-connecting-ip": `fixture-${suffix}` });
@@ -74,7 +74,7 @@ async function fixture(productEmails = false) {
     return { ...await formFields(response), email, ...extra };
   };
   const code = (index = delivered.length - 1): string => {
-    const match = delivered[index]?.text?.match(/code is ([0-9]{6})\./);
+    const match = delivered[index]?.text?.match(/^([0-9]{6})$/m);
     if (!match) throw new Error("Expected a captured verification code");
     return match[1];
   };
@@ -112,6 +112,10 @@ describe("native owner email HTTP", () => {
     expect(codePage.headers.get("referrer-policy")).toBe("same-origin");
     expect((await f.request("/owner/login", cookies, form)).status).toBe(200);
     expect(f.send).toHaveBeenCalledTimes(1);
+    expect(f.delivered[0]).toMatchObject({ from: { email: "login@ship.space", name: "Ship" },
+      replyTo: "hello@humansandmachin.es", subject: "Your Ship sign-in code",
+      text: `Enter this code in Ship to continue:\n\n${f.code()}\n\nThis code expires in 10 minutes. Don’t share it with anyone.\n\nIf you didn’t request this code, you can ignore this email.\n\nShip` });
+    expect(f.delivered[0].html).toContain(`>${f.code()}</strong>`);
     expect(cookies.has(SESSION)).toBe(false);
     const verify = { ...form, code: f.code() };
     const lost = await f.request("/owner/verify", cookies, verify, ORIGIN, false);
@@ -271,32 +275,15 @@ describe("native owner email HTTP", () => {
     f.advance();
     expect((await f.request("/owner/resend", cookies, form)).status).toBe(200);
     expect(f.delivered).toHaveLength(1);
+    expect(f.delivered[0].text).toContain("This code expires in 9 minutes.");
     expect((await f.request("/owner/login", cookies, form)).status).toBe(200);
     expect(f.send).toHaveBeenCalledTimes(2);
     f.advance();
     expect((await f.request("/owner/resend", cookies, form)).status).toBe(200);
     expect(f.send).toHaveBeenCalledTimes(3);
     expect(f.delivered).toHaveLength(2);
+    expect(f.delivered[1].text).toContain("This code expires in 8 minutes.");
+    expect(f.code(1)).toBe(f.code(0));
     expect((await f.request("/owner/verify", cookies, { ...form, code: f.code() })).status).toBe(303);
   });
-});
-
-it("saves product-email preferences without JavaScript and rejects cross-origin or stale forms", async () => {
-  const f = await fixture(true); const cookies: Cookies = new Map();
-  expect((await f.request("/owner/email-preferences", cookies)).headers.get("location")).toBe("/owner/login");
-  const form = await f.start(cookies, "login", f.email);
-  await f.request("/owner/login", cookies, form);
-  await f.request("/owner/verify", cookies, { ...form, code: f.code() });
-  const page = await f.request("/owner/email-preferences", cookies);
-  const text = await page.clone().text();
-  expect(text).toContain('name="productEmails"'); expect(text).not.toContain('value="yes" checked');
-  const fields = await formFields(page);
-  expect(fields.wordingVersion).toBe(PRODUCT_EMAIL_WORDING_VERSION);
-  expect((await f.request("/owner/email-preferences", cookies, { ...fields, productEmails: "yes" }, "https://forged.example")).status).toBe(403);
-  expect((await f.request("/owner/email-preferences", cookies, { ...fields, productEmails: "yes" })).status).toBe(200);
-  expect((await f.request("/owner/email-preferences", cookies, fields)).status).toBe(409);
-  const current = await formFields(await f.request("/owner/email-preferences", cookies));
-  expect((await f.request("/owner/email-preferences", cookies, current)).status).toBe(200);
-  expect((await new ProductEmailConsent(env.INSTALLATIONS_DB).preference(f.email)).optedIn).toBe(false);
-  expect(f.send).toHaveBeenCalledTimes(1);
 });

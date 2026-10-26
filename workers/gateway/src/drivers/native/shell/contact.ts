@@ -1,6 +1,8 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
 import type {
+  ApproachResult,
+  ApproachSummary,
   ContactInviteCreateArgs,
   ContactRequestCreateArgs,
   ContactRequestState,
@@ -8,23 +10,27 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { contactDisplayName, jsonObjectSchema } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../../../kernel/context";
+import { resolveCallerOwnerUid } from "../../../kernel/context";
+import { handleApproachCreate } from "../../../kernel/approaches/admission";
+import { expireOverdueApproach } from "../../../kernel/approaches/runtime";
+import { requireContactCaller } from "../../../kernel/federation/authority";
+import { sha256Base64Url } from "../../../kernel/federation-crypto";
 import {
   handleContactAliasSet,
-  handleContactIdentity,
-  handleContactInviteAccept,
-  handleContactInviteCancel,
-  handleContactInviteCreate,
-  handleContactInviteList,
   handleContactList,
   handleContactRequestCreate,
   handleContactRequestList,
   handleContactRequestUpdate,
   handleContactRevoke,
 } from "../../../kernel/federation";
+import {
+  handleContactInviteAccept,
+  handleContactInviteCancel,
+  handleContactInviteCreate,
+  handleContactInviteList,
+} from "../../../kernel/federation/invitations";
 import { handleContactPreferencesUpdate } from "../../../kernel/federation/preferences";
-import { handleProfileResolve } from "../../../kernel/profiles";
-import { deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
-import { shipAddress } from "../../../installation/identity";
+import { handleProfileResolve, ownerDisplayName } from "../../../kernel/profiles";
 import {
   parseDurationMs,
   requireCommandCapability,
@@ -61,16 +67,15 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
     case "--help":
     case "-h":
       return completed(contactUsage());
-    case "identity":
-      requireCommandCapability(ctx, "contact.identity");
-      requireArgumentCount(rest, 0, "identity accepts no arguments");
-      return json(await handleContactIdentity(ctx));
     case "find":
       requireCommandCapability(ctx, "profile.resolve");
       requireArgumentCount(rest, 1, "find requires: contact find @HANDLE|ADDRESS");
-      return json(await handleProfileResolve({ url: profileAddress(rest[0], ctx) }, ctx));
+      return json(await handleProfileResolve({ address: rest[0] }, ctx));
+    case "connect":
+      requireCommandCapability(ctx, "approach.create");
+      return json(await connectToPerson(rest, ctx));
     case "list":
-      return listContacts(rest, ctx);
+      return await listContacts(rest, ctx);
     case "alias":
       requireCommandCapability(ctx, "contact.alias.set");
       if (rest.length < 2) {
@@ -103,18 +108,19 @@ async function runContactCommand(args: string[], ctx: KernelContext): Promise<Ex
   }
 }
 
-function listContacts(args: string[], ctx: KernelContext): ExecResult {
+async function listContacts(args: string[], ctx: KernelContext): Promise<ExecResult> {
   requireCommandCapability(ctx, "contact.list");
   const flags = parseOnlyFlags(args, new Set(["--all", "--json"]));
-  const result = handleContactList({ includeRevoked: flags.has("--all") }, ctx);
+  const result = await handleContactList({ includeRevoked: flags.has("--all") }, ctx);
   if (flags.has("--json")) return json(result);
-  const lines = ["CONTACT\tSTATE\tNAME\tSHIP"];
+  const lines = ["CONTACT\tSTATE\tNAME\tADDRESS"];
   for (const contact of result.contacts) {
     lines.push([
       contact.id,
       contact.state,
       contactDisplayName(contact),
-      contact.remoteShipId,
+      // Only a contact that ended before DIDs names none.
+      contact.remoteHandle ? `@${contact.remoteHandle}` : contact.remoteDid ?? "(before DIDs)",
     ].join("\t"));
   }
   if (result.contacts.length === 0) lines.push("(none)");
@@ -155,6 +161,62 @@ async function manageInvite(args: string[], ctx: KernelContext): Promise<ExecRes
     return json(handleContactInviteCancel({ inviteId: rest[0] }, ctx));
   }
   throw new Error("invite requires create, accept, list, or cancel");
+}
+
+/**
+ * Send a first message request to a published profile. The owner's canonical
+ * Ship may do this for them; the recipient still decides whether to accept.
+ */
+async function connectToPerson(args: string[], ctx: KernelContext): Promise<ApproachResult> {
+  const address = requireShellOptionValue(args[0], "connect");
+  let text: string | undefined;
+  let displayName: string | undefined;
+  let shipHandlesMessages: boolean | undefined;
+  for (let index = 1; index < args.length; index += 2) {
+    const option = args[index];
+    const value = requireShellOptionValue(args[index + 1], option);
+    if (option === "--message" && text === undefined) text = value;
+    else if (option === "--name" && displayName === undefined) displayName = value;
+    else if (option === "--handling" && shipHandlesMessages === undefined) shipHandlesMessages = parseHandling(value);
+    else throw new Error(`unexpected or repeated connect option: ${option}`);
+  }
+  if (!text?.trim()) throw new Error("connect requires --message TEXT");
+  if (shipHandlesMessages === undefined) throw new Error("Ask the owner who should handle new messages, then use --handling manual|ship");
+  // Only the signed-in human or their canonical Ship may send, or replay, a message request.
+  requireContactCaller(ctx, true);
+  const { profile } = await handleProfileResolve({ address }, ctx);
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  const name = displayName ?? ownerDisplayName(ownerUid, ctx);
+  if (!name?.trim()) throw new Error("connect requires --name DISPLAY_NAME");
+  // The same message to the same person is one request while it is still open; once it has
+  // ended, sending it again is a new request.
+  const base = `${profile.did}\n${text}`;
+  let idempotencyKey = `connect:${await sha256Base64Url(base)}`;
+  for (let previous = ctx.approaches.byIdempotencyKey(ownerUid, idempotencyKey); previous;
+    previous = ctx.approaches.byIdempotencyKey(ownerUid, idempotencyKey)) {
+    if (!approachEnded(previous.summary)) {
+      if (["preparing", "pending"].includes(previous.summary.state)
+        && (previous.shipHandlesMessages !== shipHandlesMessages || previous.localDisplayName !== name)) {
+        throw new Error("This message request is already waiting for an answer; withdraw it before sending it with a different name or handling");
+      }
+      return { approach: previous.summary };
+    }
+    idempotencyKey = `connect:${await sha256Base64Url(`${base}\n${previous.summary.id}`)}`;
+  }
+  const open = ctx.approaches.unresolved(ownerUid, profile.did);
+  // A request past its deadline may still read as pending until maintenance reaches it; expire that
+  // exact request now so the replacement is not refused as a duplicate.
+  if (open) await expireOverdueApproach(open, ctx);
+  return await handleApproachCreate({
+    did: profile.did, profileCid: profile.cid, displayName: name, text, shipHandlesMessages, idempotencyKey,
+  }, ctx);
+}
+
+function approachEnded(approach: Pick<ApproachSummary, "state" | "expiresAtMs">): boolean {
+  return ["declined", "withdrawn", "expired", "blocked"].includes(approach.state)
+    // A request still preparing or pending past its deadline has ended too; maintenance just hasn't
+    // recorded it yet. Accepting requests keep their receipt grace and are not ended here.
+    || (["preparing", "pending"].includes(approach.state) && approach.expiresAtMs <= Date.now());
 }
 
 function parseHandling(value: string): boolean {
@@ -293,17 +355,6 @@ function parseOnlyFlags(args: string[], allowed: Set<string>): Set<string> {
   return flags;
 }
 
-/** A bare or @-prefixed handle names a Ship on this deployment's domain; anything else is a Ship's address. */
-function profileAddress(value: string, ctx: KernelContext): string {
-  const handle = value.replace(/^@/, "").toLowerCase();
-  if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(handle)) {
-    const domain = shipAddress(ctx.installationIdentity, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).primaryDomain)?.domain;
-    if (!domain) throw new Error("This Ship has no domain for handles; give the Ship's full address");
-    return `https://${handle}.${domain}/profile`;
-  }
-  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
-}
-
 function requireArgumentCount(args: string[], count: number, message: string): void {
   if (args.length !== count) throw new Error(message);
 }
@@ -319,8 +370,8 @@ function completed(stdout: string): ExecResult {
 function contactUsage(): string {
   return [
     "Usage:",
-    "  contact identity",
     "  contact find @HANDLE|ADDRESS",
+    "  contact connect @HANDLE|ADDRESS --message TEXT --handling manual|ship [--name DISPLAY_NAME]",
     "  contact list [--all] [--json]",
     "  contact alias CONTACT_ID NAME|--clear",
     "  contact invite create --handling manual|ship [--expires DURATION]",
@@ -335,7 +386,9 @@ function contactUsage(): string {
     "",
     "Ask the owner who should handle new messages unless they already chose. manual leaves messages for the owner;",
     "ship lets Ship handle future incoming messages. The choice affects only this owner's side and can change later.",
-    "find reads published profiles only. Private invitations need neither a public profile nor an existing contact.",
+    "Profiles are public by default. connect finds the person's profile and sends them a first message request;",
+    "they decide whether to accept. The request fails if the profile is unavailable or not receiving requests.",
+    "Private invitations need neither a public profile nor an existing contact.",
     "To invite someone at a known email address, create an invitation and send its url with mail send; see mail help.",
     "Otherwise share the url with the owner. Check email delivery with mail status and acceptance with contact invite list --all.",
     "Creating or sending a link does not mean it was accepted.",

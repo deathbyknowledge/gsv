@@ -12,12 +12,14 @@
     "./admin/page": "./src/admin/page.ts",
     "./admin/installations-page": "./src/admin/installations-page.ts",
     "./admin/insight": "./src/admin/insight.ts",
+    "./admin/takedowns": "./src/admin/takedowns.ts",
     "./http": "./src/http.ts",
     "./store": "./src/store.ts",
     "./domain": "./src/domain.ts",
     "./tokens": "./src/tokens.ts",
     "./onboarding": "./src/onboarding.ts",
     "./reset-preparation": "./src/reset-preparation.ts",
+    "./request-reports": "./src/request-reports.ts",
     "./deletion": "./src/deletion.ts",
     "./deletion-verifier": "./src/deletion-verifier.ts",
     "./operator-resources": "./src/operator-resources.ts",
@@ -28,9 +30,7 @@
     "./owner-service": "./src/owner-service.ts",
     "./owner-front-door": "./src/owner-front-door.ts",
     "./signup": "./src/signup.ts",
-    "./product-email": "./src/product-email.ts",
-    "./product-email-http": "./src/product-email-http.ts",
-    "./service-notices": "./src/service-notices.ts"
+    "./product-email": "./src/product-email.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

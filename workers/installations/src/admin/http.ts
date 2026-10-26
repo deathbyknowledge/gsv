@@ -1,18 +1,25 @@
+import type { UsernamePolicyInput, UsernamePolicyLists } from "../username-policy";
+import { adminSignupPage } from "./signup-page";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { AdminInstallation, AdminInstallationList, AdminInstallationListQuery, AdminInstallationSummary } from "../administration";
 import { hasExpectedOrigin, json, noStoreHeaders, readRequestBody, requireString } from "../http";
 import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
-import { InstallationAdminApi, readInstallationListQuery } from "./api";
-import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type ShipView } from "./installations-page";
+import { InstallationAdminApi, readConfirmedAction, readInstallationListQuery, UnconfirmedActionError } from "./api";
+import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type LifecycleRetry, type ShipView } from "./installations-page";
 import { adminAuditPage } from "./audit-page";
 import type { AdminAuditRecorder, OperatorAuditResult, ShipInsight } from "./insight";
 import { adminErrorPage, adminStylesheet, adminTimeScript } from "./page";
-import type { IssuedAdminInstallation } from "./service";
+import { OpenNetworkFollowError, type IssuedAdminInstallation } from "./service";
 import { InstallationDeletionHttp } from "../deletion-http";
 import type { AccountsDeletionRuntime } from "../deletion-runtime";
+import type { RequestReports } from "../request-reports";
+import { RequestReportsHttp } from "./reports-http";
+import { runTakedownAction, type ShipTakedowns } from "./takedowns";
 
 type AdminCreateFormInput = { operationId: string; handle: string };
 type AdminService<Detail extends AdminInstallation, Summary extends AdminInstallationSummary> = {
+  getUsernamePolicy(): Promise<UsernamePolicyLists>;
+  setUsernamePolicy(value: UsernamePolicyInput): Promise<void>;
   listInstallations(input: AdminInstallationListQuery): Promise<Omit<AdminInstallationList, "installations"> & { installations: Summary[] }>;
   getInstallation(installationId: string): Promise<Detail | null>;
   create(input: AdminCreateFormInput): Promise<IssuedAdminInstallation & { installation: Detail }>;
@@ -28,6 +35,7 @@ export class InstallationAdminHttp<
 > {
   private readonly api: InstallationAdminApi;
   private readonly deletion: InstallationDeletionHttp | undefined;
+  private readonly reports: RequestReportsHttp | undefined;
 
   constructor(
     private readonly service: AdminService<Detail, Summary>,
@@ -36,10 +44,16 @@ export class InstallationAdminHttp<
     private readonly presentation: InstallationAdminPresentation<Detail, Summary> = {},
     deletion?: AccountsDeletionRuntime,
     private readonly insight?: ShipInsight,
+    private readonly takedowns?: ShipTakedowns,
+    reports?: RequestReports,
   ) {
     const audited: AdminAuditRecorder = (request, action, mutation, describe) => this.audited(request, action, mutation, describe);
-    this.api = new InstallationAdminApi(service, access, origin, audited);
+    this.api = new InstallationAdminApi(service, access, origin, audited, takedowns);
     this.deletion = deletion ? new InstallationDeletionHttp(deletion, access, origin, audited) : undefined;
+    // A report closes under the audit event of the operator's action, so the queue needs the audit log.
+    this.reports = reports && insight
+      ? new RequestReportsHttp(reports, insight.audit, access, origin, audited, takedowns, presentation.navigation)
+      : undefined;
   }
 
   async handle(request: Request): Promise<Response | null> {
@@ -47,12 +61,16 @@ export class InstallationAdminHttp<
     if (url.pathname !== "/admin" && !url.pathname.startsWith("/admin/")) return null;
     const deletionResponse = await this.deletion?.handle(request);
     if (deletionResponse) return deletionResponse;
+    const reportsResponse = await this.reports?.handle(request);
+    if (reportsResponse) return reportsResponse;
     const response = await this.api.handle(request);
     if (response) return response;
     if (!await this.access.allows(request)) return adminText("Forbidden", 403);
     const head = request.method === "HEAD";
-    const route = /^\/admin\/installations\/([^/]+)(?:\/(onboarding|lifecycle|reset))?$/.exec(url.pathname);
+    const route = /^\/admin\/installations\/([^/]+)(?:\/(onboarding|lifecycle|reset|takedowns|takedowns\/restore))?$/.exec(url.pathname);
     let createFormInput: AdminCreateFormInput | undefined;
+    let usernamePolicyInput: UsernamePolicyInput | undefined;
+    let lifecycleRetry: LifecycleRetry | undefined;
     try {
       if (url.pathname === "/admin/styles.css" && (request.method === "GET" || head)) return adminStylesheet(head);
       if (url.pathname === "/admin/time.js" && (request.method === "GET" || head)) return adminTimeScript(head);
@@ -61,8 +79,24 @@ export class InstallationAdminHttp<
         return adminInstallationsPage(await this.service.listInstallations(readInstallationListQuery(url)), undefined, head, 200, this.presentation);
       }
       if (url.pathname === "/admin/audit" && (request.method === "GET" || head)) {
-        const page = readAuditPage(url);
+        const page = readPageNumber(url);
         return adminAuditPage(this.insight ? await this.insight.audit.list({ page }) : null, head, this.presentation.navigation);
+      }
+      if (url.pathname === "/admin/signup" && (request.method === "GET" || head)) {
+        const lists = await this.service.getUsernamePolicy();
+        return adminSignupPage({ lists: { reserved: lists.reserved.join("\n"), blocked: lists.blocked.join("\n") }, head,
+          saved: url.searchParams.get("saved") === "1", navigation: this.presentation.navigation });
+      }
+      if (url.pathname === "/admin/signup" && request.method === "POST") {
+        requireAdminMutationOrigin(request, this.origin);
+        // Two 16,000-character fields can use nine encoded bytes per UTF-16 code unit, plus form framing.
+        const form = await readAdminForm(request, 320 * 1024);
+        const reserved = form.get("reserved"), blocked = form.get("blocked");
+        if (reserved === null || blocked === null) throw new Error("handle lists are required");
+        const input = { reserved, blocked };
+        usernamePolicyInput = input;
+        await this.audited(request, { name: "signup.username-policy.update" }, () => this.service.setUsernamePolicy(input));
+        return adminRedirect("/admin/signup?saved=1");
       }
       if (url.pathname === "/admin/installations/new" && (request.method === "GET" || head)) {
         return adminNewInstallationPage(undefined, head, 200, undefined, this.presentation.navigation);
@@ -88,8 +122,9 @@ export class InstallationAdminHttp<
           const form = await readAdminForm(request);
           const state = form.get("state");
           if (state !== "active" && state !== "restricted") throw new Error("installation state is invalid");
+          lifecycleRetry = { state, reason: form.get("reason") };
           await this.audited(request,
-            { name: state === "restricted" ? "ship.suspend" : "ship.reactivate", installationId, reason: form.get("reason") },
+            { name: state === "restricted" ? "ship.suspend" : "ship.reactivate", installationId, reason: lifecycleRetry.reason },
             () => this.service.setInstallationState(installationId, state));
           return adminRedirect(`/admin/installations/${encodeURIComponent(installationId)}`);
         }
@@ -100,14 +135,18 @@ export class InstallationAdminHttp<
         }
         if (route[2] === "reset") {
           const form = await readAdminForm(request);
-          const input = {
-            operationId: requireString(form.get("operationId"), "operationId"),
-            confirmHandle: requireString(form.get("confirmHandle"), "confirmHandle"),
-          };
-          const issued = await this.audited(request, { name: "ship.reset", installationId, reason: form.get("reason") },
+          const { input, reason } = readConfirmedAction({
+            operationId: form.get("operationId"), confirmHandle: form.get("confirmHandle"), reason: form.get("reason"),
+          });
+          const issued = await this.audited(request, { name: "ship.reset", installationId, reason },
             () => this.service.resetInstallation(installationId, input),
             (result) => ({ detail: { replacementInstallationId: result.installation.installationId } }));
           return adminInstallationPage(issued.installation, issued, undefined, false, 201, this.presentation, await this.shipView(issued.installation));
+        }
+        if ((route[2] === "takedowns" || route[2] === "takedowns/restore") && this.takedowns) {
+          await runTakedownAction(this.takedowns, (...args) => this.audited(...args), request, installationId,
+            route[2] === "takedowns" ? "takedown" : "restore", Object.fromEntries(await readAdminForm(request)));
+          return adminRedirect(`/admin/installations/${encodeURIComponent(installationId)}`);
         }
       }
       return isAdminApiPath(url.pathname)
@@ -120,6 +159,10 @@ export class InstallationAdminHttp<
       const failure = installationAdminFailure(error instanceof Error ? error : new Error("request failed"));
       if (failure.status >= 500) console.warn("[Operator] Admin request failed:", url.pathname, exceptionDiagnostics(error));
       if (isAdminApiPath(url.pathname)) return json({ error: failure.message }, failure.status);
+      if (request.method === "POST" && url.pathname === "/admin/signup" && usernamePolicyInput !== undefined) {
+        return adminSignupPage({ lists: usernamePolicyInput, error: failure.message, status: failure.status,
+          navigation: this.presentation.navigation });
+      }
       if (request.method === "POST" && url.pathname === "/admin/installations") {
         return adminNewInstallationPage(failure.message, false, failure.status, createFormInput, this.presentation.navigation);
       }
@@ -129,7 +172,7 @@ export class InstallationAdminHttp<
         catch { installation = null; }
         if (installation) {
           return adminInstallationPage(installation, undefined, failure.message, false, failure.status, this.presentation,
-            await this.shipView(installation));
+            await this.shipView(installation), error instanceof OpenNetworkFollowError ? lifecycleRetry : undefined);
         }
       }
       return adminErrorPage(failure.message, failure.status, head, this.presentation.navigation);
@@ -139,8 +182,8 @@ export class InstallationAdminHttp<
   /** Runs an admitted operator mutation under its audit row. */
   private async audited<T>(
     request: Request,
-    action: { name: string; installationId?: string; reason?: string | null },
-    mutation: () => Promise<T>,
+    action: { name: string; installationId?: string; reason?: string | null; detail?: Record<string, string> },
+    mutation: (eventId?: string) => Promise<T>,
     describe?: (result: T) => OperatorAuditResult,
   ): Promise<T> {
     if (!this.insight) return await mutation();
@@ -148,8 +191,8 @@ export class InstallationAdminHttp<
     // that fails a second verification refuses the action rather than losing attribution.
     const actor = this.access.operatorIdentity ? await this.access.operatorIdentity(request) : "operator";
     if (actor === null) throw new AdminForbiddenError();
-    return await this.insight.audit.run({ actor, action: action.name, installationId: action.installationId, reason: action.reason },
-      mutation, describe);
+    return await this.insight.audit.run({ actor, action: action.name, installationId: action.installationId, reason: action.reason,
+      detail: action.detail }, mutation, describe);
   }
 
   /**
@@ -159,11 +202,12 @@ export class InstallationAdminHttp<
   private async shipView(installation: Detail): Promise<ShipView | undefined> {
     if (!this.insight) return undefined;
     try {
-      const [context, health] = await Promise.all([
+      const [context, health, openNetwork] = await Promise.all([
         this.insight.context(installation),
         this.insight.health(installation.installationId),
+        this.takedowns?.view(installation.installationId),
       ]);
-      return { context, health };
+      return openNetwork ? { context, health, openNetwork } : { context, health };
     } catch (error) {
       console.warn("[Operator] Ship page details unavailable:", installation.installationId, exceptionDiagnostics(error));
       return undefined;
@@ -171,7 +215,7 @@ export class InstallationAdminHttp<
   }
 }
 
-function readAuditPage(url: URL): number {
+export function readPageNumber(url: URL): number {
   const value = url.searchParams.get("page");
   if (value === null) return 1;
   const page = Number(value);
@@ -184,10 +228,10 @@ export function requireAdminMutationOrigin(request: Request, origin: string): vo
   if (!hasExpectedOrigin(request, origin)) throw new AdminForbiddenError();
 }
 
-export async function readAdminForm(request: Request): Promise<URLSearchParams> {
+export async function readAdminForm(request: Request, maxBytes = 16 * 1024): Promise<URLSearchParams> {
   const type = request.headers.get("content-type")?.split(";", 1)[0]?.trim();
   if (type !== "application/x-www-form-urlencoded") throw new Error("form body is required");
-  const bytes = await readRequestBody(request, 16 * 1024);
+  const bytes = await readRequestBody(request, maxBytes);
   return new URLSearchParams(new TextDecoder().decode(bytes));
 }
 
@@ -208,8 +252,10 @@ function isAdminApiPath(pathname: string): boolean {
   return pathname === "/admin/api" || pathname.startsWith("/admin/api/");
 }
 
-function installationAdminFailure(error: Error) {
+export function installationAdminFailure(error: Error) {
   const message = error.message;
+  if (error instanceof UnconfirmedActionError) return { message, status: 400 };
+  if (error instanceof OpenNetworkFollowError) return { message, status: 503 };
   if (["handle ", "installation", "operationId ", "request ", "form ", "query ", "state ", "page "]
     .some((prefix) => message.startsWith(prefix))) return { message, status: 400 };
   return { message: "The operator request could not be completed.", status: 503 };
