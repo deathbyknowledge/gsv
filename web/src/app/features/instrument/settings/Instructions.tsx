@@ -1,4 +1,7 @@
 import { LoadingState } from "../../../components/ui/Spinner";
+import { Select } from "../../../components/ui/Select";
+import { TextArea } from "../../../components/ui/TextArea";
+import { TextInput } from "../../../components/ui/TextInput";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
@@ -102,9 +105,7 @@ export function Instructions({ account, active, onDirty }: SettingsSectionProps)
     {deleted && <p role="status">{t("settings.instructions.deleted", { name: deleted })}</p>}
     {!newDraft && files.data?.length === 0 && <p>{t("settings.instructions.none")}</p>}
     {!newDraft && files.data && files.data.length > 0 && <>
-      <label>{t("settings.instructions.file")}<select value={name ?? ""} disabled={pending} onChange={(event) => { setSelected(event.currentTarget.value); setConfirmDelete(false); setDeleted(null); setSaved(null); remove.reset(); }}>
-        {files.data.map((entry) => <option key={entry} value={entry}>{drafts[entry] && drafts[entry].content !== drafts[entry].original ? t("settings.instructions.unsavedFile", { name: entry }) : entry}</option>)}
-      </select></label>
+      <Select block label={t("settings.instructions.file")} options={files.data.map((entry) => ({ label: drafts[entry] && drafts[entry].content !== drafts[entry].original ? t("settings.instructions.unsavedFile", { name: entry }) : entry, value: entry }))} selected={name ?? ""} disabled={pending} onSelect={(value) => { setSelected(value); setConfirmDelete(false); setDeleted(null); setSaved(null); remove.reset(); }} />
       <SettingsError error={file.error ?? currentError ?? remove.error} />
       {file.isPending && connected && <LoadingState>{t("settings.instructions.reading")}</LoadingState>}
     </>}
@@ -114,23 +115,21 @@ export function Instructions({ account, active, onDirty }: SettingsSectionProps)
         if (!newDirty || window.confirm(t("settings.instructions.confirmDiscardNew"))) { setNewDraft(null); create.reset(); }
       }}>{t("common.cancel")}</button>
     </div>}
-    {(newDraft || name) && <form aria-label={t(newDraft ? "settings.instructions.newTitle" : "settings.instructions.edit")} onSubmit={(event) => {
+    {(newDraft || name) && <form class="settings-instruction-form" aria-label={t(newDraft ? "settings.instructions.newTitle" : "settings.instructions.edit")} onSubmit={(event) => {
       event.preventDefault();
       if (newDraft) { if (canCreate && newName) create.mutate({ name: newName, content: newDraft.content }); }
       else if (editable && name && content !== undefined) save.mutate({ name, content });
     }}>
       {newDraft && <>
-        <label>{t("settings.instructions.fileName")} <small>{t("settings.instructions.mdAdded")}</small><input name="instruction-name" autoFocus autoComplete="off" value={newDraft.name} readOnly={!editable} placeholder={t("settings.instructions.namePlaceholder")} aria-invalid={!!nameError} aria-describedby={nameError ? "instruction-name-error" : undefined} onInput={(event) => { setNewDraft({ ...newDraft, name: event.currentTarget.value }); create.reset(); }} /></label>
-        {nameError && <p class="settings-error" id="instruction-name-error" role="alert">{nameError}</p>}
+        <TextInput label={t("settings.instructions.fileName")} description={t("settings.instructions.mdAdded")} placeholder={t("settings.instructions.namePlaceholder")} value={newDraft.name} readonly={!editable} status={nameError ? "error" : "none"} message={nameError ?? ""} inputProps={{ name: "instruction-name", autoFocus: true, autoComplete: "off" }} onChange={(value) => { setNewDraft({ ...newDraft, name: value }); create.reset(); }} />
         <SettingsError error={create.error} />
       </>}
       {content !== undefined && <>
-        <label>{newDraft ? t("settings.instructions.title") : name}<textarea class="settings-instruction-editor" aria-label={t("settings.instructions.contentLabel")} spellcheck={false} value={content} readOnly={!editable} onInput={(event) => {
-          const value = event.currentTarget.value;
+        <TextArea label={newDraft ? t("settings.instructions.title") : name ?? ""} placeholder="" size="large" rows={24} value={content} readonly={!editable} textareaProps={{ "aria-label": t("settings.instructions.contentLabel") }} onChange={(value) => {
           if (newDraft) { setNewDraft({ ...newDraft, content: value }); create.reset(); }
           else if (name) { setDrafts({ ...drafts, [name]: { original: draft?.original ?? file.data!, content: value } }); save.reset(); }
           setSaved(null);
-        }} /></label>
+        }} />
         <div class="settings-actions">
           {newDraft ? <button class="ibtn" type="submit" disabled={!canCreate}>{create.isPending ? <LoadingState>{t("settings.instructions.creating")}</LoadingState> : t("settings.instructions.create")}</button>
             : <button class="ibtn" type="submit" disabled={!editable || !draft || draft.content === draft.original}>{save.isPending ? <LoadingState>{t("common.saving")}</LoadingState> : t("settings.instructions.save")}</button>}

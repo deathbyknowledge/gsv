@@ -28,7 +28,8 @@ export interface TextInputProps {
   prefix?: ComponentChildren;
   suffix?: string;
   clearable?: boolean;
-  type?: "text" | "password";
+  /** Native input type. Password gets the show/hide toggle; the others only change keyboard and validation. */
+  type?: "text" | "password" | "url" | "number" | "email";
   maxLength?: number;
   onChange?: (value: string) => void;
   /** Extra attributes spread onto the inner <input> (autoComplete, name,
@@ -133,12 +134,13 @@ export function TextInput(props: TextInputProps) {
           {...inputProps}
           class="gsv-ti-input"
           id={fieldId}
-          type={isPassword && !revealed ? "password" : "text"}
+          type={isPassword ? (revealed ? "text" : "password") : type}
           value={value}
           placeholder={placeholder}
           disabled={disabled}
           readOnly={readonly}
-          aria-labelledby={hasLabelRow && label.length > 0 ? `${fieldId}-label` : undefined}
+          // A caller's own accessible name (repeated rows numbered "Header 1 name") wins over the visible label.
+          aria-labelledby={hasLabelRow && label.length > 0 && !inputProps?.["aria-label"] ? `${fieldId}-label` : undefined}
           aria-describedby={describedBy}
           aria-invalid={effectiveStatus === "error" ? true : undefined}
           // SAFETY: Component boundary provides the asserted DOM/test shape.
@@ -175,7 +177,7 @@ export function TextInput(props: TextInputProps) {
           {hasStatusMsg ? (
             <>
               <span class="gsv-fld-dot" />
-              <span class="gsv-fld-msg gsv-sublabel" id={`${fieldId}-msg`}>{effectiveMessage}</span>
+              <span class="gsv-fld-msg gsv-sublabel" id={`${fieldId}-msg`} role={effectiveStatus === "error" ? "alert" : undefined}>{effectiveMessage}</span>
             </>
           ) : null}
           {showCounter ? <span class="gsv-ti-counter gsv-sublabel">{counterText}</span> : null}
