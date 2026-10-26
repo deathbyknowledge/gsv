@@ -23,6 +23,8 @@ export type OwnerNotice = {
   subject: OwnerNoticeSubject;
   pendingCount: number;
   round: number;
+  /** Row creation time; with the round it names this notice once, even after a row is forgotten. */
+  createdAtMs: number;
   attemptCount: number;
   nextAttemptAtMs: number;
 };
@@ -34,6 +36,7 @@ type OwnerNoticeRow = {
   subject_json: string;
   pending_count: number;
   round: number;
+  created_at: number;
   attempt_count: number;
   next_attempt_at: number;
 };
@@ -105,7 +108,7 @@ export class OwnerNoticeStore {
   /** The owner's earliest pending notice. */
   next(ownerUid: number): OwnerNotice | null {
     const row = this.sql.exec<OwnerNoticeRow>(
-      `SELECT notice_key, owner_uid, topic, subject_json, pending_count, round, attempt_count, next_attempt_at
+      `SELECT notice_key, owner_uid, topic, subject_json, pending_count, round, created_at, attempt_count, next_attempt_at
        FROM owner_notices WHERE owner_uid = ? AND state = 'pending'
        ORDER BY next_attempt_at, created_at, notice_key LIMIT 1`,
       ownerUid,
@@ -118,6 +121,7 @@ export class OwnerNoticeStore {
       subject: subjectSchema.parse(JSON.parse(row.subject_json)),
       pendingCount: row.pending_count,
       round: row.round,
+      createdAtMs: row.created_at,
       attemptCount: row.attempt_count,
       nextAttemptAtMs: row.next_attempt_at,
     };

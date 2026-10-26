@@ -5,7 +5,7 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import * as adapterSend from "./adapter-send";
 import type { Kernel } from "./do";
 import { OwnerNoticeRuntime } from "./owner-notice-runtime";
-import { OwnerNoticeStore } from "./owner-notice-store";
+import { OWNER_NOTICE_COLLAPSE_MS, OwnerNoticeStore } from "./owner-notice-store";
 import { ShipEventStore } from "./ship-event-store";
 
 const OWNER = 1000;
@@ -13,26 +13,30 @@ const WHATSAPP: AdapterMessageDestination = {
   kind: "adapter", adapter: "whatsapp", accountId: "managed", actorId: "wa:owner", surface: { kind: "dm", id: "wa:owner" },
 };
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("owner notice delivery", () => {
   it("tells a person on their messenger about a contact message they handle, and records it for Ship", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, notices, shipEvents, host } = fixture(storage);
       const send = sent();
-      notices.noteContactMessage(OWNER, adaSubject("are we still on\nfor tomorrow?"), 1, Date.now());
+      const at = Date.now();
+      notices.noteContactMessage(OWNER, adaSubject("are we still on\nfor tomorrow?"), 1, at);
 
       await runtime.onOwnerNotices(OWNER, { id: "task:one" });
 
       expect(send).toHaveBeenCalledExactlyOnceWith(WHATSAPP, OWNER, {
-        deliveryId: "owner-notice:contact.message:contact:ada:0",
+        deliveryId: expect.stringMatching(/^owner-notice:[0-9a-f]{64}$/),
         text: "💬 Ada: are we still on for tomorrow?\nOpen: https://person.example/people?contact=contact%3Aada",
       }, expect.anything());
       expect(notices.next(OWNER)).toBeNull();
       expect(shipEvents.next(OWNER)).toMatchObject({
-        eventId: "owner.notified:contact.message:contact:ada:0",
+        eventId: `owner.notified:contact.message:contact:ada:${at}:0`,
         event: { type: "owner.notified", payload: {
-          noticeId: "contact.message:contact:ada:0", topic: "contact.message", channel: "WhatsApp", from: "Ada",
+          noticeId: `contact.message:contact:ada:${at}:0`, topic: "contact.message", channel: "WhatsApp", from: "Ada",
           contactId: "contact:ada", conversationId: "conv:ada", messages: 1,
           text: "💬 Ada: are we still on for tomorrow?\nOpen: https://person.example/people?contact=contact%3Aada",
         } },
@@ -78,7 +82,8 @@ describe("owner notice delivery", () => {
       const send = vi.spyOn(adapterSend, "deliverAdapterDestination")
         .mockResolvedValueOnce({ ok: false, error: "WhatsApp is unavailable", retryable: true })
         .mockResolvedValueOnce({ ok: true, adapter: "whatsapp", accountId: "managed", surfaceId: "wa:owner", deliveryId: "d" });
-      notices.noteContactMessage(OWNER, adaSubject("hi"), 1, Date.now());
+      const at = Date.now();
+      notices.noteContactMessage(OWNER, adaSubject("hi"), 1, at);
 
       await runtime.onOwnerNotices(OWNER, { id: "task:first" });
       expect(notices.next(OWNER)).toMatchObject({ attemptCount: 1, round: 0 });
@@ -86,15 +91,63 @@ describe("owner notice delivery", () => {
 
       storage.sql.exec("UPDATE owner_notices SET next_attempt_at = 0");
       await runtime.onOwnerNotices(OWNER, { id: "task:retry" });
-      expect(send.mock.calls.map(([, , message]) => message.deliveryId)).toEqual([
-        "owner-notice:contact.message:contact:ada:0", "owner-notice:contact.message:contact:ada:0",
-      ]);
-      expect(shipEvents.next(OWNER)?.eventId).toBe("owner.notified:contact.message:contact:ada:0");
+      const [failed, retried] = send.mock.calls.map(([, , message]) => message.deliveryId);
+      expect(retried).toBe(failed);
+      expect(shipEvents.next(OWNER)?.eventId).toBe(`owner.notified:contact.message:contact:ada:${at}:0`);
 
       send.mockResolvedValueOnce({ ok: false, error: "Destination is no longer linked", retryable: false });
       notices.noteOnce(OWNER, "contact.invite.accepted:contact:ada:generation:one", "contact.invite.accepted", adaSubject(), Date.now());
       await runtime.onOwnerNotices(OWNER, { id: "task:refused" });
       expect(notices.next(OWNER)).toBeNull();
+    });
+  });
+
+  it("never reuses a delivery identity after a contact's notice row is forgotten", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices, state } = fixture(storage);
+      const send = sent();
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const pastWindow = () => vi.setSystemTime(Date.now() + OWNER_NOTICE_COLLAPSE_MS + 1_000);
+      notices.noteContactMessage(OWNER, adaSubject("hi"), 1, Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:one" });
+
+      pastWindow();
+      notices.prune(Date.now());
+      notices.noteContactMessage(OWNER, adaSubject("hi"), 2, Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:two" });
+
+      pastWindow();
+      notices.noteContactMessage(OWNER, adaSubject("hi"), 3, Date.now());
+      state.unread = false;
+      await runtime.onOwnerNotices(OWNER, { id: "task:dismissed" });
+      state.unread = true;
+      notices.noteContactMessage(OWNER, adaSubject("hi"), 4, Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:three" });
+      vi.useRealTimers();
+
+      const ids = send.mock.calls.map(([, , message]) => message.deliveryId);
+      expect(ids).toHaveLength(3);
+      expect(new Set(ids).size).toBe(3);
+      expect(storage.sql.exec("SELECT COUNT(*) AS n FROM ship_events").one().n).toBe(3);
+    });
+  });
+
+  it("sends changed text under a new delivery id after a retryable failure", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices } = fixture(storage);
+      const send = vi.spyOn(adapterSend, "deliverAdapterDestination")
+        .mockResolvedValueOnce({ ok: false, error: "Telegram is unavailable", retryable: true })
+        .mockResolvedValueOnce({ ok: true, adapter: "whatsapp", accountId: "managed", surfaceId: "wa:owner", deliveryId: "d" });
+      notices.noteContactMessage(OWNER, adaSubject("hi"), 1, Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:first" });
+
+      notices.noteContactMessage(OWNER, adaSubject("are you there?"), 2, Date.now());
+      storage.sql.exec("UPDATE owner_notices SET next_attempt_at = 0");
+      await runtime.onOwnerNotices(OWNER, { id: "task:retry" });
+
+      const [failed, retried] = send.mock.calls.map(([, , message]) => message);
+      expect(retried?.text).toContain("Ada sent you 2 messages");
+      expect(retried?.deliveryId).not.toBe(failed?.deliveryId);
     });
   });
 

@@ -1,5 +1,6 @@
 import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import type { DurableTaskOptions } from "../shared/durable-tasks";
+import { stableOpaqueId } from "../shared/stable-id";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { deliverAdapterDestination } from "./adapter-send";
 import { adapterDisplayName, identityLinkRouteGeneration } from "./adapter-destinations";
@@ -61,8 +62,12 @@ export class OwnerNoticeRuntime {
       noticeLanguage(ctx.config.get(`users/${notice.ownerUid}/locale/language`)),
       ctx.installationIdentity?.canonicalOrigin ?? null,
     );
+    // A forgotten row comes back with a new creation time, so a round is never named twice.
+    const noticeId = `${notice.key}:${notice.createdAtMs}:${notice.round}`;
+    // Adapters bind a delivery id to its content: a retry after the text changed is a new delivery.
+    const deliveryId = await stableOpaqueId("owner-notice", [noticeId, text]);
     const result = await deliverAdapterDestination(destination, notice.ownerUid, {
-      deliveryId: `owner-notice:${notice.key}:${notice.round}`,
+      deliveryId,
       text,
       ...(routeGeneration === undefined ? undefined : { routeGeneration }),
     }, ctx);
@@ -81,7 +86,7 @@ export class OwnerNoticeRuntime {
     const event: OwnerNotifiedShipEvent = {
       type: "owner.notified",
       payload: {
-        noticeId: `${notice.key}:${notice.round}`,
+        noticeId,
         topic: current.topic,
         channel: adapterDisplayName(destination.adapter),
         text,
@@ -94,7 +99,7 @@ export class OwnerNoticeRuntime {
     };
     this.host.ctx.storage.transactionSync(() => {
       this.host.ownerNotices.sent(notice, now);
-      this.host.shipEvents.enqueue(notice.ownerUid, `owner.notified:${notice.key}:${notice.round}`, event, now);
+      this.host.shipEvents.enqueue(notice.ownerUid, `owner.notified:${noticeId}`, event, now);
     });
     await this.host.shipEventRuntime.queue(notice.ownerUid);
     return true;
