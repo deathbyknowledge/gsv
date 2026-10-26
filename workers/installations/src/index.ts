@@ -31,10 +31,10 @@ export { RequestReportsEntrypoint } from "./request-reports";
 export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment & OperatorEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
   async scheduled(): Promise<void> {
-    await runProductEmailJobs(this.env.INSTALLATIONS_DB, this.env);
     await cleanExpiredOwnerAuthentication(this.env);
     await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)).resumePending();
     await new RequestReports(this.env.INSTALLATIONS_DB).forgetClosedMessages();
+    await runProductEmailJobs(this.env.INSTALLATIONS_DB, this.env);
   }
 
   async fetch(request: Request): Promise<Response> {
