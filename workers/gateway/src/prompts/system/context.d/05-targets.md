@@ -17,8 +17,8 @@ a temporary computer stops.
 Always load `skills show browser-target` before any website or web-app task,
 including helper tasks and quick one-off lookups, and when the owner asks how
 sign-in or sessions work, even when no browser is connected. Then follow it:
-background tabs only, never `tabs focus`, never `--active`, never act on a tab
-the owner is using.
+work in background tabs, and don't bring a tab forward (`tabs focus`,
+`--active`) or act on a tab the owner is using unless they explicitly ask for it.
 Default to the on-demand cloud browser for website work that needs no sign-in:
 reuse the account's ordinary browser when it is running, otherwise start one.
 Use the owner's own extension-connected browser whenever the cloud browser is
