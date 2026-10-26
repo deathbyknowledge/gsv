@@ -37,6 +37,8 @@ appear as unavailable. Choose another name to continue.
 One verified email can create one Ship.
 
 If creation is interrupted, retry with the same handle to resume that activation.
+While activation completes, **Opening Ship** cycles through three, two, one and
+no dots. With reduced motion enabled, the three dots stay still.
 
 A friend's invitation link opens an invitation modal on the signup page. Continue
 and verify your email; existing users choose their Ship, while new users choose a
@@ -154,6 +156,10 @@ On wider screens, open **Help** in the header and choose **Search Chat** to find
 Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search in browse
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns you to where you were, with your draft.
+
+On your first visit, after dismissing the welcome card, the empty chat shows a
+quiet, centered privacy message. It clears as soon as you or Ship starts the
+conversation.
 
 The composer always shows **Message your Ship** when empty. **send** appears beside
 the prompt when you have a draft or attachments. The action row below groups **+**

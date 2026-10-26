@@ -1111,7 +1111,7 @@ export const es = {
   "session.setup.aboutShip": "Ship es un asistente de IA que puede usar tu ordenador y tus servicios conectados para hacer las cosas por ti.",
   "session.setup.aboutAccess": "Según lo que le permitas, puede trabajar con archivos, ejecutar comandos, usar sitios web y servicios con sesión iniciada y enviar comunicaciones en tu nombre.",
   "session.setup.aboutRisk": "Ship está en acceso anticipado y puede cometer errores. Algunas acciones pueden ser difíciles de deshacer, así que guarda copias de seguridad de los datos importantes y revisa con atención las acciones con consecuencias.",
-  "session.setup.opening": "Abriendo Ship…",
+  "session.setup.opening": "Abriendo Ship",
   "session.setup.activate": "Activar Ship",
 
   // Session: unfinished setup
@@ -1852,6 +1852,7 @@ export const es = {
   "chat.message.dismiss": "descartar",
   "chat.history.failed": "No se ha podido cargar tu conversación: {error}",
   "chat.history.helperEmpty": "Este ayudante aún no tiene mensajes.",
+  "chat.firstOpenPrivacy": "No usamos tus datos para entrenar IA.\nTus conversaciones son privadas.\n¡Tu información te pertenece!",
   "chat.history.waking": "Ship se está despertando",
   "chat.history.loadingOlder": "cargando mensajes anteriores",
   "chat.history.loadFailed": "No se ha podido cargar el historial.",

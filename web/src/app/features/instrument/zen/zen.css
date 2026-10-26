@@ -19,6 +19,18 @@
 @container instrument (max-width: 720px) {
   .zen-body { --zen-gutter: 18px; }
 }
+.zen-first-open-privacy {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+  color: var(--faint);
+  font: 400 16px/1.7 var(--gsv-font-prose);
+  text-align: center;
+}
+.zen-first-open-privacy p { margin: 0; max-width: 44ch; white-space: pre-line; }
 .zen-moments {
   grid-area: 1 / 1 / 2 / -1;
   position: relative;
