@@ -252,10 +252,12 @@ Every capability tool also accepts a `purpose` argument: one sentence written fo
 | `config/shell/network_enabled` | `true` | Enables network tools in native shell execution. |
 | `config/shell/max_output_bytes` | `524288` | Maximum stdout and stderr returned per `shell.exec`; bytes that only flow between pipeline stages or into files are not counted. |
 
-Native shell execution also has a 128 MiB aggregate output ceiling, including
-intermediate pipeline output. This keeps gzip decompression's output allowance
-within the Workers runtime's supported limit; it is separate from the returned
-stdout/stderr limit above.
+Native shell execution also holds at most 16 MiB of data per command: input it
+reads, output it produces including intermediate pipeline output, and any one
+string. A command over that fails with a `size limit exceeded` error. Native
+commands run inside the Gateway, so this bounds both its memory and how long one
+command can hold it; work on larger data belongs on a machine target. This is
+separate from the returned stdout/stderr limit above.
 
 The protocol's `server.version` is this semantic product version. `server.release`
 identifies the deployed build: stable release bundles use their exact `vX.Y.Z` tag,
