@@ -9,7 +9,7 @@ import { InstallationAdminHttp } from "./admin/http";
 import { InstallationAdminService } from "./admin/service";
 import { AccountsDeletionRuntime } from "./deletion-runtime";
 import { InstallationOnboardingStore } from "./onboarding";
-import { InstallationStateNotices, noticeInstallationState } from "./state-notices";
+import { changeInstallationState, InstallationStateNotices } from "./state-notices";
 import { AccountStore } from "./store";
 
 const origin = "http://localhost:8976";
@@ -79,13 +79,14 @@ describe("an installation's changes of state", () => {
   it("each take a higher revision in the write that makes them, even when the clock stands still", async () => {
     const ships = stack();
     const installationId = await activeShip(ships, "noticecount");
-    expect(await notice(installationId)).toBeNull();
+    const activated = (await notice(installationId))!;
+    expect(activated).toMatchObject({ state: "active", delivered: 0 });
 
     const admin = new InstallationAdminStore(db);
     await admin.setInstallationState(installationId, "restricted");
     const suspended = (await notice(installationId))!;
     expect(suspended).toMatchObject({ state: "restricted", delivered: 0, attemptedAt: 0 });
-    expect(suspended.revision).toBeGreaterThan(0);
+    expect(suspended.revision).toBeGreaterThan(activated.revision);
     await admin.setInstallationState(installationId, "restricted");
     expect(await notice(installationId)).toEqual(suspended);
     await admin.setInstallationState(installationId, "active");
@@ -93,18 +94,15 @@ describe("an installation's changes of state", () => {
     expect(reactivated).toMatchObject({ state: "active" });
     expect(reactivated.revision).toBeGreaterThan(suspended.revision);
 
-    await db.batch([
-      db.prepare("UPDATE installations SET state = 'restricted' WHERE id = ?").bind(installationId),
-      noticeInstallationState(db, installationId, 5),
-      db.prepare("UPDATE installations SET state = 'active' WHERE id = ?").bind(installationId),
-      noticeInstallationState(db, installationId, 5),
-    ]);
+    await changeInstallationState(db, installationId, [db.prepare("UPDATE installations SET state = 'restricted' WHERE id = ?").bind(installationId)], 5);
+    await changeInstallationState(db, installationId, [db.prepare("UPDATE installations SET state = 'active' WHERE id = ?").bind(installationId)], 5);
     expect(await notice(installationId)).toMatchObject({ state: "active", revision: reactivated.revision + 2 });
   });
 
   it("are reported by the directory only when it is asked for them", async () => {
     const installationId = await activeShip(stack(), "noticereport");
-    expect(await accounts.resolveInstallation(installationId, { stateRevision: true })).toMatchObject({ state: "active", stateRevision: 0 });
+    expect(await accounts.resolveInstallation(installationId, { stateRevision: true }))
+      .toMatchObject({ state: "active", stateRevision: (await notice(installationId))!.revision });
     await new InstallationAdminStore(db).setInstallationState(installationId, "restricted");
     await new InstallationAdminStore(db).setInstallationState(installationId, "active");
     const { revision } = (await notice(installationId))!;
@@ -123,7 +121,7 @@ describe("an installation's changes of state", () => {
   it("leave with their installation", async () => {
     const principal = await accounts.createPrincipal({ email: "leaving@example.com", displayName: "Owner", verified: true });
     const { installationId } = await accounts.reserveInstallation({ principalId: principal.id, operationId: "create_noticeleaving", handle: "noticeleaving" });
-    await noticeInstallationState(db, installationId).run();
+    await changeInstallationState(db, installationId, []);
     expect(await notice(installationId)).toMatchObject({ state: "reserved" });
     await db.prepare("DELETE FROM installations WHERE id = ?").bind(installationId).run();
     expect(await notice(installationId)).toBeNull();
@@ -239,7 +237,7 @@ describe("telling a Ship's Kernel of its state", () => {
       const { installationId } = await accounts.reserveInstallation({ principalId: principal.id, operationId: `create_noticebatch${index}`, handle: `noticebatch${index}` });
       ids.push(installationId);
     }
-    await db.batch(ids.map((installationId) => noticeInstallationState(db, installationId)));
+    for (const installationId of ids) await changeInstallationState(db, installationId, []);
     const unreachable = { installationStateChanged: vi.fn(async (_input: InstallationStateChangedRequest): Promise<never> => {
       throw new Error("Gateway unavailable");
     }) };

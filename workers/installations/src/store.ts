@@ -12,7 +12,7 @@ import {
   parseHandle,
   parseOpaqueId,
 } from "./domain";
-import { noticeInstallationState } from "./state-notices";
+import { changeInstallationState } from "./state-notices";
 
 const RESERVATION_TTL_MS = 30 * 60 * 1000;
 
@@ -270,7 +270,7 @@ export class AccountStore {
     const canonicalHostname = new URL(previous.canonical_origin).hostname;
     const now = Date.now();
 
-    const results = await this.db.batch([
+    const results = await changeInstallationState(this.db, previousInstallationId, [
       this.db.prepare(
         `UPDATE installations
          SET handle = ?, canonical_origin = ?, state = 'retained',
@@ -396,8 +396,7 @@ export class AccountStore {
          FROM installation_reset_operations
          WHERE operation_id = ? AND replacement_installation_id = ?`,
       ).bind(participant, now, operationId, replacement.installationId)),
-      noticeInstallationState(this.db, previousInstallationId, now),
-    ]);
+    ], now);
 
     const committed = await this.getResetByOperation(operationId);
     if (committed) {
@@ -600,7 +599,7 @@ export class AccountStore {
     const now = Date.now();
     // A committed reset already retired the old identity and moved its handle.
     // Its exact replacement remains recoverable, including legacy expiring rows.
-    const results = await this.db.batch([
+    const results = await changeInstallationState(this.db, reservation.installationId, [
       this.db.prepare(
         `UPDATE installations
          SET state = 'provisioning'
@@ -629,7 +628,7 @@ export class AccountStore {
                AND i.state = 'provisioning'
            )`,
       ).bind(now, operationId, principalId),
-    ]);
+    ], now);
     const current = await this.requireOwnedReservation(operationId, principalId);
     const resumed = results.every((result) => (result.meta.changes ?? 0) === 0)
       && current.state === "provisioning" && current.operationState === "provisioning";
@@ -657,7 +656,7 @@ export class AccountStore {
     }
 
     const now = Date.now();
-    const results = await this.db.batch([
+    const results = await changeInstallationState(this.db, reservation.installationId, [
       this.db.prepare(
         `UPDATE installations
          SET state = 'active', reservation_expires_at = NULL,
@@ -680,7 +679,7 @@ export class AccountStore {
          WHERE id = ? AND installation_id = ?
            AND completed_at IS NULL AND revoked_at IS NULL`,
       ).bind(now, claimId, reservation.installationId),
-    ]);
+    ], now);
     if (results.some((result, index) => index === 1 ? (result.meta.changes ?? 0) < 1 : (result.meta.changes ?? 0) !== 1)) {
       throw new Error("installation onboarding could not be activated");
     }

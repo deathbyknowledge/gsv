@@ -9,7 +9,7 @@ import { accountsDeletionNamespacesSchema, type AccountsDeletionDiscovery, type 
 import { parseHandle, parseOpaqueId } from "./domain";
 import { AccountsOperatorResources } from "./operator-resources";
 import { OPERATOR_RESOURCE_OWNER, type OperatorResourceCatalog } from "./operator-resource-contracts";
-import { InstallationStateNotices, noticeInstallationState, type InstallationStateNoticeEnvironment } from "./state-notices";
+import { changeInstallationState, InstallationStateNotices, type InstallationStateNoticeEnvironment } from "./state-notices";
 
 type DiscoverableDeletionOwner = InstallationDeletionService & Pick<InstallationDeletionDiscoveryService, "inspectInstallationDeletion">;
 
@@ -167,13 +167,12 @@ export class AccountsDeletionRuntime {
       if (previous.operation_id !== operationId) throw new Error("installation deletion operation does not match");
       return this.accountOwner.installationDeletionStatus({ version: 1, operationId, installationId });
     }
-    const [changed] = await this.db.batch([
+    const [changed] = await changeInstallationState(this.db, installationId, [
       this.db.prepare(`UPDATE installations SET state = 'retained', reservation_expires_at = NULL
         WHERE id = ? AND handle = ? AND state IN ('active', 'restricted', 'reserved', 'provisioning', 'retained')
           AND NOT EXISTS (SELECT 1 FROM installation_reset_operations r JOIN installation_reset_participants p USING(operation_id)
             WHERE (r.previous_installation_id = installations.id OR r.replacement_installation_id = installations.id) AND p.state != 'prepared')`)
         .bind(installationId, handle),
-      noticeInstallationState(this.db, installationId),
     ]);
     if (changed?.meta.changes !== 1) throw new Error("installation cannot retire from its current state or reset preparation is pending");
     // The Ship stops its own work once told; the cron tells it if this can't.

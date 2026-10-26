@@ -13,14 +13,30 @@ export type InstallationStateNoticeEnvironment = {
 };
 
 /**
- * Brings an installation's notice in line with its state. Add it to the batch
- * that changes the state: a new state takes a higher revision and is pending
- * again, while an unchanged one leaves the notice as it was. The revision is
- * the change's time in milliseconds, or one more than the last when the clock
- * hasn't moved on, so a change made after restoring the database still
- * outranks whatever a Kernel kept.
+ * Runs one batch that changes an installation's state, with the change's
+ * notice after its statements, and returns the statements' own results.
+ * Every write of an installation's state goes through this, so none goes
+ * untold; a test refuses any other.
  */
-export function noticeInstallationState(db: D1Database, installationId: string, now = Date.now()): D1PreparedStatement {
+export async function changeInstallationState(
+  db: D1Database,
+  installationId: string,
+  statements: D1PreparedStatement[],
+  now = Date.now(),
+): Promise<D1Result[]> {
+  const results = await db.batch([...statements, noticeInstallationState(db, installationId, now)]);
+  return results.slice(0, statements.length);
+}
+
+/**
+ * Brings an installation's notice in line with the state its batch left: a
+ * new state takes a higher revision and is pending again, while an unchanged
+ * one leaves the notice as it was. The revision is the change's time in
+ * milliseconds, or one more than the last when the clock hasn't moved on, so
+ * a change made after restoring the database still outranks whatever a
+ * Kernel kept.
+ */
+function noticeInstallationState(db: D1Database, installationId: string, now: number): D1PreparedStatement {
   return db.prepare(`INSERT INTO installation_state_notices (installation_id, state, revision)
     SELECT id, state, ? FROM installations WHERE id = ?
     ON CONFLICT (installation_id) DO UPDATE SET state = excluded.state,

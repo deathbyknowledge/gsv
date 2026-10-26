@@ -54,8 +54,9 @@ To tell Kernels of changes of state, that Worker binds the Gateway's
 `InstallationAdminService` and the deletion environment, runs
 `InstallationStateNotices.resumePending()` on its cron, and asks
 `AccountStore.resolveInstallation` for `stateRevision` only while the binding is
-present. Any other code that changes an installation's state adds
-`noticeInstallationState` to the same batch.
+present. Every write of an installation's state goes through
+`changeInstallationState`, which adds the change's notice to the same batch;
+a check in Accounts' tests refuses any other.
 
 ## Resolution and admission
 
