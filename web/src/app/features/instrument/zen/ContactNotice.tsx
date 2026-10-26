@@ -1,6 +1,7 @@
 import { contactDisplayName, type ContactSummary, type ConversationMessage } from "@humansandmachines/gsv/protocol";
-import type { ComponentChildren, JSX, RefObject } from "preact";
+import type { ComponentChildren, RefObject } from "preact";
 import { useState } from "preact/hooks";
+import { TextArea } from "../../../components/ui/TextArea";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { selectContactSendIntent, type ContactDraftSendIntent } from "../../../services/contacts/contactSendIntent";
 import { sendContactMessage } from "../../../services/contacts/contactsService";
@@ -155,12 +156,12 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
           {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId="" />)}
         </div>
       ))}</div>
-      <textarea class="reply" rows={2} aria-label={t("chat.contact.replyTo", { name })} placeholder={t("chat.contact.replyPlaceholder", { name })} value={draft.text} disabled={!mayReply || state === "sending"}
-        onInput={(event: JSX.TargetedEvent<HTMLTextAreaElement>) => {
-          onDraft({ ...draft, text: event.currentTarget.value });
+      <TextArea label="" rows={2} value={draft.text} placeholder={t("chat.contact.replyPlaceholder", { name })} disabled={!mayReply || state === "sending"}
+        onChange={(text) => {
+          onDraft({ ...draft, text });
           if (state !== "sending") setState("idle");
         }}
-        onKeyDown={(event) => { if (entersToSend(event)) void send(); }} />
+        textareaProps={{ "aria-label": t("chat.contact.replyTo", { name }), onKeyDown: (event) => { if (entersToSend(event)) void send(); } }} />
       <div class="send">
         <button type="button" class="ibtn is-primary" disabled={!maySend || !body || tooLong || state === "sending" || undelivered} onClick={() => void send()}>
           {state === "sending" ? t("chat.sending") : t("chat.contact.sendTo", { name })}

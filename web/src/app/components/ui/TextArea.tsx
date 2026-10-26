@@ -126,7 +126,8 @@ export function TextArea(props: TextAreaProps) {
         disabled={disabled}
         readOnly={readonly}
         spellcheck={false}
-        aria-labelledby={hasLabelRow && label.length > 0 ? `${fieldId}-label` : undefined}
+        // A caller's own accessible name wins over the visible label, as in TextInput.
+        aria-labelledby={hasLabelRow && label.length > 0 && !textareaProps?.["aria-label"] ? `${fieldId}-label` : undefined}
         aria-describedby={describedBy}
         aria-invalid={effectiveStatus === "error" ? true : undefined}
         // SAFETY: Component boundary provides the asserted DOM/test shape.
