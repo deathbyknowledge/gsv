@@ -216,7 +216,7 @@ export class ProcessRun {
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const media: ResourceBlock[] = [];
     const run = this.host.runs.active;
-    // the same policy a Read would face, resolved from the account and the remembered approvals when the run has none yet
+    // the same policy a Read would face, resolved from the owner's policy when the run has none yet
     const policy = run?.runId === runId ? this.host.tools.resolveToolApprovalPolicy(run) : DEFAULT_TOOL_APPROVAL_POLICY;
     for (const spec of specs) {
       const { target, path } = parseAttachPath(spec);

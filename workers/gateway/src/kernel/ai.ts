@@ -270,9 +270,8 @@ export async function handleAiConfig(
   const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
 
   // Persona and context come from the run-as account's home (the home.context
-  // provider reads /home/<account>/context.d). Tool approval follows the same
-  // account default order as model config, so humans can own defaults for their
-  // agents while agents can still override them.
+  // provider reads /home/<account>/context.d). Tool approval is the human
+  // owner's one policy, so the Ship, Crew and every child decide alike.
   const accountApprovalPolicy = readOwnerApprovalPolicy(config, principalOf(ctx) ? resolveCallerOwnerUid(ctx) : uid);
 
   const maxContextBytes = parseInt(
