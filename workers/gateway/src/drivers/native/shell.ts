@@ -207,7 +207,7 @@ function createBash(
       maxLoopIterations: 10_000,
       // The returned stdout/stderr are truncated to config/shell/max_output_bytes
       // separately. Pipe traffic inside one invocation, including bytes that
-      // only ever flow into files, keeps just-bash's own 256 MiB ceiling.
+      // only ever flow into files, is bounded by NATIVE_SHELL_DATA_BYTES below.
       maxExecutionTimeMs: timeoutMs + JUST_BASH_EXECUTION_BACKSTOP_GRACE_MS,
       maxExtensionCleanupTimeMs: JUST_BASH_EXTENSION_CLEANUP_TIME_MS,
       // One builtin runs synchronously over its whole input, so data size bounds both the
