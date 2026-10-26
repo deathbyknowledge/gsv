@@ -49,9 +49,10 @@ operator admin has its Takedowns panel and Reports queue.
 
 To tell Kernels of changes of state, that Worker binds the Gateway's
 `GatewayAdmissionEntrypoint` as `ADMISSION_GATEWAY` with the
-`installation-admission` authority, applies migration
-`0036_installation_state_notices`, gives `InstallationStateNotices` to
-`InstallationAdminService` and the deletion environment, runs
+`installation-admission` authority, applies migrations
+`0036_installation_state_notices` and `0037_installation_state_followers`,
+gives `installationStateNotices(db, env)` to `InstallationAdminService` and the
+deletion environment, runs
 `InstallationStateNotices.resumePending()` on its cron, and asks
 `AccountStore.resolveInstallation` for `stateRevision` only while the binding is
 present. Every write of an installation's state goes through
@@ -96,9 +97,14 @@ higher revision, so a late or repeated notice never undoes a newer one. A
 Kernel without a record asks Accounts once and keeps the answer. A Process asks
 its Kernel rather than Accounts, and remembers an `active` answer for one minute.
 
-A notice that can't be delivered stays pending. Accounts' cron retries pending
-notices every minute, least recently tried first and twenty at a time, until the
-Gateway answers with that change's revision or a later one. When an operator
+The same notice tells the deployment's PDS, when Accounts binds it as
+`PDS_MODERATION`, so its account for the Ship follows the state; see [the open
+network](open-network.md). Each follower is tracked on its own, so neither
+waits on the other. A notice that can't be delivered stays pending for that
+follower. Accounts' cron retries each follower's pending notices every minute,
+least recently tried first and twenty at a time, until the Gateway answers with
+that change's revision or a later one, or the PDS has read the state since the
+change. When an operator
 suspends or reactivates a Ship whose Kernel can't be told at once, the Ship
 keeps its new state and the request says the Ship hasn't confirmed; **Try
 again** tells it again. A reset or retirement tells the retired installation's
@@ -113,9 +119,7 @@ cannot be told apart from a suspension. A refusal or a failure is never kept.
 
 Accounts reports a revision only while it binds `ADMISSION_GATEWAY`. A Kernel
 whose directory answers without one keeps no record: it remembers an `active`
-answer for one minute and observes a change within a minute. Accounts also
-tells the deployment's PDS when it restricts or reactivates an installation, so
-relays hear of the suspension; see [the open network](open-network.md).
+answer for one minute and observes a change within a minute.
 
 Accounts also holds an operator binding to the Gateway for the Ship health
 view in administration. The Gateway resolves the installation through the

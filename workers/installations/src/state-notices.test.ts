@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { createExecutionContext } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InstallationAdmissionService, InstallationStateChangedRequest } from "@humansandmachines/gsv/services/lifecycle";
+import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 import InstallationService from "./index";
 import { InstallationAdminStore } from "./administration";
 import { CloudflareInstallationAdminAccess } from "./admin/access";
@@ -38,11 +39,35 @@ function admissionGateway() {
   return { service, kept, last: (installationId: string) => kept.filter((entry) => entry.installationId === installationId).at(-1) };
 }
 
+/**
+ * The deployment's PDS as Accounts' moderation binding reaches it: each time
+ * it is told of an installation's change, it reads the state Accounts holds by
+ * then. It fails for the installations in `unreachable`.
+ */
+function moderationPds() {
+  const followed: Array<{ installationId: string; state: string | null }> = [];
+  const unreachable = new Set<string>();
+  const pds = {
+    getRepository: vi.fn(async () => null),
+    updateSubjectStatus: vi.fn(async () => {
+      throw new Error("No takedown is expected");
+    }),
+    getSubjectStatus: vi.fn(async () => null),
+    locateRepository: vi.fn(async () => null),
+    reconcileAccountStatus: vi.fn(async (installationId: string) => {
+      if (unreachable.has(installationId)) throw new Error("PDS unavailable");
+      const row = await db.prepare("SELECT state FROM installations WHERE id = ?").bind(installationId).first<{ state: string }>();
+      followed.push({ installationId, state: row?.state ?? null });
+    }),
+  } satisfies PdsModerationService;
+  return { pds, unreachable, of: (installationId: string) => followed.filter((entry) => entry.installationId === installationId) };
+}
+
 function stack(admission?: InstallationAdmissionService) {
   const onboarding = new InstallationOnboardingStore(db, accounts);
-  const notices = admission ? new InstallationStateNotices(db, admission) : undefined;
+  const notices = admission ? new InstallationStateNotices(db, { gateway: admission }) : undefined;
   const service = new InstallationAdminService(db, accounts, onboarding,
-    { id: "principal_state_notice_operator", email: "operator@gsv.invalid", displayName: "Operator" }, {}, undefined, notices);
+    { id: "principal_state_notice_operator", email: "operator@gsv.invalid", displayName: "Operator" }, {}, notices);
   const http = new InstallationAdminHttp(service, new CloudflareInstallationAdminAccess({ environment: "development", origin }), origin);
   return { service, onboarding, http, notices };
 }
@@ -58,7 +83,7 @@ async function activeShip({ http, service, onboarding }: ReturnType<typeof stack
 }
 
 async function notice(installationId: string) {
-  return await db.prepare(`SELECT state, revision, delivered_revision AS delivered, attempted_at AS attemptedAt
+  return await db.prepare(`SELECT state, revision, gateway_revision AS delivered, gateway_attempted_at AS attemptedAt
     FROM installation_state_notices WHERE installation_id = ?`).bind(installationId)
     .first<{ state: string; revision: number; delivered: number; attemptedAt: number }>();
 }
@@ -71,8 +96,8 @@ function api(path: string, body: Record<string, string>): Request {
   return new Request(`${origin}${path}`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 
-function cron(admission: InstallationAdmissionService): Promise<void> {
-  return new InstallationService(createExecutionContext(), { ...env, ADMISSION_GATEWAY: admission }).scheduled();
+function cron(followers: { ADMISSION_GATEWAY?: InstallationAdmissionService; PDS_MODERATION?: PdsModerationService }): Promise<void> {
+  return new InstallationService(createExecutionContext(), { ...env, ...followers }).scheduled();
 }
 
 describe("an installation's changes of state", () => {
@@ -166,7 +191,7 @@ describe("telling a Ship's Kernel of its state", () => {
     expect(missed.delivered).toBeLessThan(missed.revision);
     expect(missed.attemptedAt).toBeGreaterThan(0);
 
-    await cron(gateway.service);
+    await cron({ ADMISSION_GATEWAY: gateway.service });
     expect(gateway.last(installationId)).toEqual({ installationId, state: "restricted", stateRevision: missed.revision });
     expect((await notice(installationId))!.delivered).toBe(missed.revision);
   });
@@ -230,7 +255,7 @@ describe("telling a Ship's Kernel of its state", () => {
 
   it("retries from the cron in bounded batches, least recently tried first", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    await db.prepare("UPDATE installation_state_notices SET delivered_revision = revision").run();
+    await db.prepare("UPDATE installation_state_notices SET gateway_revision = revision, pds_revision = revision").run();
     const principal = await accounts.createPrincipal({ email: "batch@example.com", displayName: "Owner", verified: true });
     const ids: string[] = [];
     for (let index = 0; index < 22; index++) {
@@ -242,22 +267,56 @@ describe("telling a Ship's Kernel of its state", () => {
       throw new Error("Gateway unavailable");
     }) };
 
-    await new InstallationStateNotices(db, unreachable, () => 1_000).resumePending();
+    await new InstallationStateNotices(db, { gateway: unreachable }, () => 1_000).resumePending();
     expect(unreachable.installationStateChanged).toHaveBeenCalledTimes(20);
-    const untried = (await db.prepare("SELECT installation_id FROM installation_state_notices WHERE attempted_at = 0 AND delivered_revision < revision")
+    const untried = (await db.prepare("SELECT installation_id FROM installation_state_notices WHERE gateway_attempted_at = 0 AND gateway_revision < revision")
       .all<{ installation_id: string }>()).results.map(({ installation_id }) => installation_id);
     expect(untried).toHaveLength(2);
 
     unreachable.installationStateChanged.mockClear();
-    await new InstallationStateNotices(db, unreachable, () => 2_000).resumePending();
+    await new InstallationStateNotices(db, { gateway: unreachable }, () => 2_000).resumePending();
     const retried = unreachable.installationStateChanged.mock.calls.map(([input]) => input.installationId);
     expect(retried).toHaveLength(20);
     expect(retried).toEqual(expect.arrayContaining(untried));
 
     const gateway = admissionGateway();
-    await new InstallationStateNotices(db, gateway.service).resumePending();
-    await new InstallationStateNotices(db, gateway.service).resumePending();
-    expect((await db.prepare("SELECT COUNT(*) AS count FROM installation_state_notices WHERE delivered_revision < revision")
+    await new InstallationStateNotices(db, { gateway: gateway.service }).resumePending();
+    await new InstallationStateNotices(db, { gateway: gateway.service }).resumePending();
+    expect((await db.prepare("SELECT COUNT(*) AS count FROM installation_state_notices WHERE gateway_revision < revision")
       .first<{ count: number }>())?.count).toBe(0);
+  });
+});
+
+describe("telling the deployment's PDS of a Ship's state", () => {
+  it("tells it of each change through the same notice, once, with or without the Gateway", async () => {
+    const { pds, of } = moderationPds();
+    const installationId = await activeShip(stack(), "noticepds");
+    await new InstallationAdminStore(db).setInstallationState(installationId, "restricted");
+
+    await cron({ PDS_MODERATION: pds });
+    expect(of(installationId)).toEqual([{ installationId, state: "restricted" }]);
+    await cron({ PDS_MODERATION: pds });
+    expect(of(installationId)).toHaveLength(1);
+  });
+
+  it("follows it apart from the Kernel, so a PDS that can't be told stays pending alone", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const gateway = admissionGateway();
+    const { pds, unreachable, of } = moderationPds();
+    const installationId = await activeShip(stack(), "noticeapart");
+    await new InstallationAdminStore(db).setInstallationState(installationId, "restricted");
+    unreachable.add(installationId);
+
+    await cron({ ADMISSION_GATEWAY: gateway.service, PDS_MODERATION: pds });
+    expect(gateway.last(installationId)).toMatchObject({ state: "restricted" });
+    expect(of(installationId)).toEqual([]);
+    expect(warn).toHaveBeenCalledWith("[Lifecycle] Open-network host not yet told of a Ship's state:", installationId,
+      expect.objectContaining({ exceptionMessage: "PDS unavailable" }));
+
+    unreachable.delete(installationId);
+    const told = gateway.kept.length;
+    await cron({ ADMISSION_GATEWAY: gateway.service, PDS_MODERATION: pds });
+    expect(of(installationId)).toEqual([{ installationId, state: "restricted" }]);
+    expect(gateway.kept.slice(told).filter((entry) => entry.installationId === installationId)).toEqual([]);
   });
 });

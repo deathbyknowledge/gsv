@@ -1,6 +1,5 @@
 import { UsernamePolicy, type UsernamePolicyInput, type UsernamePolicyLists } from "../username-policy";
 import type { InstallationResetService } from "@humansandmachines/gsv/services/lifecycle";
-import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 import { InstallationAdminStore, type AdminInstallation } from "../administration";
 import { parseOpaqueId } from "../domain";
 import { InstallationOnboardingStore, type IssuedInstallationOnboarding } from "../onboarding";
@@ -26,19 +25,8 @@ export const RESET_CONSEQUENCES: readonly string[] = [
   "Nothing is erased yet: this Ship's data is kept as pending deletion until a separate deletion removes it.",
 ];
 
-/** Accounts kept a Ship's new lifecycle state, but something that follows it hasn't yet. */
-export class LifecycleFollowError extends Error {}
-
-/** Accounts kept a Ship's new lifecycle state, but the deployment's PDS could not follow it. */
-export class OpenNetworkFollowError extends LifecycleFollowError {
-  constructor(readonly state: "active" | "restricted", options: ErrorOptions) {
-    super(`The Ship is ${state === "restricted" ? "suspended" : "reactivated"}, but its open-network host could not be told.`, options);
-    this.name = "OpenNetworkFollowError";
-  }
-}
-
 /** Accounts kept a Ship's new lifecycle state, but the Ship hasn't confirmed it; Accounts keeps telling it. */
-export class ShipFollowError extends LifecycleFollowError {
+export class ShipFollowError extends Error {
   constructor(readonly state: "active" | "restricted") {
     super(`The Ship is ${state === "restricted" ? "suspended" : "reactivated"}, but it hasn't confirmed yet. Accounts keeps telling it.`);
     this.name = "ShipFollowError";
@@ -54,9 +42,7 @@ export class InstallationAdminService extends InstallationAdminStore {
     private readonly onboarding: InstallationOnboardingStore,
     private readonly registryPrincipal: OperatorRegistryPrincipal,
     participants: Readonly<Record<string, InstallationResetService>>,
-    /** The deployment's PDS, which tells relays when a Ship is suspended or reactivated. */
-    private readonly pds?: PdsModerationService,
-    /** Tells each Ship's Kernel of its new state, when the deployment binds the Gateway's admission entrypoint. */
+    /** Tells what follows each Ship's state of its changes: its Kernel, and the deployment's PDS. */
     private readonly notices?: InstallationStateNotices,
   ) {
     super(database);
@@ -71,13 +57,8 @@ export class InstallationAdminService extends InstallationAdminStore {
   override async setInstallationState(installationId: string, state: "active" | "restricted"): Promise<void> {
     await super.setInstallationState(installationId, state);
     // A Ship that can't be told now is told by the cron, and the request says so rather than succeeding.
-    const told = await this.notices?.deliver(installationId) ?? true;
-    try {
-      await this.pds?.reconcileAccountStatus(installationId);
-    } catch (error) {
-      throw new OpenNetworkFollowError(state, { cause: error });
-    }
-    if (!told) throw new ShipFollowError(state);
+    // A PDS that can't be told is told by the cron too, without failing the request.
+    if (!(await this.notices?.deliver(installationId) ?? true)) throw new ShipFollowError(state);
   }
 
   getUsernamePolicy(): Promise<UsernamePolicyLists> {

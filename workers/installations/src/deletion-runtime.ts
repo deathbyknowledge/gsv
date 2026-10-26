@@ -9,7 +9,7 @@ import { accountsDeletionNamespacesSchema, type AccountsDeletionDiscovery, type 
 import { parseHandle, parseOpaqueId } from "./domain";
 import { AccountsOperatorResources } from "./operator-resources";
 import { OPERATOR_RESOURCE_OWNER, type OperatorResourceCatalog } from "./operator-resource-contracts";
-import { changeInstallationState, InstallationStateNotices, type InstallationStateNoticeEnvironment } from "./state-notices";
+import { changeInstallationState, installationStateNotices, type InstallationStateNotices, type InstallationStateNoticeEnvironment } from "./state-notices";
 
 type DiscoverableDeletionOwner = InstallationDeletionService & Pick<InstallationDeletionDiscoveryService, "inspectInstallationDeletion">;
 
@@ -37,7 +37,7 @@ export function createAccountsDeletionRuntime(db: D1Database, env: AccountsDelet
       gateway: env.DELETION_OWNER_GATEWAY,
       owners,
       namespaces: accountsDeletionNamespacesSchema.parse(env.DELETION_DISCOVERY_NAMESPACES ?? {}),
-    }, env.OPERATOR_DELETION_CATALOG, env.ADMISSION_GATEWAY ? new InstallationStateNotices(db, env.ADMISSION_GATEWAY) : undefined);
+    }, env.OPERATOR_DELETION_CATALOG, installationStateNotices(db, env));
 }
 
 export class AccountsDeletionRuntime {
