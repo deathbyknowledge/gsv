@@ -142,7 +142,7 @@ Unsaved preferences trigger a warning when leaving; if you leave, the draft stay
 available when you return. **Discard changes** resets it.
 
 To request account deletion, open **Settings → Account** and email
-[hello@humansandmachin.es](mailto:hello@humansandmachin.es). During early access,
+[privacy@humansandmachin.es](mailto:privacy@humansandmachin.es). During early access,
 the team handles deletion manually; there is no self-service deletion button yet.
 
 Under **Settings → Preferences → Appearance**, turn off **Show stars** for a
