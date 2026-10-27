@@ -175,6 +175,9 @@ fence updates and removal while an earlier delivery is in flight.
 The Process writes a person-only notice and its bounded durable receipt
 atomically, emits a history change, and allocates no run or queued work.
 Model-visible audiences use the existing runtime event admission and wake path.
+An event may carry a `link` naming the GSV object it is about, such as a
+contact or a contact request. It is never a URL: each client opens the object
+in its own interface.
 Duplicate deliveries are idempotent within retained receipts; events older than
 the Process reset boundary are ignored. Raw history and client notices remain
 available independently of the canonical Conversation.

@@ -1,6 +1,9 @@
 import { describeChatError, describeHistoryEventError, type ChatErrorContext, type ChatErrorPresentation } from "../../../services/chat/domain/errorPresentation";
 import { historyEventText } from "../../../services/chat/domain/typedHistory";
+import type { ProcHistoryEventLink } from "@humansandmachines/gsv/protocol";
 import { useT, type TextKey } from "../../../i18n/locale";
+import { AppLink } from "../../../services/navigation/appNavigation";
+import { peoplePath } from "../people/peopleNavigation";
 import { noteSummary, type Moment } from "./zenModel";
 
 type NoticeValues = Readonly<Record<string, string>>;
@@ -46,6 +49,7 @@ export function NoteMoment({
   const text = moment.event ? historyEventText(moment.event) : moment.text;
   /* a failure reads as what happened and what to do; the gateway's own words stay one click away */
   const failure = moment.event ? describeHistoryEventError(moment.event, text) : null;
+  const link = moment.event?.link ? eventLink(moment.event.link) : null;
   return (
     <div
       data-index={index}
@@ -59,9 +63,17 @@ export function NoteMoment({
         {failure ? <span class="note-hint">{t(open ? "chat.note.hide" : "chat.note.details")}</span> : null}
       </button>
       {failure ? <p class="note-action">{t(failure.action)}</p> : null}
+      {link ? <AppLink class="note-link" href={link.href}>{t(link.label)}</AppLink> : null}
       {open ? <div class="note-text">{text}</div> : null}
     </div>
   );
+}
+
+/** Where what an event is about lives in GSV. */
+function eventLink(link: ProcHistoryEventLink): { href: string; label: TextKey } {
+  return link.kind === "contact.request"
+    ? { href: peoplePath({ view: "requests", requestId: link.requestId }), label: "chat.event.link.request" }
+    : { href: peoplePath({ contactId: link.contactId }), label: "chat.event.link.contact" };
 }
 
 /** The status line's message. It is text, not a control; only a failure's details fold open. */

@@ -18,6 +18,25 @@ async function rendered(render: () => ComponentChildren): Promise<ComponentChild
   return tree;
 }
 
+describe("event links", () => {
+  it.each([
+    [{ kind: "contact", contactId: "contact:ada" }, "/people?contact=contact%3Aada", "Open in People"],
+    [{ kind: "contact.request", requestId: "approach:bo" }, "/people?view=requests&request=approach%3Abo", "Review the request"],
+  ] as const)("opens what a notice is about inside GSV", async (link, href, label) => {
+    const moment: Moment = {
+      id: "message:7", role: "note", text: "", streaming: false, thinking: false, runId: null, timestamp: 1, activities: [], narration: "",
+      event: { kind: "owner.notified", severity: "info", audience: "both", link, payload: {
+        noticeId: "notice", topic: "contact.message", channel: "WhatsApp", text: "💬 Ada: are we still on for tomorrow?",
+        from: "Ada", contactId: "contact:ada", sentAtMs: 1 } },
+    };
+    const tree = await rendered(() => NoteMoment({ moment, open: false, focus: false, index: 0, phase: "settled", onToggle: () => {} }));
+    expect(collectText(tree)).toContain("Notified you on WhatsApp: 💬 Ada: are we still on for tomorrow?");
+    const anchor = collectNodes(tree).find((node) => node.props?.href !== undefined);
+    expect(anchor?.props.href).toBe(href);
+    expect(collectText(anchor?.props.children)).toBe(label);
+  });
+});
+
 describe("error details", () => {
   it("hides the original failure until the reader opens it", async () => {
     const text = "Generation failed: Model generation timed out after 180000ms";

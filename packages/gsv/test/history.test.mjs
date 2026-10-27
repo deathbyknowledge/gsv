@@ -309,6 +309,15 @@ test("every registered event validates its own payload and rejects prose substit
   }
 });
 
+test("an event may name the object it is about, never a URL", () => {
+  const event = { kind: "owner.notified", payload: eventFixtures["owner.notified"], severity: "info", audience: "both" };
+  for (const link of [{ kind: "contact", contactId: "contact:1" }, { kind: "contact.request", requestId: "approach:1" }]) {
+    assert.deepEqual(procHistoryEventSchema.parse({ ...event, link }).link, link);
+  }
+  assert.equal(procHistoryEventSchema.safeParse({ ...event, link: { kind: "url", href: "https://example.test" } }).success, false);
+  assert.equal(procHistoryEventSchema.safeParse({ ...event, link: { kind: "contact", contactId: "contact:1", url: "https://example.test" } }).success, false);
+});
+
 test("legacy events preserve exact prose and distinguish recognized events from new kinds", () => {
   const event = {
     kind: "legacy",

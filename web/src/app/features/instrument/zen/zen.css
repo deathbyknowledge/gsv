@@ -604,6 +604,16 @@
   line-height: 1.5;
   color: var(--label);
 }
+.zen-moment.is-note .note-link {
+  display: inline-block;
+  margin: 2px 0 0 calc(1ch + 10px);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.zen-moment.is-note .note-link:hover { color: var(--label); }
 .zen-moment.is-note.is-open .tri { color: var(--accent); }
 .zen-moment.is-note .note-text {
   margin-top: 8px;

@@ -352,7 +352,7 @@ export type ProcHistoryEventPayloadMap = {
     topic: "contact.message" | "contact.request" | "contact.invite.accepted";
     /** The adapter that carried the notice, such as whatsapp. */
     channel: string;
-    /** The notice exactly as the owner received it; contact text inside it is untrusted. */
+    /** The notice's line as the owner received it, without its link; contact text inside it is untrusted. */
     text: string;
     /** The contact's local alias or display name. */
     from: string;
@@ -383,6 +383,19 @@ export const procHistoryTargetEventRegistry = {
   },
 } as const;
 
+/**
+ * The GSV object an event is about. It is never a URL: each client opens it in its own
+ * interface, and a messenger receives a link to it from the Kernel.
+ */
+export type ProcHistoryEventLink =
+  | { kind: "contact"; contactId: string }
+  | { kind: "contact.request"; requestId: string };
+
+export const procHistoryEventLinkSchema: z.ZodMiniType<ProcHistoryEventLink> = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("contact"), contactId: z.string() }),
+  z.strictObject({ kind: z.literal("contact.request"), requestId: z.string() }),
+]);
+
 function eventSchema<K extends ProcHistoryEventKind>(kind: K) {
   return z.strictObject({
     kind: z.literal(kind),
@@ -390,6 +403,7 @@ function eventSchema<K extends ProcHistoryEventKind>(kind: K) {
     severity: procHistoryEventSeveritySchema,
     audience: procHistoryEventAudienceSchema,
     media: z.optional(z.array(procHistoryMediaSchema)),
+    link: z.optional(procHistoryEventLinkSchema),
   });
 }
 
@@ -432,6 +446,7 @@ export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discrim
     severity: procHistoryEventSeveritySchema,
     audience: procHistoryEventAudienceSchema,
     media: z.optional(z.array(procHistoryMediaSchema)),
+    link: z.optional(procHistoryEventLinkSchema),
   }),
 ]);
 
@@ -444,4 +459,5 @@ export type ProcHistoryEvent = ({
   severity: ProcHistoryEventSeverity;
   audience: ProcHistoryEventAudience;
   media?: ProcHistoryMedia[];
+  link?: ProcHistoryEventLink;
 };

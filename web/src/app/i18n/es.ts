@@ -1779,6 +1779,8 @@ export const es = {
   "chat.event.returned": "De vuelta del ayudante {pid}.",
   "chat.event.connected": "{target} se ha conectado.",
   "chat.event.ownerNotified": "Te avisó por {channel}: {text}",
+  "chat.event.link.contact": "Abrir en Personas",
+  "chat.event.link.request": "Revisar la solicitud",
   "chat.event.disconnected": "{target} se ha desconectado.",
   "chat.event.wake": "Ha llegado un evento del entorno de ejecución mientras esta conversación estaba ocupada.",
   "chat.tool.waitingInput": "Esperando la entrada de la herramienta.",

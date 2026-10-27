@@ -38,8 +38,8 @@ describe("owner notice delivery", () => {
         event: { type: "owner.notified", payload: {
           noticeId: `contact.message:contact:ada:${at}:0`, topic: "contact.message", channel: "WhatsApp", from: "Ada",
           contactId: "contact:ada", conversationId: "conv:ada", messages: 1,
-          text: "💬 Ada: are we still on for tomorrow?\nOpen: https://person.example/people?contact=contact%3Aada",
-        } },
+          text: "💬 Ada: are we still on for tomorrow?",
+        }, link: { kind: "contact", contactId: "contact:ada" } },
       });
       expect(host.shipEventRuntime.queue).toHaveBeenCalledWith(OWNER);
     });
@@ -153,7 +153,7 @@ describe("owner notice delivery", () => {
 
   it("names a message request's sender without its text, in the owner's language", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
-      const { runtime, notices, state } = fixture(storage);
+      const { runtime, notices, shipEvents, state } = fixture(storage);
       const send = sent();
       state.language = "es-ES";
       notices.noteOnce(OWNER, "contact.request:approach:bo", "contact.request", {
@@ -164,6 +164,10 @@ describe("owner notice delivery", () => {
         "📬 Solicitud de mensaje de Bo Your bank (@bo.ship.space). Léela y decide en Personas.\n"
         + "Abrir: https://person.example/people?view=requests&request=approach%3Abo",
       );
+      expect(shipEvents.next(OWNER)?.event).toMatchObject({
+        payload: { text: "📬 Solicitud de mensaje de Bo Your bank (@bo.ship.space). Léela y decide en Personas." },
+        link: { kind: "contact.request", requestId: "approach:bo" },
+      });
     });
   });
 

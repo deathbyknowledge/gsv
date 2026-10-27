@@ -26,7 +26,7 @@ function ownerNotice(eventId: string): InternalRequestFrame<"proc.event.deliver"
   return {
     type: "req", id: `request:${eventId}`, call: "proc.event.deliver", args: {
       eventId, event: {
-        kind: "owner.notified", severity: "info", audience: "model",
+        kind: "owner.notified", severity: "info", audience: "both", link: { kind: "contact", contactId: "contact:ada" },
         payload: {
           noticeId: "contact.message:contact:ada:0", topic: "contact.message", channel: "WhatsApp", from: "Ada",
           text: "💬 Ada: are we still on for tomorrow?", contactId: "contact:ada", conversationId: "conv:ada", messages: 1, sentAtMs: 1000,
@@ -222,7 +222,8 @@ describe("registered Process events", () => {
   });
 
   it.each([
-    ["for a person", { audience: "person" }],
+    ["for a person only", { audience: "person" }],
+    ["for the model only", { audience: "model" }],
     ["as a warning", { severity: "warn" }],
   ] as const)("refuses an owner notice addressed %s", async (_name, change) => {
     const stub = await initProcess(`history-events-owner-notice-${change.audience ?? change.severity}`, ROOT_IDENTITY);

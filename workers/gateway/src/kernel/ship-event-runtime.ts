@@ -97,7 +97,7 @@ export class ShipEventRuntime {
         call: "proc.event.deliver",
         args: {
           eventId: queued.eventId,
-          event: { kind: "owner.notified", payload: event.payload, severity: "info", audience: "model" },
+          event: { kind: "owner.notified", payload: event.payload, severity: "info", audience: "both", link: event.link },
         },
       };
       const response = await sendFrameToProcess(this.host.installationId, processId, request);

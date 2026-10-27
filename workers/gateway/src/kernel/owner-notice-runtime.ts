@@ -7,7 +7,7 @@ import { adapterDisplayName, identityLinkRouteGeneration } from "./adapter-desti
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import type { OwnerNotice } from "./owner-notice-store";
-import { noticeLanguage, renderOwnerNotice } from "./owner-notice-text";
+import { messengerNoticeText, noticeLanguage, ownerNoticeLink, renderOwnerNotice } from "./owner-notice-text";
 import type { OwnerNotifiedShipEvent } from "./ship-event-store";
 
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
@@ -55,13 +55,12 @@ export class OwnerNoticeRuntime {
       return true;
     }
     const { destination } = preferred;
-    const link = ctx.adapters.identityLinks.get(destination.adapter, destination.accountId, destination.actorId);
-    const routeGeneration = link ? identityLinkRouteGeneration(link, destination.surface) : undefined;
-    const text = renderOwnerNotice(
-      current,
-      noticeLanguage(ctx.config.get(`users/${notice.ownerUid}/locale/language`)),
-      ctx.installationIdentity?.canonicalOrigin ?? null,
-    );
+    const identityLink = ctx.adapters.identityLinks.get(destination.adapter, destination.accountId, destination.actorId);
+    const routeGeneration = identityLink ? identityLinkRouteGeneration(identityLink, destination.surface) : undefined;
+    const language = noticeLanguage(ctx.config.get(`users/${notice.ownerUid}/locale/language`));
+    const line = renderOwnerNotice(current, language);
+    const link = ownerNoticeLink(current);
+    const text = messengerNoticeText(line, link, language, ctx.installationIdentity?.canonicalOrigin ?? null);
     // A forgotten row comes back with a new creation time, so a round is never named twice.
     const noticeId = `${notice.key}:${notice.createdAtMs}:${notice.round}`;
     // Adapters bind a delivery id to its content: a retry after the text changed is a new delivery.
@@ -89,13 +88,14 @@ export class OwnerNoticeRuntime {
         noticeId,
         topic: current.topic,
         channel: adapterDisplayName(destination.adapter),
-        text,
+        text: line,
         from: current.subject.from,
         contactId: current.subject.contactId,
         ...(current.subject.conversationId ? { conversationId: current.subject.conversationId } : undefined),
         ...(current.topic === "contact.message" ? { messages: current.pendingCount } : undefined),
         sentAtMs: now,
       },
+      link,
     };
     this.host.ctx.storage.transactionSync(() => {
       this.host.ownerNotices.sent(notice, now);
