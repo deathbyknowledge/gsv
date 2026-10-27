@@ -262,6 +262,12 @@ import type {
   AtprotoWriteResult,
 } from "./atproto";
 import type {
+  MailListArgs,
+  MailListResult,
+  MailReadArgs,
+  MailReadResult,
+  MailSearchArgs,
+  MailSearchResult,
   MailSendArgs,
   MailSendResult,
   MailStatusArgs,
@@ -357,6 +363,9 @@ export type SyscallDomains = {
 
   "mail.send": { args: MailSendArgs; result: MailSendResult };
   "mail.status": { args: MailStatusArgs; result: MailStatusResult };
+  "mail.list": { args: MailListArgs; result: MailListResult };
+  "mail.search": { args: MailSearchArgs; result: MailSearchResult };
+  "mail.read": { args: MailReadArgs; result: MailReadResult };
 
   "conversation.ship": { args: ConversationShipArgs; result: ConversationShipResult };
   "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };

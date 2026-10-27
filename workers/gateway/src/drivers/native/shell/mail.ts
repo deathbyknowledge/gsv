@@ -2,6 +2,8 @@ import { MAIL_MAX_OUTBOUND_TEXT_BYTES as MAX_OUTBOUND_TEXT_BYTES } from "@humans
 import { defineCommand } from "just-bash";
 import type { CommandContext, ExecResult } from "just-bash";
 import type {
+  MailMessageSummary,
+  MailPage,
   MailSendArgs,
   MailSendResult,
   MailStatusResult,
@@ -10,22 +12,22 @@ import type { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import { managedMailAddressForOwner } from "../../../kernel/mailbox";
-import type { MailMessageRecord } from "../../../kernel/mailbox-store";
 import { handleMailSend } from "../../../kernel/outbound-mail";
 import { handleMailStatus } from "../../../kernel/outbound-status";
+import { handleMailList, handleMailRead, handleMailSearch } from "../../../kernel/inbound-mail-read";
 import {
   requireCommandCapability,
   requireShellOptionValue,
 } from "./common";
 
 type MailSendOptions = { to?: string; subject?: string; message?: string; bodyPath?: string; deliveryId?: string; replyToMessageId?: string };
-type MailSearchOptions = { query: string; limit: number; offset: number };
-type MailPageOptions = { limit: number; offset: number };
+type MailSearchOptions = MailPageOptions & { query: string };
+type MailPageOptions = { limit?: number; before?: string };
 
 const MAIL_USAGE = `Usage:
   mail address
-  mail list [--limit N] [--offset N]
-  mail search <query> [--limit N] [--offset N]
+  mail list [--limit N] [--before CURSOR]
+  mail search <query> [--limit N] [--before CURSOR]
   mail show <message-id> [--raw]
   mail status <delivery-id>
   mail send --to ADDRESS --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]
@@ -72,20 +74,16 @@ async function runMailCommand(
       if (!address) throw new Error("managed mail is not available for this account");
       return completed(`${address}\n`);
     }
-    case "list": {
-      const page = parsePage(rest);
-      return completed(formatMessagePage(
-        ctx.mailboxes.list(ownerUid, page.limit, page.offset).messages,
-      ));
-    }
+    case "list":
+      requireCommandCapability(ctx, "mail.list");
+      return completed(formatMessagePage(handleMailList(parsePage(rest), ctx), "mail list"));
     case "search": {
+      requireCommandCapability(ctx, "mail.search");
       const parsed = parseSearch(rest);
-      return completed(formatMessagePage(
-        ctx.mailboxes.search(ownerUid, parsed.query, parsed.limit, parsed.offset).messages,
-      ));
+      return completed(formatMessagePage(handleMailSearch(parsed, ctx), `mail search ${shellQuote(parsed.query)}`));
     }
     case "show":
-      return await showMessage(rest, ownerUid, fs, ctx);
+      return await showMessage(rest, fs, ctx);
     case "status":
       return statusMail(rest, ctx);
     case "send":
@@ -281,10 +279,10 @@ function formatStatusResult(result: MailStatusResult): ExecResult {
 
 async function showMessage(
   args: string[],
-  ownerUid: number,
   fs: GsvFs,
   ctx: KernelContext,
 ): Promise<ExecResult> {
+  requireCommandCapability(ctx, "mail.read");
   let raw = false;
   let selector: string | undefined;
   for (const arg of args) {
@@ -299,21 +297,33 @@ async function showMessage(
     }
   }
   if (!selector) throw new Error("show requires a message id");
-  const message = ctx.mailboxes.getMessage(ownerUid, selector);
-  if (!message) throw new Error(`message not found: ${selector}`);
-  return completed(await fs.readFile(raw ? message.rawPath : message.textPath));
+  if (raw) {
+    const message = ctx.mailboxes.getMessage(resolveCallerOwnerUid(ctx), selector);
+    if (!message) throw new Error(`Mail message not found: ${selector}`);
+    return completed(await fs.readFile(message.rawPath));
+  }
+  const { message } = await handleMailRead({ messageId: selector }, ctx, fs);
+  return completed(message.truncated
+    ? `${message.text}\n[Message cut short; read ${message.textPath} for the rest.]\n`
+    : message.text);
 }
 
-function formatMessagePage(messages: MailMessageRecord[]): string {
-  if (messages.length === 0) return "No messages.\n";
-  return `${messages.map((message) => [
+function formatMessagePage(page: MailPage, command: string): string {
+  if (page.messages.length === 0) return "No messages.\n";
+  const rows = page.messages.map((message: MailMessageSummary) => [
     message.messageId,
     new Date(message.receivedAt).toISOString(),
-    cleanColumn(message.displayFrom ?? message.envelopeFrom),
+    cleanColumn(message.from),
     cleanColumn(message.subject ?? "(no subject)"),
     message.category ?? "unsummarized",
     message.requiresAttention === true ? "attention" : "",
-  ].join("\t")).join("\n")}\n`;
+  ].join("\t"));
+  if (page.next) rows.push(`More: ${command} --before ${page.next}`);
+  return `${rows.join("\n")}\n`;
+}
+
+function shellQuote(value: string): string {
+  return /^[\w@.+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function cleanColumn(value: string): string {
@@ -325,7 +335,7 @@ function parseSearch(args: string[]): MailSearchOptions {
   const pageArgs: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--limit" || arg === "--offset") {
+    if (arg === "--limit" || arg === "--before" || arg === "--offset") {
       pageArgs.push(arg, args[index + 1] ?? "");
       index += 1;
     } else if (arg.startsWith("--")) {
@@ -340,26 +350,28 @@ function parseSearch(args: string[]): MailSearchOptions {
 }
 
 function parsePage(args: string[]): MailPageOptions {
-  let limit = 50;
-  let offset = 0;
+  const page: MailPageOptions = {};
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg !== "--limit" && arg !== "--offset") {
+    const value = args[index + 1];
+    index += 1;
+    if (arg === "--offset") {
+      throw new Error("--offset is gone; continue with the --before value printed after a page");
+    }
+    if (arg === "--before") {
+      if (!value) throw new Error("--before requires a cursor");
+      page.before = value;
+    } else if (arg === "--limit") {
+      const limit = Number(value);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+        throw new Error("--limit must be between 1 and 200");
+      }
+      page.limit = limit;
+    } else {
       throw new Error(`unexpected argument: ${arg}`);
     }
-    const value = Number(args[index + 1]);
-    index += 1;
-    if (!Number.isSafeInteger(value) || value < 0) {
-      throw new Error(`${arg} requires a non-negative integer`);
-    }
-    if (arg === "--limit") {
-      if (value === 0 || value > 200) throw new Error("--limit must be between 1 and 200");
-      limit = value;
-    } else {
-      offset = value;
-    }
   }
-  return { limit, offset };
+  return page;
 }
 
 function completed(stdout: string): ExecResult {

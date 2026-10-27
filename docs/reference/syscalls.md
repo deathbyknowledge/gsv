@@ -469,6 +469,60 @@ and foreign-owned deliveries. It does not re-enter compose, body storage, or
 Queue publication. This is the normal way to observe the eventual outcome of a
 send that returned `queued`.
 
+## Received mail: `mail.list`, `mail.search`, `mail.read`
+
+These read the caller's own inbox, each under its own capability, and the
+native `mail list`, `mail search` and `mail show` commands use them.
+
+```ts
+type MailMessageSummary = {
+  messageId: string;
+  receivedAt: number;
+  sentAt: number | null;
+  from: string;
+  subject: string | null;
+  summary: string | null; // filled in shortly after arrival
+  category: ManagedMailSummaryCategory | null;
+  requiresAttention: boolean | null;
+  attachmentCount: number;
+};
+type MailPage = { messages: MailMessageSummary[]; next?: string };
+
+type MailSyscalls = {
+  "mail.list": { args: { limit?: number; before?: string }; result: MailPage };
+  "mail.search": { args: { query: string; limit?: number; before?: string }; result: MailPage };
+  "mail.read": {
+    args: { messageId: string }; // or an unambiguous prefix
+    result: {
+      message: MailMessageSummary & {
+        to: string[];
+        cc: string[];
+        replyTo: string[];
+        attachments: { filename?: string; mimeType: string; size: number }[];
+        text: string;
+        truncated: boolean;
+        textPath: string;
+        rawPath: string;
+      };
+    };
+  };
+};
+```
+
+Pages run newest first, with up to 200 messages each (50 by default). To get
+the next older page, pass `next` as `before`. A cursor stays valid while new
+mail arrives, so paging neither skips nor repeats messages.
+
+`mail.search` returns messages that contain every word of the query, each
+matched as a word prefix. It looks in the sender, the recipients, the subject,
+the summary and the first 16,384 characters of the plain text. Mail that
+arrived before this index existed is searchable by its headers and summary
+only.
+
+`mail.read` returns the plain-text rendering with its headers. A message longer
+than 100,000 characters comes back cut short, with `truncated` set; the whole
+message stays readable at `textPath`.
+
 ## Web search: `web.search`
 
 Indexed web search uses the targetable `web.search` syscall, exposed as the
