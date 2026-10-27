@@ -763,6 +763,24 @@ describe("GsvFs write metadata", () => {
     expect(await fs.readFileBuffer(`/${TEST_PREFIX}streamed-blob`)).toEqual(binary);
   });
 
+  it("types a streamed file by its leading bytes, however they are chunked", async () => {
+    const fs = makeFs(SAM);
+    const chunks = [new Uint8Array([0x41]), new Uint8Array([0x00, 0xff])];
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const next = chunks.shift();
+        if (next) controller.enqueue(next);
+        else controller.close();
+      },
+    });
+
+    await fs.writeFileStream(`/${TEST_PREFIX}chunked-blob`, stream, { expectedSize: 3 });
+
+    const head = await env.STORAGE.head(`${TEST_PREFIX}chunked-blob`);
+    expect(head?.httpMetadata?.contentType).toBe("application/octet-stream");
+    expect(await fs.readFileBuffer(`/${TEST_PREFIX}chunked-blob`)).toEqual(new Uint8Array([0x41, 0x00, 0xff]));
+  });
+
   it("streams writes to R2 with supplied HTTP metadata", async () => {
     const fs = makeFs(SAM);
     const bytes = new TextEncoder().encode("streamed data");

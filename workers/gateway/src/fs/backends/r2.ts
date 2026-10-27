@@ -667,19 +667,33 @@ function conditionalMissStatus(conditions: OpenFileOptions["conditions"] | undef
   return 412;
 }
 
-/** Reads a stream's first chunk to type it, then hands back a stream that still starts with that chunk. */
+// As many leading bytes as the machine reads to type a file.
+const CONTENT_SNIFF_BYTES = 8192;
+
+/** Reads a stream's leading bytes to type it, then hands back a stream that still starts with them. */
 async function sniffStreamContentType(
   path: string,
   stream: ReadableStream<Uint8Array>,
 ): Promise<{ contentType: string; stream: ReadableStream<Uint8Array> }> {
   const reader = stream.getReader();
-  const first = await reader.read();
+  const leading: Uint8Array[] = [];
+  let size = 0;
+  let done = false;
+  while (size < CONTENT_SNIFF_BYTES) {
+    const next = await reader.read();
+    if (next.done) {
+      done = true;
+      break;
+    }
+    leading.push(next.value);
+    size += next.value.byteLength;
+  }
   return {
-    contentType: sniffContentType(path, first.done ? new Uint8Array() : first.value),
+    contentType: sniffContentType(path, leading.reduce(concatBytes, new Uint8Array()).subarray(0, CONTENT_SNIFF_BYTES)),
     stream: new ReadableStream<Uint8Array>({
       start(controller) {
-        if (first.done) controller.close();
-        else controller.enqueue(first.value);
+        for (const chunk of leading) controller.enqueue(chunk);
+        if (done) controller.close();
       },
       async pull(controller) {
         const next = await reader.read();
