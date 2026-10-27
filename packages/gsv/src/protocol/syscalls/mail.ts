@@ -1,4 +1,11 @@
-import type { ManagedMailSummaryCategory } from "../managed";
+export type ManagedMailSummaryCategory =
+  | "personal"
+  | "work"
+  | "transactional"
+  | "newsletter"
+  | "spam"
+  | "suspicious"
+  | "other";
 
 export type MailSendArgs = {
   text: string;
