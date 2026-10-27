@@ -1923,7 +1923,7 @@ Runtime behavior:
 | `sys.token.list` | `handleSysTokenList` | Lists token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
 | `sys.token.revoke` | `handleSysTokenRevoke` | Revokes a token by id with optional reason. Non-root can revoke only own tokens. Missing or inaccessible token returns `revoked: false`. |
 | `sys.pair.create` | `handleSysPairCreate` | A signed-in human or permitted process creates an idempotent, ten-minute device invitation for a free target ID. Processes act for their human owner. The Kernel retains its secret hashed and creates no device credential yet. |
-| `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. |
+| `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. An invitation is paired only while the machine credential it issued is live; forgetting the machine makes it cancelled. |
 | `sys.pair.cancel` | `handleSysPairCancel` | Cancels an unused caller-owned invitation; an already-paired device and its credential remain intact. |
 | `sys.pair.redeem` | `handleSysPairRedeem` | Pre-connect enrollment. Consumes one invitation and atomically registers the receiving client's persisted random machine credential for the invitation's account and target. The same credential may recover an acknowledgement; another cannot reuse the invitation. |
 | `sys.link` | `handleSysLink` | User-role only. Links an adapter/account/actor to a uid. Adapter is lowercased; root may link to any uid, non-root only self. |

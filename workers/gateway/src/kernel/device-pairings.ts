@@ -117,7 +117,16 @@ export class DevicePairingStore {
     if (!owner) throw new Error("Pairing account is unavailable");
     return { id: row.id, username: owner.username, targetId: row.target_id, label: row.label,
       createdAt: row.created_at, expiresAt: row.expires_at,
-      state: row.redeemed_at !== null ? "paired" : row.expires_at <= Date.now() ? "expired" : row.cancelled_at !== null ? "cancelled" : "pending" };
+      state: row.redeemed_at !== null ? (this.credentialLive(row.token_id) ? "paired" : "cancelled")
+        : row.expires_at <= Date.now() ? "expired" : row.cancelled_at !== null ? "cancelled" : "pending" };
+  }
+
+  /** A redeemed invitation stays paired only while the machine credential it issued does; forgetting the machine revokes it. */
+  private credentialLive(tokenId: string | null): boolean {
+    return tokenId !== null && this.sql.exec(
+      "SELECT 1 FROM auth_tokens WHERE token_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) LIMIT 1",
+      tokenId, Date.now(),
+    ).toArray().length > 0;
   }
 
   private requireTarget(ownerUid: number, targetId: string, replace: boolean): void {
