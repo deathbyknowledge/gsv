@@ -35,11 +35,19 @@ const r2SuffixRangeSchema = z.object({
   suffix: z.number(),
 });
 
+/** The most entries one directory listing returns; a larger folder is refused rather than truncated. */
+const READDIR_ENTRY_LIMIT = 10_000;
+
 export class R2MountBackend implements MountBackend {
+  private readonly readdirEntryLimit: number;
+
   constructor(
     private readonly bucket: R2Bucket,
     private readonly identity: ProcessIdentity,
-  ) {}
+    options: { readdirEntryLimit?: number } = {},
+  ) {
+    this.readdirEntryLimit = options.readdirEntryLimit ?? READDIR_ENTRY_LIMIT;
+  }
 
   handles(_path: string): boolean {
     return true;
@@ -290,17 +298,25 @@ export class R2MountBackend implements MountBackend {
     const p = normalizePath(path);
     const key = toKey(p);
     const prefix = key ? key + "/" : "";
-    const listed = await this.bucket.list({ prefix, delimiter: "/" });
 
+    // R2 returns one page at a time; a listing is either complete or refused, never cut short.
     const entries: string[] = [];
-    for (const obj of listed.objects) {
-      const name = obj.key.slice(prefix.length);
-      if (name && !name.endsWith("/.dir") && name !== ".dir") entries.push(name);
-    }
-    for (const dp of listed.delimitedPrefixes) {
-      const name = dp.slice(prefix.length).replace(/\/+$/, "");
-      if (name) entries.push(name);
-    }
+    let cursor: string | undefined;
+    do {
+      const listed = await this.bucket.list({ prefix, delimiter: "/", cursor });
+      for (const obj of listed.objects) {
+        const name = obj.key.slice(prefix.length);
+        if (name && !name.endsWith("/.dir") && name !== ".dir") entries.push(name);
+      }
+      for (const dp of listed.delimitedPrefixes) {
+        const name = dp.slice(prefix.length).replace(/\/+$/, "");
+        if (name) entries.push(name);
+      }
+      if (entries.length > this.readdirEntryLimit) {
+        throw new Error(`E2BIG: more than ${this.readdirEntryLimit} entries in '${p}'`);
+      }
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
 
     if (entries.length === 0) {
       const dirExists = await this.exists(path);

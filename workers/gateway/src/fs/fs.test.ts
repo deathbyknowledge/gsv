@@ -1022,6 +1022,28 @@ describe("GsvFs directory removal", () => {
 
     await expect(fs.rm(`/${TEST_PREFIX}beta`)).rejects.toThrow("ENOTEMPTY");
   });
+
+  it("lists every entry of a folder larger than one R2 page", async () => {
+    const fs = makeFs(ROOT);
+    const names = Array.from({ length: 1_050 }, (_, index) => `mail-${String(index).padStart(4, "0")}`);
+    for (let start = 0; start < names.length; start += 50) {
+      await Promise.all(names.slice(start, start + 50).map((name) =>
+        putFile(`${TEST_PREFIX}large/${name}`, "x", { uid: "0", gid: "0", mode: "644" })));
+    }
+    await putFile(`${TEST_PREFIX}large/zz/inner`, "x", { uid: "0", gid: "0", mode: "644" });
+
+    expect(await fs.readdir(`/${TEST_PREFIX}large`)).toEqual([...names, "zz"]);
+  });
+
+  it("refuses to list a folder past its entry limit instead of returning part of it", async () => {
+    await Promise.all(["a", "b", "c"].map((name) =>
+      putFile(`${TEST_PREFIX}capped/${name}`, "x", { uid: "0", gid: "0", mode: "644" })));
+    const backend = new R2MountBackend(env.STORAGE, ROOT, { readdirEntryLimit: 2 });
+
+    await expect(backend.readdir(`/${TEST_PREFIX}capped`)).rejects.toThrow(
+      `E2BIG: more than 2 entries in '/${TEST_PREFIX}capped'`,
+    );
+  });
 });
 
 describe("resolveUserPath", () => {
