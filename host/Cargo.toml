@@ -8,7 +8,7 @@ resolver = "2"
 exclude = ["helpers/speaker"]
 
 [workspace.package]
-version = "0.7.4"
+version = "0.7.5"
 
 [profile.release]
 strip = true
