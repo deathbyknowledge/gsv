@@ -740,6 +740,29 @@ describe("GsvFs write metadata", () => {
     );
   });
 
+  it("types an extensionless file by its bytes", async () => {
+    const fs = makeFs(SAM);
+    const binary = new Uint8Array([0x8f, 0x00, 0xd2, 0x41, 0xff, 0x13]);
+    const text = new TextEncoder().encode("Hola, ¿qué tal?\n");
+
+    await fs.writeFile(`/${TEST_PREFIX}blob`, binary);
+    await fs.writeFile(`/${TEST_PREFIX}README`, text);
+    await fs.writeFileStream(`/${TEST_PREFIX}streamed-blob`, bytesToStream(binary), { expectedSize: binary.byteLength });
+    await fs.writeFileStream(`/${TEST_PREFIX}Makefile`, bytesToStream(text), { expectedSize: text.byteLength });
+    await fs.writeFile(`/${TEST_PREFIX}empty`, new Uint8Array());
+
+    const types = await Promise.all(["blob", "README", "streamed-blob", "Makefile", "empty"].map(async (name) =>
+      (await env.STORAGE.head(`${TEST_PREFIX}${name}`))?.httpMetadata?.contentType));
+    expect(types).toEqual([
+      "application/octet-stream",
+      "text/plain",
+      "application/octet-stream",
+      "text/plain",
+      "text/plain",
+    ]);
+    expect(await fs.readFileBuffer(`/${TEST_PREFIX}streamed-blob`)).toEqual(binary);
+  });
+
   it("streams writes to R2 with supplied HTTP metadata", async () => {
     const fs = makeFs(SAM);
     const bytes = new TextEncoder().encode("streamed data");

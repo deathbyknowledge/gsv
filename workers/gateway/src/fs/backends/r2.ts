@@ -16,7 +16,7 @@ import type {
   WriteFileStreamOptions,
   WriteFileStreamResult,
 } from "../mount";
-import { concatBytes, inferContentType, isTextContentType, normalizePath } from "../utils";
+import { concatBytes, isTextContentType, normalizePath, sniffContentType } from "../utils";
 import { bindStreamToAbort } from "../../shared/streams";
 import { z } from "zod";
 
@@ -127,7 +127,7 @@ export class R2MountBackend implements MountBackend {
       httpMetadata: {
         contentType: parsedOptions.success && parsedOptions.data.contentType
           ? parsedOptions.data.contentType
-          : inferContentType(p),
+          : sniffContentType(p, content instanceof Uint8Array ? content : new Uint8Array()),
       },
       customMetadata: {
         uid: String(this.identity.uid),
@@ -150,13 +150,16 @@ export class R2MountBackend implements MountBackend {
     options.signal?.throwIfAborted();
     if (existing) this.assertMode(existing, WRITE_BIT, p);
 
-    const source = options.signal
+    const bound = options.signal
       ? bindStreamToAbort(content, options.signal)
       : content;
+    const { contentType, stream: source } = options.contentType
+      ? { contentType: options.contentType, stream: bound }
+      : await sniffStreamContentType(p, bound);
     const fixed = new FixedLengthStream(options.expectedSize);
     const [result] = await Promise.all([
       this.bucket.put(key, fixed.readable, {
-        httpMetadata: toR2HttpMetadata(p, options),
+        httpMetadata: toR2HttpMetadata(contentType, options),
         customMetadata: {
           uid: String(this.identity.uid),
           gid: String(this.identity.gid),
@@ -664,9 +667,35 @@ function conditionalMissStatus(conditions: OpenFileOptions["conditions"] | undef
   return 412;
 }
 
-function toR2HttpMetadata(path: string, options: WriteFileStreamOptions): R2HTTPMetadata {
+/** Reads a stream's first chunk to type it, then hands back a stream that still starts with that chunk. */
+async function sniffStreamContentType(
+  path: string,
+  stream: ReadableStream<Uint8Array>,
+): Promise<{ contentType: string; stream: ReadableStream<Uint8Array> }> {
+  const reader = stream.getReader();
+  const first = await reader.read();
   return {
-    contentType: options.contentType ?? inferContentType(path),
+    contentType: sniffContentType(path, first.done ? new Uint8Array() : first.value),
+    stream: new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (first.done) controller.close();
+        else controller.enqueue(first.value);
+      },
+      async pull(controller) {
+        const next = await reader.read();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      },
+      cancel(reason) {
+        return reader.cancel(reason);
+      },
+    }),
+  };
+}
+
+function toR2HttpMetadata(contentType: string, options: WriteFileStreamOptions): R2HTTPMetadata {
+  return {
+    contentType,
     cacheControl: options.cacheControl,
     contentDisposition: options.contentDisposition,
   };

@@ -194,6 +194,11 @@ body. Browser receivers cancel and release their body reader on cancellation or
 deadline, including when a sender stalls. Cancellation while reading leaves
 the destination unchanged. See [Frame Bodies](/reference/websocket-protocol#frame-bodies).
 
+A file written without a content type takes its extension's type. When the
+name says nothing, it is `text/plain` only if its first bytes are UTF-8 without
+NUL bytes, and `application/octet-stream` otherwise. Machines first recognise
+common formats from the bytes.
+
 For a file result, `size` is the original file size; the body descriptor length
 is the transmitted payload size and can differ when `offset` or `limit` selects
 only part of the file. Text results are materialized back into `content`; only
