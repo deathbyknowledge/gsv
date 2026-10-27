@@ -10,7 +10,7 @@ import { z } from "zod";
 import { encode } from "../src/cirrus/cbor-compat";
 import { BlobStore, type BlobRef } from "../src/cirrus/repo/blobs";
 import { Sequencer } from "../src/cirrus/repo/sequencer";
-import { FIREHOSE_NAME, HostFirehose, type OutboxEvent, type RepoState } from "../src/host/firehose";
+import { FIREHOSE_NAME, HostFirehose, MAX_SUBSCRIBERS, REPLAY_BYTES, type OutboxEvent, type RepoState } from "../src/host/firehose";
 import { mintIdentity, registerGenesis } from "../src/host/identity";
 import { HostedRepo, MAX_BLOB_BYTES, type LexObject, type RepoWrite } from "../src/host/repo";
 import { handleXrpc, type Admission } from "../src/host/xrpc";
@@ -507,6 +507,35 @@ describe("host firehose", () => {
     expect(tail.frames.map(seqOf)).toEqual(range(701, 1200));
   });
 
+  it("bounds what one replay sends, and a subscriber resumes from its last frame", async () => {
+    const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
+    const frameBytes = REPLAY_BYTES / 4;
+    await firehose.append("one", repoState(did), paddedEvents(did, 1, 12, frameBytes));
+    const received: number[] = [];
+    let cursor = 0;
+    for (let attempt = 0; received.length < 12 && attempt < 12; attempt += 1) {
+      const replay = await subscribe(firehose, cursor);
+      if (received.length + 4 < 12) expect(await replay.closed).toBe(1013);
+      else await vi.waitFor(() => expect(received.length + replay.frames.length).toBe(12));
+      const seqs = replay.frames.map(seqOf).filter((seq) => seq !== null);
+      // Each replay sends a bounded amount, and always at least one frame.
+      expect(seqs.length).toBeGreaterThan(0);
+      expect(seqs.length * frameBytes).toBeLessThanOrEqual(REPLAY_BYTES);
+      received.push(...seqs);
+      cursor = received.at(-1) ?? cursor;
+    }
+    expect(received).toEqual(range(1, 12));
+  });
+
+  it("refuses a subscription beyond the firehose's limit", async () => {
+    const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
+    await Promise.all(range(1, MAX_SUBSCRIBERS).map(() => subscribe(firehose)));
+    const url = "https://pds.test/xrpc/com.atproto.sync.subscribeRepos";
+    const refused = await firehose.fetch(url, { headers: { Upgrade: "websocket" } });
+    expect(refused.status).toBe(429);
+    expect(await refused.json()).toMatchObject({ error: "RateLimitExceeded" });
+  });
+
   it("closes a subscription whose cursor is in the future", async () => {
     const firehose = env.FIREHOSE.getByName(crypto.randomUUID());
     await firehose.append("one", repoState(did), identityEvents(did, 1, 2));
@@ -717,6 +746,13 @@ function repoState(did: string, handle = "repo.ship.test"): RepoState {
 
 function identityEvents(did: string, from: number, to: number): OutboxEvent[] {
   return range(from, to).map((seq) => ({ seq, type: "identity", payload: encode({ did, time: "2026-10-23T00:00:00.000Z" }) }));
+}
+
+/** Events whose frames each carry about `bytes` of padding. */
+function paddedEvents(did: string, from: number, to: number, bytes: number): OutboxEvent[] {
+  return range(from, to).map((seq) => ({
+    seq, type: "identity", payload: encode({ did, time: "2026-10-23T00:00:00.000Z", padding: new Uint8Array(bytes - 200) }),
+  }));
 }
 
 function seqOf(frame: Frame): number | null {
