@@ -258,8 +258,8 @@ const eventFixtures = {
   "runtime.failed": { reason: "schedule.error", error: "Could not load schedule" },
   "target.connection": { targetId: "machine:one", event: "connected", platform: "linux", observedAt: 100 },
   "owner.notified": {
-    noticeId: "contact.message:contact:1:0", topic: "contact.message", channel: "WhatsApp", text: "💬 Xisca: The photo",
-    from: "Xisca", contactId: "contact:1", conversationId: "conv:1", messages: 1, sentAtMs: 100,
+    noticeId: "contact.message:contact:1:0", topic: "contact.message", channel: "WhatsApp",
+    from: "Xisca", handle: "xisca.ship.space", preview: "The photo", contactId: "contact:1", conversationId: "conv:1", messages: 1, sentAtMs: 100,
   },
 };
 
@@ -316,6 +316,12 @@ test("an event may name the object it is about, never a URL", () => {
   }
   assert.equal(procHistoryEventSchema.safeParse({ ...event, link: { kind: "url", href: "https://example.test" } }).success, false);
   assert.equal(procHistoryEventSchema.safeParse({ ...event, link: { kind: "contact", contactId: "contact:1", url: "https://example.test" } }).success, false);
+});
+
+test("an owner notice carries its parts as fields, never a rendered line", () => {
+  const event = { kind: "owner.notified", payload: eventFixtures["owner.notified"], severity: "info", audience: "both" };
+  assert.deepEqual(procHistoryEventSchema.parse(event).payload, eventFixtures["owner.notified"]);
+  assert.equal(procHistoryEventSchema.safeParse({ ...event, payload: { ...event.payload, text: "💬 Xisca: The photo" } }).success, false);
 });
 
 test("legacy events preserve exact prose and distinguish recognized events from new kinds", () => {

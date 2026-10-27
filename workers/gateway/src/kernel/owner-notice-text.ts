@@ -50,13 +50,26 @@ export function noticeLanguage(preference: string | null | undefined): NoticeLan
   return "en";
 }
 
-/** The notice's line. Names and previews come from other people, so they stay on one short line. */
+/** Who a notice is from and what they wrote. They come from other people, so each stays on one short line. */
+export type OwnerNoticeParts = { from: string; handle?: string; preview?: string };
+
+export function ownerNoticeParts(notice: OwnerNotice): OwnerNoticeParts {
+  const { subject } = notice;
+  const handle = subject.handle ? oneLine(subject.handle, NAME_CHARACTERS) : "";
+  const preview = notice.topic === "contact.message" ? oneLine(subject.preview ?? "", PREVIEW_CHARACTERS) : "";
+  return {
+    from: oneLine(subject.from, NAME_CHARACTERS) || "?",
+    ...(handle ? { handle } : undefined),
+    ...(preview ? { preview } : undefined),
+  };
+}
+
+/** The notice's line, for a messenger, which carries only text. */
 export function renderOwnerNotice(notice: OwnerNotice, language: NoticeLanguage): string {
   const words = WORDS[language];
-  const { subject } = notice;
-  const name = oneLine(subject.from, NAME_CHARACTERS) || "?";
-  const from = subject.handle ? `${name} (@${oneLine(subject.handle, NAME_CHARACTERS)})` : name;
-  const preview = oneLine(subject.preview ?? "", PREVIEW_CHARACTERS) || words.attachment;
+  const parts = ownerNoticeParts(notice);
+  const from = parts.handle ? `${parts.from} (@${parts.handle})` : parts.from;
+  const preview = parts.preview ?? words.attachment;
   return notice.topic === "contact.message"
     ? notice.pendingCount > 1 ? words.messages(from, notice.pendingCount, preview) : words.message(from, preview)
     : notice.topic === "contact.request" ? words.request(from) : words.accepted(from);

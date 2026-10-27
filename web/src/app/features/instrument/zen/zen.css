@@ -614,6 +614,25 @@
   text-underline-offset: 3px;
 }
 .zen-moment.is-note .note-link:hover { color: var(--label); }
+/* a notice GSV sent the person: shown whole, with where to answer it */
+.zen-moment.is-owner-notice .notice-card {
+  max-width: var(--measure-prose);
+  padding: 10px 12px;
+  border: 1px solid var(--border-raised);
+  border-left: 2px solid var(--accent);
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.zen-moment.is-owner-notice .notice-head { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.zen-moment.is-owner-notice .notice-from { color: var(--label); }
+.zen-moment.is-owner-notice .notice-handle,
+.zen-moment.is-owner-notice .notice-meta { color: var(--faint); font-size: 12px; }
+.zen-moment.is-owner-notice .notice-meta { margin-left: auto; }
+.zen-moment.is-owner-notice .notice-body { margin: 6px 0 0; color: var(--text-dim); overflow-wrap: anywhere; }
+.zen-moment.is-owner-notice .notice-count { display: block; color: var(--faint); font-size: 12px; }
+.zen-moment.is-owner-notice .notice-quiet { font-style: italic; }
+.zen-moment.is-owner-notice .note-link { margin: 8px 0 0; }
 .zen-moment.is-note.is-open .tri { color: var(--accent); }
 .zen-moment.is-note .note-text {
   margin-top: 8px;

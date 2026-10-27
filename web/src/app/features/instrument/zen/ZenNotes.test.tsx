@@ -18,22 +18,37 @@ async function rendered(render: () => ComponentChildren): Promise<ComponentChild
   return tree;
 }
 
-describe("event links", () => {
-  it.each([
-    [{ kind: "contact", contactId: "contact:ada" }, "/people?contact=contact%3Aada", "Open in People"],
-    [{ kind: "contact.request", requestId: "approach:bo" }, "/people?view=requests&request=approach%3Abo", "Review the request"],
-  ] as const)("opens what a notice is about inside GSV", async (link, href, label) => {
-    const moment: Moment = {
-      id: "message:7", role: "note", text: "", streaming: false, thinking: false, runId: null, timestamp: 1, activities: [], narration: "",
-      event: { kind: "owner.notified", severity: "info", audience: "both", link, payload: {
-        noticeId: "notice", topic: "contact.message", channel: "WhatsApp", text: "💬 Ada: are we still on for tomorrow?",
-        from: "Ada", contactId: "contact:ada", sentAtMs: 1 } },
-    };
-    const tree = await rendered(() => NoteMoment({ moment, open: false, focus: false, index: 0, phase: "settled", onToggle: () => {} }));
-    expect(collectText(tree)).toContain("Notified you on WhatsApp: 💬 Ada: are we still on for tomorrow?");
+describe("owner notices", () => {
+  const notice = (payload: Partial<Extract<NonNullable<Moment["event"]>, { kind: "owner.notified" }>["payload"]>, link: { kind: "contact"; contactId: string } | { kind: "contact.request"; requestId: string }): Moment => ({
+    id: "message:7", role: "note", text: "", streaming: false, thinking: false, runId: null, timestamp: 1, activities: [], narration: "",
+    event: { kind: "owner.notified", severity: "info", audience: "both", link, payload: {
+      noticeId: "notice", topic: "contact.message", channel: "WhatsApp", from: "Ada", contactId: "contact:ada", sentAtMs: 1, ...payload } },
+  });
+  const card = (moment: Moment) => rendered(() => NoteMoment({ moment, open: false, focus: false, index: 0, phase: "settled", onToggle: () => {} }));
+
+  it("shows who wrote, where the owner heard, and what they said, without folding it away", async () => {
+    const tree = await card(notice({ handle: "ada.ship.space", preview: "are we still on for tomorrow?", messages: 1 }, { kind: "contact", contactId: "contact:ada" }));
+    const text = collectText(tree);
+    for (const part of ["Ada", "@ada.ship.space", "via WhatsApp", "are we still on for tomorrow?"]) expect(text).toContain(part);
+    expect(text).not.toContain("Notified you on");
+    expect(collectNodes(tree).some((node) => node.type === "button")).toBe(false);
     const anchor = collectNodes(tree).find((node) => node.props?.href !== undefined);
-    expect(anchor?.props.href).toBe(href);
-    expect(collectText(anchor?.props.children)).toBe(label);
+    expect(anchor?.props.href).toBe("/people?contact=contact%3Aada");
+    expect(collectText(anchor?.props.children)).toBe("Open in People");
+  });
+
+  it("counts several messages and names an attachment without text", async () => {
+    const text = collectText(await card(notice({ messages: 3 }, { kind: "contact", contactId: "contact:ada" })));
+    expect(text).toContain("3 messages");
+    expect(text).toContain("Sent an attachment");
+  });
+
+  it("opens a message request where the owner decides it", async () => {
+    const tree = await card(notice({ topic: "contact.request", from: "Bo" }, { kind: "contact.request", requestId: "approach:bo" }));
+    expect(collectText(tree)).toContain("Wants to message you.");
+    const anchor = collectNodes(tree).find((node) => node.props?.href !== undefined);
+    expect(anchor?.props.href).toBe("/people?view=requests&request=approach%3Abo");
+    expect(collectText(anchor?.props.children)).toBe("Review the request");
   });
 });
 

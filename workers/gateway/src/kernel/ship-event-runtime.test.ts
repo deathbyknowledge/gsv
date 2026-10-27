@@ -53,7 +53,7 @@ describe("Ship event delivery", () => {
       const { runtime, shipEvents } = fixture(storage);
       const payload = {
         noticeId: "contact.message:contact:remote:1:0", topic: "contact.message", channel: "WhatsApp", from: "Remote",
-        text: "💬 Remote: hello", contactId: "contact:remote", conversationId: "conv:remote", messages: 1, sentAtMs: 1,
+        preview: "hello", contactId: "contact:remote", conversationId: "conv:remote", messages: 1, sentAtMs: 1,
       } as const;
       const link = { kind: "contact", contactId: "contact:remote" } as const;
       shipEvents.enqueue(OWNER, "owner.notified:contact.message:contact:remote:1:0", { type: "owner.notified", payload, link }, Date.now());

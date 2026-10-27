@@ -7,7 +7,7 @@ import { adapterDisplayName, identityLinkRouteGeneration } from "./adapter-desti
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import type { OwnerNotice } from "./owner-notice-store";
-import { messengerNoticeText, noticeLanguage, ownerNoticeLink, renderOwnerNotice } from "./owner-notice-text";
+import { messengerNoticeText, noticeLanguage, ownerNoticeLink, ownerNoticeParts, renderOwnerNotice } from "./owner-notice-text";
 import type { OwnerNotifiedShipEvent } from "./ship-event-store";
 
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
@@ -88,8 +88,7 @@ export class OwnerNoticeRuntime {
         noticeId,
         topic: current.topic,
         channel: adapterDisplayName(destination.adapter),
-        text: line,
-        from: current.subject.from,
+        ...ownerNoticeParts(current),
         contactId: current.subject.contactId,
         ...(current.subject.conversationId ? { conversationId: current.subject.conversationId } : undefined),
         ...(current.topic === "contact.message" ? { messages: current.pendingCount } : undefined),

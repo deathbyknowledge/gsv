@@ -226,8 +226,9 @@ export const procHistoryEventPayloadSchemas = {
     noticeId: z.string(),
     topic: z.enum(["contact.message", "contact.request", "contact.invite.accepted"]),
     channel: z.string(),
-    text: z.string(),
     from: z.string(),
+    handle: z.optional(z.string()),
+    preview: z.optional(z.string()),
     contactId: z.optional(z.string()),
     conversationId: z.optional(z.string()),
     messages: z.optional(nonNegativeIntegerSchema),
@@ -352,10 +353,12 @@ export type ProcHistoryEventPayloadMap = {
     topic: "contact.message" | "contact.request" | "contact.invite.accepted";
     /** The adapter that carried the notice, such as whatsapp. */
     channel: string;
-    /** The notice's line as the owner received it, without its link; contact text inside it is untrusted. */
-    text: string;
-    /** The contact's local alias or display name. */
+    /** The contact's local alias or display name, on one line. */
     from: string;
+    /** The contact's handle, when the notice names one. */
+    handle?: string;
+    /** The start of the newest message, on one line; absent when it carries no text. It is the contact's untrusted words. */
+    preview?: string;
     contactId?: string;
     conversationId?: string;
     /** How many contact messages the notice covered. */

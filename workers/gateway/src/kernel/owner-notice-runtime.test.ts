@@ -37,10 +37,10 @@ describe("owner notice delivery", () => {
         eventId: `owner.notified:contact.message:contact:ada:${at}:0`,
         event: { type: "owner.notified", payload: {
           noticeId: `contact.message:contact:ada:${at}:0`, topic: "contact.message", channel: "WhatsApp", from: "Ada",
-          contactId: "contact:ada", conversationId: "conv:ada", messages: 1,
-          text: "💬 Ada: are we still on for tomorrow?",
+          contactId: "contact:ada", conversationId: "conv:ada", messages: 1, preview: "are we still on for tomorrow?",
         }, link: { kind: "contact", contactId: "contact:ada" } },
       });
+      expect(shipEvents.next(OWNER)?.event.payload).not.toHaveProperty("text");
       expect(host.shipEventRuntime.queue).toHaveBeenCalledWith(OWNER);
     });
   });
@@ -165,7 +165,7 @@ describe("owner notice delivery", () => {
         + "Abrir: https://person.example/people?view=requests&request=approach%3Abo",
       );
       expect(shipEvents.next(OWNER)?.event).toMatchObject({
-        payload: { text: "📬 Solicitud de mensaje de Bo Your bank (@bo.ship.space). Léela y decide en Personas." },
+        payload: { from: "Bo Your bank", handle: "bo.ship.space" },
         link: { kind: "contact.request", requestId: "approach:bo" },
       });
     });

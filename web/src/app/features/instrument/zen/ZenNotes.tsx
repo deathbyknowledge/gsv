@@ -1,7 +1,7 @@
 import { describeChatError, describeHistoryEventError, type ChatErrorContext, type ChatErrorPresentation } from "../../../services/chat/domain/errorPresentation";
 import { historyEventText } from "../../../services/chat/domain/typedHistory";
-import type { ProcHistoryEventLink } from "@humansandmachines/gsv/protocol";
-import { useT, type TextKey } from "../../../i18n/locale";
+import type { ProcHistoryEvent, ProcHistoryEventLink } from "@humansandmachines/gsv/protocol";
+import { useT, type TextKey, type Translate } from "../../../i18n/locale";
 import { AppLink } from "../../../services/navigation/appNavigation";
 import { peoplePath } from "../people/peopleNavigation";
 import { noteSummary, type Moment } from "./zenModel";
@@ -45,6 +45,7 @@ export function NoteMoment({
   onToggle: () => void;
 }) {
   const t = useT();
+  if (moment.event?.kind === "owner.notified") return ownerNoticeCard(t, moment, moment.event, focus, index, phase);
   /* the event rather than its cached row text, so the note follows the interface language */
   const text = moment.event ? historyEventText(moment.event) : moment.text;
   /* a failure reads as what happened and what to do; the gateway's own words stay one click away */
@@ -65,6 +66,43 @@ export function NoteMoment({
       {failure ? <p class="note-action">{t(failure.action)}</p> : null}
       {link ? <AppLink class="note-link" href={link.href}>{t(link.label)}</AppLink> : null}
       {open ? <div class="note-text">{text}</div> : null}
+    </div>
+  );
+}
+
+type OwnerNotified = Extract<ProcHistoryEvent, { kind: "owner.notified" }>;
+
+/** A notice GSV sent the person, shown whole: who wrote, where the person heard, what they said, and where to answer. */
+function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, focus: boolean, index: number, phase: "pending" | "materialising" | "settled") {
+  const { payload } = event;
+  const link = event.link ? eventLink(event.link) : null;
+  const sent = new Date(payload.sentAtMs);
+  const count = payload.messages !== undefined && payload.messages > 1 ? t("chat.notice.messages", { count: String(payload.messages) }) : null;
+  return (
+    <div
+      data-index={index}
+      data-moment-id={moment.id}
+      class={`zen-moment is-note is-owner-notice${focus ? " is-focus" : ""}${phase === "pending" ? " is-pending" : phase === "materialising" ? " is-materialising" : ""}`}
+    >
+      <div class="who">{t("chat.note.notice")}</div>
+      <div class="notice-card">
+        <div class="notice-head">
+          <span class="notice-from">{payload.from}</span>
+          {payload.handle ? <span class="notice-handle">{`@${payload.handle}`}</span> : null}
+          <span class="notice-meta">
+            {t("chat.notice.via", { channel: payload.channel })} · <time dateTime={sent.toISOString()}>{sent.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time>
+          </span>
+        </div>
+        {payload.topic === "contact.message" ? (
+          <p class="notice-body">
+            {count ? <span class="notice-count">{count}</span> : null}
+            {payload.preview ? <q>{payload.preview}</q> : <span class="notice-quiet">{t("chat.notice.attachment")}</span>}
+          </p>
+        ) : (
+          <p class="notice-body">{t(payload.topic === "contact.request" ? "chat.notice.request" : "chat.notice.accepted")}</p>
+        )}
+        {link ? <AppLink class="note-link" href={link.href}>{t(link.label)}</AppLink> : null}
+      </div>
     </div>
   );
 }
