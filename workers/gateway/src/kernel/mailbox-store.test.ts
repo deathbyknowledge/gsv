@@ -191,6 +191,7 @@ describe("MailboxStore", () => {
       expect(ids("pump")).toEqual(["mail_aaaaaaaa"]);
       expect(ids("billing")).toEqual(["mail_bbbbbbbb"]);
       expect(ids("hosting invoice")).toEqual(["mail_bbbbbbbb"]);
+      expect(ids("billing hosting")).toEqual(["mail_bbbbbbbb"]);
       expect(ids("receipt pumpkin")).toEqual([]);
       expect(ids('"OR" NEAR(-x')).toEqual([]);
     });

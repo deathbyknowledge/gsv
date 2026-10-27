@@ -629,14 +629,15 @@ export class MailboxStore {
     }
     const terms = trimmed.split(/\s+/);
     if (terms.length > 32) throw new Error("Mail search accepts at most 32 words");
-    const match = terms.map((term) => `"${term.replaceAll('"', '""')}"*`).join(" AND ");
+    // Each word may match the headers and body or the summary, so words are matched one at a time.
+    const matches = terms.map((term) => `"${term.replaceAll('"', '""')}"*`);
     return this.page(
       ownerUid,
-      `AND mail_messages.search_rowid IN (
+      matches.map(() => `AND mail_messages.search_rowid IN (
          SELECT rowid FROM mail_search WHERE mail_search MATCH ?
          UNION SELECT rowid FROM mail_summary_search WHERE mail_summary_search MATCH ?
-       )`,
-      [match, match],
+       )`).join("\n"),
+      matches.flatMap((match) => [match, match]),
       options,
     );
   }

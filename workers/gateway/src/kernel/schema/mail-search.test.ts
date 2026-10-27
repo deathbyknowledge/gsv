@@ -24,6 +24,7 @@ describe("mail search upgrade", () => {
       expect(ids("receipt")).toEqual(["mail_old"]);
       expect(ids("billing")).toEqual(["mail_old"]);
       expect(ids("hosting")).toEqual(["mail_old"]);
+      expect(ids("receipt hosting")).toEqual(["mail_old"]);
 
       store.recordMessage({
         messageId: "mail_new", mailboxId: "mailbox:1000:primary", intakeId: "intake-new", digest: "sha256:new",
