@@ -5,12 +5,14 @@ import type {
   AdapterInboundMessage,
   AdapterInboundResult,
   AdapterMedia,
+  AdapterSendAction,
   AdapterSurface,
 } from "../adapters";
 import type { AdapterServiceDescriptor } from "../../services/adapters";
 import {
   adapterConnectChallengeSchema,
   adapterMediaSchema,
+  adapterSendActionSchema,
   adapterSurfaceSchema,
   type AdapterConnectChallenge,
 } from "../adapters";
@@ -89,6 +91,8 @@ export type AdapterSendArgs = {
   text: string;
   replyToId?: string;
   media?: AdapterMedia[];
+  /** Something to open from the message: a button where the messenger has one, a line of text where it doesn't. */
+  action?: AdapterSendAction;
   /** Acknowledge that this separate send intentionally duplicates the active run's directed endpoint. */
   also?: boolean;
 };
@@ -101,6 +105,7 @@ export const adapterSendArgsSchema = z.strictObject({
   text: z.string(),
   replyToId: z.optional(z.string()),
   media: z.optional(z.array(adapterMediaSchema)),
+  action: z.optional(adapterSendActionSchema),
   also: z.optional(z.boolean()),
 });
 

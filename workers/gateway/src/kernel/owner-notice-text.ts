@@ -1,4 +1,4 @@
-import type { ProcHistoryEventLink } from "@humansandmachines/gsv/protocol";
+import type { AdapterSendAction, ProcHistoryEventLink } from "@humansandmachines/gsv/protocol";
 import type { OwnerNotice } from "./owner-notice-store";
 
 const PREVIEW_CHARACTERS = 200;
@@ -12,7 +12,9 @@ type NoticeWords = {
   attachment: string;
   request: (from: string) => string;
   accepted: (from: string) => string;
-  open: (url: string) => string;
+  /** Button labels, at most 20 characters for WhatsApp. */
+  openContact: string;
+  openRequest: string;
 };
 
 const WORDS = {
@@ -22,7 +24,8 @@ const WORDS = {
     attachment: "(attachment)",
     request: (from) => `📬 Message request from ${from}. Read it and decide in People.`,
     accepted: (from) => `🤝 ${from} accepted your invitation. You can message each other in People now.`,
-    open: (url) => `Open: ${url}`,
+    openContact: "Open in People",
+    openRequest: "Review request",
   },
   es: {
     message: (from, preview) => `💬 ${from}: ${preview}`,
@@ -30,7 +33,8 @@ const WORDS = {
     attachment: "(adjunto)",
     request: (from) => `📬 Solicitud de mensaje de ${from}. Léela y decide en Personas.`,
     accepted: (from) => `🤝 ${from} ha aceptado tu invitación. Ya podéis escribiros en Personas.`,
-    open: (url) => `Abrir: ${url}`,
+    openContact: "Abrir en Personas",
+    openRequest: "Revisar solicitud",
   },
   "pt-BR": {
     message: (from, preview) => `💬 ${from}: ${preview}`,
@@ -38,7 +42,8 @@ const WORDS = {
     attachment: "(anexo)",
     request: (from) => `📬 Solicitação de mensagem de ${from}. Leia e decida em Contatos.`,
     accepted: (from) => `🤝 ${from} aceitou seu convite. Vocês já podem conversar em Contatos.`,
-    open: (url) => `Abrir: ${url}`,
+    openContact: "Abrir em Contatos",
+    openRequest: "Revisar solicitação",
   },
 } satisfies Record<NoticeLanguage, NoticeWords>;
 
@@ -82,9 +87,13 @@ export function ownerNoticeLink(notice: OwnerNotice): ProcHistoryEventLink {
     : { kind: "contact", contactId: notice.subject.contactId };
 }
 
-/** A messenger carries only text, so the link follows the line as an address on this Ship. */
-export function messengerNoticeText(line: string, link: ProcHistoryEventLink, language: NoticeLanguage, origin: string | null): string {
-  if (!origin) return line;
+/** A messenger opens the link as an address on this Ship; each adapter shows it as a button or a line of text. */
+export function messengerNoticeAction(
+  link: ProcHistoryEventLink,
+  language: NoticeLanguage,
+  origin: string | null,
+): AdapterSendAction | undefined {
+  if (!origin) return undefined;
   const url = new URL("/people", origin);
   if (link.kind === "contact.request") {
     url.searchParams.set("view", "requests");
@@ -92,7 +101,8 @@ export function messengerNoticeText(line: string, link: ProcHistoryEventLink, la
   } else {
     url.searchParams.set("contact", link.contactId);
   }
-  return `${line}\n${WORDS[language].open(url.toString())}`;
+  const words = WORDS[language];
+  return { kind: "open", label: link.kind === "contact.request" ? words.openRequest : words.openContact, url: url.toString() };
 }
 
 function oneLine(value: string, limit: number): string {

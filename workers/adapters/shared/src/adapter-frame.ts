@@ -1,5 +1,6 @@
 import { exceptionDiagnostics } from "../../../../packages/gsv/src/diagnostics.js";
 import {
+  adapterActionText,
   adapterDeliveryContextSchema,
   type AdapterGatewayRequestFrame,
   type AdapterGatewayResponseFrame,
@@ -18,6 +19,8 @@ import { renderAdapterSend, type RenderedAdapterSend } from "./peer-render";
 
 export type AdapterFrameHandlers = {
   send(delivery: RenderedAdapterSend, body?: BinaryBody): Promise<AdapterProviderSendResult>;
+  /** The adapter shows a message's action itself; any other adapter receives it written into the text. */
+  actions?: true;
 };
 
 /** Validate and dispatch one canonical Gateway-to-adapter frame. */
@@ -61,6 +64,10 @@ export async function handleAdapterFrame(
   if (context.routeGeneration) message.routeGeneration = context.routeGeneration;
   if (args.replyToId !== undefined) message.replyToId = args.replyToId;
   if (args.media !== undefined) message.media = args.media;
+  if (args.action !== undefined) {
+    if (handlers.actions) message.action = args.action;
+    else message.text = adapterActionText(message.text, args.action);
+  }
   const delivery = renderAdapterSend(context, message);
 
   let result: AdapterProviderSendResult;

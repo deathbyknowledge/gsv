@@ -121,7 +121,8 @@ change that causes them. One row per contact collapses repeated messages, and a 
 goes out once keeps its row as a receipt. Before sending, the Kernel rechecks the subject:
 an unread conversation from an active, unblocked, unmuted contact Ship doesn't handle, or a
 request still pending. It then sends through the owner's private messenger destination,
-unless the owner's selected client is active. Request notices name the sender only; message
+unless the owner's selected client is active, with an action that opens the contact or request
+in People on the messenger (a link button where it has one). Request notices name the sender only; message
 text from a stranger never leaves People. Each sent notice queues an `owner.notified` Ship
 event, which Process records for the next generation without starting a run, so Ship can
 answer a reply to it. The owner sees the same event in their Ship conversation as a card built from its fields

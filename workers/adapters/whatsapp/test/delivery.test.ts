@@ -8,7 +8,14 @@ import type { ManagedWhatsAppPeerState } from "../src/managed-peer-state";
 // SAFETY: the managed test configuration binds these Workers and namespaces.
 const bindings = env as ManagedWhatsAppPeerEnv & { WHATSAPP_API: Fetcher };
 const stateKey = "managed_whatsapp_peer:v1:state";
-type GraphMessage = { kind: string; body: { to?: string; type?: string; text?: { body?: string } } };
+type GraphMessage = {
+  kind: string;
+  body: {
+    to?: string; type?: string; text?: { body?: string };
+    interactive?: { type: string; body: { text: string }; action: { name?: string; parameters?: { display_text: string; url: string } } };
+    template?: { components: Array<{ type: string; parameters: Array<{ text?: string }> }> };
+  };
+};
 
 async function seed(actorId: string, closed = false) {
   const peer = bindings.MANAGED_WHATSAPP_PEER.getByName(`managed:${actorId}`);
@@ -255,4 +262,28 @@ it("reports disabled templates instead of claiming a delivery", async () => {
     }
   });
   expect(await messages(message.actorId)).toEqual([]);
+});
+
+it("puts an action to open on a link button inside the window, and its link in the text otherwise", async () => {
+  const action = { kind: "open" as const, label: "Open in People", url: "https://ada.ship.space/people?contact=contact%3Abo" };
+  const open = await seed("34690217771");
+  using button = await open.peer.sendMessage(open.route.installationId, { ...open.message, text: "💬 Bo: are we still on?", action });
+  expect(button).toMatchObject({ ok: true });
+  expect((await messages("34690217771")).map((record) => record.body)).toMatchObject([{
+    to: "34690217771", type: "interactive",
+    interactive: { type: "cta_url", body: { text: "💬 Bo: are we still on?" }, action: { name: "cta_url", parameters: { display_text: "Open in People", url: action.url } } },
+  }]);
+
+  const local = await seed("34690217772");
+  using text = await local.peer.sendMessage(local.route.installationId, {
+    ...local.message, text: "💬 Bo: are we still on?", action: { ...action, url: "http://localhost:8787/people" },
+  });
+  expect(text).toMatchObject({ ok: true });
+  expect((await messages("34690217772")).map((record) => record.body.text?.body)).toEqual(["💬 Bo: are we still on?\nOpen in People: http://localhost:8787/people"]);
+
+  const closed = await seed("34690217773", true);
+  using template = await closed.peer.sendMessage(closed.route.installationId, { ...closed.message, text: "💬 Bo: are we still on?", action });
+  expect(template).toMatchObject({ ok: true });
+  const [sent] = await messages("34690217773");
+  expect(sent?.body.template?.components[0]?.parameters[0]?.text).toBe(`💬 Bo: are we still on? · Open in People: ${action.url}`);
 });
