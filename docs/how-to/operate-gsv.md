@@ -53,7 +53,7 @@ configure:
 
 ```sh
 GSV_OWNER_EMAIL_FROM=login@ship.space
-GSV_OWNER_EMAIL_REPLY_TO=hello@humansandmachin.es
+GSV_OWNER_EMAIL_REPLY_TO=support@humansandmachin.es
 ```
 
 The sender domain must be enabled for Cloudflare Email Sending in the deployment
