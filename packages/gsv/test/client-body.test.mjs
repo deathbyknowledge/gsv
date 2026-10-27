@@ -792,6 +792,54 @@ test("cancels an outbound request before rejecting its timeout", async () => {
   client.close();
 });
 
+test("counts a request deadline from the end of its upload, not its start", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket, defaultRequestTimeoutMs: 30 });
+  await client.connect({ url: "ws://test", username: "test", password: "test" });
+  const socket = FakeWebSocket.instance;
+  const slowUpload = () => new ReadableStream({
+    async pull(controller) {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      controller.enqueue(new Uint8Array([1, 2, 3]));
+      controller.close();
+    },
+  });
+  const sentBefore = socket.sent.length;
+
+  const answered = client.request("test.upload", {}, { body: { stream: slowUpload(), length: 3 } });
+  const request = JSON.parse(socket.sent[sentBefore]);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  socket.receive(JSON.stringify({ type: "res", id: request.id, ok: true, data: { ok: true } }));
+  assert.deepEqual((await answered).data, { ok: true });
+
+  const unanswered = client.request("test.silent", {}, { body: { stream: slowUpload(), length: 3 } });
+  const startedAt = Date.now();
+  await assert.rejects(unanswered, /Request timed out after 30ms: test\.silent/);
+  assert.ok(Date.now() - startedAt >= 100, "the deadline starts once the upload has been sent");
+  client.close();
+});
+
+test("leaves a copy's duration to the Kernel that runs it", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket, requestTimeoutsMs: { "test.other": 10 } });
+  await client.connect({ url: "ws://test", username: "test", password: "test" });
+  const socket = FakeWebSocket.instance;
+  const originalSetTimeout = globalThis.setTimeout;
+  const scheduledDelays = [];
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    scheduledDelays.push(delay);
+    return originalSetTimeout(callback, delay, ...args);
+  };
+  try {
+    const copy = client.request("fs.copy", { source: { path: "/a" }, destination: { path: "/b" } });
+    const request = JSON.parse(socket.sent.at(-1));
+    assert.deepEqual(scheduledDelays, [], "no client deadline is armed for a copy");
+    socket.receive(JSON.stringify({ type: "res", id: request.id, ok: true, data: { ok: true } }));
+    assert.deepEqual((await copy).data, { ok: true });
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+  client.close();
+});
+
 test("leaves omitted shell deadlines to the server and budgets explicit timeouts", async () => {
   const { client, socket } = await connectedClient();
   const originalSetTimeout = globalThis.setTimeout;

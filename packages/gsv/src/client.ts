@@ -246,7 +246,6 @@ const DEFAULT_REQUEST_TIMEOUTS_MS = {
   "sys.setup": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "sys.setup.assist": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "sys.bootstrap": LONG_RUNNING_REQUEST_TIMEOUT_MS,
-  "fs.copy": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "fs.transfer.stat": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "fs.transfer.send": LONG_RUNNING_REQUEST_TIMEOUT_MS,
   "fs.transfer.receive": LONG_RUNNING_REQUEST_TIMEOUT_MS,
@@ -955,17 +954,19 @@ export class GSVClient {
         void outgoing?.cancel(error);
         pending.reject(error);
       };
-      const timeoutId = timeoutMs === null
+      const armTimeout = (): TimerHandle | null => timeoutMs === null
         ? null
         : globalThis.setTimeout(() => {
           const error = new Error(`Request timed out after ${timeoutMs}ms: ${call}`);
           cancelPending(error);
         }, timeoutMs);
 
+      // An upload is guarded by its body's idle timeout while it streams; the
+      // request deadline only waits for the answer once the last byte is sent.
       const pending: PendingRequest = {
         resolve,
         reject,
-        timeoutId,
+        timeoutId: outgoing ? null : armTimeout(),
         call,
         bodyAbort,
         abortSignal: signal,
@@ -987,7 +988,9 @@ export class GSVClient {
           return;
         }
         if (outgoing) {
-          void outgoing.send(bodyAbort?.signal).catch((error) => {
+          void outgoing.send(bodyAbort?.signal).then(() => {
+            if (this.pending.get(id) === pending) pending.timeoutId = armTimeout();
+          }, (error) => {
             const pending = this.takePending(id);
             if (!pending) {
               return;
@@ -1228,6 +1231,10 @@ export class GSVClient {
     const configuredTimeout = this.requestTimeoutsMs[call];
     if (configuredTimeout !== undefined) {
       return configuredTimeout;
+    }
+    // The Kernel runs a copy and bounds each of its transfers; how long it may take depends on the file.
+    if (call === "fs.copy") {
+      return null;
     }
     if (call === "shell.exec") {
       const session = shellExecSessionArgumentsSchema.safeParse(args);
