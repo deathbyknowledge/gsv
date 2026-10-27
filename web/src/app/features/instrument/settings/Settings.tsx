@@ -95,7 +95,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
           <section hidden={section !== "account"} aria-labelledby="settings-account-title">
             <h1 id="settings-account-title">{t("settings.account.title")}</h1>
             <h2>{t("settings.account.deleteTitle")}</h2>
-            <p class="settings-intro">{rich(t("settings.account.deleteRequest"), { email: <a href="mailto:hello@humansandmachin.es">hello@humansandmachin.es</a> })}</p>
+            <p class="settings-intro">{rich(t("settings.account.deleteRequest"), { email: <a href="mailto:privacy@humansandmachin.es">privacy@humansandmachin.es</a> })}</p>
             <p class="settings-muted">{t("settings.account.deleteExplanation")}</p>
           </section>
           {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>{t("settings.signIn.title")}</h1><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
