@@ -27,10 +27,10 @@ export type TelegramApprovalCallback = {
 };
 
 export type TelegramInlineKeyboardMarkup = {
-  inline_keyboard: Array<Array<{
-    text: string;
-    callback_data: string;
-  }>>;
+  inline_keyboard: Array<Array<
+    | { text: string; callback_data: string }
+    | { text: string; url: string }
+  >>;
 };
 
 export type TelegramApprovalControls = {

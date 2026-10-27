@@ -27,6 +27,7 @@ import {
   SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
   validateAdapterMediaBody,
 } from "../../shared/src/media-body";
+import { adapterActionText } from "../../../../packages/gsv/src/protocol/adapters.js";
 import type {
   AdapterOutboundMessage,
   AdapterDeliveryContext,
@@ -231,12 +232,14 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       const controls = context?.hil
         ? await prepareTelegramApproval(this.ctx.storage, context, context.hil, route)
         : null;
-      const renderedMessage = controls ? { ...message, text: controls.text } : message;
+      const [renderedMessage, options] = controls
+        ? [{ ...withoutAction(message), text: controls.text }, { replyMarkup: controls.replyMarkup }]
+        : telegramActionMessage(message);
       const result = await this.deliverMessage(renderedMessage, {
         kind: "installation",
         installationId,
         generation: message.routeGeneration,
-      }, body, controls ? { replyMarkup: controls.replyMarkup } : {});
+      }, body, options);
       if (result.ok && controls) {
         await attachTelegramApprovalMessage(this.ctx.storage, controls.token, result.messageId);
       }
@@ -917,6 +920,23 @@ function telegramTextChunks(markdown: string, splitParagraphs = true, legacyGrou
     fitMarkdownToLimit(paragraphs, markdownToTelegramHtml, TELEGRAM_TEXT_LIMIT)
       .map((fitted) => fitted.markdown));
   return chunks.length > 0 ? chunks : splitTextAtLimit(markdown, TELEGRAM_TEXT_LIMIT);
+}
+
+function withoutAction(message: AdapterOutboundMessage): AdapterOutboundMessage {
+  const { action: _action, ...rest } = message;
+  return rest;
+}
+
+// Telegram opens only https links from a button; anything else, and a message with media, keeps the link as text.
+function telegramActionMessage(
+  message: AdapterOutboundMessage,
+): [AdapterOutboundMessage, TelegramTextMessageOptions] {
+  const { action, ...rest } = message;
+  if (!action) return [message, {}];
+  if (rest.media?.length || new URL(action.url).protocol !== "https:") {
+    return [{ ...rest, text: adapterActionText(rest.text, action) }, {}];
+  }
+  return [rest, { replyMarkup: { inline_keyboard: [[{ text: action.label, url: action.url }]] } }];
 }
 
 function telegramFingerprintMessage(

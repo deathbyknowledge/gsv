@@ -4647,6 +4647,7 @@ describe("adapter lifecycle handlers", () => {
       {
         deliveryId: "run-1:finished",
         text: "automatic reply",
+        action: { kind: "open", label: "Open in People", url: "https://ship.example/people" },
         replyToId: "incoming-7",
       },
       ctx,
@@ -4665,6 +4666,7 @@ describe("adapter lifecycle handlers", () => {
         call: "adapter.send",
         args: expect.objectContaining({
           text: "automatic reply",
+          action: { kind: "open", label: "Open in People", url: "https://ship.example/people" },
           replyToId: "incoming-7",
         }),
       }),

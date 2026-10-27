@@ -243,6 +243,15 @@ ordinary `proc.hil` request through a Kernel-derived, interaction-scoped
 linked-human peer. The adapter service account never receives ambient
 `proc.hil` authority, and provider reply threading is not authorization.
 
+An `adapter.send` may also carry one `action`: a label of at most 20 characters
+and an http or https address to open. Adapters that declare native actions show
+it as a link button: Telegram under the message, WhatsApp as a `cta_url` message
+inside the 24-hour window. An address the provider can't open from a button,
+media, approval controls and WhatsApp's out-of-window template keep the link as
+a line of text under the message, and adapters without native actions always
+receive it that way from the shared frame handler. The action is part of the
+delivery's content, so a replay with a different action is a different delivery.
+
 An approval for a deleted or inaccessible Process is terminal. The Kernel
 preserves the protocol error code, so the adapter resolves the callback as stale
 and continues delivering later messages. Temporary transport or service failures
