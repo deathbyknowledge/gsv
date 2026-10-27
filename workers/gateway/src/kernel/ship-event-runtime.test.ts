@@ -48,6 +48,28 @@ describe("Ship event delivery", () => {
     });
   });
 
+  it("delivers an owner notice that both Ship and its owner can see in the conversation", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, shipEvents } = fixture(storage);
+      const payload = {
+        noticeId: "contact.message:contact:remote:1:0", topic: "contact.message", adapter: "whatsapp", from: "Remote",
+        preview: "hello", contactId: "contact:remote", conversationId: "conv:remote", messages: 1, sentAtMs: 1,
+      } as const;
+      const link = { kind: "contact", contactId: "contact:remote" } as const;
+      shipEvents.enqueue(OWNER, "owner.notified:contact.message:contact:remote:1:0", { type: "owner.notified", payload, link }, Date.now());
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      const send = vi.spyOn(processTransport, "sendFrameToProcess")
+        .mockResolvedValue({ type: "res", id: "response", ok: true, data: {} });
+
+      await runtime.onShipEvents(OWNER, { id: "task:notice" });
+      expect(send).toHaveBeenCalledWith("installation:test", "proc:ship", expect.objectContaining({
+        call: "proc.event.deliver",
+        args: { eventId: "owner.notified:contact.message:contact:remote:1:0",
+          event: { kind: "owner.notified", payload, severity: "info", audience: "both", link } },
+      }));
+    });
+  });
+
   it("revokes a queued message once Ship no longer handles its contact", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { contact, runtime, shipEvents, responsibilities } = fixture(storage);

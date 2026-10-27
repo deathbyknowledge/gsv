@@ -55,7 +55,7 @@ import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenDraftPaste, ZenMedia } from "./ZenMedia";
 import { longPaste, zenAttachment, zenDraftMessage, type ZenAttachment, type ZenPaste } from "./zenAttachments";
-import { FeedbackNote, NoteMoment, zenErrorText, zenFailure, zenNotice, type ZenNote } from "./ZenNotes";
+import { FeedbackNote, MomentTime, NoteMoment, zenErrorText, zenFailure, zenNotice, type ZenNote } from "./ZenNotes";
 import type { ChatErrorContext } from "../../../services/chat/domain/errorPresentation";
 import { rich, useT, type TextKey } from "../../../i18n/locale";
 import {
@@ -66,7 +66,6 @@ import {
   brightMessageIndices,
   defaultPlace,
   momentsFromConversation,
-  momentTime,
   memoryPagesForMoment,
   nextDayBoundary,
   ownerTimeZone,
@@ -141,13 +140,6 @@ function reducedMotion(): boolean {
 function placesFromTargets(targets: Awaited<ReturnType<typeof loadConsoleTargets>>): Place[] {
   return targets.map((target) => ({ id: target.deviceId, label: target.label || target.deviceId, online: target.online, kind: target.kind }));
 }
-
-/** When the moment was sent, read in the owner's zone. Always in the label row so nothing moves; the stylesheet reveals it on hover, focus or the browse cursor. */
-const MomentTime = memo(function MomentTime({ timestamp, today, timeZone }: { timestamp: number; today: number; timeZone: string }) {
-  useT(); // the label names its month in the interface language, so a language change renders it again
-  const when = momentTime(timestamp, timeZone, today);
-  return <time class="when" dateTime={new Date(timestamp).toISOString()} title={when.title}>{when.label}</time>;
-});
 
 function MomentCopyButton({ text }: { text: string }) {
   const t = useT();
@@ -1121,6 +1113,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
                       index={index}
                       phase={pending ? "pending" : materialising ? "materialising" : "settled"}
                       focus={selection === index}
+                      clock={{ today, timeZone }}
                       open={openNotes.has(moment.id)}
                       onToggle={() =>
                         setOpenNotes((current) => {

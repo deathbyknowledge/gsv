@@ -124,7 +124,8 @@ request still pending. It then sends through the owner's private messenger desti
 unless the owner's selected client is active. Request notices name the sender only; message
 text from a stranger never leaves People. Each sent notice queues an `owner.notified` Ship
 event, which Process records for the next generation without starting a run, so Ship can
-answer a reply to it.
+answer a reply to it. The owner sees the same event in their Ship conversation as a card built from its fields
+(who wrote, which messenger, the start of the message) with a link to the contact or request in People.
 
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more

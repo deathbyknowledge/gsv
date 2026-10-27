@@ -586,3 +586,9 @@ export interface AdapterGatewayInterface<Frame = AdapterGatewayFrame> {
     frame: Frame,
   ): Promise<Frame | null>;
 }
+
+/** The name a person knows a messenger by, from its adapter id. */
+export function adapterDisplayName(adapter: string): string {
+  if (adapter === "whatsapp") return "WhatsApp";
+  return adapter.charAt(0).toUpperCase() + adapter.slice(1);
+}

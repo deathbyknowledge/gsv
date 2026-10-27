@@ -1,3 +1,4 @@
+import type { ProcHistoryEventLink } from "@humansandmachines/gsv/protocol";
 import type { OwnerNotice } from "./owner-notice-store";
 
 const PREVIEW_CHARACTERS = 200;
@@ -49,29 +50,49 @@ export function noticeLanguage(preference: string | null | undefined): NoticeLan
   return "en";
 }
 
-/** The notice exactly as the owner reads it. Names and previews come from other people, so they stay on one short line. */
-export function renderOwnerNotice(notice: OwnerNotice, language: NoticeLanguage, origin: string | null): string {
-  const words = WORDS[language];
+/** Who a notice is from and what they wrote. They come from other people, so each stays on one short line. */
+export type OwnerNoticeParts = { from: string; handle?: string; preview?: string };
+
+export function ownerNoticeParts(notice: OwnerNotice): OwnerNoticeParts {
   const { subject } = notice;
-  const name = oneLine(subject.from, NAME_CHARACTERS) || "?";
-  const from = subject.handle ? `${name} (@${oneLine(subject.handle, NAME_CHARACTERS)})` : name;
-  const preview = oneLine(subject.preview ?? "", PREVIEW_CHARACTERS) || words.attachment;
-  const text = notice.topic === "contact.message"
-    ? notice.pendingCount > 1 ? words.messages(from, notice.pendingCount, preview) : words.message(from, preview)
-    : notice.topic === "contact.request" ? words.request(from) : words.accepted(from);
-  const url = origin ? noticeUrl(notice, origin) : null;
-  return url ? `${text}\n${words.open(url)}` : text;
+  const handle = subject.handle ? oneLine(subject.handle, NAME_CHARACTERS) : "";
+  const preview = notice.topic === "contact.message" ? oneLine(subject.preview ?? "", PREVIEW_CHARACTERS) : "";
+  return {
+    from: oneLine(subject.from, NAME_CHARACTERS) || "?",
+    ...(handle ? { handle } : undefined),
+    ...(preview ? { preview } : undefined),
+  };
 }
 
-function noticeUrl(notice: OwnerNotice, origin: string): string {
+/** The notice's line, for a messenger, which carries only text. */
+export function renderOwnerNotice(notice: OwnerNotice, language: NoticeLanguage): string {
+  const words = WORDS[language];
+  const parts = ownerNoticeParts(notice);
+  const from = parts.handle ? `${parts.from} (@${parts.handle})` : parts.from;
+  const preview = parts.preview ?? words.attachment;
+  return notice.topic === "contact.message"
+    ? notice.pendingCount > 1 ? words.messages(from, notice.pendingCount, preview) : words.message(from, preview)
+    : notice.topic === "contact.request" ? words.request(from) : words.accepted(from);
+}
+
+/** What the notice is about, for each client to open in its own way. */
+export function ownerNoticeLink(notice: OwnerNotice): ProcHistoryEventLink {
+  return notice.topic === "contact.request" && notice.subject.approachId
+    ? { kind: "contact.request", requestId: notice.subject.approachId }
+    : { kind: "contact", contactId: notice.subject.contactId };
+}
+
+/** A messenger carries only text, so the link follows the line as an address on this Ship. */
+export function messengerNoticeText(line: string, link: ProcHistoryEventLink, language: NoticeLanguage, origin: string | null): string {
+  if (!origin) return line;
   const url = new URL("/people", origin);
-  if (notice.topic === "contact.request" && notice.subject.approachId) {
+  if (link.kind === "contact.request") {
     url.searchParams.set("view", "requests");
-    url.searchParams.set("request", notice.subject.approachId);
+    url.searchParams.set("request", link.requestId);
   } else {
-    url.searchParams.set("contact", notice.subject.contactId);
+    url.searchParams.set("contact", link.contactId);
   }
-  return url.toString();
+  return `${line}\n${WORDS[language].open(url.toString())}`;
 }
 
 function oneLine(value: string, limit: number): string {
