@@ -293,11 +293,24 @@ export async function appendApproachMessage(id: string, ctx: KernelContext): Pro
     origin: summary.direction === "incoming" ? { kind: "federation", contactId: record.contactId, deliveryId: summary.requestId } : { kind: "client" },
     createdAt: record.sentAtMs,
   });
-  ctx.approaches.messageCommitted(id, message.message.sequence);
+  ctx.federation.transaction(() => {
+    const committed = ctx.approaches.messageCommitted(id, message.message.sequence);
+    // A request someone sent is the person's to read and decide; their messenger hears of it, by name only.
+    if (committed.summary.direction === "incoming" && committed.summary.state === "pending") {
+      ctx.ownerNotices.noteOnce(committed.ownerUid, `contact.request:${id}`, "contact.request", {
+        contactId: committed.contactId,
+        conversationId: committed.summary.conversationId,
+        approachId: id,
+        from: committed.summary.displayName,
+        ...(committed.summary.peerHandle ? { handle: committed.summary.peerHandle } : undefined),
+      }, Date.now());
+    }
+  });
   ctx.conversations.recordContactMessage(message.message, true);
   if (message.created) {
     ctx.broadcastToUserUid(record.ownerUid, "message.committed", { message: message.message, directed: false });
     ctx.broadcastToUserUid(record.ownerUid, "conversation.changed", { conversationId: conversation.id, latestSequence: message.message.sequence });
   }
   ctx.broadcastToUserUid(record.ownerUid, "approach.changed");
+  await ctx.queueOwnerNotices(record.ownerUid);
 }

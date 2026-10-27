@@ -186,6 +186,29 @@ one active responsibility awaits that contact. Resolving or cancelling the work
 ends that association. The receiving person independently chooses who handles
 their side.
 
+## Hear about new messages on your messenger
+
+When you are not using GSV in a browser or on Desktop, your Ship's messenger
+chat, such as WhatsApp or Telegram, tells you about:
+
+- a new message from someone whose messages you handle, with the first line of
+  what they wrote;
+- a message request, with the sender's name and handle only; read the message
+  and decide in People;
+- someone accepting your invitation.
+
+Each notice links to the conversation or request. While you keep a conversation
+unread, later messages from the same person arrive as one notice at most every
+ten minutes, such as "Ada sent you 3 messages". Reading the conversation,
+deciding the request or muting the person stops notices that have not gone out
+yet. Messages that Ship handles reach Ship, not a notice; Ship tells you what
+matters. GSV doesn't send these notices while you are active in a browser or on
+Desktop, because People shows the change there.
+
+Ship knows about each notice it sent, so you can reply to it in the same chat,
+for example "tell her Friday works". A message request stays yours to read and
+decide in People.
+
 A message’s **reply** action quotes that message in the same conversation and keeps
 its exact reference, including on the first incoming message before you have sent
 anything back. Reply and successful delivery information appear on hover or

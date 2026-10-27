@@ -1,3 +1,4 @@
+import type { InternalRequestFrame } from "../protocol/process-frames";
 import type { DurableTaskOptions } from "../shared/durable-tasks";
 import { sendFrameToProcess } from "../shared/utils";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
@@ -71,6 +72,8 @@ export class ShipEventRuntime {
   /** Checked again after every await: removal stops delivery, and the event's producer rebinds or revokes it. */
   private admit(queued: QueuedShipEvent): QueuedShipEvent | "revoked" | "stop" {
     if (this.host.auth.isAccountDisabled(queued.ownerUid)) return "stop";
+    // The owner already received the notice; Ship's record of it has nothing to revoke.
+    if (queued.event.type === "owner.notified") return queued;
     const ctx = this.host.buildKernelContext({ callerOwnerUid: queued.ownerUid });
     const event = admitQueuedContactEvent(queued.ownerUid, queued.eventId, queued.event, ctx);
     return event ? { ...queued, event } : "revoked";
@@ -85,18 +88,36 @@ export class ShipEventRuntime {
     const queued = this.admit(admitted);
     if (queued === "revoked") this.host.shipEvents.delivered(admitted.eventId);
     if (queued === "revoked" || queued === "stop") return;
+    const { event } = queued;
+    if (event.type === "owner.notified") {
+      // Recorded for Ship's next generation without starting a run of its own.
+      const request: InternalRequestFrame<"proc.event.deliver"> = {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.event.deliver",
+        args: {
+          eventId: queued.eventId,
+          event: { kind: "owner.notified", payload: event.payload, severity: "info", audience: "model" },
+        },
+      };
+      const response = await sendFrameToProcess(this.host.installationId, processId, request);
+      if (!response) throw new Error("Ship event produced no Process response");
+      if (!response.ok) throw new Error(response.error.message);
+      this.host.shipEvents.delivered(queued.eventId);
+      return;
+    }
     const response = await sendFrameToProcess(this.host.installationId, processId, {
       type: "req",
       id: crypto.randomUUID(),
       call: "proc.runtime.event.deliver",
-      args: { eventId: queued.eventId, event: queued.event },
+      args: { eventId: queued.eventId, event },
     });
     if (!response) throw new Error("Ship event produced no Process response");
     if (!response.ok) throw new Error(response.error.message);
     const now = Date.now();
     this.host.ctx.storage.transactionSync(() => {
       this.host.shipEvents.delivered(queued.eventId);
-      this.host.responsibilities.markEventDelivered(queued.ownerUid, [queued.event.responsibilityId], now);
+      this.host.responsibilities.markEventDelivered(queued.ownerUid, [event.responsibilityId], now);
     });
   }
 

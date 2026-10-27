@@ -222,6 +222,17 @@ export const procHistoryEventPayloadSchemas = {
     version: z.optional(z.string()),
     observedAt: z.number(),
   }),
+  "owner.notified": z.strictObject({
+    noticeId: z.string(),
+    topic: z.enum(["contact.message", "contact.request", "contact.invite.accepted"]),
+    channel: z.string(),
+    text: z.string(),
+    from: z.string(),
+    contactId: z.optional(z.string()),
+    conversationId: z.optional(z.string()),
+    messages: z.optional(nonNegativeIntegerSchema),
+    sentAtMs: z.number(),
+  }),
 } satisfies { [K in keyof ProcHistoryEventPayloadMap]: z.ZodMiniType<ProcHistoryEventPayloadMap[K]> };
 
 export type ProcHistoryContextProjection = {
@@ -335,6 +346,22 @@ export type ProcHistoryEventPayloadMap = {
     version?: string;
     observedAt: number;
   };
+  /** A notice the Kernel sent to the owner's messenger, recorded so Ship understands a reply to it. */
+  "owner.notified": {
+    noticeId: string;
+    topic: "contact.message" | "contact.request" | "contact.invite.accepted";
+    /** The adapter that carried the notice, such as whatsapp. */
+    channel: string;
+    /** The notice exactly as the owner received it; contact text inside it is untrusted. */
+    text: string;
+    /** The contact's local alias or display name. */
+    from: string;
+    contactId?: string;
+    conversationId?: string;
+    /** How many contact messages the notice covered. */
+    messages?: number;
+    sentAtMs: number;
+  };
 };
 
 export type ProcHistoryEventKind = keyof ProcHistoryEventPayloadMap;
@@ -395,6 +422,7 @@ export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discrim
   eventSchema("runtime.wake"),
   eventSchema("runtime.failed"),
   eventSchema("target.connection"),
+  eventSchema("owner.notified"),
   z.strictObject({
     kind: z.literal("legacy"),
     payload: z.strictObject({

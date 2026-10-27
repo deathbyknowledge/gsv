@@ -115,6 +115,17 @@ Both human and Process-authored replies may continue authorized work. A receipt 
 never creates another responsibility. Revocation ends standing handling and returns unfinished tasks
 to Ship with the disconnection recorded. A replacement contact generation requires a fresh handoff.
 
+A contact message the person handles, a message request and an accepted invitation instead
+become owner notices. Kernel `owner_notices` rows are written in the same transaction as the
+change that causes them. One row per contact collapses repeated messages, and a notice that
+goes out once keeps its row as a receipt. Before sending, the Kernel rechecks the subject:
+an unread conversation from an active, unblocked, unmuted contact Ship doesn't handle, or a
+request still pending. It then sends through the owner's private messenger destination,
+unless the owner's selected client is active. Request notices name the sender only; message
+text from a stranger never leaves People. Each sent notice queues an `owner.notified` Ship
+event, which Process records for the next generation without starting a run, so Ship can
+answer a reply to it.
+
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more
 work, or remain silent.

@@ -116,7 +116,9 @@ The Process deduplicates by event id. A producer that changes the ledger in the 
 transaction marks that change announced, so the ledger does not wake Ship for it;
 once the event is admitted, the records it names get the same recovery wake as a
 delivered batch, and the run that receives it gates yield on those records. Contact
-messages are the first producer.
+messages are the first producer. An `owner.notified` event names no records and starts
+no run: Process records it in history for the next generation, or adds it to the run
+already active.
 
 The producer decides again before every delivery attempt, including after the Ship
 controller starts, whether a queued event may still reach Ship. A contact message

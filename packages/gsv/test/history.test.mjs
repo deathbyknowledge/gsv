@@ -257,6 +257,10 @@ const eventFixtures = {
   "runtime.wake": { source: "process", reason: "pending-events", pendingEvents: 1 },
   "runtime.failed": { reason: "schedule.error", error: "Could not load schedule" },
   "target.connection": { targetId: "machine:one", event: "connected", platform: "linux", observedAt: 100 },
+  "owner.notified": {
+    noticeId: "contact.message:contact:1:0", topic: "contact.message", channel: "WhatsApp", text: "💬 Xisca: The photo",
+    from: "Xisca", contactId: "contact:1", conversationId: "conv:1", messages: 1, sentAtMs: 100,
+  },
 };
 
 test("responsibility events preserve context fields independently of the raw transition", () => {

@@ -22,6 +22,20 @@ function request(eventId: string, audience: "model" | "person" | "both" = "perso
   };
 }
 
+function ownerNotice(eventId: string): InternalRequestFrame<"proc.event.deliver"> {
+  return {
+    type: "req", id: `request:${eventId}`, call: "proc.event.deliver", args: {
+      eventId, event: {
+        kind: "owner.notified", severity: "info", audience: "model",
+        payload: {
+          noticeId: "contact.message:contact:ada:0", topic: "contact.message", channel: "WhatsApp", from: "Ada",
+          text: "💬 Ada: are we still on for tomorrow?", contactId: "contact:ada", conversationId: "conv:ada", messages: 1, sentAtMs: 1000,
+        },
+      },
+    },
+  };
+}
+
 describe("registered Process events", () => {
   it("rejects retired approval delivery and keeps staged records inspectable outside model context", async () => {
     const stub = await initProcess("history-events-retired-approval", ROOT_IDENTITY);
@@ -175,6 +189,48 @@ describe("registered Process events", () => {
       expect(process.runs.active?.runId ?? null).toBe(audience === "person" ? null : frame.args.eventId);
       expect(await process.history.buildContextMessages()).toHaveLength(audience === "person" ? 0 : 1);
     });
+  });
+
+  it("records an owner notice for the next generation without starting a run, once", async () => {
+    const stub = await initProcess("history-events-owner-notice", ROOT_IDENTITY);
+    const frame = ownerNotice("owner.notified:contact.message:contact:ada:0");
+    const first = await stub.recvFrame(frame);
+    expect(first).toMatchObject({ ok: true, data: { eventId: frame.args.eventId, runId: null, queued: false, messageId: 1 } });
+    await evictDurableObject(stub);
+    expect(await stub.recvFrame(frame)).toEqual(first);
+    await runInProcess(stub, async (process: Process) => {
+      expect(process.runs.active).toBeNull();
+      expect(process.store.queue.queueSize()).toBe(0);
+      expect(process.store.messages.getRecords()).toMatchObject([{ kind: "event", payload: frame.args.event, runId: null }]);
+      const messages = await process.history.buildContextMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.content).toContain("💬 Ada: are we still on for tomorrow?");
+    });
+  });
+
+  it("adds an owner notice to an active run without scheduling another", async () => {
+    const stub = await initProcess("history-events-owner-notice-active", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      process.runs.active = { runId: "active" };
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish");
+      const frame = ownerNotice("owner.notified:busy");
+      expect(await process.controller.handleReq(frame)).toMatchObject({ ok: true, data: { runId: "active", queued: false } });
+      expect(schedule).not.toHaveBeenCalled();
+      expect(process.runs.active).toMatchObject({ runId: "active", pendingRuntimeEvents: 1 });
+      expect(process.store.messages.getRecords()).toMatchObject([{ kind: "event", payload: frame.args.event }]);
+    });
+  });
+
+  it.each([
+    ["for a person", { audience: "person" }],
+    ["as a warning", { severity: "warn" }],
+  ] as const)("refuses an owner notice addressed %s", async (_name, change) => {
+    const stub = await initProcess(`history-events-owner-notice-${change.audience ?? change.severity}`, ROOT_IDENTITY);
+    const frame = ownerNotice("owner.notified:invalid");
+    // SAFETY: a malformed internal frame deliberately tests the Process admission boundary.
+    const invalid = { ...frame, args: { ...frame.args, event: { ...frame.args.event, ...change } } } as InternalRequestFrame<"proc.event.deliver">;
+    expect(await stub.recvFrame(invalid)).toMatchObject({ ok: false });
+    await runInProcess(stub, (process: Process) => expect(process.store.messages.messageCount()).toBe(0));
   });
 
   it("rejects stale transitions after reset and preserves killed-process terminal state", async () => {
