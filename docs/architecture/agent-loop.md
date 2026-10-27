@@ -270,20 +270,12 @@ for model history.
 
 ## Human-in-the-Loop Approval
 
-Tool approval is profile-configured with JSON at
-`config/ai/profile/{profile}/tools/approval`. If no policy is configured, GSV
-defaults to:
-
-- Auto-allow most tools.
-- Ask before `shell.exec`.
-- Ask before `fs.delete`.
-- Ask before `sys.mcp.call`.
-
-Rules can match exact syscalls or wildcard domains and can inspect facts such as
-profile, target type, tags, paths, commands, and argument prefixes. The approval
-engine tags risky operations, including destructive commands, hidden paths,
-paths outside cwd/home, remote device targets, privileged commands, and network
-commands.
+Every process runs under its human owner's
+[approval policy](../reference/configuration.md#tool-approval-policy): rules
+that match a syscall and the target it runs on. A run takes the policy when it
+starts. A call that would ask first reads the owner's current policy from the
+Kernel, so a rule added by **Always allow** on another process applies before
+this one prompts. If that read fails, the run's own policy stands and it asks.
 
 Approval outcomes are:
 

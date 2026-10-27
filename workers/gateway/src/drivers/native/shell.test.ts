@@ -592,6 +592,20 @@ describe("native shell execution", () => {
     expect(DEFAULT_NATIVE_SHELL_TIMEOUT_MS).toBe(120_000);
   });
 
+  it("refuses to hold more data than fits beside the Kernel", async () => {
+    const ctx = makeContext();
+    await handleFsWrite({ path: "/tmp/large.txt", content: "a".repeat(20 * 1024 * 1024) }, ctx);
+    await handleFsWrite({ path: "/tmp/small.txt", content: "a".repeat(1024 * 1024) }, ctx);
+
+    const large = await handleShellExec({ input: "cat /tmp/large.txt | tr a b | wc -c" }, ctx);
+    expect(large.exitCode).not.toBe(0);
+    expect(large.stderr).toMatch(/size limit exceeded/);
+
+    const small = await handleShellExec({ input: "cat /tmp/small.txt | tr a b | wc -c" }, ctx);
+    expect(small).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(small.stdout.trim()).toBe(String(1024 * 1024));
+  });
+
   it("reports the configured command timeout under just-bash cancellation", async () => {
     const result = await handleShellExec(
       { input: "sleep 1", timeout: 10 },

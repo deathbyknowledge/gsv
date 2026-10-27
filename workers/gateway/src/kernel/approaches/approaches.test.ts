@@ -97,6 +97,24 @@ describe("message requests", () => {
     }
   });
 
+  it("records one notice for the person a request reached, naming its sender without its text", async () => {
+    await sendRequest();
+    await alice.run((ctx) => processApproachMaintenance(held(ctx)));
+    const [received] = await incomingRequests(bob);
+    const notices = (space: TestSpace) => space.run((_ctx, storage) => storage.sql.exec<{ notice_key: string; topic: string; subject_json: string }>(
+      "SELECT notice_key, topic, subject_json FROM owner_notices WHERE owner_uid = ?", SPACE_OWNER_UID,
+    ).toArray());
+    const [notice, ...others] = await notices(bob);
+    expect(others).toEqual([]);
+    expect(notice).toMatchObject({ notice_key: `contact.request:${received!.id}`, topic: "contact.request" });
+    expect(JSON.parse(notice!.subject_json)).toEqual({
+      contactId: expect.any(String), conversationId: received!.conversationId, approachId: received!.id,
+      from: "Alice in the open", handle: "alice.ship.test",
+    });
+    expect(notice!.subject_json).not.toContain("boat");
+    expect(await notices(alice)).toEqual([]);
+  });
+
   it("keeps a message for later when it reaches a Ship still accepting the request", async () => {
     await sendRequest();
     const [received] = await incomingRequests(bob);
@@ -146,7 +164,7 @@ describe("message requests", () => {
     expect(authorize).toHaveBeenCalledWith(alice.installationId, "proc:ship", expect.objectContaining({
       call: "proc.tool.authorize",
       args: expect.objectContaining({
-        syscall: "approach.create", defaultAction: "ask",
+        syscall: "approach.create",
         args: expect.objectContaining({ recipient: "bob.ship.test", did: bob.account.did }),
       }),
     }));
@@ -164,7 +182,7 @@ describe("message requests", () => {
     await expect(alice.run((ctx) => handleApproachCreate({ ...request(profile), shipHandlesMessages: false }, asShipSyscall(ctx)))).rejects.toThrow("not approved");
     expect(authorize).toHaveBeenCalledWith(alice.installationId, "proc:ship", expect.objectContaining({
       call: "proc.tool.authorize",
-      args: expect.objectContaining({ runId: "run:direct", requestId: "req:direct", syscall: "approach.create", defaultAction: "ask" }),
+      args: expect.objectContaining({ runId: "run:direct", requestId: "req:direct", syscall: "approach.create" }),
     }));
     expect(await alice.run((ctx) => ctx.approaches.list(SPACE_OWNER_UID, { direction: "outgoing", limit: 10 }))).toEqual([]);
   });

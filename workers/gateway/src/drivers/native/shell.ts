@@ -40,6 +40,7 @@ export const NATIVE_SHELL_NETWORK_CONFIG = {
 export const DEFAULT_NATIVE_SHELL_TIMEOUT_MS = DEFAULT_SHELL_EXEC_TIMEOUT_MS;
 const JUST_BASH_EXTENSION_CLEANUP_TIME_MS = 100;
 const JUST_BASH_EXECUTION_BACKSTOP_GRACE_MS = 1_000;
+const NATIVE_SHELL_DATA_BYTES = 16 * 1024 * 1024;
 
 export async function handleShellExec(
   args: ShellExecArgs,
@@ -209,6 +210,12 @@ function createBash(
       // only ever flow into files, keeps just-bash's own 256 MiB ceiling.
       maxExecutionTimeMs: timeoutMs + JUST_BASH_EXECUTION_BACKSTOP_GRACE_MS,
       maxExtensionCleanupTimeMs: JUST_BASH_EXTENSION_CLEANUP_TIME_MS,
+      // One builtin runs synchronously over its whole input, so data size bounds both the
+      // Kernel's memory and how long a command can hold its CPU.
+      maxInputBytes: NATIVE_SHELL_DATA_BYTES,
+      maxLiveBytes: NATIVE_SHELL_DATA_BYTES,
+      maxStringLength: NATIVE_SHELL_DATA_BYTES,
+      maxOutputSize: NATIVE_SHELL_DATA_BYTES,
     },
     customCommands: commandFence.wrap(buildCustomCommands(fs, identity, ctx, options)),
   });

@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useBrowserNavigation } from "../../../services/platform/BrowserNavigation";
 import { startOwnerLink } from "../../../services/session/ownerLink";
+import { TextInput } from "../../../components/ui/TextInput";
 import { useT } from "../../../i18n/locale";
 
 export function PersonalPasswordReset({ active }: { active: boolean }) {
@@ -25,7 +26,7 @@ export function PersonalPasswordReset({ active }: { active: boolean }) {
   return <form class="settings-form" onSubmit={(event) => void reset(event)}>
     <h2>{t("settings.signIn.personal")}</h2>
     <p>{t("settings.signIn.resetHint")}</p>
-    <label>{t("settings.signIn.newPassword")}<input type="password" autoComplete="new-password" minLength={8} maxLength={1024} value={password} disabled={busy || !connected} onInput={(event) => setPassword(event.currentTarget.value)} /></label>
+    <TextInput type="password" label={t("settings.signIn.newPassword")} placeholder="" value={password} disabled={busy || !connected} inputProps={{ autoComplete: "new-password", minLength: 8, maxLength: 1024 }} onChange={setPassword} />
     {error && <p class="settings-error" role="alert">{error}</p>}
     {saved && <p role="status">{t("settings.signIn.changed")}</p>}
     <button class="ibtn" type="submit" disabled={!connected || busy || password.length < 8}>{t(busy ? "settings.signIn.resetting" : "settings.signIn.reset")}</button>

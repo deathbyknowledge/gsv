@@ -115,6 +115,17 @@ Both human and Process-authored replies may continue authorized work. A receipt 
 never creates another responsibility. Revocation ends standing handling and returns unfinished tasks
 to Ship with the disconnection recorded. A replacement contact generation requires a fresh handoff.
 
+A contact message the person handles, a message request and an accepted invitation instead
+become owner notices. Kernel `owner_notices` rows are written in the same transaction as the
+change that causes them. One row per contact collapses repeated messages, and a notice that
+goes out once keeps its row as a receipt. Before sending, the Kernel rechecks the subject:
+an unread conversation from an active, unblocked, unmuted contact Ship doesn't handle, or a
+request still pending. It then sends through the owner's private messenger destination,
+unless the owner's selected client is active. Request notices name the sender only; message
+text from a stranger never leaves People. Each sent notice queues an `owner.notified` Ship
+event, which Process records for the next generation without starting a run, so Ship can
+answer a reply to it.
+
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more
 work, or remain silent.
@@ -229,11 +240,12 @@ action's purpose comes first, with command or request details folded underneath.
 The **full request** fold preserves every argument, including structured MCP
 parameters, mail bodies and execution options. Requests without a readable
 summary still expose their complete request in the details fold.
-Shell approvals on a specific target also offer **Always allow**. Its tooltip
-explains that this remembers all shell commands on that target for the
-requesting Ship or helper, not just the displayed command. The memory lives in
-that process, so a replaced Ship asks again. Other helpers and targets still use
-their own permission rules; ordinary approval and denial never remember a rule.
+Approvals on a specific target also offer **Always allow**. Its tooltip names
+what it covers: every request of that kind on that target, for Ship and every
+helper, not just the displayed one. It adds a rule to the owner's approval
+policy, shown in **Settings → Permissions**; see
+[Always allow](../reference/configuration.md#always-allow). Ordinary approval
+and denial never add a rule.
 
 Web and Desktop present a failed run, and a failure reported above the composer, as a plain-language
 summary with a recommended next step, such as trying again, waiting a few minutes or restarting the

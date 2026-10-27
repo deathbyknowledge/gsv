@@ -159,6 +159,8 @@ export type SysSetupArgs = {
   timezone?: string;
   /** Initial response-language preference, normally derived from the client (BCP 47). */
   language?: string;
+  /** The owner's choice for their profile on the open network, where `setupFeatures` lists `profile`; without one it stays private. */
+  profile?: "public" | "private";
   machine?: {
     peerId: string;
     label?: string;

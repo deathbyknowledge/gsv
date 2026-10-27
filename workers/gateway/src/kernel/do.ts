@@ -92,6 +92,7 @@ import { rejectBeforeDispatch } from "./request-rejection";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid, principalOf, requirePrincipal } from "./context";
+import { allowInOwnerApprovalPolicy, readOwnerApprovalPolicy } from "./approval-policy";
 import {
   connectedPeerContext,
   httpPeerContext,
@@ -198,6 +199,8 @@ import type {
   IpcCallTimeout,
 } from "./do-shared";
 import { ResponsibilityRuntime } from "./responsibility-runtime";
+import { OwnerNoticeRuntime } from "./owner-notice-runtime";
+import { OwnerNoticeStore } from "./owner-notice-store";
 import { ShipEventRuntime } from "./ship-event-runtime";
 import { ShipEventStore } from "./ship-event-store";
 import { FederationRuntime } from "./federation-runtime";
@@ -264,6 +267,7 @@ type KernelTask =
       payload: { ownerUid: number; generation: number };
     }
   | { callback: "onShipEvents"; payload: number }
+  | { callback: "onOwnerNotices"; payload: number }
   | { callback: "onLedgerRotate"; payload: string }
   | { callback: "onBrowserHandoffs"; payload: null };
 
@@ -341,6 +345,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
     }),
   }),
   z.object({ callback: z.literal("onShipEvents"), payload: z.number().int().nonnegative() }),
+  z.object({ callback: z.literal("onOwnerNotices"), payload: z.number().int().nonnegative() }),
   z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
   z.object({ callback: z.literal("onBrowserHandoffs"), payload: z.null() }),
 ]);
@@ -414,6 +419,7 @@ export function kernelRuntimes(host: Kernel) {
     federationRuntime: new FederationRuntime(host),
     responsibilityRuntime: new ResponsibilityRuntime(host),
     shipEventRuntime: new ShipEventRuntime(host),
+    ownerNoticeRuntime: new OwnerNoticeRuntime(host),
     browserHandoffs: new BrowserHandoffRuntime(host),
     ipc: new IpcRuntime(host),
     scheduleRuntime: new ScheduleRuntime(host),
@@ -456,6 +462,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly mailboxes: MailboxStore;
   readonly responsibilities: ResponsibilityStore;
   readonly shipEvents: ShipEventStore;
+  readonly ownerNotices: OwnerNoticeStore;
   readonly welcome: InitialOnboarding;
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
@@ -478,6 +485,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   declare readonly ipc: IpcRuntime;
   declare readonly responsibilityRuntime: ResponsibilityRuntime;
   declare readonly shipEventRuntime: ShipEventRuntime;
+  declare readonly ownerNoticeRuntime: OwnerNoticeRuntime;
   declare readonly federationRuntime: FederationRuntime;
   declare readonly processOutput: ProcessOutput;
   declare readonly adapterDelivery: AdapterDelivery;
@@ -560,6 +568,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
     this.shipEvents = new ShipEventStore(ctx.storage);
+    this.ownerNotices = new OwnerNoticeStore(ctx.storage);
     this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
@@ -601,6 +610,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     ctx.waitUntil(this.shipEventRuntime.recover().catch((error) => {
       console.warn(
         "[Kernel] Failed to recover Ship events:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }));
+    ctx.waitUntil(this.ownerNoticeRuntime.recover().catch((error) => {
+      console.warn(
+        "[Kernel] Failed to recover owner notices:",
         error instanceof Error ? error.message : String(error),
       );
     }));
@@ -1001,6 +1016,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
       case "onShipEvents":
         await this.shipEventRuntime.onShipEvents(task.payload, task);
         return;
+      case "onOwnerNotices":
+        await this.ownerNoticeRuntime.onOwnerNotices(task.payload, task);
+        return;
       case "onBrowserHandoffs":
         await this.browserHandoffs.run(task.id);
         return;
@@ -1113,6 +1131,22 @@ export class Kernel extends DurableObject<GatewayEnv> {
       console.warn("[Kernel] Process run stream ended before completion");
     });
     return true;
+  }
+
+  /** The owner's current approval policy, read again before a process asks. */
+  async readProcessApprovalPolicy(processId: string): Promise<string | null> {
+    this.retirement.assertActive();
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) throw new Error("Unknown process");
+    return readOwnerApprovalPolicy(this.config, resolveCallerOwnerUid(ctx));
+  }
+
+  /** The owner chose "Always allow" on this process's request; every process of theirs follows it. */
+  async allowProcessTool(processId: string, allow: { match: string; target: string }): Promise<boolean> {
+    this.retirement.assertActive();
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) throw new Error("Unknown process");
+    return allowInOwnerApprovalPolicy(this.config, resolveCallerOwnerUid(ctx), allow);
   }
 
   /** Runtime approval metadata; target discovery is not an extra agent capability. */
@@ -1634,6 +1668,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       mailboxes: this.mailboxes,
       responsibilities: this.responsibilities,
       shipEvents: this.shipEvents,
+      ownerNotices: this.ownerNotices,
       welcome: this.welcome,
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
@@ -1661,6 +1696,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       },
       reconcileResponsibilityWake: this.responsibilityRuntime.reconcileResponsibilityWake.bind(this.responsibilityRuntime),
       queueShipEvents: this.shipEventRuntime.queue.bind(this.shipEventRuntime),
+      queueOwnerNotices: this.ownerNoticeRuntime.queue.bind(this.ownerNoticeRuntime),
       trackBrowserHandoff: this.browserHandoffs.track.bind(this.browserHandoffs),
       scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);

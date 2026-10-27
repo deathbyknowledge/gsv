@@ -36,6 +36,19 @@ export class ProcessKernelClient {
     );
   }
 
+  async readApprovalPolicy(signal?: AbortSignal): Promise<string | null> {
+    signal?.throwIfAborted();
+    return raceWithAbort(
+      getKernelPtr(this.host.installationId).then(kernel => kernel.readProcessApprovalPolicy(this.host.pid)),
+      signal,
+    );
+  }
+
+  async allowTool(allow: { match: string; target: string }): Promise<boolean> {
+    const kernel = await getKernelPtr(this.host.installationId);
+    return kernel.allowProcessTool(this.host.pid, allow);
+  }
+
   async kernelRpc<T extends SyscallName>(
     call: T,
     args: ArgsOf<T>,

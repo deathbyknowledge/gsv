@@ -436,7 +436,7 @@ describe("managed WhatsApp clean-instance flow", () => {
       }));
       expect(await sentMessages()).toContainEqual(expect.objectContaining({
         body: expect.objectContaining({
-          text: expect.objectContaining({ body: expect.stringContaining("Allowed for this conversation.") }),
+          text: expect.objectContaining({ body: expect.stringContaining("Allowed from now on. Change this in Settings → Permissions.") }),
           context: { message_id: approvalMessageId },
         }),
       }));

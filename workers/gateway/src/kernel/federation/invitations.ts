@@ -279,6 +279,12 @@ export async function acceptInvitation(call: ShipCall, ctx: KernelContext): Prom
     if (!ctx.federation.acceptInvite({ tokenHash, remoteDid: call.caller, contactId: contact.id, generation, threadId, now })) {
       throw new ShipXrpcError(409, "InvitationUsed", "This invitation was already used");
     }
+    ctx.ownerNotices.noteOnce(contact.ownerUid, `contact.invite.accepted:${contact.id}:${generation}`, "contact.invite.accepted", {
+      contactId: contact.id,
+      contactGeneration: generation,
+      from: input.name,
+      ...(remoteHandle ? { handle: remoteHandle } : undefined),
+    }, now);
     return { contact, changed: true };
   });
   const { contact, changed } = await ctx.coordinateFederationContact(`pairing:${invite.ownerUid}:${call.caller}`, claim);
@@ -288,6 +294,7 @@ export async function acceptInvitation(call: ShipCall, ctx: KernelContext): Prom
   }
   await ensureContactConversation(contact, ctx);
   await ctx.reconcileResponsibilityWake(contact.ownerUid);
+  await ctx.queueOwnerNotices(contact.ownerUid);
   if (!isCurrentFederationContact(contact.id, contact.generation, ctx)) {
     throw new ShipXrpcError(409, "InvitationUsed", "The connection changed while it was being made");
   }

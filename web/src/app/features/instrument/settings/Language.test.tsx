@@ -1,11 +1,16 @@
-import type { ComponentChildren, JSX, VNode } from "preact";
+import type { ComponentChildren, VNode } from "preact";
 import { useState } from "preact/hooks";
 import { act } from "preact/test-utils";
 import { afterEach, expect, it, vi } from "vitest";
-import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
+import { z } from "zod";
+import { collectNodes, createTestRoot } from "../../../testing/testHarness";
+import { Select, type SelectProps } from "../../../components/ui/Select";
 import { Language } from "./Language";
 
 afterEach(() => vi.unstubAllGlobals());
+
+/** Language always passes labelled options; parsing them here keeps the assertions on that contract. */
+const options = (select: VNode<SelectProps>) => z.array(z.object({ label: z.string(), value: z.string() })).parse(select.props.options);
 
 it("offers exactly English, Spanish and Portuguese and maps regional saved values", async () => {
   vi.stubGlobal("document", {});
@@ -18,15 +23,14 @@ it("offers exactly English, Spanish and Portuguese and maps regional saved value
     tree = Language({ value: draft, editable: true, onChange: setDraft });
     return null;
   }
-  // SAFETY: These are Language's native fields; their handlers read currentTarget.value only.
-  const select = () => collectNodes(tree).find((node) => node.type === "select") as VNode<JSX.SelectHTMLAttributes<HTMLSelectElement>>;
-  // SAFETY: The change handler reads only currentTarget.value.
-  const change = (value: string) => act(() => select().props.onChange?.({ currentTarget: { value } } as JSX.TargetedEvent<HTMLSelectElement>));
+  // SAFETY: Language renders one design-system Select.
+  const select = () => collectNodes(tree).find((node) => node.type === Select) as VNode<SelectProps>;
+  const change = (value: string) => act(() => select().props.onSelect?.(value));
   try {
     await root.render(<Harness />);
-    expect(select().props.value).toBe("en");
+    expect(select().props.selected).toBe("en");
     expect(value!).toBe("en-GB");
-    expect(collectNodes(tree).filter((node) => node.type === "option").map((node) => node.props.value)).toEqual(["en", "es", "pt-BR"]);
+    expect(options(select()).map((option) => option.value)).toEqual(["en", "es", "pt-BR"]);
     await change("pt-BR");
     expect(value!).toBe("pt-BR");
     await change("es");
@@ -50,17 +54,15 @@ it.each([
     tree = Language({ value: draft, editable: true, onChange: (value) => { changed(value); setDraft(value); } });
     return null;
   }
-  // SAFETY: Language renders a native select whose change handler reads only currentTarget.value.
-  const select = () => collectNodes(tree).find((node) => node.type === "select") as VNode<JSX.SelectHTMLAttributes<HTMLSelectElement>>;
+  // SAFETY: Language renders one design-system Select.
+  const select = () => collectNodes(tree).find((node) => node.type === Select) as VNode<SelectProps>;
   try {
     await root.render(<Harness />);
-    expect(select().props.value).toBe(saved);
-    const savedOption = collectNodes(tree).find((node) => node.type === "option" && node.props.value === saved);
-    expect(collectText(savedOption)).toBe(label);
+    expect(select().props.selected).toBe(saved);
+    expect(options(select()).find((option) => option.value === saved)?.label).toBe(label);
     expect(changed).not.toHaveBeenCalled();
-    // SAFETY: The native change handler only reads the selected value.
-    await act(() => select().props.onChange?.({ currentTarget: { value: "en" } } as JSX.TargetedEvent<HTMLSelectElement>));
+    await act(() => select().props.onSelect?.("en"));
     expect(changed).toHaveBeenCalledWith("en");
-    expect(select().props.value).toBe("en");
+    expect(select().props.selected).toBe("en");
   } finally { await root.unmount(); }
 });

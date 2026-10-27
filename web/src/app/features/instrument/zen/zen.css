@@ -100,8 +100,9 @@
 .zen-people-panel .message + .message { margin-top: 18px; }
 .zen-people-panel .message time { display: block; margin-bottom: 6px; color: var(--text-dim); font: 10px/1.4 var(--gsv-font-mono); }
 .zen-people-panel .ask { margin: 0; font: 16px/1.55 var(--gsv-font-prose); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
-.zen-people-panel .reply { display: block; flex-shrink: 0; width: 100%; min-height: 64px; max-height: 120px; box-sizing: border-box; padding: 12px 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: none; color: var(--text); font: 16px/1.55 var(--gsv-font-prose); resize: vertical; }
-.zen-people-panel .reply:focus-visible { outline: none; border-top-color: var(--accent); }
+/* the reply field is the design-system TextArea; the panel only keeps it from growing over the messages */
+.zen-people-panel .reply-box > .gsv-ta { flex-shrink: 0; margin-bottom: 6px; }
+.zen-people-panel .reply-box .gsv-ta-box { max-height: 120px; }
 .zen-people-panel .send { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-block: 6px; font: 400 11px/1.5 var(--gsv-font-mono); color: var(--text-dim); }
 .zen-people-panel .send .ibtn { padding: 7px 12px; }
 .zen-people-panel .error { color: var(--error); }

@@ -59,7 +59,7 @@ and `contact connect @esteve --message TEXT --handling manual|ship` sends the sa
 first message request. Telling Ship "add @esteve" is enough: Ship resolves the
 handle, asks you to approve sending it (an `approach.create` rule in the
 [approval policy](../reference/configuration.md#tool-approval-policy) can skip the question),
-and Esteve decides whether to accept. Profiles are public by default, so a handle normally resolves.
+and Esteve decides whether to accept. A handle resolves when its owner made their profile public.
 An unavailable profile does not establish whether the Ship exists: the handle may
 be mistyped, the Ship elsewhere, or the profile private. It does not prevent
 sharing a private invitation.
@@ -69,9 +69,17 @@ name, choose who handles new messages, then send a first message.
 They make their own handling choice when accepting, or can decline it. Acceptance keeps that first message in the same
 conversation, opens it directly, and enables further messages and attachments.
 
-A new Ship's profile is public on the open network from your first sign-in, named
-by your handle and open to message requests, so people can add you by handle,
-and Bluesky and other apps can show it. Choose
+## Your profile {#your-profile}
+
+Setting up your Ship offers **I'm OK with a public profile, so other people's Ships
+can find mine** beside the terms, or beside the password when signup already
+took them. It starts unticked, and **What's the difference?** under it explains both
+choices. Ticked, your profile is public: it is published on the open network at your
+first sign-in, named by your handle and open to message requests, so people can
+add you by handle, and Bluesky and other apps can show it. Those apps and search
+engines can save a copy of a public profile, and a copy they saved may remain
+after you make it private. A private profile publishes nothing: only people you
+invite can reach you, and you can publish it later in People. Choose
 your handle at the bottom of People to see your profile as others will: a **public**
 or **private** label, your picture, your handle with a button that copies your
 profile address, your bio, and who can start a conversation. An empty bio shows
@@ -104,9 +112,9 @@ an ellipsis. Bluesky and other apps may let anyone search for your profile. Your
 Ship doesn't see follows, replies or messages on Bluesky. Unpublishing removes
 the page, the record and the Bluesky copy, and keeps the profile private until
 you publish again;
-existing contacts and conversations remain. People who already viewed it may
-retain copies. A Ship whose owner already saved, published or unpublished a profile
-keeps it exactly as it was; only a Ship with no saved profile gets the public default.
+existing contacts and conversations remain. People and apps that already saved it
+may keep their copies. A Ship set up before setup asked keeps its profile as it was,
+and one that never had a profile stays private until you publish.
 If your operator takes down your profile, its copy on Bluesky, its picture,
 something else your Ship published or your whole Ship on the open network, your
 handle at the bottom of People reads **taken down**, and your profile lists each
@@ -177,6 +185,29 @@ An exact reply identifies its task; an unthreaded reply continues work only when
 one active responsibility awaits that contact. Resolving or cancelling the work
 ends that association. The receiving person independently chooses who handles
 their side.
+
+## Hear about new messages on your messenger
+
+When you are not using GSV in a browser or on Desktop, your Ship's messenger
+chat, such as WhatsApp or Telegram, tells you about:
+
+- a new message from someone whose messages you handle, with the first line of
+  what they wrote;
+- a message request, with the sender's name and handle only; read the message
+  and decide in People;
+- someone accepting your invitation.
+
+Each notice links to the conversation or request. While you keep a conversation
+unread, later messages from the same person arrive as one notice at most every
+ten minutes, such as "Ada sent you 3 messages". Reading the conversation,
+deciding the request or muting the person stops notices that have not gone out
+yet. Messages that Ship handles reach Ship, not a notice; Ship tells you what
+matters. GSV doesn't send these notices while you are active in a browser or on
+Desktop, because People shows the change there.
+
+Ship knows about each notice it sent, so you can reply to it in the same chat,
+for example "tell her Friday works". A message request stays yours to read and
+decide in People.
 
 A message’s **reply** action quotes that message in the same conversation and keeps
 its exact reference, including on the first incoming message before you have sent

@@ -86,7 +86,9 @@ describe("account setup", () => {
     const discard = vi.fn();
     const failure = { code: 401, message: "Installation setup link is invalid or expired",
       details: { setupRecovery: true, setupUrl: "https://accounts.example/owner/signup/?resume=1" } };
-    client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 503, details: failure.details });
+    // The link's own probe, then setup.
+    client.requestOnce.mockRejectedValueOnce({ code: 503, details: failure.details })
+      .mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 503, details: failure.details });
     const service = createSessionService(client, { onboarding: { token: onboardingToken, discard, complete } });
     await service.start();
     await expect(service.setup({ username: "alice", password: "password123" })).rejects.toEqual(failure);
@@ -101,7 +103,8 @@ describe("account setup", () => {
     window.sessionStorage.setItem(onboardingStorageKey, onboardingToken);
     const client = createSetupClient();
     const failure = { code: 401, details: { setupRecovery: true } };
-    client.requestOnce.mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 401 });
+    client.requestOnce.mockRejectedValueOnce({ code: 425, details: { setupMode: true } })
+      .mockRejectedValueOnce(failure).mockRejectedValueOnce({ code: 401 });
     const service = createSessionService(client);
     await service.start();
     expect(service.snapshot().phase).toBe("setup");
@@ -200,13 +203,14 @@ describe("account setup", () => {
   ])("negotiates the initial language with a $name Gateway", async ({ code, details, supported }) => {
     installWindow();
     const client = createSetupClient();
-    client.requestOnce.mockRejectedValueOnce({ code, details });
+    // The link's own probe, then setup's.
+    client.requestOnce.mockRejectedValueOnce({ code, details }).mockRejectedValueOnce({ code, details });
     const complete = vi.fn();
     const discard = vi.fn();
     const service = createSessionService(client, { onboarding: { token: onboardingToken, complete, discard } });
     await service.start();
     await service.setup({ password: "password123", timezone: "Europe/Madrid", language: "es-ES" });
-    expect(client.requestOnce).toHaveBeenCalledTimes(2);
+    expect(client.requestOnce).toHaveBeenCalledTimes(3);
     expect(client.requestOnce).toHaveBeenLastCalledWith("wss://example.test/ws", "sys.setup", {
       password: "password123", timezone: "Europe/Madrid", onboardingToken,
       ...(supported ? { language: "es-ES" } : undefined),
@@ -214,6 +218,24 @@ describe("account setup", () => {
     expect(service.snapshot().phase).toBe("ready");
     expect(complete).toHaveBeenCalledOnce();
     expect(discard).not.toHaveBeenCalled();
+    service.dispose?.();
+  });
+
+  it.each([
+    { name: "can publish it", features: ["language", "profile"], offered: true },
+    { name: "can't publish it", features: ["language"], offered: false },
+  ])("asks about the profile only where the Ship $name, and sends the choice only there", async ({ features, offered }) => {
+    installWindow();
+    const client = createSetupClient();
+    const details = { setupRecovery: true, setupFeatures: features };
+    client.requestOnce.mockRejectedValueOnce({ code: 503, details }).mockRejectedValueOnce({ code: 503, details });
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, complete: vi.fn(), discard: vi.fn() } });
+    await service.start();
+    expect(service.snapshot()).toMatchObject({ phase: "setup", setupProfileChoice: offered });
+    await service.setup({ password: "password123", profile: "public" });
+    expect(client.requestOnce).toHaveBeenLastCalledWith("wss://example.test/ws", "sys.setup", {
+      password: "password123", onboardingToken, ...(offered ? { profile: "public" } : undefined),
+    });
     service.dispose?.();
   });
 

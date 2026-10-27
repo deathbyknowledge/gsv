@@ -96,6 +96,7 @@ import { createMediaExecutor } from "../inference/media-client";
 import { isVectorImageMimeType } from "../inference/image-mime";
 import { collectPromptSkillIndex } from "./skills";
 import { retireSeededSkills } from "./sys/seeded-skills";
+import { readOwnerApprovalPolicy } from "./approval-policy";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { ensureSharedMemoryContext } from "./account-home";
 import { discoverVisibleTargets, gsvTargetImplementations, listAllVisibleTargets, targetCanHandle, targetToAiTarget } from "./targets";
@@ -269,10 +270,9 @@ export async function handleAiConfig(
   const systemContextFiles = listConfigContextFiles(config, "config/ai/context.d");
 
   // Persona and context come from the run-as account's home (the home.context
-  // provider reads /home/<account>/context.d). Tool approval follows the same
-  // account default order as model config, so humans can own defaults for their
-  // agents while agents can still override them.
-  const accountApprovalPolicy = resolveAccountApprovalPolicy(config, accountConfigUids);
+  // provider reads /home/<account>/context.d). Tool approval is the human
+  // owner's one policy, so the Ship, Crew and every child decide alike.
+  const accountApprovalPolicy = readOwnerApprovalPolicy(config, principalOf(ctx) ? resolveCallerOwnerUid(ctx) : uid);
 
   const maxContextBytes = parseInt(
     resolveConfig("max_context_bytes") ?? "32768",
@@ -1272,20 +1272,6 @@ function requireCompleteAiMediaModelConfig(
     apiKey: values.api_key?.trim() ?? "",
     values,
   };
-}
-
-/**
- * Tool approval policy for the effective account chain, falling back to the
- * system default.
- */
-function resolveAccountApprovalPolicy(config: KernelContext["config"], accountUids: readonly number[]): string | null {
-  for (const uid of accountUids) {
-    const value = config.get(`users/${uid}/ai/tools/approval`);
-    if (value !== null) {
-      return value;
-    }
-  }
-  return config.get("config/ai/tools/approval") ?? null;
 }
 
 function listConfigContextFiles(config: KernelContext["config"], prefix: string): ContextFile[] {

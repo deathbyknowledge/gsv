@@ -158,12 +158,16 @@ context events rather than a rewritten prompt.
 ## Tool Approval Policy
 
 The approval policy decides whether an agent's tool call runs, asks the person
-first, or is refused. Two keys hold it:
+first, or is refused. Each human owner has one policy, and Ship, Crew and every
+other process of that owner run under it. Two keys hold it:
 
 | Key | Scope | Edited at |
 |---|---|---|
-| `config/ai/tools/approval` | Installation default, root-writable | `/sys/config/ai/tools/approval` |
-| `users/{uid}/ai/tools/approval` | One account's override, layered over the default | **Settings → permissions** in the web console, or `/sys/users/{uid}/ai/tools/approval` |
+| `config/ai/tools/approval` | Installation default, root-writable; applies until an owner has their own policy | `/sys/config/ai/tools/approval` |
+| `users/{uid}/ai/tools/approval` | The human owner's policy, replacing the installation default | **Settings → Permissions**, **Always allow** on a request, or `/sys/users/{uid}/ai/tools/approval` |
+
+An agent account's own `users/{uid}/ai/tools/approval` key is not read; its
+processes follow their owner's policy.
 
 Policy shape:
 
@@ -196,11 +200,16 @@ Default policy (`default` is `auto`; the runtime, the Process fallback, and the 
 | `{ "route": "instance", "platform": "browser" }`, Ship-provisioned browsers | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `{ "route": "instance", "platform": "linux" }`, Ship-provisioned computers | `fs.*`, `shell.exec`, `net.fetch` | — |
 | `targets/*`, connected computers and browsers | `fs.read`, `fs.search`, `fs.transfer.stat`, `fs.transfer.send` | every other `fs.*` call, `shell.exec`, `net.fetch` |
-| any target | `web.search` | `sys.mcp.call`, `mail.send`, `approach.create`, `atproto.write` |
+| any target | `web.search` | `sys.mcp.call`, `mail.send`, `sched.add`, `sched.update`, `approach.create`, `atproto.write` |
 
-`approach.create`, the Ship sending a first message request to someone who is not a contact yet, asks even under a stored policy without a matching rule; add an explicit `approach.create` rule to allow or block it.
-
-`atproto.write`, the Ship publishing records to the [open network](/architecture/open-network), likewise asks without a matching rule; add an explicit `atproto.write` rule to allow or block it. Uploading a file does not ask, because nothing serves it until an approved write publishes a record that references it.
+`sched.add` and `sched.update` are checked only when a schedule runs a command;
+message reminders never ask. `approach.create` is the Ship sending a first
+message request to someone who is not a contact yet. `atproto.write` is the
+Ship publishing records to the [open network](/architecture/open-network);
+uploading a file does not ask, because nothing serves it until an approved write
+publishes a record that references it. Every decision comes from the rules:
+mail, MCP tools, scheduled commands, message requests and network writes ask
+because the default rules say so, and a rule can change that like any other.
 
 Native work in the cloud home and Ship-provisioned browsers proceeds without asking. Connected personal browsers and computers still ask before changing files, running commands, or making network requests. Capability grants, ownership checks, and browser sign-in handoffs still apply. A cloud browser may retain website logins; use an Ask or Block rule for **Cloud browsers**, or for one target, to restrict its use.
 
@@ -213,7 +222,22 @@ Metadata selectors use the Kernel’s resolved target record, never a target nam
 
 A stored policy may leave either field out. An omitted `default` is `auto`, and an omitted `rules` keeps the built-in rules above, so `{"default":"deny"}` alone still runs native cloud-home work automatically. To replace every built-in rule, set `rules` explicitly, using `[]` for none. A value that is not valid JSON, or not an object, falls back to the built-in policy.
 
-Mail is guarded separately. When `default` is `auto` and no rule covers `mail.send` at the `gsv` scope, an `ask` rule for `mail.send` is added to the policy on read, and an unmatched `mail.send` resolves to `ask` regardless. Sending mail without asking requires an explicit `auto` rule for `mail.send`, as the permissions page says.
+### Always allow
+
+**Always allow** on a request adds a rule to the owner's policy:
+
+```json
+{ "match": "<the request's syscall>", "target": "<its target>", "action": "auto" }
+```
+
+The rule goes first in the list, replacing any rule with the same `match` and
+`target`. When the owner has no policy yet, the installation default is copied
+first. The rule covers every request of that kind on that target, not only the
+one shown. It applies to every process of the owner, including runs already
+under way: a run reads the owner's current policy again before it asks. Always
+allow is offered only for a request that names one target, never `targets/*` or
+`*`, and a Block rule never reaches a prompt. The rule appears in **Settings →
+Permissions**, where it can be changed or removed.
 
 Every capability tool also accepts a `purpose` argument: one sentence written for the person, shown in the approval prompt and recorded in the ledger. It is stripped before the syscall runs; see [Tool purpose](./syscalls.md#tool-purpose).
 
@@ -228,10 +252,12 @@ Every capability tool also accepts a `purpose` argument: one sentence written fo
 | `config/shell/network_enabled` | `true` | Enables network tools in native shell execution. |
 | `config/shell/max_output_bytes` | `524288` | Maximum stdout and stderr returned per `shell.exec`; bytes that only flow between pipeline stages or into files are not counted. |
 
-Native shell execution also has a 128 MiB aggregate output ceiling, including
-intermediate pipeline output. This keeps gzip decompression's output allowance
-within the Workers runtime's supported limit; it is separate from the returned
-stdout/stderr limit above.
+Native shell execution also holds at most 16 MiB of data per command: input it
+reads, output it produces including intermediate pipeline output, and any one
+string. A command over that fails with a `size limit exceeded` error. Native
+commands run inside the Gateway, so this bounds both its memory and how long one
+command can hold it; work on larger data belongs on a machine target. This is
+separate from the returned stdout/stderr limit above.
 
 The protocol's `server.version` is this semantic product version. `server.release`
 identifies the deployed build: stable release bundles use their exact `vX.Y.Z` tag,

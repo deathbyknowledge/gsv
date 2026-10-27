@@ -343,7 +343,7 @@ describe("managed Telegram clean-instance flow", () => {
         body: expect.objectContaining({
           chat_id: "12345",
           message_id: approvalMessageId,
-          text: expect.stringContaining("Allowed for this conversation."),
+          text: expect.stringContaining("Allowed from now on. Change this in Settings → Permissions."),
         }),
       }));
     });

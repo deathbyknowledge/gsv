@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { procHistoryEventSchema, procHistoryTargetEventRegistry } from "@humansandmachines/gsv/protocol";
+import {
+  procHistoryEventSchema, procHistoryTargetEventRegistry, type ProcHistoryEvent,
+} from "@humansandmachines/gsv/protocol";
 import type { ProcessEventDeliverArgs, ProcessEventDeliverResult } from "../../protocol/process-frames";
 import type { Process } from "../do";
 import { renderHistoryEvent } from "../history/event-renderer";
@@ -18,6 +20,15 @@ export async function deliverProcessEvent(
   if (!host.isInitialized()) throw new Error("Process no longer exists");
   const eventId = z.string().regex(/^[a-zA-Z0-9._:-]{1,200}$/).parse(args.eventId);
   const event = procHistoryEventSchema.parse(args.event);
+  if (event.kind === "owner.notified") {
+    if (event.severity !== "info" || event.audience !== "model") {
+      throw new Error("Process event is not registered for this delivery path");
+    }
+    // A notice joins an active run like any runtime event; otherwise it waits, without
+    // starting a run, for the owner's reply that needs it.
+    if (host.runs.active) return admitRuntimeEvent(host, eventId, event);
+    return appendNotice(host, eventId, event);
+  }
   const definition = procHistoryTargetEventRegistry["target.status"];
   if (event.kind !== definition.kind || event.severity !== definition.severity ||
       !definition.allowedAudiences.includes(event.audience)) {
@@ -27,19 +38,33 @@ export async function deliverProcessEvent(
   if (event.payload.observedAt <= resetAt) {
     return { eventId, runId: null, queued: false, ignored: true };
   }
-  const content = renderHistoryEvent(event);
-  if (event.audience !== "person") {
-    const admitted = await host.controller.handleRuntimeEvent(content, event.kind, {
-      runId: eventId,
-      dedupeId: eventId,
-      kind: event.kind,
-      provenance: JSON.stringify({ source: "kernel", eventId, eventType: event.kind }),
-      event,
-    });
-    if (!admitted.ok) throw new Error(admitted.error);
-    return { eventId, runId: admitted.runId, queued: admitted.queued };
-  }
+  if (event.audience !== "person") return admitRuntimeEvent(host, eventId, event);
+  return appendNotice(host, eventId, event);
+}
 
+async function admitRuntimeEvent(
+  host: Process,
+  eventId: string,
+  event: ProcHistoryEvent,
+): Promise<ProcessEventDeliverResult> {
+  const admitted = await host.controller.handleRuntimeEvent(renderHistoryEvent(event), event.kind, {
+    runId: eventId,
+    dedupeId: eventId,
+    kind: event.kind,
+    provenance: JSON.stringify({ source: "kernel", eventId, eventType: event.kind }),
+    event,
+  });
+  if (!admitted.ok) throw new Error(admitted.error);
+  return { eventId, runId: admitted.runId, queued: admitted.queued };
+}
+
+/** Appends a history event outside any run, once per history generation. */
+async function appendNotice(
+  host: Process,
+  eventId: string,
+  event: ProcHistoryEvent,
+): Promise<ProcessEventDeliverResult> {
+  const content = renderHistoryEvent(event);
   const timestamp = Date.now();
   const messageId = host.ctx.storage.transactionSync(() => {
     const generation = host.store.state.getHistoryGeneration();
@@ -53,6 +78,6 @@ export async function deliverProcessEvent(
     host.store.state.setValue(NOTICE_RECEIPTS_KEY, JSON.stringify(receipts.slice(-RUNTIME_EVENT_TOMBSTONE_LIMIT)));
     return id;
   });
-  await host.signals.changed(["messages"], { messageId, timestamp, recordKind: "event", audience: "person" });
+  await host.signals.changed(["messages"], { messageId, timestamp, recordKind: "event", audience: event.audience });
   return { eventId, runId: null, queued: false, messageId };
 }

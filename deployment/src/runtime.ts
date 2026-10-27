@@ -265,6 +265,9 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
         main: props.paths.gatewayBundle,
         bundle: false,
         compatibility: { ...compatibility, flags: [...compatibility.flags, "global_fetch_strictly_public"] },
+        // A gsv shell command runs synchronously inside the Kernel; give it the shell's
+        // default timeout of CPU before the platform resets the whole Kernel.
+        limits: { cpuMs: 120_000 },
         workersDev: props.gatewayWorkersDev ?? false,
         observability: props.observability
           ?? (props.telemetry

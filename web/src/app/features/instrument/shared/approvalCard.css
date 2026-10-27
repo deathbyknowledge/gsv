@@ -15,7 +15,14 @@
   text-transform: uppercase;
   font-size: 11px;
   margin-bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
+/* the header's notes live in tooltips; the info icon sits right after the heading
+   and its 22px hit area overhangs the line rather than making the header taller */
+.zen-approval .q .gsv-infotip { margin-inline-start: 0; margin-block: -6px; }
 .zen-approval .keys {
   margin-top: 10px;
   color: var(--text-dim);
