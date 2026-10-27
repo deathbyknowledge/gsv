@@ -39,16 +39,28 @@ export async function runProductEmailJobs(db: D1Database, env: ProductEmailEnvir
       const headers = { Authorization: `Token ${env.BUTTONDOWN_API_KEY}`, "Content-Type": "application/json",
         "X-API-Version": "2026-04-01" };
       const endpoint = "https://api.buttondown.com/v1/subscribers";
-      const existing = await fetcher(`${endpoint}/${encodeURIComponent(row.email)}`, { headers, signal: AbortSignal.timeout(15_000) });
-      await existing.body?.cancel();
-      if (existing.status === 404) {
+      const subscriberUrl = `${endpoint}/${encodeURIComponent(row.email)}`;
+      const existing = await fetcher(subscriberUrl, { headers, signal: AbortSignal.timeout(15_000) });
+      if (existing.ok) {
+        const subscriber = z.object({ type: z.string(), tags: z.array(z.string()) }).parse(await existing.json());
+        const subscribed = ["regular", "premium", "gifted", "trialed", "churning", "churned", "past_due", "paused", "unpaid", "upcoming"].includes(subscriber.type);
+        if (subscribed && !subscriber.tags.includes("newsletter")) {
+          const response = await fetcher(subscriberUrl, { method: "PATCH", headers: { ...headers,
+            "X-Buttondown-Collision-Behavior": "add", "X-Idempotency-Key": `${row.request_id}:newsletter` },
+            signal: AbortSignal.timeout(15_000), body: JSON.stringify({ tags: ["newsletter"] }) });
+          await response.body?.cancel();
+          if (!response.ok) throw new Error(`buttondown_http_${response.status}`);
+        }
+      } else {
+        await existing.body?.cancel();
+        if (existing.status !== 404) throw new Error(`buttondown_http_${existing.status}`);
         const response = await fetcher(endpoint, { method: "POST", headers: { ...headers, "X-Idempotency-Key": row.request_id }, signal: AbortSignal.timeout(15_000),
-          body: JSON.stringify({ email_address: row.email, type: "regular", ip_address: row.ip ?? undefined,
+          body: JSON.stringify({ email_address: row.email, type: "regular", tags: ["newsletter"], ip_address: row.ip ?? undefined,
             metadata: { source: "ship-signup", wording_version: row.wording_version, locale: row.locale, requested_at: row.requested_at } }) });
         await response.body?.cancel();
         if (!response.ok) throw new Error(`buttondown_http_${response.status}`);
-      } else if (!existing.ok) throw new Error(`buttondown_http_${existing.status}`);
-      // Existing subscribers, including unsubscribed/blocked addresses, are never changed.
+      }
+      // Existing subscription states stay unchanged; only subscribed addresses receive the newsletter tag.
       await db.prepare(`UPDATE product_email_signups SET completed_at=?,ip=NULL,last_error=NULL WHERE email=? AND request_id=? AND attempts=?`)
         .bind(Date.now(), row.email, row.request_id, claim.attempts).run();
     } catch (cause) {

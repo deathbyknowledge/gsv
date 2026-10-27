@@ -420,8 +420,12 @@ Inspect `product_email_signups.due_at`, `attempts` and `last_error` for failures
 Retries reuse one request ID, and completed requests are not replayed.
 
 Buttondown owns subscriptions and the unsubscribe link in each product email.
-Existing subscriber records are left unchanged, including unsubscribed or blocked
-addresses. Signup requests store the choice's wording version, locale, timestamp
+Checked signups join the existing `newsletter` audience. New subscribers receive
+that tag; existing subscribed addresses have it appended without replacing tags
+such as `early-access` or changing their subscription state. Pending, unsubscribed,
+blocked and other suppressed addresses remain untouched. No existing list is
+bulk-enrolled. Signup requests store the choice's wording version, locale, timestamp
 and verified address; the temporary signup IP is cleared after delivery.
-The adapter uses Buttondown's [subscriber API](https://docs.buttondown.com/api-subscribers-create)
+The adapter uses Buttondown's [subscriber API](https://docs.buttondown.com/api-subscribers-create),
+[tag append behavior](https://docs.buttondown.com/tags)
 and [idempotency keys](https://docs.buttondown.com/api-idempotency-keys).

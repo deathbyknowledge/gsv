@@ -30,13 +30,17 @@ it("retries provider downtime with the same key and retains redacted diagnostics
   expect(new Headers(provider.mock.calls[1][1]?.headers).get("X-Idempotency-Key"))
     .toBe(new Headers(provider.mock.calls[3][1]?.headers).get("X-Idempotency-Key"));
   expect(new Headers(provider.mock.calls[3][1]?.headers).get("X-API-Version")).toBe("2026-04-01");
+  expect(JSON.parse(String(provider.mock.calls[3][1]?.body))).toMatchObject({
+    email_address: f.owner.email, type: "regular", tags: ["newsletter"],
+    metadata: { source: "ship-signup", wording_version: choice.wordingVersion, locale: "en" },
+  });
   expect(await f.row()).toMatchObject({ completed_at: expect.any(Number), attempts: 2, ip: null, last_error: null });
   await queueProductEmail(db, f.owner, choice);
   await runProductEmailJobs(db, config, provider);
   expect(provider).toHaveBeenCalledTimes(4);
 });
 
-it.each(["regular", "unactivated", "unsubscribed", "blocked", "complained", "undeliverable", "removed"])("leaves an existing %s subscriber unchanged", async (type) => {
+it.each(["unactivated", "unsubscribed", "blocked", "complained", "undeliverable", "removed", "unknown"])("leaves an existing %s subscriber unchanged", async (type) => {
   const f = await fixture();
   const provider = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ type, tags: ["existing"] }));
   await runProductEmailJobs(db, config, provider);
@@ -45,9 +49,76 @@ it.each(["regular", "unactivated", "unsubscribed", "blocked", "complained", "und
   expect(await f.row()).toMatchObject({ completed_at: expect.any(Number) });
 });
 
+it.each(["regular", "premium", "gifted", "trialed", "churning", "churned", "past_due", "paused", "unpaid", "upcoming"])("appends newsletter without replacing tags or the %s status", async (type) => {
+  const f = await fixture();
+  const provider = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ type, tags: ["early-access", "website"] }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  await runProductEmailJobs(db, config, provider);
+  expect(provider).toHaveBeenCalledTimes(2);
+  const [url, request] = provider.mock.calls[1];
+  expect(url).toBe(`https://api.buttondown.com/v1/subscribers/${encodeURIComponent(f.owner.email)}`);
+  expect(request?.method).toBe("PATCH");
+  expect(new Headers(request?.headers).get("X-Buttondown-Collision-Behavior")).toBe("add");
+  expect(JSON.parse(String(request?.body))).toEqual({ tags: ["newsletter"] });
+  expect(await f.row()).toMatchObject({ completed_at: expect.any(Number), ip: null });
+});
+
+it("does not update an existing newsletter subscriber", async () => {
+  const f = await fixture();
+  const provider = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ type: "regular", tags: ["early-access", "newsletter"] }));
+  await runProductEmailJobs(db, config, provider);
+  expect(provider).toHaveBeenCalledOnce();
+  expect(await f.row()).toMatchObject({ completed_at: expect.any(Number) });
+});
+
+it("retries failed tag delivery with a stable key without replacing other tags", async () => {
+  const f = await fixture();
+  const provider = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ type: "regular", tags: ["early-access"] }))
+    .mockResolvedValueOnce(new Response(null, { status: 503 }));
+  await runProductEmailJobs(db, config, provider);
+  expect(await f.row()).toMatchObject({ completed_at: null, attempts: 1 });
+  await f.retry();
+  provider.mockResolvedValueOnce(Response.json({ type: "regular", tags: ["early-access", "another-source"] }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  await runProductEmailJobs(db, config, provider);
+  const requests = [provider.mock.calls[1][1]!, provider.mock.calls[3][1]!];
+  expect(new Headers(requests[0].headers).get("X-Idempotency-Key"))
+    .toBe(new Headers(requests[1].headers).get("X-Idempotency-Key"));
+  for (const request of requests) {
+    expect(request.method).toBe("PATCH");
+    expect(new Headers(request.headers).get("X-Buttondown-Collision-Behavior")).toBe("add");
+    expect(JSON.parse(String(request.body))).toEqual({ tags: ["newsletter"] });
+  }
+  expect(await f.row()).toMatchObject({ completed_at: expect.any(Number), attempts: 2, last_error: null });
+});
+
+it.each([
+  { type: "regular", tags: ["early-access", "newsletter"] },
+  { type: "unsubscribed", tags: ["early-access"] },
+])("rechecks $type status and tags after an uncertain update", async (subscriber) => {
+  const f = await fixture();
+  const provider = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ type: "regular", tags: ["early-access"] }))
+    .mockRejectedValueOnce(new Error("Response lost"));
+  await runProductEmailJobs(db, config, provider);
+  await f.retry();
+  provider.mockResolvedValueOnce(Response.json(subscriber));
+  await runProductEmailJobs(db, config, provider);
+  expect(provider).toHaveBeenCalledTimes(3);
+  expect(provider.mock.calls[2][1]?.method).toBeUndefined();
+  expect(await f.row()).toMatchObject({ completed_at: expect.any(Number), attempts: 2 });
+});
+
+it("retains a request when Buttondown returns an invalid subscriber", async () => {
+  const f = await fixture();
+  const provider = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ type: "regular" }));
+  await runProductEmailJobs(db, config, provider);
+  expect(provider).toHaveBeenCalledOnce();
+  expect(await f.row()).toMatchObject({ completed_at: null, attempts: 1, last_error: expect.any(String) });
+});
+
 it("serializes concurrent drains and honors the sending switch", async () => {
   const f = await fixture();
-  const provider = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ type: "regular" }));
+  const provider = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ type: "regular", tags: ["newsletter"] }));
   await runProductEmailJobs(db, {}, provider);
   expect(provider).not.toHaveBeenCalled();
   await Promise.all([runProductEmailJobs(db, config, provider), runProductEmailJobs(db, config, provider)]);
