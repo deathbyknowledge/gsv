@@ -392,7 +392,12 @@ host answers `com.atproto.server.describeServer`, then reads the host's
 firehose: from its live end the first time, and from the last event it read
 when it follows the host again. A relay that loses the firehose too often stops
 following the host until the host asks again. The firehose keeps 72 hours of
-events, so a relay that comes back within that time misses none.
+events, so a relay that comes back within that time misses none. One
+subscription replays at most 1 MiB before the firehose closes it with code
+1013, and the relay resumes from the last event it read when it reconnects.
+The firehose holds at most 64 subscriptions and refuses more with HTTP 429
+`RateLimitExceeded`, so reconnecting relays can't exhaust the memory every
+repository shares.
 
 ```text
 every ten minutes ─▶ HostFirehose: which relays are due?
