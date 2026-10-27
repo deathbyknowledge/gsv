@@ -609,6 +609,13 @@ answers with `CANCEL | END`; a sender waiting for credit that receives none
 within the same period fails its own stream with `ERROR | END`. A sender that
 exceeds its window is a protocol violation and is cancelled by the receiver.
 
+These idle rules, not a request deadline, bound an upload while it streams. A
+request's deadline covers waiting for its answer, so for a request with a body
+it starts once the last byte has been sent: a large file can take as long as it
+needs, provided it keeps moving. The SDK and the gateway both count deadlines
+this way, and the SDK leaves `fs.copy` without a deadline of its own because the
+gateway bounds each transfer that the copy runs.
+
 The window is the only receive-side bound. A receiver must accept any number
 of frames that fit its granted window, however small they are, so
 implementations must not cap buffered frames separately. Bulk senders should

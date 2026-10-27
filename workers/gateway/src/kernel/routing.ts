@@ -96,6 +96,22 @@ export class RoutingTable {
     };
   }
 
+  /** Moves a route's expiry; returns the schedule it replaced, or undefined when the route is gone. */
+  reschedule(id: string, expiresAt: number, scheduleId: string): string | null | undefined {
+    const rows = [...this.sql.exec<{ schedule_id: string | null }>(
+      "SELECT schedule_id FROM routing_table WHERE id = ?",
+      id,
+    )];
+    if (rows.length === 0) return undefined;
+    this.sql.exec(
+      "UPDATE routing_table SET expires_at = ?, schedule_id = ? WHERE id = ?",
+      expiresAt,
+      scheduleId,
+      id,
+    );
+    return rows[0].schedule_id;
+  }
+
   get(id: string): RouteEntry | null {
     const rows = [...this.sql.exec<{
       id: string;
