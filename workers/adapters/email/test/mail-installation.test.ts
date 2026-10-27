@@ -508,7 +508,11 @@ describe("managed mail installation transport", () => {
   );
 
   it("waits to recheck a summary while its space is unavailable instead of retrying at once", async () => {
-    const installationId = "installation_summary-unavailable-" + crypto.randomUUID();
+    // The fixture directory answers active for the intake, then restricted.
+    const installationId = "installation_restricted-after-intake-" + crypto.randomUUID();
+    const bound: unknown = env.ACCOUNTS;
+    // SAFETY: AccountsTest explicitly exposes this inspection method in vitest.config.ts.
+    const accounts = bound as { installationChecks(id: string): Promise<number> };
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
     let restoreAlarmScheduling = () => {};
     await runInDurableObject(stub, (_instance, state) => {
@@ -524,37 +528,20 @@ describe("managed mail installation transport", () => {
     }
     if (accepted.result.status !== "accepted") throw new Error("test mail was not accepted");
     const intakeId = accepted.result.intakeId;
-    // The space is restricted after the mail arrived.
-    let checks = 0;
-    await runInDurableObject(stub, (instance) => {
-      // SAFETY: MailInstallation keeps its bindings on the Durable Object's env, which the test swaps for a restricted directory.
-      const bindings = (instance as unknown as { env: { ACCOUNTS: Record<string, unknown> } }).env;
-      const accounts = bindings.ACCOUNTS;
-      bindings.ACCOUNTS = new Proxy(accounts, {
-        get(target, property) {
-          if (property === "resolveInstallation") {
-            return async (id: string) => {
-              checks += 1;
-              return { found: true, state: "restricted", installationId: id, handle: "restricted", canonicalOrigin: "https://restricted.gsv.space" };
-            };
-          }
-          const value: unknown = Reflect.get(target, property);
-          return typeof value === "function" ? value.bind(target) : value;
-        },
-      });
-    });
+    expect(await accounts.installationChecks(installationId)).toBe(1);
 
     const started = Date.now();
     await runDurableObjectAlarm(stub);
 
-    expect(checks).toBe(1);
+    // One check for the summary, then a wait, not a check per batch slot.
+    expect(await accounts.installationChecks(installationId)).toBe(2);
     await expect(stub.getIntake(context(installationId), intakeId)).resolves.toMatchObject({ storageState: "stored", summaryAttempts: 0 });
-    const next = await runInDurableObject(stub, (_instance, state) => ({
+    const next = await runInDurableObject(stub, async (_instance, state) => ({
       due: state.storage.sql.exec<{ due: number }>("SELECT summary_next_attempt_at AS due FROM mail_intakes WHERE intake_id = ?", intakeId).one().due,
-      alarm: state.storage.getAlarm(),
+      alarm: await state.storage.getAlarm(),
     }));
     expect(next.due).toBeGreaterThanOrEqual(started + 60_000);
-    expect(await next.alarm).toBeGreaterThanOrEqual(started + 60_000);
+    expect(next.alarm).toBeGreaterThanOrEqual(started + 60_000);
   });
 
   it("recovers a completed inference result after its RPC response is lost", async () => {
