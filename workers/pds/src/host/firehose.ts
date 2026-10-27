@@ -270,7 +270,11 @@ export class HostFirehose extends DurableObject<HostEnv> {
     if (cursor !== null && !/^\d+$/.test(cursor)) {
       return Response.json({ error: "InvalidRequest", message: "cursor must be a non-negative integer" }, { status: 400 });
     }
-    if (this.ctx.getWebSockets().length >= MAX_SUBSCRIBERS) {
+    const subscribers = this.ctx.getWebSockets().length;
+    // How many subscriptions a new one joins, and how it resumes, show what a burst of reconnects builds up.
+    console.info(`Firehose subscription from ${request.headers.get("User-Agent")?.slice(0, 64) || "an unnamed client"}: `
+      + `${subscribers} open, ${cursor === null ? "live" : `from ${cursor}`}`);
+    if (subscribers >= MAX_SUBSCRIBERS) {
       return Response.json({ error: "RateLimitExceeded", message: "The firehose has too many subscribers" }, { status: 429 });
     }
     const { 0: client, 1: server } = new WebSocketPair();
