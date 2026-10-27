@@ -1784,7 +1784,7 @@ export const ptBR = {
   "chat.event.returned": "De volta do ajudante {pid}.",
   "chat.event.connected": "{target} conectado.",
   "chat.event.ownerNotified": "Avisou você pelo {channel} sobre {from}",
-  "chat.notice.via": "pelo {channel}",
+  "chat.notice.sentOn": "Chegou pelo {channel}",
   "chat.notice.messages": "{count} mensagens · a última",
   "chat.notice.attachment": "Enviou um anexo",
   "chat.notice.request": "Quer falar com você.",

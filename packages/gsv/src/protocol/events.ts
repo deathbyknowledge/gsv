@@ -225,7 +225,7 @@ export const procHistoryEventPayloadSchemas = {
   "owner.notified": z.strictObject({
     noticeId: z.string(),
     topic: z.enum(["contact.message", "contact.request", "contact.invite.accepted"]),
-    channel: z.string(),
+    adapter: z.string(),
     from: z.string(),
     handle: z.optional(z.string()),
     preview: z.optional(z.string()),
@@ -351,8 +351,8 @@ export type ProcHistoryEventPayloadMap = {
   "owner.notified": {
     noticeId: string;
     topic: "contact.message" | "contact.request" | "contact.invite.accepted";
-    /** The adapter that carried the notice, such as whatsapp. */
-    channel: string;
+    /** The adapter that carried the notice, such as whatsapp; each reader names it with adapterDisplayName. */
+    adapter: string;
     /** The contact's local alias or display name, on one line. */
     from: string;
     /** The contact's handle, when the notice names one. */

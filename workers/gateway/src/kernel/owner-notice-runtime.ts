@@ -3,7 +3,7 @@ import type { DurableTaskOptions } from "../shared/durable-tasks";
 import { stableOpaqueId } from "../shared/stable-id";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { deliverAdapterDestination } from "./adapter-send";
-import { adapterDisplayName, identityLinkRouteGeneration } from "./adapter-destinations";
+import { identityLinkRouteGeneration } from "./adapter-destinations";
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import type { OwnerNotice } from "./owner-notice-store";
@@ -87,7 +87,7 @@ export class OwnerNoticeRuntime {
       payload: {
         noticeId,
         topic: current.topic,
-        channel: adapterDisplayName(destination.adapter),
+        adapter: destination.adapter,
         ...ownerNoticeParts(current),
         contactId: current.subject.contactId,
         ...(current.subject.conversationId ? { conversationId: current.subject.conversationId } : undefined),

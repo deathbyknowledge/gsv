@@ -1778,7 +1778,7 @@ export const en = {
   "chat.event.returned": "Returned from helper {pid}.",
   "chat.event.connected": "{target} connected.",
   "chat.event.ownerNotified": "Notified you on {channel} about {from}",
-  "chat.notice.via": "via {channel}",
+  "chat.notice.sentOn": "Sent to you on {channel}",
   "chat.notice.messages": "{count} messages · newest",
   "chat.notice.attachment": "Sent an attachment",
   "chat.notice.request": "Wants to message you.",

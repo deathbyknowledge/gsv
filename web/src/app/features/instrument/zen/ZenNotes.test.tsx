@@ -2,7 +2,7 @@ import type { ComponentChildren } from "preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import type { ChatErrorContext } from "../../../services/chat/domain/errorPresentation";
-import { FeedbackNote, NoteMoment, zenFailure } from "./ZenNotes";
+import { FeedbackNote, MomentTime, NoteMoment, zenFailure } from "./ZenNotes";
 import type { Moment } from "./zenModel";
 
 let root: ReturnType<typeof createTestRoot> | undefined;
@@ -22,19 +22,32 @@ describe("owner notices", () => {
   const notice = (payload: Partial<Extract<NonNullable<Moment["event"]>, { kind: "owner.notified" }>["payload"]>, link: { kind: "contact"; contactId: string } | { kind: "contact.request"; requestId: string }): Moment => ({
     id: "message:7", role: "note", text: "", streaming: false, thinking: false, runId: null, timestamp: 1, activities: [], narration: "",
     event: { kind: "owner.notified", severity: "info", audience: "both", link, payload: {
-      noticeId: "notice", topic: "contact.message", channel: "WhatsApp", from: "Ada", contactId: "contact:ada", sentAtMs: 1, ...payload } },
+      noticeId: "notice", topic: "contact.message", adapter: "whatsapp", from: "Ada", contactId: "contact:ada", sentAtMs: 1, ...payload } },
   });
-  const card = (moment: Moment) => rendered(() => NoteMoment({ moment, open: false, focus: false, index: 0, phase: "settled", onToggle: () => {} }));
+  const card = (moment: Moment) => rendered(() => NoteMoment({
+    moment, clock: { today: 1, timeZone: "UTC" }, open: false, focus: false, index: 0, phase: "settled", onToggle: () => {},
+  }));
 
   it("shows who wrote, where the owner heard, and what they said, without folding it away", async () => {
     const tree = await card(notice({ handle: "ada.ship.space", preview: "are we still on for tomorrow?", messages: 1 }, { kind: "contact", contactId: "contact:ada" }));
     const text = collectText(tree);
-    for (const part of ["Ada", "@ada.ship.space", "via WhatsApp", "are we still on for tomorrow?"]) expect(text).toContain(part);
+    for (const part of ["Ada", "@ada.ship.space", "are we still on for tomorrow?"]) expect(text).toContain(part);
     expect(text).not.toContain("Notified you on");
+    expect(text).not.toContain("WhatsApp");
+    const carrier = collectNodes(tree).find((node) => node.props?.class === "notice-carrier");
+    expect(carrier?.props).toMatchObject({ title: "WhatsApp", "aria-label": "Sent to you on WhatsApp" });
     expect(collectNodes(tree).some((node) => node.type === "button")).toBe(false);
     const anchor = collectNodes(tree).find((node) => node.props?.href !== undefined);
     expect(anchor?.props.href).toBe("/people?contact=contact%3Aada");
     expect(collectText(anchor?.props.children)).toBe("Open in People");
+  });
+
+  it("shows when it was sent in the label row, as other moments do", async () => {
+    const tree = await card(notice({ sentAtMs: 1_000 }, { kind: "contact", contactId: "contact:ada" }));
+    const label = collectNodes(tree).find((node) => node.props?.class === "who");
+    expect(collectText(label?.props.children)).toContain("notice");
+    expect(collectNodes(label?.props.children).find((node) => node.type === MomentTime)?.props)
+      .toMatchObject({ timestamp: 1_000, timeZone: "UTC" });
   });
 
   it("counts several messages and names an attachment without text", async () => {

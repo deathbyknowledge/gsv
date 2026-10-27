@@ -1779,7 +1779,7 @@ export const es = {
   "chat.event.returned": "De vuelta del ayudante {pid}.",
   "chat.event.connected": "{target} se ha conectado.",
   "chat.event.ownerNotified": "Te avisó por {channel} sobre {from}",
-  "chat.notice.via": "por {channel}",
+  "chat.notice.sentOn": "Te llegó por {channel}",
   "chat.notice.messages": "{count} mensajes · el último",
   "chat.notice.attachment": "Envió un adjunto",
   "chat.notice.request": "Quiere escribirte.",

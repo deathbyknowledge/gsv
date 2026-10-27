@@ -29,7 +29,7 @@ function ownerNotice(eventId: string): InternalRequestFrame<"proc.event.deliver"
       eventId, event: {
         kind: "owner.notified", severity: "info", audience: "both", link: { kind: "contact", contactId: "contact:ada" },
         payload: {
-          noticeId: "contact.message:contact:ada:0", topic: "contact.message", channel: "WhatsApp", from: "Ada",
+          noticeId: "contact.message:contact:ada:0", topic: "contact.message", adapter: "whatsapp", from: "Ada",
           preview: "are we still on for tomorrow?", contactId: "contact:ada", conversationId: "conv:ada", messages: 1, sentAtMs: 1000,
         },
       },

@@ -258,7 +258,7 @@ const eventFixtures = {
   "runtime.failed": { reason: "schedule.error", error: "Could not load schedule" },
   "target.connection": { targetId: "machine:one", event: "connected", platform: "linux", observedAt: 100 },
   "owner.notified": {
-    noticeId: "contact.message:contact:1:0", topic: "contact.message", channel: "WhatsApp",
+    noticeId: "contact.message:contact:1:0", topic: "contact.message", adapter: "whatsapp",
     from: "Xisca", handle: "xisca.ship.space", preview: "The photo", contactId: "contact:1", conversationId: "conv:1", messages: 1, sentAtMs: 100,
   },
 };

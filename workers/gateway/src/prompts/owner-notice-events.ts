@@ -1,9 +1,9 @@
-import type { ProcHistoryEventPayload } from "@humansandmachines/gsv/protocol";
+import { adapterDisplayName, type ProcHistoryEventPayload } from "@humansandmachines/gsv/protocol";
 
 export function formatOwnerNotifiedEvent(event: ProcHistoryEventPayload<"owner.notified">): string {
   const contact = event.contactId ? ` (\`${event.contactId}\`)` : "";
   const from = event.handle ? `${event.from} (@${event.handle})` : event.from;
-  const notified = `GSV notified your owner on ${event.channel}`;
+  const notified = `GSV notified your owner on ${adapterDisplayName(event.adapter)}`;
   if (event.topic === "contact.request") {
     return `${notified} about a message request from ${from}. Only your owner can read and decide message requests, in People.`;
   }

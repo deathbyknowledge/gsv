@@ -52,7 +52,7 @@ describe("Ship event delivery", () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, shipEvents } = fixture(storage);
       const payload = {
-        noticeId: "contact.message:contact:remote:1:0", topic: "contact.message", channel: "WhatsApp", from: "Remote",
+        noticeId: "contact.message:contact:remote:1:0", topic: "contact.message", adapter: "whatsapp", from: "Remote",
         preview: "hello", contactId: "contact:remote", conversationId: "conv:remote", messages: 1, sentAtMs: 1,
       } as const;
       const link = { kind: "contact", contactId: "contact:remote" } as const;

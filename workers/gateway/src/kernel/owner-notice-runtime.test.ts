@@ -36,7 +36,7 @@ describe("owner notice delivery", () => {
       expect(shipEvents.next(OWNER)).toMatchObject({
         eventId: `owner.notified:contact.message:contact:ada:${at}:0`,
         event: { type: "owner.notified", payload: {
-          noticeId: `contact.message:contact:ada:${at}:0`, topic: "contact.message", channel: "WhatsApp", from: "Ada",
+          noticeId: `contact.message:contact:ada:${at}:0`, topic: "contact.message", adapter: "whatsapp", from: "Ada",
           contactId: "contact:ada", conversationId: "conv:ada", messages: 1, preview: "are we still on for tomorrow?",
         }, link: { kind: "contact", contactId: "contact:ada" } },
       });
