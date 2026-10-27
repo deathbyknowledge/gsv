@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import type { ChatErrorContext } from "../../../services/chat/domain/errorPresentation";
+import { Hint } from "../../../components/ui/Tooltip";
 import { FeedbackNote, MomentTime, NoteMoment, zenFailure } from "./ZenNotes";
 import type { Moment } from "./zenModel";
 
@@ -34,12 +35,14 @@ describe("owner notices", () => {
     for (const part of ["Ada", "@ada.ship.space", "are we still on for tomorrow?"]) expect(text).toContain(part);
     expect(text).not.toContain("Notified you on");
     expect(text).not.toContain("WhatsApp");
-    const carrier = collectNodes(tree).find((node) => node.props?.class === "notice-carrier");
-    expect(carrier?.props).toMatchObject({ title: "WhatsApp", "aria-label": "Sent to you on WhatsApp" });
+    expect(collectNodes(tree).find((node) => node.type === Hint)?.props.text).toBe("WhatsApp");
+    expect(collectNodes(tree).find((node) => node.props?.class === "notice-carrier-mark")?.props["aria-label"]).toBe("Sent to you on WhatsApp");
     expect(collectNodes(tree).some((node) => node.type === "button")).toBe(false);
+    // The whole card opens the contact, and says so in its corner.
     const anchor = collectNodes(tree).find((node) => node.props?.href !== undefined);
     expect(anchor?.props.href).toBe("/people?contact=contact%3Aada");
-    expect(collectText(anchor?.props.children)).toBe("Open in People");
+    expect(collectText(anchor?.props.children)).toContain("are we still on for tomorrow?");
+    expect(collectText(anchor?.props.children)).toMatch(/Open$/);
   });
 
   it("shows when it was sent in the label row, as other moments do", async () => {
@@ -61,7 +64,7 @@ describe("owner notices", () => {
     expect(collectText(tree)).toContain("Wants to message you.");
     const anchor = collectNodes(tree).find((node) => node.props?.href !== undefined);
     expect(anchor?.props.href).toBe("/people?view=requests&request=approach%3Abo");
-    expect(collectText(anchor?.props.children)).toBe("Review the request");
+    expect(collectText(anchor?.props.children)).toMatch(/Review$/);
   });
 });
 
