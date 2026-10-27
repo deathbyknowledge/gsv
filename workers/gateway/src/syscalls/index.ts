@@ -90,7 +90,7 @@ export function intoSyscallTool(
   };
 }
 
-export const PURPOSE_SCHEMA_DESCRIPTION = "One short sentence in the language the person writes in, as a bare verb phrase (no 'I want to', no 'I will') saying what this call does for them, for example 'check whether Granola is running and list its windows'. Always include it: it is what the person reads on an approval and later in the receipt of the run.";
+export const PURPOSE_SCHEMA_DESCRIPTION = "One short sentence in the language the person writes in, as a bare verb phrase (no 'I want to', no 'I will') saying what this call does for them, for example 'check whether Granola is running and list its windows'. Address the person as 'you', never as 'her', 'him', 'the user' or by name, and describe the outcome for them rather than the mechanics. Always include it: it is what the person reads on an approval and later in the receipt of the run.";
 
 /**
  * Put the person-facing `purpose` first on a syscall tool so it streams before the
