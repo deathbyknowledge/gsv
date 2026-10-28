@@ -319,7 +319,8 @@ impl Commands {
             Self::Auth { rest } => match first(rest) {
                 "login" => "`gsv auth login` is now `gsv login`, for example: gsv login me.ship.space",
                 "logout" => "`gsv auth logout` is now `gsv logout`.",
-                _ => "`gsv auth` was removed. Sign in with `gsv login`; manage linked messengers and tokens in the web app.",
+                "token" => "`gsv auth token` was removed. Computers get their credentials from a pairing invitation in Fleet, and `gsv places forget NAME` revokes one.",
+                _ => "`gsv auth` was removed. Sign in with `gsv login`; link messengers in the web app, under Settings.",
             },
             Self::Ship { pid: Some(_), .. } => {
                 "`gsv chat --pid` is now `gsv work open PID \"MESSAGE\"`."
@@ -858,7 +859,7 @@ mod tests {
                 vec!["gsv", "auth", "login", "--username", "me"],
                 "gsv login",
             ),
-            (vec!["gsv", "auth", "token", "list"], "web app"),
+            (vec!["gsv", "auth", "token", "list"], "gsv places forget"),
             (vec!["gsv", "config", "get", "ai.model"], "web app"),
             (
                 vec!["gsv", "chat", "--pid", "proc:1", "hi"],

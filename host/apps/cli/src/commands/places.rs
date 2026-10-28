@@ -124,11 +124,17 @@ pub(crate) async fn run(
             if id == "gsv" {
                 return Err("Your Ship can't forget itself".into());
             }
-            if !yes
-                && !remote::confirm(&format!(
-                    "Forget {place}? It loses access until it is paired again."
-                ))?
-            {
+            // Forgetting a cloud browser or computer stops it instead.
+            let cloud = targets
+                .iter()
+                .find(|target| text(target, "targetId") == id)
+                .is_some_and(|target| kind(target) == "cloud");
+            let question = if cloud {
+                format!("Stop {place}?")
+            } else {
+                format!("Forget {place}? It loses access until it is paired again.")
+            };
+            if !yes && !remote::confirm(&question)? {
                 println!("Nothing changed.");
                 return Ok(());
             }
@@ -136,7 +142,11 @@ pub(crate) async fn run(
             if out.json {
                 return render::print_json(&result);
             }
-            println!("Forgot {place}. Its access is revoked.");
+            if cloud {
+                println!("Stopping {place}.");
+            } else {
+                println!("Forgot {place}. Its access is revoked.");
+            }
             Ok(())
         }
     }
