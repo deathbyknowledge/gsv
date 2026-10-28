@@ -299,12 +299,17 @@ describe("link preview extraction", () => {
     try {
       await withPreviews({
         "https://example.com/": () => { throw new Error("socket hang up https://example.com/?token=abc"); },
+        "https://example.com/pictured": () => html('<meta property="og:title" content="Shop"><meta property="og:image" content="/shop.png">'),
+        "https://example.com/shop.png": () => { throw new Error("image host reset"); },
       }, async ({ previews }) => {
         await expect(previews.preview("https://example.com/")).resolves.toEqual({ ok: false, error: "unreachable" });
+        expect(await previewOf(previews, "https://example.com/pictured")).not.toHaveProperty("image");
       });
-      const record = warn.mock.calls.find(([message]) => message === "[LinkPreviews] Preview failed:");
-      expect(record?.[1]).toBe("Link preview request failed: Error");
-      expect(record?.[2]).toMatchObject({ exceptionName: "Error", exceptionMessage: "socket hang up https://example.com/?[redacted]" });
+      const page = warn.mock.calls.find(([message]) => message === "[LinkPreviews] Preview failed:");
+      expect(page?.[1]).toBe("Link preview request failed: Error");
+      expect(page?.[2]).toMatchObject({ exceptionName: "Error", exceptionMessage: "socket hang up https://example.com/?[redacted]" });
+      const image = warn.mock.calls.find(([message]) => message === "[LinkPreviews] Preview image failed:");
+      expect(image?.[2]).toMatchObject({ exceptionName: "Error", exceptionMessage: "image host reset" });
     } finally {
       warn.mockRestore();
     }

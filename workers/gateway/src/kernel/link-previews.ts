@@ -482,9 +482,8 @@ async function fetchPreviewImage(raw: string, pageUrl: URL, options: FetchOption
     const url = previewableUrl(resolved);
     return { url, ...await fetchImageBytes(url, options) };
   } catch (error) {
-    if (!(error instanceof LinkPreviewFailure)) {
-      console.warn("[LinkPreviews] Preview image fetch failed:", exceptionDiagnostics(error));
-    }
+    // The preview goes on without its image; the reason is logged the same way a failed page is.
+    logFailure("[LinkPreviews] Preview image failed:", error);
     return null;
   }
 }
@@ -790,12 +789,17 @@ function isAvif(bytes: Uint8Array): boolean {
 
 /** The client sees only the category; the bounded, redacted fields of any underlying error stay in the Kernel log. */
 function failureCategory<ErrorValue>(error: ErrorValue): LinkPreviewFailureCategory {
+  logFailure("[LinkPreviews] Preview failed:", error);
+  return error instanceof LinkPreviewFailure ? error.category : "unreachable";
+}
+
+/** A known failure logs only when it wraps a cause; anything else is unexpected and logs in full. */
+function logFailure<ErrorValue>(prefix: string, error: ErrorValue): void {
   if (error instanceof LinkPreviewFailure) {
-    if (error.cause !== undefined) console.warn("[LinkPreviews] Preview failed:", error.message, exceptionDiagnostics(error.cause));
-    return error.category;
+    if (error.cause !== undefined) console.warn(prefix, error.message, exceptionDiagnostics(error.cause));
+    return;
   }
-  console.warn("[LinkPreviews] Unexpected preview failure:", exceptionDiagnostics(error));
-  return "unreachable";
+  console.warn(prefix, "unexpected", exceptionDiagnostics(error));
 }
 
 function errorName<ErrorValue>(error: ErrorValue): string {
