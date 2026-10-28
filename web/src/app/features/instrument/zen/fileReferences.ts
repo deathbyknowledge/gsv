@@ -12,13 +12,13 @@ import { PLACE_REFERENCE_PREFIX } from "./zenModel";
 const ROOTS = ["home", "tmp", "workspace", "root", "srv", "var", "opt", "mnt", "Users"].join("|");
 const PATH = new RegExp(`^(?:~|/(?:${ROOTS}))/[^\\s<>"'\`*]*`);
 /** Where a path may begin: at the start of the text or after a space or an opening bracket or quote. */
-const CANDIDATE = new RegExp(`(?<=^|[\\s(\\[{"'])(?:~|/(?:${ROOTS}))/`);
+const CANDIDATE = new RegExp(`(^|[\\s(\\[{"'])(?:~|/(?:${ROOTS}))/`);
 const BOUNDARY = /[\s([{"']$/;
 
 /** The fragment a linked path carries: a trailing slash names a folder, anything else is tried as a file. */
 export function fileReferenceHref(path: string): string {
   if (!path.endsWith("/")) return `#file:${CLOUD_TARGET_ID}:${encodeURIComponent(path)}`;
-  return `#dir:${CLOUD_TARGET_ID}:${encodeURIComponent(path.replace(/(?<=.)\/+$/, ""))}`;
+  return `#dir:${CLOUD_TARGET_ID}:${encodeURIComponent(path.replace(/\/+$/, "") || "/")}`;
 }
 
 /** The Work row a link in Ship's text opens, or null when the link is something else. */
@@ -34,8 +34,12 @@ export function fileReferenceRow(href: string): FleetRow | null {
 
 /** The Work row a link clicked in Ship's text opens: a place it mentions or a path it names; null leaves the link alone. */
 export function textLinkRow(href: string): FleetRow | null {
-  if (href.startsWith(PLACE_REFERENCE_PREFIX)) return `target:${decodeURIComponent(href.slice(PLACE_REFERENCE_PREFIX.length))}`;
-  return fileReferenceRow(href);
+  if (!href.startsWith(PLACE_REFERENCE_PREFIX)) return fileReferenceRow(href);
+  try {
+    return `target:${decodeURIComponent(href.slice(PLACE_REFERENCE_PREFIX.length))}`;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -47,8 +51,8 @@ export const filePathLinks: MarkedExtension = {
     name: "filePath",
     level: "inline",
     start(src) {
-      const at = src.search(CANDIDATE);
-      return at < 0 ? undefined : at;
+      const match = CANDIDATE.exec(src);
+      return match ? match.index + match[1].length : undefined;
     },
     tokenizer(src, tokens) {
       if (this.lexer.state.inLink) return undefined;

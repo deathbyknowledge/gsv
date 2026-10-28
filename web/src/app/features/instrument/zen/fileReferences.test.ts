@@ -16,6 +16,7 @@ describe("file paths in Ship's text", () => {
     expect(html("Read /home/x/y.md first")).toBe(`<p>Read ${link("/home/x/y.md")} first</p>`);
     expect(html("Your notes live in ~/notes/")).toBe(`<p>Your notes live in ${link("~/notes/")}</p>`);
     expect(html("/tmp/report.csv is ready")).toBe(`<p>${link("/tmp/report.csv")} is ready</p>`);
+    expect(html("Kept in (~/notes/résumé.md)")).toBe(`<p>Kept in (${link("~/notes/résumé.md")})</p>`);
   });
 
   it("leaves sentence punctuation and closing brackets outside the link", () => {
@@ -49,6 +50,7 @@ describe("file reference links", () => {
     expect(fileReferenceRow(fileReferenceHref("/home/x/y z.md"))).toBe("file:gsv:/home/x/y z.md");
     expect(fileReferenceRow(fileReferenceHref("/home/x/lease/"))).toBe("dir:gsv:/home/x/lease");
     expect(fileReferenceRow(fileReferenceHref("~/"))).toBe("dir:gsv:~");
+    expect(fileReferenceRow(fileReferenceHref("~/Año 2026/日本 #1?.md"))).toBe("file:gsv:~/Año 2026/日本 #1?.md");
   });
 
   it("ignores other links and malformed ones", () => {
@@ -65,5 +67,6 @@ describe("links clicked in Ship's text", () => {
     expect(textLinkRow(fileReferenceHref("~/notes/"))).toBe("dir:gsv:~/notes");
     expect(textLinkRow("https://example.com/home/x")).toBeNull();
     expect(textLinkRow("#section")).toBeNull();
+    expect(textLinkRow("#place:%E0")).toBeNull();
   });
 });
