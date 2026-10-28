@@ -2,6 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
+import { StatusMeta, type StatusTone } from "../../../components/ui/StatusDot";
+import { Tag } from "../../../components/ui/Tag";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { disconnectConsoleAdapterPairing } from "../../../services/system/consoleService";
 import type { ConsoleIdentityLink } from "../../../domain/system/consoleModels";
@@ -27,6 +29,13 @@ const STATUS_LABELS = {
   "status-unavailable": "settings.messengers.status.statusUnavailable",
   "service-unavailable": "settings.messengers.status.serviceUnavailable",
 } satisfies Record<MessengerConnectionStatus, TextKey>;
+const STATUS_TONES = {
+  connected: "online",
+  "reconnect-needed": "warn",
+  "needs-attention": "error",
+  "status-unavailable": "idle",
+  "service-unavailable": "idle",
+} satisfies Record<MessengerConnectionStatus, StatusTone>;
 
 export function MessengerConnections({ account, active }: Pick<SettingsSectionProps, "account" | "active">) {
   const t = useT();
@@ -59,13 +68,19 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
     {connections.data && MESSENGERS.map(({ id, name, blurb }) => {
       const adapter = connections.data.adapters.find((entry) => entry.adapter === id);
       const links = connections.data.links.filter((entry) => entry.adapter === id);
+      const linked = links.some((link) => messengerConnectionStatus(adapter, link.accountId) === "connected");
       const available = adapter?.enabled && adapter.supportsPairing;
       const canPair = adapter?.canLink === true;
       const comingSoon = id === "slack" || id === "discord";
       const canConnect = !comingSoon && connected && canPair && available && !unlink.isPending;
       return <section class="settings-messenger" key={id} aria-label={name}>
         <div class="settings-messenger-heading">
-          <h2>{name}{comingSoon && <small class="settings-coming-soon">{t("settings.messengers.comingSoon")}</small>}</h2>
+          <h2>
+            {name}
+            {comingSoon
+              ? <small class="settings-coming-soon">{t("settings.messengers.comingSoon")}</small>
+              : <span class="settings-messenger-tag"><Tag tone={linked ? "online" : "idle"} dot label={t(linked ? "settings.pairing.connected" : "settings.pairing.notConnected")} /></span>}
+          </h2>
           <button class="settings-text-action" disabled={comingSoon || (pairing === id ? unlink.isPending : !canConnect)} onClick={() => { if (comingSoon) return; setRemoving(null); setPairing(pairing === id ? null : id); }}>
             {pairing === id ? t("settings.messengers.closeSetup") : links.length ? t("settings.messengers.connectAnother") : t("settings.messengers.connect", { name })}
           </button>
@@ -73,13 +88,20 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         <p class="settings-muted">{t(blurb)}</p>
         {!available && <p class="settings-muted">{t("settings.messengers.unavailable", { name })}</p>}
         {available && !canPair && <p class="settings-muted">{t("settings.messengers.cannotLink", { name })}</p>}
-        {links.length === 0 && available && <p class="settings-muted">{t("settings.messengers.noLinks", { name })}</p>}
+        {links.length === 0 && available && <p class="settings-messenger-links"><StatusMeta tone="idle" label={t("settings.messengers.noLinks", { name })} /></p>}
         <ul class="settings-list settings-messenger-links">{links.map((link) => {
           const status = messengerConnectionStatus(adapter, link.accountId);
           const error = adapter?.accounts.find((entry) => entry.accountId === link.accountId)?.error;
           const isRemoving = removing?.adapter === link.adapter && removing.accountId === link.accountId && removing.actorId === link.actorId;
           return <li key={JSON.stringify([link.accountId, link.actorId])}>
-            <div class="settings-server-heading"><strong>{t("settings.messengers.user", { platform: name, id: link.actorId })}</strong><span class={`settings-messenger-status${status === "connected" ? " is-connected" : ""}`}><i aria-hidden="true" />{t(STATUS_LABELS[status])}</span></div>
+            <div class="settings-server-heading">
+              <StatusMeta
+                tone={STATUS_TONES[status]}
+                label={status === "connected"
+                  ? t("settings.messengers.connectedTo", { id: link.actorId })
+                  : `${t(STATUS_LABELS[status])} · ${t("settings.messengers.user", { platform: name, id: link.actorId })}`}
+              />
+            </div>
             {id === "slack" && <small>{t("settings.messengers.workspace", { id: link.accountId })}</small>}
             {error && <p class="settings-error" role="alert">{error}</p>}
             <div class="settings-actions">

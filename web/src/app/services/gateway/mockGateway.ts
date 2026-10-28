@@ -921,7 +921,9 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     /* Settings › Messengers: every messenger is deployed and unlinked, so each pairing flow can be looked at */
     case "adapter.list": return respond(id, { adapters: ["telegram", "slack", "discord", "whatsapp"].map((adapter) => ({ adapter, available: true, enabled: true, canLink: true,
-      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true, accounts: [] })) });
+      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true,
+      /* Telegram is linked so Settings shows a connected messenger beside the unlinked ones. */
+      accounts: adapter === "telegram" ? [{ accountId: "mock-telegram", connected: true, authenticated: true }] : [] })) });
     case "adapter.pair.info": {
       const { adapter } = z.object({ adapter: z.string() }).parse(args);
       return respond(id, { adapter, accountId: `mock-${adapter}`, configured: true,
@@ -1016,7 +1018,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
-    case "sys.link.list": return respond(id, { links: [] });
+    case "sys.link.list": return respond(id, { links: [{ adapter: "telegram", accountId: "mock-telegram", actorId: "351913787780", uid: OWNER.uid, createdAt: at(3, 10, 0), linkedByUid: OWNER.uid }] });
     case "r12y.list": {
       const { states, includeTerminal, offset = 0, limit = 100 } = responsibilityListArgs.parse(args);
       const records = responsibilities.filter((record) => states ? states.includes(record.state) : includeTerminal || !["resolved", "cancelled"].includes(record.state));

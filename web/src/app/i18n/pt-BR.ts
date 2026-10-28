@@ -275,6 +275,7 @@ export const ptBR = {
   "settings.messengers.unavailable": "Não é possível conectar {name} neste Ship.",
   "settings.messengers.cannotLink": "Sua conta não pode conectar uma conta de {name}.",
   "settings.messengers.noLinks": "Você não tem nenhuma conta de {name} conectada.",
+  "settings.messengers.connectedTo": "conectado a {id}",
   "settings.messengers.user": "Usuário {id} de {platform}",
   "settings.messengers.workspace": "espaço de trabalho {id}",
   "settings.messengers.status.connected": "conectada",

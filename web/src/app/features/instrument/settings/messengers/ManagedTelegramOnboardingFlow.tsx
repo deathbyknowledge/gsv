@@ -218,7 +218,7 @@ function ManagedMessengerOnboardingFlow({
               title={t("settings.pairing.startIn", { platform: platform.toUpperCase() })}
               text={firstStepText}
             />
-            {isWhatsApp ? <p class="gsv-cf-desc">{t("settings.pairing.whatsappRelink")}</p> : null}
+            {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.whatsappRelink")}</p> : null}
             {info.isError ? (
               <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform })} />
             ) : !info.data?.configured ? (

@@ -107,12 +107,9 @@
 .settings-messenger { padding-bottom: 1rem; }
 .settings-messenger-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
 .settings-messenger-heading h2 { margin: 0; }
+.settings-messenger-tag { display: inline-block; margin-left: .75rem; vertical-align: middle; }
 .settings-coming-soon { display: inline-block; margin-left: .75rem; padding: .15rem .4rem; border: 1px solid var(--border); font-size: .65rem; font-weight: 400; vertical-align: middle; white-space: nowrap; }
 .settings-messenger-links { margin: 0; }
-.settings-messenger-status { display: inline-flex; align-items: center; gap: .5rem; font-size: .75rem; }
-.settings-messenger-status i { width: .4rem; height: .4rem; background: var(--text-dim); flex-shrink: 0; }
-.settings-messenger-links .settings-messenger-status.is-connected { color: var(--online); }
-.settings-messenger-status.is-connected i { background: currentColor; }
 .settings-messenger-links .settings-server-heading { flex-wrap: wrap; align-items: baseline; }
 .settings-mcp-options { border-top: 1px solid var(--border); padding-block: 1rem; margin-bottom: 1rem; font-size: .8rem; }
 .settings-mcp-options summary { color: var(--text-dim); cursor: pointer; }

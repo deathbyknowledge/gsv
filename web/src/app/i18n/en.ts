@@ -269,6 +269,7 @@ export const en = {
   "settings.messengers.unavailable": "{name} cannot be connected on this Ship.",
   "settings.messengers.cannotLink": "Your account cannot connect a {name} account.",
   "settings.messengers.noLinks": "No {name} account is connected to you.",
+  "settings.messengers.connectedTo": "connected to {id}",
   "settings.messengers.user": "{platform} user {id}",
   "settings.messengers.workspace": "workspace {id}",
   "settings.messengers.status.connected": "connected",
