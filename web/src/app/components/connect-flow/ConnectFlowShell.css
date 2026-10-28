@@ -78,12 +78,16 @@
   margin-top: -8px;
 }
 
-/* A note that trails an alert: same width as the alert, dim prose. The step column's gap spaces it. */
+/* A note that trails an alert: same width as the alert, dim prose, pulled
+   tight under it the way the description sits under the title. */
 .gsv-cf-note {
   min-width: 0;
   margin: 0;
   color: var(--prose-dim);
   overflow-wrap: anywhere;
+}
+.gsv-alert + .gsv-cf-note {
+  margin-top: -8px;
 }
 
 /* Shared step building blocks ----------------------------------------------- */
