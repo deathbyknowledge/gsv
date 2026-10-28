@@ -46,13 +46,13 @@ function fetcher(routes: Record<string, Route>) {
 async function withPreviews<T>(
   routes: Record<string, Route>,
   run: (input: { previews: LinkPreviews; fetch: ReturnType<typeof fetcher>; bucket: R2Bucket; clock: { now: number } }) => Promise<T>,
-  options: { timeoutMs?: number; deadlineMs?: number } = {},
+  options: { timeoutMs?: number; deadlineMs?: number; bucket?: (bucket: R2Bucket) => R2Bucket } = {},
 ): Promise<T> {
   return runWithRealKernelSql(async (sql) => {
     const fetch = fetcher(routes);
     const bucket = createInstallationStorage(env.STORAGE, `link-previews-${crypto.randomUUID()}`);
     const clock = { now: 1_000_000 };
-    const previews = new LinkPreviews(sql, bucket, {
+    const previews = new LinkPreviews(sql, options.bucket?.(bucket) ?? bucket, {
       fetch,
       now: () => clock.now,
       timeoutMs: options.timeoutMs,
@@ -473,6 +473,29 @@ describe("link preview cache", () => {
       expect(await previewOf(previews, "https://example.com/")).toMatchObject({ title: "Shop", image: { mimeType: "image/png" } });
       expect(fetch).toHaveBeenCalledTimes(4);
     });
+  });
+
+  it("answers a preview without waiting for expired cleanup", async () => {
+    let finishDelete!: () => void;
+    const deleting = new Promise<void>((resolve) => { finishDelete = resolve; });
+    // SAFETY: the wrapper inherits every R2Bucket member from the bucket it is created from and overrides only delete.
+    const slowDeletes = (bucket: R2Bucket): R2Bucket => Object.assign(Object.create(bucket) as R2Bucket, {
+      delete: async (keys: string | string[]) => { await deleting; return bucket.delete(keys); },
+    });
+    await withPreviews({
+      "https://example.com/a": () => html('<head><meta property="og:image" content="/a.png"></head>'),
+      "https://example.com/a.png": () => image(PNG),
+      "https://example.com/b": () => html("<title>B</title>"),
+    }, async ({ previews, bucket, clock }) => {
+      const key = (await previewOf(previews, "https://example.com/a")).image!.key;
+      clock.now += LINK_PREVIEW_SUCCESS_TTL_MS;
+      // b answers while a's expired image is still being deleted.
+      expect(await previewOf(previews, "https://example.com/b")).toMatchObject({ title: "B" });
+      expect(await bucket.head(LINK_PREVIEW_IMAGE_PREFIX + key)).not.toBeNull();
+      finishDelete();
+      await previews.settled();
+      expect(await bucket.head(LINK_PREVIEW_IMAGE_PREFIX + key)).toBeNull();
+    }, { bucket: slowDeletes });
   });
 
   it("deletes an expired image no preview refers to and keeps one still in use", async () => {

@@ -389,8 +389,8 @@ working context changes.
 ## Link previews in the web app
 
 Chat shows a quiet card under a settled Ship message for each web link it contains, in order and
-once per URL, with the page's image, site name, title and description; the card opens the link in a
-new tab. Links inside code, images and the person's own messages get no card. Previews resolve
+once per URL and at most ten per message, with the page's image, site name, title and description;
+the card opens the link in a new tab. Links inside code, images and the person's own messages get no card. Previews resolve
 lazily as messages render: the signed-in client asks the Kernel through `conversation.link.preview`,
 and the Kernel reads the public page on that client's behalf and caches the result, including
 failures, for the installation. The image travels through `conversation.link.image` as a frame

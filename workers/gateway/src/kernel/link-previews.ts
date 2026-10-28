@@ -124,6 +124,7 @@ export class LinkPreviews {
   private readonly fetchOptions: FetchOptions;
   private readonly now: () => number;
   private readonly deadlineMs: number;
+  private pruning: Promise<void> | null = null;
 
   constructor(
     private readonly sql: SqlStorage,
@@ -145,9 +146,22 @@ export class LinkPreviews {
     } catch (error) {
       return { ok: false, error: failureCategory(error) };
     }
-    await this.pruneExpired();
+    this.pruneInBackground();
     const row = this.cached(url.href) ?? await this.refresh(url.href);
     return previewResult(requested, row);
+  }
+
+  /** Cleanup runs beside a request, never ahead of it, so a preview answers within its own deadline; one pass at a time. */
+  private pruneInBackground(): void {
+    if (this.pruning) return;
+    this.pruning = this.pruneExpired()
+      .catch((error) => console.warn("[LinkPreviews] Pruning expired previews failed:", errorName(error)))
+      .finally(() => { this.pruning = null; });
+  }
+
+  /** Resolves once any background pruning has finished. */
+  async settled(): Promise<void> {
+    await this.pruning;
   }
 
   async image(key: string): Promise<{ data: ConversationLinkImageResult; body?: BinaryBody }> {

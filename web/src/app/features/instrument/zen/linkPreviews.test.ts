@@ -11,6 +11,12 @@ describe("message links", () => {
     ]);
   });
 
+  it("caps the cards of one message", () => {
+    const text = Array.from({ length: 12 }, (_, index) => `https://site${index}.example`).join(" ");
+    expect(extractMessageLinks(text)).toHaveLength(10);
+    expect(extractMessageLinks(text, 3)).toEqual(["https://site0.example", "https://site1.example", "https://site2.example"]);
+  });
+
   it("lists a link once, where it first appears", () => {
     expect(extractMessageLinks("https://one.example and https://two.example, again [one](https://one.example)."))
       .toEqual(["https://one.example", "https://two.example"]);
