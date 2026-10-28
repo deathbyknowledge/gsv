@@ -112,7 +112,11 @@ describe("ManagedTelegramOnboardingFlow", () => {
     expect(collectText(currentFlow().steps.flatMap((step) => step.render({} as never))))
       .not.toContain("BotFather");
     expect(nodes().some((node) => node.props.label === "ACCESS TOKEN")).toBe(false);
-    expect(collectText(nodes())).toContain("OPEN @official_gsv_bot");
+    expect(collectText(nodes())).toContain("To message Ship manually, find @official_gsv_bot in Telegram.");
+    const connect = nodeWithLabel(nodes(), "CONNECT");
+    expect(connect.props.href).toBe("https://t.me/official_gsv_bot");
+    expect(connect.props.variant).toBe("primary");
+    expect(nodeWithLabel(nodes(), "I HAVE A CODE").props.variant).toBe("secondary");
   });
 
   it("reveals the Telegram identity before linking it to Personal", async () => {

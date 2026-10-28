@@ -163,9 +163,9 @@ function ManagedMessengerOnboardingFlow({
     ? info.data?.installUrl ? t("settings.pairing.installIn", { platform: platform.toUpperCase() }) : t("settings.pairing.viewSetup", { platform: platform.toUpperCase() })
     : isWhatsApp
       ? info.data?.installUrl ? t("settings.pairing.connect") : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
-      : t("settings.pairing.open", { name: botUsername ? `@${botUsername}` : "TELEGRAM" });
-  // WhatsApp's chat link carries the pairing message, so opening it is the step.
-  const launchLeads = isWhatsApp && Boolean(info.data?.installUrl);
+      : botUsername ? t("settings.pairing.connect") : t("settings.pairing.viewSetup", { platform: "TELEGRAM" });
+  // Opening the messenger is the step, so the launch control leads whenever the link is real.
+  const launchLeads = installsApp || isWhatsApp ? Boolean(info.data?.installUrl) : Boolean(botUsername);
 
   const inspectCode = async () => {
     if (!code.trim() || inspect.isPending) return;
@@ -219,6 +219,7 @@ function ManagedMessengerOnboardingFlow({
               text={firstStepText}
             />
             {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{chatNumber ? t("settings.pairing.whatsappManual", { number: chatNumber }) : t("settings.pairing.whatsappManualNoNumber")}</p> : null}
+            {!installsApp && !isWhatsApp && botUsername ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.telegramManual", { bot: `@${botUsername}` })}</p> : null}
             {info.isError ? (
               <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform })} />
             ) : !info.data?.configured ? (

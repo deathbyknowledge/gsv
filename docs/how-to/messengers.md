@@ -37,8 +37,9 @@ flows used through Ship; they are not currently available in Settings.
 
 ## Telegram
 
-1. In Ship, open **Messengers → Telegram** and use the link to open the official
-   Ship bot.
+1. In Ship, open **Messengers → Telegram** and choose **Connect**. It opens a
+   chat with the official Ship bot. To message it manually instead, find the
+   bot handle shown under the instructions.
 2. Send the bot any private message. It replies with a short-lived code.
 3. Enter that code back in Ship. Ship shows the Telegram display name, handle,
    and numeric ID that requested it.
