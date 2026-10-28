@@ -1,3 +1,4 @@
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type {
   BinaryBody,
   ConversationLinkImageResult,
@@ -12,8 +13,9 @@ export type LinkPreviewFailureCategory = "unsupported" | "blocked" | "unreachabl
 
 /** A preview fetch that failed for a reason the client may show by category. */
 export class LinkPreviewFailure extends Error {
-  constructor(readonly category: LinkPreviewFailureCategory, message: string) {
-    super(message);
+  /** A wrapped transport or parser error keeps its cause, so the Kernel log can say what actually went wrong. */
+  constructor(readonly category: LinkPreviewFailureCategory, message: string, options?: { cause: unknown }) {
+    super(message, options);
     this.name = "LinkPreviewFailure";
   }
 }
@@ -159,7 +161,7 @@ export class LinkPreviews {
   private pruneInBackground(): void {
     if (this.pruning) return;
     this.pruning = this.pruneExpired()
-      .catch((error) => console.warn("[LinkPreviews] Pruning expired previews failed:", errorName(error)))
+      .catch((error) => console.warn("[LinkPreviews] Pruning expired previews failed:", exceptionDiagnostics(error)))
       .finally(() => { this.pruning = null; });
     this.keepAlive(this.pruning);
   }
@@ -279,7 +281,7 @@ export class LinkPreviews {
           customMetadata: { purpose: IMAGE_PURPOSE, uid: "0", gid: "0", mode: "400" },
         });
       } catch (error) {
-        console.warn("[LinkPreviews] Failed to store a preview image:", errorName(error));
+        console.warn("[LinkPreviews] Failed to store a preview image:", exceptionDiagnostics(error));
         return null;
       }
       const withImage: LinkPreviewRow = {
@@ -308,12 +310,12 @@ export class LinkPreviews {
       await this.storage.delete(LINK_PREVIEW_IMAGE_PREFIX + key);
       return;
     } catch (error) {
-      console.warn("[LinkPreviews] Failed to delete an unnamed preview image:", errorName(error));
+      console.warn("[LinkPreviews] Failed to delete an unnamed preview image:", exceptionDiagnostics(error));
     }
     try {
       this.sql.exec("INSERT OR REPLACE INTO link_preview_orphans (image_key, failed_at) VALUES (?, ?)", key, this.now());
     } catch (error) {
-      console.warn("[LinkPreviews] Failed to record an orphaned preview image:", errorName(error));
+      console.warn("[LinkPreviews] Failed to record an orphaned preview image:", exceptionDiagnostics(error));
     }
   }
 
@@ -392,7 +394,7 @@ export class LinkPreviews {
         await this.storage.delete(LINK_PREVIEW_IMAGE_PREFIX + key);
         return true;
       } catch (error) {
-        console.warn("[LinkPreviews] Failed to delete an unreferenced preview image:", errorName(error));
+        console.warn("[LinkPreviews] Failed to delete an unreferenced preview image:", exceptionDiagnostics(error));
         return false;
       }
     });
@@ -481,7 +483,7 @@ async function fetchPreviewImage(raw: string, pageUrl: URL, options: FetchOption
     return { url, ...await fetchImageBytes(url, options) };
   } catch (error) {
     if (!(error instanceof LinkPreviewFailure)) {
-      console.warn("[LinkPreviews] Preview image fetch failed:", errorName(error));
+      console.warn("[LinkPreviews] Preview image fetch failed:", exceptionDiagnostics(error));
     }
     return null;
   }
@@ -540,7 +542,7 @@ async function guardedFetch(start: URL, accept: string, options: FetchOptions): 
       release();
       throw error instanceof LinkPreviewFailure
         ? error
-        : new LinkPreviewFailure("unreachable", `Link preview request failed: ${errorName(error)}`);
+        : new LinkPreviewFailure("unreachable", `Link preview request failed: ${errorName(error)}`, { cause: error });
     }
     if (!REDIRECT_STATUSES.has(response.status)) return { response, url, signal: controller.signal, release };
     release();
@@ -649,7 +651,7 @@ async function readPageMetadata(body: ReadableStream<Uint8Array>, contentType: s
   if (failure !== undefined) {
     throw failure instanceof LinkPreviewFailure
       ? failure
-      : new LinkPreviewFailure("unreachable", `Page body could not be read: ${errorName(failure)}`);
+      : new LinkPreviewFailure("unreachable", `Page body could not be read: ${errorName(failure)}`, { cause: failure });
   }
   return collector.metadata();
 }
@@ -786,9 +788,13 @@ function isAvif(bytes: Uint8Array): boolean {
   return box === "ftypavif" || box === "ftypavis";
 }
 
+/** The client sees only the category; the bounded, redacted fields of any underlying error stay in the Kernel log. */
 function failureCategory<ErrorValue>(error: ErrorValue): LinkPreviewFailureCategory {
-  if (error instanceof LinkPreviewFailure) return error.category;
-  console.warn("[LinkPreviews] Unexpected preview failure:", errorName(error));
+  if (error instanceof LinkPreviewFailure) {
+    if (error.cause !== undefined) console.warn("[LinkPreviews] Preview failed:", error.message, exceptionDiagnostics(error.cause));
+    return error.category;
+  }
+  console.warn("[LinkPreviews] Unexpected preview failure:", exceptionDiagnostics(error));
   return "unreachable";
 }
 

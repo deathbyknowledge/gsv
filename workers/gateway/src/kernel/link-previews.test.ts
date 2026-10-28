@@ -294,6 +294,22 @@ describe("link preview extraction", () => {
     });
   });
 
+  it("keeps the bounded, redacted fields of an unexpected failure in the log", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await withPreviews({
+        "https://example.com/": () => { throw new Error("socket hang up https://example.com/?token=abc"); },
+      }, async ({ previews }) => {
+        await expect(previews.preview("https://example.com/")).resolves.toEqual({ ok: false, error: "unreachable" });
+      });
+      const record = warn.mock.calls.find(([message]) => message === "[LinkPreviews] Preview failed:");
+      expect(record?.[1]).toBe("Link preview request failed: Error");
+      expect(record?.[2]).toMatchObject({ exceptionName: "Error", exceptionMessage: "socket hang up https://example.com/?[redacted]" });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("returns a bare preview for a non-HTML page and a category for a failed one", async () => {
     await withPreviews({
       "https://example.com/file.pdf": () => new Response("%PDF", { headers: { "content-type": "application/pdf" } }),
