@@ -244,10 +244,6 @@ pub(crate) async fn run() -> Result<(), DynError> {
                 .action;
             signed_in!(|auth| tokens::run(&url, auth, action.clone(), Output::new(json)))
         }
-        Commands::Auth { rest } if Commands::link_code(&rest).is_some() => {
-            let code = Commands::link_code(&rest).unwrap_or_default().to_string();
-            signed_in!(|auth| account::link_messenger(&url, auth, code.clone(), out))
-        }
         Commands::Shell { .. }
         | Commands::Proc { .. }
         | Commands::Adapter { .. }

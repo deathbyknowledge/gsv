@@ -521,7 +521,7 @@ pointer to their replacement.
 | `gsv proc reset` / `kill` | `gsv work reset ID` / `gsv work end ID`. |
 | `gsv auth login` / `logout` | `gsv login SPACE` / `gsv logout`. |
 | `gsv auth token ...` | Still works, hidden, for one release; see [Sign In](#sign-in). |
-| `gsv auth link --adapter ...` / `link-list` / `unlink` | Link messengers in **Settings → Messengers**. `gsv auth link CODE`, which redeems the code a messenger sends someone it doesn't know yet, still works. |
+| `gsv auth link` / `link-list` / `unlink` | Pair messengers in **Settings → Messengers**. |
 | `gsv config get` / `set` (remote) | Change Ship settings in the web app. |
 | `gsv adapter ...` | Connect messengers in **Settings → Messengers**. |
 

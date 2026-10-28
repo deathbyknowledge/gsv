@@ -291,15 +291,6 @@ pub(crate) enum Commands {
 }
 
 impl Commands {
-    /// The code in `gsv auth link CODE`, which a messenger's link challenge
-    /// hands out.
-    pub(crate) fn link_code(rest: &[String]) -> Option<&str> {
-        match rest {
-            [link, code] if link == "link" && !code.starts_with('-') => Some(code),
-            _ => None,
-        }
-    }
-
     /// `gsv auth token ...`, kept for one release so CI can still get a
     /// token. `None` when `rest` is another `auth` form.
     pub(crate) fn token_command(rest: &[String]) -> Option<TokenCommand> {
@@ -332,12 +323,13 @@ impl Commands {
             Self::Adapter { .. } => {
                 "`gsv adapter` was removed. Connect messengers in the web app, under Settings."
             }
-            // A messenger's link challenge hands out a code to redeem here.
-            Self::Auth { rest } if Self::link_code(rest).is_some() => return None,
             Self::Auth { rest } if first(rest) == "token" => return None,
             Self::Auth { rest } => match first(rest) {
                 "login" => "`gsv auth login` is now `gsv login`, for example: gsv login me.ship.space",
                 "logout" => "`gsv auth logout` is now `gsv logout`.",
+                "link" | "link-list" | "unlink" => {
+                    "`gsv auth link` was removed. Pair messengers in the web app, under Settings → Messengers."
+                }
                 _ => "`gsv auth` was removed. Sign in with `gsv login`; link messengers in the web app, under Settings.",
             },
             Self::Ship { pid: Some(_), .. } => {
@@ -973,6 +965,11 @@ mod tests {
             (
                 vec!["gsv", "auth", "login", "--username", "me"],
                 "gsv login",
+            ),
+            (vec!["gsv", "auth", "link", "CODE"], "Settings → Messengers"),
+            (
+                vec!["gsv", "auth", "unlink", "--adapter", "x", "--actor-id", "y"],
+                "Settings → Messengers",
             ),
             (vec!["gsv", "config", "get", "ai.model"], "web app"),
             (

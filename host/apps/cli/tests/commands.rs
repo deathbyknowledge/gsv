@@ -338,6 +338,9 @@ async fn removed_commands_point_to_their_replacement_and_plain_gsv_explains_itse
         stderr(&output),
         "Error: `gsv shell` is now `gsv run`, for example: gsv run ls ~\n"
     );
+    let output = cli.run(&["auth", "link", "ABC123"]).await;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("Settings → Messengers"));
     let output = cli.run(&["auth", "login"]).await;
     assert!(stderr(&output).contains("`gsv auth login` is now `gsv login`"));
     let output = cli.run(&[]).await;
@@ -360,29 +363,6 @@ async fn status_reports_sign_in_pairing_and_versions_without_prompting() {
     assert!(text.contains(
         "Connect this computer: open Work in the web app, click connect, then run gsv pair CODE"
     ));
-}
-
-#[tokio::test]
-async fn a_messenger_link_code_is_still_redeemed() {
-    fn answer(call: &str, _: &Value) -> Value {
-        match call {
-            "sys.link.consume" => json!({ "linked": true, "link": { "adapter": "telegram" } }),
-            _ => json!({}),
-        }
-    }
-    let (url, calls) = ship(answer).await;
-    let output = Cli::signed_in(&url)
-        .run(&["auth", "link", "fixture-link"])
-        .await;
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert_eq!(
-        stdout(&output),
-        "Linked. Your telegram messages now reach your Ship.\n"
-    );
-    assert_eq!(
-        called(&calls, "sys.link.consume")[0]["code"],
-        "fixture-link"
-    );
 }
 
 fn two_pieces_of_work() -> Value {

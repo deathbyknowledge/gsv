@@ -229,7 +229,7 @@ actor must be linked to a local uid before messages are delivered to that user's
 processes.
 
 For unlinked actors, direct messages receive a link challenge with a one-time
-code, redeemed with `gsv auth link CODE`. Non-DM messages from unlinked actors are dropped. Once
+code. Non-DM messages from unlinked actors are dropped. Once
 linked, a direct message is delivered to the user's personal controller unless
 that controller opened a direct line to an owned work process from the exact
 current DM run. A newer private message or selection fences a late route
