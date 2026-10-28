@@ -98,10 +98,7 @@ import {
   handleSysMcpRemove,
 } from "./sys/mcp";
 import {
-  handleSysLink,
-  handleSysLinkConsume,
   handleSysLinkList,
-  handleSysUnlink,
 } from "./sys/link";
 import {
   handleAdapterConnect,
@@ -724,17 +721,8 @@ async function dispatchKernel(
       case "sys.token.revoke":
         data = handleSysTokenRevoke(frame.args, ctx);
         break;
-      case "sys.link":
-        data = handleSysLink(frame.args, ctx);
-        break;
-      case "sys.unlink":
-        data = handleSysUnlink(frame.args, ctx);
-        break;
       case "sys.link.list":
         data = handleSysLinkList(frame.args, ctx);
-        break;
-      case "sys.link.consume":
-        data = handleSysLinkConsume(frame.args, ctx);
         break;
 
       // --- account.* ---

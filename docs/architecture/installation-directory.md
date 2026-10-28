@@ -67,6 +67,21 @@ accepts `active`, or `provisioning` when explicitly resolving a setup route.
 Unknown hosts must not allocate Kernel state. Directory failures must fail
 closed rather than falling back to a different installation.
 
+Each gateway isolate remembers an `active` route for a minute per hostname,
+for public reads only: the web app's files, public files, profile pages,
+`/.well-known/atproto-did` and the OAuth client metadata. Concurrent public
+reads of a hostname share one lookup. Connections, git, Ship-to-Ship calls and
+sign-in callbacks ask Accounts every time, and so does any hostname Accounts
+does not route, routes to a Ship that is not active, or cannot answer for, so
+a random hostname still allocates nothing. Any answer replaces a remembered
+route, and a Kernel that refuses a request's identity makes the gateway ask
+again. A suspension or reset therefore reaches public reads within a minute,
+while the Kernel's own gate and retirement still refuse its work. A lookup
+that fails or takes longer than five seconds answers `503` "Ship is briefly
+unreachable" with `Retry-After: 5`: Accounts answers in milliseconds, and
+within a few seconds in its slowest minutes, so a lookup still waiting by
+then has stalled.
+
 The [lifecycle gate](https://github.com/deathbyknowledge/gsv/blob/main/workers/gateway/src/installation/lifecycle.ts)
 also applies to work entering through existing WebSockets, adapters,
 inference, Process ticks, and schedules. Suspending an installation does not
@@ -85,8 +100,9 @@ two seconds is recorded as a diagnostic and fails closed with a retryable
 from a suspension. Accounts does not notify a Kernel when it restricts or
 resets an installation, so already-authenticated traffic observes those
 changes within a minute. Accounts does tell the deployment's PDS when it
-restricts or reactivates an installation, so relays hear of the suspension;
-see [the open network](open-network.md).
+restricts, reactivates or retires an installation, so relays hear of the
+suspension and a retired Ship's repository stops being served; see
+[the open network](open-network.md).
 
 Accounts also holds an operator binding to the Gateway for the Ship health
 view in administration. The Gateway resolves the installation through the
