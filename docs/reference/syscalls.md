@@ -1985,10 +1985,7 @@ Runtime behavior:
 | `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. An invitation is paired only while the machine credential it issued is live; forgetting the machine makes it cancelled. |
 | `sys.pair.cancel` | `handleSysPairCancel` | Cancels an unused caller-owned invitation; an already-paired device and its credential remain intact. |
 | `sys.pair.redeem` | `handleSysPairRedeem` | Pre-connect enrollment. Consumes one invitation and atomically registers the receiving client's persisted random machine credential for the invitation's account and target. The same credential may recover an acknowledgement; another cannot reuse the invitation. |
-| `sys.link` | `handleSysLink` | User-role only. Links an adapter/account/actor to a uid. Adapter is lowercased; root may link to any uid, non-root only self. |
-| `sys.unlink` | `handleSysUnlink` | User-role only. Removes an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. |
 | `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
-| `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
 
 `sys.connect`, `sys.setup`, `sys.setup.assist`, and `sys.pair.redeem` are special-cased before normal auth/capability dispatch. Pairing redemption requires a valid human-issued invitation and retains the managed installation work gate. Other `sys.*` calls require a connected identity and are denied in setup mode.
 
@@ -2176,24 +2173,9 @@ type SystemSyscalls = {
     result: { revoked: boolean };
   };
 
-  "sys.link": {
-    args: { adapter: string; accountId: string; actorId: string; uid?: number };
-    result: { linked: boolean; link?: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number } };
-  };
-
-  "sys.unlink": {
-    args: { adapter: string; accountId: string; actorId: string };
-    result: { removed: boolean };
-  };
-
   "sys.link.list": {
     args: { uid?: number };
     result: { links: Array<{ adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number }> };
-  };
-
-  "sys.link.consume": {
-    args: { code: string };
-    result: { linked: boolean; link?: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number } };
   };
 
   "account.create": {
@@ -2421,8 +2403,8 @@ Runtime behavior:
 | `adapter.pair.info` | `handleAdapterPairInfo` | Signed-in human or authorized owned process. Returns adapter-owned public setup information: official bot username, install link, optional instructions for obtaining a code, and the calling codes the provider keeps the account from messaging. |
 | `adapter.pair.inspect` | `handleAdapterPairInspect` | Signed-in human or authorized owned process. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
 | `adapter.pair.confirm` | `handleAdapterPairConfirm` | Signed-in human or authorized owned process. The Kernel derives the active human owner from the authenticated session or process registry and honors process tool policy. Binds the external identity to that owner and the current installation, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. The caller cannot choose the destination uid or installation. |
-| `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. Generic `sys.unlink` refuses managed links so the two sides cannot be orphaned. |
-| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
+| `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. |
+| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, drops an unlinked DM as `pairing_required` so the adapter answers with its own pairing reply, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
 | `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, an optional `action` to open (a label of at most 20 characters and an http or https URL, shown as a link button where the messenger supports one and as a line of text otherwise), media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. Failed and ambiguous results may include bounded, redacted `diagnostics` (exception name/message/stack/cause, provider status, error code/subcode and request ID). |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |

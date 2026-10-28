@@ -6,14 +6,16 @@ import { fromBase16 } from "@atcute/multibase";
 import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
 import type { InstallationDeletionInspection } from "@humansandmachines/gsv/services/lifecycle-discovery";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { PdsEnv } from "../src/gsv/env";
 import { PdsLifecycleEntrypoint } from "../src/gsv/lifecycle";
 import { PdsPublisherEntrypoint } from "../src/gsv/publisher";
 import { FIREHOSE_NAME } from "../src/host/firehose";
+import worker from "../src/index";
 import { FakeAccounts } from "./accounts";
 import { FakePlcDirectory, isDidPlc } from "./plc";
 import { framesFor, subscribe } from "./relay";
-import { deliver, installFakePlc, rejection, upload } from "./support";
+import { deliver, errorOf, installFakePlc, read, rejection, upload } from "./support";
 
 const NOTE = "com.example.note";
 const SHIP_CALL = { aud: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb#ship", lxm: "space.ship.deliver" };
@@ -68,6 +70,7 @@ describe("deleting an installation's public account", () => {
     await deliver(repo);
     const firehose = env.FIREHOSE.getByName(FIREHOSE_NAME);
     const relay = await subscribe(firehose);
+    expect((await serve("com.atproto.sync.getLatestCommit", { did })).status).toBe(200);
     accounts.setState(ship.installationId, "retained");
     const request = deletion(ship.installationId);
 
@@ -75,6 +78,11 @@ describe("deleting an installation's public account", () => {
     expect(await lifecycle().quiesceInstallation(request)).toMatchObject({ phase: "quiesced", outcome: "progress", pendingResources: 2 });
     await vi.waitFor(() => expect(framesFor(relay, did).at(-1)).toMatchObject({ type: "#account", body: { active: false, status: "deleted" } }));
     expect(await firehose.locate(did)).toMatchObject({ active: false, status: "deleted" });
+    // The repository itself reads as deleted from then on.
+    const direct = (method: string, params: Record<string, string>) => repo.fetch(`https://pds.test/xrpc/${method}?${new URLSearchParams(params)}`);
+    expect(await read(z.object({ did: z.string(), active: z.boolean(), status: z.string().optional() }), direct("com.atproto.sync.getRepoStatus", { did })))
+      .toEqual({ did, active: false, status: "deleted" });
+    expect(await errorOf(direct("com.atproto.repo.describeRepo", { repo: did }))).toBe("RepoNotFound");
     // Whatever binding the Kernel still holds, the account publishes and signs nothing more.
     const refusals = [
       await rejection(repo.applyWrites([{ action: "delete", collection: NOTE, rkey: "self" }])),
@@ -96,6 +104,8 @@ describe("deleting an installation's public account", () => {
     expect(await runInDurableObject(firehose, (_instance, state) => state.storage.sql.exec<{ events: number }>(
       "SELECT COUNT(*) AS events FROM events WHERE did = ?", did,
     ).one().events)).toBe(1);
+    // A host that found the repository before reads it as missing, and leaves the erased object as it is.
+    expect(await errorOf(serve("com.atproto.sync.getRepoStatus", { did }))).toBe("RepoNotFound");
     // The object keeps only its record of the deletion, which refuses another account for the installation.
     expect(await runInDurableObject(repo, async (_instance, state) => ({
       keys: [...(await state.storage.list()).keys()],
@@ -229,6 +239,12 @@ describe("deleting an installation's public account", () => {
 
 function deletion(installationId: string): InstallationDeletionRequest {
   return { version: 1, operationId: `deletion-${crypto.randomUUID()}`, installationId };
+}
+
+/** Sends a public XRPC query to the deployed worker. */
+function serve(method: string, params: Record<string, string>): Promise<Response> {
+  const request = new Request<unknown, IncomingRequestCfProperties>(`https://pds.test/xrpc/${method}?${new URLSearchParams(params)}`);
+  return worker.fetch(request, deployedEnv());
 }
 
 /** The deletion entrypoint as Accounts' binding, with the given authority or with no props, sees it. */

@@ -321,8 +321,11 @@ export type AdapterInboundResult = {
     text: string;
     replyToId?: string;
   };
+  /**
+   * Kernels before 0.7.6 asked for pairing with a link challenge, and their stored
+   * ingress receipts can still replay one. Adapters treat it as `pairing_required`.
+   */
   challenge?: {
-    /** Stable idempotency key for delivering this link challenge. */
     deliveryId: string;
     code: string;
     prompt: string;
@@ -330,6 +333,7 @@ export type AdapterInboundResult = {
   };
   /** Set only when this provider ingress key was already claimed. */
   replayed?: "in_progress" | "completed";
+  /** `pairing_required`: the Kernel has no link for a person the adapter still routes to it. */
   droppedReason?: string;
   error?: string;
 };
