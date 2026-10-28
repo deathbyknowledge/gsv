@@ -107,7 +107,7 @@ export const es = {
   "settings.preferences.unsaved": "Cambios sin guardar",
   "settings.preferences.save": "Guardar cambios",
   "settings.account.title": "Cuenta",
-  "settings.account.intro": "La cuenta con la que inicias sesión. Si la eliminas, se eliminan tu Ship y todo lo que recuerda.",
+  "settings.account.intro": "Tu acceso y tu identidad para usar Ship.",
   "settings.account.deleteTitle": "Eliminar tu cuenta",
   "settings.account.deleteRequest": "Para eliminar tu cuenta, escribe a {email} y la eliminaremos manualmente por ti.",
   "settings.account.deleteExplanation": "Ship sigue en acceso anticipado, así que aún no hemos añadido una opción para que elimines tu cuenta directamente.",
@@ -183,7 +183,7 @@ export const es = {
 
   // Settings: standing responsibilities
   "settings.standing.title": "Responsabilidades permanentes",
-  "settings.standing.intro": "De lo que se encarga Ship cuando ocurre algo.",
+  "settings.standing.intro": "Sigue de cerca lo que Ship está atendiendo.",
   "settings.standing.noAccess": "Tu cuenta no puede leer las responsabilidades permanentes.",
   "settings.standing.empty": "Todavía no hay nada fijo. Lo que Ship se encargue de hacer por ti aparecerá aquí.",
   "settings.standing.alwaysOn": "Siempre activa.",
@@ -225,7 +225,7 @@ export const es = {
 
   // Settings: instructions
   "settings.instructions.title": "Instrucciones",
-  "settings.instructions.intro": "Instrucciones permanentes, en Markdown. Los ayudantes heredan estas instrucciones además de las suyas. Los cambios se aplican en la próxima ejecución.",
+  "settings.instructions.intro": "Aquí queda la guía que le das a Ship sobre cómo comportarse. Los ayudantes heredan estas instrucciones junto con las suyas. Los cambios se aplican en la siguiente ejecución.",
   "settings.instructions.new": "nueva instrucción",
   "settings.instructions.newTitle": "Nueva instrucción",
   "settings.instructions.edit": "Editar instrucción",
@@ -263,7 +263,7 @@ export const es = {
   // Settings: messengers
   "settings.messengers.comingSoon": "Próximamente",
   "settings.messengers.title": "Mensajería",
-  "settings.messengers.intro": "Elige dónde hablas con tu Ship.",
+  "settings.messengers.intro": "Habla con tu Ship desde tu app de mensajería favorita.",
   "settings.messengers.telegram": "Habla con tu Ship desde Telegram.",
   "settings.messengers.slack": "Habla con tu Ship desde tu espacio de trabajo de Slack.",
   "settings.messengers.discord": "Habla con tu Ship desde mensajes directos y servidores de Discord.",

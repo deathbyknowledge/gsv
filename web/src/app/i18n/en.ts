@@ -106,7 +106,7 @@ export const en = {
   "settings.preferences.unsaved": "Unsaved changes",
   "settings.preferences.save": "Save changes",
   "settings.account.title": "Account",
-  "settings.account.intro": "The account you sign in with. Deleting it removes your Ship and everything it remembers.",
+  "settings.account.intro": "Your login and identity to use Ship.",
   "settings.account.deleteTitle": "Delete your account",
   "settings.account.deleteRequest": "To delete your account, email {email} and we’ll delete it manually for you.",
   "settings.account.deleteExplanation": "Ship is still in early access, so we haven’t added a self-service deletion option yet.",
@@ -182,7 +182,7 @@ export const en = {
 
   // Settings: standing responsibilities
   "settings.standing.title": "Standing responsibilities",
-  "settings.standing.intro": "What Ship takes care of when something happens.",
+  "settings.standing.intro": "Keep track of what Ship is taking care of.",
   "settings.standing.noAccess": "Your account cannot read standing responsibilities.",
   "settings.standing.empty": "Nothing standing yet. The things Ship takes care of for you will show up here.",
   "settings.standing.alwaysOn": "Always on.",
@@ -224,7 +224,7 @@ export const en = {
 
   // Settings: instructions
   "settings.instructions.title": "Instructions",
-  "settings.instructions.intro": "Your standing instructions, in Markdown. Helpers inherit these instructions alongside their own. Changes take effect on the next run.",
+  "settings.instructions.intro": "Guidance you give to Ship on how to behave is recorded here. Helpers inherit these instructions alongside their own. Changes take effect on the next run.",
   "settings.instructions.new": "new instruction",
   "settings.instructions.newTitle": "New instruction",
   "settings.instructions.edit": "Edit instruction",
@@ -262,7 +262,7 @@ export const en = {
   // Settings: messengers
   "settings.messengers.comingSoon": "Coming soon",
   "settings.messengers.title": "Messengers",
-  "settings.messengers.intro": "Choose where you talk to your Ship.",
+  "settings.messengers.intro": "Talk to your Ship from your favorite messenger app.",
   "settings.messengers.telegram": "Talk to your Ship from Telegram.",
   "settings.messengers.slack": "Talk to your Ship from your Slack workspace.",
   "settings.messengers.discord": "Talk to your Ship from Discord DMs and servers.",
