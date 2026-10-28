@@ -185,6 +185,7 @@ export const es = {
   "settings.standing.title": "Responsabilidades permanentes",
   "settings.standing.intro": "De lo que se encarga Ship cuando ocurre algo.",
   "settings.standing.noAccess": "Tu cuenta no puede leer las responsabilidades permanentes.",
+  "settings.standing.empty": "Todavía no hay nada fijo. Lo que Ship se encargue de hacer por ti aparecerá aquí.",
   "settings.standing.alwaysOn": "Siempre activa.",
   "settings.standing.alwaysOnError": "Esta responsabilidad siempre está activa.",
 

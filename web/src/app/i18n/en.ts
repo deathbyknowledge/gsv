@@ -184,6 +184,7 @@ export const en = {
   "settings.standing.title": "Standing responsibilities",
   "settings.standing.intro": "What Ship takes care of when something happens.",
   "settings.standing.noAccess": "Your account cannot read standing responsibilities.",
+  "settings.standing.empty": "Nothing standing yet. The things Ship takes care of for you will show up here.",
   "settings.standing.alwaysOn": "Always on.",
   "settings.standing.alwaysOnError": "This responsibility is always on.",
 

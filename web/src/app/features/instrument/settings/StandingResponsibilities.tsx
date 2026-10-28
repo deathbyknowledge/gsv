@@ -24,6 +24,7 @@ export function StandingResponsibilities({ account }: { account: ConsoleAccount 
     <PageHeading title={t("settings.standing.title")} description={t("settings.standing.intro")} />
     {query.isPending && connected && <LoadingState>{t("common.loading")}</LoadingState>}
     <SettingsError error={query.error ?? update.error} />
+    {query.isSuccess && query.data.sources.length === 0 && <p class="settings-muted">{t("settings.standing.empty")}</p>}
     <ul class="settings-list">{query.data?.sources.map((source) => <li key={source.id}>
       <label class="settings-check"><input type="checkbox" checked={source.enabled}
         disabled={source.control === "required" || !connected || update.isPending || !canConfigure(account, "r12y.source.update")}

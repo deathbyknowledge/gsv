@@ -190,6 +190,7 @@ export const ptBR = {
   "settings.standing.title": "Responsabilidades fixas",
   "settings.standing.intro": "Do que o Ship cuida quando algo acontece.",
   "settings.standing.noAccess": "Sua conta não pode ler as responsabilidades fixas.",
+  "settings.standing.empty": "Ainda não há nada fixo. O que o Ship cuidar por você vai aparecer aqui.",
   "settings.standing.alwaysOn": "Sempre ativa.",
   "settings.standing.alwaysOnError": "Esta responsabilidade está sempre ativa.",
 
