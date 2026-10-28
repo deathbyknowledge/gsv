@@ -3,7 +3,7 @@ import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { InfoTip } from "../../../components/ui/InfoTip";
-import { StatusMeta, type StatusTone } from "../../../components/ui/StatusDot";
+import { StatusDot } from "../../../components/ui/StatusDot";
 import { Tag } from "../../../components/ui/Tag";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { disconnectConsoleAdapterPairing } from "../../../services/system/consoleService";
@@ -30,13 +30,6 @@ const STATUS_LABELS = {
   "status-unavailable": "settings.messengers.status.statusUnavailable",
   "service-unavailable": "settings.messengers.status.serviceUnavailable",
 } satisfies Record<MessengerConnectionStatus, TextKey>;
-const STATUS_TONES = {
-  connected: "online",
-  "reconnect-needed": "warn",
-  "needs-attention": "error",
-  "status-unavailable": "idle",
-  "service-unavailable": "idle",
-} satisfies Record<MessengerConnectionStatus, StatusTone>;
 
 export function MessengerConnections({ account, active }: Pick<SettingsSectionProps, "account" | "active">) {
   const t = useT();
@@ -69,13 +62,15 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
     {connections.data && MESSENGERS.map(({ id, name, blurb }) => {
       const adapter = connections.data.adapters.find((entry) => entry.adapter === id);
       const links = connections.data.links.filter((entry) => entry.adapter === id);
+      const linked = links.some((link) => messengerConnectionStatus(adapter, link.accountId) === "connected");
       const available = adapter?.enabled && adapter.supportsPairing;
       const canPair = adapter?.canLink === true;
       const comingSoon = id === "slack" || id === "discord";
       const canConnect = !comingSoon && connected && canPair && available && !unlink.isPending;
       return <section class="settings-messenger" key={id} aria-label={name}>
         <div class="settings-messenger-heading">
-          <h2>
+          <h2 class="settings-messenger-name">
+            {!comingSoon && <StatusDot tone={linked ? "online" : "idle"} size={7} />}
             {name}
             {comingSoon && <span class="settings-messenger-tag"><Tag boxed size="medium" tone="idle" label={t("settings.messengers.comingSoon")} /></span>}
           </h2>
@@ -87,7 +82,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         {!available && <p class="settings-muted">{t("settings.messengers.unavailable", { name })}</p>}
         {available && !canPair && <p class="settings-muted">{t("settings.messengers.cannotLink", { name })}</p>}
         {links.length === 0 && available && !comingSoon && <p class="settings-messenger-links settings-messenger-state">
-          <StatusMeta tone="idle" labelTone="muted" label={t("settings.messengers.noLinks", { name })} />
+          <span class="settings-messenger-status gsv-sublabel">{t("settings.messengers.noLinks", { name })}</span>
           {id === "whatsapp" && <InfoTip text={t("settings.messengers.whatsappRelink")} position="right" />}
         </p>}
         <ul class="settings-list settings-messenger-links">{links.map((link) => {
@@ -96,13 +91,11 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
           const isRemoving = removing?.adapter === link.adapter && removing.accountId === link.accountId && removing.actorId === link.actorId;
           return <li key={JSON.stringify([link.accountId, link.actorId])}>
             <div class="settings-server-heading">
-              <StatusMeta
-                tone={STATUS_TONES[status]}
-                labelTone="muted"
-                label={status === "connected"
+              <span class="settings-messenger-status gsv-sublabel">
+                {status === "connected"
                   ? t("settings.messengers.connectedTo", { id: link.actorId })
                   : `${t(STATUS_LABELS[status])} · ${t("settings.messengers.user", { platform: name, id: link.actorId })}`}
-              />
+              </span>
             </div>
             {id === "slack" && <small>{t("settings.messengers.workspace", { id: link.accountId })}</small>}
             {error && <p class="settings-error" role="alert">{error}</p>}

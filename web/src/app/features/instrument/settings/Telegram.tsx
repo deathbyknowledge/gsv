@@ -10,7 +10,6 @@ function CompactFlowShell({ flow, current, onStep }: ConnectFlowShellProps): Com
   const step = flow.steps[index];
   return (
     <div class="settings-telegram-flow">
-      <div class="settings-telegram-step">{step.meta} · {step.title}</div>
       {step.render({
         onBack: () => onStep(Math.max(0, index - 1)),
         onNext: () => onStep(Math.min(lastIndex, index + 1)),

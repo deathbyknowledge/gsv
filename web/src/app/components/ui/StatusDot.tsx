@@ -53,19 +53,16 @@ export interface StatusMetaProps {
   label: string;
   /** Dot diameter in px. */
   dotSize?: number;
-  /** "status" (default) colors the label with the tone; "muted" keeps the
-   *  label in the dim text color and lets the dot alone carry the tone. */
-  labelTone?: "status" | "muted";
 }
 
 /** StatusMeta — a tone-colored status word with a leading StatusDot. The shared
  *  header-level status treatment: used in page headers and section-card headers
  *  so a status reads the same everywhere (and in step with the list rows). */
-export function StatusMeta({ tone, label, dotSize = 7, labelTone = "status" }: StatusMetaProps) {
+export function StatusMeta({ tone, label, dotSize = 7 }: StatusMetaProps) {
   return (
     <span
       class="gsv-status-meta gsv-sublabel"
-      style={{ display: "inline-flex", alignItems: "center", gap: "8px", letterSpacing: ".16em", color: labelTone === "muted" ? "var(--text-dim)" : STATUS_TEXT[tone] }}
+      style={{ display: "inline-flex", alignItems: "center", gap: "8px", letterSpacing: ".16em", color: STATUS_TEXT[tone] }}
     >
       <StatusDot tone={tone} size={dotSize} />
       {label}
