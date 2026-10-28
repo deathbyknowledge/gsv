@@ -151,8 +151,6 @@ describe("CapabilityStore", () => {
         "sys.feedback",
         "sys.instance.*",
         "sys.ledger.list",
-        "sys.link",
-        "sys.link.consume",
         "sys.link.list",
         "sys.mcp.add",
         "sys.mcp.call",
@@ -174,7 +172,6 @@ describe("CapabilityStore", () => {
         "sys.token.create",
         "sys.token.list",
         "sys.token.revoke",
-        "sys.unlink",
         "web.search",
       ]);
     },
