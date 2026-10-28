@@ -1,7 +1,7 @@
 import { act } from "preact/test-utils";
 import { expect, it, vi } from "vitest";
 import type { ConnectFlowDef } from "../../../../components/connect-flow/connectFlowTypes";
-import { collectText, createTestRoot, flowStepNodes, nodeWithLabel } from "../../../../testing/testHarness";
+import { createTestRoot, flowStepNodes, nodeWithLabel } from "../../../../testing/testHarness";
 import { SharedDiscordOnboardingFlow, type ManagedTelegramDependencies } from "./ManagedTelegramOnboardingFlow";
 
 it("opens server installation and requires explicit confirmation of the Discord person and scope", async () => {

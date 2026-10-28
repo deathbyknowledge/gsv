@@ -2,7 +2,6 @@ import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectFlowDef } from "../../../../components/connect-flow/connectFlowTypes";
 import {
-  collectText,
   createTestRoot,
   flowStepNodes,
   nodeWithLabel,
