@@ -485,6 +485,7 @@
   --label: #4a4677;
   --text-muted: #5f5a8e;
   --text-dim: #6d6899;
+  --prose-dim: #6d6899; /* dim prose / blurb body (AA 4.66:1 on the page) */
   --faint: #a7a3c8;
   --glyph: #6b5fd6;
   --star: #b8b2e6;

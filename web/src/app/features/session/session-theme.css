@@ -87,6 +87,7 @@
   --label: #4a4677;
   --node-label: #4a4677;
   --text-dim: #6d6899;
+  --prose-dim: #6d6899; /* dim prose / blurb body (AA 4.66:1 on the page) */
   --online: #167346; /* AA on every light surface (was #1e8a55, 4.4:1 on white) */
   --error: #c0364f;
   --idle: #9d98c6;
