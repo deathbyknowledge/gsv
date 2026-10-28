@@ -440,7 +440,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
           ) : filesPlace || openFile ? (
             <>
               {filesPlace && <RetainedView active={active && inspectorOpen && !expandedFile && !openFile}>
-                <button type="button" class="fleet-text-action chat-context-back" onClick={() => setFilesPlace(null)}>← {filesPlace.label}</button>
+                <button type="button" class="fleet-text-action chat-context-back" onClick={() => { setSelected(targetRow(filesPlace.id)); setFilesPlace(null); }}>← {filesPlace.label}</button>
                 <div class="fleet-tree"><PlaceTree key={`${filesPlace.id}:${filesPath ?? ""}`} place={filesPlace} initialPath={filesPath} enabled={connected && filesPlace.online} onOpenFile={selectFile} initiallyOpen /></div>
               </RetainedView>}
               {openFile && <FilePreview file={openFile} placeLabel={placeLabel(openFile.target)}

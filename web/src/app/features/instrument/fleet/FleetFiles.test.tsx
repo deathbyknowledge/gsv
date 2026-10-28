@@ -56,7 +56,8 @@ async function openFleet(reference: FleetRow) {
     // SAFETY: The node was selected by the exact component whose props type P describes.
     return node ? node.props as P : null;
   };
-  return { find, render, async close() { await root.unmount(); cache.clear(); } };
+  const nodes = () => collectNodes(tree);
+  return { find, nodes, render, async close() { await root.unmount(); cache.clear(); } };
 }
 
 describe("paths opened from Ship's text", () => {
@@ -75,6 +76,18 @@ describe("paths opened from Ship's text", () => {
       expect(view.find(FilePreview)).toBeNull();
       expect(view.find(PlaceTree)?.place.id).toBe("gsv");
       expect(view.find(PlaceTree)?.initialPath).toBe("~/lease");
+    } finally { await view.close(); }
+  });
+
+  it("goes back from a linked folder to its place", async () => {
+    const view = await openFleet("dir:gsv:~/lease");
+    try {
+      const back = view.nodes().find((node) => node.type === "button" && String(node.props.class).includes("chat-context-back"));
+      await act(() => back?.props.onClick?.());
+      await view.render();
+      expect(view.find(PlaceTree)).toBeNull();
+      // The place's own inspector, the one that offers browsing its files, replaces the tree.
+      expect(view.nodes().some((node) => "onBrowse" in node.props)).toBe(true);
     } finally { await view.close(); }
   });
 
