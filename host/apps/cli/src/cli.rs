@@ -396,7 +396,10 @@ pub(crate) enum ContactsAction {
         days: Option<u32>,
     },
     /// Use an invitation someone shared with you
-    Accept { code: String },
+    Accept {
+        /// The invitation link or code
+        code: String,
+    },
     /// Message a contact
     Send {
         /// Contact name
@@ -457,11 +460,15 @@ pub(crate) enum MailAction {
         page: MailPage,
     },
     /// Read one message
-    Read { id: String },
+    Read {
+        /// Message id from the list
+        id: String,
+    },
     /// Send mail from your Ship's address; the body comes from MESSAGE or stdin
     Send {
         /// Recipient address
         to: String,
+        /// Subject line
         #[arg(long, short = 's')]
         subject: Option<String>,
         /// Message body (default: read from stdin)
@@ -479,6 +486,7 @@ pub(crate) enum MailAction {
 pub(crate) enum WorkAction {
     /// What a piece of work did
     Show {
+        /// Work id from `gsv work`
         id: String,
         /// How many steps to show
         #[arg(short = 'n', long, default_value_t = 30)]
@@ -486,26 +494,34 @@ pub(crate) enum WorkAction {
     },
     /// Talk to a piece of work, or open a prompt with it
     Open {
+        /// Work id from `gsv work`
         id: String,
         /// What to say (quotes are optional)
         #[arg(num_args = 0..)]
         message: Vec<String>,
     },
     /// Stop what a piece of work is doing now
-    Stop { id: String },
+    Stop {
+        /// Work id from `gsv work`
+        id: String,
+    },
 }
 
 #[derive(Subcommand, Clone)]
 pub(crate) enum ApprovalsAction {
     /// Allow one waiting action
     Allow {
+        /// Id from `gsv approvals`
         id: String,
         /// Also allow actions like this from now on
         #[arg(long)]
         always: bool,
     },
     /// Refuse one waiting action
-    Block { id: String },
+    Block {
+        /// Id from `gsv approvals`
+        id: String,
+    },
 }
 
 #[derive(Args, Clone, Default)]
@@ -544,7 +560,9 @@ pub(crate) enum RoutinesAction {
     },
     /// Change a routine
     Edit {
+        /// Routine id from `gsv routines`
         id: String,
+        /// A new name
         #[arg(long)]
         name: Option<String>,
         /// What your Ship should do each time
@@ -552,6 +570,7 @@ pub(crate) enum RoutinesAction {
         message: Option<String>,
         #[command(flatten)]
         cadence: Cadence,
+        /// Time zone for daily, weekly and cron times
         #[arg(long)]
         timezone: Option<String>,
         /// Stop running it until resumed
@@ -562,17 +581,29 @@ pub(crate) enum RoutinesAction {
         resume: bool,
     },
     /// Remove a routine
-    Remove { id: String },
+    Remove {
+        /// Routine id from `gsv routines`
+        id: String,
+    },
     /// Run a routine now
-    Run { id: String },
+    Run {
+        /// Routine id from `gsv routines`
+        id: String,
+    },
 }
 
 #[derive(Subcommand, Clone)]
 pub(crate) enum PlacesAction {
     /// Give a place a new name
-    Rename { place: String, name: String },
+    Rename {
+        /// Current name or id
+        place: String,
+        /// New name
+        name: String,
+    },
     /// Forget a place and revoke its access
     Forget {
+        /// Name or id from `gsv places`
         place: String,
         /// Don't ask for confirmation
         #[arg(long, short = 'y')]
