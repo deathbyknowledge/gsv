@@ -116,7 +116,14 @@ export class ManagedInstallationGate {
   }
 }
 
-type RecordedInstallationState = { state: InstallationState; revision: number };
+type RecordedInstallationState = { state: InstallationState; revision: number; recordedAt: number };
+
+/**
+ * How long a record stands before the Kernel asks Accounts again. Accounts
+ * tells the Kernel of every change, so this only bounds how long a Kernel can
+ * miss that Accounts stopped telling it, as after a rollback.
+ */
+const RECORD_TTL_MS = 24 * 60 * 60_000;
 
 /** A Kernel being set up keeps asking Accounts, whose answer carries setup details that change without a change of state. */
 const UNRECORDED_STATES: ReadonlySet<InstallationState> = new Set(["reserved", "provisioning"]);
@@ -126,8 +133,8 @@ const UNRECORDED_STATES: ReadonlySet<InstallationState> = new Set(["reserved", "
  * the Kernel of every change of state and gives each a higher revision, so
  * the Kernel answers from its record and replaces it only with a higher
  * revision: a late notice never undoes a newer one.
- * A Kernel without a record asks Accounts through its gate and keeps the
- * answer. An answer without a revision comes from an Accounts that doesn't
+ * A Kernel without a record, or with one older than a day, asks Accounts
+ * through its gate and keeps the answer. An answer without a revision comes from an Accounts that doesn't
  * tell Kernels of changes, so the Kernel keeps none and only the gate's
  * minute applies.
  */
@@ -145,7 +152,9 @@ export class RecordedInstallationGate {
   /** `fresh` asks Accounts even with a record, for calls that grant new authority. */
   async check(options: { fresh?: boolean } = {}): Promise<ManagedInstallationWorkGate> {
     const recorded = options.fresh ? undefined : this.recorded();
-    return recorded ? workGate(this.bindings, recorded) : await this.gate.check(options);
+    return recorded && Date.now() - recorded.recordedAt < RECORD_TTL_MS
+      ? workGate(this.bindings, recorded)
+      : await this.gate.check(options);
   }
 
   /** Keeps a directory answer newer than the record, and returns the revision the Kernel then holds. */
@@ -157,16 +166,17 @@ export class RecordedInstallationGate {
       if (recorded) this.kv.delete(MANAGED_INSTALLATION_STATE_KEY);
       return undefined;
     }
-    if (recorded && recorded.revision >= revision) return recorded.revision;
+    if (recorded && recorded.revision > revision) return recorded.revision;
     if (UNRECORDED_STATES.has(installation.state)) {
       if (recorded) this.kv.delete(MANAGED_INSTALLATION_STATE_KEY);
     } else {
-      this.kv.put(MANAGED_INSTALLATION_STATE_KEY, { state: installation.state, revision });
+      // The same revision renews the record: Accounts still numbers changes.
+      this.kv.put(MANAGED_INSTALLATION_STATE_KEY, { state: installation.state, revision, recordedAt: Date.now() });
     }
     return revision;
   }
 
-  /** Forgets the gate's last confirmation; a record stands until Accounts reports a newer one. */
+  /** Forgets the gate's last confirmation; a record stands until Accounts reports a newer one or it is a day old. */
   invalidate(): void {
     this.gate.invalidate();
   }

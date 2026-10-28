@@ -514,7 +514,7 @@ export class AccountStore {
   /**
    * `stateRevision` reports the revision of the installation's latest change
    * of state. Report it only while each change is delivered to the Gateway,
-   * since a Kernel that holds a revision stops asking.
+   * since a Kernel that holds a revision asks only once a day.
    */
   async resolveInstallation(
     installationIdValue: string,

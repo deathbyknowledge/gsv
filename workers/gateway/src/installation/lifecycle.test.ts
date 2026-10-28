@@ -255,14 +255,45 @@ describe("a Kernel's record of its installation state", () => {
     return { accounts, resolveInstallation, kv, gate };
   }
 
-  it("asks Accounts once, then answers from its record however long it runs", async () => {
+  it("answers from its record for a day, then asks Accounts and renews it", async () => {
     vi.useFakeTimers();
     const { resolveInstallation, kv, gate } = kernelWith({ ...identity, state: "active", stateRevision: 4 });
     await expect(Promise.all([gate.check(), gate.check()])).resolves.toEqual([{ allowed: true }, { allowed: true }]);
-    vi.advanceTimersByTime(24 * 60 * 60_000);
+    expect(kv.values.get(MANAGED_INSTALLATION_STATE_KEY)).toEqual({ state: "active", revision: 4, recordedAt: Date.now() });
+    vi.advanceTimersByTime(24 * 60 * 60_000 - 1);
     await expect(gate.check()).resolves.toEqual({ allowed: true });
     expect(resolveInstallation).toHaveBeenCalledTimes(1);
-    expect(kv.values.get(MANAGED_INSTALLATION_STATE_KEY)).toEqual({ state: "active", revision: 4 });
+    vi.advanceTimersByTime(1);
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    expect(resolveInstallation).toHaveBeenCalledTimes(2);
+    expect(kv.values.get(MANAGED_INSTALLATION_STATE_KEY)).toEqual({ state: "active", revision: 4, recordedAt: Date.now() });
+    vi.advanceTimersByTime(24 * 60 * 60_000 - 1);
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    expect(resolveInstallation).toHaveBeenCalledTimes(2);
+  });
+
+  it("learns within a day that Accounts stopped telling it of changes", async () => {
+    vi.useFakeTimers();
+    const { accounts, resolveInstallation, kv, gate } = kernelWith({ ...identity, state: "active", stateRevision: 4 });
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    // Accounts is rolled back to a version that neither numbers nor tells changes, then suspends the Ship.
+    accounts.answer = { ...identity, state: "restricted" };
+    vi.advanceTimersByTime(24 * 60 * 60_000);
+    await expect(gate.check()).resolves.toEqual(suspended);
+    expect(kv.values.size).toBe(0);
+    expect(resolveInstallation).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed when Accounts cannot answer as its record expires, and asks again", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { resolveInstallation, gate } = kernelWith({ ...identity, state: "active", stateRevision: 4 });
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    vi.advanceTimersByTime(24 * 60 * 60_000);
+    resolveInstallation.mockRejectedValueOnce(new Error("Network connection lost"));
+    await expect(gate.check()).resolves.toEqual({ allowed: false, code: 503, message: "Ship is briefly unreachable; try again in a moment" });
+    await expect(gate.check()).resolves.toEqual({ allowed: true });
+    expect(resolveInstallation).toHaveBeenCalledTimes(3);
   });
 
   it("follows each change Accounts reports, and a late report never undoes a newer one", async () => {

@@ -94,7 +94,10 @@ Object storage. The entrypoint never wakes a Kernel for an identity the
 directory doesn't hold, or for `reserved`, `provisioning` or `deleted`. The
 Kernel answers later admissions from its record and replaces it only with a
 higher revision, so a late or repeated notice never undoes a newer one. A
-Kernel without a record asks Accounts once and keeps the answer. A Process asks
+Kernel without a record, or with one older than a day, asks Accounts and keeps
+the answer, so a Kernel learns within a day if Accounts stops telling it of
+changes, as after a rollback. If Accounts can't answer then, admission fails
+closed as below. A Process asks
 its Kernel rather than Accounts, and remembers an `active` answer for one minute.
 
 The same notice tells the deployment's PDS, when Accounts binds it as
