@@ -94,6 +94,8 @@ const DELIVERED_KEY = "firehose.delivered";
 const FAILURES_KEY = "firehose.failures";
 /** Set while Accounts restricts the account's installation. */
 const SUSPENDED_KEY = "suspended";
+/** Set once Accounts retires the account's installation; its deletion later erases the repository. */
+const CLOSED_KEY = "closed";
 const DELIVERY_BATCH = 100;
 /** Delivered events kept locally so the wake check can read the last announced head. */
 const KEEP_DELIVERED = 100;
@@ -231,6 +233,19 @@ export class HostedRepo extends DurableObject<HostEnv> {
       if (suspended) return await this.suspend(repo);
       await this.ctx.storage.delete(SUSPENDED_KEY);
       if (!repo.takedowns.has(account.did)) await repo.engine.activateAccount();
+    });
+  }
+
+  /**
+   * Has the account read as deleted once Accounts retires its installation,
+   * by a reset or as the first step of deleting it. Relays hear of the
+   * deletion when it quiesces the repository, which it then erases. An
+   * installation that never published keeps an empty object.
+   */
+  async close(): Promise<void> {
+    return this.serialize(async () => {
+      if (await this.retired() || !(await this.storedAccount())) return;
+      await this.ctx.storage.put(CLOSED_KEY, true);
     });
   }
 
@@ -550,6 +565,11 @@ export class HostedRepo extends DurableObject<HostEnv> {
 
   private async read(repo: OpenRepo, method: string, url: URL): Promise<Response> {
     const { did, handle } = repo.account;
+    // A retired installation's account reads as deleted until its deletion erases the repository.
+    if (await this.retired() || await this.closed()) {
+      if (method === "com.atproto.sync.getRepoStatus") return Response.json({ did, active: false, status: "deleted" });
+      throw new XrpcError("RepoNotFound", `Could not find repo: ${did}`);
+    }
     const takendown = repo.takedowns.has(did);
     const suspended = !takendown && await this.suspended();
     const active = !takendown && !suspended && await repo.storage.getActive();
@@ -705,6 +725,10 @@ export class HostedRepo extends DurableObject<HostEnv> {
 
   private async suspended(): Promise<boolean> {
     return (await this.ctx.storage.get<boolean>(SUSPENDED_KEY)) === true;
+  }
+
+  private async closed(): Promise<boolean> {
+    return (await this.ctx.storage.get<boolean>(CLOSED_KEY)) === true;
   }
 
   /** Marks the account suspended and, unless its host has taken it down, tells relays. */
