@@ -13,7 +13,7 @@ import { Sequencer } from "../src/cirrus/repo/sequencer";
 import { FIREHOSE_NAME, HostFirehose, MAX_SUBSCRIBERS, REPLAY_BYTES, type OutboxEvent, type RepoState } from "../src/host/firehose";
 import { mintIdentity, registerGenesis } from "../src/host/identity";
 import { HostedRepo, MAX_BLOB_BYTES, type LexObject, type RepoWrite } from "../src/host/repo";
-import { handleXrpc, type Admission } from "../src/host/xrpc";
+import { handleXrpc } from "../src/host/xrpc";
 import { FakePlcDirectory } from "./plc";
 import { framesFor, subscribe, verifyCommit, type Frame } from "./relay";
 import { byteStream, deliver, errorOf, installFakePlc, read, rejection, upload } from "./support";
@@ -421,12 +421,25 @@ describe("host XRPC", () => {
     expect(await listDurableObjectIds(env.REPOS)).toHaveLength(before);
   });
 
-  it("reports a repository the deployment does not admit", async () => {
-    const { account } = await hostAccount();
-    const suspended = async (): Promise<Admission> => "suspended";
-    expect(await errorOf(xrpc("com.atproto.repo.describeRepo", { repo: account.did }, suspended))).toBe("RepoSuspended");
-    expect(await read(z.json(), xrpc("com.atproto.sync.getRepoStatus", { did: account.did }, suspended)))
-      .toEqual({ did: account.did, active: false, status: "suspended" });
+  it("leaves a repository to report its own suspension", async () => {
+    const { repo, account } = await hostAccount();
+    await repo.setSuspended(true);
+    expect(await errorOf(xrpc("com.atproto.repo.describeRepo", { repo: account.did }))).toBe("RepoSuspended");
+    expect(await read(z.json(), xrpc("com.atproto.sync.getRepoStatus", { did: account.did })))
+      .toMatchObject({ did: account.did, active: false, status: "suspended" });
+  });
+
+  it("finds a repository by its DID in the host directory once, and by its handle every time", async () => {
+    const { account, handle } = await hostAccount();
+    const directory = vi.spyOn(env.FIREHOSE, "getByName");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      expect((await xrpc("com.atproto.sync.getLatestCommit", { did: account.did })).status).toBe(200);
+    }
+    expect(directory).toHaveBeenCalledOnce();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect((await xrpc("com.atproto.repo.describeRepo", { repo: handle })).status).toBe(200);
+    }
+    expect(directory).toHaveBeenCalledTimes(3);
   });
 
   it("refuses a blob CID that would name a staged upload", async () => {
@@ -443,7 +456,7 @@ describe("host XRPC", () => {
       PDS_PRIVACY_POLICY_URL: "https://operator.example/privacy",
       PDS_TERMS_OF_SERVICE_URL: "https://operator.example/terms",
     };
-    const server = await handleXrpc(new Request("https://pds.test/xrpc/com.atproto.server.describeServer"), operated, admitAll);
+    const server = await handleXrpc(new Request("https://pds.test/xrpc/com.atproto.server.describeServer"), operated);
     expect(await server.json()).toEqual({
       did: "did:web:pds.test", availableUserDomains: [], inviteCodeRequired: true,
       links: { privacyPolicy: "https://operator.example/privacy", termsOfService: "https://operator.example/terms" },
@@ -461,15 +474,15 @@ describe("host XRPC", () => {
       .parse(await read(z.json(), xrpc("com.atproto.sync.listRepos", { limit: "1000" })));
     expect(listing.repos).toContainEqual(expect.objectContaining({ did: account.did, active: true }));
 
-    const preflight = await handleXrpc(new Request("https://pds.test/xrpc/_health", { method: "OPTIONS" }), env, admitAll);
+    const preflight = await handleXrpc(new Request("https://pds.test/xrpc/_health", { method: "OPTIONS" }), env);
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS");
     expect(await errorOf(xrpc("com.atproto.repo.createRecord", {}))).toBe("MethodNotImplemented");
-    const post = await handleXrpc(new Request("https://pds.test/xrpc/_health", { method: "POST" }), env, admitAll);
+    const post = await handleXrpc(new Request("https://pds.test/xrpc/_health", { method: "POST" }), env);
     expect(post.status).toBe(405);
 
     const upgrade = new Request("https://pds.test/xrpc/com.atproto.sync.subscribeRepos", { headers: { Upgrade: "websocket" } });
-    const socket = await handleXrpc(upgrade, env, admitAll);
+    const socket = await handleXrpc(upgrade, env);
     expect(socket.status).toBe(101);
     socket.webSocket?.accept();
     socket.webSocket?.close();
@@ -593,16 +606,8 @@ describe("host firehose", () => {
   });
 });
 
-async function admitAll(): Promise<Admission> {
-  return "active";
-}
-
-function xrpc(
-  method: string,
-  params: ConstructorParameters<typeof URLSearchParams>[0],
-  admit: (name: string) => Promise<Admission> = admitAll,
-): Promise<Response> {
-  return handleXrpc(new Request(`https://pds.test/xrpc/${method}?${new URLSearchParams(params)}`), env, admit);
+function xrpc(method: string, params: ConstructorParameters<typeof URLSearchParams>[0]): Promise<Response> {
+  return handleXrpc(new Request(`https://pds.test/xrpc/${method}?${new URLSearchParams(params)}`), env);
 }
 
 /** Every page of a collection's listing, as record keys. */

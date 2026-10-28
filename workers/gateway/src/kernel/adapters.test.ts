@@ -548,12 +548,6 @@ function makeContext(
         list: vi.fn(() => []),
         ...options.identityLinks,
       },
-      linkChallenges: {
-        issue: vi.fn(() => ({
-          code: "ABCD",
-          expiresAt: Date.now() + 60_000,
-        })),
-      },
       surfaceRoutes: {
         resolvePid: vi.fn((key: { uid: number }) => resolveSurfaceRoute(key)?.pid ?? null),
         resolveRoute: resolveSurfaceRoute,
@@ -3570,7 +3564,23 @@ describe("adapter lifecycle handlers", () => {
       expect(ctx.adapters.identityLinks.listForCleanup(1000)).toHaveLength(1);
     });
     expect(ctx.runRoutes.setAdapterRoute).not.toHaveBeenCalled();
-    expect(ctx.adapters.linkChallenges.issue).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("asks the adapter to pair a person it delivers without a route", async () => {
+    const ctx = makeContext({}, { upsert: vi.fn() });
+    await runWithRealKernelSql(async (sql) => {
+      ctx.adapters.identityLinks = new IdentityLinkStore(sql);
+      ctx.auth = new AuthStore(sql);
+      await expect(handleAdapterInbound({
+        adapter: "telegram", accountId: "managed",
+        message: { messageId: "unknown-dm", surface: { kind: "dm", id: "555" }, actor: { id: "555" }, text: "Hi" },
+      }, ctx)).resolves.toEqual({ ok: true, droppedReason: "pairing_required" });
+      await expect(handleAdapterInbound({
+        adapter: "telegram", accountId: "managed",
+        message: { messageId: "unknown-group", surface: { kind: "group", id: "-100" }, actor: { id: "555" }, text: "Hi", wasMentioned: true },
+      }, ctx)).resolves.toEqual({ ok: true, droppedReason: "unlinked_actor" });
+    });
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
@@ -3592,7 +3602,6 @@ describe("adapter lifecycle handlers", () => {
       expect(ctx.adapters.identityLinks.listForCleanup(link.uid)).toHaveLength(1);
     });
     expect(ctx.runRoutes.setAdapterRoute).not.toHaveBeenCalled();
-    expect(ctx.adapters.linkChallenges.issue).not.toHaveBeenCalled();
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 

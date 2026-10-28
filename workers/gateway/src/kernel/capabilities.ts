@@ -82,7 +82,6 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.mcp.list",
     "sys.mcp.refresh",
     "sys.mcp.remove",
-    "sys.link",
     "sys.link.list",
     "sys.token.create",
     "sys.token.list",
@@ -90,8 +89,6 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.pair.create",
     "sys.pair.list",
     "sys.pair.cancel",
-    "sys.unlink",
-    "sys.link.consume",
     "account.create",
     "account.list",
   ]],  // users

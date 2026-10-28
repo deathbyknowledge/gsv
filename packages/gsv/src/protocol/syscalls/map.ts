@@ -130,12 +130,8 @@ import type {
   SysTargetListResult,
   SysTargetUpdateArgs,
   SysTargetUpdateResult,
-  SysLinkArgs,
-  SysLinkConsumeArgs,
-  SysLinkConsumeResult,
   SysLinkListArgs,
   SysLinkListResult,
-  SysLinkResult,
   SysMcpAddArgs,
   SysMcpAddResult,
   SysMcpCallArgs,
@@ -166,8 +162,6 @@ import type {
   SysTokenListResult,
   SysTokenRevokeArgs,
   SysTokenRevokeResult,
-  SysUnlinkArgs,
-  SysUnlinkResult,
 } from "./system";
 import type {
   SchedulerAddArgs,
@@ -503,10 +497,7 @@ export type SyscallDomains = {
   "sys.pair.list": { args: SysPairListArgs; result: SysPairListResult };
   "sys.pair.cancel": { args: SysPairCancelArgs; result: SysPairCancelResult };
   "sys.pair.redeem": { args: SysPairRedeemArgs; result: SysPairRedeemResult };
-  "sys.link": { args: SysLinkArgs; result: SysLinkResult };
-  "sys.unlink": { args: SysUnlinkArgs; result: SysUnlinkResult };
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
-  "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };

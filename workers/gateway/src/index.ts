@@ -38,7 +38,9 @@ import {
 } from "./public-assets";
 import { isWebSocketRequest } from "./shared/utils";
 import {
+  forgetInstallationRoute,
   getKernelByInstallationId,
+  InstallationRouteUnavailable,
   resolveInstallationRoute,
 } from "./installation/routing";
 import {
@@ -90,9 +92,22 @@ export default {
       && !federationPath
       && !profilePath;
 
-    const route = await resolveInstallationRoute(request, {
-      allowProvisioning: websocketRequest || browserAssetRequest,
-    });
+    // A public read may take a route Accounts gave in the last minute; a connection, git, a Ship's call or a sign-in callback asks again.
+    const publicRead = (request.method === "GET" || request.method === "HEAD")
+      && !websocketRequest
+      && !gitMatch
+      && !federationPath
+      && url.pathname !== "/oauth/callback";
+    let route;
+    try {
+      route = await resolveInstallationRoute(request, {
+        allowProvisioning: websocketRequest || browserAssetRequest,
+        cached: publicRead,
+      });
+    } catch (error) {
+      if (!(error instanceof InstallationRouteUnavailable)) throw error;
+      return new Response(error.message, { status: 503, headers: { "retry-after": "5", "cache-control": "no-store" } });
+    }
     if (!route) {
       return new Response("Not Found", { status: 404 });
     }
@@ -133,6 +148,8 @@ export default {
       // look into this method
       await kernelDO.ensureInstallationIdentity(route.identity);
     } catch {
+      // A retired or replaced Kernel refuses here; the next request asks Accounts for the hostname again.
+      forgetInstallationRoute(request);
       console.error("[Gateway] Kernel installation identity check failed");
       return new Response("Installation unavailable", { status: 503 });
     }

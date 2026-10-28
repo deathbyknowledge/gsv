@@ -99,11 +99,6 @@ type AdapterInboundDisposition = Omit<
     text: string;
     replyToId?: string;
   };
-  challenge?: {
-    code: string;
-    prompt: string;
-    expiresAt: number;
-  };
 };
 
 type AdapterIngressProcessRecovery = {
@@ -209,11 +204,9 @@ export async function handleAdapterInbound(
               ? "replayed"
               : result.delivered
                 ? "delivered"
-                : result.challenge
-                  ? "challenge"
-                  : result.reply
-                    ? "handled"
-                    : "dropped",
+                : result.reply
+                  ? "handled"
+                  : "dropped",
           surface: args.message.surface.kind,
           hasMedia: Boolean(args.message.media?.length),
           durationMs: Math.max(0, Date.now() - startedAt),
@@ -322,7 +315,6 @@ async function handleAdapterInboundOwned(
   }
   const receiptId = receipt.receiptId;
   const replyDeliveryId = `${receiptId}:reply`;
-  const challengeDeliveryId = `${receiptId}:challenge`;
   const claimToken = receipt.claimToken;
   try {
     if (receipt.state === "prepared") {
@@ -342,17 +334,10 @@ async function handleAdapterInboundOwned(
       body,
       ctx,
     });
-    const {
-      reply: immediateReply,
-      challenge: immediateChallenge,
-      ...baseDisposition
-    } = disposition;
+    const { reply: immediateReply, ...baseDisposition } = disposition;
     const result: AdapterInboundSyscallResult = { ...baseDisposition };
     if (immediateReply) {
       result.reply = { deliveryId: replyDeliveryId, ...immediateReply };
-    }
-    if (immediateChallenge) {
-      result.challenge = { deliveryId: challengeDeliveryId, ...immediateChallenge };
     }
     ctx.adapters.ingressReceipts.prepare(receiptId, claimToken, result);
     ctx.adapters.ingressReceipts.complete(receiptId, claimToken);
@@ -411,26 +396,8 @@ async function resolveClaimedAdapterInbound(input: {
     return { ok: true, droppedReason: "stale_route_generation" };
   }
   if (uid === null) {
-    if (message.surface.kind !== "dm") {
-      return { ok: true, droppedReason: "unlinked_actor" };
-    }
-
-    const challenge = ctx.adapters.linkChallenges.issue({
-      adapter,
-      accountId,
-      actorId,
-      surfaceKind: message.surface.kind,
-      surfaceId: message.surface.id,
-    });
-
-    return {
-      ok: true,
-      challenge: {
-        code: challenge.code,
-        prompt: `UNKNOWN USER. Who are you? 🧐.\n\nIdentify yourself in your GSV by using this access code: ${challenge.code}`,
-        expiresAt: challenge.expiresAt,
-      },
-    };
+    // The adapter still routes this person here, so it answers with its own pairing reply.
+    return { ok: true, droppedReason: message.surface.kind === "dm" ? "pairing_required" : "unlinked_actor" };
   }
 
   if (message.surface.kind !== "dm" && message.wasMentioned !== true) {
