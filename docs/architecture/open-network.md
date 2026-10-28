@@ -24,11 +24,15 @@ standard `com.atproto.repo.*` and `com.atproto.sync.*` XRPC methods; each
 reaches the object that holds the repository. `workers/pds/README.md` describes
 the repository engine.
 
-The PDS serves an installation's repository only while Accounts reports the
-installation active. A retired installation's repository reads as deleted, and
-any other state as suspended. A restricted installation keeps its identity, so
-the PDS still creates its DID when the Kernel asks, but signs, publishes and
-serves nothing for it until it is active again.
+Each repository answers its own public reads from the state Accounts has it
+follow, as below: it is served while its installation is active, reads as
+suspended while Accounts restricts the installation, and as deleted once
+Accounts retires it. Public reads never ask Accounts. The host finds a
+repository by DID in its directory once in each Worker isolate, since a DID
+names the same repository for as long as it exists, and by handle every time,
+since a reset moves a handle to a new repository. A restricted installation
+keeps its identity, so the PDS still creates its DID when the Kernel asks, but
+signs, publishes and serves nothing for it until it is active again.
 
 Relays hear of a suspension. Once Accounts restricts or reactivates an
 installation, it asks the PDS through `PDS_MODERATION` to follow, and the PDS
@@ -45,6 +49,13 @@ the PDS can't follow, Accounts keeps the new state and the operator's request
 fails; the Ship page's **Try again**, or the same request sent again, tells the
 PDS.
 
+Accounts asks the PDS to follow too once it retires an installation, by a
+reset or as the first step of deleting it. The repository then reads as
+deleted: `getRepoStatus` answers `active: false` with `status: "deleted"`, and
+every other read `RepoNotFound`. Relays hear of the deletion only once it
+quiesces the repository. If the PDS can't follow, the reset or retirement
+fails with the installation retired, and sending it again tells the PDS.
+
 ## Identity
 
 A Ship's account is a `did:plc` whose handle is the Ship's hostname, such as
@@ -52,7 +63,11 @@ A Ship's account is a `did:plc` whose handle is the Ship's hostname, such as
 publish, an invitation, a message request or another call to a Ship. The PDS
 accepts only a hostname that Accounts routes to the same installation. The Gateway answers
 `/.well-known/atproto-did` on that hostname with the DID, which is how apps
-verify the handle; a hostname the repository does not name returns 404.
+verify the handle; a hostname the repository does not name returns 404. Each
+Gateway isolate answers a hostname for a minute from the DID the PDS last gave
+for it, so a takedown or a handle moving away shows within a minute; a
+hostname the PDS gave no DID for is asked about every time, so a new account
+resolves at once.
 
 The DID document names two services: `#atproto_pds`, the PDS that holds the
 repository, and `#ship`, the Ship's hostname, where other Ships reach it. The
@@ -263,7 +278,8 @@ read it serves:
 
 - An account taken down answers repository reads with `RepoTakendown` and
   reads as `takendown` in `getRepoStatus` and `listRepos`. Relays receive an
-  `#account` event saying so. The PDS refuses the Ship's writes, uploads and
+  `#account` event saying so, and the Ship's hostname stops naming the DID
+  within a minute. The PDS refuses the Ship's writes, uploads and
   service-auth signatures, so the Ship publishes nothing and can't call other
   Ships. The Kernel takes that refusal as final: a message, message request or
   acceptance it was sending fails at once instead of retrying, and its person

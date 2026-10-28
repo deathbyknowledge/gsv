@@ -153,7 +153,6 @@ const adapterIngressFinishedSchema = z.strictObject({
     outcome: z.enum([
       "delivered",
       "dropped",
-      "challenge",
       "handled",
       "replayed",
       "error",

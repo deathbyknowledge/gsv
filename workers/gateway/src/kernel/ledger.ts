@@ -423,6 +423,13 @@ export class LedgerStore {
     return this.windowCount() > LEDGER_WINDOW_ROWS;
   }
 
+  /** True when neither the window nor the segment index holds a line, so housekeeping has nothing to close, rotate or prune. */
+  isEmpty(): boolean {
+    return this.sql.exec<{ empty: number }>(
+      "SELECT NOT EXISTS (SELECT 1 FROM ledger_window) AND NOT EXISTS (SELECT 1 FROM ledger_segments) AS empty",
+    ).one().empty === 1;
+  }
+
   /** Closes as cancelled every line still open past the window age; returns how many. */
   closeStale(now = Date.now()): number {
     const rows = this.sql.exec<{ seq: number }>(

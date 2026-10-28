@@ -275,7 +275,7 @@ export function describeToolCall(syscall: string, args: ChatTranscriptValue | un
   else if (syscall.startsWith("sys.target.")) detail = [parsed.targetId, parsed.label].filter(Boolean).join(" · ");
   else if (syscall.startsWith("sys.mcp.")) detail = parsed.name || parsed.serverId || "";
   else if (syscall.startsWith("sys.oauth.")) detail = parsed.provider ?? "";
-  else if (syscall.startsWith("adapter.") || syscall.startsWith("sys.link") || syscall === "sys.unlink") detail = parsed.adapter ?? "";
+  else if (syscall.startsWith("adapter.") || syscall === "sys.link.list") detail = parsed.adapter ?? "";
   return detail.replace(/\s+/g, " ").trim();
 }
 
