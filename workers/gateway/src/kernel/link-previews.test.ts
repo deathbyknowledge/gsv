@@ -298,6 +298,28 @@ describe("link preview extraction", () => {
     });
   });
 
+  it("cancels the body of a page it does not read", async () => {
+    const cancels: Array<ReturnType<typeof vi.fn>> = [];
+    const unread = (chunk: string, init: ResponseInit): Response => {
+      const cancel = vi.fn();
+      cancels.push(cancel);
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new TextEncoder().encode(chunk)); },
+        cancel,
+      });
+      return new Response(stream, init);
+    };
+    await withPreviews({
+      "https://example.com/file.pdf": () => unread("%PDF", { headers: { "content-type": "application/pdf" } }),
+      "https://example.com/missing": () => unread("nope", { status: 404, headers: { "content-type": "text/html" } }),
+    }, async ({ previews }) => {
+      await previews.preview("https://example.com/file.pdf");
+      await previews.preview("https://example.com/missing");
+      expect(cancels).toHaveLength(2);
+      for (const cancel of cancels) expect(cancel).toHaveBeenCalled();
+    });
+  });
+
   it("times out a request that does not answer", async () => {
     await withPreviews({
       "https://example.com/slow": () => new Promise<Response>(() => {}),
@@ -410,6 +432,27 @@ describe("link preview cache", () => {
       clock.now += 1;
       await previews.preview("https://example.com/");
       expect(fetch).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  it("retries an advertised image that failed within the hour, not after a week", async () => {
+    let imageDown = true;
+    await withPreviews({
+      "https://example.com/": () => html('<meta property="og:title" content="Shop"><meta property="og:image" content="/shop.png">'),
+      "https://example.com/shop.png": () => imageDown ? new Response("", { status: 503 }) : image(PNG),
+    }, async ({ previews, fetch, clock }) => {
+      expect(await previewOf(previews, "https://example.com/")).toEqual({
+        url: "https://example.com/",
+        resolvedUrl: "https://example.com/",
+        title: "Shop",
+      });
+      imageDown = false;
+      clock.now += LINK_PREVIEW_FAILURE_TTL_MS - 1;
+      expect(await previewOf(previews, "https://example.com/")).not.toHaveProperty("image");
+      expect(fetch).toHaveBeenCalledTimes(2);
+      clock.now += 1;
+      expect(await previewOf(previews, "https://example.com/")).toMatchObject({ title: "Shop", image: { mimeType: "image/png" } });
+      expect(fetch).toHaveBeenCalledTimes(4);
     });
   });
 

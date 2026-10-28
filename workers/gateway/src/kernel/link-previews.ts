@@ -189,10 +189,11 @@ export class LinkPreviews {
   }
 
   private async fetchAndStore(url: string): Promise<LinkPreviewRow> {
-    const { row, image } = await this.fetchRow(url);
+    const { row, image, imageAdvertised } = await this.fetchRow(url);
     const stored = image ? await this.storeWithImage(row, image) : null;
-    const saved = stored?.row ?? row;
-    const previous = stored ? stored.previous : this.upsert(row);
+    // A page whose advertised image could not be fetched or stored keeps the failure expiry, so the image is retried within the hour.
+    const saved = stored?.row ?? (imageAdvertised ? { ...row, expires_at: row.fetched_at + LINK_PREVIEW_FAILURE_TTL_MS } : row);
+    const previous = stored ? stored.previous : this.upsert(saved);
     // Released after the new key's lock, so two saves never wait on each other's keys.
     if (previous && previous !== saved.image_key) await this.releaseImage(previous);
     return saved;
@@ -226,7 +227,7 @@ export class LinkPreviews {
     });
   }
 
-  private async fetchRow(url: string): Promise<{ row: LinkPreviewRow; image: PreviewImage | null }> {
+  private async fetchRow(url: string): Promise<{ row: LinkPreviewRow; image: PreviewImage | null; imageAdvertised: boolean }> {
     const fetchedAt = this.now();
     let page: { resolvedUrl: URL; metadata: PageMetadata };
     try {
@@ -235,6 +236,7 @@ export class LinkPreviews {
       return {
         row: { ...emptyRow(url, fetchedAt, fetchedAt + LINK_PREVIEW_FAILURE_TTL_MS), error: failureCategory(error) },
         image: null,
+        imageAdvertised: false,
       };
     }
     const { metadata } = page;
@@ -250,6 +252,7 @@ export class LinkPreviews {
         site_name: metadata.siteName ?? null,
       },
       image: image ? { ...image, width: metadata.image?.width, height: metadata.image?.height } : null,
+      imageAdvertised: Boolean(metadata.image),
     };
   }
 
@@ -351,8 +354,8 @@ function previewResult(requested: string, row: LinkPreviewRow): ConversationLink
 
 async function fetchPage(url: URL, options: FetchOptions): Promise<{ resolvedUrl: URL; metadata: PageMetadata }> {
   const fetched = await guardedFetch(url, PAGE_ACCEPT, options);
+  const { response } = fetched;
   try {
-    const { response } = fetched;
     if (!response.ok) throw new LinkPreviewFailure("unreachable", `Page responded with status ${response.status}`);
     const contentType = response.headers.get("content-type") ?? "";
     if (!HTML_TYPES.has(mediaType(contentType)) || !response.body) {
@@ -361,6 +364,8 @@ async function fetchPage(url: URL, options: FetchOptions): Promise<{ resolvedUrl
     return { resolvedUrl: fetched.url, metadata: await readPageMetadata(response.body, contentType, fetched.signal) };
   } finally {
     fetched.release();
+    // A body the metadata reader never took is cancelled here, so an unread page does not hold its connection open.
+    if (response.body && !response.body.locked) await response.body.cancel().catch(() => {});
   }
 }
 
