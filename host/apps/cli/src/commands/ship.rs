@@ -51,6 +51,34 @@ fn debug_log(enabled: bool, message: impl AsRef<str>) {
     }
 }
 
+/// One plain line for a failed run, with the diagnostic reference when the
+/// error carries one. Known causes get their own words; anything else stays
+/// generic, and the full error is in `--json`.
+fn failure_line(error: &str) -> String {
+    let reference = error
+        .split("Inference reference:")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .map(|id| id.chars().take(8).collect::<String>());
+    let lower = error.to_ascii_lowercase();
+    let cause = if lower.contains("managed inference is disabled") {
+        Some("managed inference is turned off for this Ship")
+    } else {
+        None
+    };
+    match (cause, reference) {
+        (Some(cause), Some(reference)) => {
+            format!("Your Ship couldn't answer: {cause}. (ref {reference})")
+        }
+        (Some(cause), None) => format!("Your Ship couldn't answer: {cause}."),
+        (None, Some(reference)) => format!("Your Ship couldn't answer. (ref {reference})"),
+        (None, None) => format!(
+            "Your Ship couldn't answer: {}",
+            render::truncate(&render::one_line(error), 160)
+        ),
+    }
+}
+
 fn signal_run_id(payload: &Value) -> Option<String> {
     payload
         .get("runId")
@@ -75,6 +103,8 @@ struct ChatState {
     completed: AtomicBool,
     pending: Mutex<Vec<PendingChatSignal>>,
     replies: Mutex<Vec<Value>>,
+    /// The raw error of the last run that failed, kept for `--json`.
+    failure: Mutex<Option<String>>,
     hil_requests: mpsc::UnboundedSender<Value>,
 }
 
@@ -90,6 +120,7 @@ impl ChatState {
             completed: AtomicBool::new(false),
             pending: Mutex::new(Vec::new()),
             replies: Mutex::new(Vec::new()),
+            failure: Mutex::new(None),
             hil_requests,
         }
     }
@@ -251,8 +282,16 @@ fn process_chat_signal(state: &ChatState, signal: &str, payload: &Value) {
             if state.emitted_text.load(Ordering::SeqCst) && !state.json {
                 println!();
             }
-            if let Some(error) = payload.get("error").and_then(Value::as_str) {
-                state.notice(Tone::Bad, &format!("Your Ship stopped: {error}"));
+            let aborted = payload.get("status").and_then(Value::as_str) == Some("aborted");
+            match payload.get("error").and_then(Value::as_str) {
+                Some(error) if !aborted => {
+                    state.notice(Tone::Bad, &failure_line(error));
+                    if let Ok(mut failure) = state.failure.lock() {
+                        *failure = Some(error.to_string());
+                    }
+                }
+                _ if aborted => state.notice(Tone::Dim, "Stopped."),
+                _ => {}
             }
             if let Ok(mut run_id) = state.expected_run_id.lock() {
                 *run_id = None;
@@ -504,19 +543,28 @@ pub(crate) async fn run_client(
             interactive_stdin,
         )
         .await?;
+        let failure = state
+            .failure
+            .lock()
+            .map(|failure| failure.clone())
+            .unwrap_or_default();
         if out.json {
             let replies = state
                 .replies
                 .lock()
                 .map(|replies| replies.clone())
                 .unwrap_or_default();
-            return render::print_json(&json!({
+            render::print_json(&json!({
                 "conversationId": conversation_id,
                 "sent": sent,
                 "replies": replies,
-            }));
+                "error": failure,
+            }))?;
         }
-        return Ok(());
+        return match failure {
+            Some(_) => Err(Box::new(remote::Exit(1))),
+            None => Ok(()),
+        };
     }
 
     let style = Style::stderr();
@@ -705,6 +753,23 @@ pub(crate) async fn run_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_runs_read_as_one_plain_line_with_their_reference() {
+        let disabled = "Generation failed: Inference reference: 7afee6a6-1b2c-4d5e\nManaged inference is disabled for this installation";
+        assert_eq!(
+            failure_line(disabled),
+            "Your Ship couldn't answer: managed inference is turned off for this Ship. (ref 7afee6a6)"
+        );
+        assert_eq!(
+            failure_line("Generation failed: Inference reference: 0c1d2e3f\nupstream 503"),
+            "Your Ship couldn't answer. (ref 0c1d2e3f)"
+        );
+        assert_eq!(
+            failure_line("Generation failed: context\ntoo long"),
+            "Your Ship couldn't answer: Generation failed: context too long"
+        );
+    }
 
     fn state() -> (ChatState, mpsc::UnboundedReceiver<Value>) {
         let (sender, receiver) = mpsc::unbounded_channel();
