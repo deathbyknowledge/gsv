@@ -23,13 +23,15 @@ import { InstallationOperatorHttp, OperatorInstallationAdminAccess } from "./ope
 import { createAccountsDeletionRuntime } from "./deletion-runtime";
 import { configuredDeletionEnvironment, type DeletionResourceEnvironment } from "./deletion-verifier";
 import { ShipTakedowns } from "./admin/takedowns";
+import { installationStateNotices, type InstallationStateNoticeEnvironment } from "./state-notices";
 export { InstallationOwnershipEntrypoint } from "./owner-service";
 import { RequestReports } from "./request-reports";
 export { RequestReportsEntrypoint } from "./request-reports";
 
-export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment & OperatorEnvironment>
+export default class InstallationService extends WorkerEntrypoint<Env & InstallationOwnerEnvironment & DeletionResourceEnvironment & TelemetryEnvironment & OperatorEnvironment & InstallationStateNoticeEnvironment>
   implements InstallationDirectoryService, InstallationOnboardingService {
   async scheduled(): Promise<void> {
+    await installationStateNotices(this.env.INSTALLATIONS_DB, this.env)?.resumePending();
     await cleanExpiredOwnerAuthentication(this.env);
     await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)).resumePending();
     await new RequestReports(this.env.INSTALLATIONS_DB).forgetClosedMessages();
@@ -46,7 +48,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     const accounts = this.accounts();
     const administration = new InstallationAdminService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), {
         id: OPERATOR_REGISTRY_PRINCIPAL_ID, email: "operator@gsv.invalid", displayName: "Operator registry",
-      }, {}, this.env.PDS_MODERATION);
+      }, {}, installationStateNotices(this.env.INSTALLATIONS_DB, this.env));
     const mode = parseOperatorAccessMode(this.env.GSV_OPERATOR_ACCESS_MODE);
     const bootstrap = new InstallationBootstrapService(this.env.INSTALLATIONS_DB, accounts, this.onboarding(), administration, mode);
     const operatorResponse = await new InstallationOperatorHttp(bootstrap, this.env.GSV_ADMIN_ORIGIN, mode).handle(request);
@@ -72,7 +74,7 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
   }
 
   async resolveInstallation(installationId: string): Promise<InstallationDirectoryResult> {
-    return this.accounts().resolveInstallation(installationId);
+    return this.accounts().resolveInstallation(installationId, { stateRevision: Boolean(this.env.ADMISSION_GATEWAY) });
   }
 
   async authorizeInstallationOnboarding(input: AuthorizeInstallationOnboardingInput): Promise<InstallationOnboardingAuthorization> {

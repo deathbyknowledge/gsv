@@ -40,10 +40,10 @@ dropped the account's events while it was suspended fetches it again.
 the state again meanwhile, the PDS follows that too: it reads the state after
 each change until two reads agree. An account created for a restricted
 installation starts suspended. A takedown outranks a suspension: the account
-reads as `takendown` until the operator restores it, then as `suspended`. If
-the PDS can't follow, Accounts keeps the new state and the operator's request
-fails; the Ship page's **Try again**, or the same request sent again, tells the
-PDS.
+reads as `takendown` until the operator restores it, then as `suspended`.
+Accounts tells the PDS through the same durable notice that tells the Ship's
+Kernel. If the PDS can't be told, the operator's request still succeeds and
+Accounts' cron tells the PDS every minute until it has followed.
 
 ## Identity
 

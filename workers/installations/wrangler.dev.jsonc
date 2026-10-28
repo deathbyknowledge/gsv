@@ -50,6 +50,14 @@
       "props": {
         "authority": "installation-operator"
       }
+    },
+    {
+      "binding": "ADMISSION_GATEWAY",
+      "service": "gsv-gateway-dev",
+      "entrypoint": "GatewayAdmissionEntrypoint",
+      "props": {
+        "authority": "installation-admission"
+      }
     }
   ]
 }

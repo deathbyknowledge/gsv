@@ -1,10 +1,10 @@
 import { UsernamePolicy, type UsernamePolicyInput, type UsernamePolicyLists } from "../username-policy";
 import type { InstallationResetService } from "@humansandmachines/gsv/services/lifecycle";
-import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 import { InstallationAdminStore, type AdminInstallation } from "../administration";
 import { parseOpaqueId } from "../domain";
 import { InstallationOnboardingStore, type IssuedInstallationOnboarding } from "../onboarding";
 import { InstallationResetCoordinator } from "../reset-preparation";
+import type { InstallationStateNotices } from "../state-notices";
 import { AccountStore, type InstallationDataDeletionState } from "../store";
 
 export type IssuedAdminInstallation = {
@@ -25,11 +25,11 @@ export const RESET_CONSEQUENCES: readonly string[] = [
   "Nothing is erased yet: this Ship's data is kept as pending deletion until a separate deletion removes it.",
 ];
 
-/** Accounts kept a Ship's new lifecycle state, but the deployment's PDS could not follow it. */
-export class OpenNetworkFollowError extends Error {
-  constructor(readonly state: "active" | "restricted", options: ErrorOptions) {
-    super(`The Ship is ${state === "restricted" ? "suspended" : "reactivated"}, but its open-network host could not be told.`, options);
-    this.name = "OpenNetworkFollowError";
+/** Accounts kept a Ship's new lifecycle state, but the Ship hasn't confirmed it; Accounts keeps telling it. */
+export class ShipFollowError extends Error {
+  constructor(readonly state: "active" | "restricted") {
+    super(`The Ship is ${state === "restricted" ? "suspended" : "reactivated"}, but it hasn't confirmed yet. Accounts keeps telling it.`);
+    this.name = "ShipFollowError";
   }
 }
 
@@ -42,25 +42,24 @@ export class InstallationAdminService extends InstallationAdminStore {
     private readonly onboarding: InstallationOnboardingStore,
     private readonly registryPrincipal: OperatorRegistryPrincipal,
     participants: Readonly<Record<string, InstallationResetService>>,
-    /** The deployment's PDS, which tells relays when a Ship is suspended or reactivated. */
-    private readonly pds?: PdsModerationService,
+    /** Tells what follows each Ship's state of its changes: its Kernel, and the deployment's PDS. */
+    private readonly notices?: InstallationStateNotices,
   ) {
     super(database);
     this.resets = new InstallationResetCoordinator(database, accounts, participants);
   }
 
   /**
-   * Suspends or reactivates the installation, then has the deployment's PDS
-   * follow. If the PDS can't, the request fails with the new state kept, and
-   * repeating it tells the PDS.
+   * Suspends or reactivates the installation, then tells its Kernel and the
+   * deployment's PDS through the change's notice. If the Kernel can't be told,
+   * the request fails with the new state kept; the cron keeps telling both
+   * until they follow, and repeating the request tells them at once.
    */
   override async setInstallationState(installationId: string, state: "active" | "restricted"): Promise<void> {
     await super.setInstallationState(installationId, state);
-    try {
-      await this.pds?.reconcileAccountStatus(installationId);
-    } catch (error) {
-      throw new OpenNetworkFollowError(state, { cause: error });
-    }
+    // A Ship that can't be told now is told by the cron, and the request says so rather than succeeding.
+    // A PDS that can't be told is told by the cron too, without failing the request.
+    if (!(await this.notices?.deliver(installationId) ?? true)) throw new ShipFollowError(state);
   }
 
   getUsernamePolicy(): Promise<UsernamePolicyLists> {
@@ -96,6 +95,8 @@ export class InstallationAdminService extends InstallationAdminStore {
   ): Promise<IssuedAdminInstallation> {
     const installationId = parseOpaqueId(installationIdValue, "installationId");
     const reset = await this.resets.reset({ installationId, operationId: input.operationId, confirmHandle: input.confirmHandle });
+    // The retired Ship stops its own work once told; the cron tells it if this can't.
+    await this.notices?.deliver(reset.previousInstallationId);
     const onboarding = await this.onboarding.begin(reset.installationId);
     return {
       installation: await this.requireInstallation(reset.installationId), onboarding,

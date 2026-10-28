@@ -12,6 +12,7 @@ import {
   parseHandle,
   parseOpaqueId,
 } from "./domain";
+import { changeInstallationState } from "./state-notices";
 
 const RESERVATION_TTL_MS = 30 * 60 * 1000;
 
@@ -269,7 +270,7 @@ export class AccountStore {
     const canonicalHostname = new URL(previous.canonical_origin).hostname;
     const now = Date.now();
 
-    const results = await this.db.batch([
+    const results = await changeInstallationState(this.db, previousInstallationId, [
       this.db.prepare(
         `UPDATE installations
          SET handle = ?, canonical_origin = ?, state = 'retained',
@@ -395,7 +396,7 @@ export class AccountStore {
          FROM installation_reset_operations
          WHERE operation_id = ? AND replacement_installation_id = ?`,
       ).bind(participant, now, operationId, replacement.installationId)),
-    ]);
+    ], now);
 
     const committed = await this.getResetByOperation(operationId);
     if (committed) {
@@ -510,8 +511,14 @@ export class AccountStore {
     }>();
   }
 
+  /**
+   * `stateRevision` reports the revision of the installation's latest change
+   * of state. Report it only while each change is delivered to the Gateway,
+   * since a Kernel that holds a revision stops asking.
+   */
   async resolveInstallation(
     installationIdValue: string,
+    options: { stateRevision?: boolean } = {},
   ): Promise<InstallationDirectoryResult> {
     let installationId: string;
     try {
@@ -522,8 +529,9 @@ export class AccountStore {
 
     const row = await this.db.prepare(
       `SELECT i.id, i.handle, i.canonical_origin, i.state,
-         i.owner_setup AS owner_setup_recovery
+         i.owner_setup AS owner_setup_recovery, COALESCE(n.revision, 0) AS state_revision
        FROM installations i
+       LEFT JOIN installation_state_notices n ON n.installation_id = i.id
        WHERE i.id = ?
        LIMIT 1`,
     ).bind(installationId).first<{
@@ -532,6 +540,7 @@ export class AccountStore {
       canonical_origin: string;
       state: InstallationState;
       owner_setup_recovery: number;
+      state_revision: number;
     }>();
     if (!row) {
       const retired = await this.db.prepare("SELECT installation_id FROM installation_account_deletions WHERE installation_id = ?")
@@ -546,6 +555,7 @@ export class AccountStore {
       state: row.state,
     };
     if (row.owner_setup_recovery) result.ownerSetupRecovery = true;
+    if (options.stateRevision) result.stateRevision = row.state_revision;
     return result;
   }
 
@@ -589,7 +599,7 @@ export class AccountStore {
     const now = Date.now();
     // A committed reset already retired the old identity and moved its handle.
     // Its exact replacement remains recoverable, including legacy expiring rows.
-    const results = await this.db.batch([
+    const results = await changeInstallationState(this.db, reservation.installationId, [
       this.db.prepare(
         `UPDATE installations
          SET state = 'provisioning'
@@ -618,7 +628,7 @@ export class AccountStore {
                AND i.state = 'provisioning'
            )`,
       ).bind(now, operationId, principalId),
-    ]);
+    ], now);
     const current = await this.requireOwnedReservation(operationId, principalId);
     const resumed = results.every((result) => (result.meta.changes ?? 0) === 0)
       && current.state === "provisioning" && current.operationState === "provisioning";
@@ -646,7 +656,7 @@ export class AccountStore {
     }
 
     const now = Date.now();
-    const results = await this.db.batch([
+    const results = await changeInstallationState(this.db, reservation.installationId, [
       this.db.prepare(
         `UPDATE installations
          SET state = 'active', reservation_expires_at = NULL,
@@ -669,7 +679,7 @@ export class AccountStore {
          WHERE id = ? AND installation_id = ?
            AND completed_at IS NULL AND revoked_at IS NULL`,
       ).bind(now, claimId, reservation.installationId),
-    ]);
+    ], now);
     if (results.some((result, index) => index === 1 ? (result.meta.changes ?? 0) < 1 : (result.meta.changes ?? 0) !== 1)) {
       throw new Error("installation onboarding could not be activated");
     }

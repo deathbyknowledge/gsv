@@ -33,7 +33,11 @@ user-controlled field.
 
 Every deployment supplies directory, onboarding and inference execution bindings.
 The public deployment package composes these services for one or many isolated
-spaces. A missing or unavailable directory fails closed. The model stack starts
+spaces. A missing or unavailable directory fails closed. Accounts tells each
+Kernel of its installation's changes of state through the Gateway's
+`GatewayAdmissionEntrypoint`, bound to Accounts as `ADMISSION_GATEWAY` with the
+`installation-admission` authority in deployment-owned props; see the
+[installation directory](./installation-directory.md). The model stack starts
 with `gsv/default`, which the operator's inference service resolves.
 User-configured providers use that same execution
 boundary, including transport through a connected machine.

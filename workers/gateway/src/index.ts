@@ -59,6 +59,7 @@ import { DEPLOYMENT_PRESENTATION_PATH, deploymentPresentation, deploymentPresent
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
 export { Conversation } from "./conversation/do";
+export { GatewayAdmissionEntrypoint } from "./installation/admission-entrypoint";
 export { GatewayLifecycleEntrypoint } from "./installation/deletion-entrypoint";
 export { GatewayRecoveryEntrypoint } from "./installation/recovery-entrypoint";
 export { InstancesGatewayEntrypoint } from "./installation/instances-entrypoint";

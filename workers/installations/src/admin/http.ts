@@ -9,7 +9,7 @@ import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage
 import { adminAuditPage } from "./audit-page";
 import type { AdminAuditRecorder, OperatorAuditResult, ShipInsight } from "./insight";
 import { adminErrorPage, adminStylesheet, adminTimeScript } from "./page";
-import { OpenNetworkFollowError, type IssuedAdminInstallation } from "./service";
+import { ShipFollowError, type IssuedAdminInstallation } from "./service";
 import { InstallationDeletionHttp } from "../deletion-http";
 import type { AccountsDeletionRuntime } from "../deletion-runtime";
 import type { RequestReports } from "../request-reports";
@@ -172,7 +172,7 @@ export class InstallationAdminHttp<
         catch { installation = null; }
         if (installation) {
           return adminInstallationPage(installation, undefined, failure.message, false, failure.status, this.presentation,
-            await this.shipView(installation), error instanceof OpenNetworkFollowError ? lifecycleRetry : undefined);
+            await this.shipView(installation), error instanceof ShipFollowError ? lifecycleRetry : undefined);
         }
       }
       return adminErrorPage(failure.message, failure.status, head, this.presentation.navigation);
@@ -255,7 +255,7 @@ function isAdminApiPath(pathname: string): boolean {
 export function installationAdminFailure(error: Error) {
   const message = error.message;
   if (error instanceof UnconfirmedActionError) return { message, status: 400 };
-  if (error instanceof OpenNetworkFollowError) return { message, status: 503 };
+  if (error instanceof ShipFollowError) return { message, status: 503 };
   if (["handle ", "installation", "operationId ", "request ", "form ", "query ", "state ", "page "]
     .some((prefix) => message.startsWith(prefix))) return { message, status: 400 };
   return { message: "The operator request could not be completed.", status: 503 };

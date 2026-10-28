@@ -22,7 +22,7 @@ trusted Worker service bindings.
 | Method | Input and result | Ownership |
 |---|---|---|
 | `resolveHostname(hostname)` | Returns the registered installation identity and state, or `{ found: false }`. Unknown and retired hostname records do not resolve. | Accounts normalizes and resolves hostnames; the gateway supplies the request hostname. |
-| `resolveInstallation(installationId)` | Returns that exact immutable identity and state, or `{ found: false }`. | Internal callers retain a validated id in owned state or recover it from a trusted route. |
+| `resolveInstallation(installationId)` | Returns that exact immutable identity and state, or `{ found: false }`. While Accounts tells Kernels of changes, it also returns the state's `stateRevision`. | Internal callers retain a validated id in owned state or recover it from a trusted route. |
 | `authorizeInstallationOnboarding({ installationId, token })` | Returns the matching claim id and installation identity, or `{ ok: false }`. | The Kernel supplies its resolved installation id and the setup capability. Accounts validates its hash, expiry, revocation and provisioning state. |
 | `completeInstallationOnboarding({ claimId, installationId })` | Completes the admitted setup claim and returns the installation id with state `complete`. | The Kernel creates local credentials first; Accounts consumes the claim and activates installation routing. |
 
@@ -46,6 +46,18 @@ exports a `RequestReportsEntrypoint` that files through `fileKernelReport` on
 its own database, runs `RequestReports.forgetClosedMessages()` on its cron, and
 gives `InstallationAdminHttp` its `ShipTakedowns` and `RequestReports`, so the
 operator admin has its Takedowns panel and Reports queue.
+
+To tell Kernels of changes of state, that Worker binds the Gateway's
+`GatewayAdmissionEntrypoint` as `ADMISSION_GATEWAY` with the
+`installation-admission` authority, applies migrations
+`0036_installation_state_notices` and `0037_installation_state_followers`,
+gives `installationStateNotices(db, env)` to `InstallationAdminService` and the
+deletion environment, runs
+`InstallationStateNotices.resumePending()` on its cron, and asks
+`AccountStore.resolveInstallation` for `stateRevision` only while the binding is
+present. Every write of an installation's state goes through
+`changeInstallationState`, which adds the change's notice to the same batch;
+a check in Accounts' tests refuses any other.
 
 ## Resolution and admission
 
@@ -73,20 +85,41 @@ inference, Process ticks, and schedules. Suspending an installation does not
 erase data or recursively cancel work already admitted; durable work
 rechecks the gate before new admission and may resume after reactivation.
 
-Inside a Kernel or Process, the gate remembers an `active` answer for one
-minute and shares one directory lookup among concurrent requests, so ordinary
-traffic does not query Accounts per frame. A refusal is never remembered and
-clears an earlier confirmation. Calls that authenticate or grant credentials
-(`sys.connect`, device pairing and account recovery, and the recovery and
-owner-link authorizations Accounts requests) always ask Accounts. Deletion
-quiescence clears the confirmation. A lookup that fails or takes longer than
-two seconds is recorded as a diagnostic and fails closed with a retryable
-"Ship is briefly unreachable" error, because an outage cannot be told apart
-from a suspension. Accounts does not notify a Kernel when it restricts or
-resets an installation, so already-authenticated traffic observes those
-changes within a minute. Accounts does tell the deployment's PDS when it
-restricts or reactivates an installation, so relays hear of the suspension;
-see [the open network](open-network.md).
+Accounts tells each Kernel when its installation's state changes, so ordinary
+traffic does not ask Accounts. Each change of state takes a higher revision in
+the same write as the change, kept in `installation_state_notices`. Accounts
+then calls the Gateway's admission entrypoint, which reads the installation back
+from the directory and has its Kernel keep that state and revision in Durable
+Object storage. The entrypoint never wakes a Kernel for an identity the
+directory doesn't hold, or for `reserved`, `provisioning` or `deleted`. The
+Kernel answers later admissions from its record and replaces it only with a
+higher revision, so a late or repeated notice never undoes a newer one. A
+Kernel without a record asks Accounts once and keeps the answer. A Process asks
+its Kernel rather than Accounts, and remembers an `active` answer for one minute.
+
+The same notice tells the deployment's PDS, when Accounts binds it as
+`PDS_MODERATION`, so its account for the Ship follows the state; see [the open
+network](open-network.md). Each follower is tracked on its own, so neither
+waits on the other. A notice that can't be delivered stays pending for that
+follower. Accounts' cron retries each follower's pending notices every minute,
+least recently tried first and twenty at a time, until the Gateway answers with
+that change's revision or a later one, or the PDS has read the state since the
+change. When an operator
+suspends or reactivates a Ship whose Kernel can't be told at once, the Ship
+keeps its new state and the request says the Ship hasn't confirmed; **Try
+again** tells it again. A reset or retirement tells the retired installation's
+Kernel the same way, so its own background work stops.
+
+Calls that authenticate or grant credentials (`sys.connect`, device pairing and
+account recovery, and the recovery and owner-link authorizations Accounts
+requests) always ask Accounts, and the Kernel keeps the answer. A lookup that
+fails or takes longer than two seconds is recorded as a diagnostic and fails
+closed with a retryable "Ship is briefly unreachable" error, because an outage
+cannot be told apart from a suspension. A refusal or a failure is never kept.
+
+Accounts reports a revision only while it binds `ADMISSION_GATEWAY`. A Kernel
+whose directory answers without one keeps no record: it remembers an `active`
+answer for one minute and observes a change within a minute.
 
 Accounts also holds an operator binding to the Gateway for the Ship health
 view in administration. The Gateway resolves the installation through the
