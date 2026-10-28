@@ -430,6 +430,19 @@ describe("link preview images", () => {
 });
 
 describe("link preview cache", () => {
+  it("hands a shared fetch to the owning object so it outlives its callers", async () => {
+    await withPreviews({
+      "https://example.com/": () => html("<title>Shared</title>"),
+    }, async ({ previews, tasks }) => {
+      const before = tasks.length;
+      await previewOf(previews, "https://example.com/");
+      // Pruning and the fetch itself were both registered; the cached answer registers only pruning.
+      expect(tasks.length).toBe(before + 2);
+      await previewOf(previews, "https://example.com/");
+      expect(tasks.length).toBe(before + 3);
+    });
+  });
+
   it("answers repeated and concurrent requests from one fetch", async () => {
     await withPreviews({ "https://example.com/": () => html("<title>Once</title>") }, async ({ previews, fetch }) => {
       const [first, second] = await Promise.all([
@@ -564,7 +577,7 @@ describe("link preview cache", () => {
       "https://example.com/old.png": () => image(PNG),
       "https://example.com/new.png": () => image(JPEG, "image/jpeg"),
       "https://example.com/shared.png": () => image(PNG),
-    }, async ({ previews, bucket, clock }) => {
+    }, async ({ previews, bucket, clock, tasks }) => {
       const oldKey = (await previewOf(previews, "https://example.com/a")).image!.key;
       const sharedKey = (await previewOf(previews, "https://example.com/b")).image!.key;
       clock.now += LINK_PREVIEW_SUCCESS_TTL_MS / 2;
@@ -573,6 +586,8 @@ describe("link preview cache", () => {
       cover = "/new.png";
       const newKey = (await previewOf(previews, "https://example.com/a")).image!.key;
       expect(newKey).not.toBe(oldKey);
+      // The replaced image is deleted beside the answer, under the object's lifetime.
+      await Promise.all(tasks);
       expect(await bucket.head(LINK_PREVIEW_IMAGE_PREFIX + oldKey)).toBeNull();
       expect(await bucket.head(LINK_PREVIEW_IMAGE_PREFIX + newKey)).not.toBeNull();
       // b expired, but c still refers to the same image.

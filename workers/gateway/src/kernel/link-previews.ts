@@ -215,6 +215,8 @@ export class LinkPreviews {
     if (existing) return existing;
     const pending = this.fetchAndStore(url).finally(() => this.inflight.delete(url));
     this.inflight.set(url, pending);
+    // The shared fetch outlives any one caller's wait, so it finishes and fills the cache even after they all cancel.
+    this.keepAlive(pending.catch(() => undefined));
     return pending;
   }
 
@@ -240,8 +242,8 @@ export class LinkPreviews {
       // A page whose advertised image could not be fetched or stored keeps the failure expiry, so the image is retried within the hour.
       const saved = stored?.row ?? (imageAdvertised ? { ...row, expires_at: row.fetched_at + LINK_PREVIEW_FAILURE_TTL_MS } : row);
       const previous = stored ? stored.previous : this.upsert(saved);
-      // Released after the new key's lock, so two saves never wait on each other's keys.
-      if (previous && previous !== saved.image_key) await this.releaseImage(previous, this.now());
+      // The replaced image goes in the background: the row is already saved, and its deletion waits on that key's own lock.
+      if (previous && previous !== saved.image_key) this.keepAlive(this.releaseImage(previous, this.now()));
       return saved;
     } finally {
       clearTimeout(timer);
