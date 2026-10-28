@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use std::process::{Output, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio_tungstenite::tungstenite::Message;
@@ -149,6 +150,11 @@ impl Cli {
     /// `script`, and returns what the terminal showed. `None` when `script`
     /// isn't installed.
     async fn run_in_terminal(&self, args: &[&str]) -> Option<String> {
+        self.type_in_terminal(args, "").await
+    }
+
+    /// Like `run_in_terminal`, typing `input` into the terminal as it starts.
+    async fn type_in_terminal(&self, args: &[&str], input: &str) -> Option<String> {
         let quoted: Vec<String> = std::iter::once(env!("CARGO_BIN_EXE_gsv"))
             .chain(args.iter().copied())
             .map(|arg| format!("'{}'", arg.replace('\'', r"'\''")))
@@ -163,12 +169,19 @@ impl Cli {
             .env_remove("GSV_URL")
             .env_remove("GSV_TOKEN")
             .env_remove("GSV_USER")
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .ok()?;
+        let mut child = child;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(input.as_bytes())
+                .await
+                .expect("type into the terminal");
+        }
         let output = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output())
             .await
             .expect("bounded command")
@@ -848,4 +861,57 @@ async fn a_new_token_prints_whole_on_a_narrow_terminal() {
     show("gsv auth token create (40 columns)", &output);
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(stdout(&output).contains("gsv_svc_0123456789abcdefghijklmnopqrstuvwxyz0123"));
+}
+
+#[tokio::test]
+async fn a_conversation_takes_more_input_and_quit_while_a_reply_runs() {
+    fn answer(call: &str, _: &Value) -> Value {
+        match call {
+            "conversation.ship" => json!({ "conversation": { "id": "conv:ship" } }),
+            // The reply never finishes: the run keeps working on a long tool.
+            "conversation.send" => json!({ "runId": "run:9", "queued": false }),
+            _ => json!({}),
+        }
+    }
+    let (url, calls) = ship(answer).await;
+    let Some(screen) = Cli::signed_in(&url)
+        .type_in_terminal(
+            &["ship"],
+            "find my flights\nactually, only Friday's\n/quit\n",
+        )
+        .await
+    else {
+        eprintln!("skipped: util-linux script is not installed");
+        return;
+    };
+    show_text("gsv ship (input while a reply runs)", &screen);
+    let sent: Vec<Value> = called(&calls, "conversation.send")
+        .into_iter()
+        .map(|args| args["text"].clone())
+        .collect();
+    assert_eq!(
+        sent,
+        vec![json!("find my flights"), json!("actually, only Friday's")]
+    );
+}
+
+#[tokio::test]
+async fn contacts_send_json_still_fails_when_delivery_fails() {
+    fn answer(call: &str, _: &Value) -> Value {
+        match call {
+            "contact.list" => {
+                json!({ "contacts": [{ "id": "contact:ana", "remoteName": "Ana", "remoteHandle": "ana", "state": "active" }] })
+            }
+            "contact.send" => json!({ "state": "failed" }),
+            _ => json!({}),
+        }
+    }
+    let (url, _) = ship(answer).await;
+    let output = Cli::signed_in(&url)
+        .run(&["contacts", "send", "Ana", "hello", "--json"])
+        .await;
+    show("gsv contacts send --json (failed)", &output);
+    assert!(!output.status.success());
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("JSON output");
+    assert_eq!(printed["state"], "failed");
 }

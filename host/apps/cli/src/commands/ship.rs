@@ -789,35 +789,53 @@ pub(crate) async fn run_client(
     };
     prompt();
 
+    // Input stays open while a reply runs, so a correction or /quit never waits for it.
+    let mut replying = false;
+    let mut input_open = true;
     loop {
         tokio::select! {
             request = hil_requests.recv() => {
                 if let Some(request) = request {
                     handle_hil_request(&client, request, &mut stdin_lines, interactive_stdin).await;
-                    prompt();
+                    if state.completed.load(Ordering::SeqCst) {
+                        prompt();
+                    } else {
+                        state.wait_for(Some("Thinking"));
+                    }
                 }
             }
-            line = stdin_lines.recv() => {
-                let Some(line) = line else { break };
+            line = stdin_lines.recv(), if input_open => {
+                let Some(line) = line else {
+                    input_open = false;
+                    if replying { continue } else { break }
+                };
                 let line = line.map_err(DynError::from)?;
                 let line = line.trim();
                 if matches!(line, "quit" | "exit" | "/quit" | "/exit" | "/q") {
                     break;
                 }
                 if line.is_empty() {
-                    prompt();
+                    if !replying {
+                        prompt();
+                    }
                     continue;
                 }
                 send(&client, &state, &conversation_id, line).await?;
-                wait_for_chat_complete(
-                    &state,
-                    &client,
-                    &mut hil_requests,
-                    &mut stdin_lines,
-                    interactive_stdin,
-                )
-                .await?;
-                prompt();
+                replying = true;
+            }
+            _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)), if replying => {
+                if client.connection().is_disconnected() {
+                    return Err(
+                        "Lost the connection to your Ship. The reply will be in gsv ship history.".into(),
+                    );
+                }
+                if state.completed.load(Ordering::SeqCst) {
+                    replying = false;
+                    if !input_open {
+                        break;
+                    }
+                    prompt();
+                }
             }
         }
     }

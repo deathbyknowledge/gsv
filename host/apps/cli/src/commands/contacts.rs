@@ -279,10 +279,14 @@ pub(crate) async fn run(
                 }),
             )
             .await?;
-            if out.json {
-                return render::print_json(&sent);
-            }
             let name = display_name(contact);
+            if out.json {
+                render::print_json(&sent)?;
+                if text(&sent, "state") == "failed" {
+                    return Err(format!("Couldn't deliver to {name}. Try again later.").into());
+                }
+                return Ok(());
+            }
             match text(&sent, "state") {
                 "delivered" => println!("Sent to {name}."),
                 "failed" => {
