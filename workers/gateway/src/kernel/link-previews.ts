@@ -294,8 +294,8 @@ export class LinkPreviews {
       try {
         previous = this.upsert(withImage);
       } catch (error) {
-        // No row names the object: take it back now, or remember it for pruning when that fails too.
-        await this.forgetUnnamedImage(key);
+        // Unless another live row shares the object, take it back now, or remember it for pruning when that fails too.
+        if (!this.referencedLive(key, this.now())) await this.forgetUnnamedImage(key);
         throw error;
       }
       return { row: withImage, previous };

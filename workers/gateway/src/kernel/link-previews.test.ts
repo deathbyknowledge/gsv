@@ -573,6 +573,28 @@ describe("link preview cache", () => {
     });
   });
 
+  it("keeps a shared image when another page's row write fails", async () => {
+    await withPreviews({
+      "https://example.com/a": () => html('<head><meta property="og:image" content="/shared.png"></head>'),
+      "https://example.com/b": () => html('<head><meta property="og:image" content="/shared.png"></head>'),
+      "https://example.com/shared.png": () => image(PNG),
+    }, async ({ previews, bucket, sql }) => {
+      const key = (await previewOf(previews, "https://example.com/a")).image!.key;
+      const exec = sql.exec.bind(sql);
+      let failRowWrite = true;
+      vi.spyOn(sql, "exec").mockImplementation((query: string, ...bindings: SqlStorageValue[]) => {
+        if (failRowWrite && query.includes("INSERT OR REPLACE INTO link_previews")) {
+          failRowWrite = false;
+          throw new Error("sqlite busy");
+        }
+        return exec(query, ...bindings);
+      });
+      await expect(previews.preview("https://example.com/b")).rejects.toThrow("sqlite busy");
+      expect(await bucket.head(LINK_PREVIEW_IMAGE_PREFIX + key)).not.toBeNull();
+      await expect(previews.image(key)).resolves.toMatchObject({ data: { ok: true } });
+    });
+  });
+
   it("keeps the row of an image it could not delete for a later pass", async () => {
     let deletesFail = true;
     // SAFETY: the wrapper inherits every R2Bucket member from the bucket it is created from and overrides only delete.
