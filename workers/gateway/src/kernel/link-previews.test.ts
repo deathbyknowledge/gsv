@@ -52,6 +52,7 @@ async function withPreviews<T>(
     clock: { now: number };
     /** Background work the previews handed to the owning object. */
     tasks: Array<Promise<unknown>>;
+    sql: SqlStorage;
   }) => Promise<T>,
   options: { timeoutMs?: number; deadlineMs?: number; bucket?: (bucket: R2Bucket) => R2Bucket } = {},
 ): Promise<T> {
@@ -67,7 +68,7 @@ async function withPreviews<T>(
       deadlineMs: options.deadlineMs,
       keepAlive: (task) => { tasks.push(task); },
     });
-    return run({ previews, fetch, bucket, clock, tasks });
+    return run({ previews, fetch, bucket, clock, tasks, sql });
   });
 }
 
@@ -549,6 +550,27 @@ describe("link preview cache", () => {
       await previews.pruneExpired();
       expect(await storedImages(bucket)).toBe(1);
     }, { bucket: flakyDeletes });
+  });
+
+  it("takes a stored image back when its row cannot be written", async () => {
+    await withPreviews({
+      "https://example.com/": () => html('<head><meta property="og:image" content="/a.png"></head>'),
+      "https://example.com/a.png": () => image(PNG),
+    }, async ({ previews, bucket, sql }) => {
+      const exec = sql.exec.bind(sql);
+      let failRowWrite = true;
+      vi.spyOn(sql, "exec").mockImplementation((query: string, ...bindings: SqlStorageValue[]) => {
+        if (failRowWrite && query.includes("INSERT OR REPLACE INTO link_previews")) {
+          failRowWrite = false;
+          throw new Error("sqlite busy");
+        }
+        return exec(query, ...bindings);
+      });
+      await expect(previews.preview("https://example.com/")).rejects.toThrow("sqlite busy");
+      expect(await storedImages(bucket)).toBe(0);
+      expect(await previewOf(previews, "https://example.com/")).toMatchObject({ image: { mimeType: "image/png" } });
+      expect(await storedImages(bucket)).toBe(1);
+    });
   });
 
   it("keeps the row of an image it could not delete for a later pass", async () => {

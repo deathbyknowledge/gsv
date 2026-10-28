@@ -290,8 +290,31 @@ export class LinkPreviews {
         image_width: image.width ?? null,
         image_height: image.height ?? null,
       };
-      return { row: withImage, previous: this.upsert(withImage) };
+      let previous: string | null;
+      try {
+        previous = this.upsert(withImage);
+      } catch (error) {
+        // No row names the object: take it back now, or remember it for pruning when that fails too.
+        await this.forgetUnnamedImage(key);
+        throw error;
+      }
+      return { row: withImage, previous };
     });
+  }
+
+  /** Under the key's lock: deletes an object no row names, falling back to the orphan record. */
+  private async forgetUnnamedImage(key: string): Promise<void> {
+    try {
+      await this.storage.delete(LINK_PREVIEW_IMAGE_PREFIX + key);
+      return;
+    } catch (error) {
+      console.warn("[LinkPreviews] Failed to delete an unnamed preview image:", errorName(error));
+    }
+    try {
+      this.sql.exec("INSERT OR REPLACE INTO link_preview_orphans (image_key, failed_at) VALUES (?, ?)", key, this.now());
+    } catch (error) {
+      console.warn("[LinkPreviews] Failed to record an orphaned preview image:", errorName(error));
+    }
   }
 
   private async fetchRow(
