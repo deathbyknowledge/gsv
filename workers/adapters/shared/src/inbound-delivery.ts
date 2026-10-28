@@ -457,19 +457,6 @@ export function adapterInboundResultDisposition(
   }
 
   const responses: PendingInboundResponse[] = [];
-  if (result.challenge?.prompt) {
-    const message: AdapterOutboundMessage = {
-      deliveryId: result.challenge.deliveryId,
-      surface: input.surface,
-      text: result.challenge.prompt,
-      replyToId: input.providerMessageId,
-    };
-    if (input.actorId) message.actorId = input.actorId;
-    responses.push({
-      message,
-      expiresAt: result.challenge.expiresAt,
-    });
-  }
   if (result.reply?.text) {
     const message: AdapterOutboundMessage = {
       deliveryId: result.reply.deliveryId,
@@ -487,10 +474,12 @@ export function adapterInboundResultDisposition(
   return disposition;
 }
 
-/** Managed adapters own fresh pairing codes after the Kernel revokes their saved identity. */
+/** Managed adapters own fresh pairing codes whenever the Kernel has no current link for the person. */
 export function adapterInboundRequiresPairing(result: AdapterInboundResult): boolean {
   return result.ok && isTerminalAdapterInboundResult(result)
-    && (Boolean(result.challenge) || result.droppedReason === "revoked_identity");
+    && (result.droppedReason === "pairing_required"
+      || result.droppedReason === "revoked_identity"
+      || Boolean(result.challenge));
 }
 
 function requireDeliveryId(value: string): string {
