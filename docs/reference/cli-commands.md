@@ -14,7 +14,6 @@ Talk
 
 Look after things
   work               What your Ship and its helpers are doing
-  approvals          Actions waiting for your yes or no
   routines           Things your Ship does on a schedule
   memory             Your wiki, and the notes your Ship always reads
   activity           What ran, where, and how it went
@@ -94,6 +93,20 @@ before the command. They are hidden from help:
 | `-u, --user <USER>` | | Account name override. |
 | `-t, --token <TOKEN>` | `GSV_TOKEN` | Non-interactive credential. User commands default to the personal account; device credentials keep their enrolled username. |
 
+To get a credential for CI, use the hidden token commands, kept for one
+release:
+
+```bash
+gsv auth token create [--kind machine|service|human] [--label LABEL] [--peer PEER_ID] [--expires-at UNIX_MS] [--uid UID]
+gsv auth token list [--uid UID]
+gsv auth token revoke TOKEN_ID [--reason TEXT] [--uid UID]
+```
+
+`create` prints the token once; store it straight away. `machine` is the
+default kind and needs `--peer`, the one peer id that may connect with it.
+`--uid` is for root-managed tokens. Computers normally get their credentials
+from a pairing invitation instead.
+
 ## Talk
 
 ### Ship
@@ -117,7 +130,8 @@ Without a message it opens a prompt (`›`). Each line is sent as soon as you
 press Enter, so a new message can supersede an active run; `/quit` leaves.
 Tool use and notices appear dimmed on stderr. When the Ship asks to do
 something that needs your approval, the prompt shows what and why and takes
-`o` (once), `a` (always) or `b` (block). `--json` needs a message and prints
+`o` (once), `a` (always) or `b` (block). Without a terminal the request waits
+for an answer in the web app or on a messenger. `--json` needs a message and prints
 `{ conversationId, sent, replies }`. Set `GSV_CLIENT_DEBUG=1` to trace
 run-signal matching.
 
@@ -179,6 +193,8 @@ gsv work [--all]
 gsv work show ID [-n N]
 gsv work open ID [MESSAGE]
 gsv work stop ID
+gsv work reset ID [-y]
+gsv work end ID [-y]
 ```
 
 `work` lists what is running now: your Ship and the work it delegated, with
@@ -189,21 +205,14 @@ ledger follow, with their state, due time and blocker.
 `show` prints a timeline of what a piece of work did, folding each tool result
 into its call. `open` talks to that work as `ship` does, with a message or as a
 prompt. `stop` ends its current run with `proc.abort`; the work itself remains.
+When an action is waiting for approval, `show` displays it; answer it in the web
+app or on a messenger.
 
-### Approvals
-
-```bash
-gsv approvals
-gsv approvals allow ID [--always]
-gsv approvals block ID
-```
-
-`approvals` lists actions waiting for your yes or no across your Ship and its
-work: what the action does, where, and its most telling detail, such as the
-command line or recipient. `allow` approves once; `--always` also allows
-actions like it from now on. `block` refuses. The CLI composes the list from
-`proc.list` and the pending request of each running process, and answers with
-`proc.hil`.
+`reset` archives a piece of work's history and starts it fresh with
+`proc.reset`; on your Ship it starts the conversation context over. `end`
+archives the history and tears the work down for good with `proc.kill`; your
+Ship itself can't be ended. Both ask first and report how many messages were
+archived. Without a terminal they refuse unless `--yes` is given.
 
 ### Routines
 
@@ -509,9 +518,9 @@ pointer to their replacement.
 | `gsv chat [--pid PID]` | `gsv ship`; `gsv chat` remains an alias. `--pid` became `gsv work open ID`. |
 | `gsv shell` | `gsv run COMMAND`, one command at a time. |
 | `gsv proc list` / `send` / `history` | `gsv work`, `gsv work open ID MESSAGE`, `gsv work show ID`. |
-| `gsv proc kill` / `reset` | `gsv work stop ID` stops a run; reset and end work in the web app. |
+| `gsv proc reset` / `kill` | `gsv work reset ID` / `gsv work end ID`. |
 | `gsv auth login` / `logout` | `gsv login SPACE` / `gsv logout`. |
-| `gsv auth token ...` | Computers get credentials from a pairing invitation; `gsv places forget` revokes one. |
+| `gsv auth token ...` | Still works, hidden, for one release; see [Sign In](#sign-in). |
 | `gsv auth link --adapter ...` / `link-list` / `unlink` | Link messengers in **Settings → Messengers**. `gsv auth link CODE`, which redeems the code a messenger sends someone it doesn't know yet, still works. |
 | `gsv config get` / `set` (remote) | Change Ship settings in the web app. |
 | `gsv adapter ...` | Connect messengers in **Settings → Messengers**. |
