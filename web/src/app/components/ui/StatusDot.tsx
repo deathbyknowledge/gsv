@@ -7,13 +7,15 @@ export interface StatusDotProps {
   glow?: boolean;
 }
 
+/* Dots read the --dot-* tokens where a theme defines them (the light themes use
+   lighter shades than their AA text tones) and fall back to the text tone. */
 const TONE_VAR = {
-  online: "var(--online)",
-  error: "var(--error)",
-  idle: "var(--idle)",
-  update: "var(--update)",
-  live: "var(--live)",
-  warn: "var(--warn)",
+  online: "var(--dot-online, var(--online))",
+  error: "var(--dot-error, var(--error))",
+  idle: "var(--dot-idle, var(--idle))",
+  update: "var(--dot-update, var(--update))",
+  live: "var(--dot-live, var(--live))",
+  warn: "var(--dot-warn, var(--warn))",
 } satisfies Record<StatusTone, string>;
 
 /** StatusDot — ported from StatusDot.dc.html. */
@@ -51,16 +53,19 @@ export interface StatusMetaProps {
   label: string;
   /** Dot diameter in px. */
   dotSize?: number;
+  /** "status" (default) colors the label with the tone; "muted" keeps the
+   *  label in the dim text color and lets the dot alone carry the tone. */
+  labelTone?: "status" | "muted";
 }
 
 /** StatusMeta — a tone-colored status word with a leading StatusDot. The shared
  *  header-level status treatment: used in page headers and section-card headers
  *  so a status reads the same everywhere (and in step with the list rows). */
-export function StatusMeta({ tone, label, dotSize = 7 }: StatusMetaProps) {
+export function StatusMeta({ tone, label, dotSize = 7, labelTone = "status" }: StatusMetaProps) {
   return (
     <span
       class="gsv-status-meta gsv-sublabel"
-      style={{ display: "inline-flex", alignItems: "center", gap: "8px", letterSpacing: ".16em", color: STATUS_TEXT[tone] }}
+      style={{ display: "inline-flex", alignItems: "center", gap: "8px", letterSpacing: ".16em", color: labelTone === "muted" ? "var(--text-dim)" : STATUS_TEXT[tone] }}
     >
       <StatusDot tone={tone} size={dotSize} />
       {label}

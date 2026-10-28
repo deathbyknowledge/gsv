@@ -87,7 +87,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         {!available && <p class="settings-muted">{t("settings.messengers.unavailable", { name })}</p>}
         {available && !canPair && <p class="settings-muted">{t("settings.messengers.cannotLink", { name })}</p>}
         {links.length === 0 && available && !comingSoon && <p class="settings-messenger-links settings-messenger-state">
-          <StatusMeta tone="idle" label={t("settings.messengers.noLinks", { name })} />
+          <StatusMeta tone="idle" labelTone="muted" label={t("settings.messengers.noLinks", { name })} />
           {id === "whatsapp" && <InfoTip text={t("settings.messengers.whatsappRelink")} position="right" />}
         </p>}
         <ul class="settings-list settings-messenger-links">{links.map((link) => {
@@ -98,6 +98,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
             <div class="settings-server-heading">
               <StatusMeta
                 tone={STATUS_TONES[status]}
+                labelTone="muted"
                 label={status === "connected"
                   ? t("settings.messengers.connectedTo", { id: link.actorId })
                   : `${t(STATUS_LABELS[status])} · ${t("settings.messengers.user", { platform: name, id: link.actorId })}`}
