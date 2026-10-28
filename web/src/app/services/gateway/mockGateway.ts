@@ -43,6 +43,7 @@ import {
   type ApproachSummary,
   type ContactSendResult,
   type ContactSummary,
+  type DevicePairing,
   type ConversationInboxEntry,
   type AiThinkingContent,
   type AiToolCall,
@@ -199,6 +200,15 @@ const maraView = { readThroughSequence: 0, archived: false, revision: 1 };
 /* a retry with the same idempotency key replays the first answer, as the Kernel replays its outbox record; the
    in-flight promise is stored before the hash resolves so two overlapping retries cannot both append */
 const maraSends = new Map<string, Promise<ContactSendResult>>();
+
+/* Work › connect a place: invitations live for this tab and expire after ten minutes, as the Kernel's do; the
+   pairing code itself is built by the browser from the invitation and its own secret, so nothing here needs one */
+const PAIRING_TTL_MS = 10 * 60 * 1000;
+const pairings = new Map<string, DevicePairing>();
+const pairCreateArgs = z.object({ id: z.string(), secret: z.string(), targetId: z.string(), label: z.string(), replace: z.boolean().optional() });
+function pairingNow(pairing: DevicePairing): DevicePairing {
+  return pairing.state === "pending" && pairing.expiresAt <= Date.now() ? { ...pairing, state: "expired" } : pairing;
+}
 function maraConversation(): ConversationSummary {
   return { id: MARA_CONVERSATION, kind: "contact", ownerUid: OWNER.uid, title: "Mara", latestSequence: maraThread.length, createdAt: at(3, 9, 0), updatedAt: maraThread.at(-1)!.createdAt };
 }
@@ -1017,6 +1027,25 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
     case "sys.link.list": return respond(id, { links: [] });
+    case "sys.pair.create": {
+      /* the same id answers with the invitation it already made, so the browser's retry and cancel reconcile */
+      const { id: pairingId, targetId, label } = pairCreateArgs.parse(args);
+      const existing = pairings.get(pairingId);
+      if (existing) return respond(id, { pairing: pairingNow(existing) });
+      const createdAt = Date.now();
+      const pairing: DevicePairing = { id: pairingId, username: OWNER.username, targetId, label: label.trim(), createdAt, expiresAt: createdAt + PAIRING_TTL_MS, state: "pending" };
+      pairings.set(pairingId, pairing);
+      return respond(id, { pairing });
+    }
+    case "sys.pair.list": return respond(id, { pairings: [...pairings.values()].map(pairingNow).sort((a, b) => b.createdAt - a.createdAt) });
+    case "sys.pair.cancel": {
+      const { id: pairingId } = z.object({ id: z.string() }).parse(args);
+      const current = pairings.get(pairingId);
+      if (!current) return refuse(id, 404, "Pairing invitation not found");
+      const pairing: DevicePairing = pairingNow(current).state === "pending" ? { ...current, state: "cancelled" } : pairingNow(current);
+      pairings.set(pairingId, pairing);
+      return respond(id, { pairing });
+    }
     case "r12y.list": {
       const { states, includeTerminal, offset = 0, limit = 100 } = responsibilityListArgs.parse(args);
       const records = responsibilities.filter((record) => states ? states.includes(record.state) : includeTerminal || !["resolved", "cancelled"].includes(record.state));
