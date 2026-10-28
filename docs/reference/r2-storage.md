@@ -63,6 +63,7 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `ipc_calls` | Durable same-owner IPC call deadlines, terminal results, and delivery outbox state. |
 | `signal_watches` | Process-owned target connection watches. |
 | `link_previews` | Cached link preview metadata by requested URL, kept 7 days after a successful fetch and 1 hour after a failure. |
+| `link_preview_orphans` | Preview image objects no row names whose deletion failed, retried by later pruning passes. |
 
 ## Process SQLite
 

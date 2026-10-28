@@ -200,6 +200,22 @@ export class LinkPreviews {
       if (row.image_key && !released.get(row.image_key)) continue;
       this.sql.exec("DELETE FROM link_previews WHERE url = ? AND expires_at <= ?", row.url, now);
     }
+    const orphans = this.sql.exec<{ image_key: string }>(
+      "SELECT image_key FROM link_preview_orphans ORDER BY failed_at LIMIT ?",
+      PRUNE_BATCH,
+    ).toArray();
+    for (const orphan of orphans) {
+      if (await this.releaseImage(orphan.image_key, now)) {
+        this.sql.exec("DELETE FROM link_preview_orphans WHERE image_key = ?", orphan.image_key);
+      }
+    }
+  }
+
+  /** Deletes an image no row names any more, remembering it for a later pass when the deletion fails. */
+  private async releaseReplacedImage(key: string): Promise<void> {
+    const now = this.now();
+    if (await this.releaseImage(key, now)) return;
+    this.sql.exec("INSERT OR REPLACE INTO link_preview_orphans (image_key, failed_at) VALUES (?, ?)", key, now);
   }
 
   private cached(url: string): LinkPreviewRow | null {
@@ -243,7 +259,7 @@ export class LinkPreviews {
       const saved = stored?.row ?? (imageAdvertised ? { ...row, expires_at: row.fetched_at + LINK_PREVIEW_FAILURE_TTL_MS } : row);
       const previous = stored ? stored.previous : this.upsert(saved);
       // The replaced image goes in the background: the row is already saved, and its deletion waits on that key's own lock.
-      if (previous && previous !== saved.image_key) this.keepAlive(this.releaseImage(previous, this.now()));
+      if (previous && previous !== saved.image_key) this.keepAlive(this.releaseReplacedImage(previous));
       return saved;
     } finally {
       clearTimeout(timer);

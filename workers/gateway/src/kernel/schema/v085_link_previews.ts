@@ -3,7 +3,9 @@ import type { SqlMigration } from "../../schema/runner";
 /**
  * Cached page metadata for link previews, keyed by the requested URL. A
  * failed fetch keeps only its category, and a row's image key names the
- * installation-scoped object holding its image bytes.
+ * installation-scoped object holding its image bytes. An image object whose
+ * deletion failed after no row named it any more is remembered as an orphan
+ * until a later pruning pass deletes it.
  */
 export const KERNEL_V085_LINK_PREVIEWS: SqlMigration = {
   id: 85,
@@ -30,5 +32,11 @@ export const KERNEL_V085_LINK_PREVIEWS: SqlMigration = {
     `,
     "CREATE INDEX link_previews_expiry ON link_previews (expires_at)",
     "CREATE INDEX link_previews_image ON link_previews (image_key) WHERE image_key IS NOT NULL",
+    `
+      CREATE TABLE link_preview_orphans (
+        image_key TEXT PRIMARY KEY,
+        failed_at INTEGER NOT NULL
+      )
+    `,
   ],
 };

@@ -391,7 +391,8 @@ working context changes.
 Chat shows a quiet card under a settled Ship message for each web link it contains, in order and
 once per URL and at most ten per message, with the page's image, site name, title and description;
 the card opens the link in a new tab. Links inside code, images and the person's own messages get no card. Previews resolve
-lazily as messages render: the signed-in client asks the Kernel through `conversation.link.preview`,
+lazily, and only for messages near the viewport, so opening a long history fetches nothing for
+what it scrolled past: the signed-in client asks the Kernel through `conversation.link.preview`,
 and the Kernel reads the public page on that client's behalf and caches the result, including
 failures, for the installation. The image travels through `conversation.link.image` as a frame
 body, so the browser never contacts the linked site or its image host. Until a preview resolves, or

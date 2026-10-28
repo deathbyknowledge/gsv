@@ -1,4 +1,4 @@
-import { useMemo } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Surface } from "../../../components/ui/Surface";
 import { fetchLinkPreview, fetchLinkPreviewImage } from "../../../services/chat/backend/linkPreviewService";
 import { useMediaObjectUrl } from "../../../services/chat/hooks/useChatMediaSource";
@@ -24,11 +24,36 @@ function hostname(url: string): string {
   }
 }
 
+/** How far outside the viewport a message's cards start resolving, so they are ready as it scrolls in. */
+const NEAR_VIEWPORT_MARGIN = "50% 0px";
+
+/**
+ * Whether the element has come near the viewport. Previews resolve only for messages the person is about to see, so
+ * opening a long history fetches nothing for the pages it scrolled past. Without an observer, everything is near.
+ */
+function useNearViewport() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [near, setNear] = useState(() => !("IntersectionObserver" in window));
+  useEffect(() => {
+    const element = ref.current;
+    if (near || !element) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      setNear(true);
+      observer.disconnect();
+    }, { rootMargin: NEAR_VIEWPORT_MARGIN });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [near]);
+  return { ref, near };
+}
+
 /** One card per web link in a settled Ship message; links whose page offers nothing take no room. */
 export function ZenLinkCards({ text }: { text: string }) {
   const links = useMemo(() => extractMessageLinks(text), [text]);
+  const { ref, near } = useNearViewport();
   if (links.length === 0) return null;
-  return <div class="zen-link-cards">{links.map((url) => <ZenLinkCard key={url} url={url} />)}</div>;
+  return <div class="zen-link-cards" ref={ref}>{near ? links.map((url) => <ZenLinkCard key={url} url={url} />) : null}</div>;
 }
 
 /** The page behind a link, as the Kernel read it. Until it resolves, or when it fails or is empty, nothing shows. */

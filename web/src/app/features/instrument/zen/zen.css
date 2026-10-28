@@ -799,6 +799,7 @@
 .zen-media img, .zen-media video { display: block; max-width: 100%; max-height: min(28rem, 55vh); object-fit: contain; }
 .zen-media audio { max-width: 100%; }
 /* the pages a Ship message links to, read by the Kernel: quiet cards under the text, one per link, no room taken until one resolves */
+.zen-link-cards:empty { min-height: 1px; }
 .zen-link-cards:not(:empty) { display: flex; flex-direction: column; align-items: flex-start; gap: .75rem; margin: 1rem 0; }
 .zen-link-card { display: block; width: min(100%, 28rem); color: inherit; text-decoration: none; }
 .zen-link-card:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }

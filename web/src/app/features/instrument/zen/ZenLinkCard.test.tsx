@@ -11,9 +11,13 @@ const LINK = "https://guide.example/start";
 let root: ReturnType<typeof createTestRoot> | undefined;
 afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlobals(); });
 
-async function rendered(view: () => ComponentChildren, preview?: ConversationLinkPreview): Promise<ComponentChildren> {
+async function rendered(
+  view: () => ComponentChildren,
+  preview?: ConversationLinkPreview,
+  windowExtras: { IntersectionObserver?: new () => { observe(): void; disconnect(): void } } = {},
+): Promise<ComponentChildren> {
   let tree: ComponentChildren;
-  vi.stubGlobal("window", Object.assign(new EventTarget(), { location: { search: "" }, sessionStorage: { getItem: () => null } }));
+  vi.stubGlobal("window", Object.assign(new EventTarget(), { location: { search: "" }, sessionStorage: { getItem: () => null }, ...windowExtras }));
   vi.stubGlobal("document", new EventTarget());
   const cache = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
   if (preview) cache.setQueryData(linkPreviewQueryKey(LINK), preview);
@@ -54,6 +58,16 @@ describe("link preview card", () => {
 
   it("renders nothing for a message without web links", async () => {
     expect(await rendered(() => ZenLinkCards({ text: "No links here, only `https://code.example`." }))).toBeNull();
+  });
+
+  it("mounts no card until the message comes near the viewport", async () => {
+    class IdleObserver {
+      observe(): void {}
+      disconnect(): void {}
+    }
+    const tree = await rendered(() => ZenLinkCards({ text: `See ${LINK}.` }), undefined, { IntersectionObserver: IdleObserver });
+    expect(collectNodes(tree).some((node) => node.type === ZenLinkCard)).toBe(false);
+    expect(collectNodes(tree).some((node) => node.type === "div")).toBe(true);
   });
 
   it("lists one card per link in the message", async () => {

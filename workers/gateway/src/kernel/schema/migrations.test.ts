@@ -409,6 +409,7 @@ describe("kernel schema migrations", () => {
     const statements = migration!.statements.map((statement) => statement.trim().replace(/\s+/g, " "));
     expect(statements[0]).toMatch(/^CREATE TABLE link_previews \( url TEXT PRIMARY KEY,/);
     expect(statements).toContain("CREATE INDEX link_previews_expiry ON link_previews (expires_at)");
+    expect(statements.at(-1)).toMatch(/^CREATE TABLE link_preview_orphans \( image_key TEXT PRIMARY KEY,/);
   });
 
   it("adds installation-local mailbox indexes", () => {

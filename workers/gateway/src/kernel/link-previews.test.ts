@@ -520,6 +520,37 @@ describe("link preview cache", () => {
     }, { timeoutMs: 1_000, deadlineMs: 20, bucket: slowPuts });
   });
 
+  it("remembers a replaced image it could not delete and removes it on a later pass", async () => {
+    let deletesFail = true;
+    let cover = "/old.png";
+    // SAFETY: the wrapper inherits every R2Bucket member from the bucket it is created from and overrides only delete.
+    const flakyDeletes = (bucket: R2Bucket): R2Bucket => Object.assign(Object.create(bucket) as R2Bucket, {
+      delete: async (keys: string | string[]) => {
+        if (deletesFail) throw new Error("r2 unavailable");
+        return bucket.delete(keys);
+      },
+    });
+    await withPreviews({
+      "https://example.com/": () => html(`<head><meta property="og:image" content="${cover}"></head>`),
+      "https://example.com/old.png": () => image(PNG),
+      "https://example.com/new.png": () => image(JPEG, "image/jpeg"),
+    }, async ({ previews, bucket, clock, tasks }) => {
+      const oldKey = (await previewOf(previews, "https://example.com/")).image!.key;
+      clock.now += LINK_PREVIEW_SUCCESS_TTL_MS;
+      cover = "/new.png";
+      const newKey = (await previewOf(previews, "https://example.com/")).image!.key;
+      expect(newKey).not.toBe(oldKey);
+      await Promise.all(tasks);
+      expect(await bucket.head(LINK_PREVIEW_IMAGE_PREFIX + oldKey)).not.toBeNull();
+      deletesFail = false;
+      await previews.pruneExpired();
+      expect(await bucket.head(LINK_PREVIEW_IMAGE_PREFIX + oldKey)).toBeNull();
+      expect(await bucket.head(LINK_PREVIEW_IMAGE_PREFIX + newKey)).not.toBeNull();
+      await previews.pruneExpired();
+      expect(await storedImages(bucket)).toBe(1);
+    }, { bucket: flakyDeletes });
+  });
+
   it("keeps the row of an image it could not delete for a later pass", async () => {
     let deletesFail = true;
     // SAFETY: the wrapper inherits every R2Bucket member from the bucket it is created from and overrides only delete.
