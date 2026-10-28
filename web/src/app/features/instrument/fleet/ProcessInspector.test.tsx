@@ -6,7 +6,9 @@ import { GSVClient } from "@humansandmachines/gsv/client";
 import type { ConsoleProcess } from "../../../domain/system/consoleModels";
 import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
 import { ProcessInspector } from "./Fleet";
+import type { LedgerLine } from "./fleetModel";
 import { LineInspector } from "../settings/LedgerLine";
+import { t } from "../../../i18n/locale";
 
 const abort = vi.fn<GSVClient["proc"]["abort"]>();
 
@@ -17,7 +19,12 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function inspector() {
+function ledgerLine(overrides: Partial<LedgerLine>): LedgerLine {
+  return { id: "call", timestamp: 1, processId: "worker", place: "gsv", syscall: "fs.read", action: { key: "fleet.ledger.fsRead" },
+    purpose: null, detail: "", args: "", outcome: "completed", runId: "run", costNanoUsd: null, ...overrides };
+}
+
+async function inspector(lines: LedgerLine[] = []) {
   const client = new GSVClient();
   client.proc.abort = abort;
   const cache = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
@@ -31,7 +38,7 @@ async function inspector() {
   const onZen = vi.fn();
   function Harness() {
     tree = ProcessInspector({ client, process, model: null, cost: null, responsibilities: 0, canEditAi: false,
-      now: 1, onZen, lines: [], placeLabelFor: (target) => target });
+      now: 1, onZen, lines, placeLabelFor: (target) => target });
     return null;
   }
   const render = () => root.render(<QueryClientProvider client={cache}><Harness /></QueryClientProvider>);
@@ -102,8 +109,7 @@ describe("Fleet process navigation", () => {
     let tree: ComponentChildren;
     function Harness() {
       tree = LineInspector({
-        line: { id: "call", timestamp: 1, processId: "worker", place: "gsv", syscall: "fs.read",
-          action: { key: "fleet.ledger.fsRead" }, detail: "", args: "", outcome: "done", runId: "run", costNanoUsd: null },
+        line: ledgerLine({ outcome: "done" }),
         placeLabelFor: (target) => target, processName: "worker", technical: false, onProcess,
       });
       return null;
@@ -114,5 +120,40 @@ describe("Fleet process navigation", () => {
     expect(action).toBeDefined();
     await action?.props.onClick?.();
     expect(onProcess).toHaveBeenCalledWith("worker");
+  });
+});
+
+describe("Fleet ledger lines", () => {
+  const code = "const notes = await fs.read(\"/home/e/notes.md\");\nreturn notes.content;";
+  const lines = [
+    ledgerLine({ id: "script", syscall: "codemode.exec", action: { key: "fleet.ledger.codemodeExec" }, purpose: "pull the action items out of your notes", args: JSON.stringify({ code }) }),
+    ledgerLine({ id: "older", syscall: "shell.exec", place: "laptop", action: { key: "fleet.ledger.shellExec" }, detail: "df -h" }),
+  ];
+
+  it("reads each recent call by Ship's purpose, falling back to the verb, and never prints a script", async () => {
+    const view = await inspector(lines);
+    expect(view.text()).toContain("pull the action items out of your notes");
+    expect(view.text()).toContain("df -h");
+    expect(view.text()).not.toContain("await fs.read");
+    expect(view.text()).not.toContain("your notes ·");
+  });
+
+  it("heads a line with its purpose and keeps the verb beneath it", async () => {
+    const root = createTestRoot("Ledger line purpose");
+    let tree: ComponentChildren;
+    let line = lines[0];
+    function Harness() {
+      tree = LineInspector({ line, placeLabelFor: (target) => target, processName: "Ship", technical: false, onProcess: vi.fn() });
+      return null;
+    }
+    cleanup.push(() => root.unmount());
+    await root.render(<Harness />);
+    const heading = () => collectText(collectNodes(tree).find((node) => node.type === "h3"));
+    expect(heading()).toBe("pull the action items out of your notes");
+    expect(collectText(collectNodes(tree).find((node) => node.type === "div" && node.props.class === "sub"))).toContain(t("fleet.ledger.codemodeExec"));
+    expect(collectText(collectNodes(tree).find((node) => node.type === "dl" && node.props.class === "fleet-kv"))).not.toContain("await fs.read");
+    line = lines[1];
+    await root.render(<Harness />);
+    expect(heading()).toBe(t("fleet.ledger.shellExec"));
   });
 });

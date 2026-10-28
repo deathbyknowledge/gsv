@@ -1861,8 +1861,8 @@ export const ptBR = {
   "chat.terminal.inputFor": "Entrada para {command}",
 
   // Chat: run receipts
-  "chat.receipt.working": "trabalhando",
-  "chat.receipt.worked": "trabalhou",
+  "chat.receipt.working": "trabalhando nisso",
+  "chat.receipt.worked": "trabalhou nisso",
   "chat.receipt.notes": "notas de trabalho",
   "chat.receipt.details": "detalhes da resposta",
   "chat.receipt.process": "esta conversa",

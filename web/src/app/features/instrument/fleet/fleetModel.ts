@@ -65,6 +65,8 @@ export type LedgerLine = {
   syscall: string;
   /** What happened, in a person's words: "read a file", "sent a message". */
   action: LedgerAction;
+  /** Ship's own sentence for why it made the call, when it wrote one. */
+  purpose: string | null;
   /** The argument that matters, one line: a path, a command, a query. */
   detail: string;
   /** The call's arguments as the Kernel recorded them, JSON text; empty for a line made here. */
@@ -213,8 +215,6 @@ const toolArgsSchema = z.object({
   path: z.string().optional(),
   url: z.string().optional(),
   query: z.string().optional(),
-  code: z.string().optional(),
-  script: z.string().optional(),
   model: z.string().optional(),
   name: z.string().optional(),
   title: z.string().optional(),
@@ -248,13 +248,13 @@ function parseToolArgs(value: ChatTranscriptValue | undefined): ToolArgs {
 /** The argument that matters, collapsed to one line, so a heredoc or a long path never breaks a row. */
 export function describeToolCall(syscall: string, args: ChatTranscriptValue | undefined): string {
   const parsed = parseToolArgs(args);
+  /* A CodeMode script has no one-line detail; it stays in the recorded arguments. */
   let detail = "";
   if (syscall === "shell.exec") detail = parsed.input ?? "";
   else if (syscall === "web.search") detail = parsed.query ?? "";
   else if (syscall === "fs.copy") detail = [parsed.source, parsed.destination].map((endpoint) => endpoint ? `${endpoint.target ? `${endpoint.target}:` : ""}${endpoint.path}` : "").filter(Boolean).join(" → ");
   else if (syscall.startsWith("fs.")) detail = [parsed.path, syscall === "fs.search" ? parsed.query : null].filter(Boolean).join(" · ");
   else if (syscall.startsWith("net.")) detail = parsed.url ?? "";
-  else if (syscall.startsWith("codemode.")) detail = parsed.code || parsed.script || "";
   else if (syscall.startsWith("ai.")) detail = parsed.model ?? "";
   else if (syscall.startsWith("sys.config.")) detail = parsed.key ?? "";
   else if (syscall.startsWith("r12y.")) detail = parsed.title || parsed.id || parsed.states?.join(" · ") || "";
@@ -428,6 +428,7 @@ const sysLedgerLineSchema = z.object({
   target: z.string(),
   call: z.string(),
   args: z.string(),
+  purpose: z.string().nullable().optional(),
   outcome: z.enum(["ok", "failed", "denied", "cancelled"]).nullable(),
   error: z.string().nullable().optional(),
   durationMs: z.number().nullable(),
@@ -463,6 +464,7 @@ export function ledgerFromSysLines(lines: readonly z.infer<typeof sysLedgerLineS
       place: line.target,
       syscall: line.call,
       action,
+      purpose: line.purpose?.trim() || null,
       detail: describeToolCall(line.call, args),
       args: line.args,
       outcome: line.outcome === null ? "running" : line.outcome === "ok" ? "completed" : line.outcome,
