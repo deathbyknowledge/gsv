@@ -94,6 +94,12 @@
   overflow-wrap: anywhere;
 }
 
+/* The footer buttons sit clear of an alert or its note. */
+.gsv-alert + .gsv-cf-footer,
+.gsv-cf-note + .gsv-cf-footer {
+  margin-top: 10px;
+}
+
 /* Shared step building blocks ----------------------------------------------- */
 
 /* Footer button row at the bottom of a step (BACK / CONTINUE etc). */
