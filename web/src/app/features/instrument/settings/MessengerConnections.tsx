@@ -3,7 +3,7 @@ import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { InfoTip } from "../../../components/ui/InfoTip";
-import { StatusDot } from "../../../components/ui/StatusDot";
+import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Tag } from "../../../components/ui/Tag";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { disconnectConsoleAdapterPairing } from "../../../services/system/consoleService";
@@ -62,7 +62,10 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
     {connections.data && MESSENGERS.map(({ id, name, blurb }) => {
       const adapter = connections.data.adapters.find((entry) => entry.adapter === id);
       const links = connections.data.links.filter((entry) => entry.adapter === id);
-      const linked = links.some((link) => messengerConnectionStatus(adapter, link.accountId) === "connected");
+      const statuses = links.map((link) => messengerConnectionStatus(adapter, link.accountId));
+      const nameTone: StatusTone = statuses.includes("needs-attention") ? "error"
+        : statuses.includes("reconnect-needed") ? "warn"
+        : statuses.includes("connected") ? "online" : "idle";
       const available = adapter?.enabled && adapter.supportsPairing;
       const canPair = adapter?.canLink === true;
       const comingSoon = id === "slack" || id === "discord";
@@ -70,9 +73,9 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
       return <section class="settings-messenger" key={id} aria-label={name}>
         <div class="settings-messenger-heading">
           <h2 class="settings-messenger-name">
-            {!comingSoon && <StatusDot tone={linked ? "online" : "idle"} size={7} />}
+            <StatusDot tone={nameTone} size={7} />
             {name}
-            {comingSoon && <span class="settings-messenger-tag"><Tag boxed size="medium" tone="idle" label={t("settings.messengers.comingSoon")} /></span>}
+            {comingSoon && <Tag boxed size="medium" tone="idle" label={t("settings.messengers.comingSoon")} />}
           </h2>
           <button class="settings-text-action" disabled={comingSoon || (pairing === id ? unlink.isPending : !canConnect)} onClick={() => { if (comingSoon) return; setRemoving(null); setPairing(pairing === id ? null : id); }}>
             {pairing === id ? t("settings.messengers.closeSetup") : links.length ? t("settings.messengers.connectAnother") : t("settings.messengers.connect", { name })}

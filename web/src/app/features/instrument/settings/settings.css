@@ -26,7 +26,7 @@
 }
 .settings h1 { font-size: 1.3rem; text-transform: lowercase; }
 .settings h2 { margin-top: 2.5rem; font-size: 1rem; font-weight: 500; }
-.settings p { line-height: 1.7; }
+.settings p:not(.gsv-prose) { line-height: 1.7; }
 .settings-intro { max-width: 65ch; color: var(--text-dim); margin-bottom: 2rem; font-family: var(--gsv-font-prose); font-size: 1rem; }
 .settings-intro a { text-decoration: underline; text-underline-offset: .2em; }
 .settings-muted, .settings small { color: var(--text-dim); }
@@ -40,7 +40,7 @@
 .settings .gsv-fld .gsv-fld-desc { max-width: none; }
 .settings-field-note { margin: -1rem 0 1.5rem; max-width: 42rem; color: var(--text-dim); font-size: .75rem; }
 /* design-system controls dim their own disabled state */
-.settings button:disabled:not(.gsv-sel-trig):not(.gsv-ti-btn):not(.gsv-ti-x) { opacity: .45; cursor: not-allowed; }
+.settings button:disabled:not(.gsv-btn):not(.gsv-sel-trig):not(.gsv-ti-btn):not(.gsv-ti-x) { opacity: .45; cursor: not-allowed; }
 .settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; font-size: .75rem; color: var(--text-dim); }
 .settings-form { padding-bottom: 2rem; }
 .settings-check { flex-direction: row !important; align-items: center !important; }
@@ -101,13 +101,13 @@
 .settings-login-code { color: var(--text); letter-spacing: .15em; }
 .settings-telegram { padding-bottom: 1rem; }
 .settings-telegram-flow { margin-top: .25rem; }
+/* A disabled fieldset does not reach anchors; keep the DS link-button in step. */
+.settings fieldset:disabled a.gsv-btn { pointer-events: none; opacity: .45; }
 /* the console shell spaces a step's text from its field with a flex gap; the compact shell has no such gap */
-.settings-telegram-flow .gsv-cf-desc { margin-bottom: 1.25rem; }
 .settings-messenger { padding-bottom: 1rem; }
 .settings-messenger-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
 .settings-messenger-heading h2 { margin: 0; }
 .settings-messenger-name { display: inline-flex; align-items: center; gap: .5rem; }
-.settings-messenger-tag { display: inline-block; margin-left: .75rem; vertical-align: middle; }
 .settings-messenger-links { margin: 0; }
 .settings-list > li.settings-messenger-state { flex-direction: row; align-items: center; gap: 0; }
 .settings-messenger-status { display: inline-flex; align-items: center; gap: .5rem; letter-spacing: .12em; color: var(--text-dim); }

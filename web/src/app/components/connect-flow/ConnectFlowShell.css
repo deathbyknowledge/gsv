@@ -78,26 +78,12 @@
   margin-top: -8px;
 }
 
-/* An alert that opens a step sits a little clear of the step title. */
-.gsv-cf-step-title + .gsv-alert {
-  margin-top: 6px;
-}
-
-/* A note that trails an alert: same width as the alert, a little more air above it. */
-.gsv-alert + .gsv-cf-note {
-  margin-top: 4px;
-}
+/* A note that trails an alert: same width as the alert, dim prose. The step column's gap spaces it. */
 .gsv-cf-note {
   min-width: 0;
   margin: 0;
   color: var(--prose-dim);
   overflow-wrap: anywhere;
-}
-
-/* The footer buttons sit clear of an alert or its note. */
-.gsv-alert + .gsv-cf-footer,
-.gsv-cf-note + .gsv-cf-footer {
-  margin-top: 10px;
 }
 
 /* Shared step building blocks ----------------------------------------------- */
