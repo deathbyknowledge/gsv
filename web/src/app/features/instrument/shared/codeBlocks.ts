@@ -16,7 +16,8 @@ export function enhanceCodeBlocks(container: HTMLElement): void {
     header.className = "markdown-code-header";
     const language = document.createElement("span");
     language.textContent = [...code.classList].find((name) => name.startsWith("language-"))?.slice(9) ?? "";
-    if (language.textContent === "text") block.classList.add("is-plain-text");
+    // Untagged fences carry prose more often than code; let them wrap at every width.
+    if (language.textContent === "" || language.textContent === "text") block.classList.add("is-plain-text");
     const actions = document.createElement("span");
     actions.className = "markdown-code-actions";
     const status = document.createElement("span");

@@ -39,7 +39,7 @@
   color: var(--text-hi);
 }
 .markdown-code-block.is-plain-text pre { white-space: pre-wrap; text-wrap: wrap; overflow-wrap: anywhere; }
-@media (max-width: 720px) {
+@container instrument (max-width: 720px) {
   .markdown-code-block pre { white-space: pre-wrap; text-wrap: wrap; overflow-wrap: anywhere; }
 }
 .markdown-code-block pre:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }

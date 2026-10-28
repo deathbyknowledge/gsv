@@ -12,7 +12,7 @@ canonical message records the relevant PID and run ID, but killing that Process 
 conversation. Users can inspect the referenced Process while it exists or read its archive later.
 
 Web and Desktop render Ship's Markdown code blocks at a readable monospace size with a copy action.
-Long lines wrap on narrow viewports and scroll inside the block on wide ones. Copy preserves
+Blocks without a language tag, and `text` blocks, wrap at every width; tagged code wraps when the Instrument column is narrow and scrolls inside the block on wide ones. Copy preserves
 indentation and internal line breaks without adding the renderer's final newline to the clipboard.
 Chat renders human messages as plain text with clickable web URLs. External web links in human
 messages and Ship's Markdown replies open in a new tab.
