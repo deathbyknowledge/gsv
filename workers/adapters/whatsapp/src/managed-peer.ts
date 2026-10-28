@@ -1031,7 +1031,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         parts.push(async () => (await part(index)).messageId);
       };
       const addText = (body: string): void => {
-        addPart((index) => send({ to, type: "text", text: { preview_url: false, body } }, index));
+        addPart((index) => send({ to, type: "text", text: { preview_url: true, body } }, index));
       };
       // The provider id reported for the delivery: the message that carries
       // the approval buttons when there are any, otherwise the first message.
