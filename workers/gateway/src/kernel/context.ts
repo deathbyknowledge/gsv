@@ -48,6 +48,7 @@ import type { ShipCallNonces } from "./ships/auth";
 import type { ShipIdentity } from "./ships/identity";
 import type { ProfileStore } from "./profile-store";
 import type { ApproachStore } from "./approach-store";
+import type { LinkPreviews } from "./link-previews";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import type { InstallationIdentity } from "../installation/identity";
 import type { KernelConnection, KernelConnectionState } from "./connection";
@@ -97,6 +98,8 @@ export type KernelContext = {
   shipCallNonces: ShipCallNonces;
   profiles: ProfileStore;
   approaches: ApproachStore;
+  /** Page metadata and images fetched for links in conversation messages. */
+  linkPreviews: LinkPreviews;
   scheduleApproachMaintenance: () => Promise<void>;
   connection: KernelConnection<KernelConnectionState> | null;
   peer?: PeerContext;

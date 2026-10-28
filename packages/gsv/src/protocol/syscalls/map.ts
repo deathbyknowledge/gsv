@@ -286,6 +286,10 @@ import type {
   ConversationListResult,
   ConversationMediaReadArgs,
   ConversationMediaReadResult,
+  ConversationLinkPreviewArgs,
+  ConversationLinkPreviewResult,
+  ConversationLinkImageArgs,
+  ConversationLinkImageResult,
   ConversationSendArgs,
   ConversationSendResult,
 } from "./conversation";
@@ -371,6 +375,8 @@ export type SyscallDomains = {
   "conversation.search": { args: ConversationSearchArgs; result: ConversationSearchResult };
   "conversation.send": { args: ConversationSendArgs; result: ConversationSendResult };
   "conversation.media.read": { args: ConversationMediaReadArgs; result: ConversationMediaReadResult };
+  "conversation.link.preview": { args: ConversationLinkPreviewArgs; result: ConversationLinkPreviewResult };
+  "conversation.link.image": { args: ConversationLinkImageArgs; result: ConversationLinkImageResult };
 
   "profile.get": { args: ProfileGetArgs; result: ProfileGetResult };
   "profile.update": { args: ProfileUpdateArgs; result: ProfileUpdateResult };

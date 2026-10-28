@@ -342,7 +342,7 @@ function ownedConversation(id: string | undefined, ctx: KernelContext): Conversa
   return conversation;
 }
 
-function requireConversationClient(ctx: KernelContext): number {
+export function requireConversationClient(ctx: KernelContext): number {
   if (principalOf(ctx)?.kind !== "human" || ctx.processId) {
     throw new Error("Conversation operations require a direct user client");
   }

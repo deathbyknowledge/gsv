@@ -690,6 +690,8 @@ conversation ownership checks. Delegated processes do not inherit this read auth
 | `conversation.search` | Conversation DO | Searches retained message indexes, newest matches first. Defaults to the caller's Ship. Only new messages are indexed; older search entries are pruned under storage pressure without deleting their original history. Archival alone does not remove a search entry. |
 | `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
+| `conversation.link.preview` | Kernel | Returns Open Graph style metadata for an http(s) link in a message: title, description, site name, and an optional image. The Kernel fetches only public hosts on the default port, checks every redirect hop, reads at most the page head, and caches the result for 7 days, or a failure for 1 hour. A failure names its category: `unsupported`, `blocked`, `unreachable`, `too-large`, or `timeout`. Direct user clients only. |
+| `conversation.link.image` | Kernel | Returns the bytes of a preview image as the frame body. The key is the opaque `image.key` from a cached preview; images are PNG, JPEG, GIF, WebP, or AVIF of at most 2 MiB, stored in the installation's R2 namespace. Direct user clients only. |
 
 ```ts
 type ConversationKind = "ship" | "work" | "group" | "contact";
@@ -751,6 +753,26 @@ type ConversationSyscalls = {
   "conversation.media.read": {
     args: { conversationId: string; key: string };
     result: { ok: true; conversationId: string; key: string; mimeType: string; size: number } | OperationError;
+  };
+  "conversation.link.preview": {
+    args: { url: string };
+    result:
+      | {
+          ok: true;
+          preview: {
+            url: string;
+            resolvedUrl: string;
+            title?: string;
+            description?: string;
+            siteName?: string;
+            image?: { key: string; mimeType: string; size: number; width?: number; height?: number };
+          };
+        }
+      | OperationError;
+  };
+  "conversation.link.image": {
+    args: { key: string };
+    result: { ok: true; key: string; mimeType: string; size: number } | OperationError;
   };
 };
 ```

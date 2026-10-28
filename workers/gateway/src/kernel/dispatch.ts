@@ -172,6 +172,7 @@ import {
   handleConversationMediaRead,
   handleConversationSend,
 } from "./conversation-handlers";
+import { handleConversationLinkImage, handleConversationLinkPreview } from "./link-preview-handlers";
 import {
   handleContactAliasSet,
   handleContactDeliveryGet,
@@ -486,6 +487,16 @@ async function dispatchKernel(
           id: frame.id,
           ok: true,
           ...await handleConversationMediaRead(frame.args, ctx),
+        };
+      case "conversation.link.preview":
+        data = await handleConversationLinkPreview(frame.args, ctx);
+        break;
+      case "conversation.link.image":
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleConversationLinkImage(frame.args, ctx),
         };
 
       case "proc.list":

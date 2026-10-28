@@ -167,6 +167,7 @@ import { SERVER_VERSION } from "../version";
 import { parseInstallationId } from "../installation/identity";
 import type { InstallationIdentity } from "../installation/identity";
 import { createInstallationStorage } from "../installation/storage";
+import { LinkPreviews } from "./link-previews";
 import { createInstallationRipgit } from "../installation/ripgit";
 import {
   DurableTaskScheduler,
@@ -468,6 +469,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly federation: FederationStore;
   readonly profiles: ProfileStore;
   readonly approaches: ApproachStore;
+  readonly linkPreviews: LinkPreviews;
   readonly shipIdentity: ShipIdentity;
   readonly didDocuments: DidDocumentStore;
   readonly shipCallNonces: ShipCallNonces;
@@ -574,6 +576,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);
+    this.linkPreviews = new LinkPreviews(sql, this.installationStorage);
     this.shipIdentity = new ShipIdentity(ctx.storage);
     this.didDocuments = new DidDocumentStore(sql);
     this.shipCallNonces = new ShipCallNonces(sql);
@@ -1677,6 +1680,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       shipCallNonces: this.shipCallNonces,
       profiles: this.profiles,
       approaches: this.approaches,
+      linkPreviews: this.linkPreviews,
       scheduleApproachMaintenance: () => this.scheduleApproachMaintenance(),
       connection: options.connection ?? null,
       peer: options.peer,

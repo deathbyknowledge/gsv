@@ -195,6 +195,43 @@ export type ConversationMediaReadResult =
     }
   | { ok: false; error: string };
 
+export type ConversationLinkPreviewArgs = {
+  /** Absolute http(s) URL as written in the message. */
+  url: string;
+};
+
+export type ConversationLinkPreviewImage = {
+  /** Opaque key for `conversation.link.image`, scoped to the installation. */
+  key: string;
+  mimeType: string;
+  size: number;
+  width?: number;
+  height?: number;
+};
+
+/** Open Graph style metadata the Kernel read from the page. Absent fields mean the page offered none. */
+export type ConversationLinkPreview = {
+  url: string;
+  /** The page URL after redirects. */
+  resolvedUrl: string;
+  title?: string;
+  description?: string;
+  siteName?: string;
+  image?: ConversationLinkPreviewImage;
+};
+
+export type ConversationLinkPreviewResult =
+  | { ok: true; preview: ConversationLinkPreview }
+  | { ok: false; error: string };
+
+export type ConversationLinkImageArgs = {
+  key: string;
+};
+
+export type ConversationLinkImageResult =
+  | { ok: true; key: string; mimeType: string; size: number }
+  | { ok: false; error: string };
+
 export type ConversationMessageStartedSignal = {
   conversationId: string;
   messageId: string;
