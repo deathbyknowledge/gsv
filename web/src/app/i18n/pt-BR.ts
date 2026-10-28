@@ -1204,7 +1204,7 @@ export const ptBR = {
   "session.welcome.signInWithEmail": "Entrar com e-mail",
   "session.welcome.sendCode": "Enviar código",
   "session.welcome.confirm": "Confirmar",
-  "session.welcome.codeSent": "Digite o código enviado para {email}.",
+  "session.welcome.codeSent": "Digite o código enviado para {email}. Confira também sua pasta de spam.",
   "session.welcome.invitationPrompt": "Entre ou crie seu Ship para se conectar.",
   "session.welcome.handle": "Nome de usuário",
   "session.welcome.handlePlaceholder": "seu-nome",

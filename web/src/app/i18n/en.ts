@@ -1198,7 +1198,7 @@ export const en = {
   "session.welcome.signInWithEmail": "Sign in with email",
   "session.welcome.sendCode": "Send code",
   "session.welcome.confirm": "Confirm",
-  "session.welcome.codeSent": "Enter the code sent to {email}.",
+  "session.welcome.codeSent": "Enter the code sent to {email}. Check your spam folder too.",
   "session.welcome.invitationPrompt": "Sign in or create your Ship to connect.",
   "session.welcome.handle": "Handle",
   "session.welcome.handlePlaceholder": "your-name",
