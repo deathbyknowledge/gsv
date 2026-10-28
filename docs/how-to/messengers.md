@@ -120,13 +120,12 @@ confirmed author and observed destination.
 Ship uses one operator-owned WhatsApp Business number on the WhatsApp Business
 Platform. You message that number from your own WhatsApp account.
 
-1. In Ship, open **Settings → Messengers → WhatsApp**. It shows the Ship number
-   and an **Open WhatsApp** button that starts a chat with it, with the pairing
-   message already filled in.
+1. In Ship, open **Settings → Messengers → WhatsApp** and choose **Connect**.
+   It opens a chat with the Ship number, with the pairing message already filled
+   in. To message Ship manually instead, send `/link` to the number shown under
+   the instructions.
 2. Send that message. It replies with instructions and a separate code-only
-   message you can copy. The code expires in 10 minutes. If your number is
-   already connected to another Ship, sending the same message gets you a fresh
-   code.
+   message you can copy. The code expires in 10 minutes.
 3. Enter the code back in Ship. Ship shows the WhatsApp profile name and the
    masked number that requested it.
 4. Confirm only if that is your WhatsApp number. The code alone cannot choose a

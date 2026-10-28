@@ -125,15 +125,12 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(currentFlow().title).toBe("Connect WhatsApp");
     const allNodes = currentFlow().steps.flatMap((step) => flowStepNodes(currentFlow(), step.key));
     expect(allNodes.some((node) => node.props.label === "ACCESS TOKEN")).toBe(false);
-    const instructions = nodes().find((node) => node.props.text?.includes("+34600000000"));
+    const instructions = nodes().find((node) => node.props.text?.includes("Clicking \"Connect\""));
     expect(instructions?.props.text).toBe(
-      "Open WhatsApp below and send the message that's already filled in to +34600000000. Ship replies with a short-lived code.",
+      "Clicking \"Connect\" will send a message to Ship. Ship will reply with a short-lived connection code.",
     );
-    expect(instructions?.props.text).not.toContain("/link");
-    expect(collectText(nodes())).toContain(
-      "Already connected to another Ship from this number? Sending that same message gets you a fresh code.",
-    );
-    const open = nodeWithLabel(nodes(), "OPEN WHATSAPP");
+    expect(collectText(nodes())).toContain("To message Ship manually, send \"/link\" to +34600000000.");
+    const open = nodeWithLabel(nodes(), "CONNECT");
     expect(open.props.href).toBe("https://wa.me/34600000000?text=%2Flink");
     expect(open.props.variant).toBe("primary");
     expect(nodeWithLabel(nodes(), "I HAVE A CODE").props.variant).toBe("secondary");

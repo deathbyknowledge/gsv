@@ -157,12 +157,12 @@ function ManagedMessengerOnboardingFlow({
   const firstStepText = installsApp
     ? t(isDiscord ? "settings.pairing.installDiscord" : "settings.pairing.installSlack")
     : isWhatsApp
-      ? chatNumber ? t("settings.pairing.whatsappStartNumber", { number: chatNumber }) : t("settings.pairing.whatsappStart")
+      ? t("settings.pairing.whatsappStart")
       : t("settings.pairing.telegramStart");
   const launchLabel = installsApp
     ? info.data?.installUrl ? t("settings.pairing.installIn", { platform: platform.toUpperCase() }) : t("settings.pairing.viewSetup", { platform: platform.toUpperCase() })
     : isWhatsApp
-      ? info.data?.installUrl ? t("settings.pairing.open", { name: "WHATSAPP" }) : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
+      ? info.data?.installUrl ? t("settings.pairing.connect") : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
       : t("settings.pairing.open", { name: botUsername ? `@${botUsername}` : "TELEGRAM" });
   // WhatsApp's chat link carries the pairing message, so opening it is the step.
   const launchLeads = isWhatsApp && Boolean(info.data?.installUrl);
@@ -218,7 +218,7 @@ function ManagedMessengerOnboardingFlow({
               title={t("settings.pairing.startIn", { platform: platform.toUpperCase() })}
               text={firstStepText}
             />
-            {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.whatsappRelink")}</p> : null}
+            {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{chatNumber ? t("settings.pairing.whatsappManual", { number: chatNumber }) : t("settings.pairing.whatsappManualNoNumber")}</p> : null}
             {info.isError ? (
               <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform })} />
             ) : !info.data?.configured ? (
