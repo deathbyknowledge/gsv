@@ -78,6 +78,7 @@ Ship writes the brief; the owner sees it in the approval.
 ```yaml
 to: "+34 910 000 000"
 business: "Restaurante Lúa"              # how the agent addresses the callee
+on_behalf_of: Esteve Jamez               # the name in the opening line
 goal: Reserve a table for 4 on Friday 31 October, around 21:00
 may_share:                               # facts the agent may say
   - The reservation name is Esteve
@@ -94,8 +95,10 @@ max_minutes: 6                           # capped by the entitlement
 `phone.call` validates the brief structurally and bounds every field. It does not
 judge whether a goal is sensible; that is the owner's approval.
 
+Ship fills `on_behalf_of` from the owner's profile or memory, so the name
+callers hear is part of what the owner approves; there is no separate setting.
 The voice agent's instructions are rendered by the Kernel from a template in
-`workers/gateway/src/prompts/phone/`, with the owner's display name and the brief.
+`workers/gateway/src/prompts/phone/` and the brief.
 The template is production prompt text and follows the protected-prompt rules.
 
 ## Calls and the voice agent
@@ -133,11 +136,14 @@ telephony format. Audio is held only in memory while relayed.
 
 ### Opening and disclosure
 
-The agent's first words are fixed by the template, not chosen by the model:
+The agent's first words are fixed by the template, not chosen by the model,
+and spoken in the brief's language (or the destination country's):
 
-> Hi, this is Ship, an AI assistant calling for Esteve. This call is transcribed.
+> Hi, I'm an AI assistant calling on behalf of Esteve Jamez. Just so you know,
+> this call is transcribed.
 
-The agent never claims to be human and answers truthfully if asked.
+The opening does not say "Ship": a product name means nothing to the callee. The
+agent never claims to be human and answers truthfully if asked.
 
 ### Agent tools
 
@@ -164,9 +170,12 @@ The voice agent has exactly three tools:
  voice agent ◄── answer as a session message ◄─────────┘
 ```
 
-The question has a deadline, 45 seconds by default. Until then the agent keeps
-the line ("one moment, I'm checking"). If no answer arrives, the agent says it
-will call back and ends the call with `callback_needed`. Ship then records the
+The deadline applies only while a question is open, never to ordinary turns,
+which stay real time. It is 45 seconds by default. The agent says it is checking
+when it asks, checks in about every 15 seconds ("still checking, thanks for
+waiting"), and offers to call back sooner if the callee needs to go. If no answer
+arrives, the agent says it will call back and ends the call with
+`callback_needed`. Ship then records the
 follow-up in r12y. Whichever answer arrives first wins; later answers for the
 same question are rejected.
 
@@ -207,6 +216,9 @@ says so.
 
 - `phone.call` gets a default approval rule of **ask**, alongside `mail.send`
   and `atproto.write`. The approval shows the number, the business and the brief.
+- There is no "always allow" for calls in the first release. Each call has its
+  own brief, so allowing a number would approve briefs the owner never saw; the
+  approval is also the owner's review of what will be said in their name.
 - Every other `phone.*` syscall acts on an existing call owned by the same human
   and needs no approval.
 - Schedules that would place a call need their own approval.
@@ -297,22 +309,21 @@ an owner calling their own Ship) are a later RFC.
 - Cancelling a run never hangs up a call; only `phone.end`, the agent, the
   callee or the time cap end it.
 
+## Decisions
+
+1. **Realtime provider:** OpenAI Realtime, which is expected to take telephony
+   μ-law audio directly. The interface stays model-neutral.
+2. **Question deadline:** 45 seconds, only while a question is open, with
+   check-ins every 15 seconds.
+3. **Approval:** every call asks; no "always allow" in the first release.
+4. **Name in the opening:** `on_behalf_of` in the approved brief.
+5. **Transcription disclosure:** the opening line says the call is transcribed;
+   no further legal review is planned for the first release.
+
 ## Open questions
 
-1. **Realtime provider.** OpenAI Realtime or Gemini Live. OpenAI is expected to
-   accept and return telephony μ-law audio directly; Gemini Live needs PCM, so
-   the Durable Object would convert both ways. Measure latency on real calls
-   before deciding.
-2. **Question deadline.** 45 seconds covers a Ship generation and a quick owner
-   reply. Is that too long for a callee to wait?
-3. **Transcription disclosure.** Some places treat a transcript like a
-   recording for consent. Confirm the opening line with counsel.
-4. **Always allow.** Should an approval offer "always allow this number", or
-   should every call ask in the first release?
-5. **Keypad.** Twilio's bidirectional streams may not carry DTMF; sending tones
+1. **Keypad.** Twilio's bidirectional streams may not carry DTMF; sending tones
    could require briefly redirecting the call. Confirm during the build.
-6. **Owner's name in the opening.** Profile display name, handle, or a name
-   the owner sets for calls.
 
 ## Non-goals
 
