@@ -50,16 +50,21 @@ pub(crate) async fn run(
         return Ok(());
     }
     let now = render::now_ms();
-    let mut table = Table::new(&["When", "Who", "Where", "What", "", "Took"]).flex(3);
+    let mut table = Table::new(&["When", "Who", "Where", "What", "", "Took"])
+        .flex(3)
+        .limit(1, 14)
+        .limit(2, 18);
     for line in lines {
         let who = match (text(line, "principalKind"), opt_text(line, "pid")) {
             (_, Some(pid)) => format!("work {}", render::short_id(pid)),
             ("human", None) => "you".to_string(),
             (kind, None) => kind.to_string(),
         };
+        let call_name = text(line, "call");
+        let did = super::activity_labels::label(call_name).unwrap_or(call_name);
         let what = match opt_text(line, "purpose") {
-            Some(purpose) => format!("{} — {purpose}", text(line, "call")),
-            None => text(line, "call").to_string(),
+            Some(purpose) => format!("{did} — {}", render::one_line(purpose)),
+            None => did.to_string(),
         };
         table.row(vec![
             Cell::new(

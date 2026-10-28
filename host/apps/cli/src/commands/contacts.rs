@@ -77,7 +77,9 @@ pub(crate) async fn run(
                 );
                 return Ok(());
             }
-            let mut table = Table::new(&["Name", "Handle", "Last message", ""]).flex(1);
+            let mut table = Table::new(&["Name", "Handle", "Last message", ""])
+                .flex(1)
+                .limit(0, 24);
             for contact in list {
                 let last = [
                     number(contact, "lastReceivedAtMs"),
@@ -140,7 +142,7 @@ pub(crate) async fn run(
             }
             let known = contacts(&client).await?;
             let me = remote::me(&client)?.uid as i64;
-            let mut table = Table::bare().flex(3);
+            let mut table = Table::bare().flex(3).limit(1, 24);
             let mut unread = 0;
             for entry in entries {
                 let contact_id = text(entry, "contactId");
@@ -192,7 +194,7 @@ pub(crate) async fn run(
                         },
                     ),
                     Cell::new(when, Tone::Dim),
-                    line.into(),
+                    render::one_line(&line).into(),
                 ]);
             }
             let note = if unread > 0 {

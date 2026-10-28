@@ -58,7 +58,9 @@ pub(crate) async fn run(
                     text(target, "label").to_lowercase(),
                 )
             });
-            let mut table = Table::new(&["Name", "Kind", "Status", "Id"]).flex(0);
+            let mut table = Table::new(&["Name", "Kind", "Status", "Id"])
+                .flex(0)
+                .limit(3, 28);
             for target in &targets {
                 let status = if remote::flag(target, "online") {
                     Cell::new("online", Tone::Good)

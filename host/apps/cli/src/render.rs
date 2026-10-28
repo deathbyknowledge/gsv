@@ -38,10 +38,11 @@ impl Style {
         let terminal = std::io::stdout().is_terminal();
         Self {
             color: terminal && color_allowed(),
+            // Piped output keeps the same shape as a default terminal.
             width: if terminal {
                 terminal_width()
             } else {
-                env_width().unwrap_or(usize::MAX)
+                env_width().unwrap_or(DEFAULT_WIDTH)
             },
         }
     }
@@ -337,6 +338,7 @@ pub(crate) struct Table {
     headers: Option<Vec<String>>,
     rows: Vec<Vec<Cell>>,
     flex: usize,
+    limits: Vec<(usize, usize)>,
 }
 
 impl Table {
@@ -345,6 +347,7 @@ impl Table {
             headers: Some(headers.iter().map(|header| header.to_string()).collect()),
             rows: Vec::new(),
             flex: headers.len().saturating_sub(1),
+            limits: Vec::new(),
         }
     }
 
@@ -353,12 +356,20 @@ impl Table {
             headers: None,
             rows: Vec::new(),
             flex: usize::MAX,
+            limits: Vec::new(),
         }
     }
 
     /// Marks the column that shrinks to fit the terminal width.
     pub(crate) fn flex(mut self, column: usize) -> Self {
         self.flex = column;
+        self
+    }
+
+    /// Caps a column, such as a sender's name, so one long value can't push
+    /// the flexible column off the screen.
+    pub(crate) fn limit(mut self, column: usize, width: usize) -> Self {
+        self.limits.push((column, width));
         self
     }
 
@@ -402,6 +413,11 @@ impl Table {
                 .max()
                 .unwrap_or(0);
             *width = header.max(cells);
+        }
+        for (column, limit) in &self.limits {
+            if let Some(width) = widths.get_mut(*column) {
+                *width = (*width).min(*limit);
+            }
         }
         let gaps = width_of(COLUMN_GAP) * columns.saturating_sub(1);
         let fixed: usize = widths
@@ -551,6 +567,23 @@ mod tests {
             match_id(&ids, "proc:8f9b0000", |id| id.as_str(), "process"),
             Ok(&ids[1])
         );
+    }
+
+    #[test]
+    fn limited_columns_stop_one_long_value_pushing_the_table_wide() {
+        let mut table = Table::new(&["From", "Subject", "When"])
+            .flex(1)
+            .limit(0, 10);
+        table.row(vec![
+            "A sender with a very long name".into(),
+            "s".repeat(200).into(),
+            "2 h ago".into(),
+        ]);
+        let rendered = table.render(&Style::plain(60));
+        let row = rendered.lines().nth(1).expect("row");
+        assert!(row.starts_with("A sender …  sss"), "{row}");
+        assert!(row.ends_with("…  2 h ago"), "{row}");
+        assert_eq!(width_of(row), 60);
     }
 
     #[test]

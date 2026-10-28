@@ -1,5 +1,6 @@
 pub(crate) mod account;
 pub(crate) mod activity;
+mod activity_labels;
 pub(crate) mod approvals;
 pub(crate) mod contacts;
 pub(crate) mod files;
