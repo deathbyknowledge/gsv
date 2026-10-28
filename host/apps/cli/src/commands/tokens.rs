@@ -139,10 +139,13 @@ pub(crate) async fn run(
             }
             let result = call(&client, "sys.token.revoke", args).await?;
             if out.json {
-                return render::print_json(&result);
+                render::print_json(&result)?;
             }
             if !remote::flag(&result, "revoked") {
                 return Err(format!("No active token has the id {token_id}.").into());
+            }
+            if out.json {
+                return Ok(());
             }
             println!("Revoked {token_id}.");
             Ok(())

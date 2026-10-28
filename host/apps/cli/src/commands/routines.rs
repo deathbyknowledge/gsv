@@ -468,13 +468,14 @@ pub(crate) async fn run(
             )
             .await?;
             if out.json {
-                return render::print_json(&result);
+                render::print_json(&result)?;
             }
             let name = text(&schedule, "name");
             match items(&result, "results").first() {
                 Some(run) if text(run, "status") == "error" => {
                     return Err(format!("{name} failed: {}", text(run, "error")).into())
                 }
+                _ if out.json => {}
                 Some(run) if text(run, "status") == "skipped" => {
                     println!("{name} is already running, so this run was skipped.")
                 }

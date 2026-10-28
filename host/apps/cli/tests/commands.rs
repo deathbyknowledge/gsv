@@ -915,3 +915,35 @@ async fn contacts_send_json_still_fails_when_delivery_fails() {
     let printed: Value = serde_json::from_slice(&output.stdout).expect("JSON output");
     assert_eq!(printed["state"], "failed");
 }
+
+#[tokio::test]
+async fn json_output_keeps_the_exit_status_of_a_failed_run_or_revoke() {
+    fn answer(call: &str, _: &Value) -> Value {
+        match call {
+            "sched.list" => {
+                json!({ "schedules": [{ "id": "sched:9a1b", "name": "Morning brief", "enabled": true,
+                "schedule": { "kind": "every", "everyMs": 86_400_000 }, "createdAtMs": 0 }], "count": 1 })
+            }
+            "sched.run" => {
+                json!({ "results": [{ "status": "error", "error": "The target is offline." }] })
+            }
+            "sys.token.revoke" => json!({ "revoked": false }),
+            _ => json!({}),
+        }
+    }
+    let (url, _) = ship(answer).await;
+    let cli = Cli::signed_in(&url);
+    let output = cli.run(&["routines", "run", "sched:9a1b", "--json"]).await;
+    show("gsv routines run --json (failed)", &output);
+    assert!(!output.status.success());
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("JSON output");
+    assert_eq!(printed["results"][0]["status"], "error");
+
+    let output = cli
+        .run(&["auth", "token", "revoke", "tok-gone", "--json"])
+        .await;
+    show("gsv auth token revoke --json (unknown)", &output);
+    assert!(!output.status.success());
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("JSON output");
+    assert_eq!(printed["revoked"], false);
+}
