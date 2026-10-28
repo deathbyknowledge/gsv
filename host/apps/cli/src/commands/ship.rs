@@ -18,6 +18,7 @@ use super::account::release_hint;
 use super::activity_labels;
 use super::approvals::render_request;
 use crate::cli::ShipAction;
+use crate::markdown::{self, Markdown};
 use crate::remote::{self, call, items, number, text, DynError, Output};
 use crate::render::{self, Style, Tone};
 
@@ -39,6 +40,8 @@ struct Screen {
     mid_line: bool,
     /// Tool calls in flight, by call id, with the line to print when each ends.
     tools: HashMap<String, String>,
+    /// Renders the reply when stdout is a terminal.
+    markdown: Markdown,
 }
 
 impl Screen {
@@ -51,6 +54,11 @@ impl Screen {
     }
 
     fn end_line(&mut self) {
+        let rest = self.markdown.finish();
+        if !rest.is_empty() {
+            print!("{rest}");
+            self.mid_line = true;
+        }
         if self.mid_line {
             println!();
             let _ = io::stdout().flush();
@@ -193,7 +201,14 @@ impl ChatState {
             spinner: !json
                 && io::stderr().is_terminal()
                 && std::env::var("TERM").map_or(true, |term| term != "dumb"),
-            screen: Mutex::new(Screen::default()),
+            screen: Mutex::new(Screen {
+                markdown: Markdown::new(
+                    !json && io::stdout().is_terminal(),
+                    Style::stdout().colored(),
+                    markdown::hyperlinks_supported(),
+                ),
+                ..Screen::default()
+            }),
             hil_requests,
         }
     }
@@ -205,6 +220,7 @@ impl ChatState {
         if let Ok(mut screen) = self.screen.lock() {
             screen.waiting = None;
             screen.clear_spinner();
+            let text = screen.markdown.push(text);
             print!("{text}");
             let _ = io::stdout().flush();
             if !text.is_empty() {

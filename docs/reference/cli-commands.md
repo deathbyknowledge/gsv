@@ -132,6 +132,12 @@ runs, a spinner on stderr says what is happening; it appears only when
 stderr is a terminal and never with `--json`, and it is erased before
 anything else prints.
 
+On a terminal, replies are rendered line by line as they arrive: headings in
+bold, `•` bullets, quotes behind `│`, code blocks indented without their
+fences, inline bold, italic and code, and links as `text (url)`, or as
+clickable links in terminals known to support them. Tables are left as
+written. Piped replies stay raw Markdown.
+
 Piped input counts as the message:
 
 ```bash

@@ -702,6 +702,13 @@ async fn a_terminal_shows_a_spinner_that_never_shares_a_line_with_the_reply() {
         "{screen:?}"
     );
     assert!(screen.contains("· read a file (failed)\n"), "{screen:?}");
+    // On a terminal the reply is rendered, and the unfinished last line
+    // still prints when the run ends.
+    assert!(
+        screen.contains("Two meetings.\n• 9:00 standup"),
+        "{screen:?}"
+    );
+    assert!(!screen.contains("**"), "{screen:?}");
     // Every spinner frame is erased before anything else is written.
     for after in screen.split('…').skip(1) {
         assert!(after.starts_with("\r\u{1b}[2K"), "{after:?}");

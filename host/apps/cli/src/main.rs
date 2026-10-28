@@ -5,6 +5,7 @@ mod commands;
 mod desktop;
 mod device;
 mod local_config;
+mod markdown;
 mod pairing;
 mod remote;
 mod render;

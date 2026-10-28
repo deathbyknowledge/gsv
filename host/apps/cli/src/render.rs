@@ -64,6 +64,11 @@ impl Style {
         }
     }
 
+    /// Whether this stream gets terminal styles.
+    pub(crate) fn colored(&self) -> bool {
+        self.color
+    }
+
     pub(crate) fn width(&self) -> usize {
         self.width
     }
