@@ -399,6 +399,32 @@ pub(crate) async fn update(url: &str, auth: GatewayAuth, out: Output) -> Result<
     Ok(())
 }
 
+/// Redeems the code a messenger sends someone it doesn't know yet, which
+/// links that messenger identity to this account.
+pub(crate) async fn link_messenger(
+    url: &str,
+    auth: GatewayAuth,
+    code: String,
+    out: Output,
+) -> Result<(), DynError> {
+    let client = remote::connect(url, auth).await?;
+    let result = call(&client, "sys.link.consume", json!({ "code": code.trim() })).await?;
+    if out.json {
+        return render::print_json(&result);
+    }
+    if !remote::flag(&result, "linked") {
+        return Err(
+            "That code didn't link anything. Message your Ship again for a new one.".into(),
+        );
+    }
+    let adapter = result
+        .get("link")
+        .and_then(|link| remote::opt_text(link, "adapter"))
+        .unwrap_or("messenger");
+    println!("Linked. Your {adapter} messages now reach your Ship.");
+    Ok(())
+}
+
 /// Forgets this computer on the Ship, which revokes its credential, then
 /// removes the background service and the saved credential here.
 pub(crate) async fn unpair(

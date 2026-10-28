@@ -299,6 +299,14 @@ pub(crate) enum Commands {
 
 impl Commands {
     /// The replacement for a removed command, printed instead of running it.
+    /// The code in `gsv auth link CODE`, the one `auth` form that remains.
+    pub(crate) fn link_code(rest: &[String]) -> Option<&str> {
+        match rest {
+            [link, code] if link == "link" && !code.starts_with('-') => Some(code),
+            _ => None,
+        }
+    }
+
     pub(crate) fn removed_pointer(&self) -> Option<String> {
         fn first(rest: &[String]) -> &str {
             rest.first().map(String::as_str).unwrap_or_default()
@@ -316,6 +324,8 @@ impl Commands {
             Self::Adapter { .. } => {
                 "`gsv adapter` was removed. Connect messengers in the web app, under Settings."
             }
+            // A messenger's link challenge hands out a code to redeem here.
+            Self::Auth { rest } if Self::link_code(rest).is_some() => return None,
             Self::Auth { rest } => match first(rest) {
                 "login" => "`gsv auth login` is now `gsv login`, for example: gsv login me.ship.space",
                 "logout" => "`gsv auth logout` is now `gsv logout`.",
