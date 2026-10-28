@@ -107,8 +107,8 @@ describe("managed Kernel mailbox", () => {
       expect(storage.bytes(stored.rawPath.slice(1))).toEqual(aliasRaw);
       expect(ctx.mailboxes.getPrimaryMailbox()).toEqual(mailbox);
       expect(managedMailAddressForOwner(1000, ctx)).toBe(first.envelope.to);
-      expect(ctx.mailboxes.list(1000).count).toBe(2);
-      expect(ctx.mailboxes.list(1001).count).toBe(0);
+      expect(ctx.mailboxes.list(1000).messages).toHaveLength(2);
+      expect(ctx.mailboxes.list(1001).messages).toHaveLength(0);
 
       const completion = {
         version: 1,
@@ -154,11 +154,11 @@ describe("managed Kernel mailbox", () => {
         ctx,
       );
       expect(replay).toEqual(accepted);
-      expect(ctx.mailboxes.list(1000).count).toBe(1);
+      expect(ctx.mailboxes.list(1000).messages).toHaveLength(1);
       expect(ctx.mailboxes.getIntake("intake-retry")).toMatchObject({
         messageId: accepted.messageId,
       });
-      expect(ctx.mailboxes.list(1001).count).toBe(0);
+      expect(ctx.mailboxes.list(1001).messages).toHaveLength(0);
     });
   });
 
@@ -386,7 +386,7 @@ describe("managed mailbox account removal", () => {
       expect(kernel.mailboxes.getMessage(1000, accepted.messageId)).toMatchObject({
         summary: completion.summary.summary, eventDeliveredAt: expect.any(Number),
       });
-      expect(kernel.mailboxes.list(1000).count).toBe(1);
+      expect(kernel.mailboxes.list(1000).messages).toHaveLength(1);
       expect(kernel.responsibilities.list({ ownerUid: 1000 }).records).toEqual([]);
       expect(wake).not.toHaveBeenCalled();
       expect(writes).not.toHaveBeenCalled();
@@ -400,7 +400,7 @@ describe("managed mailbox account removal", () => {
       const accepted = await kernel.acceptManagedInboundMail(METADATA, bodyFromBytes(RAW));
       expect(kernel.mailboxes.getPrimaryMailbox()).toMatchObject({ ownerUid: 1001, mailboxId: "mailbox:1001:primary" });
       expect(kernel.mailboxes.getMessage(1001, accepted.messageId)?.rawPath).toContain("/home/sam/");
-      expect(kernel.mailboxes.list(1000).count).toBe(0);
+      expect(kernel.mailboxes.list(1000).messages).toHaveLength(0);
     });
   });
 

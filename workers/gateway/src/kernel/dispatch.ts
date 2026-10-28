@@ -164,6 +164,7 @@ import {
 } from "./targets";
 import { requestAdapterTarget } from "./adapter-targets";
 import { handleMailSend } from "./outbound-mail";
+import { handleMailList, handleMailRead, handleMailSearch } from "./inbound-mail-read";
 import { handleMailStatus } from "./outbound-status";
 import {
   handleConversationForProcess,
@@ -444,6 +445,15 @@ async function dispatchKernel(
         break;
       case "mail.status":
         data = handleMailStatus(frame.args, ctx);
+        break;
+      case "mail.list":
+        data = handleMailList(frame.args, ctx);
+        break;
+      case "mail.search":
+        data = handleMailSearch(frame.args, ctx);
+        break;
+      case "mail.read":
+        data = await handleMailRead(frame.args, ctx);
         break;
 
       case "conversation.ship":

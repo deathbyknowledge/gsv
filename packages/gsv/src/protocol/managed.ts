@@ -1,4 +1,5 @@
 import type { AiStopReason } from "./syscalls/ai";
+import type { ManagedMailSummaryCategory } from "./syscalls/mail";
 import type { AdapterInstallationContext } from "./adapters";
 import type { UnlinkAdapterIdentityInput, UnlinkAdapterIdentityResult } from "../services/adapters";
 import type {
@@ -36,14 +37,7 @@ export type ManagedMailSummaryRequest = {
   text: string;
 };
 
-export type ManagedMailSummaryCategory =
-  | "personal"
-  | "work"
-  | "transactional"
-  | "newsletter"
-  | "spam"
-  | "suspicious"
-  | "other";
+export type { ManagedMailSummaryCategory } from "./syscalls/mail";
 
 export type ManagedMailSummary = {
   summary: string;

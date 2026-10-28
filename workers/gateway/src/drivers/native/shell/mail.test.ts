@@ -129,7 +129,7 @@ describe("mail shell command", () => {
       // SAFETY: this fixture supplies the KernelContext fields used by the command.
       const ctx = {
         env: { STORAGE: env.STORAGE },
-        peer: testPeer({ kind: "human", account: personalAgent, calls: [] }),
+        peer: testPeer({ kind: "human", account: personalAgent, calls: ["mail.list", "mail.search", "mail.read"] }),
         processId: "proc:hank-agent",
         auth,
         mailboxes,
@@ -162,6 +162,41 @@ describe("mail shell command", () => {
       expect(mistyped.exitCode).toBe(1);
       expect(mistyped.stderr).toContain("message not found");
       expect(readFile).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("pages and searches mail with the cursor it prints", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const mailboxes = new MailboxStore(sql);
+      mailboxes.ensureMailbox("mailbox:1000:primary", 1000, "hank@gsv.space");
+      for (const [index, letter] of ["a", "b"].entries()) {
+        mailboxes.recordMessage(messageInput({
+          messageId: `mail:${letter.repeat(8)}`,
+          intakeId: `intake-${letter}`,
+          digest: `sha256:${letter.repeat(64)}`,
+          subject: `Parcel ${letter}`,
+          receivedAt: 1_000 + index,
+          bodyText: "Your parcel is on its way.",
+        }));
+      }
+      // SAFETY: listing and searching use only the caller's identity and mailbox store.
+      const ctx = {
+        peer: testPeer({ kind: "human", account: { uid: 1000, gid: 1000, gids: [1000], username: "hank", home: "/home/hank", cwd: "/home/hank" }, calls: ["mail.list", "mail.search"] }),
+        mailboxes,
+      } as KernelContext;
+      // SAFETY: listing and searching read no files.
+      const command = buildMailCommand({} as GsvFs, ctx);
+
+      const first = await command.execute(["search", "on", "its", "way", "--limit", "1"]);
+      expect(first.stdout).toContain("mail:bbbbbbbb");
+      const more = /^More: (.+)$/m.exec(first.stdout)?.[1];
+      expect(more).toMatch(/^mail search 'on its way' --before /);
+      const second = await command.execute(["search", "on", "its", "way", "--before", more!.split(" --before ")[1]]);
+      expect(second.stdout).toContain("mail:aaaaaaaa");
+      expect(second.stdout).not.toContain("More:");
+
+      const offset = await command.execute(["list", "--offset", "50"]);
+      expect(offset).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("--before") });
     });
   });
 
