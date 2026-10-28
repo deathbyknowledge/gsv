@@ -1,41 +1,222 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
+
+/// The top-level help, grouped by what a person wants to do. Clap cannot
+/// group subcommands under headings, so the list is written out here; a test
+/// keeps it in step with the visible commands.
+pub(crate) const TOP_HELP: &str = "\
+Ship from your terminal.
+
+Usage: gsv <COMMAND> [--json]
+
+Talk
+  ship [MESSAGE]     Talk to your Ship, or open a prompt (also: chat)
+  contacts           People you talk to, and invitations
+  requests           Message requests from people you don't know yet
+  mail               Your Ship's mailbox
+
+Look after things
+  work               What your Ship and its helpers are doing
+  approvals          Actions waiting for your yes or no
+  routines           Things your Ship does on a schedule
+  memory             Your wiki, and the notes your Ship always reads
+  activity           What ran, where, and how it went
+
+Places
+  files              Files on your Ship or a connected place
+  run                Run one command on your Ship or a connected place
+  places             Computers and browsers connected to your Ship
+
+This computer
+  login [SPACE]      Sign in to your Ship
+  logout             Sign out
+  status             Check sign-in, pairing and the background service
+  pair CODE          Connect this computer to your Ship
+  unpair             Disconnect this computer
+  update             Check for a newer Ship for this computer
+  desktop            Open Ship Desktop
+  version            Show version and build details
+
+Add --json to any command for the full result.
+Run gsv help COMMAND for details, for example: gsv help files
+";
 
 #[derive(Parser)]
 #[command(
     name = "gsv",
     bin_name = "gsv",
     version = gsv::build_info::BUILD_VERSION,
-    about = "Ship CLI - Chat, Device, and Desktop Control Plane"
+    about = "Ship from your terminal.",
+    override_help = TOP_HELP,
+    disable_help_subcommand = false
 )]
 pub(crate) struct Cli {
-    /// Gateway URL (overrides config file)
-    #[arg(long, env = "GSV_URL")]
+    /// Ship WebSocket URL; `gsv login SPACE` saves it instead
+    #[arg(long, env = "GSV_URL", global = true, hide = true)]
     pub(crate) url: Option<String>,
 
-    /// Gateway username (global override for remote commands)
-    #[arg(short = 'u', long, global = true)]
+    /// Account for a machine or service credential (legacy service units)
+    #[arg(short = 'u', long, global = true, hide = true)]
     pub(crate) user: Option<String>,
 
-    /// Gateway password credential (global override for remote commands)
-    #[arg(short = 'p', long, global = true)]
-    pub(crate) password: Option<String>,
-
-    /// Non-interactive credential (legacy token flag; overrides config/env)
-    #[arg(short, long, env = "GSV_TOKEN", global = true)]
+    /// Non-interactive credential for CI and service units
+    #[arg(
+        short = 't',
+        long,
+        env = "GSV_TOKEN",
+        global = true,
+        hide = true,
+        hide_env_values = true
+    )]
     pub(crate) token: Option<String>,
 
+    /// Print the full result as JSON
+    #[arg(long, global = true)]
+    pub(crate) json: bool,
+
     #[command(subcommand)]
-    pub(crate) command: Commands,
+    pub(crate) command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
-    /// Pair this computer with one invitation from GSV (omit it to resume)
+    /// Talk to your Ship. With a message it sends once and prints the reply;
+    /// without one it opens a prompt. Piped input counts as the message.
+    #[command(visible_alias = "chat", args_conflicts_with_subcommands = true)]
+    Ship {
+        /// What to say (quotes are optional)
+        #[arg(num_args = 0..)]
+        message: Vec<String>,
+
+        /// Removed: use `gsv work open`
+        #[arg(long, hide = true)]
+        pid: Option<String>,
+
+        #[command(subcommand)]
+        action: Option<ShipAction>,
+    },
+
+    /// Files on your Ship or a connected place. Name a place with
+    /// PLACE:PATH, for example laptop:~/notes.txt; a bare path is on your Ship.
+    Files {
+        #[command(subcommand)]
+        action: FilesAction,
+    },
+
+    /// People you talk to, and invitations
+    Contacts {
+        #[command(subcommand)]
+        action: Option<ContactsAction>,
+    },
+
+    /// Message requests from people you don't know yet
+    Requests {
+        #[command(subcommand)]
+        action: Option<RequestsAction>,
+    },
+
+    /// Your wiki, and the notes your Ship always reads
+    Memory {
+        #[command(subcommand)]
+        action: Option<MemoryAction>,
+    },
+
+    /// Your Ship's mailbox, newest first
+    #[command(args_conflicts_with_subcommands = true)]
+    Mail {
+        #[command(flatten)]
+        page: MailPage,
+
+        #[command(subcommand)]
+        action: Option<MailAction>,
+    },
+
+    /// What your Ship and its helpers are doing
+    #[command(args_conflicts_with_subcommands = true)]
+    Work {
+        /// Include idle work
+        #[arg(long)]
+        all: bool,
+
+        #[command(subcommand)]
+        action: Option<WorkAction>,
+    },
+
+    /// Actions waiting for your yes or no
+    Approvals {
+        #[command(subcommand)]
+        action: Option<ApprovalsAction>,
+    },
+
+    /// Things your Ship does on a schedule
+    Routines {
+        #[command(subcommand)]
+        action: Option<RoutinesAction>,
+    },
+
+    /// Run one command on your Ship or a connected place. Output and the
+    /// exit code pass through.
+    Run {
+        /// Place to run on (default: your Ship)
+        #[arg(long)]
+        on: Option<String>,
+
+        /// Directory to run in
+        #[arg(long)]
+        cwd: Option<String>,
+
+        /// The command line, for example: gsv run --on laptop df -h.
+        /// Options for gsv itself, such as --json, go before it.
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+
+    /// Computers and browsers connected to your Ship
+    Places {
+        #[command(subcommand)]
+        action: Option<PlacesAction>,
+    },
+
+    /// What ran, where, and how it went
+    Activity {
+        /// Only what ran on this place
+        #[arg(long)]
+        on: Option<String>,
+
+        /// How many entries to show
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: u32,
+    },
+
+    /// Sign in to your Ship, for example: gsv login me.ship.space
+    Login {
+        /// Your Ship's address (defaults to the last one you used)
+        space: Option<String>,
+
+        /// Account name, for root or another explicit account
+        #[arg(long)]
+        username: Option<String>,
+
+        /// Password, for scripts (prefer the prompt)
+        #[arg(long)]
+        password: Option<String>,
+
+        /// How long the session lasts, in hours
+        #[arg(long, default_value_t = 8)]
+        ttl_hours: u32,
+    },
+
+    /// Sign out and end this computer's session
+    Logout,
+
+    /// Check sign-in, pairing and the background service
+    Status,
+
+    /// Connect this computer to your Ship with an invitation (omit it to resume)
     Pair {
         /// Invitation (use - to read from stdin, omit to resume)
         code: Option<String>,
-        /// Filesystem workspace to expose (defaults to the home directory)
+        /// Folder to share (defaults to your home folder)
         #[arg(long)]
         workspace: Option<PathBuf>,
         /// Save pairing without installing or starting the background service
@@ -48,41 +229,28 @@ pub(crate) enum Commands {
         #[arg(long)]
         no_replace: bool,
     },
-    /// Send a message to the agent (interactive or one-shot)
-    Chat {
-        /// Message to send (if omitted, enters interactive mode)
-        message: Option<String>,
 
-        /// Process ID to continue (creates a new process when omitted)
-        #[arg(long)]
-        pid: Option<String>,
+    /// Disconnect this computer from your Ship and remove its service
+    Unpair {
+        /// Don't ask for confirmation
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
-    /// Interactive shell connected to the gateway OS
-    Shell,
+    /// Check for a newer Ship for this computer
+    Update,
 
-    /// Process management (`proc.*`)
-    Proc {
+    /// Launch, focus, or control Ship Desktop
+    Desktop {
         #[command(subcommand)]
-        action: ProcAction,
+        action: Option<DesktopAction>,
     },
 
-    /// Adapter account lifecycle (`adapter.*`)
-    Adapter {
-        #[command(subcommand)]
-        action: AdapterAction,
-    },
-
-    /// Authentication and onboarding
-    #[command(
-        after_help = "Create your Ship using the browser setup link from your operator, then run `gsv auth login`."
-    )]
-    Auth {
-        #[command(subcommand)]
-        action: AuthAction,
-    },
+    /// Show version and build details
+    Version,
 
     /// Install, inspect, and control the local gsvd service
+    #[command(hide = true)]
     Daemon {
         #[command(subcommand)]
         action: DaemonAction,
@@ -95,15 +263,10 @@ pub(crate) enum Commands {
         action: LegacyDeviceAction,
     },
 
-    /// Launch, focus, or control the local GSV Desktop application
-    Desktop {
-        #[command(subcommand)]
-        action: Option<DesktopAction>,
-    },
-
-    /// Get or set gateway configuration (use --local for CLI config)
+    /// Local CLI configuration (`--local`); the installers set the release channel here
+    #[command(hide = true)]
     Config {
-        /// Operate on local CLI config instead of remote kernel config
+        /// Operate on the local CLI config
         #[arg(long)]
         local: bool,
 
@@ -111,18 +274,315 @@ pub(crate) enum Commands {
         action: ConfigAction,
     },
 
-    /// Show CLI version and build metadata
-    Version,
+    /// Removed commands; each fails with a pointer to its replacement.
+    #[command(hide = true, disable_help_flag = true)]
+    Shell {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+        rest: Vec<String>,
+    },
+    #[command(hide = true, disable_help_flag = true)]
+    Proc {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+        rest: Vec<String>,
+    },
+    #[command(hide = true, disable_help_flag = true)]
+    Adapter {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+        rest: Vec<String>,
+    },
+    #[command(hide = true, disable_help_flag = true)]
+    Auth {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+        rest: Vec<String>,
+    },
+}
+
+impl Commands {
+    /// The replacement for a removed command, printed instead of running it.
+    pub(crate) fn removed_pointer(&self) -> Option<String> {
+        fn first(rest: &[String]) -> &str {
+            rest.first().map(String::as_str).unwrap_or_default()
+        }
+        let pointer = match self {
+            Self::Shell { .. } => "`gsv shell` is now `gsv run`, for example: gsv run ls ~",
+            Self::Proc { rest } => match first(rest) {
+                "send" => "`gsv proc send` is now `gsv work open PID \"MESSAGE\"`.",
+                "history" => "`gsv proc history` is now `gsv work show PID`.",
+                "kill" | "reset" => {
+                    "`gsv proc` is now `gsv work`; `gsv work stop PID` stops a run. Reset and end work from the web app."
+                }
+                _ => "`gsv proc` is now `gsv work`.",
+            },
+            Self::Adapter { .. } => {
+                "`gsv adapter` was removed. Connect messengers in the web app, under Settings."
+            }
+            Self::Auth { rest } => match first(rest) {
+                "login" => "`gsv auth login` is now `gsv login`, for example: gsv login me.ship.space",
+                "logout" => "`gsv auth logout` is now `gsv logout`.",
+                _ => "`gsv auth` was removed. Sign in with `gsv login`; manage linked messengers and tokens in the web app.",
+            },
+            Self::Ship { pid: Some(_), .. } => {
+                "`gsv chat --pid` is now `gsv work open PID \"MESSAGE\"`."
+            }
+            Self::Config { local: false, .. } => {
+                "`gsv config` was removed. Change settings in the web app, under Settings."
+            }
+            _ => return None,
+        };
+        Some(pointer.to_string())
+    }
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum ShipAction {
+    /// Recent messages in your conversation
+    History {
+        /// How many messages to show
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: u32,
+    },
+    /// Find a past message
+    Search {
+        /// Words to find
+        #[arg(required = true, num_args = 1..)]
+        query: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum FilesAction {
+    /// List a folder (default: your Ship's home folder)
+    Ls { path: Option<String> },
+    /// Print a text file
+    Cat { path: String },
+    /// Upload a file from this computer
+    Put {
+        /// File on this computer
+        local: PathBuf,
+        /// Where to put it, such as notes/todo.md or laptop:~/todo.md
+        path: String,
+    },
+    /// Download a file to this computer
+    Get {
+        path: String,
+        /// Where to save it (default: the file's name in this folder; - prints it)
+        local: Option<PathBuf>,
+    },
+    /// Copy a file between places without passing through this computer
+    Cp { from: String, to: String },
+    /// Delete a file
+    Rm { path: String },
+    /// Search file contents
+    Search {
+        /// Text to find
+        query: String,
+        /// Folder to search in (default: your Ship's home folder)
+        path: Option<String>,
+        /// Only files whose names match this pattern, such as *.md
+        #[arg(long)]
+        include: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum ContactsAction {
+    /// Your conversations with contacts, newest first
+    Inbox,
+    /// Make an invitation to share with someone
+    Invite {
+        /// Days before the invitation expires
+        #[arg(long)]
+        days: Option<u32>,
+    },
+    /// Use an invitation someone shared with you
+    Accept { code: String },
+    /// Message a contact
+    Send {
+        /// Contact name
+        name: String,
+        /// What to say (quotes are optional)
+        #[arg(required = true, num_args = 1..)]
+        message: Vec<String>,
+    },
+    /// Block a contact
+    Block { name: String },
+    /// Unblock a contact
+    Unblock { name: String },
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum RequestsAction {
+    /// Accept a message request
+    Accept { id: String },
+    /// Decline a message request
+    Decline { id: String },
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum MemoryAction {
+    /// Print a wiki page, such as notes/index.md
+    Read { page: String },
+    /// Search your wikis
+    Search {
+        /// Words to find
+        query: String,
+        /// Only this wiki
+        #[arg(long = "in")]
+        wiki: Option<String>,
+    },
+    /// Show the notes your Ship reads in every conversation
+    Standing,
+}
+
+#[derive(Args, Clone)]
+pub(crate) struct MailPage {
+    /// Show messages older than this one (from the previous page's footer)
+    #[arg(long)]
+    pub(crate) before: Option<String>,
+
+    /// How many messages to show
+    #[arg(short = 'n', long, default_value_t = 20)]
+    pub(crate) limit: u32,
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum MailAction {
+    /// Search received mail
+    Search {
+        /// Words to find
+        #[arg(required = true, num_args = 1..)]
+        query: Vec<String>,
+        #[command(flatten)]
+        page: MailPage,
+    },
+    /// Read one message
+    Read { id: String },
+    /// Send mail from your Ship's address; the body comes from MESSAGE or stdin
+    Send {
+        /// Recipient address
+        to: String,
+        #[arg(long, short = 's')]
+        subject: Option<String>,
+        /// Message body (default: read from stdin)
+        #[arg(num_args = 0..)]
+        message: Vec<String>,
+    },
+    /// Check a sent message's delivery
+    Status {
+        /// Delivery id printed by `gsv mail send`
+        id: String,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum WorkAction {
+    /// What a piece of work did
+    Show {
+        id: String,
+        /// How many steps to show
+        #[arg(short = 'n', long, default_value_t = 30)]
+        limit: u32,
+    },
+    /// Talk to a piece of work, or open a prompt with it
+    Open {
+        id: String,
+        /// What to say (quotes are optional)
+        #[arg(num_args = 0..)]
+        message: Vec<String>,
+    },
+    /// Stop what a piece of work is doing now
+    Stop { id: String },
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum ApprovalsAction {
+    /// Allow one waiting action
+    Allow {
+        id: String,
+        /// Also allow actions like this from now on
+        #[arg(long)]
+        always: bool,
+    },
+    /// Refuse one waiting action
+    Block { id: String },
+}
+
+#[derive(Args, Clone, Default)]
+#[group(multiple = false)]
+pub(crate) struct Cadence {
+    /// Every day at this time, such as 09:00
+    #[arg(long, value_name = "HH:MM")]
+    pub(crate) daily: Option<String>,
+
+    /// Every week on this day and time, such as "mon 09:00"
+    #[arg(long, value_name = "DAY HH:MM")]
+    pub(crate) weekly: Option<String>,
+
+    /// At a fixed interval, such as 30m, 2h or 1d
+    #[arg(long, value_name = "INTERVAL")]
+    pub(crate) every: Option<String>,
+
+    /// A cron expression, such as "0 9 * * 1-5"
+    #[arg(long, value_name = "EXPR")]
+    pub(crate) cron: Option<String>,
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum RoutinesAction {
+    /// Add a routine
+    Add {
+        /// A short name, such as "Morning briefing"
+        name: String,
+        /// What your Ship should do each time
+        message: String,
+        #[command(flatten)]
+        cadence: Cadence,
+        /// Time zone for daily, weekly and cron times (default: your Ship's)
+        #[arg(long)]
+        timezone: Option<String>,
+    },
+    /// Change a routine
+    Edit {
+        id: String,
+        #[arg(long)]
+        name: Option<String>,
+        /// What your Ship should do each time
+        #[arg(long)]
+        message: Option<String>,
+        #[command(flatten)]
+        cadence: Cadence,
+        #[arg(long)]
+        timezone: Option<String>,
+        /// Stop running it until resumed
+        #[arg(long, conflicts_with = "resume")]
+        pause: bool,
+        /// Run it again on its schedule
+        #[arg(long)]
+        resume: bool,
+    },
+    /// Remove a routine
+    Remove { id: String },
+    /// Run a routine now
+    Run { id: String },
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum PlacesAction {
+    /// Give a place a new name
+    Rename { place: String, name: String },
+    /// Forget a place and revoke its access
+    Forget {
+        place: String,
+        /// Don't ask for confirmation
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
 pub(crate) enum DesktopAction {
     /// Show redacted local Desktop state without launching it
-    Status {
-        /// Print machine-readable JSON
-        #[arg(long)]
-        json: bool,
-    },
+    Status,
 
     /// Create and select a new conversation in Desktop
     New,
@@ -231,11 +691,7 @@ pub(crate) enum DaemonAction {
     Reconnect,
 
     /// Show bounded, redacted live diagnostics
-    Diagnostics {
-        /// Print machine-readable JSON
-        #[arg(long)]
-        json: bool,
-    },
+    Diagnostics,
 
     /// Show gsvd service logs
     Logs {
@@ -296,7 +752,7 @@ pub(crate) enum DaemonServiceAction {
 pub(crate) enum ConfigAction {
     /// Get configuration value
     Get {
-        /// Config key (or omit to list all visible keys)
+        /// Config key
         key: Option<String>,
     },
     /// Set configuration value
@@ -305,268 +761,6 @@ pub(crate) enum ConfigAction {
         key: String,
         /// Value to set
         value: String,
-    },
-}
-
-#[derive(Subcommand, Clone)]
-pub(crate) enum AuthAction {
-    /// Log in and cache a short-lived user session token locally
-    Login {
-        /// Gateway username (defaults to local config)
-        #[arg(long)]
-        username: Option<String>,
-
-        /// Gateway password (if omitted, prompts interactively)
-        #[arg(long)]
-        password: Option<String>,
-
-        /// Session lifetime in hours (default: 8)
-        #[arg(long, default_value_t = 8)]
-        ttl_hours: u32,
-    },
-
-    /// Clear cached local user session token
-    Logout,
-
-    /// Link an adapter identity to a local user.
-    /// Use either a one-time code positional argument or explicit adapter/account/actor flags.
-    Link {
-        /// One-time link code (e.g., ABCD-1234)
-        code: Option<String>,
-
-        /// Adapter id (manual link mode)
-        #[arg(long)]
-        adapter: Option<String>,
-
-        /// Adapter account id (manual link mode)
-        #[arg(long = "account-id")]
-        account_id: Option<String>,
-
-        /// Adapter actor id (manual link mode)
-        #[arg(long = "actor-id")]
-        actor_id: Option<String>,
-
-        /// Optional target uid (root only for other users)
-        #[arg(long)]
-        uid: Option<u32>,
-    },
-
-    /// List linked adapter identities
-    LinkList {
-        /// Optional uid filter (root only for other users)
-        #[arg(long)]
-        uid: Option<u32>,
-    },
-
-    /// Remove an existing adapter identity link
-    Unlink {
-        /// Adapter id
-        #[arg(long)]
-        adapter: String,
-
-        /// Adapter account id
-        #[arg(long = "account-id")]
-        account_id: String,
-
-        /// Adapter actor id
-        #[arg(long = "actor-id")]
-        actor_id: String,
-    },
-
-    /// Manage auth tokens
-    Token {
-        #[command(subcommand)]
-        action: AuthTokenAction,
-    },
-}
-
-#[derive(Subcommand, Clone)]
-pub(crate) enum AuthTokenAction {
-    /// Create a new auth token
-    Create {
-        /// Token kind
-        #[arg(long, value_enum, default_value = "machine")]
-        kind: TokenKindArg,
-
-        /// Optional owner uid (root only)
-        #[arg(long)]
-        uid: Option<u32>,
-
-        /// Optional token label
-        #[arg(long)]
-        label: Option<String>,
-
-        /// Peer id the token may connect as (machine tokens only)
-        #[arg(long, alias = "device")]
-        peer: Option<String>,
-
-        /// Optional expiry timestamp (unix ms)
-        #[arg(long)]
-        expires_at: Option<i64>,
-    },
-
-    /// List auth tokens
-    List {
-        /// Optional uid filter (root only)
-        #[arg(long)]
-        uid: Option<u32>,
-    },
-
-    /// Revoke an auth token
-    Revoke {
-        /// Token ID to revoke
-        token_id: String,
-
-        /// Optional revoke reason
-        #[arg(long)]
-        reason: Option<String>,
-
-        /// Optional uid filter (root only)
-        #[arg(long)]
-        uid: Option<u32>,
-    },
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub(crate) enum TokenKindArg {
-    #[value(alias = "device", alias = "node")]
-    Machine,
-    Service,
-    #[value(alias = "user")]
-    Human,
-}
-
-impl TokenKindArg {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Machine => "machine",
-            Self::Service => "service",
-            Self::Human => "human",
-        }
-    }
-}
-
-#[derive(Subcommand, Clone)]
-pub(crate) enum ProcAction {
-    /// List visible processes
-    List {
-        /// Optional uid filter (root only)
-        #[arg(long)]
-        uid: Option<u32>,
-    },
-
-    /// Spawn a new process
-    Spawn {
-        /// Account to run the process as a username or uid
-        /// (default: personal agent)
-        #[arg(long = "as", visible_alias = "run-as")]
-        run_as: Option<String>,
-
-        /// First-choice model ID from the owning human's stack (fallbacks still apply)
-        #[arg(long)]
-        model: Option<String>,
-
-        /// Reasoning effort: off, minimal, low, medium, high, or xhigh
-        #[arg(long, visible_alias = "reasoning", value_parser = ["off", "minimal", "low", "medium", "high", "xhigh"])]
-        effort: Option<String>,
-
-        /// Optional process label
-        #[arg(long)]
-        label: Option<String>,
-
-        /// Optional initial prompt/message for the spawned process
-        #[arg(long)]
-        prompt: Option<String>,
-
-        /// Optional parent process ID
-        #[arg(long = "parent")]
-        parent_pid: Option<String>,
-    },
-
-    /// Send a message to a process
-    Send {
-        /// Message to deliver
-        message: String,
-
-        /// Process ID
-        #[arg(long)]
-        pid: String,
-    },
-
-    /// Read process message history
-    History {
-        /// Process ID
-        #[arg(long)]
-        pid: String,
-
-        /// Read the newest messages instead of the oldest page
-        #[arg(long)]
-        tail: bool,
-
-        /// Maximum number of messages
-        #[arg(long)]
-        limit: Option<u32>,
-
-        /// Offset into message history
-        #[arg(long)]
-        offset: Option<u32>,
-    },
-
-    /// Reset process history
-    Reset {
-        /// Process ID
-        #[arg(long)]
-        pid: String,
-    },
-
-    /// Kill a process
-    Kill {
-        /// Process ID
-        pid: String,
-
-        /// Skip archival before kill
-        #[arg(long)]
-        no_archive: bool,
-    },
-}
-
-#[derive(Subcommand, Clone)]
-pub(crate) enum AdapterAction {
-    /// Connect/start an adapter account
-    Connect {
-        /// Adapter id (e.g., whatsapp, discord, telegram)
-        #[arg(long)]
-        adapter: String,
-
-        /// Adapter account id
-        #[arg(long = "account-id", default_value = "default")]
-        account_id: String,
-
-        /// Adapter-specific config JSON object
-        #[arg(long = "config-json")]
-        config_json: Option<String>,
-    },
-
-    /// Disconnect/stop an adapter account
-    Disconnect {
-        /// Adapter id (e.g., whatsapp, discord, telegram)
-        #[arg(long)]
-        adapter: String,
-
-        /// Adapter account id
-        #[arg(long = "account-id", default_value = "default")]
-        account_id: String,
-    },
-
-    /// Show adapter account status
-    Status {
-        /// Adapter id (e.g., whatsapp, discord, telegram)
-        #[arg(long)]
-        adapter: String,
-
-        /// Optional adapter account id
-        #[arg(long = "account-id")]
-        account_id: Option<String>,
     },
 }
 
@@ -589,154 +783,303 @@ pub(crate) enum LocalConfigAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+
+    fn parse(args: &[&str]) -> Cli {
+        match Cli::try_parse_from(args) {
+            Ok(cli) => cli,
+            Err(error) => panic!("{args:?} should parse: {error}"),
+        }
+    }
 
     #[test]
-    fn auth_setup_is_removed_and_help_points_to_accounts() {
-        let error = Cli::try_parse_from(["gsv", "auth", "setup"])
-            .err()
-            .expect("setup is no longer an auth command");
-        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
-        let help = Cli::try_parse_from(["gsv", "auth", "--help"])
+    fn top_help_lists_every_visible_command() {
+        let command = Cli::command();
+        for subcommand in command.get_subcommands() {
+            if subcommand.is_hide_set() || subcommand.get_name() == "help" {
+                continue;
+            }
+            let name = subcommand.get_name();
+            assert!(
+                TOP_HELP.contains(&format!("\n  {name} ")),
+                "TOP_HELP is missing `{name}`"
+            );
+        }
+        let help = Cli::try_parse_from(["gsv", "--help"])
             .err()
             .expect("help is displayed")
             .to_string();
-        assert!(help.contains("browser setup link from your operator"));
-        assert!(help.contains("gsv auth login"));
+        assert_eq!(help.trim_end(), TOP_HELP.trim_end());
     }
 
     #[test]
-    fn auth_login_and_machine_pairing_remain_available() {
-        let login = Cli::try_parse_from(["gsv", "auth", "login", "--username", "owner"])
-            .expect("login parses");
-        assert!(matches!(login.command, Commands::Auth {
-            action: AuthAction::Login { username: Some(username), .. }
-        } if username == "owner"));
-        let pair = Cli::try_parse_from(["gsv", "pair", "fixture-invitation", "--no-install"])
-            .expect("device enrollment parses");
+    fn plain_gsv_parses_without_a_command() {
+        assert!(parse(&["gsv"]).command.is_none());
+    }
+
+    #[test]
+    fn ship_sends_a_message_opens_a_prompt_or_reads_history() {
+        let cli = parse(&["gsv", "ship", "what's", "on", "today?"]);
         assert!(
-            matches!(pair.command, Commands::Pair { code: Some(code), no_install: true, .. }
+            matches!(cli.command, Some(Commands::Ship { message, action: None, .. })
+            if message.join(" ") == "what's on today?")
+        );
+        let cli = parse(&["gsv", "chat"]);
+        assert!(
+            matches!(cli.command, Some(Commands::Ship { message, action: None, .. })
+            if message.is_empty())
+        );
+        let cli = parse(&["gsv", "ship", "history", "-n", "5"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Ship {
+                action: Some(ShipAction::History { limit: 5 }),
+                ..
+            })
+        ));
+        let cli = parse(&["gsv", "ship", "--json", "search", "dentist"]);
+        assert!(cli.json);
+    }
+
+    #[test]
+    fn removed_commands_parse_so_they_can_point_to_their_replacement() {
+        for (args, expected) in [
+            (vec!["gsv", "shell"], "gsv run"),
+            (vec!["gsv", "proc", "list", "--uid", "1"], "gsv work"),
+            (
+                vec!["gsv", "proc", "send", "--pid", "p", "hi"],
+                "gsv work open",
+            ),
+            (
+                vec!["gsv", "adapter", "connect", "--adapter", "x"],
+                "web app",
+            ),
+            (
+                vec!["gsv", "auth", "login", "--username", "me"],
+                "gsv login",
+            ),
+            (vec!["gsv", "auth", "token", "list"], "web app"),
+            (vec!["gsv", "config", "get", "ai.model"], "web app"),
+            (
+                vec!["gsv", "chat", "--pid", "proc:1", "hi"],
+                "gsv work open",
+            ),
+        ] {
+            let cli = parse(&args);
+            let pointer = cli
+                .command
+                .as_ref()
+                .and_then(Commands::removed_pointer)
+                .unwrap_or_default();
+            assert!(pointer.contains(expected), "{args:?} -> {pointer}");
+        }
+        let local = parse(&["gsv", "config", "--local", "set", "release.channel", "dev"]);
+        assert!(local
+            .command
+            .as_ref()
+            .and_then(Commands::removed_pointer)
+            .is_none());
+    }
+
+    #[test]
+    fn login_takes_a_space_and_credentials_are_no_longer_global() {
+        let cli = parse(&["gsv", "login", "me.ship.space", "--username", "root"]);
+        assert!(
+            matches!(cli.command, Some(Commands::Login { space: Some(space), username: Some(user), .. })
+            if space == "me.ship.space" && user == "root")
+        );
+        Cli::try_parse_from(["gsv", "work", "-p", "secret"])
+            .err()
+            .expect("rejected");
+        Cli::try_parse_from(["gsv", "work", "--password", "secret"])
+            .err()
+            .expect("rejected");
+    }
+
+    #[test]
+    fn run_passes_the_command_line_through() {
+        let cli = parse(&["gsv", "run", "--on", "laptop", "ls", "-la", "~"]);
+        assert!(
+            matches!(cli.command, Some(Commands::Run { on: Some(on), command, .. })
+            if on == "laptop" && command == ["ls", "-la", "~"])
+        );
+        Cli::try_parse_from(["gsv", "run"]).err().expect("rejected");
+    }
+
+    #[test]
+    fn mail_pages_with_before_and_routines_take_one_cadence() {
+        let cli = parse(&["gsv", "mail", "--before", "abc123"]);
+        assert!(
+            matches!(cli.command, Some(Commands::Mail { page, action: None })
+            if page.before.as_deref() == Some("abc123"))
+        );
+        let cli = parse(&["gsv", "mail", "search", "invoice", "--json"]);
+        assert!(cli.json);
+        parse(&[
+            "gsv",
+            "routines",
+            "add",
+            "Briefing",
+            "Plan my day",
+            "--daily",
+            "08:00",
+        ]);
+        Cli::try_parse_from([
+            "gsv", "routines", "add", "B", "M", "--daily", "08:00", "--every", "1h",
+        ])
+        .err()
+        .expect("rejected");
+    }
+
+    #[test]
+    fn pairing_keeps_every_flag_desktop_and_the_installers_use() {
+        let pair = parse(&["gsv", "pair", "fixture-invitation", "--no-install"]);
+        assert!(
+            matches!(pair.command, Some(Commands::Pair { code: Some(code), no_install: true, .. })
             if code == "fixture-invitation")
         );
-    }
-
-    #[test]
-    fn desktop_can_pair_from_stdin_without_replacing_existing_login_or_machine() {
-        let pair =
-            Cli::try_parse_from(["gsv", "pair", "-", "--preserve-cli-login", "--no-replace"])
-                .expect("desktop pairing parses");
+        let pair = parse(&["gsv", "pair", "-", "--preserve-cli-login", "--no-replace"]);
         assert!(
-            matches!(pair.command, Commands::Pair { code: Some(code), preserve_cli_login: true, no_replace: true, no_install: false, .. } if code == "-")
+            matches!(pair.command, Some(Commands::Pair { code: Some(code), preserve_cli_login: true, no_replace: true, no_install: false, .. }) if code == "-")
         );
-    }
-
-    #[test]
-    fn spawn_accepts_initial_model_and_effort() {
-        let cli = Cli::try_parse_from([
-            "gsv", "proc", "spawn", "--model", "quick", "--effort", "high", "--prompt", "do work",
-        ])
-        .expect("spawn options parse");
-        assert!(
-            matches!(cli.command, Commands::Proc { action: ProcAction::Spawn {
-            model: Some(model), effort: Some(effort), prompt: Some(prompt), ..
-        }} if model == "quick" && effort == "high" && prompt == "do work")
-        );
-        assert!(Cli::try_parse_from(["gsv", "proc", "spawn", "--effort", "unlimited"]).is_err());
+        let pair = parse(&["gsv", "pair", "--workspace", "/tmp/w"]);
+        assert!(matches!(
+            pair.command,
+            Some(Commands::Pair {
+                code: None,
+                workspace: Some(_),
+                ..
+            })
+        ));
     }
 
     #[test]
     fn desktop_without_a_subcommand_means_activate() {
-        let cli = Cli::try_parse_from(["gsv", "desktop"]).expect("desktop command parses");
-        assert!(matches!(cli.command, Commands::Desktop { action: None }));
+        let cli = parse(&["gsv", "desktop"]);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Desktop { action: None })
+        ));
     }
 
     #[test]
     fn desktop_commands_accept_only_the_narrow_control_surface() {
-        let status =
-            Cli::try_parse_from(["gsv", "desktop", "status", "--json"]).expect("status parses");
+        let status = parse(&["gsv", "desktop", "status", "--json"]);
+        assert!(status.json);
         assert!(matches!(
             status.command,
-            Commands::Desktop {
-                action: Some(DesktopAction::Status { json: true })
-            }
+            Some(Commands::Desktop {
+                action: Some(DesktopAction::Status)
+            })
         ));
 
-        let new = Cli::try_parse_from(["gsv", "desktop", "new"]).expect("new parses");
+        let new = parse(&["gsv", "desktop", "new"]);
         assert!(matches!(
             new.command,
-            Commands::Desktop {
+            Some(Commands::Desktop {
                 action: Some(DesktopAction::New)
-            }
+            })
         ));
 
-        let use_process =
-            Cli::try_parse_from(["gsv", "desktop", "use", "proc:1"]).expect("use parses");
+        let use_process = parse(&["gsv", "desktop", "use", "proc:1"]);
         assert!(matches!(
             use_process.command,
-            Commands::Desktop {
+            Some(Commands::Desktop {
                 action: Some(DesktopAction::Use { pid })
-            } if pid == "proc:1"
+            }) if pid == "proc:1"
         ));
 
-        let microphone_list = Cli::try_parse_from(["gsv", "desktop", "microphone", "list"])
-            .expect("microphone list parses");
+        let microphone_list = parse(&["gsv", "desktop", "microphone", "list"]);
         assert!(matches!(
             microphone_list.command,
-            Commands::Desktop {
+            Some(Commands::Desktop {
                 action: Some(DesktopAction::Microphone {
                     action: MicrophoneAction::List
                 })
-            }
+            })
         ));
 
-        let microphone_use =
-            Cli::try_parse_from(["gsv", "desktop", "microphone", "use", "Shure MV6"])
-                .expect("microphone use parses");
+        let microphone_use = parse(&["gsv", "desktop", "microphone", "use", "Shure MV6"]);
         assert!(matches!(
             microphone_use.command,
-            Commands::Desktop {
+            Some(Commands::Desktop {
                 action: Some(DesktopAction::Microphone {
                     action: MicrophoneAction::Use { name }
                 })
-            } if name == "Shure MV6"
+            }) if name == "Shure MV6"
         ));
 
-        let microphone_default = Cli::try_parse_from(["gsv", "desktop", "microphone", "default"])
-            .expect("microphone default parses");
+        let microphone_default = parse(&["gsv", "desktop", "microphone", "default"]);
         assert!(matches!(
             microphone_default.command,
-            Commands::Desktop {
+            Some(Commands::Desktop {
                 action: Some(DesktopAction::Microphone {
                     action: MicrophoneAction::Default
                 })
-            }
+            })
         ));
 
-        assert!(Cli::try_parse_from(["gsv", "desktop", "send", "secret"]).is_err());
-        assert!(Cli::try_parse_from(["gsv", "desktop", "new", "--label", "private"]).is_err());
-        assert!(Cli::try_parse_from(["gsv", "desktop", "microphone"]).is_err());
-        assert!(
-            Cli::try_parse_from(["gsv", "desktop", "microphone", "use", "one", "two"]).is_err()
-        );
+        Cli::try_parse_from(["gsv", "desktop", "send", "secret"])
+            .err()
+            .expect("rejected");
+        Cli::try_parse_from(["gsv", "desktop", "new", "--label", "private"])
+            .err()
+            .expect("rejected");
+        Cli::try_parse_from(["gsv", "desktop", "microphone"])
+            .err()
+            .expect("rejected");
+        Cli::try_parse_from(["gsv", "desktop", "microphone", "use", "one", "two"])
+            .err()
+            .expect("rejected");
+    }
+
+    #[test]
+    fn hidden_entry_points_used_by_installers_and_desktop_still_parse() {
+        for args in [
+            vec!["gsv", "daemon", "install"],
+            vec!["gsv", "daemon", "install", "--workspace", "/tmp/w"],
+            vec!["gsv", "daemon", "status"],
+            vec!["gsv", "daemon", "uninstall"],
+            vec!["gsv", "daemon", "doctor"],
+            vec!["gsv", "daemon", "start"],
+            vec!["gsv", "daemon", "stop"],
+            vec!["gsv", "daemon", "reload"],
+            vec!["gsv", "daemon", "diagnostics", "--json"],
+            vec![
+                "gsv",
+                "config",
+                "--local",
+                "set",
+                "release.channel",
+                "stable",
+            ],
+            vec!["gsv", "device", "run"],
+            vec![
+                "gsv",
+                "--url",
+                "wss://x/ws",
+                "-u",
+                "owner",
+                "-t",
+                "t",
+                "device",
+                "run",
+            ],
+        ] {
+            parse(&args);
+        }
+        #[cfg(windows)]
+        parse(&["gsv", "daemon", "windows-update", "--daemon-sha256", "00"]);
     }
 
     #[test]
     fn daemon_owns_local_service_and_live_control_commands() {
-        let status =
-            Cli::try_parse_from(["gsv", "daemon", "status"]).expect("daemon status parses");
+        let status = parse(&["gsv", "daemon", "status"]);
         assert!(matches!(
             status.command,
-            Commands::Daemon {
+            Some(Commands::Daemon {
                 action: DaemonAction::Status
-            }
-        ));
-
-        let reload =
-            Cli::try_parse_from(["gsv", "daemon", "reload"]).expect("daemon reload parses");
-        assert!(matches!(
-            reload.command,
-            Commands::Daemon {
-                action: DaemonAction::Reload
-            }
+            })
         ));
         Cli::try_parse_from(["gsv", "daemon", "run"])
             .err()
@@ -745,7 +1088,6 @@ mod tests {
 
     #[test]
     fn legacy_device_namespace_retains_only_the_installed_service_launcher() {
-        Cli::try_parse_from(["gsv", "device", "run"]).expect("legacy device run still parses");
         Cli::try_parse_from(["gsv", "device", "status"])
             .err()
             .expect("legacy device status must be removed");
