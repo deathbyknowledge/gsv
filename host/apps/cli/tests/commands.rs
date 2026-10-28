@@ -140,6 +140,37 @@ impl Cli {
             .expect("bounded command")
             .expect("CLI result")
     }
+
+    /// Runs the CLI with a terminal for stdout and stderr, through util-linux
+    /// `script`, and returns what the terminal showed. `None` when `script`
+    /// isn't installed.
+    async fn run_in_terminal(&self, args: &[&str]) -> Option<String> {
+        let quoted: Vec<String> = std::iter::once(env!("CARGO_BIN_EXE_gsv"))
+            .chain(args.iter().copied())
+            .map(|arg| format!("'{}'", arg.replace('\'', r"'\''")))
+            .collect();
+        let child = Command::new("script")
+            .args(["-qfec", &quoted.join(" "), "/dev/null"])
+            .env("HOME", self.directory.path())
+            .env("XDG_CONFIG_HOME", self.directory.path().join("config"))
+            .env("NO_COLOR", "1")
+            .env("COLUMNS", "100")
+            .env("TERM", "xterm-256color")
+            .env_remove("GSV_URL")
+            .env_remove("GSV_TOKEN")
+            .env_remove("GSV_USER")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .ok()?;
+        let output = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output())
+            .await
+            .expect("bounded command")
+            .expect("terminal result");
+        Some(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"))
+    }
 }
 
 fn stdout(output: &Output) -> String {
@@ -158,6 +189,10 @@ fn called(calls: &Calls, name: &str) -> Vec<Value> {
         .filter(|(call, _)| call == name)
         .map(|(_, args)| args.clone())
         .collect()
+}
+
+fn show_text(title: &str, text: &str) {
+    eprintln!("--- {title}\n{text}");
 }
 
 fn show(title: &str, output: &Output) {
@@ -601,6 +636,76 @@ async fn a_failed_reply_exits_non_zero_with_one_plain_line() {
         "Your Ship couldn't answer: managed inference is turned off for this Ship. (ref 7afee6a6)\n"
     ));
     assert!(!stderr(&output).contains("Managed inference is disabled"));
+}
+
+/// A run that calls two tools, then streams a short Markdown reply.
+fn tool_run(call: &str, _: &Value) -> Value {
+    let signal = |signal: &str, payload: Value| json!({ "signal": signal, "payload": payload });
+    match call {
+        "conversation.ship" => json!({ "conversation": { "id": "conv:ship" } }),
+        "conversation.send" => json!({
+            "runId": "run:8", "queued": false,
+            "__signals": [
+                signal("proc.run.tool.started", json!({ "runId": "run:8", "callId": "c1",
+                    "name": "Shell", "syscall": "shell.exec",
+                    "purpose": "Checking your calendar for tomorrow" })),
+                signal("proc.run.tool.started", json!({ "runId": "run:8", "callId": "c2",
+                    "name": "Read", "syscall": "fs.read" })),
+            signal("proc.run.tool.finished", json!({ "runId": "run:8", "callId": "c1", "outcome": "completed" })),
+            signal("proc.run.tool.finished", json!({ "runId": "run:8", "callId": "c2", "outcome": "failed" })),
+                signal("message.delta", json!({ "runId": "run:8", "delta": "**Two** meet" })),
+                signal("message.delta", json!({ "runId": "run:8", "delta": "ings.\n- 9:00 standup" })),
+                signal("proc.run.finished", json!({ "runId": "run:8", "status": "ok" })),
+            ]
+        }),
+        _ => json!({}),
+    }
+}
+
+#[tokio::test]
+async fn piped_replies_stay_raw_and_tool_lines_use_the_purpose() {
+    let (url, _) = ship(tool_run).await;
+    let output = Cli::signed_in(&url)
+        .run(&["ship", "what's tomorrow?"])
+        .await;
+    show("gsv ship (piped)", &output);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "**Two** meetings.\n- 9:00 standup\n");
+    let notes = stderr(&output);
+    assert!(
+        notes.contains("· Checking your calendar for tomorrow\n"),
+        "{notes}"
+    );
+    assert!(notes.contains("· read a file\n"), "{notes}");
+    assert!(!notes.contains('\u{1b}'), "no spinner without a terminal");
+}
+
+#[tokio::test]
+async fn a_terminal_shows_a_spinner_that_never_shares_a_line_with_the_reply() {
+    let (url, _) = ship(tool_run).await;
+    let Some(screen) = Cli::signed_in(&url)
+        .run_in_terminal(&["ship", "what's tomorrow?"])
+        .await
+    else {
+        eprintln!("skipped: util-linux script isn't installed");
+        return;
+    };
+    show_text("gsv ship (terminal)", &screen);
+    assert!(screen.contains("Thinking…"), "{screen:?}");
+    assert!(
+        screen.contains("Checking your calendar for tomorrow…"),
+        "{screen:?}"
+    );
+    assert!(screen.contains("Reading a file…"), "{screen:?}");
+    assert!(
+        screen.contains("· Checking your calendar for tomorrow\n"),
+        "{screen:?}"
+    );
+    assert!(screen.contains("· read a file (failed)\n"), "{screen:?}");
+    // Every spinner frame is erased before anything else is written.
+    for after in screen.split('…').skip(1) {
+        assert!(after.starts_with("\r\u{1b}[2K"), "{after:?}");
+    }
 }
 
 #[tokio::test]

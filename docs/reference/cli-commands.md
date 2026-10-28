@@ -124,6 +124,14 @@ as it streams, and returns when the run finishes, for up to 600 seconds. When
 the run fails, `ship` prints one plain line with the diagnostic reference,
 such as `Your Ship couldn't answer. (ref 7afee6a6)`, and exits 1; `--json`
 includes the full error.
+
+Each tool the Ship uses leaves one line, such as `· Checking your calendar`:
+the purpose the Ship gave, or else the activity wording, such as
+`ran a command`, or else the tool's name. While the Ship thinks or a tool
+runs, a spinner on stderr says what is happening; it appears only when
+stderr is a terminal and never with `--json`, and it is erased before
+anything else prints.
+
 Piped input counts as the message:
 
 ```bash

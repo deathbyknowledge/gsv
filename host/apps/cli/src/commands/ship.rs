@@ -5,6 +5,7 @@
 //! a one-shot reply can be piped. `--json` waits for the run and prints the
 //! committed replies instead of streaming.
 
+use std::collections::HashMap;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,12 +15,58 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use super::account::release_hint;
+use super::activity_labels;
 use super::approvals::render_request;
 use crate::cli::ShipAction;
 use crate::remote::{self, call, items, number, text, DynError, Output};
 use crate::render::{self, Style, Tone};
 
 const CHAT_WAIT_TIMEOUT_SECS: u64 = 600;
+const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER_TICK: std::time::Duration = std::time::Duration::from_millis(80);
+/// Erases the current terminal line and returns to its start.
+const CLEAR_LINE: &str = "\r\x1b[2K";
+
+/// What is on the terminal while a run streams. One lock covers the spinner
+/// and every write, so the spinner never shares a line with the reply.
+#[derive(Default)]
+struct Screen {
+    /// What the spinner says while waiting, such as "Thinking".
+    waiting: Option<String>,
+    drawn: bool,
+    frame: usize,
+    /// The reply on stdout ended without a newline.
+    mid_line: bool,
+    /// Tool calls in flight, by call id, with the line to print when each ends.
+    tools: HashMap<String, String>,
+}
+
+impl Screen {
+    fn clear_spinner(&mut self) {
+        if self.drawn {
+            eprint!("{CLEAR_LINE}");
+            let _ = io::stderr().flush();
+            self.drawn = false;
+        }
+    }
+
+    fn end_line(&mut self) {
+        if self.mid_line {
+            println!();
+            let _ = io::stdout().flush();
+            self.mid_line = false;
+        }
+    }
+}
+
+/// Stops the spinner's redraw task when the conversation ends.
+struct Ticker(tokio::task::JoinHandle<()>);
+
+impl Drop for Ticker {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
 
 /// Which conversation to talk to.
 pub(crate) enum Conversation {
@@ -49,6 +96,25 @@ fn debug_log(enabled: bool, message: impl AsRef<str>) {
     if enabled {
         eprintln!("[gateway-client-debug] {}", message.as_ref());
     }
+}
+
+/// How a tool call reads: the line left once it ends, and what the spinner
+/// says while it runs. The model's purpose comes first, then the activity
+/// label for its syscall, then the raw name.
+fn tool_words(payload: &Value) -> (String, String) {
+    if let Some(purpose) = super::approvals::purpose(payload) {
+        return (purpose.clone(), purpose);
+    }
+    let syscall = remote::opt_text(payload, "syscall").unwrap_or_default();
+    if let Some(label) = activity_labels::label(syscall) {
+        let doing = activity_labels::progressive(syscall).unwrap_or_else(|| label.to_string());
+        return (label.to_string(), doing);
+    }
+    let name = remote::opt_text(payload, "name")
+        .or_else(|| remote::opt_text(payload, "syscall"))
+        .unwrap_or("a tool")
+        .to_string();
+    (name.clone(), name)
 }
 
 /// One plain line for a failed run, with the diagnostic reference when the
@@ -105,6 +171,9 @@ struct ChatState {
     replies: Mutex<Vec<Value>>,
     /// The raw error of the last run that failed, kept for `--json`.
     failure: Mutex<Option<String>>,
+    /// Whether to animate progress: stderr is a terminal and not `--json`.
+    spinner: bool,
+    screen: Mutex<Screen>,
     hil_requests: mpsc::UnboundedSender<Value>,
 }
 
@@ -121,6 +190,10 @@ impl ChatState {
             pending: Mutex::new(Vec::new()),
             replies: Mutex::new(Vec::new()),
             failure: Mutex::new(None),
+            spinner: !json
+                && io::stderr().is_terminal()
+                && std::env::var("TERM").map_or(true, |term| term != "dumb"),
+            screen: Mutex::new(Screen::default()),
             hil_requests,
         }
     }
@@ -129,16 +202,123 @@ impl ChatState {
         if self.json {
             return;
         }
-        print!("{text}");
-        let _ = io::stdout().flush();
+        if let Ok(mut screen) = self.screen.lock() {
+            screen.waiting = None;
+            screen.clear_spinner();
+            print!("{text}");
+            let _ = io::stdout().flush();
+            if !text.is_empty() {
+                screen.mid_line = !text.ends_with('\n');
+            }
+        }
         self.emitted_text.store(true, Ordering::SeqCst);
+    }
+
+    /// Ends a partly printed reply line, so what follows starts on its own.
+    fn end_text(&self) {
+        if self.json {
+            return;
+        }
+        if let Ok(mut screen) = self.screen.lock() {
+            screen.end_line();
+        }
     }
 
     fn notice(&self, tone: Tone, text: &str) {
         if self.json {
             return;
         }
-        eprintln!("{}", self.notices.paint(tone, text));
+        if let Ok(mut screen) = self.screen.lock() {
+            screen.clear_spinner();
+            screen.end_line();
+            eprintln!("{}", self.notices.paint(tone, text));
+        }
+    }
+
+    /// Shows the spinner with this label while waiting, or hides it.
+    fn wait_for(&self, label: Option<&str>) {
+        if !self.spinner {
+            return;
+        }
+        if let Ok(mut screen) = self.screen.lock() {
+            screen.waiting = label.map(str::to_string);
+            if label.is_none() {
+                screen.clear_spinner();
+            }
+        }
+        if label.is_some() {
+            self.tick();
+        }
+    }
+
+    fn tick(&self) {
+        let Ok(mut screen) = self.screen.lock() else {
+            return;
+        };
+        if screen.mid_line {
+            return;
+        }
+        let Some(label) = screen.waiting.clone() else {
+            return;
+        };
+        screen.frame = (screen.frame + 1) % SPINNER_FRAMES.len();
+        let frame = SPINNER_FRAMES.get(screen.frame).copied().unwrap_or("·");
+        let line = render::truncate(&format!("{label}…"), self.notices.width().saturating_sub(3));
+        eprint!(
+            "{CLEAR_LINE}{} {}",
+            self.notices.paint(Tone::Accent, frame),
+            self.notices.dim(&line)
+        );
+        let _ = io::stderr().flush();
+        screen.drawn = true;
+    }
+
+    fn tool_started(&self, payload: &Value) {
+        let (done, doing) = tool_words(payload);
+        let line = render::truncate(&format!("· {done}"), self.notices.width());
+        if !self.spinner {
+            self.notice(Tone::Dim, &line);
+            return;
+        }
+        self.end_text();
+        if let Ok(mut screen) = self.screen.lock() {
+            screen
+                .tools
+                .insert(text(payload, "callId").to_string(), line);
+        }
+        self.wait_for(Some(&doing));
+    }
+
+    /// Leaves the lines of tool calls that never reported their end.
+    fn flush_tools(&self) {
+        let lines: Vec<String> = self
+            .screen
+            .lock()
+            .map(|mut screen| screen.tools.drain().map(|(_, line)| line).collect())
+            .unwrap_or_default();
+        for line in lines {
+            self.notice(Tone::Dim, &line);
+        }
+    }
+
+    fn tool_finished(&self, payload: &Value) {
+        if !self.spinner {
+            return;
+        }
+        let line = self
+            .screen
+            .lock()
+            .ok()
+            .and_then(|mut screen| screen.tools.remove(text(payload, "callId")));
+        if let Some(line) = line {
+            match text(payload, "outcome") {
+                "failed" => self.notice(Tone::Bad, &format!("{line} (failed)")),
+                "denied" => self.notice(Tone::Warn, &format!("{line} (blocked)")),
+                "cancelled" => self.notice(Tone::Dim, &format!("{line} (stopped)")),
+                _ => self.notice(Tone::Dim, &line),
+            }
+        }
+        self.wait_for(Some("Thinking"));
     }
 
     fn begin_wait(&self) {
@@ -252,6 +432,7 @@ fn process_chat_signal(state: &ChatState, signal: &str, payload: &Value) {
                     state.print(text);
                 }
             }
+            state.wait_for(None);
         }
         "message.delta" => {
             if let Some(text) = payload.get("delta").and_then(Value::as_str) {
@@ -259,29 +440,27 @@ fn process_chat_signal(state: &ChatState, signal: &str, payload: &Value) {
             }
         }
         "message.aborted" => {
-            if state.emitted_text.swap(false, Ordering::SeqCst) && !state.json {
-                println!();
-            }
+            state.emitted_text.store(false, Ordering::SeqCst);
+            state.end_text();
         }
         "proc.run.tool.started" => {
-            if let Some(name) = payload.get("name").and_then(Value::as_str) {
-                if state.emitted_text.swap(false, Ordering::SeqCst) && !state.json {
-                    println!();
-                }
-                state.notice(Tone::Dim, &format!("· {name}"));
-            }
+            state.emitted_text.store(false, Ordering::SeqCst);
+            state.tool_started(payload);
         }
+        "proc.run.tool.finished" => state.tool_finished(payload),
         "proc.run.hil.requested" => {
             if payload.get("requestId").and_then(Value::as_str).is_some()
                 && payload.get("pid").and_then(Value::as_str).is_some()
             {
+                state.wait_for(None);
+                state.end_text();
                 let _ = state.hil_requests.send(payload.clone());
             }
         }
         "proc.run.finished" => {
-            if state.emitted_text.load(Ordering::SeqCst) && !state.json {
-                println!();
-            }
+            state.wait_for(None);
+            state.end_text();
+            state.flush_tools();
             let aborted = payload.get("status").and_then(Value::as_str) == Some("aborted");
             match payload.get("error").and_then(Value::as_str) {
                 Some(error) if !aborted => {
@@ -424,6 +603,9 @@ async fn wait_for_chat_complete(
             request = hil_requests.recv() => {
                 if let Some(request) = request {
                     handle_hil_request(client, request, stdin_lines, interactive_stdin).await;
+                    if !state.completed.load(Ordering::SeqCst) {
+                        state.wait_for(Some("Thinking"));
+                    }
                 }
             }
             _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {}
@@ -483,6 +665,7 @@ async fn send(
             "Busy with something else; your message is queued.",
         );
     }
+    state.wait_for(Some("Thinking"));
     state.expect_run(run_id.to_string());
     Ok(result)
 }
@@ -505,6 +688,16 @@ pub(crate) async fn run_client(
 
     let (hil_sender, mut hil_requests) = mpsc::unbounded_channel::<Value>();
     let state = Arc::new(ChatState::new(debug, out.json, hil_sender));
+    let _ticker = state.spinner.then(|| {
+        let state = state.clone();
+        Ticker(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(SPINNER_TICK);
+            loop {
+                interval.tick().await;
+                state.tick();
+            }
+        }))
+    });
     let handler_state = state.clone();
     let client = KernelClient::connect_with_peer(
         url,
@@ -753,6 +946,31 @@ pub(crate) async fn run_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_lines_prefer_the_purpose_then_the_label_then_the_name() {
+        let purposeful = json!({
+            "syscall": "shell.exec", "name": "Shell",
+            "purpose": "  Checking your calendar\n for tomorrow  "
+        });
+        assert_eq!(
+            tool_words(&purposeful),
+            (
+                "Checking your calendar for tomorrow".to_string(),
+                "Checking your calendar for tomorrow".to_string()
+            )
+        );
+        let labelled = json!({ "syscall": "shell.exec", "name": "Shell", "purpose": "   " });
+        assert_eq!(
+            tool_words(&labelled),
+            ("ran a command".to_string(), "Running a command".to_string())
+        );
+        let unknown = json!({ "syscall": "made.up", "name": "Mystery" });
+        assert_eq!(
+            tool_words(&unknown),
+            ("Mystery".to_string(), "Mystery".to_string())
+        );
+    }
 
     #[test]
     fn failed_runs_read_as_one_plain_line_with_their_reference() {

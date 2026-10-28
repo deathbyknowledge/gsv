@@ -41,6 +41,14 @@ pub(crate) fn describe_request(request: &Value) -> (String, Option<String>) {
     (title, subject)
 }
 
+/// The model's one-sentence purpose for the person, on one line, or `None`
+/// when it wrote none.
+pub(crate) fn purpose(request: &Value) -> Option<String> {
+    opt_text(request, "purpose")
+        .map(render::one_line)
+        .filter(|purpose| !purpose.is_empty())
+}
+
 /// The block shown when a request arrives during `gsv ship` and in
 /// `gsv work show`: what, why, and the argument that matters.
 pub(crate) fn render_request(style: &Style, request: &Value) -> String {
@@ -50,10 +58,10 @@ pub(crate) fn render_request(style: &Style, request: &Value) -> String {
         style.paint(Tone::Warn, "Waiting for you:"),
         style.strong(&title)
     );
-    if let Some(purpose) = opt_text(request, "purpose") {
+    if let Some(purpose) = purpose(request) {
         out.push_str(&format!(
             "  {}\n",
-            render::truncate(&render::one_line(purpose), style.width().saturating_sub(2))
+            render::truncate(&purpose, style.width().saturating_sub(2))
         ));
     }
     if let Some(subject) = subject {

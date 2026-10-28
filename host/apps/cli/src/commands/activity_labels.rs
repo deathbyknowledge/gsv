@@ -241,6 +241,75 @@ const LABELS: &[(&str, &str)] = &[
     ("web.search", "searched the web"),
 ];
 
+/// The same wording as work in progress, for the spinner: "ran a command"
+/// becomes "Running a command".
+const PROGRESSIVE: &[(&str, &str)] = &[
+    ("accepted", "Accepting"),
+    ("activated", "Activating"),
+    ("answered", "Answering"),
+    ("applied", "Applying"),
+    ("asked", "Asking"),
+    ("cancelled", "Cancelling"),
+    ("changed", "Changing"),
+    ("checked", "Checking"),
+    ("compared", "Comparing"),
+    ("confirmed", "Confirming"),
+    ("connected", "Connecting"),
+    ("copied", "Copying"),
+    ("created", "Creating"),
+    ("deleted", "Deleting"),
+    ("delivered", "Delivering"),
+    ("disconnected", "Disconnecting"),
+    ("dismissed", "Dismissing"),
+    ("edited", "Editing"),
+    ("ended", "Ending"),
+    ("fetched", "Fetching"),
+    ("forgot", "Forgetting"),
+    ("forked", "Forking"),
+    ("generated", "Generating"),
+    ("imported", "Importing"),
+    ("listed", "Listing"),
+    ("opened", "Opening"),
+    ("prepared", "Preparing"),
+    ("published", "Publishing"),
+    ("ran", "Running"),
+    ("read", "Reading"),
+    ("received", "Receiving"),
+    ("redeemed", "Redeeming"),
+    ("refreshed", "Refreshing"),
+    ("removed", "Removing"),
+    ("renamed", "Renaming"),
+    ("reported", "Reporting"),
+    ("requested", "Requesting"),
+    ("reset", "Resetting"),
+    ("responded", "Responding"),
+    ("retried", "Retrying"),
+    ("revoked", "Revoking"),
+    ("saved", "Saving"),
+    ("searched", "Searching"),
+    ("sent", "Sending"),
+    ("started", "Starting"),
+    ("stopped", "Stopping"),
+    ("transcribed", "Transcribing"),
+    ("unpaired", "Unpairing"),
+    ("unpublished", "Unpublishing"),
+    ("updated", "Updating"),
+    ("used", "Using"),
+    ("wrote", "Writing"),
+];
+
+/// What a call is doing while it runs, such as "Running a command", when
+/// its label has a progressive form.
+pub(crate) fn progressive(call: &str) -> Option<String> {
+    let (verb, rest) = label(call)?.split_once(' ')?;
+    let index = PROGRESSIVE
+        .binary_search_by(|(past, _)| past.cmp(&verb))
+        .ok()?;
+    PROGRESSIVE
+        .get(index)
+        .map(|(_, doing)| format!("{doing} {rest}"))
+}
+
 pub(crate) fn label(call: &str) -> Option<&'static str> {
     LABELS
         .binary_search_by(|(name, _)| name.cmp(&call))
@@ -258,5 +327,12 @@ mod tests {
         assert!(LABELS.windows(2).all(|pair| pair[0].0 < pair[1].0));
         assert_eq!(label("shell.exec"), Some("ran a command"));
         assert_eq!(label("made.up"), None);
+        assert!(PROGRESSIVE.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        assert_eq!(
+            progressive("shell.exec").as_deref(),
+            Some("Running a command")
+        );
+        assert_eq!(progressive("fs.read").as_deref(), Some("Reading a file"));
+        assert_eq!(progressive("made.up"), None);
     }
 }
