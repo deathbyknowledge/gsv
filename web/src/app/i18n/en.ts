@@ -97,6 +97,7 @@ export const en = {
   "settings.loadingAccount": "Loading your account…",
   "settings.accountUnknown": "Your account could not be identified. Settings cannot be edited.",
   "settings.signIn.title": "Sign-in",
+  "settings.signIn.intro": "Change your password and set up a way back in if you lose access.",
 
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (unavailable)",
@@ -105,6 +106,7 @@ export const en = {
   "settings.preferences.unsaved": "Unsaved changes",
   "settings.preferences.save": "Save changes",
   "settings.account.title": "Account",
+  "settings.account.intro": "The account you sign in with. Deleting it removes your Ship and everything it remembers.",
   "settings.account.deleteTitle": "Delete your account",
   "settings.account.deleteRequest": "To delete your account, email {email} and we’ll delete it manually for you.",
   "settings.account.deleteExplanation": "Ship is still in early access, so we haven’t added a self-service deletion option yet.",
@@ -187,7 +189,7 @@ export const en = {
 
   // Settings: permissions
   "settings.permissions.title": "Permissions",
-  "settings.permissions.intro": "Choose when Ship and its helpers ask before using a capability. “Always allow” on a request adds a rule here. More specific targets win, then more specific capabilities; list order breaks ties. Account capability grants still set the outer limit.",
+  "settings.permissions.intro": "Choose what Ship and its helpers may do on their own and what they ask you about first. Choosing “Always allow” on a request adds a rule here.",
   "settings.permissions.loading": "Loading permissions…",
   "settings.permissions.targetsUnavailable": "Target names could not be loaded. Stored target IDs remain available.",
   "settings.permissions.unsupported": "This saved policy contains fields this editor cannot safely change. It has been kept unchanged.",
@@ -352,7 +354,7 @@ export const en = {
 
   // Settings: MCP servers
   "settings.mcp.title": "MCP servers",
-  "settings.mcp.intro": "Connect tools and resources to your Ship.",
+  "settings.mcp.intro": "Give Ship extra tools and sources, like a calendar or a database, through MCP servers you add here.",
   "settings.mcp.noList": "Your account cannot list MCP servers.",
   "settings.mcp.noAdd": "Your account cannot add MCP servers.",
   "settings.mcp.loading": "Loading MCP servers…",
@@ -495,7 +497,7 @@ export const en = {
   // Settings: desktop voice
   "settings.voice.title": "Voice",
   "settings.voice.label": "Voice settings",
-  "settings.voice.intro": "Voice preferences for this computer.",
+  "settings.voice.intro": "How Ship listens and speaks on this computer.",
   "settings.voice.microphone": "Microphone",
   "settings.voice.systemDefault": "System default",
   "settings.voice.microphoneUnavailable": "Selected microphone unavailable",

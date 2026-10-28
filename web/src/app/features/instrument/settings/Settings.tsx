@@ -94,11 +94,12 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
           <RetainedView active={active && section === "logs"}><Logs account={account} onProcess={onInspectProcess} /></RetainedView>
           <section hidden={section !== "account"} aria-labelledby="settings-account-title">
             <h1 id="settings-account-title">{t("settings.account.title")}</h1>
+            <p class="settings-intro">{t("settings.account.intro")}</p>
             <h2>{t("settings.account.deleteTitle")}</h2>
             <p class="settings-intro">{rich(t("settings.account.deleteRequest"), { email: <a href="mailto:hello@humansandmachin.es">hello@humansandmachin.es</a> })}</p>
             <p class="settings-muted">{t("settings.account.deleteExplanation")}</p>
           </section>
-          {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>{t("settings.signIn.title")}</h1><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
+          {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>{t("settings.signIn.title")}</h1><p class="settings-intro">{t("settings.signIn.intro")}</p><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
         </div>}
       </div>
     </div>

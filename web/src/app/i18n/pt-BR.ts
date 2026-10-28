@@ -103,6 +103,7 @@ export const ptBR = {
   "settings.loadingAccount": "Carregando sua conta…",
   "settings.accountUnknown": "Não foi possível identificar sua conta. As configurações não podem ser editadas.",
   "settings.signIn.title": "Login",
+  "settings.signIn.intro": "Altere sua senha e configure um jeito de voltar a entrar se você perder o acesso.",
 
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (indisponível)",
@@ -111,6 +112,7 @@ export const ptBR = {
   "settings.preferences.unsaved": "Alterações não salvas",
   "settings.preferences.save": "Salvar alterações",
   "settings.account.title": "Conta",
+  "settings.account.intro": "A conta que você usa para entrar. Excluir essa conta remove o seu Ship e tudo o que ele lembra.",
   "settings.account.deleteTitle": "Excluir sua conta",
   "settings.account.deleteRequest": "Para excluir sua conta, envie um e-mail para {email} e faremos a exclusão manualmente para você.",
   "settings.account.deleteExplanation": "O Ship ainda está em acesso antecipado, por isso ainda não adicionamos uma opção para você excluir sua conta por conta própria.",
@@ -193,7 +195,7 @@ export const ptBR = {
 
   // Settings: permissions
   "settings.permissions.title": "Permissões",
-  "settings.permissions.intro": "Escolha quando o Ship e seus ajudantes devem perguntar antes de usar uma capacidade. “Sempre permitir” em um pedido adiciona uma regra aqui. Destinos mais específicos têm prioridade, depois capacidades mais específicas; a ordem da lista desempata. As capacidades concedidas à conta continuam definindo o limite máximo.",
+  "settings.permissions.intro": "Escolha o que o Ship e seus ajudantes podem fazer sozinhos e sobre o que perguntam antes. Escolher “Sempre permitir” em um pedido adiciona uma regra aqui.",
   "settings.permissions.loading": "Carregando permissões…",
   "settings.permissions.targetsUnavailable": "Não foi possível carregar os nomes dos destinos. Os IDs de destino salvos continuam disponíveis.",
   "settings.permissions.unsupported": "Esta política salva contém campos que este editor não consegue alterar com segurança. Ela foi mantida sem alterações.",
@@ -358,7 +360,7 @@ export const ptBR = {
 
   // Settings: MCP servers
   "settings.mcp.title": "Servidores MCP",
-  "settings.mcp.intro": "Conecte ferramentas e recursos ao seu Ship.",
+  "settings.mcp.intro": "Dê ao Ship mais ferramentas e fontes, como uma agenda ou um banco de dados, pelos servidores MCP que você adicionar aqui.",
   "settings.mcp.noList": "Sua conta não pode ver a lista de servidores MCP.",
   "settings.mcp.noAdd": "Sua conta não pode adicionar servidores MCP.",
   "settings.mcp.loading": "Carregando servidores MCP…",
@@ -501,7 +503,7 @@ export const ptBR = {
   // Settings: desktop voice
   "settings.voice.title": "Voz",
   "settings.voice.label": "Configurações de voz",
-  "settings.voice.intro": "Preferências de voz para este computador.",
+  "settings.voice.intro": "Como o Ship ouve e fala neste computador.",
   "settings.voice.microphone": "Microfone",
   "settings.voice.systemDefault": "Padrão do sistema",
   "settings.voice.microphoneUnavailable": "O microfone selecionado não está disponível",

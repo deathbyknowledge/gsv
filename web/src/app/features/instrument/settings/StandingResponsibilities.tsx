@@ -20,7 +20,7 @@ export function StandingResponsibilities({ account }: { account: ConsoleAccount 
   }, onSuccess: () => cache.invalidateQueries({ queryKey: INSTRUMENT_SOURCES_KEY }) });
   if (!canConfigure(account, "r12y.source.list")) return <p class="settings-muted">{t("settings.standing.noAccess")}</p>;
   return <section class="settings-standing" aria-label={t("settings.standing.title")}>
-    <h1>{t("settings.standing.title")}</h1><p class="settings-muted">{t("settings.standing.intro")}</p>
+    <h1>{t("settings.standing.title")}</h1><p class="settings-intro">{t("settings.standing.intro")}</p>
     {query.isPending && connected && <LoadingState>{t("common.loading")}</LoadingState>}
     <SettingsError error={query.error ?? update.error} />
     <ul class="settings-list">{query.data?.sources.map((source) => <li key={source.id}>

@@ -98,6 +98,7 @@ export const es = {
   "settings.loadingAccount": "Cargando tu cuenta…",
   "settings.accountUnknown": "No se ha podido identificar tu cuenta. No se pueden editar los ajustes.",
   "settings.signIn.title": "Acceso",
+  "settings.signIn.intro": "Cambia tu contraseña y prepara una forma de volver a entrar si pierdes el acceso.",
 
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (no disponible)",
@@ -106,6 +107,7 @@ export const es = {
   "settings.preferences.unsaved": "Cambios sin guardar",
   "settings.preferences.save": "Guardar cambios",
   "settings.account.title": "Cuenta",
+  "settings.account.intro": "La cuenta con la que inicias sesión. Si la eliminas, se eliminan tu Ship y todo lo que recuerda.",
   "settings.account.deleteTitle": "Eliminar tu cuenta",
   "settings.account.deleteRequest": "Para eliminar tu cuenta, escribe a {email} y la eliminaremos manualmente por ti.",
   "settings.account.deleteExplanation": "Ship sigue en acceso anticipado, así que aún no hemos añadido una opción para que elimines tu cuenta directamente.",
@@ -188,7 +190,7 @@ export const es = {
 
   // Settings: permissions
   "settings.permissions.title": "Permisos",
-  "settings.permissions.intro": "Elige cuándo deben preguntar Ship y sus ayudantes antes de usar una capacidad. «Permitir siempre» en una solicitud añade aquí una regla. Ganan los destinos más específicos y, después, las capacidades más específicas; si hay empate, decide el orden de la lista. Las capacidades concedidas a la cuenta siguen marcando el límite.",
+  "settings.permissions.intro": "Elige qué pueden hacer Ship y sus ayudantes por su cuenta y sobre qué te preguntan antes. Si eliges «Permitir siempre» en una solicitud, se añade aquí una regla.",
   "settings.permissions.loading": "Cargando permisos…",
   "settings.permissions.targetsUnavailable": "No se han podido cargar los nombres de los destinos. Los ID guardados siguen disponibles.",
   "settings.permissions.unsupported": "Esta política guardada contiene campos que este editor no puede cambiar con seguridad. Se ha mantenido sin cambios.",
@@ -353,7 +355,7 @@ export const es = {
 
   // Settings: MCP servers
   "settings.mcp.title": "Servidores MCP",
-  "settings.mcp.intro": "Conecta herramientas y recursos a tu Ship.",
+  "settings.mcp.intro": "Dale a Ship más herramientas y fuentes, como un calendario o una base de datos, con los servidores MCP que añadas aquí.",
   "settings.mcp.noList": "Tu cuenta no puede ver la lista de servidores MCP.",
   "settings.mcp.noAdd": "Tu cuenta no puede añadir servidores MCP.",
   "settings.mcp.loading": "Cargando servidores MCP…",
@@ -496,7 +498,7 @@ export const es = {
   // Settings: desktop voice
   "settings.voice.title": "Voz",
   "settings.voice.label": "Ajustes de voz",
-  "settings.voice.intro": "Preferencias de voz para este ordenador.",
+  "settings.voice.intro": "Cómo te escucha y te habla Ship en este ordenador.",
   "settings.voice.microphone": "Micrófono",
   "settings.voice.systemDefault": "Predeterminado del sistema",
   "settings.voice.microphoneUnavailable": "El micrófono seleccionado no está disponible",
