@@ -5,48 +5,43 @@
   left: 50%;
   transform: translate(-50%, -50%);
   box-sizing: border-box;
-  width: min(720px, calc(100% - 32px));
+  width: min(520px, calc(100% - 32px));
   max-height: calc(var(--instrument-height) / var(--type-scale) - 32px);
   overflow: auto;
-  padding: 28px 32px 32px;
+  padding: var(--space-5);
   border: 1px solid var(--border-raised);
   background: var(--panel);
   box-shadow: 0 12px 40px rgba(0, 0, 0, .32);
   color: var(--text);
   font-family: var(--gsv-font-prose);
-  font-size: 24px;
-  line-height: 1.5;
+  font-size: 16px;
+  line-height: 1.6;
 }
-.welcome-card h2 { margin: 0 32px 20px 0; font-size: 32px; font-weight: 500; }
-.welcome-card p { margin: 0 0 26px; }
+.welcome-card h2 { margin: 0 var(--space-6) var(--space-4) 0; font-size: 22px; font-weight: 500; line-height: 1.3; }
+.welcome-card p { margin: 0 0 var(--space-3); }
 .welcome-card a { text-decoration: underline; text-underline-offset: 2px; }
 .welcome-card .welcome-card-close {
   position: absolute;
-  top: 10px;
-  right: 12px;
+  top: var(--space-3);
+  right: var(--space-3);
   width: 36px;
   height: 36px;
   color: var(--text-dim);
   font-family: var(--gsv-font-mono);
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1;
 }
 .welcome-card .welcome-card-try {
   /* the card's one action sits on the right, where action buttons are expected */
   display: block;
   margin-left: auto;
-  min-height: 44px;
-  margin-top: 4px;
-  padding: 8px 16px;
+  min-height: 38px;
+  margin-top: var(--space-4);
+  padding: var(--space-2) var(--space-4);
   border: 1px solid var(--accent);
   background: var(--accent);
   color: var(--void);
   font-family: var(--gsv-font-mono);
-  font-size: 18px;
+  font-size: 14px;
 }
 .welcome-card .welcome-card-try:hover { filter: brightness(1.12); }
-@container instrument (max-width: 600px) {
-  .welcome-card { width: calc(100% - 24px); padding: 22px; font-size: 14px; }
-  .welcome-card h2 { font-size: 20px; }
-  .welcome-card .welcome-card-try { min-height: 34px; padding: 6px 12px; font-size: 13px; }
-}
