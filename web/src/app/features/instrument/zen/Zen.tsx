@@ -54,6 +54,7 @@ import { WakingUp } from "./WakingUp";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenDraftPaste, ZenMedia } from "./ZenMedia";
+import { ZenLinkCards } from "./ZenLinkCard";
 import { longPaste, zenAttachment, zenDraftMessage, type ZenAttachment, type ZenPaste } from "./zenAttachments";
 import { FeedbackNote, MomentTime, NoteMoment, zenErrorText, zenFailure, zenNotice, type ZenNote } from "./ZenNotes";
 import type { ChatErrorContext } from "../../../services/chat/domain/errorPresentation";
@@ -1035,6 +1036,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         ) : moment.thinking || moment.streaming ? (
           <div class="text">{waking ? <WakingUp /> : null}<ThinkingMark tick={tick} /></div>
         ) : null}
+        {moment.role === "ship" && !moment.streaming && !settling.has(moment.id) && moment.text ? <ZenLinkCards text={moment.text} /> : null}
         {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
         {moment.text && <MomentCopyButton text={moment.text} />}
         {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (

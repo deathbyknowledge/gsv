@@ -2310,6 +2310,8 @@ export const ptBR = {
   "fleet.ledger.conversationSearch": "pesquisou em uma conversa",
   "fleet.ledger.conversationSend": "enviou uma mensagem",
   "fleet.ledger.conversationMediaRead": "abriu um anexo de mensagem",
+  "fleet.ledger.conversationLinkPreview": "gerou a prévia de um link",
+  "fleet.ledger.conversationLinkImage": "carregou a imagem da prévia de um link",
   "fleet.ledger.profileGet": "abriu o rascunho do perfil",
   "fleet.ledger.approachCreate": "enviou uma solicitação de mensagem",
   "fleet.ledger.approachGet": "abriu uma solicitação de mensagem",

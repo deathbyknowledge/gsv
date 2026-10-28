@@ -27,6 +27,7 @@
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
  *   /approve-publish   a publish to the open network carrying a picture; y/n decides
+ *   /links     a reply with two links, so the link preview cards can be seen (one with an image, one without)
  *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
  *   anything else is committed as your message and answered briefly a second later
  */
@@ -44,6 +45,7 @@ import {
   type ContactSendResult,
   type ContactSummary,
   type ConversationInboxEntry,
+  type ConversationLinkPreview,
   type AiThinkingContent,
   type AiToolCall,
   type ConnectResult,
@@ -291,6 +293,27 @@ const RUN_LONG_REPLY = [
 /** The picture a mock publish carries; small enough to arrive in one frame. */
 const PUBLISHED_PICTURE = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160"><rect width="240" height="160" fill="#1d2b3a"/><circle cx="182" cy="44" r="18" fill="#ffd24d"/><path d="M0 160 72 70l46 54 34-38 88 74Z" fill="#7a8fa6"/></svg>';
 const PUBLISHED_PICTURE_CID = "bafkreimockpicture";
+
+/* link previews the Kernel would read from the pages a reply links to; the image comes back through the image call */
+const LINKS_REPLY = "Two pages worth a look before we change the backup job: the [rsync documentation](https://rsync.samba.org/documentation.html) covers what `--delete` removes, and https://www.backblaze.com/blog/the-3-2-1-backup-strategy/ explains why a copy away from the studio matters.";
+const LINK_IMAGE_KEY = "mock-link-image";
+const LINK_IMAGE = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630"><rect width="1200" height="630" fill="#14233a"/><g fill="#7a8fa6"><rect x="120" y="150" width="300" height="330"/><rect x="450" y="150" width="300" height="330" opacity=".75"/><rect x="780" y="150" width="300" height="330" opacity=".5"/></g><circle cx="270" cy="420" r="14" fill="#ffd24d"/><circle cx="600" cy="420" r="14" fill="#ffd24d"/><circle cx="930" cy="420" r="14" fill="#ffd24d"/></svg>';
+const LINK_PREVIEWS = [
+  {
+    url: "https://www.backblaze.com/blog/the-3-2-1-backup-strategy/",
+    resolvedUrl: "https://www.backblaze.com/blog/the-3-2-1-backup-strategy/",
+    siteName: "Backblaze Blog",
+    title: "The 3-2-1 Backup Strategy",
+    description: "Keep three copies of your data, on two different kinds of media, with one of them off site. Here is why the rule still holds and how to put it in place without much effort.",
+    image: { key: LINK_IMAGE_KEY, mimeType: "image/svg+xml", size: new TextEncoder().encode(LINK_IMAGE).length, width: 1200, height: 630 },
+  },
+  {
+    url: "https://rsync.samba.org/documentation.html",
+    resolvedUrl: "https://rsync.samba.org/documentation.html",
+    title: "rsync documentation",
+    description: "Manual pages, the FAQ and how-to guides for rsync, the fast incremental file-transfer utility.",
+  },
+] satisfies ConversationLinkPreview[];
 
 const GRANOLA_COMMAND = "pgrep -fl Granola 2>/dev/null; echo \"---\"; osascript -e 'tell application \"System Events\" to tell process \"Granola\" to get name of every window' 2>&1 | head -5";
 
@@ -730,7 +753,7 @@ async function answer(run: OpenRun, trigger: string): Promise<void> {
   }
   await wait(jitter(trigger === "/stream" || trigger === "/reply" ? 600 : 1000));
   if (!live(run)) return;
-  await send(run, trigger === "/stream" ? LONG_REPLY : trigger === "/reply" ? SHORT_REPLY : ECHO_REPLY, trigger === "/stream");
+  await send(run, trigger === "/stream" ? LONG_REPLY : trigger === "/reply" ? SHORT_REPLY : trigger === "/links" ? LINKS_REPLY : ECHO_REPLY, trigger === "/stream");
 }
 
 /**
@@ -1008,6 +1031,18 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
         displayName: "Mara", about: "Design, good coffee, and making things together.", contactPolicy: "requests" } });
     }
     case "atproto.identity": return respond(id, { identity: { did: OWN_DID, handle: "esteve.ship.space", host: "https://pds.ship.space" }, takedowns: [] });
+    case "conversation.link.preview": {
+      const { url } = z.object({ url: z.string() }).parse(args);
+      const preview = LINK_PREVIEWS.find((entry) => entry.url === url);
+      // The Kernel fetches the page first, so a preview arrives a beat after the message settles.
+      return wait(jitter(700)).then(() => respond(id, preview ? { ok: true, preview } : { ok: false, error: `The page at ${url} offered no preview` }));
+    }
+    case "conversation.link.image": {
+      const { key } = z.object({ key: z.string() }).parse(args);
+      return key === LINK_IMAGE_KEY
+        ? socket.textResponse(id, { ok: true, key, mimeType: "image/svg+xml", size: new TextEncoder().encode(LINK_IMAGE).length }, LINK_IMAGE)
+        : respond(id, { ok: false, error: `No link preview image ${key}` });
+    }
     case "atproto.blob.read": {
       const { cid } = z.object({ cid: z.string() }).parse(args);
       return cid === PUBLISHED_PICTURE_CID

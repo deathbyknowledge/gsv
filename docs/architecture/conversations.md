@@ -386,6 +386,19 @@ does not present them as “Memory” messages or interrupt the composer when th
 working context changes.
 
 
+## Link previews in the web app
+
+Chat shows a quiet card under a settled Ship message for each web link it contains, in order and
+once per URL, with the page's image, site name, title and description; the card opens the link in a
+new tab. Links inside code, images and the person's own messages get no card. Previews resolve
+lazily as messages render: the signed-in client asks the Kernel through `conversation.link.preview`,
+and the Kernel reads the public page on that client's behalf and caches the result, including
+failures, for the installation. The image travels through `conversation.link.image` as a frame
+body, so the browser never contacts the linked site or its image host. Until a preview resolves, or
+when it fails or offers neither a title nor an image, the message shows no card and takes no extra
+room. A preview is presentation only: it is never part of the canonical message, its history or
+its search index, and messengers present links in their own way.
+
 ## Contextual requests in the web app
 
 Chat’s `+` menu can attach a file, find a person by handle, saved name or GSV address,
