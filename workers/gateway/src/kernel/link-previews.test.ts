@@ -45,20 +45,29 @@ function fetcher(routes: Record<string, Route>) {
 
 async function withPreviews<T>(
   routes: Record<string, Route>,
-  run: (input: { previews: LinkPreviews; fetch: ReturnType<typeof fetcher>; bucket: R2Bucket; clock: { now: number } }) => Promise<T>,
+  run: (input: {
+    previews: LinkPreviews;
+    fetch: ReturnType<typeof fetcher>;
+    bucket: R2Bucket;
+    clock: { now: number };
+    /** Background work the previews handed to the owning object. */
+    tasks: Array<Promise<unknown>>;
+  }) => Promise<T>,
   options: { timeoutMs?: number; deadlineMs?: number; bucket?: (bucket: R2Bucket) => R2Bucket } = {},
 ): Promise<T> {
   return runWithRealKernelSql(async (sql) => {
     const fetch = fetcher(routes);
     const bucket = createInstallationStorage(env.STORAGE, `link-previews-${crypto.randomUUID()}`);
     const clock = { now: 1_000_000 };
+    const tasks: Array<Promise<unknown>> = [];
     const previews = new LinkPreviews(sql, options.bucket?.(bucket) ?? bucket, {
       fetch,
       now: () => clock.now,
       timeoutMs: options.timeoutMs,
       deadlineMs: options.deadlineMs,
+      keepAlive: (task) => { tasks.push(task); },
     });
-    return run({ previews, fetch, bucket, clock });
+    return run({ previews, fetch, bucket, clock, tasks });
   });
 }
 
@@ -475,6 +484,54 @@ describe("link preview cache", () => {
     });
   });
 
+  it("finishes an image write that outlasts the deadline in the background", async () => {
+    let finishPut!: () => void;
+    const putting = new Promise<void>((resolve) => { finishPut = resolve; });
+    // SAFETY: the wrapper inherits every R2Bucket member from the bucket it is created from and overrides only put.
+    const slowPuts = (bucket: R2Bucket): R2Bucket => Object.assign(Object.create(bucket) as R2Bucket, {
+      put: async (...args: Parameters<R2Bucket["put"]>) => { await putting; return bucket.put(...args); },
+    });
+    await withPreviews({
+      "https://example.com/": () => html('<meta property="og:title" content="Shop"><meta property="og:image" content="/shop.png">'),
+      "https://example.com/shop.png": () => image(PNG),
+    }, async ({ previews, bucket, tasks }) => {
+      expect(await previewOf(previews, "https://example.com/")).toEqual({
+        url: "https://example.com/",
+        resolvedUrl: "https://example.com/",
+        title: "Shop",
+      });
+      finishPut();
+      await Promise.all(tasks);
+      expect(await storedImages(bucket)).toBe(1);
+      expect(await previewOf(previews, "https://example.com/")).toMatchObject({ title: "Shop", image: { mimeType: "image/png" } });
+    }, { timeoutMs: 1_000, deadlineMs: 20, bucket: slowPuts });
+  });
+
+  it("keeps the row of an image it could not delete for a later pass", async () => {
+    let deletesFail = true;
+    // SAFETY: the wrapper inherits every R2Bucket member from the bucket it is created from and overrides only delete.
+    const flakyDeletes = (bucket: R2Bucket): R2Bucket => Object.assign(Object.create(bucket) as R2Bucket, {
+      delete: async (keys: string | string[]) => {
+        if (deletesFail) throw new Error("r2 unavailable");
+        return bucket.delete(keys);
+      },
+    });
+    await withPreviews({
+      "https://example.com/": () => html('<head><meta property="og:image" content="/a.png"></head>'),
+      "https://example.com/a.png": () => image(PNG),
+    }, async ({ previews, bucket, clock }) => {
+      const key = (await previewOf(previews, "https://example.com/")).image!.key;
+      clock.now += LINK_PREVIEW_SUCCESS_TTL_MS;
+      await previews.pruneExpired();
+      expect(await bucket.head(LINK_PREVIEW_IMAGE_PREFIX + key)).not.toBeNull();
+      await expect(previews.image(key)).resolves.toMatchObject({ data: { ok: true } });
+      deletesFail = false;
+      await previews.pruneExpired();
+      expect(await storedImages(bucket)).toBe(0);
+      await expect(previews.image(key)).resolves.toEqual({ data: { ok: false, error: "not-found" } });
+    }, { bucket: flakyDeletes });
+  });
+
   it("answers a preview without waiting for expired cleanup", async () => {
     let finishDelete!: () => void;
     const deleting = new Promise<void>((resolve) => { finishDelete = resolve; });
@@ -486,14 +543,14 @@ describe("link preview cache", () => {
       "https://example.com/a": () => html('<head><meta property="og:image" content="/a.png"></head>'),
       "https://example.com/a.png": () => image(PNG),
       "https://example.com/b": () => html("<title>B</title>"),
-    }, async ({ previews, bucket, clock }) => {
+    }, async ({ previews, bucket, clock, tasks }) => {
       const key = (await previewOf(previews, "https://example.com/a")).image!.key;
       clock.now += LINK_PREVIEW_SUCCESS_TTL_MS;
-      // b answers while a's expired image is still being deleted.
+      // b answers while a's expired image is still being deleted; the deletion lives on with the owning object.
       expect(await previewOf(previews, "https://example.com/b")).toMatchObject({ title: "B" });
       expect(await bucket.head(LINK_PREVIEW_IMAGE_PREFIX + key)).not.toBeNull();
       finishDelete();
-      await previews.settled();
+      await Promise.all(tasks);
       expect(await bucket.head(LINK_PREVIEW_IMAGE_PREFIX + key)).toBeNull();
     }, { bucket: slowDeletes });
   });

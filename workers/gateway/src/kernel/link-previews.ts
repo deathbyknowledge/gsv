@@ -23,6 +23,8 @@ export type LinkPreviewOptions = {
   now?: () => number;
   timeoutMs?: number;
   deadlineMs?: number;
+  /** Keeps background work, such as pruning or a write that outlasted its deadline, alive with the owning object. */
+  keepAlive?: (task: Promise<unknown>) => void;
 };
 
 type FetchOptions = {
@@ -124,6 +126,7 @@ export class LinkPreviews {
   private readonly fetchOptions: FetchOptions;
   private readonly now: () => number;
   private readonly deadlineMs: number;
+  private readonly keepAlive: (task: Promise<unknown>) => void;
   private pruning: Promise<void> | null = null;
 
   constructor(
@@ -136,6 +139,7 @@ export class LinkPreviews {
       timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
     };
     this.deadlineMs = options.deadlineMs ?? LINK_PREVIEW_DEADLINE_MS;
+    this.keepAlive = options.keepAlive ?? (() => undefined);
     this.now = options.now ?? Date.now;
   }
 
@@ -157,11 +161,7 @@ export class LinkPreviews {
     this.pruning = this.pruneExpired()
       .catch((error) => console.warn("[LinkPreviews] Pruning expired previews failed:", errorName(error)))
       .finally(() => { this.pruning = null; });
-  }
-
-  /** Resolves once any background pruning has finished. */
-  async settled(): Promise<void> {
-    await this.pruning;
+    this.keepAlive(this.pruning);
   }
 
   async image(key: string): Promise<{ data: ConversationLinkImageResult; body?: BinaryBody }> {
@@ -180,17 +180,26 @@ export class LinkPreviews {
     };
   }
 
-  /** Deletes a bounded batch of expired rows and any image no remaining row refers to. */
+  /**
+   * Deletes a bounded batch of expired rows and any image no live row refers to. Objects go before rows, and a row
+   * whose image could not be deleted stays: an interrupted or failed pass leaves rows a later pass finds again,
+   * never an object nothing names.
+   */
   async pruneExpired(): Promise<void> {
-    const expired = this.sql.exec<{ image_key: string | null }>(
-      `DELETE FROM link_previews
-        WHERE url IN (SELECT url FROM link_previews WHERE expires_at <= ? ORDER BY expires_at LIMIT ?)
-        RETURNING image_key`,
-      this.now(),
+    const now = this.now();
+    const expired = this.sql.exec<{ url: string; image_key: string | null }>(
+      "SELECT url, image_key FROM link_previews WHERE expires_at <= ? ORDER BY expires_at LIMIT ?",
+      now,
       PRUNE_BATCH,
     ).toArray();
-    const keys = new Set(expired.flatMap((row) => row.image_key ? [row.image_key] : []));
-    for (const key of keys) await this.releaseImage(key);
+    const released = new Map<string, boolean>();
+    for (const key of new Set(expired.flatMap((row) => row.image_key ? [row.image_key] : []))) {
+      released.set(key, await this.releaseImage(key, now));
+    }
+    for (const row of expired) {
+      if (row.image_key && !released.get(row.image_key)) continue;
+      this.sql.exec("DELETE FROM link_previews WHERE url = ? AND expires_at <= ?", row.url, now);
+    }
   }
 
   private cached(url: string): LinkPreviewRow | null {
@@ -209,15 +218,34 @@ export class LinkPreviews {
     return pending;
   }
 
+  /** One deadline covers the page, its image and the image write, so the request answers inside the client's timeout. */
   private async fetchAndStore(url: string): Promise<LinkPreviewRow> {
-    const { row, image, imageAdvertised } = await this.fetchRow(url);
-    const stored = image ? await this.storeWithImage(row, image) : null;
-    // A page whose advertised image could not be fetched or stored keeps the failure expiry, so the image is retried within the hour.
-    const saved = stored?.row ?? (imageAdvertised ? { ...row, expires_at: row.fetched_at + LINK_PREVIEW_FAILURE_TTL_MS } : row);
-    const previous = stored ? stored.previous : this.upsert(saved);
-    // Released after the new key's lock, so two saves never wait on each other's keys.
-    if (previous && previous !== saved.image_key) await this.releaseImage(previous);
-    return saved;
+    const deadline = new AbortController();
+    const timer = setTimeout(() => {
+      deadline.abort(new LinkPreviewFailure("timeout", "Link preview took too long"));
+    }, this.deadlineMs);
+    try {
+      const { row, image, imageAdvertised } = await this.fetchRow(url, deadline.signal);
+      let stored: { row: LinkPreviewRow; previous: string | null } | null = null;
+      if (image) {
+        const storing = this.storeWithImage(row, image);
+        try {
+          stored = await raceWithAbort(storing, deadline.signal);
+        } catch (error) {
+          if (!deadline.signal.aborted) throw error;
+          // A write that outlasts the deadline finishes with the object; its row, image included, then replaces the one saved here.
+          this.keepAlive(storing.catch(() => undefined));
+        }
+      }
+      // A page whose advertised image could not be fetched or stored keeps the failure expiry, so the image is retried within the hour.
+      const saved = stored?.row ?? (imageAdvertised ? { ...row, expires_at: row.fetched_at + LINK_PREVIEW_FAILURE_TTL_MS } : row);
+      const previous = stored ? stored.previous : this.upsert(saved);
+      // Released after the new key's lock, so two saves never wait on each other's keys.
+      if (previous && previous !== saved.image_key) await this.releaseImage(previous, this.now());
+      return saved;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Writes the image object and the row that refers to it under the image key's lock; null when the image could not be stored. */
@@ -248,18 +276,16 @@ export class LinkPreviews {
     });
   }
 
-  private async fetchRow(url: string): Promise<{ row: LinkPreviewRow; image: PreviewImage | null; imageAdvertised: boolean }> {
+  private async fetchRow(
+    url: string,
+    signal: AbortSignal,
+  ): Promise<{ row: LinkPreviewRow; image: PreviewImage | null; imageAdvertised: boolean }> {
     const fetchedAt = this.now();
-    const deadline = new AbortController();
-    const timer = setTimeout(() => {
-      deadline.abort(new LinkPreviewFailure("timeout", "Link preview took too long"));
-    }, this.deadlineMs);
-    const options: FetchOptions = { ...this.fetchOptions, signal: deadline.signal };
+    const options: FetchOptions = { ...this.fetchOptions, signal };
     let page: { resolvedUrl: URL; metadata: PageMetadata };
     try {
       page = await fetchPage(new URL(url), options);
     } catch (error) {
-      clearTimeout(timer);
       return {
         row: { ...emptyRow(url, fetchedAt, fetchedAt + LINK_PREVIEW_FAILURE_TTL_MS), error: failureCategory(error) },
         image: null,
@@ -267,12 +293,7 @@ export class LinkPreviews {
       };
     }
     const { metadata } = page;
-    let image: FetchedImage | null = null;
-    try {
-      if (metadata.image) image = await fetchPreviewImage(metadata.image.url, page.resolvedUrl, options);
-    } finally {
-      clearTimeout(timer);
-    }
+    const image = metadata.image ? await fetchPreviewImage(metadata.image.url, page.resolvedUrl, options) : null;
     return {
       row: {
         ...emptyRow(url, fetchedAt, fetchedAt + LINK_PREVIEW_SUCCESS_TTL_MS),
@@ -318,13 +339,20 @@ export class LinkPreviews {
     return this.sql.exec("SELECT 1 FROM link_previews WHERE image_key = ? LIMIT 1", key).toArray().length > 0;
   }
 
-  private releaseImage(key: string): Promise<void> {
+  private referencedLive(key: string, now: number): boolean {
+    return this.sql.exec("SELECT 1 FROM link_previews WHERE image_key = ? AND expires_at > ? LIMIT 1", key, now).toArray().length > 0;
+  }
+
+  /** Deletes the image unless a live row still names it; true once nothing in storage needs the key any more. */
+  private releaseImage(key: string, now: number): Promise<boolean> {
     return this.withImageLock(key, async () => {
-      if (this.referenced(key)) return;
+      if (this.referencedLive(key, now)) return true;
       try {
         await this.storage.delete(LINK_PREVIEW_IMAGE_PREFIX + key);
+        return true;
       } catch (error) {
         console.warn("[LinkPreviews] Failed to delete an unreferenced preview image:", errorName(error));
+        return false;
       }
     });
   }

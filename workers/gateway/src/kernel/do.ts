@@ -576,7 +576,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);
-    this.linkPreviews = new LinkPreviews(sql, this.installationStorage);
+    this.linkPreviews = new LinkPreviews(sql, this.installationStorage, { keepAlive: (task) => ctx.waitUntil(task) });
     this.shipIdentity = new ShipIdentity(ctx.storage);
     this.didDocuments = new DidDocumentStore(sql);
     this.shipCallNonces = new ShipCallNonces(sql);
