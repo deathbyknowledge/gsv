@@ -144,8 +144,9 @@ preamble:
 > two pepperoni pizzas?
 
 The model words it naturally in the call's language; the template makes it a
-rule, and the service checks the first response's transcript for it before the
-call continues. This meets the EU AI Act's transparency duty (Article 50, in
+rule. The service records, as a boolean outcome field, whether the first
+response named the owner and an assistant, so tests and review can catch a
+template that stops doing it. This meets the EU AI Act's transparency duty (Article 50, in
 force since 2 August 2026) without a formal script. The agent never claims to
 be human and answers truthfully if asked. The opening does not mention
 transcription, and does not say "Ship": a product name means nothing to the
