@@ -12,14 +12,15 @@ canonical message records the relevant PID and run ID, but killing that Process 
 conversation. Users can inspect the referenced Process while it exists or read its archive later.
 
 Web and Desktop render Ship's Markdown code blocks at a readable monospace size with a copy action.
-Long lines scroll inside the block. Copy preserves indentation and internal line breaks without
-adding the renderer's final newline to the clipboard.
+Long lines wrap on narrow viewports and scroll inside the block on wide ones. Copy preserves
+indentation and internal line breaks without adding the renderer's final newline to the clipboard.
 Chat renders human messages as plain text with clickable web URLs. External web links in human
 messages and Ship's Markdown replies open in a new tab.
 Human messages align right, with the timestamp before the sender's name, and balance line
 lengths to avoid a short final line. Ship's messages align left.
 The Chat transcript scrolls vertically. Long words, URLs and compaction notes wrap within the
-reading column; wide tables and code blocks scroll horizontally within their own bounds.
+reading column; wide tables scroll horizontally within their own bounds, as do code blocks on
+wide viewports.
 Ship replies use ordinary line wrapping rather than paragraph balancing, filling each line
 with the words that fit. Explicit line breaks in a message remain intact.
 
