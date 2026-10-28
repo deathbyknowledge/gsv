@@ -8,9 +8,6 @@ use crate::cli::{MailAction, MailPage};
 use crate::remote::{self, call, items, number, opt_text, text, DynError, Output};
 use crate::render::{self, Cell, Style, Table, Tone};
 
-/// Pages scanned to find a message from its short id.
-const LOOKUP_PAGES: usize = 5;
-
 /// Messages fetched per call while skipping to a later page.
 const SKIP_BATCH: u64 = 100;
 
@@ -150,40 +147,15 @@ fn print_page(
     Ok(())
 }
 
-/// The message id for what someone typed: the whole id, or a short id from a
-/// recent page.
-async fn resolve_message(client: &KernelClient, input: &str) -> Result<String, DynError> {
-    if input.contains(':') || input.len() > 16 {
-        return Ok(input.to_string());
+/// The message id for what someone typed: the whole id, or the short id a
+/// page shows, which the Ship resolves against the whole mailbox.
+fn message_id(input: &str) -> String {
+    let input = input.trim();
+    if input.contains(':') {
+        input.to_string()
+    } else {
+        format!("mail:{input}")
     }
-    let mut before: Option<String> = None;
-    let mut seen: Vec<Value> = Vec::new();
-    for _ in 0..LOOKUP_PAGES {
-        let mut args = json!({ "limit": 100 });
-        if let Some(before) = &before {
-            args["before"] = json!(before);
-        }
-        let page = call(client, "mail.list", args).await?;
-        seen.extend(items(&page, "messages").iter().cloned());
-        let matching = seen
-            .iter()
-            .filter(|message| render::id_matches(text(message, "messageId"), input))
-            .count();
-        if matching > 0 {
-            break;
-        }
-        match opt_text(&page, "next") {
-            Some(next) => before = Some(next.to_string()),
-            None => break,
-        }
-    }
-    let message = render::match_id(
-        &seen,
-        input,
-        |message| text(message, "messageId"),
-        "message",
-    )?;
-    Ok(text(message, "messageId").to_string())
 }
 
 pub(crate) async fn run(
@@ -232,7 +204,7 @@ pub(crate) async fn run(
             )
         }
         Some(MailAction::Read { id }) => {
-            let message_id = resolve_message(&client, &id).await?;
+            let message_id = message_id(&id);
             let result = call(&client, "mail.read", json!({ "messageId": message_id })).await?;
             if out.json {
                 return render::print_json(&result);
@@ -323,7 +295,7 @@ pub(crate) async fn run(
             }
             let result = client.request_ok("mail.send", Some(args)).await?;
             if out.json {
-                return render::print_json(&result);
+                render::print_json(&result)?;
             }
             if result.get("ok").and_then(Value::as_bool) == Some(false) {
                 let retry = if remote::flag(&result, "retryable") {
@@ -334,6 +306,12 @@ pub(crate) async fn run(
                 return Err(format!("{}{retry}", text(&result, "error")).into());
             }
             let (from, to) = (text(&result, "from"), text(&result, "to"));
+            if out.json {
+                if text(&result, "state") == "failed" {
+                    return Err(format!("The mail to {to} could not be sent.").into());
+                }
+                return Ok(());
+            }
             match text(&result, "state") {
                 "accepted" => println!("Sent from {from} to {to}."),
                 "failed" => return Err(format!("The mail to {to} could not be sent.").into()),

@@ -120,12 +120,16 @@ impl Cli {
     }
 
     async fn run(&self, args: &[&str]) -> Output {
+        self.run_with_columns(args, 100).await
+    }
+
+    async fn run_with_columns(&self, args: &[&str], columns: usize) -> Output {
         let child = Command::new(env!("CARGO_BIN_EXE_gsv"))
             .args(args)
             .env("HOME", self.directory.path())
             .env("XDG_CONFIG_HOME", self.directory.path().join("config"))
             .env("NO_COLOR", "1")
-            .env("COLUMNS", "100")
+            .env("COLUMNS", columns.to_string())
             .env_remove("GSV_URL")
             .env_remove("GSV_TOKEN")
             .env_remove("GSV_USER")
@@ -780,4 +784,68 @@ async fn routines_can_run_once_at_a_time_in_the_ships_zone() {
         .await;
     assert_eq!(output.status.code(), Some(1));
     assert!(stderr(&output).contains("has already passed"));
+}
+
+#[tokio::test]
+async fn mail_read_finds_a_short_id_anywhere_in_the_mailbox() {
+    fn answer(call: &str, args: &Value) -> Value {
+        match call {
+            // The newest pages hold other mail; the Ship resolves the id itself.
+            "mail.list" => json!({ "messages": [], "next": null }),
+            "mail.read" if args["messageId"] == "mail:7d41c0aa" => json!({ "message": {
+                "messageId": "mail:7d41c0aa99", "from": "lena@example.com", "to": ["sam@ship.example"],
+                "cc": [], "replyTo": [], "subject": "Old invoice", "receivedAt": 0, "attachments": [],
+                "text": "From: lena@example.com\n\nFrom last year.\n"
+            }}),
+            _ => json!({}),
+        }
+    }
+    let (url, calls) = ship(answer).await;
+    let output = Cli::signed_in(&url)
+        .run(&["mail", "read", "7d41c0aa"])
+        .await;
+    show("gsv mail read (old short id)", &output);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("From last year."));
+    assert!(called(&calls, "mail.list").is_empty());
+}
+
+#[tokio::test]
+async fn mail_send_json_still_fails_when_the_mail_is_refused() {
+    fn answer(call: &str, _: &Value) -> Value {
+        match call {
+            "mail.send" => {
+                json!({ "ok": false, "error": "The address was refused.", "retryable": false })
+            }
+            _ => json!({}),
+        }
+    }
+    let (url, _) = ship(answer).await;
+    let output = Cli::signed_in(&url)
+        .run(&["mail", "send", "ana@example.com", "hello", "--json"])
+        .await;
+    show("gsv mail send --json (refused)", &output);
+    assert!(!output.status.success());
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("JSON output");
+    assert_eq!(printed["ok"], false);
+}
+
+#[tokio::test]
+async fn a_new_token_prints_whole_on_a_narrow_terminal() {
+    fn answer(call: &str, args: &Value) -> Value {
+        match call {
+            "sys.token.create" => json!({ "token": {
+                "tokenId": "tok-1", "token": "gsv_svc_0123456789abcdefghijklmnopqrstuvwxyz0123", "tokenPrefix": "gsv_svc",
+                "uid": 1000, "kind": args["kind"], "label": null, "peerId": null, "createdAt": 0, "expiresAt": null
+            }}),
+            _ => json!({}),
+        }
+    }
+    let (url, _) = ship(answer).await;
+    let output = Cli::signed_in(&url)
+        .run_with_columns(&["auth", "token", "create", "--kind", "service"], 40)
+        .await;
+    show("gsv auth token create (40 columns)", &output);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("gsv_svc_0123456789abcdefghijklmnopqrstuvwxyz0123"));
 }

@@ -55,12 +55,13 @@ pub(crate) async fn run(
             let expires = number(&token, "expiresAt")
                 .map(render::local_timestamp)
                 .unwrap_or_else(|| "never".to_string());
+            // The token prints whole on its own line: it is shown once, so no width may cut it.
+            println!("{}", style.paint(Tone::Strong, text(&token, "token")));
             print!(
                 "{}",
                 render::detail(
                     &style,
                     &[
-                        ("Token", Cell::new(text(&token, "token"), Tone::Strong)),
                         ("Id", Cell::new(text(&token, "tokenId"), Tone::Dim)),
                         ("Kind", text(&token, "kind").into()),
                         ("Peer", opt_text(&token, "peerId").unwrap_or("any").into()),
