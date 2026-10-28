@@ -370,6 +370,17 @@ describe("link preview extraction", () => {
     }, { timeoutMs: 1_000, deadlineMs: 20 });
   });
 
+  it("gives up on a body that will not cancel in time", async () => {
+    await withPreviews({
+      "https://example.com/missing": () => new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new TextEncoder().encode("nope")); },
+        cancel: () => new Promise<void>(() => {}),
+      }), { status: 404, headers: { "content-type": "text/html" } }),
+    }, async ({ previews }) => {
+      await expect(previews.preview("https://example.com/missing")).resolves.toEqual({ ok: false, error: "unreachable" });
+    }, { timeoutMs: 20 });
+  });
+
   it("times out a request that does not answer", async () => {
     await withPreviews({
       "https://example.com/slow": () => new Promise<Response>(() => {}),
@@ -540,6 +551,37 @@ describe("link preview cache", () => {
       expect(await storedImages(bucket)).toBe(1);
       expect(await previewOf(previews, "https://example.com/")).toMatchObject({ title: "Shop", image: { mimeType: "image/png" } });
     }, { timeoutMs: 1_000, deadlineMs: 20, bucket: slowPuts });
+  });
+
+  it("logs a late image write that fails after the request answered", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let finishPut!: () => void;
+    const putting = new Promise<void>((resolve) => { finishPut = resolve; });
+    // SAFETY: the wrapper inherits every R2Bucket member from the bucket it is created from and overrides only put.
+    const slowPuts = (bucket: R2Bucket): R2Bucket => Object.assign(Object.create(bucket) as R2Bucket, {
+      put: async (...args: Parameters<R2Bucket["put"]>) => { await putting; return bucket.put(...args); },
+    });
+    try {
+      await withPreviews({
+        "https://example.com/": () => html('<meta property="og:title" content="Shop"><meta property="og:image" content="/shop.png">'),
+        "https://example.com/shop.png": () => image(PNG),
+      }, async ({ previews, bucket, sql, tasks }) => {
+        expect(await previewOf(previews, "https://example.com/")).not.toHaveProperty("image");
+        // The interim row is saved; the late write's own row write is what fails.
+        const exec = sql.exec.bind(sql);
+        vi.spyOn(sql, "exec").mockImplementation((query: string, ...bindings: SqlStorageValue[]) => {
+          if (query.includes("INSERT OR REPLACE INTO link_previews")) throw new Error("sqlite busy");
+          return exec(query, ...bindings);
+        });
+        finishPut();
+        await Promise.all(tasks);
+        expect(await storedImages(bucket)).toBe(0);
+      }, { timeoutMs: 1_000, deadlineMs: 20, bucket: slowPuts });
+      const record = warn.mock.calls.find(([message]) => message === "[LinkPreviews] Late image write failed:");
+      expect(record?.[2]).toMatchObject({ exceptionMessage: "sqlite busy" });
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("remembers a replaced image it could not delete and removes it on a later pass", async () => {

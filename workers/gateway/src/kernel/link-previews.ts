@@ -254,7 +254,7 @@ export class LinkPreviews {
         } catch (error) {
           if (!deadline.signal.aborted) throw error;
           // A write that outlasts the deadline finishes with the object; its row, image included, then replaces the one saved here.
-          this.keepAlive(storing.catch(() => undefined));
+          this.keepAlive(storing.catch((error) => logFailure("[LinkPreviews] Late image write failed:", error)));
         }
       }
       // A page whose advertised image could not be fetched or stored keeps the failure expiry, so the image is retried within the hour.
@@ -464,9 +464,8 @@ async function fetchPage(url: URL, options: FetchOptions): Promise<{ resolvedUrl
     }
     return { resolvedUrl: fetched.url, metadata: await readPageMetadata(response.body, contentType, fetched.signal) };
   } finally {
-    fetched.release();
     // A body the metadata reader never took is cancelled here, so an unread page does not hold its connection open.
-    if (response.body && !response.body.locked) await response.body.cancel().catch(() => {});
+    await discardBody(fetched);
   }
 }
 
@@ -507,8 +506,18 @@ async function fetchImageBytes(url: URL, options: FetchOptions): Promise<{ bytes
     if (!mimeType) throw new LinkPreviewFailure("unsupported", "Preview image bytes are not a supported image");
     return { bytes, mimeType };
   } finally {
-    fetched.release();
-    if (response.body && !response.body.locked) await response.body.cancel().catch(() => {});
+    await discardBody(fetched);
+  }
+}
+
+/** Cancels whatever of the body is left, still under the request's timeout and the preview deadline, then releases both. */
+async function discardBody({ response, signal, release }: GuardedResponse): Promise<void> {
+  try {
+    if (response.body && !response.body.locked) await raceWithAbort(response.body.cancel(), signal);
+  } catch {
+    // A body that will not cancel in time is abandoned with its request.
+  } finally {
+    release();
   }
 }
 
