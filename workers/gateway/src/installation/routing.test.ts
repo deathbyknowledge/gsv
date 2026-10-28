@@ -277,6 +277,19 @@ describe("remembered hostname routes", () => {
     expect(warn).toHaveBeenCalledWith("[Gateway] Accounts route lookup failed:", expect.objectContaining({ exceptionMessage: "Accounts lookup timed out" }));
   }, 2_000);
 
+  it("asks Accounts afresh after a shared lookup times out", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const resolveHostname = directory(async () => ACTIVE).mockImplementationOnce(() => new Promise(() => {}));
+    const stalled = metadata();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await stalled).toBe(503);
+    const retried = metadata();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await retried).toBe(200);
+    expect(resolveHostname).toHaveBeenCalledTimes(2);
+  }, 2_000);
+
   it("answers that the Ship is briefly unreachable when Accounts fails, without remembering the failure", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const resolveHostname = directory(async () => ACTIVE).mockRejectedValueOnce(new Error("Accounts unavailable"));

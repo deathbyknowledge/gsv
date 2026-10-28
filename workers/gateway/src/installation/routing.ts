@@ -196,8 +196,9 @@ export async function resolveInstallationRoute(
   if (!lookup) {
     lookup = lookUpHostname(directory, routes, hostname);
     if (options.cached) {
-      lookup = lookup.finally(() => routes.lookups.delete(hostname));
-      routes.lookups.set(hostname, lookup);
+      const shared: Promise<InstallationDirectoryResult> = lookup.finally(() => forgetLookup(routes, hostname, shared));
+      lookup = shared;
+      routes.lookups.set(hostname, shared);
     }
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -210,12 +211,18 @@ export async function resolveInstallationRoute(
       }),
     ]);
   } catch (error) {
+    // A stalled lookup may never settle, so the next read asks Accounts again.
+    forgetLookup(routes, hostname, lookup);
     console.warn("[Gateway] Accounts route lookup failed:", exceptionDiagnostics(error));
     throw new InstallationRouteUnavailable({ cause: error });
   } finally {
     clearTimeout(timer);
   }
   return routeFor(result, options.allowProvisioning ?? false);
+}
+
+function forgetLookup(routes: HostnameRoutes, hostname: string, lookup: Promise<InstallationDirectoryResult>): void {
+  if (routes.lookups.get(hostname) === lookup) routes.lookups.delete(hostname);
 }
 
 /** Forgets a hostname's remembered route, as when the Kernel it names refuses the request. */
