@@ -189,7 +189,10 @@ export const en = {
 
   // Settings: permissions
   "settings.permissions.title": "Permissions",
-  "settings.permissions.intro": "Choose what Ship and its helpers may do on their own and what they ask you about first. Choosing “Always allow” on a request adds a rule here.",
+  "settings.permissions.intro": "Choose what Ship and its helpers may do on their own and what they ask you about first.",
+  "settings.permissions.noteAlways": "“Always allow” on a request adds a rule here.",
+  "settings.permissions.noteOrder": "More specific targets win, then more specific capabilities; list order breaks ties.",
+  "settings.permissions.noteGrants": "Account capability grants still set the outer limit.",
   "settings.permissions.loading": "Loading permissions…",
   "settings.permissions.targetsUnavailable": "Target names could not be loaded. Stored target IDs remain available.",
   "settings.permissions.unsupported": "This saved policy contains fields this editor cannot safely change. It has been kept unchanged.",

@@ -8,6 +8,7 @@ import { Select } from "../../../components/ui/Select";
 import { rich, useT } from "../../../i18n/locale";
 import "../../../services/platform/native-input.css";
 import "./desktop-voice.css";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onDirty(dirty: boolean): void }) {
   const t = useT();
@@ -30,8 +31,7 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
   const { preferences, setPreferences } = speech;
   const speaking = speech.status.phase === "speaking";
   return <section class="settings-voice" aria-label={t("settings.voice.label")}>
-    <h1>{t("settings.voice.title")}</h1>
-    <p class="settings-intro">{t("settings.voice.intro")}</p>
+    <PageHeading title={t("settings.voice.title")} description={t("settings.voice.intro")} />
 
     <Select block label={t("settings.voice.microphone")} selected={microphone.device}
       disabled={!snapshot || snapshot.devices_loading || microphone.capturing}

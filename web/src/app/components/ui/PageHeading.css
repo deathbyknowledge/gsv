@@ -1,0 +1,21 @@
+/* PageHeading — title row with an InfoTip description and an actions slot. */
+.gsv-page-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+.gsv-page-heading .gsv-page-heading-title {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.gsv-page-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+}

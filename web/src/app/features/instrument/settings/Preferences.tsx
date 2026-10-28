@@ -20,6 +20,7 @@ import { usePreferencesLeavePrompt } from "./usePreferencesLeavePrompt";
 import { canConfigure, SETTINGS_CONFIG_KEY, SETTINGS_MODELS_KEY } from "./settingsModel";
 import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./settingsShared";
 import { useT } from "../../../i18n/locale";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 export function Preferences({ account, active, onDirty }: SettingsSectionProps) {
   const t = useT();
@@ -87,8 +88,7 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
   const updateOrder = (next: ModelStackDraft) => { setOrderDraft(next); setSaved(null); savePreferences.reset(); };
 
   return <section class="settings-preferences" aria-labelledby="settings-preferences-title">
-    <h1 id="settings-preferences-title">{t("settings.preferences.title")}</h1>
-    <p class="settings-intro">{t("settings.preferences.intro", { name: account.displayName || account.username })}</p>
+    <PageHeading id="settings-preferences-title" title={t("settings.preferences.title")} description={t("settings.preferences.intro", { name: account.displayName || account.username })} />
     {!modelEditor && <ThemePreference />}
     <SettingsError error={config.error ?? models.error ?? removeModel.error} />
     {connected && (config.isPending || models.isPending) && <LoadingState variant="panel">{t("settings.preferences.loading")}</LoadingState>}

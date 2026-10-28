@@ -190,7 +190,10 @@ export const es = {
 
   // Settings: permissions
   "settings.permissions.title": "Permisos",
-  "settings.permissions.intro": "Elige qué pueden hacer Ship y sus ayudantes por su cuenta y sobre qué te preguntan antes. Si eliges «Permitir siempre» en una solicitud, se añade aquí una regla.",
+  "settings.permissions.intro": "Elige qué pueden hacer Ship y sus ayudantes por su cuenta y sobre qué te preguntan antes.",
+  "settings.permissions.noteAlways": "«Permitir siempre» en una solicitud añade aquí una regla.",
+  "settings.permissions.noteOrder": "Ganan los destinos más específicos, luego las capacidades más específicas; el orden de la lista desempata.",
+  "settings.permissions.noteGrants": "Los permisos de la cuenta siguen marcando el límite exterior.",
   "settings.permissions.loading": "Cargando permisos…",
   "settings.permissions.targetsUnavailable": "No se han podido cargar los nombres de los destinos. Los ID guardados siguen disponibles.",
   "settings.permissions.unsupported": "Esta política guardada contiene campos que este editor no puede cambiar con seguridad. Se ha mantenido sin cambios.",

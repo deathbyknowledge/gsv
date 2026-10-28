@@ -195,7 +195,10 @@ export const ptBR = {
 
   // Settings: permissions
   "settings.permissions.title": "Permissões",
-  "settings.permissions.intro": "Escolha o que o Ship e seus ajudantes podem fazer sozinhos e sobre o que perguntam antes. Escolher “Sempre permitir” em um pedido adiciona uma regra aqui.",
+  "settings.permissions.intro": "Escolha o que o Ship e seus ajudantes podem fazer sozinhos e sobre o que perguntam antes.",
+  "settings.permissions.noteAlways": "“Sempre permitir” em um pedido adiciona uma regra aqui.",
+  "settings.permissions.noteOrder": "Destinos mais específicos vencem, depois capacidades mais específicas; a ordem da lista desempata.",
+  "settings.permissions.noteGrants": "As permissões da conta continuam definindo o limite externo.",
   "settings.permissions.loading": "Carregando permissões…",
   "settings.permissions.targetsUnavailable": "Não foi possível carregar os nomes dos destinos. Os IDs de destino salvos continuam disponíveis.",
   "settings.permissions.unsupported": "Esta política salva contém campos que este editor não consegue alterar com segurança. Ela foi mantida sem alterações.",
