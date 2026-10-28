@@ -77,9 +77,11 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         <div class="settings-messenger-heading">
           <h2>
             {name}
-            {comingSoon
-              ? <small class="settings-coming-soon">{t("settings.messengers.comingSoon")}</small>
-              : <span class="settings-messenger-tag"><Tag tone={linked ? "online" : "idle"} dot label={t(linked ? "settings.pairing.connected" : "settings.pairing.notConnected")} /></span>}
+            <span class="settings-messenger-tag">
+              {comingSoon
+                ? <Tag boxed size="medium" tone="idle" label={t("settings.messengers.comingSoon")} />
+                : <Tag boxed size="medium" tone={linked ? "online" : "idle"} label={t(linked ? "settings.pairing.connected" : "settings.pairing.notConnected")} />}
+            </span>
           </h2>
           <button class="settings-text-action" disabled={comingSoon || (pairing === id ? unlink.isPending : !canConnect)} onClick={() => { if (comingSoon) return; setRemoving(null); setPairing(pairing === id ? null : id); }}>
             {pairing === id ? t("settings.messengers.closeSetup") : links.length ? t("settings.messengers.connectAnother") : t("settings.messengers.connect", { name })}
