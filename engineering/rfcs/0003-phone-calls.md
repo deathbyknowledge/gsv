@@ -96,7 +96,7 @@ max_minutes: 6                           # capped by the entitlement
 judge whether a goal is sensible; that is the owner's approval.
 
 Ship fills `on_behalf_of` from the owner's profile or memory, so the name
-callers hear is part of what the owner approves; there is no separate setting.
+callees hear is part of what the owner approves; there is no separate setting.
 The voice agent's instructions are rendered by the Kernel from a template in
 `workers/gateway/src/prompts/phone/` and the brief.
 The template is production prompt text and follows the protected-prompt rules.
@@ -136,14 +136,20 @@ telephony format. Audio is held only in memory while relayed.
 
 ### Opening and disclosure
 
-The agent's first words are fixed by the template, not chosen by the model,
-and spoken in the brief's language (or the destination country's):
+The first sentence of every call says who the call is for and that the caller is
+an AI assistant, as half a sentence inside the actual request rather than a
+preamble:
 
-> Hi, I'm an AI assistant calling on behalf of Esteve Jamez. Just so you know,
-> this call is transcribed.
+> Hi! I'm calling for Esteve, I'm his AI assistant. Could I order delivery for
+> two pepperoni pizzas?
 
-The opening does not say "Ship": a product name means nothing to the callee. The
-agent never claims to be human and answers truthfully if asked.
+The model words it naturally in the call's language; the template makes it a
+rule, and the service checks the first response's transcript for it before the
+call continues. This meets the EU AI Act's transparency duty (Article 50, in
+force since 2 August 2026) without a formal script. The agent never claims to
+be human and answers truthfully if asked. The opening does not mention
+transcription, and does not say "Ship": a product name means nothing to the
+callee.
 
 ### Agent tools
 
@@ -301,7 +307,7 @@ an owner calling their own Ship) are a later RFC.
 
 - One `phone.call` places at most one call. Nothing redials automatically.
 - The voice agent knows only the brief, answers and notes.
-- Every call opens with the disclosure.
+- Every call's first sentence names the owner and says the caller is an AI assistant.
 - No audio is stored.
 - A question gets exactly one answer, or the deadline.
 - A terminal call never changes state again; late provider callbacks are
@@ -317,8 +323,10 @@ an owner calling their own Ship) are a later RFC.
    check-ins every 15 seconds.
 3. **Approval:** every call asks; no "always allow" in the first release.
 4. **Name in the opening:** `on_behalf_of` in the approved brief.
-5. **Transcription disclosure:** the opening line says the call is transcribed;
-   no further legal review is planned for the first release.
+5. **Disclosure:** one natural clause in the first sentence ("I'm calling for
+   Esteve, I'm his AI assistant"). Transcription is not announced; revisit for
+   California before calling there, where AI transcription by a third party is
+   being litigated as interception.
 
 ## Open questions
 
