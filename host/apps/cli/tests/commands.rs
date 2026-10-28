@@ -62,7 +62,7 @@ async fn ship(answer: fn(&str, &Value) -> Value) -> (String, Calls) {
                     }
                     let call = request["call"].as_str().unwrap_or_default().to_string();
                     let args = request["args"].clone();
-                    let data = if call == "sys.connect" {
+                    let mut data = if call == "sys.connect" {
                         connect_result()
                     } else {
                         recorded
@@ -71,14 +71,27 @@ async fn ship(answer: fn(&str, &Value) -> Value) -> (String, Calls) {
                             .push((call.clone(), args.clone()));
                         answer(&call, &args)
                     };
+                    // An answer may carry signals to push after its response.
+                    let signals = data
+                        .as_object_mut()
+                        .and_then(|object| object.remove("__signals"))
+                        .unwrap_or_default();
                     let response =
                         json!({ "type": "res", "id": request["id"], "ok": true, "data": data });
-                    if socket
-                        .send(Message::Text(response.to_string()))
-                        .await
-                        .is_err()
-                    {
-                        return;
+                    let frames = std::iter::once(response).chain(
+                        signals
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .enumerate()
+                            .map(|(seq, signal)| {
+                                json!({ "type": "sig", "signal": signal["signal"], "payload": signal["payload"], "seq": seq + 1 })
+                            }),
+                    );
+                    for frame in frames {
+                        if socket.send(Message::Text(frame.to_string())).await.is_err() {
+                            return;
+                        }
                     }
                 }
             });
@@ -225,7 +238,7 @@ async fn mail_pages_with_a_cursor_and_json_returns_the_whole_result() {
     let text = stdout(&output);
     assert!(text.contains("7d41c0aa  Lena Park         Invoice 2214 [1]  2 h ago"));
     assert!(text.contains("2e9f00bb  news@example.org  This week         yesterday"));
-    assert!(text.contains("Older: gsv mail --before c2e9f00bb11"));
+    assert!(text.contains("Older: gsv mail --page 2"));
 
     let output = cli.run(&["mail", "search", "invoice", "--json"]).await;
     assert!(output.status.success(), "{}", stderr(&output));
@@ -469,4 +482,190 @@ async fn auth_token_still_creates_lists_and_revokes_tokens_for_ci() {
     let output = cli.run(&["auth", "token", "revoke", "tok-1"]).await;
     assert_eq!(stdout(&output), "Revoked tok-1.\n");
     assert_eq!(called(&calls, "sys.token.revoke")[0]["tokenId"], "tok-1");
+}
+
+#[tokio::test]
+async fn mail_read_prints_its_own_header_once_then_the_body() {
+    fn answer(call: &str, _: &Value) -> Value {
+        match call {
+            "mail.read" => json!({ "message": {
+                "messageId": "mail:7d41c0aa99", "from": "Lena Park <lena@example.com>",
+                "to": ["sam@ship.example"], "cc": [], "replyTo": ["billing@example.com"],
+                "subject": "Invoice 2214", "receivedAt": 0, "attachments": [],
+                "text": "From: Lena Park <lena@example.com>\nTo: sam@ship.example\nReply-To: billing@example.com\nSubject: Invoice 2214\nMessage-ID: <x@example.com>\n\nHi Sam,\n\nThe invoice is attached.\n",
+                "truncated": true, "textPath": "/home/sam/mail/7d41/text.txt"
+            }}),
+            _ => json!({}),
+        }
+    }
+    let (url, _) = ship(answer).await;
+    let output = Cli::signed_in(&url)
+        .run(&["mail", "read", "mail:7d41c0aa99"])
+        .await;
+    show("gsv mail read", &output);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert_eq!(text.matches("Invoice 2214").count(), 1, "{text}");
+    assert!(!text.contains("Message-ID"), "{text}");
+    assert!(text.contains("Reply-To  billing@example.com"), "{text}");
+    assert!(
+        text.contains("\nHi Sam,\n\nThe invoice is attached.\n"),
+        "{text}"
+    );
+    assert!(text.contains("The full text is at /home/sam/mail/7d41/text.txt"));
+}
+
+#[tokio::test]
+async fn mail_fits_the_width_and_pages_by_number() {
+    fn answer(call: &str, args: &Value) -> Value {
+        let subject = format!("Your weekly digest: {}", "news ".repeat(40));
+        match call {
+            "mail.list" => json!({
+                "messages": [{ "messageId": "mail:5fde01aa", "receivedAt": now() - HOUR,
+                    "from": "\"A newsletter with an unusually long display name\" <news@example.org>",
+                    "subject": subject, "attachmentCount": 0 }],
+                "next": format!("1792775846198.mail:5fde01aa{}", args["limit"]),
+            }),
+            _ => json!({}),
+        }
+    }
+    let (url, calls) = ship(answer).await;
+    let cli = Cli::signed_in(&url);
+    let output = cli.run(&["mail"]).await;
+    show("gsv mail (long subject)", &output);
+    let text = stdout(&output);
+    assert!(
+        text.lines().all(|line| line.chars().count() <= 100),
+        "{text}"
+    );
+    assert!(text.contains("A newsletter with an un…  Your weekly digest: news"));
+    assert!(text.contains("…  1 h ago"));
+    assert!(text.contains("Older: gsv mail --page 2\n"));
+    assert!(!text.contains("1792775846198"));
+
+    let output = cli.run(&["mail", "--page", "3", "-n", "5"]).await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("Older: gsv mail --page 4 -n 5"));
+    let listed = called(&calls, "mail.list");
+    // One call skips the ten newer messages, the next shows the page.
+    assert_eq!(listed[1]["limit"], 10);
+    assert_eq!(listed[1].get("before"), None);
+    assert_eq!(listed[2]["limit"], 5);
+    assert_eq!(listed[2]["before"], "1792775846198.mail:5fde01aa10");
+}
+
+#[tokio::test]
+async fn activity_uses_the_web_apps_words() {
+    fn answer(call: &str, _: &Value) -> Value {
+        match call {
+            "sys.ledger.list" => json!({ "lines": [
+                { "timestamp": now() - 5 * MINUTE, "principalKind": "human", "target": "gsv",
+                  "call": "shell.exec", "outcome": "ok", "durationMs": 420 },
+                { "timestamp": now() - 6 * MINUTE, "principalKind": "human", "target": "gsv",
+                  "call": "made.up.call", "outcome": "failed", "durationMs": 1500 }
+            ]}),
+            _ => json!({}),
+        }
+    }
+    let (url, _) = ship(answer).await;
+    let output = Cli::signed_in(&url).run(&["activity"]).await;
+    show("gsv activity", &output);
+    let text = stdout(&output);
+    assert!(
+        text.contains("5 min ago  you  gsv    ran a command  ✓"),
+        "{text}"
+    );
+    assert!(text.contains("made.up.call"), "{text}");
+}
+
+#[tokio::test]
+async fn a_failed_reply_exits_non_zero_with_one_plain_line() {
+    fn answer(call: &str, _: &Value) -> Value {
+        match call {
+            "conversation.ship" => json!({ "conversation": { "id": "conv:ship" } }),
+            "conversation.send" => json!({
+                "runId": "run:7", "queued": false,
+                "__signals": [{ "signal": "proc.run.finished", "payload": {
+                    "pid": "proc:5c1d77e2", "runId": "run:7", "status": "error",
+                    "error": "Generation failed: Inference reference: 7afee6a6-1b2c-4d5e\nManaged inference is disabled for this installation."
+                }}]
+            }),
+            _ => json!({}),
+        }
+    }
+    let (url, _) = ship(answer).await;
+    let output = Cli::signed_in(&url).run(&["ship", "hello"]).await;
+    show("gsv ship hello (failed run)", &output);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains(
+        "Your Ship couldn't answer: managed inference is turned off for this Ship. (ref 7afee6a6)\n"
+    ));
+    assert!(!stderr(&output).contains("Managed inference is disabled"));
+}
+
+#[tokio::test]
+async fn files_alone_lists_the_home_folder() {
+    fn answer(call: &str, _: &Value) -> Value {
+        match call {
+            "fs.read" => {
+                json!({ "path": "/home/sam", "directories": ["notes"], "files": ["todo.md"] })
+            }
+            _ => json!({}),
+        }
+    }
+    let (url, calls) = ship(answer).await;
+    let output = Cli::signed_in(&url).run(&["files"]).await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).starts_with("/home/sam  1 folder · 1 file\n"));
+    assert_eq!(called(&calls, "fs.read")[0]["path"], ".");
+}
+
+#[tokio::test]
+async fn routines_can_run_once_at_a_time_in_the_ships_zone() {
+    fn answer(call: &str, args: &Value) -> Value {
+        match call {
+            "sys.config.get" => {
+                json!({ "entries": [{ "key": "users/1000/locale/timezone", "value": "Europe/Madrid" }] })
+            }
+            "sched.add" => json!({ "schedule": {
+                "id": "sched:9a1b", "name": args["name"], "enabled": true,
+                "expression": args["expression"], "target": args["target"]
+            }}),
+            _ => json!({}),
+        }
+    }
+    let (url, calls) = ship(answer).await;
+    let cli = Cli::signed_in(&url);
+    let output = cli
+        .run(&[
+            "routines",
+            "add",
+            "Pick up the parcel",
+            "Remind me",
+            "--at",
+            "2099-10-29 18:00",
+        ])
+        .await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        "Added Pick up the parcel. once · Thu 29 Oct 18:00.\n"
+    );
+    let added = &called(&calls, "sched.add")[0];
+    assert_eq!(added["expression"]["kind"], "at");
+    // 18:00 in Madrid on 29 Oct 2099 is 17:00 UTC.
+    assert_eq!(added["expression"]["atMs"], 4_096_976_400_000_i64);
+
+    let output = cli
+        .run(&[
+            "routines",
+            "add",
+            "Too late",
+            "x",
+            "--at",
+            "2020-01-01 09:00",
+        ])
+        .await;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("has already passed"));
 }

@@ -11,12 +11,50 @@ use crate::render::{self, Cell, Style, Table, Tone};
 /// Pages scanned to find a message from its short id.
 const LOOKUP_PAGES: usize = 5;
 
-fn page_args(page: &MailPage) -> Value {
-    let mut args = json!({ "limit": page.limit.clamp(1, 100) });
-    if let Some(before) = &page.before {
+/// Messages fetched per call while skipping to a later page.
+const SKIP_BATCH: u64 = 100;
+
+/// Arguments for one page. `mail.list` and `mail.search` page with an opaque
+/// cursor, so `--page N` stays stateless by walking past the newer messages
+/// first; `before` is `None` when there are no messages that old.
+async fn page_args(
+    client: &KernelClient,
+    call_name: &str,
+    base: Value,
+    page: &MailPage,
+) -> Result<Option<Value>, DynError> {
+    let limit = page.limit.clamp(1, 100);
+    let mut before = page.before.clone();
+    let mut skip = u64::from(page.page.saturating_sub(1)) * u64::from(limit);
+    while skip > 0 {
+        let batch = skip.min(SKIP_BATCH);
+        let mut args = base.clone();
+        args["limit"] = json!(batch);
+        if let Some(before) = &before {
+            args["before"] = json!(before);
+        }
+        let result = call(client, call_name, args).await?;
+        match opt_text(&result, "next") {
+            Some(next) => before = Some(next.to_string()),
+            None => return Ok(None),
+        }
+        skip -= batch;
+    }
+    let mut args = base;
+    args["limit"] = json!(limit);
+    if let Some(before) = before {
         args["before"] = json!(before);
     }
-    args
+    Ok(Some(args))
+}
+
+/// The same command for the next page, with the options that shaped this one.
+fn next_page(command: &str, page: &MailPage) -> String {
+    let mut next = format!("{command} --page {}", page.page + 1);
+    if page.limit != 20 {
+        next.push_str(&format!(" -n {}", page.limit));
+    }
+    next
 }
 
 fn sender(message: &Value) -> String {
@@ -28,13 +66,19 @@ fn sender(message: &Value) -> String {
     }
 }
 
+/// The body of `mail.read`'s text, which starts with its own header block;
+/// the CLI prints a header of its own.
+fn body(text: &str) -> &str {
+    text.split_once("\n\n").map_or(text, |(_, body)| body)
+}
+
 fn page_table(style: &Style, messages: &[Value], now: i64) -> String {
-    let mut table = Table::new(&["Id", "From", "Subject", "When"]).flex(2);
+    let mut table = Table::new(&["Id", "From", "Subject", "When"])
+        .flex(2)
+        .limit(1, 24);
     for message in messages {
         let attention = message.get("requiresAttention").and_then(Value::as_bool) == Some(true);
-        let mut subject = opt_text(message, "subject")
-            .unwrap_or("(no subject)")
-            .to_string();
+        let mut subject = render::one_line(opt_text(message, "subject").unwrap_or("(no subject)"));
         let attachments = number(message, "attachmentCount").unwrap_or(0);
         if attachments > 0 {
             subject.push_str(&format!(" [{attachments}]"));
@@ -79,7 +123,7 @@ fn print_page(
     result: &Value,
     title: &str,
     empty: &str,
-    more: impl Fn(&str) -> String,
+    more: impl Fn() -> String,
 ) -> Result<(), DynError> {
     if out.json {
         return render::print_json(result);
@@ -99,8 +143,8 @@ fn print_page(
         )
     );
     print!("{}", page_table(&style, messages, render::now_ms()));
-    if let Some(next) = opt_text(result, "next") {
-        print!("{}", render::hint(&style, &more(next)));
+    if opt_text(result, "next").is_some() {
+        print!("{}", render::hint(&style, &more()));
     }
     print!("{}", render::hint(&style, "Read one: gsv mail read ID"));
     Ok(())
@@ -153,23 +197,38 @@ pub(crate) async fn run(
     let style = out.style;
     match action {
         None => {
-            let result = call(&client, "mail.list", page_args(&page)).await?;
-            print_page(out, &result, "Mail", "No mail yet.", |next| {
-                format!("Older: gsv mail --before {next}")
+            let result = match page_args(&client, "mail.list", json!({}), &page).await? {
+                Some(args) => call(&client, "mail.list", args).await?,
+                None => json!({ "messages": [] }),
+            };
+            let empty = if page.page > 1 {
+                "No mail that old."
+            } else {
+                "No mail yet."
+            };
+            print_page(out, &result, "Mail", empty, || {
+                format!("Older: {}", next_page("gsv mail", &page))
             })
         }
         Some(MailAction::Search { query, page }) => {
             let query = remote::words(&query).ok_or("Give some words to find")?;
-            let mut args = page_args(&page);
-            args["query"] = json!(query);
-            let result = call(&client, "mail.search", args).await?;
+            let base = json!({ "query": query });
+            let result = match page_args(&client, "mail.search", base, &page).await? {
+                Some(args) => call(&client, "mail.search", args).await?,
+                None => json!({ "messages": [] }),
+            };
             let quoted = format!("\"{query}\"");
+            let command = if query.contains(char::is_whitespace) {
+                format!("gsv mail search {quoted}")
+            } else {
+                format!("gsv mail search {query}")
+            };
             print_page(
                 out,
                 &result,
                 &quoted,
                 &format!("No mail matches {quoted}."),
-                |next| format!("Older matches: gsv mail search {query} --before {next}"),
+                || format!("Older matches: {}", next_page(&command, &page)),
             )
         }
         Some(MailAction::Read { id }) => {
@@ -193,6 +252,10 @@ pub(crate) async fn run(
             let cc = list("cc");
             if !cc.is_empty() {
                 rows.push(("Cc", cc.into()));
+            }
+            let reply_to = list("replyTo");
+            if !reply_to.is_empty() {
+                rows.push(("Reply-To", reply_to.into()));
             }
             rows.push((
                 "Date",
@@ -223,7 +286,7 @@ pub(crate) async fn run(
             }
             print!("{}", render::detail(&style, &rows));
             println!();
-            println!("{}", text(&message, "text").trim_end());
+            println!("{}", body(text(&message, "text")).trim_end());
             if remote::flag(&message, "truncated") {
                 println!();
                 print!(
@@ -327,6 +390,13 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_prints_the_body_without_the_header_block() {
+        let text = "From: Ana <a@x>\nTo: me@x\nSubject: Hi\n\nFirst line.\n\nSecond paragraph.\n";
+        assert_eq!(body(text), "First line.\n\nSecond paragraph.\n");
+        assert_eq!(body("no header"), "no header");
+    }
 
     #[test]
     fn senders_show_the_name_people_recognise() {

@@ -40,9 +40,10 @@ This computer
 
 Every command prints a rendering for people: a heading, aligned columns,
 relative times such as `2 h ago`, human sizes, and rows shortened to the
-terminal width. Colour appears only on a terminal, and never when `NO_COLOR`
-is set or `TERM=dumb`. `COLUMNS` overrides the detected width. An empty list
-says what to do next.
+terminal width. Long names and subjects are cut with `…` so each row fits.
+Piped output is laid out for 100 columns. Colour appears only on a terminal,
+and never when `NO_COLOR` is set or `TERM=dumb`. `COLUMNS` overrides the
+detected width. An empty list says what to do next.
 
 Lists show short ids, the first eight characters of the full id. Any unique
 prefix works wherever a command takes an id, so `gsv work show 8f3a` is enough.
@@ -119,7 +120,10 @@ gsv ship search WORDS
 
 `chat` is an alias of `ship`. With a message (quotes are optional), `ship`
 sends it to your Ship conversation with `conversation.send`, prints the reply
-as it streams, and returns when the run finishes, for up to 600 seconds.
+as it streams, and returns when the run finishes, for up to 600 seconds. When
+the run fails, `ship` prints one plain line with the diagnostic reference,
+such as `Your Ship couldn't answer. (ref 7afee6a6)`, and exits 1; `--json`
+includes the full error.
 Piped input counts as the message:
 
 ```bash
@@ -167,8 +171,8 @@ request; `decline` on your own request withdraws it.
 ### Mail
 
 ```bash
-gsv mail [--before CURSOR] [-n N]
-gsv mail search WORDS [--before CURSOR] [-n N]
+gsv mail [--page N] [-n N]
+gsv mail search WORDS [--page N] [-n N]
 gsv mail read ID
 gsv mail send TO [-s SUBJECT] [MESSAGE]
 gsv mail status DELIVERY_ID
@@ -176,9 +180,13 @@ gsv mail status DELIVERY_ID
 
 `mail` lists received mail with the newest first, 20 at a time, using
 `mail.list`. A message that needs attention is marked, and attachments are
-counted beside the subject. When more mail exists, the footer prints the exact
-command for the next page, such as `gsv mail --before c2e9f00bb11`. `search`
-uses `mail.search` with the same paging. `read` prints one message.
+counted beside the subject. When more mail exists, the footer prints the
+command for the next page, such as `gsv mail --page 2`. Pages are counted
+from the newest message, so `--page 3` walks past the first two pages with
+the `mail.list` cursor and keeps no state; new mail can shift a page. Scripts
+can follow the `next` cursor of a `--json` result with the hidden
+`--before CURSOR` option instead. `search` uses `mail.search` with the same
+paging. `read` prints the message's header, then its body.
 
 `send` sends from your Ship's address. The body comes from `MESSAGE` or, when
 it is omitted, from stdin. It prints a delivery id for `status`. Sending
@@ -218,7 +226,7 @@ archived. Without a terminal they refuse unless `--yes` is given.
 
 ```bash
 gsv routines
-gsv routines add NAME MESSAGE (--daily HH:MM | --weekly "DAY HH:MM" | --every INTERVAL | --cron EXPR) [--timezone ZONE]
+gsv routines add NAME MESSAGE (--daily HH:MM | --weekly "DAY HH:MM" | --every INTERVAL | --cron EXPR | --at WHEN) [--timezone ZONE]
 gsv routines edit ID [--name NAME] [--message MESSAGE] [CADENCE] [--timezone ZONE] [--pause | --resume]
 gsv routines remove ID
 gsv routines run ID
@@ -228,10 +236,14 @@ A routine asks your Ship to do something on a schedule. Each run becomes one
 Ship responsibility, exactly as routines made in the web app do. Daily, weekly
 and cron times use your Ship's time zone (your account's, then the Ship's,
 then UTC) unless `--timezone` names another. `--every` takes `30m`, `2h` or
-`1d`. `routines` lists each routine's cadence, next run and last result.
+`1d`. `--at` runs once, at `tomorrow 09:00`, `today 18:30` or
+`2026-10-29 18:00`, read in the same time zone; a time that has passed is
+refused. `routines` lists each routine's cadence, such as
+`once · Thu 29 Oct 18:00`, its next run and last result.
 
 ```bash
 gsv routines add "Morning briefing" "Plan my day" --daily 08:00
+gsv routines add "Pick up the parcel" "Remind me" --at "tomorrow 18:00"
 gsv routines edit 4410 --pause
 ```
 
@@ -256,7 +268,9 @@ gsv activity [--on PLACE] [-n N]
 ```
 
 `activity` lists recent syscalls from the ledger: what ran, where, how long it
-took and whether it worked. Arguments stay out of the table.
+took and whether it worked. Calls read in the web app's words, such as
+`ran a command`; a call without a label shows its name. Arguments stay out of
+the table.
 
 ## Places
 
@@ -280,6 +294,7 @@ stops the instance instead.
 ### Files
 
 ```bash
+gsv files
 gsv files ls [PATH]
 gsv files cat PATH
 gsv files put LOCAL PATH
@@ -289,6 +304,7 @@ gsv files rm PATH
 gsv files search QUERY [PATH] [--include GLOB]
 ```
 
+`gsv files` alone lists your Ship's home folder, as `gsv files ls` does.
 A path is on your Ship unless it starts with a place name and a colon, such as
 `laptop:~/notes.txt`. Single letters (`C:\`) and paths starting with `.`, `/`
 or `~` are never read as place names. `cat` prints text up to 16 MiB. `put`

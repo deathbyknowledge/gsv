@@ -1,7 +1,7 @@
 //! `gsv routines`: things your Ship does on a schedule.
 //!
 //! Routines made here match the ones the web app makes: a responsibility
-//! message on a daily, weekly, interval or cron schedule.
+//! message on a daily, weekly, interval or cron schedule, or once at a time.
 
 use gsv::kernel_client::{GatewayAuth, KernelClient};
 use serde_json::{json, Value};
@@ -61,9 +61,52 @@ fn parse_interval(value: &str) -> Result<u64, DynError> {
     Ok(every)
 }
 
+fn time_zone(timezone: &str) -> Result<jiff::tz::TimeZone, DynError> {
+    jiff::tz::TimeZone::get(timezone)
+        .map_err(|error| format!("`{timezone}` isn't a time zone ({error})").into())
+}
+
+/// The moment `--at` names, in unix milliseconds: "tomorrow 09:00",
+/// "today 18:30", a bare "18:30" (today) or "2026-10-29 18:00", read in
+/// `timezone`. A time that has passed is refused.
+fn parse_at(value: &str, timezone: &str, now_ms: i64) -> Result<i64, DynError> {
+    let zone = time_zone(timezone)?;
+    let now = jiff::Timestamp::from_millisecond(now_ms)?.to_zoned(zone.clone());
+    let value = value.trim();
+    let (day, time) = match value.rsplit_once(' ') {
+        Some((day, time)) => (day.trim(), time),
+        None => ("today", value),
+    };
+    let date = match day.to_ascii_lowercase().as_str() {
+        "today" => now.date(),
+        "tomorrow" => now.date().tomorrow()?,
+        _ => day.parse::<jiff::civil::Date>().map_err(|_error| {
+            format!("`{day}` isn't a day; use today, tomorrow or a date such as 2026-10-29")
+        })?,
+    };
+    let (hour, minute) = parse_time(time)?;
+    let hour = i8::try_from(hour)?;
+    let minute = i8::try_from(minute)?;
+    let at = date.at(hour, minute, 0, 0).to_zoned(zone)?;
+    let at_ms = at.timestamp().as_millisecond();
+    if at_ms <= now_ms {
+        return Err(format!(
+            "{} has already passed in {timezone}",
+            at.strftime("%a %-d %b %H:%M")
+        )
+        .into());
+    }
+    Ok(at_ms)
+}
+
 /// The schedule expression for the cadence flags, or `None` when none was
 /// given.
-fn expression(cadence: &Cadence, timezone: &str) -> Result<Option<Value>, DynError> {
+fn expression(cadence: &Cadence, timezone: &str, now_ms: i64) -> Result<Option<Value>, DynError> {
+    if let Some(at) = &cadence.at {
+        return Ok(Some(
+            json!({ "kind": "at", "atMs": parse_at(at, timezone, now_ms)? }),
+        ));
+    }
     if let Some(time) = &cadence.daily {
         let (hour, minute) = parse_time(time)?;
         return Ok(Some(
@@ -102,10 +145,20 @@ fn expression(cadence: &Cadence, timezone: &str) -> Result<Option<Value>, DynErr
     Ok(None)
 }
 
-/// "Daily at 09:00", "Mondays at 08:30", "Every 2 hours".
-fn cadence_label(expression: &Value) -> String {
+/// "Daily at 09:00", "Mondays at 08:30", "Every 2 hours", or
+/// "once · Thu 29 Oct 18:00" in `timezone`.
+fn cadence_label(expression: &Value, timezone: &str) -> String {
     match text(expression, "kind") {
-        "at" => "Once".to_string(),
+        "at" => {
+            let at = number(expression, "atMs")
+                .and_then(|at| jiff::Timestamp::from_millisecond(at).ok())
+                .zip(time_zone(timezone).ok())
+                .map(|(at, zone)| at.to_zoned(zone).strftime("%a %-d %b %H:%M").to_string());
+            match at {
+                Some(at) => format!("once · {at}"),
+                None => "once".to_string(),
+            }
+        }
         "after" => "After a delay".to_string(),
         "every" => {
             let every = remote::amount(expression, "everyMs");
@@ -212,6 +265,16 @@ pub(crate) async fn run(
                 return Ok(());
             }
             let now = render::now_ms();
+            let once = all.iter().any(|schedule| {
+                schedule
+                    .get("expression")
+                    .is_some_and(|expression| text(expression, "kind") == "at")
+            });
+            let timezone = if once {
+                ship_timezone(&client).await
+            } else {
+                "UTC".to_string()
+            };
             let mut table = Table::new(&["Id", "Routine", "When", "Next", "Last run"]).flex(1);
             for schedule in &all {
                 let state = schedule.get("state").cloned().unwrap_or(Value::Null);
@@ -245,7 +308,11 @@ pub(crate) async fn run(
                         text(schedule, "name"),
                         if enabled { Tone::Strong } else { Tone::Dim },
                     ),
-                    cadence_label(schedule.get("expression").unwrap_or(&Value::Null)).into(),
+                    cadence_label(
+                        schedule.get("expression").unwrap_or(&Value::Null),
+                        &timezone,
+                    )
+                    .into(),
                     next,
                     last,
                 ]);
@@ -267,8 +334,8 @@ pub(crate) async fn run(
                 Some(timezone) => timezone,
                 None => ship_timezone(&client).await,
             };
-            let expression = expression(&cadence, &timezone)?
-                .ok_or("Say when it runs: --daily 08:00, --weekly \"mon 09:00\", --every 2h or --cron \"0 9 * * 1-5\"")?;
+            let expression = expression(&cadence, &timezone, render::now_ms())?
+                .ok_or("Say when it runs: --daily 08:00, --weekly \"mon 09:00\", --every 2h, --cron \"0 9 * * 1-5\" or --at \"tomorrow 09:00\"")?;
             let result = call(
                 &client,
                 "sched.add",
@@ -287,7 +354,10 @@ pub(crate) async fn run(
             println!(
                 "Added {}. {}.",
                 style.strong(text(&schedule, "name")),
-                cadence_label(schedule.get("expression").unwrap_or(&Value::Null))
+                cadence_label(
+                    schedule.get("expression").unwrap_or(&Value::Null),
+                    &timezone
+                )
             );
             if let Some(next) = schedule
                 .get("state")
@@ -328,7 +398,7 @@ pub(crate) async fn run(
             if let Some(name) = name {
                 patch["name"] = json!(name.trim());
             }
-            if let Some(expression) = expression(&cadence, &timezone)? {
+            if let Some(expression) = expression(&cadence, &timezone, render::now_ms())? {
                 patch["expression"] = expression;
             }
             if let Some(message) = message {
@@ -371,7 +441,7 @@ pub(crate) async fn run(
             println!(
                 "Updated {}. {}{state}.",
                 style.strong(text(&updated, "name")),
-                cadence_label(updated.get("expression").unwrap_or(&Value::Null))
+                cadence_label(updated.get("expression").unwrap_or(&Value::Null), &timezone)
             );
             Ok(())
         }
@@ -430,6 +500,7 @@ mod tests {
             weekly: weekly.map(str::to_string),
             every: every.map(str::to_string),
             cron: cron.map(str::to_string),
+            at: None,
         }
     }
 
@@ -437,44 +508,77 @@ mod tests {
     fn cadences_become_the_same_expressions_the_web_app_makes() {
         let tz = "Europe/Madrid";
         assert_eq!(
-            expression(&cadence(Some("8:05"), None, None, None), tz).expect("daily"),
+            expression(&cadence(Some("8:05"), None, None, None), tz, 0).expect("daily"),
             Some(json!({ "kind": "cron", "expr": "5 8 * * *", "timezone": tz }))
         );
         assert_eq!(
-            expression(&cadence(None, Some("Monday 09:30"), None, None), tz).expect("weekly"),
+            expression(&cadence(None, Some("Monday 09:30"), None, None), tz, 0).expect("weekly"),
             Some(json!({ "kind": "cron", "expr": "30 9 * * 1", "timezone": tz }))
         );
         assert_eq!(
-            expression(&cadence(None, None, Some("2h"), None), tz).expect("every"),
+            expression(&cadence(None, None, Some("2h"), None), tz, 0).expect("every"),
             Some(json!({ "kind": "every", "everyMs": 7_200_000 }))
         );
-        expression(&cadence(None, None, None, Some("0 9 * *")), tz).expect_err("rejected");
-        expression(&cadence(Some("25:00"), None, None, None), tz).expect_err("rejected");
-        expression(&cadence(None, Some("someday 09:00"), None, None), tz).expect_err("rejected");
-        assert_eq!(expression(&Cadence::default(), tz).expect("none"), None);
+        expression(&cadence(None, None, None, Some("0 9 * *")), tz, 0).expect_err("rejected");
+        expression(&cadence(Some("25:00"), None, None, None), tz, 0).expect_err("rejected");
+        expression(&cadence(None, Some("someday 09:00"), None, None), tz, 0).expect_err("rejected");
+        assert_eq!(expression(&Cadence::default(), tz, 0).expect("none"), None);
     }
 
     #[test]
     fn cadences_read_back_as_words() {
         assert_eq!(
-            cadence_label(&json!({ "kind": "cron", "expr": "0 8 * * *", "timezone": "UTC" })),
+            cadence_label(
+                &json!({ "kind": "cron", "expr": "0 8 * * *", "timezone": "UTC" }),
+                "UTC"
+            ),
             "Daily at 08:00"
         );
         assert_eq!(
-            cadence_label(&json!({ "kind": "cron", "expr": "30 9 * * 1", "timezone": "UTC" })),
+            cadence_label(
+                &json!({ "kind": "cron", "expr": "30 9 * * 1", "timezone": "UTC" }),
+                "UTC"
+            ),
             "Mondays at 09:30"
         );
         assert_eq!(
-            cadence_label(&json!({ "kind": "cron", "expr": "0 9 * * 1-5", "timezone": "UTC" })),
+            cadence_label(
+                &json!({ "kind": "cron", "expr": "0 9 * * 1-5", "timezone": "UTC" }),
+                "UTC"
+            ),
             "0 9 * * 1-5 · UTC"
         );
         assert_eq!(
-            cadence_label(&json!({ "kind": "every", "everyMs": 3_600_000 })),
+            cadence_label(&json!({ "kind": "every", "everyMs": 3_600_000 }), "UTC"),
             "Every hour"
         );
         assert_eq!(
-            cadence_label(&json!({ "kind": "every", "everyMs": 5_400_000 })),
+            cadence_label(&json!({ "kind": "every", "everyMs": 5_400_000 }), "UTC"),
             "Every 90 minutes"
         );
+    }
+
+    #[test]
+    fn one_off_times_read_in_the_ships_time_zone_and_refuse_the_past() {
+        // Wed 28 Oct 2026, 12:00 in Madrid (11:00 UTC).
+        let now = 1_793_185_200_000;
+        let tz = "Europe/Madrid";
+        let tomorrow = parse_at("tomorrow 09:00", tz, now).expect("tomorrow");
+        assert_eq!(tomorrow, 1_793_260_800_000);
+        assert_eq!(
+            parse_at("2026-10-29 18:00", tz, now).expect("date"),
+            1_793_293_200_000
+        );
+        assert_eq!(
+            cadence_label(&json!({ "kind": "at", "atMs": 1_793_293_200_000_i64 }), tz),
+            "once · Thu 29 Oct 18:00"
+        );
+        let error = parse_at("today 09:00", tz, now)
+            .expect_err("past")
+            .to_string();
+        assert!(error.contains("already passed"), "{error}");
+        parse_at("someday 09:00", tz, now).expect_err("not a day");
+        parse_at("tomorrow 9", tz, now).expect_err("not a time");
+        parse_at("tomorrow 09:00", "Mars/Olympus", now).expect_err("not a zone");
     }
 }

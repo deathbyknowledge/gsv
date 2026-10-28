@@ -3,8 +3,8 @@ use gsv::config::CliConfig;
 
 use crate::auth_flow::{resolve_device_gateway_auth, run_with_login_retry, LoginRequest};
 use crate::cli::{
-    Cli, Commands, ConfigAction, DaemonAction, DaemonServiceAction, LegacyDeviceAction,
-    LocalConfigAction, WorkAction, TOP_HELP,
+    Cli, Commands, ConfigAction, DaemonAction, DaemonServiceAction, FilesAction,
+    LegacyDeviceAction, LocalConfigAction, WorkAction, TOP_HELP,
 };
 use crate::commands::{
     account, activity, contacts, files, mail, memory, places, requests, routines, run, ship,
@@ -75,6 +75,7 @@ pub(crate) async fn run() -> Result<(), DynError> {
             }
         },
         Commands::Files { action } => {
+            let action = action.clone().unwrap_or(FilesAction::Ls { path: None });
             signed_in!(|auth| files::run(&url, auth, action.clone(), out))
         }
         Commands::Contacts { action } => {

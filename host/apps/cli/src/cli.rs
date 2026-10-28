@@ -99,7 +99,7 @@ pub(crate) enum Commands {
     /// PLACE:PATH, for example laptop:~/notes.txt; a bare path is on your Ship.
     Files {
         #[command(subcommand)]
-        action: FilesAction,
+        action: Option<FilesAction>,
     },
 
     /// People you talk to, and invitations
@@ -517,8 +517,12 @@ pub(crate) enum MemoryAction {
 
 #[derive(Args, Clone)]
 pub(crate) struct MailPage {
-    /// Show messages older than this one (from the previous page's footer)
-    #[arg(long)]
+    /// Which page to show, newest first
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=500))]
+    pub(crate) page: u32,
+
+    /// Start after this cursor, the `next` of a `--json` result (for scripts)
+    #[arg(long, hide = true, conflicts_with = "page")]
     pub(crate) before: Option<String>,
 
     /// How many messages to show
@@ -618,6 +622,10 @@ pub(crate) struct Cadence {
     /// A cron expression, such as "0 9 * * 1-5"
     #[arg(long, value_name = "EXPR")]
     pub(crate) cron: Option<String>,
+
+    /// Once, at this time: "tomorrow 09:00", "today 18:30" or "2026-10-29 18:00"
+    #[arg(long, value_name = "WHEN")]
+    pub(crate) at: Option<String>,
 }
 
 #[derive(Subcommand, Clone)]
