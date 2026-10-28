@@ -31,6 +31,8 @@ Responsibilities and routines open from the activity line above Chat's prompt.
 In a connection’s file list, **../** moves up from the
 current starting folder and stops at that connection’s filesystem root.
 **Chat → + → reference a file** selects a file into your draft in one tap.
+A path Ship writes in Chat opens the same way: tap it to open the file's preview, or the folder's
+file list, in the cloud home.
 A file preview’s **talk about it** control adds its connection and path to your Chat
 draft as editable text, keeping existing text and attachments. It sends nothing
 until you choose **send**.

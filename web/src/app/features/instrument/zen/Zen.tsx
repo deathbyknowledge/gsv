@@ -49,6 +49,7 @@ import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
 import { ZenText } from "./ZenText";
+import { textLinkRow } from "./fileReferences";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { WakingUp } from "./WakingUp";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
@@ -70,7 +71,6 @@ import {
   nextDayBoundary,
   ownerTimeZone,
   parsePromptInput,
-  PLACE_REFERENCE_PREFIX,
   placeLabel,
   resolvePlace,
   receiptSummary,
@@ -348,6 +348,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
+  /* paths in Ship's text open in Work only for a reader who may read files there */
+  const canReadFiles = Boolean(viewer && canConfigure(viewer, "fs.read"));
 
   const timeZone = ownerTimeZone(config.data, viewer?.uid);
   const [today, setToday] = useState(Date.now);
@@ -962,15 +964,15 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     return () => window.removeEventListener("paste", onPaste);
   }, [active, addFiles, foldPaste, pendingHil]);
 
-  /* references to places inside ship text */
+  /* references to places and paths inside ship text */
   const onTextClick = useCallback(
     (event: JSX.TargetedMouseEvent<HTMLDivElement>) => {
       const target = event.target;
       if (!(target instanceof HTMLAnchorElement)) return;
-      const href = target.getAttribute("href") ?? "";
-      if (!href.startsWith(PLACE_REFERENCE_PREFIX)) return;
+      const row = textLinkRow(target.getAttribute("href") ?? "");
+      if (!row) return;
       event.preventDefault();
-      onFleet(`target:${decodeURIComponent(href.slice(PLACE_REFERENCE_PREFIX.length))}`);
+      onFleet(row);
     },
     [onFleet],
   );
@@ -1030,7 +1032,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         {moment.role === "human" ? (
           <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} onFold={pin} />
         ) : moment.text ? (
-          <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0}
+          <ZenText text={moment.text} places={places} linkFiles={canReadFiles} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0}
             opened={streamed(moment) || receivedMessages.has(moment.id)} onClick={onTextClick} onFold={pin} />
         ) : moment.thinking || moment.streaming ? (
           <div class="text">{waking ? <WakingUp /> : null}<ThinkingMark tick={tick} /></div>
@@ -1054,7 +1056,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
-    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed, receivedMessages,
+    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed, receivedMessages, canReadFiles,
     pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t, waking]);
 
   /* the status line */

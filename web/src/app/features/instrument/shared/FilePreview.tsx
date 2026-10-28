@@ -1,3 +1,4 @@
+import { useEffect } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useQuery } from "../../../services/navigation/viewQueries";
@@ -19,6 +20,7 @@ export function FilePreview({
   placeLabel: label,
   onClose,
   onAsk,
+  onFolder,
   enabled = true,
 }: {
   file: OpenFile;
@@ -26,6 +28,8 @@ export function FilePreview({
   placeLabel: string;
   onClose: () => void;
   onAsk: (text: string) => void;
+  /** Given when the path came from a link that could not say whether it names a folder; a folder then opens as one. */
+  onFolder?: (path: string) => void;
   enabled?: boolean;
 }) {
   const t = useT();
@@ -41,6 +45,10 @@ export function FilePreview({
   const text = content !== null && !Array.isArray(content) ? content : null;
   const image = Array.isArray(content) ? content.find((item) => item.type === "image") : null;
   const error = payload && !payload.ok ? payload.error : read.error ? String(read.error) : null;
+  const folder = onFolder && payload && payload.ok && "entries" in payload ? payload.path : null;
+  useEffect(() => {
+    if (folder !== null) onFolder?.(folder);
+  }, [folder, onFolder]);
   return (
     <div>
       <h3>{file.name}</h3>
@@ -57,7 +65,7 @@ export function FilePreview({
       <div class="file-preview">
         {read.isPending ? <p class="note"><LoadingState>{connected ? t("shell.reading") : t("shell.reconnecting")}</LoadingState></p> : null}
         {error ? <p class="error">{error}</p> : null}
-        {linkedEntries ? (
+        {linkedEntries && folder === null ? (
           <>
             {/* TODO: remove once fix/symlink-dirs is in a released daemon; machines then report linked folders as folders */}
             <p class="note">{t("shell.file.linkedFolder")}</p>
