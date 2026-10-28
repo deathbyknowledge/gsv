@@ -157,6 +157,15 @@ pub(crate) async fn run(
     }
     let name = text(approach, "displayName");
     match decision {
+        // Acceptance completes once the other Ship answers; until then there is no contact to write to.
+        "accept"
+            if result
+                .get("approach")
+                .map(|approach| text(approach, "state"))
+                != Some("accepted") =>
+        {
+            println!("Accepted. Connecting to {name}'s Ship; they appear in gsv contacts once it answers.");
+        }
         "accept" => {
             println!("Accepted. {name} is now a contact.");
             print!(

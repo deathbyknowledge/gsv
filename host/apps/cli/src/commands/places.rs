@@ -151,7 +151,17 @@ pub(crate) async fn run(
             }
             let result = call(&client, "sys.target.delete", json!({ "targetId": id })).await?;
             if out.json {
-                return render::print_json(&result);
+                render::print_json(&result)?;
+            }
+            // Only a paired computer is forgotten here; a cloud place answers by stopping.
+            if !cloud && !remote::flag(&result, "deleted") {
+                return Err(format!(
+                    "{place} can't be forgotten here; only computers you paired can be. Disconnect it in the web app."
+                )
+                .into());
+            }
+            if out.json {
+                return Ok(());
             }
             if cloud {
                 println!("Stopping {place}.");

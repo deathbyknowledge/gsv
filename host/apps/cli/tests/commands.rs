@@ -1030,3 +1030,54 @@ async fn renaming_a_place_that_cannot_be_renamed_says_so() {
     assert!(!output.status.success());
     assert!(!stdout(&output).contains("Renamed"));
 }
+
+#[tokio::test]
+async fn forgetting_a_place_the_ship_cannot_forget_says_so() {
+    fn answer(call: &str, _: &Value) -> Value {
+        match call {
+            "sys.target.list" => {
+                json!({ "targets": [{ "targetId": "adapter-slack-T01", "label": "Slack",
+                "kind": "service", "online": true }] })
+            }
+            "sys.target.delete" => {
+                json!({ "deleted": false, "targetId": "adapter-slack-T01", "revokedTokens": 0 })
+            }
+            _ => json!({}),
+        }
+    }
+    let (url, _) = ship(answer).await;
+    let output = Cli::signed_in(&url)
+        .run(&["places", "forget", "Slack", "--yes"])
+        .await;
+    show("gsv places forget (adapter place)", &output);
+    assert!(!output.status.success());
+    assert!(!stdout(&output).contains("revoked"));
+}
+
+#[tokio::test]
+async fn accepting_a_request_says_when_the_contact_is_still_connecting() {
+    fn answer(call: &str, args: &Value) -> Value {
+        let approach = json!({ "id": "approach:3b9e", "direction": "incoming", "state": "pending", "revision": 2,
+            "displayName": "Ana", "peerHandle": "ana", "createdAtMs": 0, "expiresAtMs": 9_999_999_999_999_i64 });
+        match call {
+            "approach.list" if args["direction"] == "incoming" => {
+                json!({ "approaches": [approach] })
+            }
+            "approach.list" => json!({ "approaches": [] }),
+            "approach.decide" => {
+                json!({ "approach": { "id": "approach:3b9e", "state": "accepting", "displayName": "Ana" } })
+            }
+            _ => json!({}),
+        }
+    }
+    let (url, _) = ship(answer).await;
+    let output = Cli::signed_in(&url)
+        .run(&["requests", "accept", "3b9e"])
+        .await;
+    show("gsv requests accept (still connecting)", &output);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(!text.contains("is now a contact"), "{text}");
+    assert!(!text.contains("gsv contacts send"), "{text}");
+    assert!(text.contains("Connecting"), "{text}");
+}
