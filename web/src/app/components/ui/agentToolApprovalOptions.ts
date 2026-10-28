@@ -37,7 +37,7 @@ const ACTION_LABELS = {
 } satisfies Record<AgentToolApprovalAction, TextKey>;
 
 /** The capabilities a rule can name, by family, with the message that labels each. */
-const CAPABILITY_LABELS = new Map(Object.entries({
+const RULE_MATCH_LABELS = new Map(Object.entries({
   // Filesystem
   "fs.*": "approval.match.fsAll",
   "fs.read": "approval.match.fsRead",
@@ -90,6 +90,112 @@ const CAPABILITY_LABELS = new Map(Object.entries({
   "sys.config.set": "approval.match.configSet",
 } satisfies Record<string, TextKey>));
 
+/** Other capabilities an account can hold, labelled for display but not offered as rule choices. */
+const GRANT_LABELS = new Map(Object.entries({
+  // Mail
+  "mail.status": "approval.match.mailStatus",
+  "mail.list": "approval.match.mailList",
+  "mail.search": "approval.match.mailSearch",
+  "mail.read": "approval.match.mailRead",
+  // Repositories
+  "repo.create": "approval.match.repoCreate",
+  "repo.log": "approval.match.repoLog",
+  "repo.refs": "approval.match.repoRefs",
+  // AI
+  "ai.models": "approval.match.aiModels",
+  "ai.text.generate": "approval.match.aiTextGenerate",
+  "ai.image.generate": "approval.match.aiImageGenerate",
+  "ai.image.read": "approval.match.aiImageRead",
+  "ai.transcription.create": "approval.match.aiTranscriptionCreate",
+  "ai.speech.create": "approval.match.aiSpeechCreate",
+  // Messengers
+  "adapter.connect": "approval.match.adapterConnect",
+  "adapter.disconnect": "approval.match.adapterDisconnect",
+  "adapter.list": "approval.match.adapterList",
+  "adapter.route": "approval.match.adapterRoute",
+  "adapter.send": "approval.match.adapterSend",
+  "adapter.status": "approval.match.adapterStatus",
+  "sys.link": "approval.match.sysLink",
+  "sys.link.consume": "approval.match.sysLinkConsume",
+  "sys.link.list": "approval.match.sysLinkList",
+  "sys.unlink": "approval.match.sysUnlink",
+  // Connections
+  "sys.target.get": "approval.match.sysTargetGet",
+  "sys.target.list": "approval.match.sysTargetList",
+  "sys.target.update": "approval.match.sysTargetUpdate",
+  "sys.target.delete": "approval.match.sysTargetDelete",
+  "sys.pair.create": "approval.match.sysPairCreate",
+  "sys.pair.list": "approval.match.sysPairList",
+  "sys.pair.cancel": "approval.match.sysPairCancel",
+  // Service sign-ins
+  "sys.oauth.start": "approval.match.sysOauthStart",
+  "sys.oauth.device.start": "approval.match.sysOauthDeviceStart",
+  "sys.oauth.device.poll": "approval.match.sysOauthDevicePoll",
+  "sys.oauth.list": "approval.match.sysOauthList",
+  "sys.oauth.forget": "approval.match.sysOauthForget",
+  // Access keys
+  "sys.token.create": "approval.match.sysTokenCreate",
+  "sys.token.list": "approval.match.sysTokenList",
+  "sys.token.revoke": "approval.match.sysTokenRevoke",
+  // Accounts and system
+  "account.create": "approval.match.accountCreate",
+  "account.list": "approval.match.accountList",
+  "sys.ledger.list": "approval.match.sysLedgerList",
+  "sys.feedback": "approval.match.sysFeedback",
+  "sys.bootstrap": "approval.match.sysBootstrap",
+} satisfies Record<string, TextKey>));
+
+/** What each family of capabilities is about, keyed by the id prefix it covers. A wildcard grant such as
+ *  `contact.*`, or a single syscall no other label names, is described by its longest family. */
+const FAMILY_LABELS = new Map(Object.entries({
+  "fs": "approval.family.fs",
+  "shell": "approval.family.shell",
+  "net": "approval.family.net",
+  "web": "approval.family.web",
+  "mail": "approval.family.mail",
+  "atproto": "approval.family.atproto",
+  "repo": "approval.family.repo",
+  "proc": "approval.family.proc",
+  "codemode": "approval.family.codemode",
+  "conversation": "approval.family.conversation",
+  "contact": "approval.family.contact",
+  "profile": "approval.family.profile",
+  "approach": "approval.family.approach",
+  "signal": "approval.family.signal",
+  "sched": "approval.family.sched",
+  "r12y": "approval.family.r12y",
+  "ai": "approval.family.ai",
+  "adapter": "approval.family.adapter",
+  "adapter.pair": "approval.family.adapterPair",
+  "account": "approval.family.account",
+  "sys.config": "approval.family.sysConfig",
+  "sys.mcp": "approval.family.sysMcp",
+  "sys.instance": "approval.family.sysInstance",
+  "sys.browser": "approval.family.sysBrowser",
+  "sys.target": "approval.family.sysTarget",
+  "sys.pair": "approval.family.sysPair",
+  "sys.link": "approval.family.sysLink",
+  "sys.oauth": "approval.family.sysOauth",
+  "sys.token": "approval.family.sysToken",
+  "sys.ledger": "approval.family.sysLedger",
+} satisfies Record<string, TextKey>));
+
+/** The message naming a capability: its own label, else its longest labelled family, else none. */
+export function capabilityLabelKey(capability: string): TextKey | undefined {
+  const known = RULE_MATCH_LABELS.get(capability) ?? GRANT_LABELS.get(capability);
+  if (known) {
+    return known;
+  }
+  const parts = capability.replace(/\.\*$/, "").split(".");
+  for (let length = parts.length; length > 0; length -= 1) {
+    const family = FAMILY_LABELS.get(parts.slice(0, length).join("."));
+    if (family) {
+      return family;
+    }
+  }
+  return undefined;
+}
+
 export function targetOptionValue(target: ToolApprovalTarget | undefined): string {
   return target === undefined ? "" : JSON.stringify(target);
 }
@@ -111,7 +217,7 @@ export function humanToolCapabilityLabel(capability: string): string {
   if (!normalized) {
     return t("approval.capability");
   }
-  const known = CAPABILITY_LABELS.get(normalized);
+  const known = capabilityLabelKey(normalized);
   if (known) {
     return t(known);
   }
@@ -135,11 +241,11 @@ export function defaultOverrideAction(defaultAction: AgentToolApprovalAction): A
 
 /** Whether a rule names a capability this editor does not list; it stays selectable as a custom match. */
 export function isCustomMatch(match: string): boolean {
-  return match !== "" && !CAPABILITY_LABELS.has(match);
+  return match !== "" && !RULE_MATCH_LABELS.has(match);
 }
 
 export function matchOptionsForRule(match: string): ApprovalOption[] {
-  const options = [...CAPABILITY_LABELS].map(([value, label]) => ({ value, label: t(label) }));
+  const options = [...RULE_MATCH_LABELS].map(([value, label]) => ({ value, label: t(label) }));
   return isCustomMatch(match) ? [...options, { value: match, label: t("approval.customMatch") }] : options;
 }
 
