@@ -1,28 +1,530 @@
 # CLI Command Reference
 
-The `gsv` command controls a Ship gateway, the local Desktop application, the
-machine daemon, the process tree, and adapters. Most commands talk to the Kernel
-syscall surface over WebSocket; `desktop` uses a same-user local endpoint.
+`gsv` is Ship from your terminal. It talks to your Ship, looks after the work
+and routines it runs, reaches files and commands on connected places, and
+manages this computer's connection. Remote commands use the Kernel syscall
+surface over WebSocket; `desktop` and `daemon` use same-user local endpoints.
 
-## Global Options
+```text
+Talk
+  ship [MESSAGE]     Talk to your Ship, or open a prompt (also: chat)
+  contacts           People you talk to, and invitations
+  requests           Message requests from people you don't know yet
+  mail               Your Ship's mailbox
 
-`--url` is a top-level option, so place it before the subcommand:
+Look after things
+  work               What your Ship and its helpers are doing
+  approvals          Actions waiting for your yes or no
+  routines           Things your Ship does on a schedule
+  memory             Your wiki, and the notes your Ship always reads
+  activity           What ran, where, and how it went
+
+Places
+  files              Files on your Ship or a connected place
+  run                Run one command on your Ship or a connected place
+  places             Computers and browsers connected to your Ship
+
+This computer
+  login [SPACE]      Sign in to your Ship
+  logout             Sign out
+  status             Check sign-in, pairing and the background service
+  pair CODE          Connect this computer to your Ship
+  unpair             Disconnect this computer
+  update             Check for a newer Ship for this computer
+  desktop            Open Ship Desktop
+  version            Show version and build details
+```
+
+`gsv` alone prints this list; `gsv help COMMAND` explains one command.
+
+## Output
+
+Every command prints a rendering for people: a heading, aligned columns,
+relative times such as `2 h ago`, human sizes, and rows shortened to the
+terminal width. Colour appears only on a terminal, and never when `NO_COLOR`
+is set or `TERM=dumb`. `COLUMNS` overrides the detected width. An empty list
+says what to do next.
+
+Lists show short ids, the first eight characters of the full id. Any unique
+prefix works wherever a command takes an id, so `gsv work show 8f3a` is enough.
+An ambiguous prefix is refused with the matching candidates.
+
+`--json` works on every command and prints the full structured result, with
+full ids, for scripts:
 
 ```bash
-gsv --url wss://example.workers.dev/ws chat "hello"
+gsv mail --json | jq '.messages[].subject'
 ```
+
+Errors are one plain sentence on stderr. A refused syscall keeps its call
+name and code in a dim suffix so it stays diagnosable. An expired or missing
+sign-in says to run `gsv login`.
+
+## Sign In
+
+```bash
+gsv login [SPACE] [--username USER] [--password PASS] [--ttl-hours N]
+gsv logout
+gsv status
+```
+
+`login` takes your Ship's address, such as `gsv login me.ship.space`, and
+remembers it; later logins can omit it. A bare host becomes `wss://HOST/ws`
+(`ws://` for `localhost`), and an `http(s)://` address is converted. The
+address is saved only after a successful sign-in. `login` asks only for the
+password of your personal account; pass `--username root` for administration.
+It creates a short-lived user session with `sys.token.create` (8 hours by
+default) and saves it in `~/.config/gsv/config.toml`. Signing in to a
+different Ship forgets the previous account name.
+
+`logout` revokes the session on the Ship with `sys.token.revoke`, then clears
+it locally. When the Ship can't be reached, the local session is still cleared
+and the command says so.
+
+`status` never prompts. It shows the Ship, whether you are signed in and until
+when, whether this computer is paired, its background service, and the CLI and
+Ship versions, followed by the next step when something is missing.
+
+Scripts and service units can skip the saved sign-in with options placed
+before the command. They are hidden from help:
 
 | Option | Env | Description |
 | --- | --- | --- |
-| `--url <URL>` | `GSV_URL` | Gateway WebSocket URL. Defaults to `gateway.url` in local config, then `ws://localhost:8787/ws`. |
-| `-u, --user <USER>` | | Gateway username override. |
-| `-p, --password <PASS>` | | Password for non-interactive login/setup. |
-| `-t, --token <TOKEN>` | `GSV_TOKEN` | Non-interactive credential. User commands default to the personal account; device credentials retain their enrolled username. |
+| `--url <URL>` | `GSV_URL` | Ship WebSocket URL. Defaults to the address saved by `gsv login`, then `ws://localhost:8787/ws`. |
+| `-u, --user <USER>` | | Account name override. |
+| `-t, --token <TOKEN>` | `GSV_TOKEN` | Non-interactive credential. User commands default to the personal account; device credentials keep their enrolled username. |
 
-Local CLI config is stored at `~/.config/gsv/config.toml`. Remote user commands use
-the cached session token from `gsv auth login`, or prompt/login when needed.
+## Talk
 
-## Chat and Shell
+### Ship
+
+```bash
+gsv ship [MESSAGE]
+gsv ship history [-n N]
+gsv ship search WORDS
+```
+
+`chat` is an alias of `ship`. With a message (quotes are optional), `ship`
+sends it to your Ship conversation with `conversation.send`, prints the reply
+as it streams, and returns when the run finishes, for up to 600 seconds.
+Piped input counts as the message:
+
+```bash
+git diff | gsv ship "review this"
+```
+
+Without a message it opens a prompt (`›`). Each line is sent as soon as you
+press Enter, so a new message can supersede an active run; `/quit` leaves.
+Tool use and notices appear dimmed on stderr. When the Ship asks to do
+something that needs your approval, the prompt shows what and why and takes
+`o` (once), `a` (always) or `b` (block). `--json` needs a message and prints
+`{ conversationId, sent, replies }`. Set `GSV_CLIENT_DEBUG=1` to trace
+run-signal matching.
+
+`history` prints recent messages and `search` finds past ones with
+`conversation.search`.
+
+### Contacts and requests
+
+```bash
+gsv contacts
+gsv contacts inbox
+gsv contacts invite [--days N]
+gsv contacts accept LINK_OR_CODE
+gsv contacts send NAME MESSAGE
+gsv contacts block NAME
+gsv contacts unblock NAME
+gsv requests
+gsv requests accept ID
+gsv requests decline ID
+```
+
+`contacts` lists people on other Ships by name and address. `NAME` matches a
+contact's local alias, display name or handle. `invite` creates a one-use
+invitation and prints its link and code, which you share yourself; `--days`
+sets how long it lasts (one hour by default, up to seven days). `accept` uses
+an invitation someone shared with you. `inbox` lists contact conversations
+with the newest first.
+
+`requests` lists first-message requests from people who found your public
+profile, and the ones you sent. `accept` and `decline` answer an incoming
+request; `decline` on your own request withdraws it.
+
+### Mail
+
+```bash
+gsv mail [--before CURSOR] [-n N]
+gsv mail search WORDS [--before CURSOR] [-n N]
+gsv mail read ID
+gsv mail send TO [-s SUBJECT] [MESSAGE]
+gsv mail status DELIVERY_ID
+```
+
+`mail` lists received mail with the newest first, 20 at a time, using
+`mail.list`. A message that needs attention is marked, and attachments are
+counted beside the subject. When more mail exists, the footer prints the exact
+command for the next page, such as `gsv mail --before c2e9f00bb11`. `search`
+uses `mail.search` with the same paging. `read` prints one message.
+
+`send` sends from your Ship's address. The body comes from `MESSAGE` or, when
+it is omitted, from stdin. It prints a delivery id for `status`. Sending
+follows the ordinary `mail.send` approval policy.
+
+## Look After Things
+
+### Work
+
+```bash
+gsv work [--all]
+gsv work show ID [-n N]
+gsv work open ID [MESSAGE]
+gsv work stop ID
+```
+
+`work` lists what is running now: your Ship and the work it delegated, with
+state, last activity and how many messages are queued. Idle work is counted
+in a footer; `--all` lists it. Open commitments from the Ship's responsibility
+ledger follow, with their state, due time and blocker.
+
+`show` prints a timeline of what a piece of work did, folding each tool result
+into its call. `open` talks to that work as `ship` does, with a message or as a
+prompt. `stop` ends its current run with `proc.abort`; the work itself remains.
+
+### Approvals
+
+```bash
+gsv approvals
+gsv approvals allow ID [--always]
+gsv approvals block ID
+```
+
+`approvals` lists actions waiting for your yes or no across your Ship and its
+work: what the action does, where, and its most telling detail, such as the
+command line or recipient. `allow` approves once; `--always` also allows
+actions like it from now on. `block` refuses. The CLI composes the list from
+`proc.list` and the pending request of each running process, and answers with
+`proc.hil`.
+
+### Routines
+
+```bash
+gsv routines
+gsv routines add NAME MESSAGE (--daily HH:MM | --weekly "DAY HH:MM" | --every INTERVAL | --cron EXPR) [--timezone ZONE]
+gsv routines edit ID [--name NAME] [--message MESSAGE] [CADENCE] [--timezone ZONE] [--pause | --resume]
+gsv routines remove ID
+gsv routines run ID
+```
+
+A routine asks your Ship to do something on a schedule. Each run becomes one
+Ship responsibility, exactly as routines made in the web app do. Daily, weekly
+and cron times use your Ship's time zone (your account's, then the Ship's,
+then UTC) unless `--timezone` names another. `--every` takes `30m`, `2h` or
+`1d`. `routines` lists each routine's cadence, next run and last result.
+
+```bash
+gsv routines add "Morning briefing" "Plan my day" --daily 08:00
+gsv routines edit 4410 --pause
+```
+
+### Memory
+
+```bash
+gsv memory
+gsv memory read WIKI/PAGE
+gsv memory search WORDS [--in WIKI]
+gsv memory standing
+```
+
+`memory` lists your wikis. `read` prints a page, such as
+`gsv memory read notes/index.md`, and `search` searches every wiki or one.
+`standing` shows the notes your Ship reads in every conversation, from your
+`~/context.d`.
+
+### Activity
+
+```bash
+gsv activity [--on PLACE] [-n N]
+```
+
+`activity` lists recent syscalls from the ledger: what ran, where, how long it
+took and whether it worked. Arguments stay out of the table.
+
+## Places
+
+A place is your Ship itself (`gsv` or `ship`) or a connected computer,
+browser or cloud instance. Commands name a place by its label or id, in any
+case.
+
+### Connected places
+
+```bash
+gsv places
+gsv places rename PLACE NAME
+gsv places forget PLACE [-y]
+```
+
+`places` lists connected places, online first. `rename` changes a place's
+label. `forget` asks first, then removes a computer and revokes its
+credentials with `sys.target.delete`; for a cloud browser or computer it
+stops the instance instead.
+
+### Files
+
+```bash
+gsv files ls [PATH]
+gsv files cat PATH
+gsv files put LOCAL PATH
+gsv files get PATH [LOCAL]
+gsv files cp FROM TO
+gsv files rm PATH
+gsv files search QUERY [PATH] [--include GLOB]
+```
+
+A path is on your Ship unless it starts with a place name and a colon, such as
+`laptop:~/notes.txt`. Single letters (`C:\`) and paths starting with `.`, `/`
+or `~` are never read as place names. `cat` prints text up to 16 MiB. `put`
+and `get` stream through this computer; `get` writes a partial file and
+renames it only when the download completes. `cp` copies between places on the
+Ship side without passing through this computer.
+
+### Run
+
+```bash
+gsv run [--on PLACE] [--cwd DIR] COMMAND...
+```
+
+`run` runs one command line with `shell.exec` on your Ship or `--on` a place,
+prints its output, and exits with the command's own status. Ctrl-C stops it
+with `shell.cancel` and exits 130. Options for `gsv` itself, such as `--json`,
+go before the command. `run` doesn't pass stdin through. On your Ship the
+command runs in the Ship's shell, whose commands are listed under
+[Commands on your Ship](#commands-on-your-ship).
+
+```bash
+gsv run --on laptop df -h
+gsv run r12y list
+```
+
+## This Computer
+
+Open **Work**, click **connect** beside Connections, name the computer and
+create an invitation. After installing Ship, paste the provided command:
+
+```bash
+gsv pair CODE [--workspace PATH] [--no-install]
+gsv pair  # resume an interrupted exchange
+gsv unpair [-y]
+gsv update
+```
+
+Use `gsv pair -` to read the invitation from stdin instead of exposing it in
+process arguments. `--preserve-cli-login` leaves the CLI's selected Ship and
+credentials unchanged; `--no-replace` refuses to overwrite an existing machine
+credential. Desktop uses these together for integrated machine setup.
+
+The invitation supplies the gateway, account and target identity. It expires in
+ten minutes and can enroll one device. The CLI saves its credential before the
+exchange and installs the per-user daemon by default. `--no-install` saves the
+pairing without changing operating-system services. Closing the web panel or
+cancelling an already-used invitation does not revoke the resulting connection.
+
+`unpair` asks first, then forgets this computer on the Ship, which revokes its
+credential, removes the background service and clears the saved machine
+credential. Your CLI sign-in stays.
+
+`update` compares this computer with your Ship's release. When a newer one is
+available it prints the installer command that updates the CLI, background
+service and Desktop together; it doesn't run it.
+
+### Background service
+
+Ship can create an invitation from Shell on `gsv` with
+`targets pair --name "My laptop" --platform mac`. Supported platforms are `mac`,
+`linux`, `windows` and `browser`. The result contains setup instructions for the
+Ship's release. `targets pair list` and `targets pair cancel INVITATION_ID`
+manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
+
+For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
+The URL opens `https://ship.space/browser?release=RELEASE` for the gateway's
+release. Download and unzip the extension, load its folder from
+`chrome://extensions` with developer mode enabled, then open **Your Ship** from
+the toolbar or Extensions button and paste `code` into its panel.
+
+
+```bash
+gsv daemon install [--id ID] [--workspace PATH]
+gsv daemon start
+gsv daemon restart
+gsv daemon stop
+gsv daemon uninstall
+gsv daemon status
+gsv daemon doctor
+gsv daemon reload
+gsv daemon reconnect
+gsv daemon diagnostics [--json]
+gsv daemon logs [-l N] [--follow]
+```
+
+The device daemon exposes local hardware-style capabilities to the Kernel:
+`fs.*`, `shell.exec`, and `net.fetch`. The gateway always sees the same syscall/tool surface;
+the device ID selects which implementation receives a driver request.
+
+The driver runtime is the separate `gsvd` executable. The hidden legacy command
+`gsv device run` transfers process ownership to the sibling
+`gsvd --foreground`; the CLI never embeds the driver. `install` creates and
+starts a launchd agent on
+macOS, a systemd user unit on Linux, or an automatic SCM service on Windows. Windows installation requests administrator
+approval and uses a dedicated service account. On Unix, reinstalling
+or starting an old definition migrates `gsv device run` to the direct `gsvd`
+entrypoint without changing the existing service identity. `doctor` checks the
+installed executable and definition. The daemon writes daily rotated JSONL logs
+under `~/.gsv/logs/device.log*` (Windows service logs use
+`%ProgramData%\GSV\daemon\logs`); `logs` tails the latest file with `-l, --lines`
+defaulting to `100`. Foreground logs use compact text by default; set
+`GSV_DEVICE_CONSOLE_FORMAT=json` or `GSV_DEVICE_CONSOLE_FORMAT=quiet` to change that.
+
+`reload` rereads `config.toml` and reconnects, while `reconnect` keeps the
+current settings. `diagnostics` reports bounded, redacted runtime notices,
+including the daemon's latest automatic-update decision; the installer it
+starts logs to `~/.gsv/logs/auto-update.log`, and `device.auto_update`
+turns automatic updates off. Windows boot services always use administrator-managed
+installer updates. On Windows, `reload` copies the enrolled owner's device settings
+to the protected service configuration; changing its workspace requires `install`
+to update filesystem permissions. `reconnect` only reconnects.
+`status` combines the operating-system service state with the live daemon's
+version, PID, machine id, connection phase, uptime, and reconnect count. These
+live operations use a versioned same-user Unix socket on macOS/Linux and a
+Windows named pipe restricted to the enrolled service owner and execution account. They do not expose credentials or gateway
+traffic.
+
+Device identity resolves as `--id`, then local `device.id`, then
+`device-<hostname>`. Workspace resolves as `--workspace`, then
+`device.workspace`, then the current directory for a foreground daemon.
+Windows pairing and service installation default to `%USERPROFILE%\GSV`.
+The enrolling user must already be able to change the workspace's permissions.
+Workspace grants and removal run at that user's original privilege level;
+administrator approval only authorizes the protected service registration.
+A persistent daemon needs `gateway.username` and `device.token`, which the
+device invitation flow saves.
+Because the compatibility launcher replaces itself with `gsvd`, gateway setup
+must be completed through the Ship's browser setup invitation before starting
+`gsvd`. See the [device guide](../how-to/connect-devices.md) for enrollment.
+
+`gsv`, `gsvd`, and the Desktop application share protocol and configuration
+crates but remain separate applications. The CLI owns operator commands and OS
+service control; `gsvd` owns machine syscalls, subprocesses, transfers,
+cancellation, reconnection, logging, and shutdown.
+
+The verified host installer ships `gsv` and `gsvd` as a matching pair and
+migrates an existing legacy service definition during upgrade. See
+[Install Host Applications](/how-to/install-host-apps) for the release matrix,
+checksum verification, and rollback contract.
+
+Windows service installation requires the bundled `gsvd.exe` beside `gsv.exe`;
+`GSV_GSVD_PATH` and `PATH` do not override that selection. The CLI checks the
+daemon before administrator approval and verifies the same bytes before copying
+them to the protected service directory. Reinstall the complete distribution if
+the bundled daemon is missing or has changed during approval.
+
+
+### Desktop
+
+```bash
+gsv desktop
+gsv desktop status [--json]
+gsv desktop new
+gsv desktop use PID
+gsv desktop microphone list
+gsv desktop microphone use NAME
+gsv desktop microphone default
+```
+
+`gsv desktop` focuses a running Desktop or launches the sibling
+`gsv-desktop` executable and waits for its local control endpoint. `new` also
+launches or focuses Desktop, asks Desktop to create a Process using its own
+authenticated gateway connection, selects it after authoritative history is
+installed, and prints the new PID. A cancellation after durable spawn but
+before selection can leave that Process valid but unselected. `use` launches
+or focuses Desktop, validates and selects an existing
+Process, then prints its PID.
+
+The microphone commands query a running Desktop without focusing its window. If
+Desktop is absent, they launch it and retry the requested microphone operation
+while its local endpoint starts. `microphone list` lists at most 32 available
+input devices and marks the operating-system default, the saved selection, and
+any active `GSV_VOICE_DEVICE` environment override. That legacy override uses a
+case-insensitive exact name, or a case-insensitive substring only when it
+identifies one device unambiguously. If the environment value is empty, too
+long, or otherwise invalid, output reports `environment override: invalid
+(remove GSV_VOICE_DEVICE)` without echoing the value. A selection of `not
+configured` means Desktop will ask on first voice use; `system default` means
+that choice was made explicitly. `microphone use NAME` validates and saves an
+exact device name, then prints the confirmed selection. Duplicate display names
+are numbered in the list but remain ambiguous to the name-only CLI; select those
+inputs in Desktop's picker instead. Quote names containing spaces. `microphone
+default` clears a named preference in favor of the operating
+system's default and prints the confirmed selection.
+
+`status` never launches Desktop. Its human output contains only gateway state,
+window state, and the selected PID; `--json` prints those same redacted fields
+for scripts. The command returns an error when Desktop is not running.
+
+The CLI finds `gsv-desktop` beside `gsv`, then on `PATH`. Development builds
+use the `gsv-desktop` binary. Set `GSV_DESKTOP_PATH` to
+an explicit executable when testing a nonstandard installation.
+
+These commands use the versioned same-user IPC contract in
+`desktop-protocol`; they do not connect through `gsvd`. Credentials,
+messages, drafts, attachment paths, and approval content cannot be sent over
+that contract. Microphone names cross it only for the explicit microphone
+commands and are never included in the general redacted Desktop status. Desktop
+remains the owner of gateway authentication, process selection, microphone
+preference, and process-switch fencing.
+
+
+### Local configuration
+
+```bash
+gsv config --local get KEY
+gsv config --local set KEY VALUE
+```
+
+These hidden commands edit `~/.config/gsv/config.toml`. Supported keys:
+`gateway.url`, `gateway.username`, `gateway.token`, `gateway.session_token`,
+`gateway.session_token_id`, `gateway.session_expires_at`,
+`gateway.session_expires_at_ms`, `release.channel`,
+`session.default_key`, `device.id`, `device.token`, `device.workspace`, and
+`device.auto_update`.
+`release.channel` must be `stable` or `dev`; `device.auto_update` must be
+`true` or `false`; token values are masked on `get`. Ship settings live in the
+web app.
+
+## Removed Commands
+
+These commands were replaced. For one release they still parse and exit with a
+pointer to their replacement.
+
+| Was | Now |
+| --- | --- |
+| `gsv chat [--pid PID]` | `gsv ship`; `gsv chat` remains an alias. `--pid` became `gsv work open ID`. |
+| `gsv shell` | `gsv run COMMAND`, one command at a time. |
+| `gsv proc list` / `send` / `history` | `gsv work`, `gsv work open ID MESSAGE`, `gsv work show ID`. |
+| `gsv proc kill` / `reset` | `gsv work stop ID` stops a run; reset and end work in the web app. |
+| `gsv auth login` / `logout` | `gsv login SPACE` / `gsv logout`. |
+| `gsv auth token ...` | Computers get credentials from a pairing invitation; `gsv places forget` revokes one. |
+| `gsv auth link --adapter ...` / `link-list` / `unlink` | Link messengers in **Settings → Messengers**. `gsv auth link CODE`, which redeems the code a messenger sends someone it doesn't know yet, still works. |
+| `gsv config get` / `set` (remote) | Change Ship settings in the web app. |
+| `gsv adapter ...` | Connect messengers in **Settings → Messengers**. |
+
+The global `-p, --password` option is gone; scripts use `gsv login --password`
+or a `-t` / `GSV_TOKEN` credential.
+
+## Commands on Your Ship
+
+Your Ship's own shell, the `gsv` target, has commands of its own. Ship uses
+them through its Shell tool, and you can run them with `gsv run`, for example
+`gsv run r12y list` or `gsv run sched list`. The examples below are written as
+they are typed inside that shell.
 
 When the operator enables feedback, the web app's header has a **feedback** action.
 Reports include the text you submit, your Ship, account, and app/server versions.
@@ -32,7 +534,7 @@ your existing history permissions. Review the snapshot before sending: tool resu
 can contain private content. No files or media are fetched for the report, and
 oversized activity is visibly shortened to 64,000 characters. Unchecking removes it. A failed submission keeps your draft
 and the exact selected snapshot for retry.
-The same report can be sent from the `gsv` target shell:
+The same report can be sent from the Ship's shell:
 
 ```bash
 feedback < report.txt
@@ -47,25 +549,8 @@ Reports go to the operator's configured inbox; the public runtime has no default
 destination. The header action appears only when `sys.connect` advertises
 `operator-feedback` for the caller.
 
-```bash
-gsv chat [MESSAGE] [--pid PID]
-gsv shell
-```
 
-`chat` resolves the Ship or selected Work conversation and sends with
-`conversation.send`. With `MESSAGE`, it waits for the canonical
-`message.committed` and matching `proc.run.finished` signals for up to 120
-seconds. The
-interactive prompt returns after each message is accepted so another message
-can supersede an active run; type `quit` or `exit` to leave. `--pid` targets a
-specific process; when omitted, the CLI uses the user's personal
-intelligence process. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
-
-`shell` opens an interactive prompt backed by the gateway `shell.exec` syscall.
-Commands run inside the gateway OS context, not directly on your local machine.
-Use `:quit`, `:exit`, or `:q` to leave.
-
-The gateway shell exposes messenger pairing to Ship and signed-in users:
+The Ship's shell exposes messenger pairing to Ship and signed-in users:
 
 ```bash
 messenger list
@@ -81,7 +566,7 @@ putting it in logged shell command text. `connect` returns `paired: true` only
 after redemption completes. Processes link their human owner's account, subject
 to their capabilities and tool policy. See [Connect a messenger](/how-to/messengers).
 
-With the optional cloud instance service enabled, the gateway shell also exposes
+With the optional cloud instance service enabled, the Ship's shell also exposes
 `instance catalog`, `instance start browser --request-id ID --wait`, `instance list`,
 `instance get ID`, and `instance stop ID --wait`. Starting reuses the account's current
 browser and reports `created` or `reused`; `--new` explicitly creates a separate
@@ -111,7 +596,7 @@ recovers that operation. Computers do not accept browser profile or `--new`
 options. Use the same list, get and stop commands; stopping destroys the files
 and running commands. See [cloud computers](/how-to/cloud-computers).
 
-Inside the gateway shell, `proc` is the process IPC userland command.
+Inside the Ship's shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --ship`
 creates recurring or one-shot Ship responsibilities; `sched add --here`
 targets the resolved current Process and uses the same responsibility semantics
@@ -347,7 +832,7 @@ is parsed and checked before being returned. `--reasoning` exposes query
 reasoning and grounding in the `--json` result envelope. `--stream` is
 available for caption, query, and OCR, and cannot be combined with `--json`,
 reasoning, or structured output. The underlying `ai.image.read` response body
-streams decoded UTF-8 chunks; the gateway shell collects those chunks into its
+streams decoded UTF-8 chunks; the Ship's shell collects those chunks into its
 final `shell.exec` stdout.
 
 The current-conversation form is transport-neutral: issue `message attach`
@@ -509,279 +994,6 @@ dispatched and the spawn was accepted; it does not mean the child finished or
 delivered output. `sched list --all` includes disabled schedules; it does not
 mean all users. `sched add --json` is a low-level compatibility path for direct
 `sched.*` payloads.
-
-## Process Commands
-
-```bash
-gsv proc list [--uid UID]
-gsv proc spawn [--as ACCOUNT] [--label LABEL] [--model MODEL_ID] [--effort LEVEL] [--prompt TEXT] [--parent PID]
-gsv proc send MESSAGE --pid PID
-gsv proc history --pid PID [--tail] [--limit N] [--offset N]
-gsv proc reset --pid PID
-gsv proc kill PID [--no-archive]
-```
-
-Processes are the agent-facing execution model. `spawn` creates a new process;
-`send` only reports acceptance, while `chat` waits for streamed output.
-`send`, `history`, `reset`, and `kill` require a PID. `history --tail` reads
-the newest messages instead of the oldest page. `--uid` filters process lists
-and requires root when viewing another user.
-
-Spawn's `--model` and `--effort` flags have the same semantics as the native
-commands above; the settings apply before the optional initial prompt starts.
-
-## Desktop Commands
-
-```bash
-gsv desktop
-gsv desktop status [--json]
-gsv desktop new
-gsv desktop use PID
-gsv desktop microphone list
-gsv desktop microphone use NAME
-gsv desktop microphone default
-```
-
-`gsv desktop` focuses a running Desktop or launches the sibling
-`gsv-desktop` executable and waits for its local control endpoint. `new` also
-launches or focuses Desktop, asks Desktop to create a Process using its own
-authenticated gateway connection, selects it after authoritative history is
-installed, and prints the new PID. A cancellation after durable spawn but
-before selection can leave that Process valid but unselected. `use` launches
-or focuses Desktop, validates and selects an existing
-Process, then prints its PID.
-
-The microphone commands query a running Desktop without focusing its window. If
-Desktop is absent, they launch it and retry the requested microphone operation
-while its local endpoint starts. `microphone list` lists at most 32 available
-input devices and marks the operating-system default, the saved selection, and
-any active `GSV_VOICE_DEVICE` environment override. That legacy override uses a
-case-insensitive exact name, or a case-insensitive substring only when it
-identifies one device unambiguously. If the environment value is empty, too
-long, or otherwise invalid, output reports `environment override: invalid
-(remove GSV_VOICE_DEVICE)` without echoing the value. A selection of `not
-configured` means Desktop will ask on first voice use; `system default` means
-that choice was made explicitly. `microphone use NAME` validates and saves an
-exact device name, then prints the confirmed selection. Duplicate display names
-are numbered in the list but remain ambiguous to the name-only CLI; select those
-inputs in Desktop's picker instead. Quote names containing spaces. `microphone
-default` clears a named preference in favor of the operating
-system's default and prints the confirmed selection.
-
-`status` never launches Desktop. Its human output contains only gateway state,
-window state, and the selected PID; `--json` prints those same redacted fields
-for scripts. The command returns an error when Desktop is not running.
-
-The CLI finds `gsv-desktop` beside `gsv`, then on `PATH`. Development builds
-use the `gsv-desktop` binary. Set `GSV_DESKTOP_PATH` to
-an explicit executable when testing a nonstandard installation.
-
-These commands use the versioned same-user IPC contract in
-`desktop-protocol`; they do not connect through `gsvd`. Credentials,
-messages, drafts, attachment paths, and approval content cannot be sent over
-that contract. Microphone names cross it only for the explicit microphone
-commands and are never included in the general redacted Desktop status. Desktop
-remains the owner of gateway authentication, process selection, microphone
-preference, and process-switch fencing.
-
-## Daemon Commands
-
-Ship can create an invitation from Shell on `gsv` with
-`targets pair --name "My laptop" --platform mac`. Supported platforms are `mac`,
-`linux`, `windows` and `browser`. The result contains setup instructions for the
-Ship's release. `targets pair list` and `targets pair cancel INVITATION_ID`
-manage the human owner's invitations. See [Connect devices](../how-to/connect-devices.md).
-
-For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
-The URL opens `https://ship.space/browser?release=RELEASE` for the gateway's
-release. Download and unzip the extension, load its folder from
-`chrome://extensions` with developer mode enabled, then open **Your Ship** from
-the toolbar or Extensions button and paste `code` into its panel.
-
-Open **Work**, click **connect** beside Connections, name the computer and create an invitation.
-After installing Ship, paste the provided command:
-
-```bash
-gsv pair CODE [--workspace PATH] [--no-install]
-gsv pair  # resume an interrupted exchange
-```
-
-Use `gsv pair -` to read the invitation from stdin instead of exposing it in
-process arguments. `--preserve-cli-login` leaves the CLI's selected Ship and
-credentials unchanged; `--no-replace` refuses to overwrite an existing machine
-credential. Desktop uses these together for integrated machine setup.
-
-The invitation supplies the gateway, account and target identity. It expires in
-ten minutes and can enroll one device. The CLI saves its credential before the
-exchange and installs the per-user daemon by default. `--no-install` saves the
-pairing without changing operating-system services. Closing the web panel or
-cancelling an already-used invitation does not revoke the resulting connection.
-
-```bash
-gsv daemon install [--id ID] [--workspace PATH]
-gsv daemon start
-gsv daemon restart
-gsv daemon stop
-gsv daemon uninstall
-gsv daemon status
-gsv daemon doctor
-gsv daemon reload
-gsv daemon reconnect
-gsv daemon diagnostics [--json]
-gsv daemon logs [-l N] [--follow]
-```
-
-The device daemon exposes local hardware-style capabilities to the Kernel:
-`fs.*`, `shell.exec`, and `net.fetch`. The gateway always sees the same syscall/tool surface;
-the device ID selects which implementation receives a driver request.
-
-The driver runtime is the separate `gsvd` executable. The hidden legacy command
-`gsv device run` transfers process ownership to the sibling
-`gsvd --foreground`; the CLI never embeds the driver. `install` creates and
-starts a launchd agent on
-macOS, a systemd user unit on Linux, or an automatic SCM service on Windows. Windows installation requests administrator
-approval and uses a dedicated service account. On Unix, reinstalling
-or starting an old definition migrates `gsv device run` to the direct `gsvd`
-entrypoint without changing the existing service identity. `doctor` checks the
-installed executable and definition. The daemon writes daily rotated JSONL logs
-under `~/.gsv/logs/device.log*` (Windows service logs use
-`%ProgramData%\GSV\daemon\logs`); `logs` tails the latest file with `-l, --lines`
-defaulting to `100`. Foreground logs use compact text by default; set
-`GSV_DEVICE_CONSOLE_FORMAT=json` or `GSV_DEVICE_CONSOLE_FORMAT=quiet` to change that.
-
-`reload` rereads `config.toml` and reconnects, while `reconnect` keeps the
-current settings. `diagnostics` reports bounded, redacted runtime notices,
-including the daemon's latest automatic-update decision; the installer it
-starts logs to `~/.gsv/logs/auto-update.log`, and `device.auto_update`
-turns automatic updates off. Windows boot services always use administrator-managed
-installer updates. On Windows, `reload` copies the enrolled owner's device settings
-to the protected service configuration; changing its workspace requires `install`
-to update filesystem permissions. `reconnect` only reconnects.
-`status` combines the operating-system service state with the live daemon's
-version, PID, machine id, connection phase, uptime, and reconnect count. These
-live operations use a versioned same-user Unix socket on macOS/Linux and a
-Windows named pipe restricted to the enrolled service owner and execution account. They do not expose credentials or gateway
-traffic.
-
-Device identity resolves as `--id`, then local `device.id`, then
-`device-<hostname>`. Workspace resolves as `--workspace`, then
-`device.workspace`, then the current directory for a foreground daemon.
-Windows pairing and service installation default to `%USERPROFILE%\GSV`.
-The enrolling user must already be able to change the workspace's permissions.
-Workspace grants and removal run at that user's original privilege level;
-administrator approval only authorizes the protected service registration.
-A persistent daemon should have
-`gateway.username` and `device.token` configured, usually from
-the device invitation flow, or
-`gsv auth token create --kind machine --peer ...` followed by
-`gsv config --local set device.token ...`.
-Because the compatibility launcher replaces itself with `gsvd`, gateway setup
-must be completed through the Ship's browser setup invitation before starting
-`gsvd`. See the [device guide](../how-to/connect-devices.md) for enrollment.
-
-`gsv`, `gsvd`, and the Desktop application share protocol and configuration
-crates but remain separate applications. The CLI owns operator commands and OS
-service control; `gsvd` owns machine syscalls, subprocesses, transfers,
-cancellation, reconnection, logging, and shutdown.
-
-The verified host installer ships `gsv` and `gsvd` as a matching pair and
-migrates an existing legacy service definition during upgrade. See
-[Install Host Applications](/how-to/install-host-apps) for the release matrix,
-checksum verification, and rollback contract.
-
-Windows service installation requires the bundled `gsvd.exe` beside `gsv.exe`;
-`GSV_GSVD_PATH` and `PATH` do not override that selection. The CLI checks the
-daemon before administrator approval and verifies the same bytes before copying
-them to the protected service directory. Reinstall the complete distribution if
-the bundled daemon is missing or has changed during approval.
-
-## Auth Commands
-
-```bash
-gsv auth login [--username USER] [--password PASS] [--ttl-hours N]
-gsv auth logout
-gsv auth link [CODE]
-gsv auth link --adapter ID --account-id ACCOUNT --actor-id ACTOR [--uid UID]
-gsv auth link-list [--uid UID]
-gsv auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
-```
-
-Initialize a new Ship through its Accounts-issued browser setup invitation.
-Login and commands operate on a Ship whose authorized setup has completed.
-
-`login` asks only for a password when no credential is cached. Omit the username
-to use the personal account, or pass `--username root` for administration. Existing
-configured usernames remain supported. The authenticated identity returned by the
-Kernel is saved with the session. `login` creates a short-lived user token with `sys.token.create` and caches it
-locally. The default TTL is 8 hours. `logout` clears only the cached local session
-token.
-
-Generic link commands bind identities for adapters that support `sys.link`.
-The bundled Telegram, Slack and Discord adapters require their own signed-in
-pairing confirmation; `gsv auth link` does not replace that flow. Use
-**Settings → Messengers**, inspect the external identity and confirm it there.
-See [messenger setup](../how-to/messengers.md).
-
-### Auth Tokens
-
-```bash
-gsv auth token create [--kind machine|service|human] [--uid UID] [--label LABEL] \
-  [--peer PEER_ID] [--expires-at UNIX_MS]
-gsv auth token list [--uid UID]
-gsv auth token revoke TOKEN_ID [--reason TEXT] [--uid UID]
-```
-
-`machine` is the default token kind. `--peer` (alias `--device`) binds a machine
-token to the one peer id that may connect with it, and is required for machine
-tokens. `--uid` is for root-managed token operations.
-
-## Config Commands
-
-```bash
-gsv config get [KEY]
-gsv config set KEY VALUE
-gsv config --local get KEY
-gsv config --local set KEY VALUE
-```
-
-Without `--local`, commands use Kernel `sys.config.get` and `sys.config.set`.
-Keys use ConfigStore paths, for example:
-
-```bash
-gsv config get config/ai/models
-gsv config set users/1000/ai/preferred_model primary
-```
-
-Omit `KEY` on remote `get` to list visible entries. Sensitive remote values are
-masked for non-root users. Non-root writes are limited to their own user
-overrides, currently `users/{uid}/ai/*`.
-
-With `--local`, commands edit `~/.config/gsv/config.toml`. Supported local keys:
-`gateway.url`, `gateway.username`, `gateway.token`, `gateway.session_token`,
-`gateway.session_token_id`, `gateway.session_expires_at`,
-`gateway.session_expires_at_ms`, `release.channel`,
-`session.default_key`, `device.id`, `device.token`, `device.workspace`, and
-`device.auto_update`.
-`release.channel` must be `stable` or `dev`; `device.auto_update` must be
-`true` or `false`; token values are masked
-on local `get`. Adapter workers use Cloudflare service bindings rather than
-locally configured provider URLs or tokens.
-
-## Adapter Commands
-
-```bash
-gsv adapter connect --adapter ID [--account-id ACCOUNT] [--config-json JSON]
-gsv adapter disconnect --adapter ID [--account-id ACCOUNT]
-gsv adapter status --adapter ID [--account-id ACCOUNT]
-```
-
-These generic lifecycle commands apply only when an adapter advertises the
-corresponding operation. `--account-id` defaults to `default` for
-connect/disconnect; `--config-json` passes an object to the adapter.
-
-The bundled messenger applications are configured by the operator at deploy
-time. People link and unlink their own identities through the adapter pairing
-flow in **Settings → Messengers**.
 
 ## Version
 

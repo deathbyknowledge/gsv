@@ -206,8 +206,8 @@ The same dispatcher handles non-chat requests. A client can issue `fs.read`;
 the Kernel checks its identity and capabilities, then either runs the native
 filesystem handler or routes to a device if `target` names one. An adapter can
 call `adapter.inbound`; the Kernel resolves the external actor through identity
-links and delivers the message to a process. A CLI call to `gsv proc kill`
-becomes a `proc.kill` syscall forwarded to the target Process DO after ownership
+links and delivers the message to a process. A CLI call to `gsv work stop`
+becomes a `proc.abort` syscall forwarded to the target Process DO after ownership
 checks.
 
 The key architectural choice is that syscall names do not change based on where
