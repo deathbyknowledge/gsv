@@ -100,7 +100,7 @@
 .settings-model-login a { color: var(--accent); }
 .settings-login-code { color: var(--text); letter-spacing: .15em; }
 .settings-telegram { padding-bottom: 1rem; }
-.settings-telegram-flow { margin-top: 1.5rem; }
+.settings-telegram-flow { margin-top: .25rem; }
 /* the console shell spaces a step's text from its field with a flex gap; the compact shell has no such gap */
 .settings-telegram-flow .gsv-cf-desc { margin-bottom: 1.25rem; }
 .settings-messenger { padding-bottom: 1rem; }
