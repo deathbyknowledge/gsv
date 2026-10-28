@@ -159,6 +159,13 @@ function ManagedMessengerOnboardingFlow({
     : isWhatsApp
       ? chatNumber ? t("settings.pairing.whatsappStartNumber", { number: chatNumber }) : t("settings.pairing.whatsappStart")
       : t("settings.pairing.telegramStart");
+  const launchLabel = installsApp
+    ? info.data?.installUrl ? t("settings.pairing.installIn", { platform: platform.toUpperCase() }) : t("settings.pairing.viewSetup", { platform: platform.toUpperCase() })
+    : isWhatsApp
+      ? info.data?.installUrl ? t("settings.pairing.open", { name: "WHATSAPP" }) : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
+      : t("settings.pairing.open", { name: botUsername ? `@${botUsername}` : "TELEGRAM" });
+  // WhatsApp's chat link carries the pairing message, so opening it is the step.
+  const launchLeads = isWhatsApp && Boolean(info.data?.installUrl);
 
   const inspectCode = async () => {
     if (!code.trim() || inspect.isPending) return;
@@ -211,6 +218,7 @@ function ManagedMessengerOnboardingFlow({
               title={t("settings.pairing.startIn", { platform: platform.toUpperCase() })}
               text={firstStepText}
             />
+            {isWhatsApp ? <p class="gsv-cf-desc">{t("settings.pairing.whatsappRelink")}</p> : null}
             {info.isError ? (
               <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform })} />
             ) : !info.data?.configured ? (
@@ -224,13 +232,11 @@ function ManagedMessengerOnboardingFlow({
             <div class="gsv-cf-footer">
               <Button variant="secondary" label={t("settings.pairing.back")} onClick={onBack} />
               <span class="gsv-cf-footer-spacer" />
-              <Link href={launchUrl}>{installsApp
-                ? info.data?.installUrl ? t("settings.pairing.installIn", { platform: platform.toUpperCase() }) : t("settings.pairing.viewSetup", { platform: platform.toUpperCase() })
-                : isWhatsApp
-                  ? info.data?.installUrl ? t("settings.pairing.open", { name: "WHATSAPP" }) : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
-                  : t("settings.pairing.open", { name: botUsername ? `@${botUsername}` : "TELEGRAM" })}</Link>
+              {launchLeads
+                ? <Button variant="primary" href={launchUrl} label={launchLabel} />
+                : <Link href={launchUrl}>{launchLabel}</Link>}
               <Button
-                variant="primary"
+                variant={launchLeads ? "secondary" : "primary"}
                 label={t("settings.pairing.haveCode")}
                 disabled={!info.data?.configured}
                 onClick={() => setStep(STEP_CODE)}

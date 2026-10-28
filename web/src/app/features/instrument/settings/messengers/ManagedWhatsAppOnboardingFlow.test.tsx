@@ -120,15 +120,23 @@ afterEach(async () => {
 });
 
 describe("ManagedWhatsAppOnboardingFlow", () => {
-  it("shows the operator's number and opens WhatsApp on it without asking for credentials", () => {
+  it("shows the operator's number and leads with opening WhatsApp on it without asking for credentials", () => {
     expect(mocks.infoAdapter).toBe("whatsapp");
     expect(currentFlow().title).toBe("Connect WhatsApp");
     const allNodes = currentFlow().steps.flatMap((step) => flowStepNodes(currentFlow(), step.key));
     expect(allNodes.some((node) => node.props.label === "ACCESS TOKEN")).toBe(false);
     const instructions = nodes().find((node) => node.props.text?.includes("+34600000000"));
-    expect(instructions?.props.text).toContain("send /link to get a new code");
-    const open = nodes().find((node) => node.props.href === "https://wa.me/34600000000?text=%2Flink");
-    expect(collectText(open)).toBe("OPEN WHATSAPP");
+    expect(instructions?.props.text).toBe(
+      "Open WhatsApp below and send the message that's already filled in to +34600000000. Ship replies with a short-lived code.",
+    );
+    expect(instructions?.props.text).not.toContain("/link");
+    expect(collectText(nodes())).toContain(
+      "Already connected to another Ship from this number? Sending that same message gets you a fresh code.",
+    );
+    const open = nodeWithLabel(nodes(), "OPEN WHATSAPP");
+    expect(open.props.href).toBe("https://wa.me/34600000000?text=%2Flink");
+    expect(open.props.variant).toBe("primary");
+    expect(nodeWithLabel(nodes(), "I HAVE A CODE").props.variant).toBe("secondary");
   });
 
   it("warns about the countries the adapter reports the operator's number cannot reach", async () => {
