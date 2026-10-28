@@ -68,7 +68,6 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
     {connections.data && MESSENGERS.map(({ id, name, blurb }) => {
       const adapter = connections.data.adapters.find((entry) => entry.adapter === id);
       const links = connections.data.links.filter((entry) => entry.adapter === id);
-      const linked = links.some((link) => messengerConnectionStatus(adapter, link.accountId) === "connected");
       const available = adapter?.enabled && adapter.supportsPairing;
       const canPair = adapter?.canLink === true;
       const comingSoon = id === "slack" || id === "discord";
@@ -77,11 +76,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         <div class="settings-messenger-heading">
           <h2>
             {name}
-            <span class="settings-messenger-tag">
-              {comingSoon
-                ? <Tag boxed size="medium" tone="idle" label={t("settings.messengers.comingSoon")} />
-                : <Tag boxed size="medium" tone={linked ? "online" : "idle"} label={t(linked ? "settings.pairing.connected" : "settings.pairing.notConnected")} />}
-            </span>
+            {comingSoon && <span class="settings-messenger-tag"><Tag boxed size="medium" tone="idle" label={t("settings.messengers.comingSoon")} /></span>}
           </h2>
           <button class="settings-text-action" disabled={comingSoon || (pairing === id ? unlink.isPending : !canConnect)} onClick={() => { if (comingSoon) return; setRemoving(null); setPairing(pairing === id ? null : id); }}>
             {pairing === id ? t("settings.messengers.closeSetup") : links.length ? t("settings.messengers.connectAnother") : t("settings.messengers.connect", { name })}
@@ -90,7 +85,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         <p class="settings-muted">{t(blurb)}</p>
         {!available && <p class="settings-muted">{t("settings.messengers.unavailable", { name })}</p>}
         {available && !canPair && <p class="settings-muted">{t("settings.messengers.cannotLink", { name })}</p>}
-        {links.length === 0 && available && <p class="settings-messenger-links"><StatusMeta tone="idle" label={t("settings.messengers.noLinks", { name })} /></p>}
+        {links.length === 0 && available && !comingSoon && <p class="settings-messenger-links"><StatusMeta tone="idle" label={t("settings.messengers.noLinks", { name })} /></p>}
         <ul class="settings-list settings-messenger-links">{links.map((link) => {
           const status = messengerConnectionStatus(adapter, link.accountId);
           const error = adapter?.accounts.find((entry) => entry.accountId === link.accountId)?.error;
