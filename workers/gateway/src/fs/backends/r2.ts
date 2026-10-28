@@ -16,7 +16,8 @@ import type {
   WriteFileStreamOptions,
   WriteFileStreamResult,
 } from "../mount";
-import { concatBytes, inferContentType, isTextContentType, normalizePath } from "../utils";
+import { FS_CONTENT_SNIFF_BYTES } from "@humansandmachines/gsv/protocol";
+import { concatBytes, isTextContentType, normalizePath, sniffContentType } from "../utils";
 import { bindStreamToAbort } from "../../shared/streams";
 import { z } from "zod";
 
@@ -127,7 +128,7 @@ export class R2MountBackend implements MountBackend {
       httpMetadata: {
         contentType: parsedOptions.success && parsedOptions.data.contentType
           ? parsedOptions.data.contentType
-          : inferContentType(p),
+          : sniffContentType(p, content instanceof Uint8Array ? content : new Uint8Array()),
       },
       customMetadata: {
         uid: String(this.identity.uid),
@@ -150,13 +151,16 @@ export class R2MountBackend implements MountBackend {
     options.signal?.throwIfAborted();
     if (existing) this.assertMode(existing, WRITE_BIT, p);
 
-    const source = options.signal
+    const bound = options.signal
       ? bindStreamToAbort(content, options.signal)
       : content;
+    const { contentType, stream: source } = options.contentType
+      ? { contentType: options.contentType, stream: bound }
+      : await sniffStreamContentType(p, bound);
     const fixed = new FixedLengthStream(options.expectedSize);
     const [result] = await Promise.all([
       this.bucket.put(key, fixed.readable, {
-        httpMetadata: toR2HttpMetadata(p, options),
+        httpMetadata: toR2HttpMetadata(contentType, options),
         customMetadata: {
           uid: String(this.identity.uid),
           gid: String(this.identity.gid),
@@ -664,9 +668,46 @@ function conditionalMissStatus(conditions: OpenFileOptions["conditions"] | undef
   return 412;
 }
 
-function toR2HttpMetadata(path: string, options: WriteFileStreamOptions): R2HTTPMetadata {
+/** Reads a stream's leading bytes to type it, then hands back a stream that still starts with them. */
+async function sniffStreamContentType(
+  path: string,
+  stream: ReadableStream<Uint8Array>,
+): Promise<{ contentType: string; stream: ReadableStream<Uint8Array> }> {
+  const reader = stream.getReader();
+  const leading: Uint8Array[] = [];
+  let size = 0;
+  let done = false;
+  while (size < FS_CONTENT_SNIFF_BYTES) {
+    const next = await reader.read();
+    if (next.done) {
+      done = true;
+      break;
+    }
+    leading.push(next.value);
+    size += next.value.byteLength;
+  }
   return {
-    contentType: options.contentType ?? inferContentType(path),
+    contentType: sniffContentType(path, leading.reduce(concatBytes, new Uint8Array())),
+    stream: new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of leading) controller.enqueue(chunk);
+        if (done) controller.close();
+      },
+      async pull(controller) {
+        const next = await reader.read();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      },
+      cancel(reason) {
+        return reader.cancel(reason);
+      },
+    }),
+  };
+}
+
+function toR2HttpMetadata(contentType: string, options: WriteFileStreamOptions): R2HTTPMetadata {
+  return {
+    contentType,
     cacheControl: options.cacheControl,
     contentDisposition: options.contentDisposition,
   };

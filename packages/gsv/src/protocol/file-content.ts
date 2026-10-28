@@ -39,8 +39,32 @@ const CONTENT_TYPES = new Map([
 ]);
 
 export function inferFsContentType(path: string): string {
+  return extensionContentType(path) ?? "text/plain";
+}
+
+/** How many leading bytes decide a new file's type, on gsv and on machines alike. */
+export const FS_CONTENT_SNIFF_BYTES = 8192;
+
+/** A new file's content type: its extension's, else text only when its leading bytes read as text. */
+export function sniffFsContentType(path: string, header: Uint8Array): string {
+  return extensionContentType(path)
+    ?? (readsAsText(header.subarray(0, FS_CONTENT_SNIFF_BYTES)) ? "text/plain" : "application/octet-stream");
+}
+
+function extensionContentType(path: string): string | undefined {
   const extension = path.split(".").pop()?.toLowerCase();
-  return extension ? CONTENT_TYPES.get(extension) ?? "text/plain" : "text/plain";
+  return extension ? CONTENT_TYPES.get(extension) : undefined;
+}
+
+// UTF-8 without NUL bytes; a character cut off by the end of the header still counts.
+function readsAsText(header: Uint8Array): boolean {
+  if (header.includes(0)) return false;
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(header, { stream: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function isTextContentType(contentType: string): boolean {

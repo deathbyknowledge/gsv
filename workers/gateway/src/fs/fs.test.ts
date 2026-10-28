@@ -740,6 +740,60 @@ describe("GsvFs write metadata", () => {
     );
   });
 
+  it("types an extensionless file by its bytes", async () => {
+    const fs = makeFs(SAM);
+    const binary = new Uint8Array([0x8f, 0x00, 0xd2, 0x41, 0xff, 0x13]);
+    const text = new TextEncoder().encode("Hola, ¿qué tal?\n");
+
+    await fs.writeFile(`/${TEST_PREFIX}blob`, binary);
+    await fs.writeFile(`/${TEST_PREFIX}README`, text);
+    await fs.writeFileStream(`/${TEST_PREFIX}streamed-blob`, bytesToStream(binary), { expectedSize: binary.byteLength });
+    await fs.writeFileStream(`/${TEST_PREFIX}Makefile`, bytesToStream(text), { expectedSize: text.byteLength });
+    await fs.writeFile(`/${TEST_PREFIX}empty`, new Uint8Array());
+
+    const types = await Promise.all(["blob", "README", "streamed-blob", "Makefile", "empty"].map(async (name) =>
+      (await env.STORAGE.head(`${TEST_PREFIX}${name}`))?.httpMetadata?.contentType));
+    expect(types).toEqual([
+      "application/octet-stream",
+      "text/plain",
+      "application/octet-stream",
+      "text/plain",
+      "text/plain",
+    ]);
+    expect(await fs.readFileBuffer(`/${TEST_PREFIX}streamed-blob`)).toEqual(binary);
+  });
+
+  it("types buffered and streamed writes by the same leading bytes", async () => {
+    const fs = makeFs(SAM);
+    const bytes = new Uint8Array(8_193).fill(0x61);
+    bytes[8_192] = 0;
+
+    await fs.writeFile(`/${TEST_PREFIX}buffered-long`, bytes);
+    await fs.writeFileStream(`/${TEST_PREFIX}streamed-long`, bytesToStream(bytes), { expectedSize: bytes.byteLength });
+
+    const types = await Promise.all(["buffered-long", "streamed-long"].map(async (name) =>
+      (await env.STORAGE.head(`${TEST_PREFIX}${name}`))?.httpMetadata?.contentType));
+    expect(types).toEqual(["text/plain", "text/plain"]);
+  });
+
+  it("types a streamed file by its leading bytes, however they are chunked", async () => {
+    const fs = makeFs(SAM);
+    const chunks = [new Uint8Array([0x41]), new Uint8Array([0x00, 0xff])];
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const next = chunks.shift();
+        if (next) controller.enqueue(next);
+        else controller.close();
+      },
+    });
+
+    await fs.writeFileStream(`/${TEST_PREFIX}chunked-blob`, stream, { expectedSize: 3 });
+
+    const head = await env.STORAGE.head(`${TEST_PREFIX}chunked-blob`);
+    expect(head?.httpMetadata?.contentType).toBe("application/octet-stream");
+    expect(await fs.readFileBuffer(`/${TEST_PREFIX}chunked-blob`)).toEqual(new Uint8Array([0x41, 0x00, 0xff]));
+  });
+
   it("streams writes to R2 with supplied HTTP metadata", async () => {
     const fs = makeFs(SAM);
     const bytes = new TextEncoder().encode("streamed data");
