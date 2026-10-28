@@ -1199,7 +1199,7 @@ export const es = {
   "session.welcome.signInWithEmail": "Iniciar sesión con tu correo",
   "session.welcome.sendCode": "Enviar código",
   "session.welcome.confirm": "Confirmar",
-  "session.welcome.codeSent": "Introduce el código enviado a {email}.",
+  "session.welcome.codeSent": "Introduce el código enviado a {email}. Revisa también tu carpeta de correo no deseado.",
   "session.welcome.invitationPrompt": "Inicia sesión o crea tu Ship para conectar.",
   "session.welcome.handle": "Nombre de usuario",
   "session.welcome.handlePlaceholder": "tu-nombre",
