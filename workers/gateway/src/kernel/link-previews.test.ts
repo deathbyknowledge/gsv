@@ -46,7 +46,7 @@ function fetcher(routes: Record<string, Route>) {
 async function withPreviews<T>(
   routes: Record<string, Route>,
   run: (input: { previews: LinkPreviews; fetch: ReturnType<typeof fetcher>; bucket: R2Bucket; clock: { now: number } }) => Promise<T>,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; deadlineMs?: number } = {},
 ): Promise<T> {
   return runWithRealKernelSql(async (sql) => {
     const fetch = fetcher(routes);
@@ -56,6 +56,7 @@ async function withPreviews<T>(
       fetch,
       now: () => clock.now,
       timeoutMs: options.timeoutMs,
+      deadlineMs: options.deadlineMs,
     });
     return run({ previews, fetch, bucket, clock });
   });
@@ -318,6 +319,24 @@ describe("link preview extraction", () => {
       expect(cancels).toHaveLength(2);
       for (const cancel of cancels) expect(cancel).toHaveBeenCalled();
     });
+  });
+
+  it("gives the whole preview one deadline across its requests", async () => {
+    await withPreviews({
+      "https://example.com/slow": () => new Promise<Response>(() => {}),
+      "https://example.com/": () => html('<meta property="og:title" content="Shop"><meta property="og:image" content="/shop.png">'),
+      "https://example.com/shop.png": () => new Promise<Response>(() => {}),
+    }, async ({ previews, fetch }) => {
+      // The page itself outlasting the deadline is a failure, even though no single request timed out.
+      await expect(previews.preview("https://example.com/slow")).resolves.toEqual({ ok: false, error: "timeout" });
+      // The deadline passing during the image leaves the page's preview without one.
+      expect(await previewOf(previews, "https://example.com/")).toEqual({
+        url: "https://example.com/",
+        resolvedUrl: "https://example.com/",
+        title: "Shop",
+      });
+      expect(fetch).toHaveBeenCalledTimes(3);
+    }, { timeoutMs: 1_000, deadlineMs: 20 });
   });
 
   it("times out a request that does not answer", async () => {

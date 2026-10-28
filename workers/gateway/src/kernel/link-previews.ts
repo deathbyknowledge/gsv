@@ -22,11 +22,14 @@ export type LinkPreviewOptions = {
   fetch?: (input: string, init: RequestInit) => Promise<Response>;
   now?: () => number;
   timeoutMs?: number;
+  deadlineMs?: number;
 };
 
 type FetchOptions = {
   fetch: (input: string, init: RequestInit) => Promise<Response>;
   timeoutMs: number;
+  /** Aborts every request of one preview once its overall deadline passes. */
+  signal?: AbortSignal;
 };
 
 type PageMetadata = {
@@ -58,6 +61,8 @@ type LinkPreviewRow = {
 const MAX_URL_LENGTH = 2048;
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 5_000;
+/** The whole preview, page and image across every permitted redirect, stays well inside the client's request timeout. */
+export const LINK_PREVIEW_DEADLINE_MS = 15_000;
 export const MAX_LINK_PREVIEW_PAGE_BYTES = 512 * 1024;
 export const MAX_LINK_PREVIEW_IMAGE_BYTES = 2 * 1024 * 1024;
 const MAX_TITLE_LENGTH = 200;
@@ -118,6 +123,7 @@ export class LinkPreviews {
   private readonly imageLocks = new Map<string, Promise<void>>();
   private readonly fetchOptions: FetchOptions;
   private readonly now: () => number;
+  private readonly deadlineMs: number;
 
   constructor(
     private readonly sql: SqlStorage,
@@ -128,6 +134,7 @@ export class LinkPreviews {
       fetch: options.fetch ?? ((input, init) => fetch(input, init)),
       timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
     };
+    this.deadlineMs = options.deadlineMs ?? LINK_PREVIEW_DEADLINE_MS;
     this.now = options.now ?? Date.now;
   }
 
@@ -229,10 +236,16 @@ export class LinkPreviews {
 
   private async fetchRow(url: string): Promise<{ row: LinkPreviewRow; image: PreviewImage | null; imageAdvertised: boolean }> {
     const fetchedAt = this.now();
+    const deadline = new AbortController();
+    const timer = setTimeout(() => {
+      deadline.abort(new LinkPreviewFailure("timeout", "Link preview took too long"));
+    }, this.deadlineMs);
+    const options: FetchOptions = { ...this.fetchOptions, signal: deadline.signal };
     let page: { resolvedUrl: URL; metadata: PageMetadata };
     try {
-      page = await fetchPage(new URL(url), this.fetchOptions);
+      page = await fetchPage(new URL(url), options);
     } catch (error) {
+      clearTimeout(timer);
       return {
         row: { ...emptyRow(url, fetchedAt, fetchedAt + LINK_PREVIEW_FAILURE_TTL_MS), error: failureCategory(error) },
         image: null,
@@ -240,9 +253,12 @@ export class LinkPreviews {
       };
     }
     const { metadata } = page;
-    const image = metadata.image
-      ? await fetchPreviewImage(metadata.image.url, page.resolvedUrl, this.fetchOptions)
-      : null;
+    let image: FetchedImage | null = null;
+    try {
+      if (metadata.image) image = await fetchPreviewImage(metadata.image.url, page.resolvedUrl, options);
+    } finally {
+      clearTimeout(timer);
+    }
     return {
       row: {
         ...emptyRow(url, fetchedAt, fetchedAt + LINK_PREVIEW_SUCCESS_TTL_MS),
@@ -418,11 +434,17 @@ type GuardedResponse = { response: Response; url: URL; signal: AbortSignal; rele
 async function guardedFetch(start: URL, accept: string, options: FetchOptions): Promise<GuardedResponse> {
   let url = start;
   for (let hop = 0; ; hop += 1) {
+    if (options.signal?.aborted) throw options.signal.reason;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort(new LinkPreviewFailure("timeout", "Link preview request timed out"));
     }, options.timeoutMs);
-    const release = () => clearTimeout(timer);
+    const onDeadline = () => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", onDeadline, { once: true });
+    const release = () => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onDeadline);
+    };
     let response: Response;
     try {
       response = await raceWithAbort(options.fetch(url.href, {
