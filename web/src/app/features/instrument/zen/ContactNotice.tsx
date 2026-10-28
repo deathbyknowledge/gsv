@@ -8,7 +8,7 @@ import { sendContactMessage } from "../../../services/contacts/contactsService";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import type { StagedResourceUpload } from "../../../services/gateway/stagedResources";
 import { canConfigure } from "../settings/settingsModel";
-import { entersToSend } from "../shared/enterToSend";
+import { entersToSend, insertsNewline } from "../shared/enterToSend";
 import { t as translate, useT, type Translate } from "../../../i18n/locale";
 import { ZenMedia } from "./ZenMedia";
 import "../shared/senderBadge.css";
@@ -161,7 +161,7 @@ export function ContactReplyBox({ notice, contact, account, draft, onDraft, onSe
           onDraft({ ...draft, text });
           if (state !== "sending") setState("idle");
         }}
-        textareaProps={{ "aria-label": t("chat.contact.replyTo", { name }), onKeyDown: (event) => { if (entersToSend(event)) void send(); } }} />
+        textareaProps={{ "aria-label": t("chat.contact.replyTo", { name }), onKeyDown: (event) => { if (!insertsNewline(event, event.currentTarget) && entersToSend(event)) void send(); } }} />
       <div class="send">
         <button type="button" class="ibtn is-primary" disabled={!maySend || !body || tooLong || state === "sending" || undelivered} onClick={() => void send()}>
           {state === "sending" ? t("chat.sending") : t("chat.contact.sendTo", { name })}

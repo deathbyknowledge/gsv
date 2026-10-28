@@ -1351,6 +1351,7 @@ export const es = {
   "shell.help.startWriting": "Empezar a escribir; la tecla pulsada va al cuadro de texto",
   "shell.help.chatInput": "Chat · escritura",
   "shell.help.send": "Enviar el mensaje o ejecutar el comando",
+  "shell.help.newLine": "Nueva línea",
   "shell.help.returnToBrowse": "Volver a la navegación; antes cierra el selector de conexión",
   "shell.help.recall": "Recuperar lo último que escribiste si el cuadro de texto está vacío",
   "shell.help.placeSyntax": "@conexión",
@@ -1379,6 +1380,7 @@ export const es = {
 
   // Shell: key names in the keyboard help
   "shell.keys.enter": "Intro",
+  "shell.keys.newLine": "Mayús / Alt + Intro",
   "shell.keys.spaceOrEnter": "Espacio / Intro",
   "shell.keys.enterOrSpace": "Intro / Espacio",
   "shell.keys.save": "⌘ / Ctrl + Intro",
