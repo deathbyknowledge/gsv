@@ -293,7 +293,8 @@ describe("telling the deployment's PDS of a Ship's state", () => {
     const installationId = await activeShip(stack(), "noticepds");
     await new InstallationAdminStore(db).setInstallationState(installationId, "restricted");
 
-    await cron({ PDS_MODERATION: pds });
+    // Earlier tests leave notices this PDS was never told of; each cron tells twenty, least recently tried first.
+    for (let run = 0; run < 10 && of(installationId).length === 0; run++) await cron({ PDS_MODERATION: pds });
     expect(of(installationId)).toEqual([{ installationId, state: "restricted" }]);
     await cron({ PDS_MODERATION: pds });
     expect(of(installationId)).toHaveLength(1);
