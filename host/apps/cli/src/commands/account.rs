@@ -196,7 +196,7 @@ pub(crate) async fn status(cfg: &CliConfig, url: &str, out: Output) -> Result<()
         ),
     ));
     if !paired {
-        next.push("Connect this computer: create an invitation in Fleet, then run gsv pair CODE");
+        next.push("Connect this computer: open Work in the web app, click connect, then run gsv pair CODE");
     }
     if paired || installed {
         rows.push(("Service", service_cell(installed, daemon.as_ref())));

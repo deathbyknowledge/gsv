@@ -1,5 +1,5 @@
 //! `gsv activity`: what ran, where and how it went, newest first. This is
-//! the syscall ledger Fleet shows; arguments stay out of the table.
+//! the syscall ledger the web app shows; arguments stay out of the table.
 
 use gsv::kernel_client::GatewayAuth;
 use serde_json::{json, Value};

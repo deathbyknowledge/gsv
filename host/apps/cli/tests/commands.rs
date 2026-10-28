@@ -407,6 +407,7 @@ async fn status_reports_sign_in_pairing_and_versions_without_prompting() {
         "{text}"
     );
     assert!(text.contains("This computer  not paired"));
-    assert!(text
-        .contains("Connect this computer: create an invitation in Fleet, then run gsv pair CODE"));
+    assert!(text.contains(
+        "Connect this computer: open Work in the web app, click connect, then run gsv pair CODE"
+    ));
 }

@@ -45,7 +45,7 @@ pub(crate) async fn run(
                     render::empty(
                         &style,
                         "Only your Ship so far.",
-                        Some("Connect a computer: create an invitation in Fleet, then run gsv pair CODE on it")
+                        Some("Connect a computer: open Work in the web app, click connect, then run gsv pair CODE on it")
                     )
                 );
                 return Ok(());
