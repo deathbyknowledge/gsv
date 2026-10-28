@@ -81,10 +81,10 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         <p class="settings-muted">{t(blurb)}</p>
         {!available && <p class="settings-muted">{t("settings.messengers.unavailable", { name })}</p>}
         {available && !canPair && <p class="settings-muted">{t("settings.messengers.cannotLink", { name })}</p>}
-        {links.length === 0 && available && !comingSoon && <p class="settings-messenger-links settings-messenger-state">
+        {links.length === 0 && available && !comingSoon && <ul class="settings-list settings-messenger-links"><li class="settings-messenger-state">
           <span class="settings-messenger-status gsv-sublabel">{t("settings.messengers.noLinks", { name })}</span>
           {id === "whatsapp" && <InfoTip text={t("settings.messengers.whatsappRelink")} position="right" />}
-        </p>}
+        </li></ul>}
         <ul class="settings-list settings-messenger-links">{links.map((link) => {
           const status = messengerConnectionStatus(adapter, link.accountId);
           const error = adapter?.accounts.find((entry) => entry.accountId === link.accountId)?.error;

@@ -109,7 +109,7 @@
 .settings-messenger-name { display: inline-flex; align-items: center; gap: .5rem; }
 .settings-messenger-tag { display: inline-block; margin-left: .75rem; vertical-align: middle; }
 .settings-messenger-links { margin: 0; }
-.settings-messenger-state { display: flex; align-items: center; }
+.settings-list > li.settings-messenger-state { flex-direction: row; align-items: center; gap: 0; }
 .settings-messenger-status { display: inline-flex; align-items: center; gap: .5rem; letter-spacing: .12em; color: var(--text-dim); }
 .settings-messenger-status::before { content: ""; width: .4rem; height: .4rem; background: currentColor; flex: none; }
 .settings-messenger-state .gsv-infotip { margin-inline-start: -2px; }
