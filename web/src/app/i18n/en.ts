@@ -1508,7 +1508,6 @@ export const en = {
   "shell.prompt.commandPlace": "runs on {place} in {dir}",
   "shell.prompt.place": "on {place}; press to change",
   "shell.prompt.placeOffline": "{place} is offline; press to change",
-  "shell.code.copy": "copy",
   "shell.code.copyTitle": "Copy code",
   "shell.code.copyFailed": "couldn't copy",
   "shell.code.copyManually": "Select the code and copy it manually",

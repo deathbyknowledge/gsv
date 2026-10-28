@@ -10,17 +10,23 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 4px 14px 0;
+  padding: 2px 14px 0;
   font: 400 11px/1.5 var(--gsv-font-mono);
   color: var(--text-dim);
 }
-.markdown-code-header button {
-  min-width: 44px;
-  padding: 5px 0;
-  text-align: right;
-  color: var(--label);
+.markdown-code-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: -6px;
 }
-.markdown-code-header button:hover { color: var(--accent); }
+.markdown-code-status { color: var(--label); }
+.markdown-code-status:empty { display: none; }
+.markdown-code-copy { display: inline-flex; }
+.markdown-code-copy .gsv-ibtn-floating { color: var(--label); }
+.markdown-code-copy .gsv-ibtn-floating:hover,
+.markdown-code-copy .gsv-ibtn-floating.is-copied { color: var(--accent); }
+.markdown-code-copy .gsv-ibtn-floating.is-failed { color: var(--error); }
 .markdown-code-block pre {
   margin: 0;
   padding: 8px 14px 14px;
