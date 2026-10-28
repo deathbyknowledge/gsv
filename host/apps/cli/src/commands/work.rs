@@ -37,15 +37,87 @@ pub(crate) async fn resolve_pid(client: &KernelClient, input: &str) -> Result<St
     if input.starts_with("proc:") {
         return Ok(input.to_string());
     }
+    Ok(text(&find_process(client, input).await?, "pid").to_string())
+}
+
+async fn find_process(client: &KernelClient, input: &str) -> Result<Value, DynError> {
     let me = remote::me(client)?.uid;
     let listing = call(client, "proc.list", json!({ "uid": me })).await?;
-    let process = render::match_id(
+    render::match_id(
         items(&listing, "processes"),
         input,
         |process| text(process, "pid"),
         "piece of work",
-    )?;
-    Ok(text(process, "pid").to_string())
+    )
+    .cloned()
+    .map_err(DynError::from)
+}
+
+/// What a confirmation or result calls a piece of work.
+fn work_name(process: &Value) -> String {
+    if remote::flag(process, "personal") {
+        return "your Ship".to_string();
+    }
+    match opt_text(process, "label") {
+        Some(label) => format!("\"{}\"", render::one_line(label)),
+        None => render::short_id(text(process, "pid")).to_string(),
+    }
+}
+
+/// `work reset` and `work end`: both archive the history first, and both
+/// ask unless `--yes` was given.
+async fn reset_or_end(
+    client: &KernelClient,
+    id: &str,
+    end: bool,
+    yes: bool,
+    out: Output,
+) -> Result<(), DynError> {
+    let process = find_process(client, id).await?;
+    let name = work_name(&process);
+    if end && remote::flag(&process, "personal") {
+        return Err(
+            "Your Ship can't be ended. Start its conversation fresh with: gsv work reset ID".into(),
+        );
+    }
+    let question = if end {
+        format!("End {name}? It stops for good; its history is archived.")
+    } else {
+        format!("Reset {name}? Its history is archived and it starts fresh.")
+    };
+    if !yes && !remote::confirm(&question)? {
+        println!("Nothing changed.");
+        return Ok(());
+    }
+    let pid = text(&process, "pid");
+    let (syscall, done) = if end {
+        ("proc.kill", "Ended")
+    } else {
+        ("proc.reset", "Reset")
+    };
+    let result = call(client, syscall, json!({ "pid": pid })).await?;
+    if out.json {
+        return render::print_json(&result);
+    }
+    println!("{done} {name}.");
+    let archived = remote::amount(&result, "archivedMessages");
+    if archived > 0 {
+        print!(
+            "{}",
+            render::hint(
+                &out.style,
+                &format!(
+                    "Archived {}.",
+                    render::count(
+                        usize::try_from(archived).unwrap_or(usize::MAX),
+                        "message",
+                        "messages"
+                    )
+                )
+            )
+        );
+    }
+    Ok(())
 }
 
 pub(crate) async fn run(
@@ -78,6 +150,8 @@ pub(crate) async fn run(
             }
             Ok(())
         }
+        Some(WorkAction::Reset { id, yes }) => reset_or_end(&client, &id, false, yes, out).await,
+        Some(WorkAction::End { id, yes }) => reset_or_end(&client, &id, true, yes, out).await,
         Some(WorkAction::Open { .. }) => {
             Err("`work open` runs through the conversation client".into())
         }
@@ -262,13 +336,7 @@ async fn show(client: &KernelClient, id: &str, limit: u32, out: Output) -> Resul
         print!("{}", super::approvals::render_request(&style, request));
         print!(
             "{}",
-            render::hint(
-                &style,
-                &format!(
-                    "Answer with: gsv approvals allow {}",
-                    render::short_id(text(request, "requestId"))
-                )
-            )
+            render::hint(&style, "Answer it in the web app or on your messenger.")
         );
     }
     Ok(())

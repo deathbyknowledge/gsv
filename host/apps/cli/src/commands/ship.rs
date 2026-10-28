@@ -297,10 +297,7 @@ async fn handle_hil_request(
     if !interactive_stdin {
         eprintln!(
             "{}",
-            style.dim(&format!(
-                "It waits for you. Answer it with: gsv approvals allow {}",
-                render::short_id(request_id)
-            ))
+            style.dim("It waits for you. Answer it in the web app or on your messenger.")
         );
         return;
     }

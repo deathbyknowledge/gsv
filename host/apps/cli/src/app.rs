@@ -7,8 +7,8 @@ use crate::cli::{
     LocalConfigAction, WorkAction, TOP_HELP,
 };
 use crate::commands::{
-    account, activity, approvals, contacts, files, mail, memory, places, requests, routines, run,
-    ship, work,
+    account, activity, contacts, files, mail, memory, places, requests, routines, run, ship,
+    tokens, work,
 };
 use crate::desktop::run_desktop;
 use crate::device::{
@@ -104,9 +104,6 @@ pub(crate) async fn run() -> Result<(), DynError> {
         }
         Commands::Work { action, all } => {
             signed_in!(|auth| work::run(&url, auth, action.clone(), all, out))
-        }
-        Commands::Approvals { action } => {
-            signed_in!(|auth| approvals::run(&url, auth, action.clone(), out))
         }
         Commands::Routines { action } => {
             signed_in!(|auth| routines::run(&url, auth, action.clone(), out))
@@ -240,6 +237,13 @@ pub(crate) async fn run() -> Result<(), DynError> {
             }
         },
         Commands::Version => run_version(),
+        Commands::Auth { rest } if rest.first().is_some_and(|word| word == "token") => {
+            let json = out.json || rest.iter().any(|arg| arg == "--json");
+            let action = Commands::token_command(&rest)
+                .ok_or("`gsv auth token` needs an action: create, list or revoke")?
+                .action;
+            signed_in!(|auth| tokens::run(&url, auth, action.clone(), Output::new(json)))
+        }
         Commands::Auth { rest } if Commands::link_code(&rest).is_some() => {
             let code = Commands::link_code(&rest).unwrap_or_default().to_string();
             signed_in!(|auth| account::link_messenger(&url, auth, code.clone(), out))

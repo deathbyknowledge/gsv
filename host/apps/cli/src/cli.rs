@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 /// The top-level help, grouped by what a person wants to do. Clap cannot
@@ -17,7 +17,6 @@ Talk
 
 Look after things
   work               What your Ship and its helpers are doing
-  approvals          Actions waiting for your yes or no
   routines           Things your Ship does on a schedule
   memory             Your wiki, and the notes your Ship always reads
   activity           What ran, where, and how it went
@@ -140,12 +139,6 @@ pub(crate) enum Commands {
 
         #[command(subcommand)]
         action: Option<WorkAction>,
-    },
-
-    /// Actions waiting for your yes or no
-    Approvals {
-        #[command(subcommand)]
-        action: Option<ApprovalsAction>,
     },
 
     /// Things your Ship does on a schedule
@@ -298,8 +291,8 @@ pub(crate) enum Commands {
 }
 
 impl Commands {
-    /// The replacement for a removed command, printed instead of running it.
-    /// The code in `gsv auth link CODE`, the one `auth` form that remains.
+    /// The code in `gsv auth link CODE`, which a messenger's link challenge
+    /// hands out.
     pub(crate) fn link_code(rest: &[String]) -> Option<&str> {
         match rest {
             [link, code] if link == "link" && !code.starts_with('-') => Some(code),
@@ -307,6 +300,22 @@ impl Commands {
         }
     }
 
+    /// `gsv auth token ...`, kept for one release so CI can still get a
+    /// token. `None` when `rest` is another `auth` form.
+    pub(crate) fn token_command(rest: &[String]) -> Option<TokenCommand> {
+        if rest.first().map(String::as_str) != Some("token") {
+            return None;
+        }
+        let args = rest.iter().skip(1).filter(|arg| *arg != "--json");
+        Some(
+            TokenCommand::try_parse_from(
+                std::iter::once(&"gsv auth token".to_string()).chain(args),
+            )
+            .unwrap_or_else(|error| error.exit()),
+        )
+    }
+
+    /// The replacement for a removed command, printed instead of running it.
     pub(crate) fn removed_pointer(&self) -> Option<String> {
         fn first(rest: &[String]) -> &str {
             rest.first().map(String::as_str).unwrap_or_default()
@@ -316,9 +325,8 @@ impl Commands {
             Self::Proc { rest } => match first(rest) {
                 "send" => "`gsv proc send` is now `gsv work open PID \"MESSAGE\"`.",
                 "history" => "`gsv proc history` is now `gsv work show PID`.",
-                "kill" | "reset" => {
-                    "`gsv proc` is now `gsv work`; `gsv work stop PID` stops a run. Reset and end work from the web app."
-                }
+                "reset" => "`gsv proc reset` is now `gsv work reset ID`.",
+                "kill" => "`gsv proc kill` is now `gsv work end ID`.",
                 _ => "`gsv proc` is now `gsv work`.",
             },
             Self::Adapter { .. } => {
@@ -326,10 +334,10 @@ impl Commands {
             }
             // A messenger's link challenge hands out a code to redeem here.
             Self::Auth { rest } if Self::link_code(rest).is_some() => return None,
+            Self::Auth { rest } if first(rest) == "token" => return None,
             Self::Auth { rest } => match first(rest) {
                 "login" => "`gsv auth login` is now `gsv login`, for example: gsv login me.ship.space",
                 "logout" => "`gsv auth logout` is now `gsv logout`.",
-                "token" => "`gsv auth token` was removed. Computers get their credentials from a pairing invitation (Work, then connect, in the web app), and `gsv places forget NAME` revokes one.",
                 _ => "`gsv auth` was removed. Sign in with `gsv login`; link messengers in the web app, under Settings.",
             },
             Self::Ship { pid: Some(_), .. } => {
@@ -341,6 +349,73 @@ impl Commands {
             _ => return None,
         };
         Some(pointer.to_string())
+    }
+}
+
+/// `gsv auth token`, parsed on its own because `auth` is otherwise a removed
+/// command that only points elsewhere.
+#[derive(Parser)]
+#[command(name = "gsv auth token", disable_help_subcommand = true)]
+pub(crate) struct TokenCommand {
+    #[command(subcommand)]
+    pub(crate) action: TokenAction,
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum TokenAction {
+    /// Create a token, printed once
+    Create {
+        /// What the token is for
+        #[arg(long, value_enum, default_value = "machine")]
+        kind: TokenKind,
+        /// Owner uid (root only)
+        #[arg(long)]
+        uid: Option<u32>,
+        /// A name to recognise it by
+        #[arg(long)]
+        label: Option<String>,
+        /// The one peer id a machine token may connect as
+        #[arg(long, alias = "device")]
+        peer: Option<String>,
+        /// Expiry, in unix milliseconds
+        #[arg(long)]
+        expires_at: Option<i64>,
+    },
+    /// List tokens
+    List {
+        /// Owner uid (root only)
+        #[arg(long)]
+        uid: Option<u32>,
+    },
+    /// Revoke a token
+    Revoke {
+        /// Token id from the list
+        token_id: String,
+        /// Why it was revoked
+        #[arg(long)]
+        reason: Option<String>,
+        /// Owner uid (root only)
+        #[arg(long)]
+        uid: Option<u32>,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum TokenKind {
+    #[value(alias = "device", alias = "node")]
+    Machine,
+    Service,
+    #[value(alias = "user")]
+    Human,
+}
+
+impl TokenKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Machine => "machine",
+            Self::Service => "service",
+            Self::Human => "human",
+        }
     }
 }
 
@@ -515,22 +590,21 @@ pub(crate) enum WorkAction {
         /// Work id from `gsv work`
         id: String,
     },
-}
-
-#[derive(Subcommand, Clone)]
-pub(crate) enum ApprovalsAction {
-    /// Allow one waiting action
-    Allow {
-        /// Id from `gsv approvals`
+    /// Clear a piece of work's history and start it fresh
+    Reset {
+        /// Work id from `gsv work`
         id: String,
-        /// Also allow actions like this from now on
-        #[arg(long)]
-        always: bool,
+        /// Don't ask for confirmation
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
-    /// Refuse one waiting action
-    Block {
-        /// Id from `gsv approvals`
+    /// End a piece of work for good
+    End {
+        /// Work id from `gsv work`
         id: String,
+        /// Don't ask for confirmation
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 }
 
@@ -900,7 +974,6 @@ mod tests {
                 vec!["gsv", "auth", "login", "--username", "me"],
                 "gsv login",
             ),
-            (vec!["gsv", "auth", "token", "list"], "gsv places forget"),
             (vec!["gsv", "config", "get", "ai.model"], "web app"),
             (
                 vec!["gsv", "chat", "--pid", "proc:1", "hi"],
@@ -915,6 +988,24 @@ mod tests {
                 .unwrap_or_default();
             assert!(pointer.contains(expected), "{args:?} -> {pointer}");
         }
+        let token = parse(&[
+            "gsv", "auth", "token", "create", "--kind", "service", "--json",
+        ]);
+        let Some(Commands::Auth { rest }) = &token.command else {
+            panic!("auth token parses as auth");
+        };
+        assert!(token
+            .command
+            .as_ref()
+            .and_then(Commands::removed_pointer)
+            .is_none());
+        assert!(matches!(
+            Commands::token_command(rest).map(|command| command.action),
+            Some(TokenAction::Create {
+                kind: TokenKind::Service,
+                ..
+            })
+        ));
         let local = parse(&["gsv", "config", "--local", "set", "release.channel", "dev"]);
         assert!(local
             .command

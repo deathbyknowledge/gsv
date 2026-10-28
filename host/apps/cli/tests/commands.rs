@@ -269,56 +269,6 @@ async fn run_names_a_place_by_label_and_passes_the_exit_status_through() {
 }
 
 #[tokio::test]
-async fn approvals_are_listed_and_answered_by_short_id() {
-    fn answer(call: &str, _: &Value) -> Value {
-        match call {
-            "proc.list" => json!({ "processes": [
-                { "pid": "proc:5c1d77e2", "uid": 1000, "username": "sam", "interactive": true, "personal": true,
-                  "parentPid": null, "state": "waiting_hil", "activeRunId": "run:9", "queuedCount": 0,
-                  "lastActiveAt": 0, "label": null, "createdAt": 0, "cwd": "/home/sam" },
-                { "pid": "proc:idle", "uid": 1000, "username": "crew", "interactive": false, "personal": false,
-                  "parentPid": null, "state": "idle", "activeRunId": null, "queuedCount": 0,
-                  "lastActiveAt": 0, "label": "Idle", "createdAt": 0, "cwd": "/home/crew" }
-            ]}),
-            "proc.history" => json!({
-                "format": 2, "pid": "proc:5c1d77e2", "records": [], "messageCount": 0, "historyRevision": 1,
-                "historyGeneration": 1, "historyResetRevision": 0, "reset": false, "hasMore": false,
-                "pendingHil": { "pid": "proc:5c1d77e2", "requestId": "3f2a91c0-dddd", "runId": "run:9", "callId": "c",
-                    "toolName": "Shell", "syscall": "shell.exec", "target": "device-studio",
-                    "args": { "input": "brew upgrade" }, "purpose": "Update the tools you asked about.", "createdAt": now() - 4 * MINUTE }
-            }),
-            "proc.hil" => {
-                json!({ "ok": true, "pid": "proc:5c1d77e2", "requestId": "3f2a91c0-dddd" })
-            }
-            "sys.target.list" => json!({ "targets": [
-                { "targetId": "device-studio", "label": "Studio Mac", "online": true }
-            ]}),
-            _ => json!({}),
-        }
-    }
-    let (url, calls) = ship(answer).await;
-    let cli = Cli::signed_in(&url);
-    let output = cli.run(&["approvals"]).await;
-    show("gsv approvals", &output);
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert!(stdout(&output)
-        .contains("3f2a91c0  4 min ago  Ship  Run a command on Studio Mac: brew upgrade"));
-    assert_eq!(
-        called(&calls, "proc.history").len(),
-        1,
-        "only running processes are read"
-    );
-
-    let output = cli.run(&["approvals", "allow", "3f2a", "--always"]).await;
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert!(stdout(&output).contains("allowed from now on"));
-    let answer = &called(&calls, "proc.hil")[0];
-    assert_eq!(answer["requestId"], "3f2a91c0-dddd");
-    assert_eq!(answer["decision"], "approve");
-    assert_eq!(answer["remember"], true);
-}
-
-#[tokio::test]
 async fn routines_made_here_match_the_web_app() {
     fn answer(call: &str, args: &Value) -> Value {
         match call {
@@ -433,4 +383,110 @@ async fn a_messenger_link_code_is_still_redeemed() {
         called(&calls, "sys.link.consume")[0]["code"],
         "fixture-link"
     );
+}
+
+fn two_pieces_of_work() -> Value {
+    json!({ "processes": [
+        { "pid": "proc:5c1d77e2-aaaa", "uid": 1000, "username": "sam", "interactive": true, "personal": true,
+          "parentPid": null, "state": "idle", "activeRunId": null, "queuedCount": 0,
+          "lastActiveAt": 0, "label": null, "createdAt": 0, "cwd": "/home/sam" },
+        { "pid": "proc:8f3a2c41-bbbb", "uid": 1000, "username": "crew", "interactive": false, "personal": false,
+          "parentPid": null, "state": "idle", "activeRunId": null, "queuedCount": 0,
+          "lastActiveAt": 0, "label": "Compare flights to Lisbon", "createdAt": 0, "cwd": "/home/crew" }
+    ]})
+}
+
+#[tokio::test]
+async fn work_reset_and_end_name_the_work_and_report_what_was_archived() {
+    fn answer(call: &str, args: &Value) -> Value {
+        match call {
+            "proc.list" => two_pieces_of_work(),
+            "proc.reset" | "proc.kill" => json!({
+                "ok": true, "pid": args["pid"], "archivedMessages": 42, "archives": []
+            }),
+            _ => json!({}),
+        }
+    }
+    let (url, calls) = ship(answer).await;
+    let cli = Cli::signed_in(&url);
+    let output = cli.run(&["work", "reset", "8f3a", "--yes"]).await;
+    show("gsv work reset 8f3a --yes", &output);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output),
+        "Reset \"Compare flights to Lisbon\".\nArchived 42 messages.\n"
+    );
+    assert_eq!(called(&calls, "proc.reset")[0]["pid"], "proc:8f3a2c41-bbbb");
+
+    let output = cli.run(&["work", "end", "8f3a", "-y"]).await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).starts_with("Ended \"Compare flights to Lisbon\".\n"));
+    assert_eq!(called(&calls, "proc.kill")[0]["pid"], "proc:8f3a2c41-bbbb");
+
+    let output = cli.run(&["work", "reset", "5c1d", "--yes", "--json"]).await;
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("JSON output");
+    assert_eq!(printed["archivedMessages"], 42);
+}
+
+#[tokio::test]
+async fn work_reset_and_end_refuse_without_a_terminal_or_on_the_ship() {
+    fn answer(call: &str, _: &Value) -> Value {
+        match call {
+            "proc.list" => two_pieces_of_work(),
+            _ => json!({ "ok": true }),
+        }
+    }
+    let (url, calls) = ship(answer).await;
+    let cli = Cli::signed_in(&url);
+    for action in ["reset", "end"] {
+        let output = cli.run(&["work", action, "8f3a"]).await;
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(
+            stderr(&output),
+            "Error: Add --yes to confirm when not running in a terminal.\n"
+        );
+    }
+    let output = cli.run(&["work", "end", "5c1d", "--yes"]).await;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("Your Ship can't be ended"));
+    assert!(called(&calls, "proc.reset").is_empty());
+    assert!(called(&calls, "proc.kill").is_empty());
+}
+
+#[tokio::test]
+async fn auth_token_still_creates_lists_and_revokes_tokens_for_ci() {
+    fn answer(call: &str, args: &Value) -> Value {
+        match call {
+            "sys.token.create" => json!({ "token": {
+                "tokenId": "tok-1", "token": "fixture-secret", "tokenPrefix": "gsv_fix", "uid": 1000,
+                "kind": args["kind"], "label": args["label"], "peerId": null, "createdAt": 0, "expiresAt": null
+            }}),
+            "sys.token.list" => json!({ "tokens": [
+                { "tokenId": "tok-1", "uid": 1000, "kind": "service", "label": "CI", "tokenPrefix": "gsv_fix",
+                  "peerId": null, "createdAt": 0, "lastUsedAt": null, "expiresAt": null, "revokedAt": null }
+            ]}),
+            "sys.token.revoke" => json!({ "revoked": true }),
+            _ => json!({}),
+        }
+    }
+    let (url, calls) = ship(answer).await;
+    let cli = Cli::signed_in(&url);
+    let output = cli
+        .run(&[
+            "auth", "token", "create", "--kind", "service", "--label", "CI", "--json",
+        ])
+        .await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("JSON output");
+    assert_eq!(printed["token"]["token"], "fixture-secret");
+    assert_eq!(called(&calls, "sys.token.create")[0]["kind"], "service");
+
+    let output = cli.run(&["auth", "token", "list"]).await;
+    show("gsv auth token list", &output);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("tok-1  service  CI     active  never      gsv_fix"));
+
+    let output = cli.run(&["auth", "token", "revoke", "tok-1"]).await;
+    assert_eq!(stdout(&output), "Revoked tok-1.\n");
+    assert_eq!(called(&calls, "sys.token.revoke")[0]["tokenId"], "tok-1");
 }
