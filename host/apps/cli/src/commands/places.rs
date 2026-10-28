@@ -116,7 +116,16 @@ pub(crate) async fn run(
             )
             .await?;
             if out.json {
-                return render::print_json(&result);
+                render::print_json(&result)?;
+            }
+            if result.get("target").is_none_or(Value::is_null) {
+                return Err(format!(
+                    "{place} can't be renamed here; only computers you paired can be."
+                )
+                .into());
+            }
+            if out.json {
+                return Ok(());
             }
             println!("Renamed {place} to {}.", style.strong(name.trim()));
             Ok(())

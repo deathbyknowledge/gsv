@@ -988,3 +988,45 @@ async fn an_approval_shows_the_whole_command_and_every_argument_on_request() {
     assert!(flat.contains("\"cwd\": \"/home/sam\""), "{screen}");
     assert_eq!(called(&calls, "proc.hil")[0]["decision"], "deny");
 }
+
+#[tokio::test]
+async fn files_ls_on_a_binary_file_shows_what_it_is_without_reading_it() {
+    fn answer(call: &str, args: &Value) -> Value {
+        match call {
+            "fs.read" if args["representation"] == "reference" => json!({
+                "ok": true, "path": "/home/sam/archive.zip", "kind": "file",
+                "contentType": "application/zip", "size": 52_428_800
+            }),
+            "fs.read" => json!({ "ok": false, "error": "archive.zip is not text or an image" }),
+            _ => json!({}),
+        }
+    }
+    let (url, _) = ship(answer).await;
+    let output = Cli::signed_in(&url)
+        .run(&["files", "ls", "archive.zip"])
+        .await;
+    show("gsv files ls archive.zip", &output);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("application/zip"));
+}
+
+#[tokio::test]
+async fn renaming_a_place_that_cannot_be_renamed_says_so() {
+    fn answer(call: &str, _: &Value) -> Value {
+        match call {
+            "sys.target.list" => {
+                json!({ "targets": [{ "targetId": "browser-7f2a", "label": "Cloud browser",
+                "kind": "browser", "online": true }] })
+            }
+            "sys.target.update" => json!({ "target": null }),
+            _ => json!({}),
+        }
+    }
+    let (url, _) = ship(answer).await;
+    let output = Cli::signed_in(&url)
+        .run(&["places", "rename", "Cloud browser", "Shopping"])
+        .await;
+    show("gsv places rename (cloud browser)", &output);
+    assert!(!output.status.success());
+    assert!(!stdout(&output).contains("Renamed"));
+}

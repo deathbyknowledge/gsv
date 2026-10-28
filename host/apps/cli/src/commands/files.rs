@@ -71,7 +71,10 @@ pub(crate) async fn run(
 
 async fn ls(client: &KernelClient, input: &str, out: Output) -> Result<(), DynError> {
     let (target, path) = resolve_place_path(client, input).await?;
-    let (result, _) = remote::read_path(client, fs_args(&target, &path)).await?;
+    // A reference answers any file with what it is and its size, without reading its contents.
+    let mut args = fs_args(&target, &path);
+    args["representation"] = json!("reference");
+    let (result, _) = remote::read_path(client, args).await?;
     if out.json {
         return render::print_json(&result);
     }
