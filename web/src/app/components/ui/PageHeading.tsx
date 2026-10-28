@@ -22,10 +22,10 @@ export function PageHeading({ title, description, headingLevel = 1, id, actions 
   const Heading = `h${headingLevel}` as "h1" | "h2" | "h3";
   return (
     <div class="gsv-page-heading">
-      <Heading id={id} class="gsv-page-heading-title">
-        <span>{title}</span>
+      <span class="gsv-page-heading-lead">
+        <Heading id={id} class="gsv-page-heading-title">{title}</Heading>
         {description ? <InfoTip text={description} position="right" /> : null}
-      </Heading>
+      </span>
       {actions ? <div class="gsv-page-heading-actions">{actions}</div> : null}
     </div>
   );
