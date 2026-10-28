@@ -7,6 +7,12 @@ import { useQuery } from "../../../services/navigation/viewQueries";
 import { extractMessageLinks } from "./linkPreviews";
 
 const PREVIEW_STALE_MS = 60 * 60 * 1000;
+/** A failed preview is asked for again after the Kernel's own failure expiry, so an open chat recovers from a transient error. */
+export const PREVIEW_RETRY_MS = 60 * 60 * 1000;
+
+export function previewRefetchInterval(query: { state: { status: "pending" | "error" | "success" } }): number | false {
+  return query.state.status === "error" ? PREVIEW_RETRY_MS : false;
+}
 
 export function linkPreviewQueryKey(url: string) {
   return ["link-preview", url] as const;
@@ -65,6 +71,7 @@ export function ZenLinkCard({ url }: { url: string }) {
     enabled: connected,
     staleTime: PREVIEW_STALE_MS,
     retry: false,
+    refetchInterval: previewRefetchInterval,
   });
   const preview = query.data;
   if (!preview || (!preview.title && !preview.image)) return null;
@@ -90,6 +97,7 @@ function ZenLinkImage({ imageKey }: { imageKey: string }) {
     enabled: connected,
     staleTime: PREVIEW_STALE_MS,
     retry: false,
+    refetchInterval: previewRefetchInterval,
   });
   const source = useMediaObjectUrl(image.data);
   if (image.isError) return null;

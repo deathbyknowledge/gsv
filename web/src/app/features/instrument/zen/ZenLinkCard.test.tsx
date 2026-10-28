@@ -4,7 +4,7 @@ import type { ConversationLinkPreview } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
-import { linkPreviewQueryKey, ZenLinkCard, ZenLinkCards } from "./ZenLinkCard";
+import { linkPreviewQueryKey, PREVIEW_RETRY_MS, previewRefetchInterval, ZenLinkCard, ZenLinkCards } from "./ZenLinkCard";
 
 const LINK = "https://guide.example/start";
 
@@ -54,6 +54,12 @@ describe("link preview card", () => {
   it("names the site by the page's host when the page gives no site name", async () => {
     const tree = await card({ url: LINK, resolvedUrl: "https://www.moved.example/start", title: "Getting started" });
     expect(collectText(tree)).toBe("moved.example Getting started");
+  });
+
+  it("asks again for a failed preview after the failure expiry, and never for a settled one", () => {
+    expect(previewRefetchInterval({ state: { status: "error" } })).toBe(PREVIEW_RETRY_MS);
+    expect(previewRefetchInterval({ state: { status: "success" } })).toBe(false);
+    expect(previewRefetchInterval({ state: { status: "pending" } })).toBe(false);
   });
 
   it("renders nothing for a message without web links", async () => {
