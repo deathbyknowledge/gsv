@@ -227,7 +227,7 @@ pub(crate) struct PlacePath {
 pub(crate) fn split_place_path(input: &str) -> PlacePath {
     if let Some((place, path)) = input.split_once(':') {
         let looks_like_place =
-            !place.is_empty() && !place.contains(['/', '\\', '~', '.']) && place.len() > 1;
+            place.len() > 1 && !place.starts_with('.') && !place.contains(['/', '\\', '~']);
         if looks_like_place {
             return PlacePath {
                 place: Some(place.to_string()),
@@ -254,7 +254,17 @@ pub(crate) async fn resolve_place_path(
     client: &KernelClient,
     input: &str,
 ) -> Result<(Option<String>, String), DynError> {
-    let split = split_place_path(input);
+    let mut split = split_place_path(input);
+    // A dotted name may be a place (`laptop.local`) or a file on the Ship (`report.v2:final`).
+    if let Some(place) = split.place.as_deref().filter(|place| place.contains('.')) {
+        let listing = list_places(client, true).await?;
+        if resolve_place(items(&listing, "targets"), place).is_err() {
+            split = PlacePath {
+                place: None,
+                path: input.to_string(),
+            };
+        }
+    }
     let target = target_for(client, split.place.as_deref()).await?;
     let path = if split.path.is_empty() {
         ".".to_string()
@@ -301,6 +311,14 @@ mod tests {
         assert_eq!(split_place_path("C:\\Users\\me").place, None);
         assert_eq!(split_place_path("~/a:b").place, None);
         assert_eq!(split_place_path("./x:y").place, None);
+        assert_eq!(
+            split_place_path("laptop.local:~/notes.txt"),
+            PlacePath {
+                place: Some("laptop.local".into()),
+                path: "~/notes.txt".into()
+            }
+        );
+        assert_eq!(split_place_path(".hidden:x").place, None);
     }
 
     #[test]

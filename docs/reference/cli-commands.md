@@ -147,8 +147,9 @@ git diff | gsv ship "review this"
 Without a message it opens a prompt (`›`). Each line is sent as soon as you
 press Enter, so a new message can supersede an active run; `/quit` leaves.
 Tool use and notices appear dimmed on stderr. When the Ship asks to do
-something that needs your approval, the prompt shows what and why and takes
-`o` (once), `a` (always) or `b` (block). Without a terminal the request waits
+something that needs your approval, the prompt shows what and why, never cut
+to the terminal's width, and takes `o` (once), `a` (always), `b` (block) or `v`,
+which prints every argument of the action before you decide. Without a terminal the request waits
 for an answer in the web app or on a messenger. `--json` needs a message and prints
 `{ conversationId, sent, replies }`. Set `GSV_CLIENT_DEBUG=1` to trace
 run-signal matching.
@@ -320,8 +321,9 @@ gsv files search QUERY [PATH] [--include GLOB]
 
 `gsv files` alone lists your Ship's home folder, as `gsv files ls` does.
 A path is on your Ship unless it starts with a place name and a colon, such as
-`laptop:~/notes.txt`. Single letters (`C:\`) and paths starting with `.`, `/`
-or `~` are never read as place names. `cat` prints text up to 16 MiB. `put`
+`laptop:~/notes.txt` or `laptop.local:~/notes.txt`. Single letters (`C:\`) and
+paths starting with `.`, `/` or `~` are never read as place names, and a dotted
+name that matches no place stays a path on your Ship. `cat` prints text up to 16 MiB. `put`
 and `get` stream through this computer; `get` writes a partial file and
 renames it only when the download completes. `cp` copies between places on the
 Ship side without passing through this computer.

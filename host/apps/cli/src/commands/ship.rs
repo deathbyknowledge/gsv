@@ -539,7 +539,7 @@ async fn handle_hil_request(
     let (decision, remember) = loop {
         eprint!(
             "{} ",
-            style.strong("Allow once [o], always [a], or block [b]?")
+            style.strong("Allow once [o], always [a], block [b], or view everything [v]?")
         );
         let _ = io::stderr().flush();
         let Some(line) = stdin_lines.recv().await else {
@@ -557,7 +557,14 @@ async fn handle_hil_request(
             "o" | "once" | "allow" | "approve" | "y" | "yes" => break ("approve", false),
             "a" | "always" => break ("approve", true),
             "b" | "block" | "d" | "deny" | "n" | "no" => break ("deny", false),
-            _ => eprintln!("{}", style.dim("Type o, a, or b.")),
+            "v" | "view" => {
+                let args = payload.get("args").cloned().unwrap_or(Value::Null);
+                eprintln!(
+                    "{}",
+                    serde_json::to_string_pretty(&args).unwrap_or_else(|_| args.to_string())
+                );
+            }
+            _ => eprintln!("{}", style.dim("Type o, a, b, or v.")),
         }
     };
 

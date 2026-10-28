@@ -177,10 +177,14 @@ impl Cli {
             .ok()?;
         let mut child = child;
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(input.as_bytes())
-                .await
-                .expect("type into the terminal");
+            // One line at a time, as a person types, so each reaches the prompt it answers.
+            for line in input.split_inclusive('\n') {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                stdin
+                    .write_all(line.as_bytes())
+                    .await
+                    .expect("type into the terminal");
+            }
         }
         let output = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output())
             .await
@@ -946,4 +950,41 @@ async fn json_output_keeps_the_exit_status_of_a_failed_run_or_revoke() {
     assert!(!output.status.success());
     let printed: Value = serde_json::from_slice(&output.stdout).expect("JSON output");
     assert_eq!(printed["revoked"], false);
+}
+
+#[tokio::test]
+async fn an_approval_shows_the_whole_command_and_every_argument_on_request() {
+    fn answer(call: &str, _: &Value) -> Value {
+        let command = format!(
+            "cd ~/projects && {} && rm -rf ~/projects/old-site",
+            "make build ".repeat(12)
+        );
+        match call {
+            "conversation.ship" => json!({ "conversation": { "id": "conv:ship" } }),
+            "conversation.send" => json!({
+                "runId": "run:10", "queued": false,
+                "__signals": [{ "signal": "proc.run.hil.requested", "payload": {
+                    "pid": "proc:5c1d77e2", "runId": "run:10", "requestId": "hil:1",
+                    "syscall": "shell.exec", "target": "gsv",
+                    "args": { "input": command, "cwd": "/home/sam" },
+                    "purpose": "Clean up and rebuild the site."
+                }}]
+            }),
+            "proc.hil" => json!({ "ok": true }),
+            _ => json!({}),
+        }
+    }
+    let (url, calls) = ship(answer).await;
+    let Some(screen) = Cli::signed_in(&url)
+        .type_in_terminal(&["ship"], "rebuild the site\nv\nb\n/quit\n")
+        .await
+    else {
+        eprintln!("skipped: util-linux script is not installed");
+        return;
+    };
+    show_text("gsv ship (approval of a long command)", &screen);
+    let flat = screen.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("&& rm -rf ~/projects/old-site"), "{screen}");
+    assert!(flat.contains("\"cwd\": \"/home/sam\""), "{screen}");
+    assert_eq!(called(&calls, "proc.hil")[0]["decision"], "deny");
 }

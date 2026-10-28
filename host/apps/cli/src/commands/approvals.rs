@@ -50,7 +50,7 @@ pub(crate) fn purpose(request: &Value) -> Option<String> {
 }
 
 /// The block shown when a request arrives during `gsv ship` and in
-/// `gsv work show`: what, why, and the argument that matters.
+/// `gsv work show`: what, why, and the argument that matters, in full.
 pub(crate) fn render_request(style: &Style, request: &Value) -> String {
     let (title, subject) = describe_request(request);
     let mut out = format!(
@@ -58,17 +58,12 @@ pub(crate) fn render_request(style: &Style, request: &Value) -> String {
         style.paint(Tone::Warn, "Waiting for you:"),
         style.strong(&title)
     );
+    // Never cut: this is what the person approves, so all of it shows, wrapping as it must.
     if let Some(purpose) = purpose(request) {
-        out.push_str(&format!(
-            "  {}\n",
-            render::truncate(&purpose, style.width().saturating_sub(2))
-        ));
+        out.push_str(&format!("  {purpose}\n"));
     }
     if let Some(subject) = subject {
-        out.push_str(&format!(
-            "  {}\n",
-            style.dim(&render::truncate(&subject, style.width().saturating_sub(2)))
-        ));
+        out.push_str(&format!("  {}\n", style.dim(&subject)));
     }
     out
 }
