@@ -127,7 +127,7 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(allNodes.some((node) => node.props.label === "ACCESS TOKEN")).toBe(false);
     const instructions = nodes().find((node) => node.props.text?.includes("Clicking \"Connect\""));
     expect(instructions?.props.text).toBe(
-      "Clicking \"Connect\" will send a message to Ship. Ship will reply with a short-lived connection code.",
+      "Clicking \"Connect\" opens WhatsApp with a message to Ship ready to go. Send it, and Ship will reply with a short-lived connection code.",
     );
     expect(collectText(nodes())).toContain("To message Ship manually, send \"/link\" to +34600000000.");
     const open = nodeWithLabel(nodes(), "CONNECT");

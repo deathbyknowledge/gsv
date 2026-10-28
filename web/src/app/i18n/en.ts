@@ -293,7 +293,7 @@ export const en = {
   "settings.pairing.blurbTelegram": "Message the official Ship bot, then confirm that Telegram account here.",
   "settings.pairing.installDiscord": "Install the Ship app in your server, then mention @Ship in a channel or message it directly. Ship sends you a short-lived pairing code by DM.",
   "settings.pairing.installSlack": "Install the Ship app in your workspace, then mention @Ship in a channel or message it directly. Ship sends you a short-lived pairing code by DM.",
-  "settings.pairing.whatsappStart": "Clicking \"Connect\" will send a message to Ship. Ship will reply with a short-lived connection code.",
+  "settings.pairing.whatsappStart": "Clicking \"Connect\" opens WhatsApp with a message to Ship ready to go. Send it, and Ship will reply with a short-lived connection code.",
   "settings.pairing.whatsappManual": "To message Ship manually, send \"/link\" to {number}.",
   "settings.pairing.whatsappManualNoNumber": "To message Ship manually, send \"/link\" to the Ship number.",
   "settings.pairing.whatsappUnreachable": "WhatsApp numbers in {countries} cannot connect: Meta blocks the Ship number from messaging them, so the code never arrives. Connect another messenger or use email instead.",

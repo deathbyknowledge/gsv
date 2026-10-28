@@ -294,7 +294,7 @@ export const es = {
   "settings.pairing.blurbTelegram": "Escribe al bot oficial de Ship y confirma aquí esa cuenta de Telegram.",
   "settings.pairing.installDiscord": "Instala la app de Ship en tu servidor y menciona a @Ship en un canal o escríbele directamente. Ship te envía por mensaje directo un código de vinculación temporal.",
   "settings.pairing.installSlack": "Instala la app de Ship en tu espacio de trabajo y menciona a @Ship en un canal o escríbele directamente. Ship te envía por mensaje directo un código de vinculación temporal.",
-  "settings.pairing.whatsappStart": "Al pulsar \"Conectar\" se envía un mensaje a Ship. Ship responde con un código de conexión temporal.",
+  "settings.pairing.whatsappStart": "Al pulsar \"Conectar\" se abre WhatsApp con un mensaje para Ship listo para enviar. Envíalo y Ship responde con un código de conexión temporal.",
   "settings.pairing.whatsappManual": "Para escribir a Ship manualmente, envía \"/link\" al {number}.",
   "settings.pairing.whatsappManualNoNumber": "Para escribir a Ship manualmente, envía \"/link\" al número de Ship.",
   "settings.pairing.whatsappUnreachable": "Los números de WhatsApp de {countries} no pueden conectarse: Meta impide que el número de Ship les escriba, así que el código nunca llega. Conecta otro mensajero o usa el correo electrónico.",

@@ -299,7 +299,7 @@ export const ptBR = {
   "settings.pairing.blurbTelegram": "Envie uma mensagem ao bot oficial do Ship e depois confirme aqui essa conta de Telegram.",
   "settings.pairing.installDiscord": "Instale o app do Ship no seu servidor e mencione @Ship em um canal ou envie uma mensagem direta a ele. O Ship envia a você um código de vinculação temporário por mensagem direta.",
   "settings.pairing.installSlack": "Instale o app do Ship no seu espaço de trabalho e mencione @Ship em um canal ou envie uma mensagem direta a ele. O Ship envia a você um código de vinculação temporário por mensagem direta.",
-  "settings.pairing.whatsappStart": "Ao clicar em \"Conectar\", uma mensagem é enviada ao Ship. O Ship responde com um código de conexão temporário.",
+  "settings.pairing.whatsappStart": "Ao clicar em \"Conectar\", o WhatsApp abre com uma mensagem para o Ship pronta para enviar. Envie e o Ship responde com um código de conexão temporário.",
   "settings.pairing.whatsappManual": "Para enviar mensagem ao Ship manualmente, mande \"/link\" para {number}.",
   "settings.pairing.whatsappManualNoNumber": "Para enviar mensagem ao Ship manualmente, mande \"/link\" para o número do Ship.",
   "settings.pairing.whatsappUnreachable": "Números de WhatsApp de {countries} não conseguem se conectar: a Meta impede o número do Ship de enviar mensagens a eles, então o código nunca chega. Conecte outro app de mensagem ou use o e-mail.",
