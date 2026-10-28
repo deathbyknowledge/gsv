@@ -370,14 +370,18 @@ describe("link preview extraction", () => {
     }, { timeoutMs: 1_000, deadlineMs: 20 });
   });
 
-  it("gives up on a body that will not cancel in time", async () => {
+  it("gives up on a body that will not cancel in time, on a redirect too", async () => {
+    const stalled = (init: ResponseInit): Response => new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode("nope")); },
+      cancel: () => new Promise<void>(() => {}),
+    }), init);
     await withPreviews({
-      "https://example.com/missing": () => new Response(new ReadableStream({
-        start(controller) { controller.enqueue(new TextEncoder().encode("nope")); },
-        cancel: () => new Promise<void>(() => {}),
-      }), { status: 404, headers: { "content-type": "text/html" } }),
+      "https://example.com/missing": () => stalled({ status: 404, headers: { "content-type": "text/html" } }),
+      "https://example.com/moved": () => stalled({ status: 302, headers: { location: "/final" } }),
+      "https://example.com/final": () => html("<title>Final</title>"),
     }, async ({ previews }) => {
       await expect(previews.preview("https://example.com/missing")).resolves.toEqual({ ok: false, error: "unreachable" });
+      expect(await previewOf(previews, "https://example.com/moved")).toMatchObject({ title: "Final", resolvedUrl: "https://example.com/final" });
     }, { timeoutMs: 20 });
   });
 

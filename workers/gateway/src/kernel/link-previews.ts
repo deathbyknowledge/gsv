@@ -552,9 +552,10 @@ async function guardedFetch(start: URL, accept: string, options: FetchOptions): 
         ? error
         : new LinkPreviewFailure("unreachable", `Link preview request failed: ${errorName(error)}`, { cause: error });
     }
-    if (!REDIRECT_STATUSES.has(response.status)) return { response, url, signal: controller.signal, release };
-    release();
-    await response.body?.cancel().catch(() => {});
+    const hopResponse: GuardedResponse = { response, url, signal: controller.signal, release };
+    if (!REDIRECT_STATUSES.has(response.status)) return hopResponse;
+    // A redirect's body is discarded under the same guards as any other, so a stalled one cannot delay the next hop.
+    await discardBody(hopResponse);
     const location = response.headers.get("location");
     if (!location) throw new LinkPreviewFailure("unreachable", "Redirect has no location");
     if (hop >= MAX_REDIRECTS) throw new LinkPreviewFailure("unreachable", "Too many redirects");
