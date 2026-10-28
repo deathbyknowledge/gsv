@@ -16,6 +16,7 @@ import type {
   WriteFileStreamOptions,
   WriteFileStreamResult,
 } from "../mount";
+import { FS_CONTENT_SNIFF_BYTES } from "@humansandmachines/gsv/protocol";
 import { concatBytes, isTextContentType, normalizePath, sniffContentType } from "../utils";
 import { bindStreamToAbort } from "../../shared/streams";
 import { z } from "zod";
@@ -667,9 +668,6 @@ function conditionalMissStatus(conditions: OpenFileOptions["conditions"] | undef
   return 412;
 }
 
-// As many leading bytes as the machine reads to type a file.
-const CONTENT_SNIFF_BYTES = 8192;
-
 /** Reads a stream's leading bytes to type it, then hands back a stream that still starts with them. */
 async function sniffStreamContentType(
   path: string,
@@ -679,7 +677,7 @@ async function sniffStreamContentType(
   const leading: Uint8Array[] = [];
   let size = 0;
   let done = false;
-  while (size < CONTENT_SNIFF_BYTES) {
+  while (size < FS_CONTENT_SNIFF_BYTES) {
     const next = await reader.read();
     if (next.done) {
       done = true;
@@ -689,7 +687,7 @@ async function sniffStreamContentType(
     size += next.value.byteLength;
   }
   return {
-    contentType: sniffContentType(path, leading.reduce(concatBytes, new Uint8Array()).subarray(0, CONTENT_SNIFF_BYTES)),
+    contentType: sniffContentType(path, leading.reduce(concatBytes, new Uint8Array())),
     stream: new ReadableStream<Uint8Array>({
       start(controller) {
         for (const chunk of leading) controller.enqueue(chunk);

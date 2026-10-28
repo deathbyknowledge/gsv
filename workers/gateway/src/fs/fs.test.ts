@@ -763,6 +763,19 @@ describe("GsvFs write metadata", () => {
     expect(await fs.readFileBuffer(`/${TEST_PREFIX}streamed-blob`)).toEqual(binary);
   });
 
+  it("types buffered and streamed writes by the same leading bytes", async () => {
+    const fs = makeFs(SAM);
+    const bytes = new Uint8Array(8_193).fill(0x61);
+    bytes[8_192] = 0;
+
+    await fs.writeFile(`/${TEST_PREFIX}buffered-long`, bytes);
+    await fs.writeFileStream(`/${TEST_PREFIX}streamed-long`, bytesToStream(bytes), { expectedSize: bytes.byteLength });
+
+    const types = await Promise.all(["buffered-long", "streamed-long"].map(async (name) =>
+      (await env.STORAGE.head(`${TEST_PREFIX}${name}`))?.httpMetadata?.contentType));
+    expect(types).toEqual(["text/plain", "text/plain"]);
+  });
+
   it("types a streamed file by its leading bytes, however they are chunked", async () => {
     const fs = makeFs(SAM);
     const chunks = [new Uint8Array([0x41]), new Uint8Array([0x00, 0xff])];

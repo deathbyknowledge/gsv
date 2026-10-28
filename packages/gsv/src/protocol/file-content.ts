@@ -42,9 +42,13 @@ export function inferFsContentType(path: string): string {
   return extensionContentType(path) ?? "text/plain";
 }
 
+/** How many leading bytes decide a new file's type, on gsv and on machines alike. */
+export const FS_CONTENT_SNIFF_BYTES = 8192;
+
 /** A new file's content type: its extension's, else text only when its leading bytes read as text. */
 export function sniffFsContentType(path: string, header: Uint8Array): string {
-  return extensionContentType(path) ?? (readsAsText(header) ? "text/plain" : "application/octet-stream");
+  return extensionContentType(path)
+    ?? (readsAsText(header.subarray(0, FS_CONTENT_SNIFF_BYTES)) ? "text/plain" : "application/octet-stream");
 }
 
 function extensionContentType(path: string): string | undefined {
