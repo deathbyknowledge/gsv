@@ -109,6 +109,7 @@
 .settings-messenger-heading h2 { margin: 0; }
 .settings-messenger-tag { display: inline-block; margin-left: .75rem; vertical-align: middle; }
 .settings-messenger-links { margin: 0; }
+.settings-messenger-state { display: flex; align-items: center; gap: .25rem; }
 .settings-messenger-links .settings-server-heading { flex-wrap: wrap; align-items: baseline; }
 .settings-mcp-options { border-top: 1px solid var(--border); padding-block: 1rem; margin-bottom: 1rem; font-size: .8rem; }
 .settings-mcp-options summary { color: var(--text-dim); cursor: pointer; }

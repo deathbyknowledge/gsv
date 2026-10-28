@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
+import { InfoTip } from "../../../components/ui/InfoTip";
 import { StatusMeta, type StatusTone } from "../../../components/ui/StatusDot";
 import { Tag } from "../../../components/ui/Tag";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -85,8 +86,10 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         <p class="settings-muted">{t(blurb)}</p>
         {!available && <p class="settings-muted">{t("settings.messengers.unavailable", { name })}</p>}
         {available && !canPair && <p class="settings-muted">{t("settings.messengers.cannotLink", { name })}</p>}
-        {links.length === 0 && available && !comingSoon && <p class="settings-messenger-links"><StatusMeta tone="idle" label={t("settings.messengers.noLinks", { name })} /></p>}
-        {links.length === 0 && available && id === "whatsapp" && <p class="settings-muted">{t("settings.messengers.whatsappRelink")}</p>}
+        {links.length === 0 && available && !comingSoon && <p class="settings-messenger-links settings-messenger-state">
+          <StatusMeta tone="idle" label={t("settings.messengers.noLinks", { name })} />
+          {id === "whatsapp" && <InfoTip text={t("settings.messengers.whatsappRelink")} position="right" />}
+        </p>}
         <ul class="settings-list settings-messenger-links">{links.map((link) => {
           const status = messengerConnectionStatus(adapter, link.accountId);
           const error = adapter?.accounts.find((entry) => entry.accountId === link.accountId)?.error;

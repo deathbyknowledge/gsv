@@ -270,7 +270,7 @@ export const es = {
   "settings.messengers.unavailable": "{name} no se puede conectar en este Ship.",
   "settings.messengers.cannotLink": "Tu cuenta no puede conectar una cuenta de {name}.",
   "settings.messengers.noLinks": "No tienes ninguna cuenta de {name} conectada.",
-  "settings.messengers.whatsappRelink": "¿Ya conectaste este número a otro Ship? Envía ese mismo mensaje y recibirás un código nuevo.",
+  "settings.messengers.whatsappRelink": "¿Ya conectaste tu número a otro Ship? Al enviar un código nuevo, esa conexión terminará y será sustituida por esta.",
   "settings.messengers.connectedTo": "conectado a {id}",
   "settings.messengers.user": "Cuenta de {platform} {id}",
   "settings.messengers.workspace": "espacio de trabajo {id}",

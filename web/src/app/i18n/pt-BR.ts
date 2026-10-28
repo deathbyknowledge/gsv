@@ -275,7 +275,7 @@ export const ptBR = {
   "settings.messengers.unavailable": "Não é possível conectar {name} neste Ship.",
   "settings.messengers.cannotLink": "Sua conta não pode conectar uma conta de {name}.",
   "settings.messengers.noLinks": "Você não tem nenhuma conta de {name} conectada.",
-  "settings.messengers.whatsappRelink": "Este número já está conectado a outro Ship? Envie essa mesma mensagem para receber um código novo.",
+  "settings.messengers.whatsappRelink": "Seu número já está conectado a outro Ship? Ao enviar um código novo, essa conexão será encerrada e substituída por esta.",
   "settings.messengers.connectedTo": "conectado a {id}",
   "settings.messengers.user": "Usuário {id} de {platform}",
   "settings.messengers.workspace": "espaço de trabalho {id}",

@@ -269,7 +269,7 @@ export const en = {
   "settings.messengers.unavailable": "{name} cannot be connected on this Ship.",
   "settings.messengers.cannotLink": "Your account cannot connect a {name} account.",
   "settings.messengers.noLinks": "No {name} account is connected to you.",
-  "settings.messengers.whatsappRelink": "Already connected to another Ship from this number? Sending that same message gets you a fresh code.",
+  "settings.messengers.whatsappRelink": "Already connected to another Ship from your number? Submitting a fresh code will end that connection and replace it with this one.",
   "settings.messengers.connectedTo": "connected to {id}",
   "settings.messengers.user": "{platform} user {id}",
   "settings.messengers.workspace": "workspace {id}",
