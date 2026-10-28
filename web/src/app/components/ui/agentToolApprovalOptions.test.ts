@@ -15,8 +15,8 @@ const DEFAULT_USER_CAPABILITIES = [
   "sys.target.get", "sys.target.list", "sys.target.update", "sys.target.delete", "sys.ledger.list",
   "sys.oauth.device.poll", "sys.oauth.device.start", "sys.oauth.forget", "sys.oauth.list", "sys.oauth.start",
   "sys.mcp.add", "sys.mcp.call", "sys.mcp.list", "sys.mcp.refresh", "sys.mcp.remove",
-  "sys.link", "sys.link.list", "sys.token.create", "sys.token.list", "sys.token.revoke",
-  "sys.pair.create", "sys.pair.list", "sys.pair.cancel", "sys.unlink", "sys.link.consume",
+  "sys.link.list", "sys.token.create", "sys.token.list", "sys.token.revoke",
+  "sys.pair.create", "sys.pair.list", "sys.pair.cancel",
   "account.create", "account.list",
 ];
 
@@ -26,7 +26,7 @@ describe("agent tool approval options", () => {
   });
 
   it("names every capability a normal account holds in plain words", () => {
-    expect(DEFAULT_USER_CAPABILITIES).toHaveLength(77);
+    expect(DEFAULT_USER_CAPABILITIES).toHaveLength(74);
     expect(DEFAULT_USER_CAPABILITIES.filter((capability) => !capabilityLabelKey(capability))).toEqual([]);
     expect(humanToolCapabilityLabel("ai.text.generate")).toBe("Write with AI");
     expect(humanToolCapabilityLabel("r12y.*")).toBe("Responsibilities");

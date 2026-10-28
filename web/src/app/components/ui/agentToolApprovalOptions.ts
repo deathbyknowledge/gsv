@@ -115,10 +115,7 @@ const GRANT_LABELS = new Map(Object.entries({
   "adapter.route": "approval.match.adapterRoute",
   "adapter.send": "approval.match.adapterSend",
   "adapter.status": "approval.match.adapterStatus",
-  "sys.link": "approval.match.sysLink",
-  "sys.link.consume": "approval.match.sysLinkConsume",
   "sys.link.list": "approval.match.sysLinkList",
-  "sys.unlink": "approval.match.sysUnlink",
   // Connections
   "sys.target.get": "approval.match.sysTargetGet",
   "sys.target.list": "approval.match.sysTargetList",
@@ -174,7 +171,6 @@ const FAMILY_LABELS = new Map(Object.entries({
   "sys.browser": "approval.family.sysBrowser",
   "sys.target": "approval.family.sysTarget",
   "sys.pair": "approval.family.sysPair",
-  "sys.link": "approval.family.sysLink",
   "sys.oauth": "approval.family.sysOauth",
   "sys.token": "approval.family.sysToken",
   "sys.ledger": "approval.family.sysLedger",
