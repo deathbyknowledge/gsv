@@ -193,7 +193,7 @@ describe("ConfigStore", () => {
       expect(context).toContain(marker);
     }
     const targets = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/05-targets.md"];
-    for (const command of ["targets list", "`gsv`", "fs.search", "skills show browser-target"]) {
+    for (const command of ["targets list", "`gsv`", "fs.search", "skills show browser-target", "installCommand", "pairCommand"]) {
       expect(targets).toContain(command);
     }
     const responsibilities = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-responsibilities.md"];
