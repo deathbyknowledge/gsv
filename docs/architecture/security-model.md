@@ -307,7 +307,7 @@ Security depends on operational discipline:
 
 - Use strong passwords and prefer scoped, expiring tokens for automation.
 - Bind device tokens to the expected device id.
-- Revoke unused tokens with `gsv auth token revoke`.
+- Forget unused computers with `gsv places forget`, which revokes their machine tokens, and revoke other unused tokens with `gsv auth token revoke`.
 - Run `gsvd` as an unprivileged OS user.
 - Link adapter actors intentionally and use HIL policies for destructive or
   remote work.
