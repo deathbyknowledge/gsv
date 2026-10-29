@@ -3,6 +3,7 @@ import { FileReader } from "./FileReader";
 import { FilePreview } from "../shared/FilePreview";
 import { PlaceTree, type OpenFile } from "../shared/PlaceFiles";
 import { FleetDialog } from "./FleetDialog";
+import { fileName } from "../../../services/files/domain/paths";
 import { assignedTo, useResponsibilities } from "../shared/Responsibilities";
 import { useDraftGuard } from "../shared/useDraftGuard";
 import type { ActivityRequest } from "../zen/chatContextModel";
@@ -68,10 +69,6 @@ export type FleetProps = {
 };
 
 const PROCESS_PAGE = 8;
-
-function fileName(path: string): string {
-  return path.split("/").filter(Boolean).at(-1) ?? path;
-}
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());

@@ -1,6 +1,7 @@
 import { Marked } from "marked";
 import { describe, expect, it } from "vitest";
 import { fileReferenceHref, fileReferenceRow, filePathLinks, textLinkRow } from "./fileReferences";
+import { chatLinkContext } from "./chatContextModel";
 
 const marked = new Marked(filePathLinks);
 /** The parser ZenText uses for Ship's text, before DOMPurify, which needs a DOM these tests do not have. */
@@ -68,5 +69,14 @@ describe("links clicked in Ship's text", () => {
     expect(textLinkRow("https://example.com/home/x")).toBeNull();
     expect(textLinkRow("#section")).toBeNull();
     expect(textLinkRow("#place:%E0")).toBeNull();
+  });
+});
+
+describe("a clicked path opens over the chat", () => {
+  it("maps file and folder rows to the chat's path panel and leaves other rows to Work", () => {
+    expect(chatLinkContext("file:gsv:/home/x/y.md")).toEqual({ kind: "path", location: { kind: "file", target: "gsv", path: "/home/x/y.md" } });
+    expect(chatLinkContext("dir:gsv:~/notes/")).toEqual({ kind: "path", location: { kind: "dir", target: "gsv", path: "~/notes/" } });
+    expect(chatLinkContext("target:laptop")).toBeNull();
+    expect(chatLinkContext("proc:p1")).toBeNull();
   });
 });

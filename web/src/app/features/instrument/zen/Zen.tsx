@@ -33,7 +33,7 @@ import { ChatPlans } from "./ChatPlans";
 import { ChatPanels } from "./ChatPanels";
 import { canConfigure } from "../settings/settingsModel";
 import { flushSync } from "preact/compat";
-import type { ActivityRequest, ChatContext } from "./chatContextModel";
+import { chatLinkContext, type ActivityRequest, type ChatContext } from "./chatContextModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
@@ -972,7 +972,9 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       const row = textLinkRow(target.getAttribute("href") ?? "");
       if (!row) return;
       event.preventDefault();
-      onFleet(row);
+      const linked = chatLinkContext(row);
+      if (linked) setContext(linked);
+      else onFleet(row);
     },
     [onFleet],
   );
