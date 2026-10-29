@@ -22,7 +22,7 @@ const DEFAULT_USER_CAPABILITIES = [
 
 describe("agent tool approval options", () => {
   it("offers an explicit outbound mail approval override", () => {
-    expect(matchOptionsForRule("")).toContainEqual({ value: "mail.send", label: "Send mail" });
+    expect(matchOptionsForRule("")).toContainEqual({ value: "mail.send", label: "Send email" });
   });
 
   it("names every capability a normal account holds in plain words", () => {
