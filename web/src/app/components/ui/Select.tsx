@@ -169,16 +169,22 @@ export function Select(props: SelectProps) {
   useEffect(() => {
     if (isOpen) {
       setHighlight(Math.max(0, idx));
-      listRef.current?.focus();
+      // Focus without scrolling: a list hanging past the page's edge must not scroll the page, which would close it.
+      listRef.current?.focus({ preventScroll: true });
     }
   }, [isOpen]);
 
+  // Keep the highlighted option within the list's own scroll, never by scrolling an ancestor: the page
+  // scrolling under an open list closes it.
   useEffect(() => {
     if (!isOpen) return;
+    const list = listRef.current;
     const row = document.getElementById(optId(highlight));
-    if (row instanceof HTMLElement) {
-      row.scrollIntoView({ block: "nearest" });
-    }
+    if (!list || !(row instanceof HTMLElement)) return;
+    const bounds = list.getBoundingClientRect();
+    const target = row.getBoundingClientRect();
+    if (target.top < bounds.top) list.scrollTop -= bounds.top - target.top;
+    else if (target.bottom > bounds.bottom) list.scrollTop += target.bottom - bounds.bottom;
   }, [highlight, isOpen]);
 
   const openList = () => {
