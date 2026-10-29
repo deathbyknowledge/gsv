@@ -55,9 +55,11 @@ it("reorders permission rules through the table and removes one before saving", 
     // SAFETY: the rules table is the one Table node the section renders.
     const table = () => screen.nodes().find((node) => node.type === Table) as VNode<TableProps<{ rule: { match: string }; index: number }>>;
     await vi.waitFor(() => expect(table().props.rows).toHaveLength(2));
+    const movingId = table().props.rowId(table().props.rows[1], 1);
     await act(() => { table().props.reorder?.onMove(1, 0); });
     const first = table().props.rows[0];
     expect(first.rule.match).toBe("web.*");
+    expect(table().props.rowId(first, 0)).toBe(movingId);
     // SAFETY: the tool column renders one design-system Select for its row.
     const tool = collectNodes(table().props.columns[0].cell(first, 0)).find((node) => node.type === Select) as VNode<SelectProps>;
     expect(tool.props.selected).toBe("web.*");

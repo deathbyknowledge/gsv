@@ -1,7 +1,7 @@
 import { saveApprovalPolicy } from "./permissionService";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleTargets } from "../../../services/system/consoleService";
 import { APPROVAL_ACTIONS, actionLabel, humanToolCapabilityLabel, targetOptionValue, targetFromOptionValue } from "../../../components/ui/agentToolApprovalOptions";
@@ -45,10 +45,25 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
     onSuccess: async () => { await cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }); setDraft(null); setSaved(true); },
   });
   const update = (next: SettingsPolicy) => { setDraft({ inherited: false, policy: next, base: draft?.base ?? original }); setSaved(false); setError(null); };
+  // A rule has no id of its own, so one travels with the rule object: a move keeps it, and an edit hands it to
+  // the edited copy. The table keys rows by it, so a moved rule keeps its focus and its highlight.
+  const ruleIds = useRef(new WeakMap<SettingsPolicy["rules"][number], string>());
+  const nextRuleId = useRef(0);
+  const ruleId = (rule: SettingsPolicy["rules"][number]) => {
+    let id = ruleIds.current.get(rule);
+    if (!id) {
+      nextRuleId.current += 1;
+      id = `rule-${nextRuleId.current}`;
+      ruleIds.current.set(rule, id);
+    }
+    return id;
+  };
   const ruleRows = (policy?.rules ?? []).map((rule, index) => ({ rule, index, options: permissionOptionsForRule(rule, targets) }));
   type RuleRow = (typeof ruleRows)[number];
   const setRule = (index: number, next: SettingsPolicy["rules"][number]) => {
-    if (policy) update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? next : entry) });
+    if (!policy) return;
+    ruleIds.current.set(next, ruleId(policy.rules[index]));
+    update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? next : entry) });
   };
   const ruleColumns: TableColumn<RuleRow>[] = [
     {
@@ -102,7 +117,7 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
         }} />{t("settings.permissions.useInherited")}</label>
         {policy && <>
           <Select block label={t("settings.permissions.default")} options={actionOptions} selected={policy.default} disabled={usesDefault} onSelect={(value) => update({ ...policy, default: settingsAction(value) })} />
-          <Table caption={t("settings.permissions.rules")} rows={ruleRows} rowId={(entry) => `rule-${entry.index}`} columns={ruleColumns} density="compact"
+          <Table caption={t("settings.permissions.rules")} rows={ruleRows} rowId={(entry) => ruleId(entry.rule)} columns={ruleColumns} density="compact"
             search={{ label: t("settings.permissions.searchRules"), placeholder: t("settings.permissions.searchRules") }}
             reorder={{ disabled: usesDefault, label: (entry) => t("settings.permissions.rule", { number: entry.index + 1 }), onMove: (from, to) => {
               const rules = [...policy.rules];
