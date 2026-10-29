@@ -317,7 +317,7 @@ export function targetOptionsForRule(target: ToolApprovalTarget | undefined, tar
     ...baseOptions,
     {
       value: targetOptionValue(target),
-      label: typeof target === "string" ? t("approval.target.notConnected", { id: target }) : targetLabelForRule(target, targets),
+      label: isToolApprovalTargetSelector(target) ? targetLabelForRule(target, targets) : t("approval.target.notConnected", { id: target }),
     },
   ];
 }
