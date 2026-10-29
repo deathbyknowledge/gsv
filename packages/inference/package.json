@@ -11,7 +11,8 @@
     "./text/*": "./src/text/*.ts",
     "./media": "./src/media/index.ts",
     "./transport": "./src/transport.ts",
-    "./executor": "./src/executor/index.ts"
+    "./executor": "./src/executor/index.ts",
+    "./realtime": "./src/realtime.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
