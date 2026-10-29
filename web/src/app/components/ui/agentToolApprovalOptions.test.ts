@@ -40,12 +40,15 @@ describe("agent tool approval options", () => {
   });
 
   it("names a single syscall by its longest labelled family", () => {
-    expect(capabilityLabelKey("conversation.send")).toBe("approval.family.conversation");
+    expect(capabilityLabelKey("conversation.send")).toBe("approval.match.conversationSend");
+    expect(capabilityLabelKey("contact.block")).toBe("approval.family.contact");
     expect(capabilityLabelKey("sys.pair.redeem")).toBe("approval.family.sysPair");
-    expect(capabilityLabelKey("adapter.pair.confirm")).toBe("approval.family.adapterPair");
+    expect(capabilityLabelKey("adapter.pair.confirm")).toBe("approval.match.adapterPairConfirm");
+    expect(capabilityLabelKey("adapter.pair.redeem")).toBe("approval.family.adapterPair");
     expect(capabilityLabelKey("adapter.inbound")).toBe("approval.family.adapter");
     expect(capabilityLabelKey("fs.transfer.send")).toBe("approval.family.fs");
-    expect(humanToolCapabilityLabel("sched.add")).toBe("Routines");
+    expect(humanToolCapabilityLabel("sched.add")).toBe("Add a routine");
+    expect(humanToolCapabilityLabel("sched.*")).toBe("Routines");
     expect(humanToolCapabilityLabel("sys.oauth.*")).toBe("Service sign-ins");
   });
 
