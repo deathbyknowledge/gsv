@@ -40,6 +40,14 @@ budgets. A person-only event contributes no provider message and cannot change
 origin annotations or consume model context.
 Model-facing events start with `[GSV EVENT]` before any origin annotations.
 
+A registered event payload carries data, never a line written for a reader:
+identifiers such as an adapter id, values a person or peer supplied (a contact's
+name or message), counts, times, and diagnostics as they were raised. The model
+renderer, each client, and each messenger render the event at their own boundary,
+in their own language and form. What the event is about travels in its `link`
+field as a GSV object, never as a URL. Text a messenger delivers is written by the
+component that sends it and is not stored on the event.
+
 Incoming messages may carry `selectedTarget`, independently of origin and reply
 destination. The model renderer prefixes that message with `[Selected target: ID]`,
 including when media is hydrated. Origin annotations still appear initially and
@@ -175,6 +183,9 @@ fence updates and removal while an earlier delivery is in flight.
 The Process writes a person-only notice and its bounded durable receipt
 atomically, emits a history change, and allocates no run or queued work.
 Model-visible audiences use the existing runtime event admission and wake path.
+An event may carry a `link` naming the GSV object it is about, such as a
+contact or a contact request. It is never a URL: each client opens the object
+in its own interface.
 Duplicate deliveries are idempotent within retained receipts; events older than
 the Process reset boundary are ignored. Raw history and client notices remain
 available independently of the canonical Conversation.

@@ -507,6 +507,43 @@ describe("managed mail installation transport", () => {
     },
   );
 
+  it("waits to recheck a summary while its space is unavailable instead of retrying at once", async () => {
+    // The fixture directory answers active for the intake, then restricted.
+    const installationId = "installation_restricted-after-intake-" + crypto.randomUUID();
+    const bound: unknown = env.ACCOUNTS;
+    // SAFETY: AccountsTest explicitly exposes this inspection method in vitest.config.ts.
+    const accounts = bound as { installationChecks(id: string): Promise<number> };
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    let restoreAlarmScheduling = () => {};
+    await runInDurableObject(stub, (_instance, state) => {
+      const setAlarm = state.storage.setAlarm.bind(state.storage);
+      const alarm = vi.spyOn(state.storage, "setAlarm").mockImplementation(async () => await setAlarm(Date.now() + 60_000));
+      restoreAlarmScheduling = () => alarm.mockRestore();
+    });
+    let accepted: Awaited<ReturnType<typeof intake>>;
+    try {
+      accepted = await intake(stub, installationId, "while restricted");
+    } finally {
+      restoreAlarmScheduling();
+    }
+    if (accepted.result.status !== "accepted") throw new Error("test mail was not accepted");
+    const intakeId = accepted.result.intakeId;
+    expect(await accounts.installationChecks(installationId)).toBe(1);
+
+    const started = Date.now();
+    await runDurableObjectAlarm(stub);
+
+    // One check for the summary, then a wait, not a check per batch slot.
+    expect(await accounts.installationChecks(installationId)).toBe(2);
+    await expect(stub.getIntake(context(installationId), intakeId)).resolves.toMatchObject({ storageState: "stored", summaryAttempts: 0 });
+    const next = await runInDurableObject(stub, async (_instance, state) => ({
+      due: state.storage.sql.exec<{ due: number }>("SELECT summary_next_attempt_at AS due FROM mail_intakes WHERE intake_id = ?", intakeId).one().due,
+      alarm: await state.storage.getAlarm(),
+    }));
+    expect(next.due).toBeGreaterThanOrEqual(started + 60_000);
+    expect(next.alarm).toBeGreaterThanOrEqual(started + 60_000);
+  });
+
   it("recovers a completed inference result after its RPC response is lost", async () => {
     const installationId = "installation_mail_lost_summary_response";
     const stub = env.MAIL_INSTALLATIONS.getByName(installationId);

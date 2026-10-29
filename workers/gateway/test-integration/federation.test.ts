@@ -717,6 +717,8 @@ async function setup(origin: URL, username: string, agentName: string): Promise<
     password: PASSWORD,
     agentName,
     timezone: "Europe/Amsterdam",
+    // These Ships meet on the open network, so each owner makes their profile public.
+    profile: "public",
   });
 }
 

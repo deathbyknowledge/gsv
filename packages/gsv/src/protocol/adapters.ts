@@ -128,6 +128,27 @@ export const adapterInboundMessageSchema = z.strictObject({
   wasMentioned: z.optional(z.boolean()),
 });
 
+/** The longest action label every messenger shows whole; WhatsApp's link button allows 20 characters. */
+export const ADAPTER_ACTION_LABEL_LIMIT = 20;
+
+/**
+ * Something a person can open from a delivered message. A messenger that has
+ * link buttons shows it as one; any other shows it as a line of text, which
+ * adapterActionText writes.
+ */
+export type AdapterSendAction = { kind: "open"; label: string; url: string };
+
+export const adapterSendActionSchema = z.strictObject({
+  kind: z.literal("open"),
+  label: z.string().check(z.minLength(1), z.refine((label) => [...label].length <= ADAPTER_ACTION_LABEL_LIMIT, "Action labels are at most 20 characters")),
+  url: z.string().check(z.refine((url) => URL.canParse(url) && ["https:", "http:"].includes(new URL(url).protocol), "Action URLs are http or https")),
+});
+
+/** A message's action written into its text, for a messenger that can't show it as a button. */
+export function adapterActionText(text: string, action: AdapterSendAction): string {
+  return `${text}\n${action.label}: ${action.url}`;
+}
+
 export type AdapterOutboundMessage = {
   /** Stable idempotency key for one logical provider delivery. */
   deliveryId: string;
@@ -139,6 +160,7 @@ export type AdapterOutboundMessage = {
   text: string;
   media?: AdapterMedia[];
   replyToId?: string;
+  action?: AdapterSendAction;
 };
 
 export const adapterOutboundMessageSchema = z.strictObject({
@@ -149,6 +171,7 @@ export const adapterOutboundMessageSchema = z.strictObject({
   text: z.string(),
   media: z.optional(z.array(adapterMediaSchema)),
   replyToId: z.optional(z.string()),
+  action: z.optional(adapterSendActionSchema),
 });
 
 /**
@@ -298,8 +321,11 @@ export type AdapterInboundResult = {
     text: string;
     replyToId?: string;
   };
+  /**
+   * Kernels before 0.7.6 asked for pairing with a link challenge, and their stored
+   * ingress receipts can still replay one. Adapters treat it as `pairing_required`.
+   */
   challenge?: {
-    /** Stable idempotency key for delivering this link challenge. */
     deliveryId: string;
     code: string;
     prompt: string;
@@ -307,6 +333,7 @@ export type AdapterInboundResult = {
   };
   /** Set only when this provider ingress key was already claimed. */
   replayed?: "in_progress" | "completed";
+  /** `pairing_required`: the Kernel has no link for a person the adapter still routes to it. */
   droppedReason?: string;
   error?: string;
 };
@@ -585,4 +612,10 @@ export interface AdapterGatewayInterface<Frame = AdapterGatewayFrame> {
     context: AdapterLinkedPeerContext,
     frame: Frame,
   ): Promise<Frame | null>;
+}
+
+/** The name a person knows a messenger by, from its adapter id. */
+export function adapterDisplayName(adapter: string): string {
+  if (adapter === "whatsapp") return "WhatsApp";
+  return adapter.charAt(0).toUpperCase() + adapter.slice(1);
 }

@@ -159,7 +159,7 @@ describe("live browser viewing", () => {
     const viewer = await openLinkedViewer(state);
     try {
       await vi.waitFor(() => expect(viewer.text()).toContain("This browser request has expired or ended"));
-      expect(viewer.nodes().some(node => node.type === "button" && collectText(node) === "I’m done — resume Ship")).toBe(false);
+      expect(viewer.nodes().some(node => node.type === "button" && collectText(node) === "I’m done, resume Ship")).toBe(false);
       await act(() => { viewer.type("private input"); });
       expect(viewer.request.mock.calls.some(([call]) => call.startsWith("sys.browser.handoff.") || call === "sys.browser.input")).toBe(false);
     } finally { await viewer.close(); }
@@ -174,7 +174,7 @@ describe("live browser viewing", () => {
       await vi.waitFor(() => expect(viewer.nodes().find(node => node.type === "textarea")?.props.disabled).toBe(false));
       await act(() => { viewer.type("first"); viewer.type("unsent"); });
       await vi.waitFor(() => expect(viewer.request.mock.calls.filter(([call]) => call === "sys.browser.input")).toHaveLength(1));
-      const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done — resume Ship");
+      const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done, resume Ship");
       await act(() => { finish!.props.onClick?.(); });
       await act(() => { viewer.push("pending"); });
       await vi.waitFor(() => expect(viewer.text()).toContain("This browser request has expired or ended"));
@@ -190,7 +190,7 @@ describe("live browser viewing", () => {
     const completion = deferred<BrowserHandoff>();
     const viewer = await openLinkedViewer("active", "linked-login", { finish: () => completion.promise });
     try {
-      const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done — resume Ship");
+      const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done, resume Ship");
       await act(() => { finish!.props.onClick?.(); });
       await vi.waitFor(() => expect(viewer.request.mock.calls.some(([call]) => call === "sys.browser.handoff.finish")).toBe(true));
       if (first === "stream") {
@@ -201,7 +201,7 @@ describe("live browser viewing", () => {
       }
       await act(async () => { completion.resolve({ ...viewer.handoff, state: "completed" }); await completion.promise; });
       await vi.waitFor(() => expect(viewer.text()).toContain("You’re done. Ship can continue."));
-      expect(viewer.nodes().some(node => node.type === "button" && collectText(node) === "I’m done — resume Ship")).toBe(false);
+      expect(viewer.nodes().some(node => node.type === "button" && collectText(node) === "I’m done, resume Ship")).toBe(false);
       if (first === "response") await act(() => { viewer.push(undefined); });
       await vi.waitFor(() => expect(viewer.nodes().find(node => node.type === "textarea")?.props.disabled).toBe(false));
       expect(viewer.text()).not.toContain("expired or ended");
@@ -218,7 +218,7 @@ describe("live browser viewing", () => {
     const completion = deferred<BrowserHandoff>();
     const viewer = await openLinkedViewer("active", "linked-login", { finish: () => completion.promise });
     try {
-      const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done — resume Ship");
+      const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done, resume Ship");
       await act(() => { finish!.props.onClick?.(); });
       await vi.waitFor(() => expect(viewer.request.mock.calls.some(([call]) => call === "sys.browser.handoff.finish")).toBe(true));
       await act(async () => { viewer.push(undefined); completion.resolve({ ...viewer.handoff, state }); await completion.promise; });
@@ -234,7 +234,7 @@ describe("live browser viewing", () => {
   it("does not rewrite the action link after its viewer closes during completion", async () => {
     const completion = deferred<BrowserHandoff>();
     const viewer = await openLinkedViewer("active", "linked-login", { finish: () => completion.promise });
-    const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done — resume Ship");
+    const finish = viewer.nodes().find(node => node.type === "button" && collectText(node) === "I’m done, resume Ship");
     await act(() => { finish!.props.onClick?.(); });
     await vi.waitFor(() => expect(viewer.request.mock.calls.some(([call]) => call === "sys.browser.handoff.finish")).toBe(true));
     await viewer.close();
@@ -265,7 +265,7 @@ describe("live browser viewing", () => {
     const root = createTestRoot("Retry handoff"), close = vi.fn();
     let tree: ComponentChildren;
     function Harness() { tree = BrowserViewer({ request: { instanceId: instance.instanceId, requestId: handoff.requestId }, onClose: close }); return null; }
-    const button = () => collectNodes(tree).find(node => node.type === "button" && collectText(node) === "I’m done — resume Ship");
+    const button = () => collectNodes(tree).find(node => node.type === "button" && collectText(node) === "I’m done, resume Ship");
     try {
       await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
       await vi.waitFor(() => expect(button()).toBeDefined());

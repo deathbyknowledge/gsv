@@ -75,8 +75,6 @@ export type RuntimeEventAdmission =
   | { ok: true; runId: string; queued: boolean; }
   | { ok: false; error: string; };
 
-export const TOOL_APPROVAL_OVERRIDES_KEY = "toolApprovalOverrides";
-
 export const MAX_KILL_ARCHIVE_ATTEMPTS = 3;
 
 export const HANDLED_IPC_CALLS_KEY = "handledIpcCalls";

@@ -34,10 +34,13 @@
 .settings-error { color: var(--error); overflow-wrap: anywhere; }
 .settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .settings label { display: flex; flex-direction: column; align-items: stretch; gap: .65rem; margin-bottom: 1.5rem; max-width: 42rem; color: var(--text); font-size: .875rem; }
-.settings input:not([type="checkbox"]):not([type="radio"]), .settings select, .settings textarea { border: 1px solid var(--border); background: var(--void); color: var(--text); padding: .7rem; font: inherit; border-radius: 0; min-width: 0; width: 100%; box-sizing: border-box; }
-.settings input:focus-visible, .settings select:focus-visible, .settings textarea:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
-.settings button:disabled, .settings select:disabled, .settings input:disabled { opacity: .45; cursor: not-allowed; }
-.settings textarea[readonly] { color: var(--text-dim); }
+/* Fields are design-system components (TextInput, Select, TextArea), which draw their own border, surface and
+   focus ring; Settings only sets their rhythm and width. A field's hint sits in the same column, under it. */
+.settings :is(.gsv-fld, .gsv-ta) { width: 100%; max-width: 42rem; margin-bottom: 1.5rem; }
+.settings .gsv-fld .gsv-fld-desc { max-width: none; }
+.settings-field-note { margin: -1rem 0 1.5rem; max-width: 42rem; color: var(--text-dim); font-size: .75rem; }
+/* design-system controls dim their own disabled state */
+.settings button:disabled:not(.gsv-sel-trig):not(.gsv-ti-btn):not(.gsv-ti-x) { opacity: .45; cursor: not-allowed; }
 .settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; font-size: .75rem; color: var(--text-dim); }
 .settings-form { padding-bottom: 2rem; }
 .settings-check { flex-direction: row !important; align-items: center !important; }
@@ -99,6 +102,8 @@
 .settings-telegram { padding-bottom: 1rem; }
 .settings-telegram-flow { margin-top: 1.5rem; }
 .settings-telegram-step { font-size: .8rem; color: var(--text-dim); margin-bottom: 1rem; }
+/* the console shell spaces a step's text from its field with a flex gap; the compact shell has no such gap */
+.settings-telegram-flow .gsv-cf-desc { margin-bottom: 1.25rem; }
 .settings-messenger { padding-bottom: 1rem; }
 .settings-messenger-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
 .settings-messenger-heading h2 { margin: 0; }
@@ -112,17 +117,17 @@
 .settings-mcp-options { border-top: 1px solid var(--border); padding-block: 1rem; margin-bottom: 1rem; font-size: .8rem; }
 .settings-mcp-options summary { color: var(--text-dim); cursor: pointer; }
 .settings-mcp-header { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin-bottom: 1rem; }
-.settings-mcp-header label { flex: 1 1 12rem; margin: 0; }
+.settings-mcp-header .gsv-fld { flex: 1 1 12rem; margin: 0; }
 .settings-mcp-header .settings-text-action { margin-bottom: .6rem; }
 .settings-server-heading { display: flex; justify-content: space-between; gap: 1rem; }
 .settings-permissions h1 { margin-bottom: .75rem; }
 .settings-permissions .settings-intro { font-size: .875rem; margin-bottom: .75rem; }
 .settings-permissions p.settings-muted { font-size: .8125rem; line-height: 1.5; }
-.settings-permissions label { gap: .35rem; margin-bottom: .75rem; font-size: .75rem; }
-.settings-permissions select { padding: .45rem .5rem; }
+.settings-permissions .gsv-fld { margin-bottom: .75rem; }
 .settings-rules { list-style: none; padding: 0; margin: .75rem 0; }
 .settings-rules > li { display: grid; grid-template-columns: 2rem minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: .65rem; padding: .65rem 0; border-top: 1px solid var(--border); align-items: start; }
-.settings-rules label { margin: 0; min-width: 0; max-width: none; }
+.settings-rules .settings-field-note { margin: .35rem 0 0; }
+.settings-rules .gsv-fld, .settings-rule-field { margin: 0; min-width: 0; max-width: none; }
 .settings-rule-move { display: flex; flex-direction: column; padding-top: 1rem; }
 .settings-rule-move button { min-height: 1.6rem; padding: 0; font-size: 1rem; }
 .settings-rule-tool { min-width: 0; }
@@ -136,7 +141,7 @@
   .settings-rule-move button { min-height: 2.25rem; }
 }
 
-.settings-instruction-editor { min-height: 24rem; resize: vertical; line-height: 1.7; tab-size: 2; }
+.settings-instruction-form .gsv-ta-box { min-height: 24rem; line-height: 1.7; tab-size: 2; }
 .settings-instruction-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1.5rem; margin-bottom: 1.5rem; }
 .settings-instruction-heading :is(h1, h2) { margin: 0; }
 .settings-instruction-removal { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border); }
@@ -147,7 +152,7 @@
   .settings-sections button { width: auto; min-width: 9rem; }
   .settings-content { padding: 1.5rem 1rem calc(4rem + var(--instrument-bottom-padding)); }
   .settings-content:has(> .gsv-loading-state.is-panel) { padding: 0; }
-  .settings-rules label { width: 100%; }
+  .settings-rules .gsv-fld { width: 100%; }
   .settings-model-stack > li { grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; }
   .settings-model-position { grid-column: 1 / -1; }
   .settings-model-details, .settings-model-stack .settings-actions { grid-column: 1 / -1; }

@@ -257,6 +257,10 @@ const eventFixtures = {
   "runtime.wake": { source: "process", reason: "pending-events", pendingEvents: 1 },
   "runtime.failed": { reason: "schedule.error", error: "Could not load schedule" },
   "target.connection": { targetId: "machine:one", event: "connected", platform: "linux", observedAt: 100 },
+  "owner.notified": {
+    noticeId: "contact.message:contact:1:0", topic: "contact.message", adapter: "whatsapp",
+    from: "Xisca", handle: "xisca.ship.space", preview: "The photo", contactId: "contact:1", conversationId: "conv:1", messages: 1, sentAtMs: 100,
+  },
 };
 
 test("responsibility events preserve context fields independently of the raw transition", () => {
@@ -303,6 +307,21 @@ test("every registered event validates its own payload and rejects prose substit
     assert.equal(procHistoryEventSchema.safeParse({ ...event, severity: "warning" }).success, false, kind);
     assert.equal(procHistoryEventSchema.safeParse({ kind, payload, severity: "info" }).success, false, kind);
   }
+});
+
+test("an event may name the object it is about, never a URL", () => {
+  const event = { kind: "owner.notified", payload: eventFixtures["owner.notified"], severity: "info", audience: "both" };
+  for (const link of [{ kind: "contact", contactId: "contact:1" }, { kind: "contact.request", requestId: "approach:1" }]) {
+    assert.deepEqual(procHistoryEventSchema.parse({ ...event, link }).link, link);
+  }
+  assert.equal(procHistoryEventSchema.safeParse({ ...event, link: { kind: "url", href: "https://example.test" } }).success, false);
+  assert.equal(procHistoryEventSchema.safeParse({ ...event, link: { kind: "contact", contactId: "contact:1", url: "https://example.test" } }).success, false);
+});
+
+test("an owner notice carries its parts as fields, never a rendered line", () => {
+  const event = { kind: "owner.notified", payload: eventFixtures["owner.notified"], severity: "info", audience: "both" };
+  assert.deepEqual(procHistoryEventSchema.parse(event).payload, eventFixtures["owner.notified"]);
+  assert.equal(procHistoryEventSchema.safeParse({ ...event, payload: { ...event.payload, text: "💬 Xisca: The photo" } }).success, false);
 });
 
 test("legacy events preserve exact prose and distinguish recognized events from new kinds", () => {

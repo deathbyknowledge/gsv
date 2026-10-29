@@ -292,7 +292,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.7.4";
+        if (key === "config/server/version") return "0.7.5";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -368,7 +368,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.7.4",
+    serverVersion: "0.7.5",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
@@ -590,6 +590,20 @@ function enablePrivateDmHandoff(
 describe("native shell execution", () => {
   it("uses a two-minute default runtime", () => {
     expect(DEFAULT_NATIVE_SHELL_TIMEOUT_MS).toBe(120_000);
+  });
+
+  it("refuses to hold more data than fits beside the Kernel", async () => {
+    const ctx = makeContext();
+    await handleFsWrite({ path: "/tmp/large.txt", content: "a".repeat(20 * 1024 * 1024) }, ctx);
+    await handleFsWrite({ path: "/tmp/small.txt", content: "a".repeat(1024 * 1024) }, ctx);
+
+    const large = await handleShellExec({ input: "cat /tmp/large.txt | tr a b | wc -c" }, ctx);
+    expect(large.exitCode).not.toBe(0);
+    expect(large.stderr).toMatch(/size limit exceeded/);
+
+    const small = await handleShellExec({ input: "cat /tmp/small.txt | tr a b | wc -c" }, ctx);
+    expect(small).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(small.stdout.trim()).toBe(String(1024 * 1024));
   });
 
   it("reports the configured command timeout under just-bash cancellation", async () => {

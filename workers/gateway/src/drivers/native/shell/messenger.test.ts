@@ -124,7 +124,6 @@ describe("messenger pairing from the native shell", () => {
         const authorization = JSON.stringify(authorize.mock.calls);
         expect(authorization).toContain("adapter.pair.confirm");
         expect(authorization).not.toContain(CODE);
-        expect(authorization).not.toContain('"defaultAction":"ask"');
         authorize.mockResolvedValue({ type: "res", id: "approved", ok: true, data: { approved: true } });
         const result = await shell.exec("messenger connect whatsapp < /tmp/code.txt");
         expect(result.exitCode, result.stderr).toBe(0);

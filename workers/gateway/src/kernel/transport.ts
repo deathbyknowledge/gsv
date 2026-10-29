@@ -91,9 +91,18 @@ const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 
+// A route waits this long for an upload to finish. The body's idle timeout
+// ends a stalled upload sooner; this only clears a route whose upload was lost
+// with the Kernel's memory.
+const ROUTED_UPLOAD_EXPIRY_MS = 6 * 60 * 60_000;
+
 type CancellableFrameBody = {
   cancel(reason?: FrameCancellationReason): Promise<void>;
+  /** Settles once the last byte has been handed to the peer, or the body failed. */
+  sent?: Promise<void>;
 };
+
+type SentFrameBody = OutgoingBinaryBody & { sent: Promise<void> };
 
 type PendingKernelResponse = {
   promise: Promise<ResponseFrame>;
@@ -303,7 +312,7 @@ async handleReq(
             frame.id,
             SETUP_REQUIRED_ERROR_CODE,
             "Setup required",
-            setupRequiredDetails(),
+            setupRequiredDetails(this.host.env),
           );
           return;
         }
@@ -483,7 +492,7 @@ receiveFrameBody(
 sendWebSocketFrame(
     connection: KernelConnection<ConnectionState>,
     frame: Frame,
-  ): OutgoingBinaryBody | null {
+  ): SentFrameBody | null {
     const body = frame.type === "sig" || (frame.type === "res" && !frame.ok)
       ? undefined
       : frame.body;
@@ -502,8 +511,9 @@ sendWebSocketFrame(
       void outgoing.cancel(error);
       throw error;
     }
-    this.host.ctx.waitUntil(outgoing.send().catch(() => {}));
-    return outgoing;
+    const sent = outgoing.send();
+    this.host.ctx.waitUntil(sent.catch(() => {}));
+    return { ...outgoing, sent };
   }
 
 frameBodyChannel(connection: KernelConnection<ConnectionState>): BinaryBodyChannel {
@@ -679,8 +689,30 @@ async registerRouteWithExpiry(route: {
         const previous = this.routedBodies.get(route.id);
         this.routedBodies.set(route.id, body);
         void previous?.cancel("Routed body replaced");
+        if (body.sent) {
+          this.waitForAnswerAfterUpload(route.id, route.ttlMs, body.sent).catch((error) => {
+            console.error(`[Kernel] Failed to reschedule route ${route.id}:`, error);
+          });
+        }
       },
     };
+  }
+
+/** A route's deadline is for the device's answer, so it starts once the request body has been sent. */
+async waitForAnswerAfterUpload(routeId: string, ttlMs: number, sent: Promise<void>): Promise<void> {
+    await this.rescheduleRouteExpiry(routeId, ROUTED_UPLOAD_EXPIRY_MS);
+    await sent.catch(() => {});
+    await this.rescheduleRouteExpiry(routeId, ttlMs);
+  }
+
+async rescheduleRouteExpiry(routeId: string, ttlMs: number): Promise<void> {
+    if (!this.host.routes.get(routeId)) return;
+    const scheduleId = (await this.host.schedule(ttlMs / 1000, "onRouteExpired", routeId)).id;
+    const previous = this.host.routes.reschedule(routeId, Date.now() + ttlMs, scheduleId);
+    const stale = previous === undefined ? scheduleId : previous;
+    if (stale) {
+      this.host.cancelSchedule(stale).catch(() => {});
+    }
   }
 
 registerActiveRequest(origin: RouteOrigin, requestId: string): AbortController {

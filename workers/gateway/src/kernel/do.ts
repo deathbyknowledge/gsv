@@ -92,6 +92,7 @@ import { rejectBeforeDispatch } from "./request-rejection";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid, principalOf, requirePrincipal } from "./context";
+import { allowInOwnerApprovalPolicy, readOwnerApprovalPolicy } from "./approval-policy";
 import {
   connectedPeerContext,
   httpPeerContext,
@@ -198,6 +199,8 @@ import type {
   IpcCallTimeout,
 } from "./do-shared";
 import { ResponsibilityRuntime } from "./responsibility-runtime";
+import { OwnerNoticeRuntime } from "./owner-notice-runtime";
+import { OwnerNoticeStore } from "./owner-notice-store";
 import { ShipEventRuntime } from "./ship-event-runtime";
 import { ShipEventStore } from "./ship-event-store";
 import { FederationRuntime } from "./federation-runtime";
@@ -264,6 +267,7 @@ type KernelTask =
       payload: { ownerUid: number; generation: number };
     }
   | { callback: "onShipEvents"; payload: number }
+  | { callback: "onOwnerNotices"; payload: number }
   | { callback: "onLedgerRotate"; payload: string }
   | { callback: "onBrowserHandoffs"; payload: null };
 
@@ -341,6 +345,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
     }),
   }),
   z.object({ callback: z.literal("onShipEvents"), payload: z.number().int().nonnegative() }),
+  z.object({ callback: z.literal("onOwnerNotices"), payload: z.number().int().nonnegative() }),
   z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
   z.object({ callback: z.literal("onBrowserHandoffs"), payload: z.null() }),
 ]);
@@ -414,6 +419,7 @@ export function kernelRuntimes(host: Kernel) {
     federationRuntime: new FederationRuntime(host),
     responsibilityRuntime: new ResponsibilityRuntime(host),
     shipEventRuntime: new ShipEventRuntime(host),
+    ownerNoticeRuntime: new OwnerNoticeRuntime(host),
     browserHandoffs: new BrowserHandoffRuntime(host),
     ipc: new IpcRuntime(host),
     scheduleRuntime: new ScheduleRuntime(host),
@@ -456,6 +462,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly mailboxes: MailboxStore;
   readonly responsibilities: ResponsibilityStore;
   readonly shipEvents: ShipEventStore;
+  readonly ownerNotices: OwnerNoticeStore;
   readonly welcome: InitialOnboarding;
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
@@ -478,6 +485,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   declare readonly ipc: IpcRuntime;
   declare readonly responsibilityRuntime: ResponsibilityRuntime;
   declare readonly shipEventRuntime: ShipEventRuntime;
+  declare readonly ownerNoticeRuntime: OwnerNoticeRuntime;
   declare readonly federationRuntime: FederationRuntime;
   declare readonly processOutput: ProcessOutput;
   declare readonly adapterDelivery: AdapterDelivery;
@@ -560,6 +568,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
     this.shipEvents = new ShipEventStore(ctx.storage);
+    this.ownerNotices = new OwnerNoticeStore(ctx.storage);
     this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
@@ -604,6 +613,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
         error instanceof Error ? error.message : String(error),
       );
     }));
+    ctx.waitUntil(this.ownerNoticeRuntime.recover().catch((error) => {
+      console.warn(
+        "[Kernel] Failed to recover owner notices:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }));
     ctx.blockConcurrencyWhile(async () => {
       await this.browserHandoffs.recover();
       for (const pending of this.mailboxes.pendingOutboundEnqueues()) {
@@ -630,8 +645,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
         );
       }
       await this.scheduleApproachMaintenance();
-      // every start of the Kernel makes sure the ledger's daily housekeeping is pending
-      await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
+      // while the ledger holds a line, every start of the Kernel makes sure its daily housekeeping is pending
+      if (!this.ledger.isEmpty()) this.ledgerHousekeepingArmed = await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     });
   }
 
@@ -1001,6 +1016,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
       case "onShipEvents":
         await this.shipEventRuntime.onShipEvents(task.payload, task);
         return;
+      case "onOwnerNotices":
+        await this.ownerNoticeRuntime.onOwnerNotices(task.payload, task);
+        return;
       case "onBrowserHandoffs":
         await this.browserHandoffs.run(task.id);
         return;
@@ -1113,6 +1131,22 @@ export class Kernel extends DurableObject<GatewayEnv> {
       console.warn("[Kernel] Process run stream ended before completion");
     });
     return true;
+  }
+
+  /** The owner's current approval policy, read again before a process asks. */
+  async readProcessApprovalPolicy(processId: string): Promise<string | null> {
+    this.retirement.assertActive();
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) throw new Error("Unknown process");
+    return readOwnerApprovalPolicy(this.config, resolveCallerOwnerUid(ctx));
+  }
+
+  /** The owner chose "Always allow" on this process's request; every process of theirs follows it. */
+  async allowProcessTool(processId: string, allow: { match: string; target: string }): Promise<boolean> {
+    this.retirement.assertActive();
+    const ctx = this.buildProcessContext(processId);
+    if (!ctx) throw new Error("Unknown process");
+    return allowInOwnerApprovalPolicy(this.config, resolveCallerOwnerUid(ctx), allow);
   }
 
   /** Runtime approval metadata; target discovery is not an extra agent capability. */
@@ -1634,6 +1668,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       mailboxes: this.mailboxes,
       responsibilities: this.responsibilities,
       shipEvents: this.shipEvents,
+      ownerNotices: this.ownerNotices,
       welcome: this.welcome,
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
@@ -1661,6 +1696,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       },
       reconcileResponsibilityWake: this.responsibilityRuntime.reconcileResponsibilityWake.bind(this.responsibilityRuntime),
       queueShipEvents: this.shipEventRuntime.queue.bind(this.shipEventRuntime),
+      queueOwnerNotices: this.ownerNoticeRuntime.queue.bind(this.ownerNoticeRuntime),
       trackBrowserHandoff: this.browserHandoffs.track.bind(this.browserHandoffs),
       scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);
@@ -1845,6 +1881,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
   /** Coalesces the tail signal to a few per second per owner, and keeps a rotation armed. */
   private readonly ledgerFeed = new LedgerFeed((ownerUid, payload) => this.connectionRuntime.broadcastLedgerChanges(ownerUid, payload));
 
+  /** Whether this Kernel has the housekeeping task pending. An empty ledger has none, and its next line arms it. */
+  private ledgerHousekeepingArmed = false;
+
   private recordLedgerDispatch(frame: RequestFrame, ctx: KernelContext, origin: RouteOrigin): void {
     try {
       const principal = principalOf(ctx);
@@ -1897,10 +1936,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   /**
-   * The daily task is armed when the Kernel starts; every hundredth line
+   * The daily task is armed when the Kernel starts with lines in the ledger,
+   * or by the first line after it was empty; every hundredth line
    * counts the window and pulls the task nearer when it is over its bound.
    */
   async armLedgerRotation(seq: number): Promise<void> {
+    // the task lapses while the ledger is empty, so the first line after that arms it again
+    if (!this.ledgerHousekeepingArmed) this.ledgerHousekeepingArmed = await this.ensureLedgerRotation(LEDGER_ROTATION_DAILY_MS);
     if (seq % 100 !== 0) return;
     if (this.ledger.windowCount() > LEDGER_WINDOW_ROWS) await this.ensureLedgerRotation(LEDGER_ROTATION_SOON_MS);
   }
@@ -1930,7 +1972,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
    * The ledger's housekeeping: stale lines close, lines past retention leave
    * the window before anything rotates, so no segment carries them, a window
    * over its bound rotates, and segments past retention go. It comes back in
-   * a minute while there is more to do, and daily otherwise.
+   * a minute while there is more to do, daily while the ledger holds lines,
+   * and not at all once it is empty.
    */
   async onLedgerRotate(reason: string, runningTaskId?: string): Promise<void> {
     let drained = true;
@@ -1952,7 +1995,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
     // a re-arm that fails is thrown so the task scheduler retries the run; failing that, the next start of the Kernel arms again
     const more = this.ledger.needsRotation() || !drained;
+    // a ledger left with nothing in it needs no housekeeping until its next line
+    if (!more && this.ledger.isEmpty()) {
+      this.ledgerHousekeepingArmed = false;
+      return;
+    }
     const armed = await this.ensureLedgerRotation(more ? LEDGER_ROTATION_RETRY_MS : LEDGER_ROTATION_DAILY_MS, runningTaskId);
+    this.ledgerHousekeepingArmed = armed;
     if (!armed) throw new Error("ledger housekeeping could not re-arm");
   }
 

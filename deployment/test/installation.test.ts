@@ -240,6 +240,7 @@ describe("public operator composition", () => {
     expect(recorded.databases).toEqual([{ name: "directory-db", migrations: { dir: "public/migrations", table: "installation_migrations" } }]);
     const gatewayWorker = recorded.workers.find((worker) => worker.id === "FixtureGateway");
     expect(gatewayWorker?.props.compatibility).toMatchObject({ flags: expect.arrayContaining(["global_fetch_strictly_public"]) });
+    expect(gatewayWorker?.props.limits).toEqual({ cpuMs: 120_000 });
     const gateway = gatewayWorker?.props.env;
     expect(gateway).toHaveProperty("INFERENCE_EXECUTION");
     expect(gateway).not.toHaveProperty("AI");

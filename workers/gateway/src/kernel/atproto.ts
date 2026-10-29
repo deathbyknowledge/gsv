@@ -89,7 +89,7 @@ export async function handleAtprotoWrite(args: AtprotoWriteArgs, ctx: KernelCont
   // A direct process syscall carries no tool owner yet; derive it so the Ship's run policy
   // applies however the write arrives. A signed-in human has none and is not asked.
   await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "atproto.write",
-    jsonObjectSchema.parse({ handle: address.handle, address: address.hostname, writes }), "ask");
+    jsonObjectSchema.parse({ handle: address.handle, address: address.hostname, writes }));
   // The person may have made their profile private while deciding.
   publishingAddress(ownerUid, ctx);
   return await withRepository(ctx, async (repository) => {

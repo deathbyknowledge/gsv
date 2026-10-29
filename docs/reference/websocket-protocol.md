@@ -164,7 +164,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
 {
   "setupMode": true,
   "next": "sys.setup",
-  "setupFeatures": ["language"]
+  "setupFeatures": ["language", "profile"]
 }
 ```
 
@@ -185,8 +185,10 @@ unfinished space receives fresh setup authorization after owner verification.
 Setup-mode and provisioning responses advertise optional setup fields through
 `details.setupFeatures`. Web and Desktop probe `sys.connect` before sending an
 initial `language` in `sys.setup`, and include it only when `"language"` is
-advertised. An older Gateway without this feature still accepts account creation
-with the existing setup fields.
+advertised. `"profile"` appears only on a Gateway with an open-network host; the
+web then asks whether the owner's profile is public and sends `profile`. An older
+Gateway without these features still accepts account creation with the existing
+setup fields.
 
 ---
 
@@ -606,6 +608,13 @@ holds credit but sends nothing for the idle period (120 s by default) and
 answers with `CANCEL | END`; a sender waiting for credit that receives none
 within the same period fails its own stream with `ERROR | END`. A sender that
 exceeds its window is a protocol violation and is cancelled by the receiver.
+
+These idle rules, not a request deadline, bound an upload while it streams. A
+request's deadline covers waiting for its answer, so for a request with a body
+it starts once the last byte has been sent: a large file can take as long as it
+needs, provided it keeps moving. The SDK and the gateway both count deadlines
+this way, and the SDK leaves `fs.copy` without a deadline of its own because the
+gateway bounds each transfer that the copy runs.
 
 The window is the only receive-side bound. A receiver must accept any number
 of frames that fit its granted window, however small they are, so

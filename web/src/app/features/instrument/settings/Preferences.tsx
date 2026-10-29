@@ -6,6 +6,7 @@ import { Timezone } from "./Timezone";
 import { Language } from "./Language";
 import { useRef, useState } from "preact/hooks";
 import { reasoningOptions } from "../../../domain/reasoning";
+import { Select } from "../../../components/ui/Select";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { aiProviderDisplayLabel } from "../../../domain/aiProviders";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -174,10 +175,12 @@ export function Preferences({ account, active, onDirty }: SettingsSectionProps) 
     </div>
     </>}
     {!modelEditor && <div class="settings-form">
-      <label>{t("settings.reasoning.label")}<select value={reasoning} disabled={!editable || saving} onChange={(event) => { setReasoningDraft(event.currentTarget.value); setSaved(null); savePreferences.reset(); }}>
-        {reasoning && !effortOptions.some((option) => option.value === reasoning) && <option value={reasoning}>{t("settings.unavailableOption", { value: reasoning })}</option>}
-        {effortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select></label>
+      <Select block label={t("settings.reasoning.label")} selected={reasoning} disabled={!editable || saving}
+        onSelect={(value) => { if (value === reasoning) return; setReasoningDraft(value); setSaved(null); savePreferences.reset(); }}
+        options={[
+          ...(reasoning && !effortOptions.some((option) => option.value === reasoning) ? [{ label: t("settings.unavailableOption", { value: reasoning }), value: reasoning }] : []),
+          ...effortOptions.map((option) => ({ label: option.label, value: option.value })),
+        ]} />
     </div>}
     {!modelEditor && config.data && <Language value={language} editable={editable && !saving} onChange={(value) => { setLanguageDraft(value); setSaved(null); savePreferences.reset(); }} />}
     {!modelEditor && config.data && <Timezone value={timezone} fallback={config.data.find((entry) => entry.key === "config/server/timezone")?.value ?? "UTC"} editable={editable && !saving} onChange={(value) => { setTimezoneDraft(value); setSaved(null); savePreferences.reset(); }} />}

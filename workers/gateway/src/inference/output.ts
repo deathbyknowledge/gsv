@@ -68,6 +68,7 @@ export function isRetryableGenerationErrorMessage(message: string): boolean {
     normalized.includes("readablestream received over rpc disconnected prematurely") ||
     normalized.includes("network connection lost") ||
     normalized.includes("connection closed: this durable object instance is no longer active") ||
+    /\binternal error; reference = [a-z0-9]+/.test(normalized) ||
     normalized.includes("reasoning but no final response") ||
     normalized.includes("malformed tool call markup") ||
     normalized.includes("generation returned no text") ||

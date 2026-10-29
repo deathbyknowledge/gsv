@@ -90,6 +90,28 @@ describe("WhatsApp approval buttons", () => {
     expect(source.request).toEqual({ pid: "proc-1", requestId: "request-1", runId: "run-1" });
   });
 
+  it("says allowed once when Ship could not record Always allow", async () => {
+    const store = storage();
+    const controls = (await prepareWhatsAppApproval(store, describeWhatsAppApproval(CONTEXT, REQUEST)))!;
+    const gateway: AdapterGatewayBinding = {
+      linkedPeerFrame: async (_installation, _context, frame) => ({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: { ok: true, pid: "proc-1", requestId: "request-1", decision: "approve", resumed: true, remembered: false },
+      }),
+      serviceFrame: async (): Promise<GatewayFrame | null> => null,
+    };
+    const status = await handleWhatsAppApprovalReply(store, gateway, { installationId: "installation_test" }, {
+      interactionId: "wamid.reply",
+      actorId: "34611111189",
+      surfaceId: "34611111189",
+      providerMessageId: "wamid.prompt",
+      data: `gsvh:${controls.token}:a`,
+    });
+    expect(status).toContain("Allowed once.");
+  });
+
   it("submits a reply button through the linked-human proc.hil path and answers with the decision", async () => {
     const store = storage();
     const controls = (await prepareWhatsAppApproval(store, describeWhatsAppApproval(CONTEXT, REQUEST)))!;
@@ -110,7 +132,7 @@ describe("WhatsApp approval buttons", () => {
       providerMessageId: "wamid.prompt",
       data: `gsvh:${controls.token}:a`,
     });
-    expect(status).toContain("Allowed for this conversation.");
+    expect(status).toContain("Allowed from now on. Change this in Settings → Permissions.");
     expect(status).toContain("Run a command in Ship's home.\n\"date\"");
     expect(linkedPeerFrame).toHaveBeenCalledWith(
       { installationId: "installation_test" },
@@ -124,7 +146,7 @@ describe("WhatsApp approval buttons", () => {
       surfaceId: "34611111189",
       providerMessageId: "wamid.prompt",
       data: `gsvh:${controls.token}:a`,
-    })).toContain("Allowed for this conversation.");
+    })).toContain("Allowed from now on. Change this in Settings → Permissions.");
     expect(linkedPeerFrame).toHaveBeenCalledOnce();
     expect(await handleWhatsAppApprovalReply(store, gateway, { installationId: "installation_test" }, {
       interactionId: "wamid.other",

@@ -1184,6 +1184,7 @@ async function commitInboundMessage(
   admitContactMessage(contact, inbox, appended.message, ctx);
   // Queue even on recovery: the event may have committed before its delivery was scheduled.
   await ctx.queueShipEvents(contact.ownerUid);
+  await ctx.queueOwnerNotices(contact.ownerUid);
 }
 
 async function commitInboundRequest(

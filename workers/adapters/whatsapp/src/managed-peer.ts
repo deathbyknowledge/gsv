@@ -31,6 +31,7 @@ import {
   SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
   validateAdapterMediaBody,
 } from "../../shared/src/media-body";
+import { adapterActionText, type AdapterSendAction } from "../../../../packages/gsv/src/protocol/adapters.js";
 import type {
   AdapterOutboundMessage,
   AdapterDeliveryContext,
@@ -284,7 +285,8 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       this.retirement.requireLive(route);
       const approval = context?.hil ? describeWhatsAppApproval(context, context.hil) : null;
       const controls = approval ? await prepareWhatsAppApproval(this.ctx.storage, approval, route) : null;
-      const renderedMessage = controls ? { ...message, text: controls.text } : message;
+      const { action: _action, ...withoutAction } = message;
+      const renderedMessage = controls ? { ...withoutAction, text: controls.text } : message;
       const options: DeliveryOptions = {};
       if (approval && controls) {
         options.controls = controls;
@@ -927,8 +929,12 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       await cancelBinaryBody(body, staleContext);
       return { ok: false, error: staleContext };
     }
-    const text = message.text.trim();
     const media = message.media ?? [];
+    // WhatsApp opens only https links from a button, and a button cannot ride on media.
+    const linkButton = message.action && media.length === 0 && new URL(message.action.url).protocol === "https:"
+      ? message.action
+      : undefined;
+    const text = (message.action && !linkButton ? adapterActionText(message.text, message.action) : message.text).trim();
     if (!text && media.length === 0) {
       await cancelBinaryBody(body, "Managed WhatsApp requires text or media");
       return { ok: false, error: "Managed WhatsApp requires text or media" };
@@ -1037,6 +1043,12 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         const last = prompts.at(-1) ?? controls.text;
         addPart((index) => send(buildWhatsAppInteractivePayload(to, { ...controls, text: last }), index));
         anchor = parts.length - 1;
+      } else if (linkButton) {
+        const bodies = whatsAppTextMessages(text, legacyGrouping || options.splitParagraphs, legacyGrouping);
+        const last = bodies.at(-1) ?? text;
+        const fits = [...last].length <= WHATSAPP_INTERACTIVE_BODY_LIMIT;
+        for (const body of fits ? bodies.slice(0, -1) : bodies) addText(body);
+        addPart((index) => send(buildWhatsAppLinkPayload(to, fits ? last : linkButton.label, linkButton), index));
       } else if (media.length === 0) {
         for (const body of whatsAppTextMessages(text, legacyGrouping || options.splitParagraphs, legacyGrouping)) addText(body);
       } else {
@@ -1108,7 +1120,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     // original request in GSV instead of attaching a fake interactive anchor.
     const text = options.controls
       ? "An action needs your approval. Open GSV to review it."
-      : message.text;
+      : message.action ? adapterActionText(message.text, message.action) : message.text;
     let sent: WhatsAppSentMessage;
     try {
       sent = await sendWhatsAppMessage(
@@ -1248,6 +1260,18 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       return this.env.WHATSAPP_API ? this.env.WHATSAPP_API.fetch(input, request) : fetch(input, request);
     };
   }
+}
+
+function buildWhatsAppLinkPayload(to: string, body: string, action: AdapterSendAction): WhatsAppOutboundPayload {
+  return {
+    to,
+    type: "interactive",
+    interactive: {
+      type: "cta_url",
+      body: { text: body },
+      action: { name: "cta_url", parameters: { display_text: action.label, url: action.url } },
+    },
+  };
 }
 
 function whatsAppFingerprintMessage(

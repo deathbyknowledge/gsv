@@ -46,7 +46,7 @@ import {
 import { formatAiModelStackLabel } from "../context/formatters";
 import { formatGenerationFailure } from "../history/event-renderer";
 import {
-  nextAiConfigFallback, classifyAssistantTurn, type AssistantTurnClassification,
+  nextAiConfigFallback, remainingAiConfigFallbacks, classifyAssistantTurn, type AssistantTurnClassification,
 } from "../run-tick-policy";
 import {
   describeAssistantResponseFailure, hasRawToolCallMarkupOutput, isRetryableAssistantResponseFailure,
@@ -216,7 +216,7 @@ export class ProcessRun {
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const media: ResourceBlock[] = [];
     const run = this.host.runs.active;
-    // the same policy a Read would face, resolved from the account and the remembered approvals when the run has none yet
+    // the same policy a Read would face, resolved from the owner's policy when the run has none yet
     const policy = run?.runId === runId ? this.host.tools.resolveToolApprovalPolicy(run) : DEFAULT_TOOL_APPROVAL_POLICY;
     for (const spec of specs) {
       const { target, path } = parseAttachPath(spec);
@@ -1355,9 +1355,11 @@ export class ProcessRun {
       reason: diagnosticReason,
     };
     control.prepared.activeConfig = fallback.config;
+    // The run's later model calls start from the fallback, so it keeps the rest of the stack.
+    const config = { ...fallback.config, fallbacks: remainingAiConfigFallbacks(control.primaryConfig, control.fallbackConfigs, control.fallbackIndex) };
     const run = this.host.mutateActiveRun(runId, (active) => ({
       ...active,
-      config: fallback.config,
+      config,
     }));
     if (!run) return "stopped";
     control.prepared.run = run;

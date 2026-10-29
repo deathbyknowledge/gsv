@@ -14,7 +14,7 @@ type TelegramApiMessage = {
     message_id?: string | number;
     reply_parameters?: { message_id: number };
     reply_markup?: {
-      inline_keyboard?: Array<Array<{ text?: string; callback_data?: string }>>;
+      inline_keyboard?: Array<Array<{ text?: string; callback_data?: string; url?: string }>>;
     };
   };
   result: { ok?: boolean; message_id?: number } | boolean;
@@ -79,6 +79,7 @@ type ManagedPeerStub = {
       actorId: string;
       routeGeneration: string;
       text: string;
+      action?: { kind: "open"; label: string; url: string };
       media?: Array<{
         type: "audio";
         mimeType: string;
@@ -97,7 +98,7 @@ type ManagedPeerStub = {
       processId: string;
       runId: string;
       processMode: "ship";
-      hil: {
+      hil?: {
         pid: string;
         requestId: string;
         runId: string;
@@ -315,6 +316,23 @@ describe("managed Telegram clean-instance flow", () => {
     expect(approvalMessageId).toBeTruthy();
     expect(approveAlwaysData).toMatch(/^gsvh:[A-Za-z0-9_-]{16}:a$/);
 
+    // An action to open becomes a link button under the message; one Telegram can't open stays a line of text.
+    const { hil: _hil, ...plainContext } = approvalContext;
+    for (const [deliveryId, url] of [["notice-button", "https://ada.ship.space/people?contact=contact%3Abo"], ["notice-local", "http://localhost:8787/people"]]) {
+      await peer.sendMessage("installation_test", {
+        deliveryId, surface: plainContext.surface, actorId: plainContext.actorId, routeGeneration: plainContext.routeGeneration,
+        text: "💬 Bo: are we still on?", action: { kind: "open", label: "Open in People", url },
+      }, undefined, { ...plainContext, deliveryId });
+    }
+    await vi.waitFor(async () => {
+      const sent = (await telegramMessages()).filter((message) => message.body.text?.startsWith("💬 Bo: are we still on?"));
+      expect(sent).toHaveLength(2);
+      expect(sent[0]?.body.text).toBe("💬 Bo: are we still on?");
+      expect(sent[0]?.body.reply_markup?.inline_keyboard).toEqual([[{ text: "Open in People", url: "https://ada.ship.space/people?contact=contact%3Abo" }]]);
+      expect(sent[1]?.body.text).toBe("💬 Bo: are we still on?\nOpen in People: http://localhost:8787/people");
+      expect(sent[1]?.body.reply_markup).toBeUndefined();
+    });
+
     expect((await SELF.fetch(approvalUpdate(
       3,
       "callback-approval",
@@ -343,7 +361,7 @@ describe("managed Telegram clean-instance flow", () => {
         body: expect.objectContaining({
           chat_id: "12345",
           message_id: approvalMessageId,
-          text: expect.stringContaining("Allowed for this conversation."),
+          text: expect.stringContaining("Allowed from now on. Change this in Settings → Permissions."),
         }),
       }));
     });

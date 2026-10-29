@@ -47,7 +47,6 @@ export const processApprovalTargetSchema: z.ZodType<ProcessApprovalTarget> = z.o
 export type ProcessToolAuthorizeArgs = ProcessToolOwner & {
   syscall: SyscallName;
   args: JsonObject;
-  defaultAction?: "ask";
   /** Derived from the Kernel's resolved route, never from syscall arguments. */
   target?: ProcessApprovalTarget;
 };
@@ -97,7 +96,7 @@ export type ProcessRuntimeEventDeliverResult = {
 /** Kernel-derived registered events; this call is never available to public peers. */
 export type ProcessEventDeliverArgs = {
   eventId: string;
-  event: Extract<ProcHistoryEvent, { kind: "target.connection" }>;
+  event: Extract<ProcHistoryEvent, { kind: "target.connection" | "owner.notified" }>;
 };
 
 export type ProcessEventDeliverResult = {

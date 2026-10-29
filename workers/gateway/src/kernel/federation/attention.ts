@@ -2,7 +2,7 @@ import type { ConversationMessage, JsonObject, ResponsibilityRecord } from "@hum
 import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type { FederationContactRecord, FederationInboxRecord, FederationOutboxLocalMessage } from "../federation-store";
-import type { ShipEvent } from "../ship-event-store";
+import type { ProcessContactMessageRuntimeEvent } from "../../protocol/process-frames";
 import { handleResponsibilityGet } from "../responsibilities";
 import { requireContactCaller } from "./authority";
 
@@ -37,7 +37,8 @@ export function cancelContactHandling(contact: FederationContactRecord, ctx: Ker
 /**
  * Queue a handled contact message for Ship. Each message becomes its own Ship event;
  * the responsibility only records that this contact is owed attention, so a message
- * reuses one that is still open instead of rewriting it.
+ * reuses one that is still open instead of rewriting it. A message Ship doesn't handle
+ * becomes a notice for the person instead.
  */
 export function admitContactMessage(contact: FederationContactRecord, inbox: FederationInboxRecord, message: ConversationMessage, ctx: KernelContext): boolean {
   return ctx.federation.transaction(() => {
@@ -52,8 +53,20 @@ export function admitContactMessage(contact: FederationContactRecord, inbox: Fed
     let work: ResponsibilityRecord | null = null;
     if (task && task.assignee.kind === "ship" && !terminal(task)) work = attend(task, ctx);
     else if (current.preferences.shipHandlesMessages) work = pendingMessages(current, ctx);
-    if (!work) return false;
-    const event: ShipEvent = {
+    if (!work) {
+      // The person handles this message, so their messenger hears of it.
+      if (!current.preferences.muted) {
+        ctx.ownerNotices.noteContactMessage(current.ownerUid, {
+          contactId: current.id,
+          contactGeneration: current.generation,
+          conversationId: message.conversationId,
+          from: contactDisplayName(current),
+          preview: message.text,
+        }, message.sequence, Date.now());
+      }
+      return false;
+    }
+    const event: ProcessContactMessageRuntimeEvent = {
       type: "contact.message",
       contactId: current.id,
       contactGeneration: current.generation,
@@ -77,7 +90,9 @@ export function admitContactMessage(contact: FederationContactRecord, inbox: Fed
  * work while the message waited, the message joins standing handling as a newly
  * arriving one would; cancelled work withdraws it. Returns the event to deliver.
  */
-export function admitQueuedContactEvent(ownerUid: number, eventId: string, event: ShipEvent, ctx: KernelContext): ShipEvent | null {
+export function admitQueuedContactEvent(
+  ownerUid: number, eventId: string, event: ProcessContactMessageRuntimeEvent, ctx: KernelContext,
+): ProcessContactMessageRuntimeEvent | null {
   return ctx.federation.transaction(() => {
     const contact = ctx.federation.get(event.contactId);
     if (!contact || contact.ownerUid !== ownerUid || contact.generation !== event.contactGeneration ||

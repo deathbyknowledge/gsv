@@ -50,6 +50,23 @@ describe("invitations", () => {
     expect(vi.mocked(fetch).mock.calls).toHaveLength(calls);
   });
 
+  it("records one notice for the inviting person once their invitation is accepted", async () => {
+    const { code } = await alice.run((ctx) => handleContactInviteCreate({ shipHandlesMessages: false }, ctx));
+    const { contact } = await bob.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx));
+    await bob.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx));
+    const notices = (space: TestSpace) => space.run((_ctx, storage) => storage.sql.exec<{ notice_key: string; topic: string; subject_json: string }>(
+      "SELECT notice_key, topic, subject_json FROM owner_notices WHERE owner_uid = ?", SPACE_OWNER_UID,
+    ).toArray());
+    const inviter = await alice.run((ctx) => ctx.federation.getByRemote(SPACE_OWNER_UID, bob.account.did)!);
+    const [notice, ...others] = await notices(alice);
+    expect(others).toEqual([]);
+    expect(notice).toMatchObject({ notice_key: `contact.invite.accepted:${inviter.id}:${contact.generation}`, topic: "contact.invite.accepted" });
+    expect(JSON.parse(notice!.subject_json)).toEqual({
+      contactId: inviter.id, contactGeneration: contact.generation, from: "Bob", handle: "bob.ship.test",
+    });
+    expect(await notices(bob)).toEqual([]);
+  });
+
   it("makes the Ship that signed the acceptance the contact, whichever name it gives", async () => {
     const { code } = await alice.run((ctx) => handleContactInviteCreate({}, ctx));
     const { token } = parseContactInvitation(code).invitation;

@@ -1,5 +1,4 @@
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
-import { MAIL_SEND } from "../syscalls/constants";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import { z } from "zod";
 import type { ProcessApprovalTarget } from "../protocol/process-frames";
@@ -54,26 +53,35 @@ const approvalPolicySchema = z.object({
 });
 const approvalArgsSchema = z.object({ target: z.string().optional(), sessionId: z.string().optional() });
 
+/**
+ * The Kernel asks for these itself once it knows whether the call needs it: a
+ * schedule only when it runs a command, a message request only when it is new.
+ * A direct call still honours Block, but leaves asking to that check.
+ */
+export const KERNEL_AUTHORIZED_SYSCALLS: ReadonlySet<string> = new Set(["sched.add", "sched.update", "approach.create"]);
+
 export function parseToolApprovalPolicy(raw: string | null | undefined): ToolApprovalPolicy {
+  return readToolApprovalPolicy(raw) ?? DEFAULT_TOOL_APPROVAL_POLICY;
+}
+
+/** A stored policy, or null when none is stored or it cannot be read. */
+export function readToolApprovalPolicy(raw: string | null | undefined): ToolApprovalPolicy | null {
   if (!raw || raw.trim().length === 0) {
-    return DEFAULT_TOOL_APPROVAL_POLICY;
+    return null;
   }
 
   try {
     const record = approvalPolicySchema.parse(JSON.parse(raw));
-    const defaultAction = record.default ?? DEFAULT_TOOL_APPROVAL_POLICY.default;
-    const rules = record.rules
-      ? record.rules
-          .map(parseRule)
-          .filter((rule): rule is ToolApprovalRule => rule !== null)
-      : DEFAULT_TOOL_APPROVAL_POLICY.rules;
-
-    return protectManagedMailApproval({
-      default: defaultAction,
-      rules,
-    });
+    return {
+      default: record.default ?? DEFAULT_TOOL_APPROVAL_POLICY.default,
+      rules: record.rules
+        ? record.rules
+            .map(parseRule)
+            .filter((rule): rule is ToolApprovalRule => rule !== null)
+        : DEFAULT_TOOL_APPROVAL_POLICY.rules,
+    };
   } catch {
-    return DEFAULT_TOOL_APPROVAL_POLICY;
+    return null;
   }
 }
 
@@ -107,13 +115,6 @@ export function resolveToolApproval(
     };
   }
 
-  if (syscall === MAIL_SEND && policy.default === "auto") {
-    return {
-      action: "ask",
-      target,
-    };
-  }
-
   return {
     action: policy.default,
     target,
@@ -126,22 +127,6 @@ export function approvalNeedsTargetMetadata(policy: ToolApprovalPolicy, syscall:
     && rule.action !== ordinary.action
     && (rule.match === syscall || isWildcardMatch(rule.match, syscall))
   );
-}
-
-function protectManagedMailApproval(policy: ToolApprovalPolicy): ToolApprovalPolicy {
-  if (
-    policy.default !== "auto"
-    || policy.rules.some((rule) =>
-      (rule.match === MAIL_SEND || isWildcardMatch(rule.match, MAIL_SEND))
-      && targetMatchesScope(rule.target, "gsv")
-    )
-  ) {
-    return policy;
-  }
-  return {
-    ...policy,
-    rules: [...policy.rules, { match: MAIL_SEND, action: "ask" }],
-  };
 }
 
 export function resolveToolApprovalTarget(syscall: string, args?: ApprovalWireValue): string {

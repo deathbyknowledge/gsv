@@ -44,6 +44,8 @@ export async function startProcessRuntimeHarness(options: {
   workersAi?: boolean;
   instances?: boolean;
   pds?: boolean;
+  /** The profile choice the person makes at setup. */
+  profile?: "public" | "private";
   managedMailQueue?: string;
 } = {}): Promise<ProcessRuntimeHarness> {
   const ai = await startOpenAiFixture();
@@ -68,6 +70,7 @@ export async function startProcessRuntimeHarness(options: {
       password: PASSWORD,
       agentName: "process-runtime-agent",
       timezone: "Europe/Amsterdam",
+      profile: options.profile,
     });
 
     client = new GSVClient({

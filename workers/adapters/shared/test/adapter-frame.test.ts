@@ -91,6 +91,35 @@ describe("handleAdapterFrame", () => {
     expect(tracked.cancelled()).toBe("Adapter request completed");
   });
 
+  describe("an action to open", () => {
+    const action = { kind: "open" as const, label: "Open in People", url: "https://ada.ship.space/people?contact=contact%3Abo" };
+
+    it("reaches an adapter without buttons as a line of text", async () => {
+      const send = vi.fn(async () => ({ ok: true as const, messageId: "provider-1" }));
+      await handleAdapterFrame("test", CONTEXT, sendFrame({ text: "💬 Bo: hello", action }), { send });
+      expect(send.mock.calls[0]?.[0]).toMatchObject({
+        message: { text: "💬 Bo: hello\nOpen in People: https://ada.ship.space/people?contact=contact%3Abo" },
+      });
+      expect(send.mock.calls[0]?.[0].message).not.toHaveProperty("action");
+    });
+
+    it("reaches an adapter that shows buttons as itself", async () => {
+      const send = vi.fn(async () => ({ ok: true as const, messageId: "provider-1" }));
+      await handleAdapterFrame("test", CONTEXT, sendFrame({ text: "💬 Bo: hello", action }), { send, actions: true });
+      expect(send.mock.calls[0]?.[0]).toMatchObject({ message: { text: "💬 Bo: hello", action } });
+    });
+
+    it.each([
+      { ...action, label: "A label far too long for a button" },
+      { ...action, url: "javascript:alert(1)" },
+    ])("is refused when no messenger could show it", async (invalid) => {
+      const send = vi.fn(async () => ({ ok: true as const, messageId: "provider-1" }));
+      const result = await handleAdapterFrame("test", CONTEXT, sendFrame({ action: invalid }), { send });
+      expect(result).toMatchObject({ ok: false, error: { code: 400 } });
+      expect(send).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([false, true])("preserves provider diagnostics through the public frame (ambiguous: %s)", async (ambiguous) => {
     const diagnostics = { exceptionName: "APIError", exceptionMessage: "Provider rejected the delivery", errorCode: "131026", providerStatusCode: 400, providerRequestId: "trace-123" };
     const result = await handleAdapterFrame("test", CONTEXT, sendFrame(), {

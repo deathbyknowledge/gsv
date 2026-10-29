@@ -159,6 +159,8 @@ export type SysSetupArgs = {
   timezone?: string;
   /** Initial response-language preference, normally derived from the client (BCP 47). */
   language?: string;
+  /** The owner's choice for their profile on the open network, where `setupFeatures` lists `profile`; without one it stays private. */
+  profile?: "public" | "private";
   machine?: {
     peerId: string;
     label?: string;
@@ -596,49 +598,6 @@ export type SysTokenRevokeArgs = {
 
 export type SysTokenRevokeResult = {
   revoked: boolean;
-};
-
-export type SysLinkConsumeArgs = {
-  code: string;
-};
-
-export type SysLinkConsumeResult = {
-  linked: boolean;
-  link?: {
-    adapter: string;
-    accountId: string;
-    actorId: string;
-    uid: number;
-    createdAt: number;
-  };
-};
-
-export type SysLinkArgs = {
-  adapter: string;
-  accountId: string;
-  actorId: string;
-  uid?: number;
-};
-
-export type SysLinkResult = {
-  linked: boolean;
-  link?: {
-    adapter: string;
-    accountId: string;
-    actorId: string;
-    uid: number;
-    createdAt: number;
-  };
-};
-
-export type SysUnlinkArgs = {
-  adapter: string;
-  accountId: string;
-  actorId: string;
-};
-
-export type SysUnlinkResult = {
-  removed: boolean;
 };
 
 export type SysLinkListArgs = {

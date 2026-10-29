@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   captureSignals, mockGeneration, processTestConfig, generationRun, assistantResponse, runInProcess,
   ROOT_IDENTITY, initProcess, messageAction, offeredTools, setHistoryPolicy, testUsage,
+  followRunApprovalPolicy,
 } from "./do-test-harness";
 
 describe("model context", () => {
@@ -500,6 +501,7 @@ describe("model context", () => {
       };
 
       process.store.messages.appendMessage("user", "run pwd");
+      followRunApprovalPolicy(process);
       process.runs.active = generationRun("run-chat-tool-markup-text", processTestConfig(pid, {
         provider: "openai",
         model: "gpt-test",
@@ -703,6 +705,59 @@ describe("model context", () => {
       status: "ok",
       reason: "run.yielded",
     });
+  });
+
+  it("keeps its other models after a fallback, so a later failure in the same run can still fall back", async () => {
+    const pid = "mech-chat-fallback-keeps-stack";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    const calls = await runInProcess(stub, async (process) => {
+      const calls: string[] = [];
+      mockGeneration(process, async (request: any) => {
+        calls.push(request.config.model);
+        const failed = (errorMessage: string) => assistantResponse([], {
+          provider: request.config.provider, model: request.config.model,
+          stopReason: "error", errorMessage, usage: testUsage(1, 0),
+        });
+        // The included model fails during an outage, the run moves to the model on the person's
+        // computer, and that computer drops off before the run's next model call.
+        if (calls.length === 1) return failed("Managed inference failed");
+        if (calls.length === 2) {
+          return assistantResponse([{ type: "toolCall", id: "progress", name: "Send", arguments: { text: "Looking." } }], {
+            provider: request.config.provider, model: request.config.model, usage: testUsage(2, 3),
+          });
+        }
+        if (calls.length === 3) return failed("Device offline: laptop");
+        return assistantResponse([messageAction("found it", "final-message")], {
+          provider: request.config.provider, model: request.config.model, usage: testUsage(2, 3),
+        });
+      }, async () => "unused");
+
+      process.store.messages.appendMessage("user", "when is boxing");
+      process.runs.active = generationRun("run-fallback-keeps-stack", processTestConfig(pid, {
+        provider: "gsv",
+        model: "default",
+        fallbacks: [{
+          modelId: "laptop-model",
+          modelName: "Laptop model",
+          provider: "openai-codex",
+          model: "codex-model",
+          apiKey: "",
+          transportTarget: "laptop",
+          maxTokens: 4096,
+          contextWindowTokens: 128000,
+          contextWindowSource: "config",
+          generationTimeoutMs: 180000,
+          generationStreaming: "auto",
+        }],
+      }));
+      await process.run.runTick("run-fallback-keeps-stack");
+      // The progress message keeps the run going; its next tick follows on its own.
+      await vi.waitFor(() => expect(process.runs.active).toBeNull());
+      return calls;
+    });
+
+    expect(calls).toEqual(["default", "codex-model", "codex-model", "default"]);
   });
 
   it("reapplies context policy after switching to a smaller fallback model", async () => {

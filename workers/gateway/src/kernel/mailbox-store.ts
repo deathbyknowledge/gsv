@@ -63,6 +63,8 @@ export type RecordMailMessageInput = Omit<
   | "createdAt"
 > & {
   intakeId: string;
+  /** The message's plain text; its start is indexed for word search. */
+  bodyText?: string;
 };
 
 export type MailIntakeRecord = {
@@ -76,8 +78,11 @@ export type MailIntakeRecord = {
 
 export type MailMessagePage = {
   messages: MailMessageRecord[];
-  count: number;
+  /** Pass as `before` for the next older page; absent on the last page. */
+  next?: string;
 };
+
+export type MailPageOptions = { limit?: number; before?: string };
 
 export type MailOutboundRecord = ManagedOutboundMailDraft & {
   ownerUid: number;
@@ -292,9 +297,10 @@ export class MailboxStore {
            subject, sent_at,
            received_at, raw_path, text_path, size_bytes, attachments_json,
            summary, category, requires_attention, confidence, summarized_at,
-           event_delivered_at, created_at
+           event_delivered_at, created_at, search_rowid
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
-                   NULL, NULL, NULL, NULL, NULL, ?)`,
+                   NULL, NULL, NULL, NULL, NULL, ?,
+                   (SELECT COALESCE(MAX(search_rowid), 0) + 1 FROM mail_messages))`,
         input.messageId,
         input.mailboxId,
         input.digest,
@@ -313,6 +319,19 @@ export class MailboxStore {
         input.sizeBytes,
         JSON.stringify(input.attachments),
         createdAt,
+      );
+      this.sql.exec(
+        `INSERT INTO mail_search (rowid, text)
+         SELECT search_rowid, ? FROM mail_messages WHERE message_id = ?`,
+        [
+          input.subject,
+          input.displayFrom,
+          input.envelopeFrom,
+          ...input.to,
+          ...input.cc,
+          input.bodyText?.slice(0, MAIL_SEARCH_BODY_CHARS),
+        ].filter(Boolean).join(" "),
+        input.messageId,
       );
     } catch (error) {
       this.sql.exec(
@@ -374,6 +393,11 @@ export class MailboxStore {
       summary.requiresAttention ? 1 : 0,
       summary.confidence,
       Date.now(),
+      messageId,
+    );
+    this.sql.exec(
+      `INSERT INTO mail_summary_search (rowid, text)
+       SELECT search_rowid, summary FROM mail_messages WHERE message_id = ?`,
       messageId,
     );
     const message = this.getMessageById(messageId);
@@ -593,54 +617,57 @@ export class MailboxStore {
     return row ? messageFromRow(row) : null;
   }
 
-  list(ownerUid: number, limit = 50, offset = 0): MailMessagePage {
-    return this.query(ownerUid, undefined, limit, offset);
+  list(ownerUid: number, options: MailPageOptions = {}): MailMessagePage {
+    return this.page(ownerUid, "", [], options);
   }
 
-  search(ownerUid: number, query: string, limit = 50, offset = 0): MailMessagePage {
-    return this.query(ownerUid, query, limit, offset);
-  }
-
-  private query(
-    ownerUid: number,
-    query: string | undefined,
-    limitValue: number,
-    offsetValue: number,
-  ): MailMessagePage {
-    const limit = normalizePageNumber(limitValue, 1, 200, 50);
-    const offset = normalizePageNumber(offsetValue, 0, 1_000_000, 0);
-    const normalizedQuery = query?.trim().toLowerCase() ?? "";
-    const filter = normalizedQuery
-      ? `AND (
-          instr(LOWER(COALESCE(mail_messages.subject, '')), ?) > 0
-          OR instr(LOWER(COALESCE(mail_messages.display_from, '')), ?) > 0
-          OR instr(LOWER(mail_messages.envelope_from), ?) > 0
-          OR instr(LOWER(COALESCE(mail_messages.summary, '')), ?) > 0
-        )`
-      : "";
-    const args: unknown[] = [ownerUid];
-    if (normalizedQuery) {
-      args.push(normalizedQuery, normalizedQuery, normalizedQuery, normalizedQuery);
+  /** Messages containing every word of `query`, each matched as a word prefix. */
+  search(ownerUid: number, query: string, options: MailPageOptions = {}): MailMessagePage {
+    const trimmed = query.trim();
+    if (!trimmed || trimmed.length > 256) {
+      throw new Error("Mail search requires between 1 and 256 characters");
     }
-    const count = this.sql.exec<{ count: number }>(
-      `SELECT COUNT(*) AS count
-         FROM mail_messages
-         JOIN mailboxes USING (mailbox_id)
-        WHERE mailboxes.owner_uid = ? ${filter}`,
-      ...args,
-    ).toArray()[0]?.count ?? 0;
+    const terms = trimmed.split(/\s+/);
+    if (terms.length > 32) throw new Error("Mail search accepts at most 32 words");
+    // Each word may match the headers and body or the summary, so words are matched one at a time.
+    const matches = terms.map((term) => `"${term.replaceAll('"', '""')}"*`);
+    return this.page(
+      ownerUid,
+      matches.map(() => `AND mail_messages.search_rowid IN (
+         SELECT rowid FROM mail_search WHERE mail_search MATCH ?
+         UNION SELECT rowid FROM mail_summary_search WHERE mail_summary_search MATCH ?
+       )`).join("\n"),
+      matches.flatMap((match) => [match, match]),
+      options,
+    );
+  }
+
+  private page(
+    ownerUid: number,
+    filter: string,
+    filterArgs: unknown[],
+    options: MailPageOptions,
+  ): MailMessagePage {
+    const limit = normalizePageNumber(options.limit ?? 50, 1, 200, 50);
+    const before = options.before === undefined ? null : parseMailCursor(options.before);
     const rows = this.sql.exec<MailMessageRow>(
       `SELECT mail_messages.*
          FROM mail_messages
          JOIN mailboxes USING (mailbox_id)
         WHERE mailboxes.owner_uid = ? ${filter}
+          ${before ? "AND (mail_messages.received_at, mail_messages.message_id) < (?, ?)" : ""}
         ORDER BY mail_messages.received_at DESC, mail_messages.message_id DESC
-        LIMIT ? OFFSET ?`,
-      ...args,
-      limit,
-      offset,
+        LIMIT ?`,
+      ownerUid,
+      ...filterArgs,
+      ...(before ? [before.receivedAt, before.messageId] : []),
+      limit + 1,
     ).toArray();
-    return { messages: rows.map(messageFromRow), count };
+    const messages = rows.slice(0, limit).map(messageFromRow);
+    const last = messages.at(-1);
+    return rows.length > limit && last
+      ? { messages, next: `${last.receivedAt}.${last.messageId}` }
+      : { messages };
   }
 
   private recordIntake(
@@ -855,6 +882,18 @@ function parseAttachments(value: string): MailAttachmentRecord[] {
     throw new Error("Stored mail attachments are invalid");
   }
   return parsed.data;
+}
+
+// Enough to find a message by what it says without indexing whole newsletters.
+const MAIL_SEARCH_BODY_CHARS = 16_384;
+
+type MailCursor = { receivedAt: number; messageId: string };
+
+function parseMailCursor(cursor: string): MailCursor {
+  const match = /^(\d+)\.(.+)$/.exec(cursor);
+  const receivedAt = match ? Number(match[1]) : NaN;
+  if (!match || !Number.isSafeInteger(receivedAt)) throw new Error("Invalid mail page cursor");
+  return { receivedAt, messageId: match[2] };
 }
 
 function normalizePageNumber(

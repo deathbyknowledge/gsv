@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { Permissions } from "./Permissions";
+import { Select, type SelectProps } from "../../../components/ui/Select";
 import { MessengerConnections } from "./MessengerConnections";
 import { MessengerPairing } from "./Telegram";
 
@@ -52,7 +53,8 @@ it("reorders permission rules with arrows and removes a rule below its tool sele
     await vi.waitFor(() => expect(screen.nodes().filter((node) => node.props.class === "settings-rule-tool")).toHaveLength(2));
     await act(() => screen.nodes().find((node) => node.props["aria-label"] === "move down")!.props.onClick?.());
     const toolGroup = screen.nodes().find((node) => node.props.class === "settings-rule-tool")!;
-    expect(collectNodes(toolGroup).find((node) => node.type === "select")!.props.value).toBe("web.*");
+    // SAFETY: The tool group holds one design-system Select.
+    expect((collectNodes(toolGroup).find((node) => node.type === Select) as VNode<SelectProps>).props.selected).toBe("web.*");
     const remove = collectNodes(toolGroup).find((node) => node.type === "button" && collectText(node) === "remove")!;
     expect(remove).toBeDefined();
     await act(() => remove.props.onClick?.());

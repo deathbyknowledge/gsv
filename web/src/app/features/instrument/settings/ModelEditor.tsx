@@ -2,6 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useEffect, useLayoutEffect, useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
+import { Select } from "../../../components/ui/Select";
+import { TextInput } from "../../../components/ui/TextInput";
 import { aiProviderOptionsForFeatures, fixedAiProviderModel } from "../../../domain/aiProviders";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useSession } from "../../../services/session/SessionProvider";
@@ -150,14 +152,24 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
   useLayoutEffect(() => { onDirty(dirty || pending); }, [dirty, pending, onDirty]);
   useLayoutEffect(() => () => onDirty(false), [onDirty]);
   const change = (key: string, value: string) => { setValues((current) => ({ ...current, [`config/ai/${key}`]: value })); save.reset(); };
+  const locked = !editable || pending;
   const canSave = editable && !!provider && !!model.trim() && !duplicateName && !pending && dirty
     && (!custom || !!values["config/ai/base_url"]?.trim())
+    && (!codex || !!transport)
     && (!testRequired || !codex || (authenticated && !!transport && transport !== "gsv"));
-  const connectionOrigin = <label>{t("settings.models.connectThrough")}<select name="transport" value={transport} onChange={(event) => change("transport_target", event.currentTarget.value)} required={codex}>
-    {codex ? <option value="" disabled>{t("settings.models.chooseMachine")}</option> : <option value="gsv">{t("settings.models.cloudHome")}</option>}
-    {transport && transport !== "gsv" && !fetchTargets.some((target) => target.deviceId === transport) && <option value={transport}>{t("settings.unavailableOption", { value: transport })}</option>}
-    {fetchTargets.map((target) => <option key={target.deviceId} value={target.deviceId}>{target.online ? target.label || target.deviceId : t("settings.models.offline", { name: target.label || target.deviceId })}</option>)}
-  </select></label>;
+  const connectionOrigin = <Select
+    block
+    label={t("settings.models.connectThrough")}
+    placeholder={codex ? t("settings.models.chooseMachine") : ""}
+    disabled={locked}
+    selected={transport}
+    onSelect={(value) => change("transport_target", value)}
+    options={[
+      ...(codex ? [] : [{ label: t("settings.models.cloudHome"), value: "gsv" }]),
+      ...(transport && transport !== "gsv" && !fetchTargets.some((target) => target.deviceId === transport) ? [{ label: t("settings.unavailableOption", { value: transport }), value: transport }] : []),
+      ...fetchTargets.map((target) => ({ label: target.online ? target.label || target.deviceId : t("settings.models.offline", { name: target.label || target.deviceId }), value: target.deviceId })),
+    ]}
+  />;
   const error = save.error ?? login.error ?? (codex ? auth.error : null);
 
   return <div class="settings-model-editor">
@@ -168,18 +180,30 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
       save.mutate({ name: displayName, values: { ...values, "config/ai/model": model, "config/ai/transport_target": fixedModel ? "" : values["config/ai/transport_target"] || (codex ? transport : "") }, first: makeFirst, clearApiKey: clearApiKey || (connectionChanged && !values["config/ai/api_key"]?.trim()) });
     }}>
       <fieldset disabled={!editable || pending}>
-        <label>{t("settings.models.provider")}<select name="provider" value={provider} required onChange={(event) => {
-          const next = event.currentTarget.value;
-          setValues({
-            "config/ai/provider": next,
-            "config/ai/oauth_account_key": next === "openai-codex" ? crypto.randomUUID() : "",
-          });
-          setClearApiKey(false);
-          setSignedIn(false);
-          setSignInError(null);
-          login.reset();
-          save.reset();
-        }}><option value="" disabled>{t("settings.models.chooseProvider")}</option>{provider && !providers.some((option) => option.value === provider) && <option value={provider}>{provider}</option>}{providers.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        <Select
+          block
+          label={t("settings.models.provider")}
+          placeholder={t("settings.models.chooseProvider")}
+          disabled={locked}
+          selected={provider}
+          options={[
+            ...(provider && !providers.some((option) => option.value === provider) ? [{ label: provider, value: provider }] : []),
+            ...providers.map((option) => ({ label: option.label, value: option.value })),
+          ]}
+          onSelect={(next) => {
+            // Re-picking the current provider is not a change; a native select never reported it.
+            if (next === provider) return;
+            setValues({
+              "config/ai/provider": next,
+              "config/ai/oauth_account_key": next === "openai-codex" ? crypto.randomUUID() : "",
+            });
+            setClearApiKey(false);
+            setSignedIn(false);
+            setSignInError(null);
+            login.reset();
+            save.reset();
+          }}
+        />
         {provider && <>
           {codex && <div class="settings-model-login">
             <p class="settings-muted">{t("settings.models.codexHint")}</p>
@@ -191,30 +215,54 @@ export function ModelEditor({ account, config, models, profile, active, onDirty,
             </>}
             {signInError && <p class="settings-error" role="alert">{t(signInError)}</p>}
           </div>}
-          {!fixedModel && <label>{t("settings.models.model")}<input name="model" value={model} required autoComplete="off" placeholder={t("settings.models.modelPlaceholder")} onInput={(event) => change("model", event.currentTarget.value)} /></label>}
+          {!fixedModel && <TextInput label={t("settings.models.model")} value={model} placeholder={t("settings.models.modelPlaceholder")} disabled={locked} inputProps={{ name: "model", required: true, autoComplete: "off" }} onChange={(value) => change("model", value)} />}
           {fixedModel && <p class="settings-muted">{t("settings.models.includedHint")}</p>}
-          {custom && <label>{t("settings.models.endpointUrl")}<input name="base-url" type="url" value={values["config/ai/base_url"] ?? ""} placeholder="https://…/v1" required onInput={(event) => change("base_url", event.currentTarget.value)} /></label>}
+          {custom && <TextInput label={t("settings.models.endpointUrl")} type="url" value={values["config/ai/base_url"] ?? ""} placeholder="https://…/v1" disabled={locked} inputProps={{ name: "base-url", required: true }} onChange={(value) => change("base_url", value)} />}
           {!codex && !fixedModel && provider !== "workers-ai" && <>
-            <label>{t("settings.models.apiKey")}
-              {hasStoredKey && !connectionChanged && !clearApiKey && <small>{t("settings.models.keySaved")}</small>}
-              {hasStoredKey && connectionChanged && <small>{t("settings.models.keyConnectionChanged")}</small>}
-              <input name="api-key" type="password" value={values["config/ai/api_key"] ?? ""} autoComplete="new-password" onInput={(event) => { setClearApiKey(false); change("api_key", event.currentTarget.value); }} />
-            </label>
+            <TextInput
+              label={t("settings.models.apiKey")}
+              description={hasStoredKey && !connectionChanged && !clearApiKey ? t("settings.models.keySaved") : hasStoredKey && connectionChanged ? t("settings.models.keyConnectionChanged") : ""}
+              type="password"
+              value={values["config/ai/api_key"] ?? ""}
+              placeholder=""
+              disabled={locked}
+              inputProps={{ name: "api-key", autoComplete: "new-password" }}
+              onChange={(value) => { setClearApiKey(false); change("api_key", value); }}
+            />
             {hasStoredKey && !connectionChanged && <label class="settings-check"><input name="clear-api-key" type="checkbox" checked={clearApiKey} onChange={(event) => { setClearApiKey(event.currentTarget.checked); change("api_key", ""); }} />{t("settings.models.removeKey")}</label>}
           </>}
           {codex && <>{connectionOrigin}<p class="settings-muted">{t(fetchTargets.length === 0 ? "settings.models.codexNoMachine" : "settings.models.codexChooseMachine")}</p></>}
-          <label>{t("settings.models.name")} <small>{t("settings.models.nameHint")}</small><input name="display-name" value={name} maxLength={80} placeholder={model || t("settings.models.namePlaceholder")} aria-invalid={duplicateName} onInput={(event) => { setName(event.currentTarget.value); save.reset(); }} /></label>
-          {duplicateName && <p class="settings-error" role="alert">{t("settings.models.duplicateName")}</p>}
+          <TextInput
+            label={t("settings.models.name")}
+            description={t("settings.models.nameHint")}
+            value={name}
+            placeholder={model || t("settings.models.namePlaceholder")}
+            status={duplicateName ? "error" : "none"}
+            message={duplicateName ? t("settings.models.duplicateName") : ""}
+            disabled={locked}
+            inputProps={{ name: "display-name", maxLength: 80 }}
+            onChange={(value) => { setName(value); save.reset(); }}
+          />
           <details class="settings-model-options"><summary>{t("settings.models.moreOptions")}</summary>
             {!fixedModel && !codex && <>
               {connectionOrigin}
-              {!custom && <label>{t("settings.models.endpointUrl")} <small>{t("settings.models.optional")}</small><input name="base-url" type="url" value={values["config/ai/base_url"] ?? ""} onInput={(event) => change("base_url", event.currentTarget.value)} /></label>}
-              <label>{t("settings.models.apiFormat")}<select name="api-format" value={values["config/ai/provider_style"] || "auto"} onChange={(event) => change("provider_style", event.currentTarget.value)}>
-                <option value="auto">{t("settings.models.automatic")}</option><option value="openai-chat-completions">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option>
-              </select></label>
+              {!custom && <TextInput label={t("settings.models.endpointUrl")} description={t("settings.models.optional")} type="url" value={values["config/ai/base_url"] ?? ""} placeholder="" disabled={locked} inputProps={{ name: "base-url" }} onChange={(value) => change("base_url", value)} />}
+              <Select
+                block
+                label={t("settings.models.apiFormat")}
+                disabled={locked}
+                selected={values["config/ai/provider_style"] || "auto"}
+                onSelect={(value) => change("provider_style", value)}
+                options={[
+                  { label: t("settings.models.automatic"), value: "auto" },
+                  { label: "OpenAI Chat Completions", value: "openai-chat-completions" },
+                  { label: "OpenAI Responses", value: "openai-responses" },
+                  { label: "Anthropic Messages", value: "anthropic-messages" },
+                ]}
+              />
             </>}
-            <label>{t("settings.models.maxTokens")}<input name="max-tokens" type="number" min="1" step="1" value={values["config/ai/max_tokens"] ?? ""} placeholder={t("settings.models.providerDefault")} onInput={(event) => change("max_tokens", event.currentTarget.value)} /></label>
-            <label>{t("settings.models.contextTokens")}<input name="context-window" type="number" min="1" step="1" value={values["config/ai/context_window_tokens"] ?? ""} placeholder={t("settings.models.automatic")} onInput={(event) => change("context_window_tokens", event.currentTarget.value)} /></label>
+            <TextInput label={t("settings.models.maxTokens")} type="number" value={values["config/ai/max_tokens"] ?? ""} placeholder={t("settings.models.providerDefault")} disabled={locked} inputProps={{ name: "max-tokens", min: 1, step: 1 }} onChange={(value) => change("max_tokens", value)} />
+            <TextInput label={t("settings.models.contextTokens")} type="number" value={values["config/ai/context_window_tokens"] ?? ""} placeholder={t("settings.models.automatic")} disabled={locked} inputProps={{ name: "context-window", min: 1, step: 1 }} onChange={(value) => change("context_window_tokens", value)} />
           </details>
           {!initial.profile && <label class="settings-check"><input name="make-first" type="checkbox" checked={makeFirst} onChange={(event) => setMakeFirst(event.currentTarget.checked)} />{t("settings.models.useThisFirst")}</label>}
         </>}

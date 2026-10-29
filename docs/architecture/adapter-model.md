@@ -243,6 +243,15 @@ ordinary `proc.hil` request through a Kernel-derived, interaction-scoped
 linked-human peer. The adapter service account never receives ambient
 `proc.hil` authority, and provider reply threading is not authorization.
 
+An `adapter.send` may also carry one `action`: a label of at most 20 characters
+and an http or https address to open. Adapters that declare native actions show
+it as a link button: Telegram under the message, WhatsApp as a `cta_url` message
+inside the 24-hour window. An address the provider can't open from a button,
+media, approval controls and WhatsApp's out-of-window template keep the link as
+a line of text under the message, and adapters without native actions always
+receive it that way from the shared frame handler. The action is part of the
+delivery's content, so a replay with a different action is a different delivery.
+
 An approval for a deleted or inaccessible Process is terminal. The Kernel
 preserves the protocol error code, so the adapter resolves the callback as stale
 and continues delivering later messages. Temporary transport or service failures
@@ -341,7 +350,7 @@ worker failure cannot leave a durable record without a wake-up. This uses the
 account's existing storage and wake-up mechanism rather than introducing a
 second ingress scheduler or blob store.
 
-Command replies and link challenges use the receipt's stable delivery ids. The
+Command replies use the receipt's stable delivery ids. The
 Kernel prepares and completes the receipt with the
 exact result. Before provider delivery, the adapter replaces its durable raw
 payload with normalized response records. It then passes each response through
@@ -349,8 +358,8 @@ the same account-local outbound ledger used by normal sends. A response retry
 therefore cannot re-enter the Kernel or renormalize actor identity. A crash
 before that transition can replay the stable Kernel receipt without repeating
 side effects; after it, a restart replays only the stored response with its
-stable delivery id. Link challenges are skipped after their expiry, and
-retry-safe response failures stop after ten durably counted attempts. Completed
+stable delivery id. A response with an expiry, such as a pairing code, is
+skipped once it expires, and retry-safe response failures stop after ten durably counted attempts. Completed
 Kernel receipts are capped and retained for seven days.
 
 Outbound messages cross the adapter-worker boundary with a stable
@@ -381,7 +390,7 @@ Message remains in conversation history and its delivery outcome remains
 inspectable in Process activity. Approval attempt one is durably scheduled
 before Process acknowledges the HIL signal; provider notification failure
 therefore cannot clear or fail a pending approval.
-Link challenges and adapter command responses use this same outbound ledger.
+Adapter command responses use this same outbound ledger.
 The Kernel derives their delivery ids before the
 durable ingress claim and returns normalized response metadata. Provider
 delivery begins only after the inbound Gateway RPC returns, so it does not make

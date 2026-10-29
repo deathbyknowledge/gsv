@@ -210,7 +210,9 @@ Inspect descriptors with:
 The `gsv` target provider runs inside the Gateway. It implements `fs.*` with
 `GsvFs`, `shell.exec` with the native `just-bash` driver, and `net.fetch` from
 the Worker's network position. Kernel control-plane domains are dispatched
-separately and are not part of the target.
+separately and are not part of the target. Native shell commands hold at most
+16 MiB of data each (see [configuration](configuration.md)); larger data
+processing belongs on a machine target.
 
 Important native paths:
 

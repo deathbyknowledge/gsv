@@ -39,6 +39,7 @@ import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
 import type { MailboxStore } from "./mailbox-store";
 import type { ResponsibilityStore } from "./responsibility-store";
+import type { OwnerNoticeStore } from "./owner-notice-store";
 import type { ShipEventStore } from "./ship-event-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import type { FederationStore } from "./federation-store";
@@ -84,6 +85,7 @@ export type KernelContext = {
   mailboxes: MailboxStore;
   responsibilities: ResponsibilityStore;
   shipEvents: ShipEventStore;
+  ownerNotices: OwnerNoticeStore;
   welcome: InitialOnboarding;
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;
@@ -126,6 +128,8 @@ export type KernelContext = {
   reconcileResponsibilityWake: (ownerUid: number) => Promise<void>;
   /** Deliver the owner's queued Ship events, in order, after the producer's transaction commits. */
   queueShipEvents: (ownerUid: number) => Promise<void>;
+  /** Send the owner's pending notices after the producer's transaction commits. */
+  queueOwnerNotices: (ownerUid: number) => Promise<void>;
   trackBrowserHandoff: (ownerUid: number, handoff: BrowserHandoff) => Promise<void>;
   scheduleManagedOutboundEnqueue: (
     outboundId: string,

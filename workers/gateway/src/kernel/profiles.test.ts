@@ -18,8 +18,8 @@ import type { Kernel } from "./do";
 import { ConfigStore } from "./config";
 import { ProfileStore } from "./profile-store";
 import {
-  ensureDefaultProfile, ensurePublishedProfile, followHostTakedowns, handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet,
-  handleProfilePublish, handleProfileResolve, handleProfileUnpublish, handleProfileUpdate, ownerDisplayName,
+  ensurePublishedProfile, followHostTakedowns, handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet,
+  handleProfilePublish, handleProfileResolve, handleProfileUnpublish, handleProfileUpdate, ownerDisplayName, recordSetupProfileChoice,
   publicProfileAvatar, publicProfileProjection, readPublicProfile,
 } from "./profiles";
 import { KERNEL_V059_PUBLIC_PROFILES } from "./schema/v059_public_profiles";
@@ -406,11 +406,11 @@ describe("the profile on Bluesky", () => {
       expect(records.has(`${BLUESKY}/self`)).toBe(false);
       // A sign-in while it is down writes nothing.
       const writes = repository.applyWrites.mock.calls.length;
-      await ensureDefaultProfile(OWNER.uid, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenCalledTimes(writes);
 
       repository.takedowns.mockResolvedValue([]);
-      await ensureDefaultProfile(OWNER.uid, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenLastCalledWith([blueskyPut({ displayName: DRAFT.displayName, description: "Edited while down" })]);
       expect(records.has(`${BLUESKY}/self`)).toBe(true);
     });
@@ -424,7 +424,7 @@ describe("the profile on Bluesky", () => {
       await handleProfilePublish({ expectedRevision: 1 }, ctx);
       expect(repository.applyWrites.mock.lastCall![0][1]).toEqual(blueskyPut({ displayName: "local" }));
       repository.takedowns.mockResolvedValue([]);
-      await ensureDefaultProfile(OWNER.uid, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenLastCalledWith([blueskyPut({ displayName: "local", avatar: PICTURE })]);
     });
   });
@@ -436,13 +436,12 @@ describe("the profile on Bluesky", () => {
       handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
       // As an earlier release left it: the record published, with nothing beside it.
       ctx.profiles.publish(OWNER.uid, 1, "bafyrecord0", record, null, null);
-      ctx.config.set(`users/${OWNER.uid}/profile/default_published`, "1");
-      await ensureDefaultProfile(OWNER.uid, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([blueskyPut({ displayName: DRAFT.displayName, description: DRAFT.about })]);
       expect(ctx.profiles.published(OWNER.uid)).toEqual({ cid: "bafyrecord0", record });
 
       const asked = host.getInstallation.mock.calls.length;
-      await ensureDefaultProfile(OWNER.uid, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
       expect(host.getInstallation).toHaveBeenCalledTimes(asked);
       expect(repository.applyWrites).toHaveBeenCalledOnce();
     });
@@ -454,8 +453,7 @@ describe("the profile on Bluesky", () => {
       const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: DRAFT.displayName, contactPolicy: "requests" };
       handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, about: "" } }, ctx);
       ctx.profiles.publish(OWNER.uid, 1, "bafyrecord0", record, null, null);
-      ctx.config.set(`users/${OWNER.uid}/profile/default_published`, "1");
-      await Promise.all([ensurePublishedProfile(OWNER.uid, ctx), ensureDefaultProfile(OWNER.uid, ctx)]);
+      await Promise.all([ensurePublishedProfile(OWNER.uid, ctx), ensurePublishedProfile(OWNER.uid, ctx)]);
       expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([blueskyPut({ displayName: DRAFT.displayName })]);
       // One read of the takedowns, and the commit.
       expect(host.getInstallation).toHaveBeenCalledTimes(2);
@@ -489,7 +487,6 @@ describe("the profile on Bluesky", () => {
       // As an earlier release left it: the record published, with nothing beside it.
       instance.profiles.update(OWNER.uid, 0, DRAFT);
       instance.profiles.publish(OWNER.uid, 1, "bafyrecord0", record, null, null);
-      instance.config.set(`users/${OWNER.uid}/profile/default_published`, "1");
     });
 
     await runInDurableObject(await kernel(), async (instance: Kernel) => {
@@ -610,30 +607,84 @@ describe("an operator's change to the host's takedowns", () => {
   });
 });
 
-describe("the default profile", () => {
-  it("publishes a public, request-open profile named by the Ship handle once, so an unpublish stays private", async () => {
+describe("the owner's profile at sign-in", () => {
+  it("publishes nothing until the owner chooses, from sign-in or any surface", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository } = profileContext(storage);
-      await ensureDefaultProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)?.record).toEqual({ $type: "space.ship.profile", displayName: "local", contactPolicy: "requests" });
-      expect(repository.applyWrites.mock.calls[0]![0][1]).toEqual(blueskyPut({ displayName: "local" }));
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 1, published: { revision: 1 } });
-      expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
-      await ensureDefaultProfile(OWNER.uid, ctx);
-      expect(repository.applyWrites).toHaveBeenCalledOnce();
-      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
-      await ensureDefaultProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 2 });
+      const { ctx, repository, host } = profileContext(storage);
+      await ensurePublishedProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.draft(OWNER.uid)).toBeNull();
+      expect(repository.applyWrites).not.toHaveBeenCalled();
+      expect(host.getInstallation).not.toHaveBeenCalled();
     });
   });
 
-  it("leaves no timer running once sign-in has published, or had nothing to publish", async () => {
+  it("saves a private choice as a draft named by the Ship handle and publishes nothing", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository, host } = profileContext(storage);
+      recordSetupProfileChoice(OWNER.uid, "private", ctx);
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 1, draft: { displayName: "local", about: "", contactPolicy: "requests" } });
+      await ensurePublishedProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+      expect(repository.applyWrites).not.toHaveBeenCalled();
+      expect(host.getInstallation).not.toHaveBeenCalled();
+    });
+  });
+
+  it("publishes a public choice once at sign-in, as the owner has since edited it, so an unpublish stays private", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      recordSetupProfileChoice(OWNER.uid, "public", ctx);
+      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, about: "" } }, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published(OWNER.uid)?.record).toEqual({ $type: "space.ship.profile", displayName: DRAFT.displayName, contactPolicy: "requests" });
+      expect(repository.applyWrites.mock.calls[0]![0][1]).toEqual(blueskyPut({ displayName: DRAFT.displayName }));
+      expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 2, published: { revision: 2 } });
+      expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(OWNER.uid, "profile.changed");
+      await ensurePublishedProfile(OWNER.uid, ctx);
+      expect(repository.applyWrites).toHaveBeenCalledOnce();
+      await handleProfileUnpublish({ expectedRevision: 2 }, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+    });
+  });
+
+  it("lets a later publish or unpublish in People replace a public choice that hasn't published yet", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      recordSetupProfileChoice(OWNER.uid, "public", ctx);
+      repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
+      await expect(ensurePublishedProfile(OWNER.uid, ctx)).rejects.toThrow("unavailable");
+      await handleProfilePublish({ expectedRevision: 1 }, ctx);
+      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
+      handleProfileUpdate({ expectedRevision: 2, draft: { ...DRAFT, about: "Kept private" } }, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+    });
+  });
+
+  it("retries a public choice at the next sign-in after a failed publish", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx, repository } = profileContext(storage);
+      recordSetupProfileChoice(OWNER.uid, "public", ctx);
+      repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
+      await expect(ensurePublishedProfile(OWNER.uid, ctx)).rejects.toThrow("unavailable");
+      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+      await ensurePublishedProfile(OWNER.uid, ctx);
+      expect(ctx.profiles.published(OWNER.uid)?.record).toMatchObject({ displayName: "local", contactPolicy: "requests" });
+    });
+  });
+
+  it("leaves no timer running once sign-in has brought a profile up to date, or had nothing to do", async () => {
     const kernel = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
     await runInDurableObject(kernel, async (_instance: Kernel, state) => {
       const { ctx, repository } = profileContext(state.storage);
-      await ensureDefaultProfile(OWNER.uid, ctx);
-      await ensureDefaultProfile(OWNER.uid, ctx);
+      const record: ShipProfileRecord = { $type: "space.ship.profile", displayName: DRAFT.displayName, contactPolicy: "requests" };
+      handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, about: "" } }, ctx);
+      // As an earlier release left it: the record published, with nothing beside it.
+      ctx.profiles.publish(OWNER.uid, 1, "bafyrecord0", record, null, null);
+      await ensurePublishedProfile(OWNER.uid, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenCalledOnce();
     });
     // A Kernel with a timer pending isn't idle, so one left behind would hold it awake after every sign-in.
@@ -641,59 +692,29 @@ describe("the default profile", () => {
     expect(await Promise.race([stopping, new Promise((resolve) => setTimeout(resolve, 2_000, "held"))])).toBe("stopped");
   });
 
-  it("retries its own default after a failed publish, but never an owner's draft", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository } = profileContext(storage);
-      repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
-      await expect(ensureDefaultProfile(OWNER.uid, ctx)).rejects.toThrow("unavailable");
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      await ensureDefaultProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)?.record).toMatchObject({ displayName: "local", contactPolicy: "requests" });
-    });
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, repository } = profileContext(storage);
-      repository.applyWrites.mockRejectedValueOnce(new Error("The repository is unavailable"));
-      await expect(ensureDefaultProfile(OWNER.uid, ctx)).rejects.toThrow("unavailable");
-      handleProfileUpdate({ expectedRevision: 1, draft: { ...DRAFT, contactPolicy: "invitation" } }, ctx);
-      await ensureDefaultProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
-      expect(repository.applyWrites).toHaveBeenCalledOnce();
-    });
-  });
-
   it("leaves a draft or a choice the owner made alone", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx } = profileContext(storage);
       handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "closed" } }, ctx);
-      await ensureDefaultProfile(OWNER.uid, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
       expect(ctx.profiles.published(OWNER.uid)).toBeNull();
     });
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx, repository } = profileContext(storage);
       handleProfileUpdate({ expectedRevision: 0, draft: { ...DRAFT, contactPolicy: "invitation" } }, ctx);
       await handleProfilePublish({ expectedRevision: 1 }, ctx);
-      await ensureDefaultProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.published(OWNER.uid)?.record.contactPolicy).toBe("invitation");
-      expect(repository.applyWrites).toHaveBeenCalledOnce();
-    });
-  });
-
-  it("is left to sign-in when the person reaches their Ship from anywhere else", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const { ctx, host } = profileContext(storage);
+      await handleProfileUnpublish({ expectedRevision: 1 }, ctx);
       await ensurePublishedProfile(OWNER.uid, ctx);
-      expect(ctx.profiles.draft(OWNER.uid)).toBeNull();
-      expect(ctx.config.getExplicit(`users/${OWNER.uid}/profile/default_published`)).toBeNull();
-      expect(host.getInstallation).not.toHaveBeenCalled();
+      expect(ctx.profiles.published(OWNER.uid)).toBeNull();
+      expect(repository.applyWrites).toHaveBeenCalledTimes(2);
     });
   });
 
-  it("waits for an open-network host before publishing anything", async () => {
+  it("publishes nothing without an open-network host", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { ctx } = profileContext(storage, { pds: false });
-      await ensureDefaultProfile(OWNER.uid, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
       expect(ctx.profiles.draft(OWNER.uid)).toBeNull();
-      expect(ctx.config.getExplicit(`users/${OWNER.uid}/profile/default_published`)).toBeNull();
       handleProfileUpdate({ expectedRevision: 0, draft: DRAFT }, ctx);
       await expect(handleProfilePublish({ expectedRevision: 1 }, ctx)).rejects.toThrow("isn't available on this deployment");
       expect(ctx.profiles.published(OWNER.uid)).toBeNull();
@@ -725,7 +746,7 @@ describe("the default profile", () => {
       expect(await publicProfileProjection(ctx)).toBeNull();
       expect(handleProfileGet(ctx).profile.published).toBeUndefined();
 
-      await ensureDefaultProfile(OWNER.uid, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([
         { action: "put", collection: "space.ship.profile", rkey: "self", record },
         blueskyPut({ displayName: "Signed name", description: "Signed about" }),
@@ -733,7 +754,7 @@ describe("the default profile", () => {
       expect(ctx.profiles.published(OWNER.uid)).toEqual({ cid: "bafyrecord1", record });
       expect(handleProfileGet(ctx).profile).toMatchObject({ revision: 3, draft: { about: "Private draft" }, published: { revision: 2, contactPolicy: "invitation" } });
       expect(ctx.profiles.pendingPublication(OWNER.uid)).toBeNull();
-      await ensureDefaultProfile(OWNER.uid, ctx);
+      await ensurePublishedProfile(OWNER.uid, ctx);
       expect(repository.applyWrites).toHaveBeenCalledOnce();
     });
   });

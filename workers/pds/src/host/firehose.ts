@@ -42,6 +42,15 @@ export type RepoListing = { repos: RepoState[]; cursor?: string };
 /** Frames older than this are pruned; a cursor before them gets #info OutdatedCursor. */
 const RETENTION_MS = 72 * 60 * 60_000;
 const REPLAY_PAGE = 500;
+/**
+ * The most one replay sends before it closes the subscription, which resumes
+ * from its last frame when the subscriber reconnects. A socket buffers what it
+ * hasn't flushed in the firehose's memory, which every subscriber and
+ * repository shares.
+ */
+export const REPLAY_BYTES = 1024 * 1024;
+/** The most subscriptions the firehose holds at once, which bounds what their replays buffer. */
+export const MAX_SUBSCRIBERS = 64;
 const ACCOUNT_STATUSES = ["takendown", "suspended", "deleted", "deactivated"] as const;
 /** The host's last request to each relay, kept as one record by the relay's origin. */
 const RELAYS_KEY = "relays";
@@ -261,6 +270,13 @@ export class HostFirehose extends DurableObject<HostEnv> {
     if (cursor !== null && !/^\d+$/.test(cursor)) {
       return Response.json({ error: "InvalidRequest", message: "cursor must be a non-negative integer" }, { status: 400 });
     }
+    const subscribers = this.ctx.getWebSockets().length;
+    // How many subscriptions a new one joins, and how it resumes, show what a burst of reconnects builds up.
+    console.info(`Firehose subscription from ${request.headers.get("User-Agent")?.slice(0, 64) || "an unnamed client"}: `
+      + `${subscribers} open, ${cursor === null ? "live" : `from ${cursor}`}`);
+    if (subscribers >= MAX_SUBSCRIBERS) {
+      return Response.json({ error: "RateLimitExceeded", message: "The firehose has too many subscribers" }, { status: 429 });
+    }
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server);
     if (cursor !== null) this.replay(server, Number(cursor));
@@ -279,7 +295,11 @@ export class HostFirehose extends DurableObject<HostEnv> {
     }
   }
 
-  /** Sends every retained frame after cursor. It never awaits, so no append interleaves with it. */
+  /**
+   * Sends the retained frames after cursor, up to REPLAY_BYTES and always at
+   * least one, and closes a subscription it didn't bring up to date. It never
+   * awaits, so no append interleaves with it.
+   */
   private replay(ws: WebSocket, cursor: number): void {
     if (cursor > this.latestSeq()) {
       ws.send(errorFrame("FutureCursor", "Cursor is in the future"));
@@ -292,17 +312,25 @@ export class HostFirehose extends DurableObject<HostEnv> {
       ws.send(infoFrame("OutdatedCursor", "Requested cursor exceeded retention window; some events skipped"));
       after = earliest - 1;
     }
+    let sent = 0;
     for (;;) {
       const page = this.ctx.storage.sql.exec<{ seq: number; frame: ArrayBuffer }>(
         "SELECT seq, frame FROM events WHERE seq > ? ORDER BY seq LIMIT ?",
         after,
         REPLAY_PAGE,
-      ).toArray();
+      );
+      let rows = 0;
       for (const row of page) {
+        if (sent > 0 && sent + row.frame.byteLength > REPLAY_BYTES) {
+          ws.close(1013, "ReplayLimit");
+          return;
+        }
         ws.send(row.frame);
+        sent += row.frame.byteLength;
         after = row.seq;
+        rows += 1;
       }
-      if (page.length < REPLAY_PAGE) return;
+      if (rows < REPLAY_PAGE) return;
     }
   }
 

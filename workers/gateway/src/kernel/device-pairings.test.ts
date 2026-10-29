@@ -111,6 +111,19 @@ describe("device invitations", () => {
     });
   });
 
+  it("stops reporting a machine as paired once its credential is revoked", async () => {
+    await fixture(async (pairings, auth) => {
+      const invite = invitation();
+      await pairings.create(1000, invite);
+      const { tokenId } = await pairings.redeem({ ...invite, credential: createPairingCredential() });
+      expect(pairings.list(1000)[0].state).toBe("paired");
+
+      auth.revokeToken(tokenId, "machine forgotten", 1000);
+
+      expect(pairings.list(1000)[0].state).toBe("cancelled");
+    });
+  });
+
   it("rolls back the credential if redemption fails before its receipt is committed", async () => {
     await fixture(async (pairings, auth) => {
       const invite = invitation();

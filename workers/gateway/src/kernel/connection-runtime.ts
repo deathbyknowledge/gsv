@@ -30,7 +30,7 @@ import {
 import {
   ensurePersonalController,
 } from "./personal-controller";
-import { ensureDefaultProfile } from "./profiles";
+import { ensurePublishedProfile } from "./profiles";
 import {
   recordMachineAddedResponsibility,
 } from "./lifecycle-responsibilities";
@@ -234,8 +234,8 @@ async handleSysConnect(
         kind: "ship",
       });
       // Publishing waits on the open-network host and its directory, which sign-in doesn't.
-      ctx.defer(ensureDefaultProfile(ownerUid, ctx).catch((cause: unknown) => {
-        console.warn("[Kernel] Failed to publish the default profile:", exceptionDiagnostics(cause));
+      ctx.defer(ensurePublishedProfile(ownerUid, ctx).catch((cause: unknown) => {
+        console.warn("[Kernel] Failed to bring the published profile up to date:", exceptionDiagnostics(cause));
       }));
     }
 
