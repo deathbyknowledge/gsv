@@ -234,6 +234,14 @@ const BUILTIN_TARGETS = [
 ] satisfies { value: string; label: TextKey }[];
 const LEGACY_EXTERNAL_TARGET = { value: targetOptionValue("targets/*"), label: "approval.target.allExternal" } satisfies { value: string; label: TextKey };
 
+/** Naming the rule "Always allow" saves: one exact syscall. A syscall without a verb of its own shows its
+ *  family and its id, so the hint never reads wider than the rule it adds. */
+export function ruleCapabilityLabel(capability: string): string {
+  const label = humanToolCapabilityLabel(capability);
+  const exact = RULE_MATCH_LABELS.has(capability) || GRANT_LABELS.has(capability) || capability.endsWith(".*") || !capabilityLabelKey(capability);
+  return exact ? label : `${label} · ${capability}`;
+}
+
 export function humanToolCapabilityLabel(capability: string): string {
   const normalized = capability.trim();
   if (!normalized) {

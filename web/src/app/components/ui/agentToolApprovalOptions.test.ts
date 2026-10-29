@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { capabilityLabelKey, humanToolCapabilityLabel, isCustomMatch, matchOptionsForRule } from "./agentToolApprovalOptions";
+import { capabilityLabelKey, humanToolCapabilityLabel, isCustomMatch, matchOptionsForRule, ruleCapabilityLabel } from "./agentToolApprovalOptions";
 
 /** The default `users` group (gid 100) in workers/gateway/src/kernel/capabilities.ts; keep the two in step. */
 const DEFAULT_USER_CAPABILITIES = [
@@ -49,6 +49,10 @@ describe("agent tool approval options", () => {
     expect(capabilityLabelKey("fs.transfer.send")).toBe("approval.family.fs");
     expect(humanToolCapabilityLabel("sched.add")).toBe("Add a routine");
     expect(humanToolCapabilityLabel("sched.*")).toBe("Routines");
+    expect(ruleCapabilityLabel("sched.add")).toBe("Add a routine");
+    expect(ruleCapabilityLabel("sched.*")).toBe("Routines");
+    expect(ruleCapabilityLabel("sched.remove")).toBe("Routines · sched.remove");
+    expect(ruleCapabilityLabel("sys.instance.stop")).toBe("Cloud browsers and computers · sys.instance.stop");
     expect(humanToolCapabilityLabel("sys.oauth.*")).toBe("Service sign-ins");
   });
 
