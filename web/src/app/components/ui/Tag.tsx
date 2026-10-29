@@ -1,4 +1,5 @@
 import { useT } from "../../i18n/locale";
+import { dotGlow as sharedDotGlow } from "./StatusDot";
 import "./Tag.css";
 
 export type TagTone = "update" | "online" | "error" | "warn" | "info" | "accent" | "idle";
@@ -43,12 +44,12 @@ export function Tag({ tone = "update", label: labelProp, boxed = false, dot = fa
   const t = useT();
   const label = labelProp ?? t("ui.tag.label");
   const color = COLOR[tone] ?? COLOR.update;
-  // Neon glow; --gsv-tag-glow (the blur radius) is zeroed on the light themes in Tag.css.
-  const dotGlow = tone === "idle" ? "none" : `0 0 var(--gsv-tag-glow, 6px) ${color}`;
+  // The shared soft glow (StatusDot.css zeroes it on the light themes).
+  const dotGlow = tone === "idle" ? "none" : sharedDotGlow(color);
   const dotEl = dot ? (
     <span
       class={pulse ? "gsv-tag-dot--pulse" : undefined}
-      style={{ width: "6px", height: "6px", borderRadius: "50%", flex: "none", background: color, boxShadow: dotGlow }}
+      style={{ width: "6px", height: "6px", flex: "none", background: color, boxShadow: dotGlow }}
     />
   ) : null;
 
