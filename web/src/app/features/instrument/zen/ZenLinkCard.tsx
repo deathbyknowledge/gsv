@@ -1,25 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Surface } from "../../../components/ui/Surface";
 import { fetchLinkPreview, fetchLinkPreviewImage } from "../../../services/chat/backend/linkPreviewService";
+import { publicDeployment } from "../../../services/deployment";
 import { useMediaObjectUrl } from "../../../services/chat/hooks/useChatMediaSource";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { extractMessageLinks } from "./linkPreviews";
 
-const PREVIEW_STALE_MS = 60 * 60 * 1000;
-/** A failed preview is asked for again after the Kernel's own failure expiry, so an open chat recovers from a transient error. */
-export const PREVIEW_RETRY_MS = 60 * 60 * 1000;
-
-export function previewRefetchInterval(query: { state: { status: "pending" | "error" | "success" } }): number | false {
-  return query.state.status === "error" ? PREVIEW_RETRY_MS : false;
-}
+/** A page read stays fresh for a day on this device; a failure is not kept, so the next view asks again. */
+const PREVIEW_STALE_MS = 24 * 60 * 60 * 1000;
 
 export function linkPreviewQueryKey(url: string) {
   return ["link-preview", url] as const;
 }
 
-export function linkPreviewImageQueryKey(key: string) {
-  return ["link-preview-image", key] as const;
+export function linkPreviewImageQueryKey(url: string) {
+  return ["link-preview-image", url] as const;
 }
 
 function hostname(url: string): string {
@@ -54,15 +50,29 @@ function useNearViewport() {
   return { ref, near };
 }
 
+/**
+ * Links to a Ship itself get no card: they need a session the preview fetch does not carry, and a page that
+ * changes something on a GET should not run because someone scrolled past it.
+ */
+export function previewableLink(url: string, ownHost: string, shipDomains: readonly string[]): boolean {
+  const host = hostname(url);
+  return host !== ownHost && !shipDomains.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
 /** One card per web link in a settled Ship message; links whose page offers nothing take no room. */
 export function ZenLinkCards({ text }: { text: string }) {
-  const links = useMemo(() => extractMessageLinks(text), [text]);
+  const links = useMemo(() => {
+    const { primaryDomain, legacyDomains = [] } = publicDeployment();
+    const shipDomains = [primaryDomain, ...legacyDomains].filter((domain): domain is string => Boolean(domain));
+    const ownHost = globalThis.location?.hostname.replace(/^www\./i, "") ?? "";
+    return extractMessageLinks(text).filter((url) => previewableLink(url, ownHost, shipDomains));
+  }, [text]);
   const { ref, near } = useNearViewport();
   if (links.length === 0) return null;
   return <div class="zen-link-cards" ref={ref}>{near ? links.map((url) => <ZenLinkCard key={url} url={url} />) : null}</div>;
 }
 
-/** The page behind a link, as the Kernel read it. Until it resolves, or when it fails or is empty, nothing shows. */
+/** The page behind a link, as this device read it through `net.fetch`. Until it resolves, or when it fails or is empty, nothing shows. */
 export function ZenLinkCard({ url }: { url: string }) {
   const { client, connected } = useGateway();
   const query = useQuery({
@@ -71,14 +81,13 @@ export function ZenLinkCard({ url }: { url: string }) {
     enabled: connected,
     staleTime: PREVIEW_STALE_MS,
     retry: false,
-    refetchInterval: previewRefetchInterval,
   });
   const preview = query.data;
-  if (!preview || (!preview.title && !preview.image)) return null;
+  if (!preview || (!preview.title && !preview.imageUrl)) return null;
   const site = preview.siteName || hostname(preview.resolvedUrl) || hostname(preview.url);
   return <a class="zen-link-card" href={preview.url} target="_blank" rel="noopener noreferrer">
     <Surface level={1} interactive>
-      {preview.image ? <ZenLinkImage imageKey={preview.image.key} /> : null}
+      {preview.imageUrl ? <ZenLinkImage url={preview.imageUrl} /> : null}
       <span class="zen-link-card-text">
         {site ? <span class="zen-link-card-site">{site}</span> : null}
         {preview.title ? <span class="zen-link-card-title">{preview.title}</span> : null}
@@ -89,15 +98,14 @@ export function ZenLinkCard({ url }: { url: string }) {
 }
 
 /** The image holds its box while it loads, so the card does not grow under the reader; a failed image gives the room back. */
-function ZenLinkImage({ imageKey }: { imageKey: string }) {
+function ZenLinkImage({ url }: { url: string }) {
   const { client, connected } = useGateway();
   const image = useQuery({
-    queryKey: linkPreviewImageQueryKey(imageKey),
-    queryFn: () => fetchLinkPreviewImage(client, imageKey),
+    queryKey: linkPreviewImageQueryKey(url),
+    queryFn: () => fetchLinkPreviewImage(client, url),
     enabled: connected,
     staleTime: PREVIEW_STALE_MS,
     retry: false,
-    refetchInterval: previewRefetchInterval,
   });
   const source = useMediaObjectUrl(image.data);
   if (image.isError) return null;

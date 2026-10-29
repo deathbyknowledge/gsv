@@ -39,7 +39,6 @@ export const BODY_SYSCALL_NAMES = [
   "fs.transfer.receive",
   "net.fetch",
   "conversation.media.read",
-  "conversation.link.image",
   "profile.avatar.set",
   "profile.avatar.read",
   "atproto.blob.upload",

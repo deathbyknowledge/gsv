@@ -2304,8 +2304,6 @@ export const en = {
   "fleet.ledger.conversationSearch": "searched a conversation",
   "fleet.ledger.conversationSend": "sent a message",
   "fleet.ledger.conversationMediaRead": "opened a message attachment",
-  "fleet.ledger.conversationLinkPreview": "previewed a link",
-  "fleet.ledger.conversationLinkImage": "loaded a link preview image",
   "fleet.ledger.profileGet": "opened the profile draft",
   "fleet.ledger.approachCreate": "sent a message request",
   "fleet.ledger.approachGet": "opened a message request",

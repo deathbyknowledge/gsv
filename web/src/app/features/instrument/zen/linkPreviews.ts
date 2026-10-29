@@ -20,6 +20,6 @@ export function extractMessageLinks(text: string, limit = MAX_MESSAGE_LINK_CARDS
     }
     links.add(href);
   });
-  // A message's cards stop at a small bound, so rendering a long reply never fans out unbounded Kernel fetches.
+  // A message's cards stop at a small bound, so rendering a long reply never fans out unbounded fetches.
   return [...links].slice(0, limit);
 }

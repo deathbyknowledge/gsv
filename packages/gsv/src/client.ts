@@ -289,7 +289,6 @@ const SYSCALL_NAMES = [
   "conversation.history",
   "conversation.search",
   "conversation.send",
-  "conversation.link.preview",
   "profile.get",
   "profile.update",
   "profile.publish",

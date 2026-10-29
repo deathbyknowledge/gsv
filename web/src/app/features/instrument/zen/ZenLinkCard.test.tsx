@@ -1,10 +1,10 @@
 import type { ComponentChildren, JSX, VNode } from "preact";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
-import type { ConversationLinkPreview } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
-import { linkPreviewQueryKey, PREVIEW_RETRY_MS, previewRefetchInterval, ZenLinkCard, ZenLinkCards } from "./ZenLinkCard";
+import type { LinkPreview } from "../../../services/chat/backend/linkPreviewService";
+import { linkPreviewQueryKey, previewableLink, ZenLinkCard, ZenLinkCards } from "./ZenLinkCard";
 
 const LINK = "https://guide.example/start";
 
@@ -13,12 +13,12 @@ afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlo
 
 async function rendered(
   view: () => ComponentChildren,
-  preview?: ConversationLinkPreview,
+  preview?: LinkPreview,
   windowExtras: { IntersectionObserver?: new () => { observe(): void; disconnect(): void } } = {},
 ): Promise<ComponentChildren> {
   let tree: ComponentChildren;
   vi.stubGlobal("window", Object.assign(new EventTarget(), { location: { search: "" }, sessionStorage: { getItem: () => null }, ...windowExtras }));
-  vi.stubGlobal("document", new EventTarget());
+  vi.stubGlobal("document", Object.assign(new EventTarget(), { getElementById: () => null }));
   const cache = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
   if (preview) cache.setQueryData(linkPreviewQueryKey(LINK), preview);
   function Harness() {
@@ -30,7 +30,7 @@ async function rendered(
   return tree;
 }
 
-function card(preview?: ConversationLinkPreview): Promise<ComponentChildren> {
+function card(preview?: LinkPreview): Promise<ComponentChildren> {
   return rendered(() => ZenLinkCard({ url: LINK }), preview);
 }
 
@@ -56,10 +56,14 @@ describe("link preview card", () => {
     expect(collectText(tree)).toBe("moved.example Getting started");
   });
 
-  it("asks again for a failed preview after the failure expiry, and never for a settled one", () => {
-    expect(previewRefetchInterval({ state: { status: "error" } })).toBe(PREVIEW_RETRY_MS);
-    expect(previewRefetchInterval({ state: { status: "success" } })).toBe(false);
-    expect(previewRefetchInterval({ state: { status: "pending" } })).toBe(false);
+  it("gives no card to a link to a Ship, its own or another on the deployment's domains", () => {
+    const domains = ["ship.space", "gsv.space"];
+    expect(previewableLink("https://ada.ship.space/settings", "ada.ship.space", domains)).toBe(false);
+    expect(previewableLink("https://bo.gsv.space/profile", "ada.ship.space", domains)).toBe(false);
+    expect(previewableLink("https://ship.space/pricing", "ada.ship.space", domains)).toBe(false);
+    expect(previewableLink("https://home.example/x", "home.example", [])).toBe(false);
+    expect(previewableLink(LINK, "ada.ship.space", domains)).toBe(true);
+    expect(previewableLink("https://notship.space/", "ada.ship.space", domains)).toBe(true);
   });
 
   it("renders nothing for a message without web links", async () => {
