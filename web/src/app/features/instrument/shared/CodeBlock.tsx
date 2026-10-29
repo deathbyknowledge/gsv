@@ -29,7 +29,7 @@ export function CodeBlock({ text, language = "", label, wrap = false }: { text: 
       <span class="markdown-code-actions">
         <span class="markdown-code-status" aria-live="polite">{state === "copied" ? t("shell.copied") : state === "failed" ? t("shell.code.copyFailed") : ""}</span>
         <span class="markdown-code-copy">
-          <IconButton glyph="copy" size={22} variant="floating" className={state === "idle" ? undefined : `is-${state}`}
+          <IconButton glyph="copy" size={30} variant="floating" className={state === "idle" ? undefined : `is-${state}`}
             title={state === "copied" ? t("shell.copied") : state === "failed" ? t("shell.code.copyManually") : label ?? t("shell.code.copyTitle")}
             onClick={copy} />
         </span>

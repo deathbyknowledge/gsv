@@ -25,14 +25,14 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-right: -6px;
+  margin-right: -10px;
 }
 .markdown-code-status { color: var(--label); }
 .markdown-code-status:empty { display: none; }
 .markdown-code-copy { display: inline-flex; }
-/* Keep the 22px glyph but give the control a 44px hit area for touch. */
+/* A 30px control (15px glyph) with a 44px hit area for touch. */
 .markdown-code-copy .gsv-ibtn-floating { position: relative; }
-.markdown-code-copy .gsv-ibtn-floating::after { content: ""; position: absolute; inset: -11px; }
+.markdown-code-copy .gsv-ibtn-floating::after { content: ""; position: absolute; inset: -7px; }
 .markdown-code-copy .gsv-ibtn-floating { color: var(--label); }
 .markdown-code-copy .gsv-ibtn-floating:hover,
 .markdown-code-copy .gsv-ibtn-floating.is-copied { color: var(--accent); }
