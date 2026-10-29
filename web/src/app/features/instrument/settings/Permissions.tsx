@@ -56,7 +56,7 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
       text: ({ rule, options }) => `${humanToolCapabilityLabel(rule.match)} ${options.customToolLabel ?? ""}`,
       cell: ({ rule, index, options }) => <span class="settings-rule-cell">
         <Select block size="small" ariaLabel={t("settings.permissions.ruleTool", { number: index + 1 })} options={options.tools} selected={rule.match} placeholder={t("settings.permissions.chooseTool")} disabled={usesDefault} onSelect={(value) => setRule(index, { ...rule, match: value })} />
-        {options.customToolLabel && <InfoTip text={options.customToolLabel} />}
+        <span class="settings-rule-info">{options.customToolLabel && <InfoTip text={options.customToolLabel} />}</span>
       </span>,
     },
     {
