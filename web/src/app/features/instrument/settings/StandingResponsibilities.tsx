@@ -8,6 +8,7 @@ import { INSTRUMENT_SOURCES_KEY } from "../wire/queryKeys";
 import { canConfigure } from "./settingsModel";
 import { SettingsError } from "./settingsShared";
 import { useT } from "../../../i18n/locale";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 export function StandingResponsibilities({ account }: { account: ConsoleAccount }) {
   const t = useT();
@@ -20,9 +21,10 @@ export function StandingResponsibilities({ account }: { account: ConsoleAccount 
   }, onSuccess: () => cache.invalidateQueries({ queryKey: INSTRUMENT_SOURCES_KEY }) });
   if (!canConfigure(account, "r12y.source.list")) return <p class="settings-muted">{t("settings.standing.noAccess")}</p>;
   return <section class="settings-standing" aria-label={t("settings.standing.title")}>
-    <h1>{t("settings.standing.title")}</h1><p class="settings-muted">{t("settings.standing.intro")}</p>
+    <PageHeading title={t("settings.standing.title")} description={t("settings.standing.intro")} />
     {query.isPending && connected && <LoadingState>{t("common.loading")}</LoadingState>}
     <SettingsError error={query.error ?? update.error} />
+    {query.isSuccess && query.data.sources.length === 0 && <p class="settings-muted">{t("settings.standing.empty")}</p>}
     <ul class="settings-list">{query.data?.sources.map((source) => <li key={source.id}>
       <label class="settings-check"><input type="checkbox" checked={source.enabled}
         disabled={source.control === "required" || !connected || update.isPending || !canConfigure(account, "r12y.source.update")}
