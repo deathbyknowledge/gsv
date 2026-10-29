@@ -1,7 +1,7 @@
 import { saveApprovalPolicy } from "./permissionService";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
-import { useRef, useState } from "preact/hooks";
+import { useMemo, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleTargets } from "../../../services/system/consoleService";
 import { APPROVAL_ACTIONS, actionLabel, humanToolCapabilityLabel, targetOptionValue, targetFromOptionValue } from "../../../components/ui/agentToolApprovalOptions";
@@ -34,9 +34,13 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
   const [error, setError] = useState<Error | null>(null);
   const [saved, setSaved] = useState(false);
   const usesDefault = draft?.inherited ?? !original;
-  const policy = usesDefault ? readSettingsPolicy(inherited) : draft?.policy ?? readSettingsPolicy(original);
+  // Parsed once per source string: a reparse on every render would hand each rule a fresh object, and with it a
+  // fresh row identity, so unrelated updates would remount every row.
+  const inheritedPolicy = useMemo(() => readSettingsPolicy(inherited), [inherited]);
+  const originalPolicy = useMemo(() => readSettingsPolicy(original), [original]);
+  const policy = usesDefault ? inheritedPolicy : draft?.policy ?? originalPolicy;
   const nextValue = usesDefault ? "" : policy ? JSON.stringify(policy) : original;
-  const dirty = draft !== null && (usesDefault ? original !== "" : JSON.stringify(readSettingsPolicy(original)) !== nextValue);
+  const dirty = draft !== null && (usesDefault ? original !== "" : JSON.stringify(originalPolicy) !== nextValue);
   useSettingsDirty(dirty, onDirty);
   const editable = connected && !!config.data && !config.isError && canConfigure(account, "sys.config.set") && policy !== null;
   const save = useMutation({
@@ -99,8 +103,7 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
       <details><summary>{t("settings.permissions.inspect")}</summary><pre>{original}</pre></details>
       <p class="settings-muted">{t("settings.permissions.replaceHint")}</p>
       <button class="settings-text-action" type="button" disabled={!connected || config.isError || !canConfigure(account, "sys.config.set")} onClick={() => {
-        const replacement = readSettingsPolicy(inherited);
-        if (replacement) update(replacement);
+        if (inheritedPolicy) update(inheritedPolicy);
       }}>{t("settings.permissions.prepareReplacement")}</button>
     </div>}
     {!canConfigure(account, "sys.config.set") && <p class="settings-muted">{t("settings.permissions.readOnly")}</p>}
