@@ -25,12 +25,9 @@ export function FilePreview({
   onAsk,
   onFolder,
   enabled = true,
-  expandLabel,
 }: {
   file: OpenFile;
   onExpand?: () => void;
-  /** What expanding does here, when it is not the reader (for instance opening Work). */
-  expandLabel?: string;
   placeLabel: string;
   onAsk: (text: string) => void;
   /** Given when the path came from a link that could not say whether it names a folder; a folder then opens as one. */
@@ -98,7 +95,7 @@ export function FilePreview({
         {image && image.type === "image" ? <img src={`data:${image.mimeType};base64,${image.data}`} alt={file.name} /> : null}
       </div>
       <div class="fleet-actions">
-        {onExpand && <button type="button" class="fleet-text-action" onClick={onExpand}>{expandLabel ?? t("shell.file.expand")}</button>}
+        {onExpand && <button type="button" class="fleet-text-action" onClick={onExpand}>{t("shell.file.expand")}</button>}
         <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk(`Use this file as context: @${file.target} ${file.path}`)}>
           {t("shell.file.ask")}
         </button>

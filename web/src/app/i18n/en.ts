@@ -1498,7 +1498,6 @@ export const en = {
   "shell.file.bytes": { one: "{size} byte", other: "{size} bytes" },
   "shell.file.linkedFolder": "This is a folder reached through a link; the connection reported it as a file. What it holds:",
   "shell.file.expand": "expand",
-  "shell.file.openInWork": "open in Work",
   "shell.file.ask": "talk about it",
   "shell.file.copyPath": "copy path",
   "shell.file.askNote": "Talking about it puts a reference to this file in the prompt; the Ship reads it from {place} when it needs to, without copying it.",

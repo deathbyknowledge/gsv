@@ -1504,7 +1504,6 @@ export const ptBR = {
   "shell.file.bytes": { one: "{size} byte", other: "{size} bytes" },
   "shell.file.linkedFolder": "Esta é uma pasta acessada por um link; a conexão a informou como arquivo. Conteúdo:",
   "shell.file.expand": "expandir",
-  "shell.file.openInWork": "abrir em Trabalho",
   "shell.file.ask": "falar sobre isto",
   "shell.file.copyPath": "copiar caminho",
   "shell.file.askNote": "Falar sobre isto coloca uma referência a este arquivo na caixa de texto; o Ship o lê de {place} quando precisa, sem copiá-lo.",

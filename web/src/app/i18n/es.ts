@@ -1499,7 +1499,6 @@ export const es = {
   "shell.file.bytes": { one: "{size} byte", other: "{size} bytes" },
   "shell.file.linkedFolder": "Es una carpeta a la que se llega mediante un enlace; la conexión la ha indicado como archivo. Contiene:",
   "shell.file.expand": "ampliar",
-  "shell.file.openInWork": "abrir en Trabajo",
   "shell.file.ask": "hablar de esto",
   "shell.file.copyPath": "copiar ruta",
   "shell.file.askNote": "Al hablar de esto, se añade una referencia a este archivo en el cuadro de texto; tu Ship lo lee desde {place} cuando lo necesita, sin copiarlo.",

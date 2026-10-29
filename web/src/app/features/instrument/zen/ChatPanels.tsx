@@ -62,18 +62,17 @@ export function ChatPanels({ context, active, account, targets, ready, onClose, 
       onClose={onClose} onConnected={onConnected} /></RetainedView>
     <RetainedView active={open("path")}>{path.current && <ChatPath key={`${path.current.location.kind}:${path.current.location.target}:${path.current.location.path}`}
       location={path.current.location} targets={targets} ready={ready} allowed={!!account && canConfigure(account, "fs.read")}
-      onAsk={onAsk} onFleet={onFleet} />}</RetainedView>
+      onAsk={onAsk} />}</RetainedView>
   </FleetDialog>;
 }
 
 /** A path Ship wrote, opened over the chat: a file's preview, or a folder's tree with its files opening in place. */
-export function ChatPath({ location, targets, ready, allowed, onAsk, onFleet }: {
+export function ChatPath({ location, targets, ready, allowed, onAsk }: {
   location: Extract<ChatContext, { kind: "path" }>["location"];
   targets: readonly ConsoleTarget[];
   ready: boolean;
   allowed: boolean;
   onAsk: (text: string) => void;
-  onFleet: (reference: FleetReference) => void;
 }) {
   const t = useT();
   const [file, setFile] = useState<OpenFile | null>(location.kind === "file"
@@ -84,7 +83,6 @@ export function ChatPath({ location, targets, ready, allowed, onAsk, onFleet }: 
   if (file) return <>
     {folder !== null && <button type="button" class="fleet-text-action chat-context-back" onClick={() => setFile(null)}>← {fileName(folder)}</button>}
     <FilePreview file={file} placeLabel={place?.label ?? location.target} enabled={ready} onAsk={onAsk}
-      expandLabel={t("shell.file.openInWork")} onExpand={() => onFleet(`file:${file.target}:${file.path}`)}
       // A link cannot say whether it names a folder; one that does opens as the folder's tree.
       onFolder={folder === null ? (path) => { setFolder(path); setFile(null); } : undefined} />
   </>;
