@@ -201,6 +201,7 @@ import type {
 import { ResponsibilityRuntime } from "./responsibility-runtime";
 import { OwnerNoticeRuntime } from "./owner-notice-runtime";
 import { OwnerNoticeStore } from "./owner-notice-store";
+import { NoticeRuleStore } from "./notice-rules";
 import { ShipEventRuntime } from "./ship-event-runtime";
 import { ShipEventStore } from "./ship-event-store";
 import { FederationRuntime } from "./federation-runtime";
@@ -463,6 +464,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly responsibilities: ResponsibilityStore;
   readonly shipEvents: ShipEventStore;
   readonly ownerNotices: OwnerNoticeStore;
+  readonly noticeRules: NoticeRuleStore;
   readonly welcome: InitialOnboarding;
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
@@ -569,6 +571,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
     this.shipEvents = new ShipEventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
+    this.noticeRules = new NoticeRuleStore(ctx.storage);
     this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
@@ -1669,6 +1672,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       responsibilities: this.responsibilities,
       shipEvents: this.shipEvents,
       ownerNotices: this.ownerNotices,
+      noticeRules: this.noticeRules,
       welcome: this.welcome,
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,

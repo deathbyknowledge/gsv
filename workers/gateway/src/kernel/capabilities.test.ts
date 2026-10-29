@@ -126,6 +126,7 @@ describe("CapabilityStore", () => {
         "mail.send",
         "mail.status",
         "net.fetch",
+        "notify.rule.*",
         "proc.*",
         "profile.*",
         "r12y.*",
