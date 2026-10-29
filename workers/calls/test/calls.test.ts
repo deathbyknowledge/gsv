@@ -71,7 +71,7 @@ async function dialled(setup: Awaited<ReturnType<typeof placed>>): Promise<void>
 async function live(setup: Awaited<ReturnType<typeof placed>>) {
   await dialled(setup);
   const { streamToken, providerCallId } = await stored(setup.object);
-  const response = await SELF.fetch(`https://calls.example.test/twilio/stream?i=${setup.installationId}&c=${setup.call.callId}`, { headers: { Upgrade: "websocket" } });
+  const response = await SELF.fetch(`https://calls.example.test/twilio/stream/${setup.installationId}/${setup.call.callId}`, { headers: { Upgrade: "websocket" } });
   const socket = response.webSocket!;
   socket.accept();
   const received: Array<Record<string, unknown>> = [];
@@ -122,7 +122,7 @@ describe("a call", () => {
     await dialled(setup);
     const dial = setup.telephony.dials[0]!;
     expect(dial).toMatchObject({ to: "+14155550123", from: "+13213604274", timeLimitSeconds: 420 });
-    expect(dial.twiml).toContain(`wss://calls.example.test/twilio/stream?i=${setup.installationId}&#38;c=${setup.call.callId}`);
+    expect(dial.twiml).toContain(`wss://calls.example.test/twilio/stream/${setup.installationId}/${setup.call.callId}`);
     expect(dial.twiml).toContain((await stored(setup.object)).streamToken);
     expect((await signed(`/twilio/status?i=${setup.installationId}&c=${setup.call.callId}`, { CallSid: "CA" + "1".padStart(32, "0"), CallStatus: "ringing" })).status).toBe(204);
     expect((await stored(setup.object)).call.state).toBe("ringing");
@@ -130,7 +130,7 @@ describe("a call", () => {
     const forged = await SELF.fetch(`https://calls.example.test/twilio/status?i=${setup.installationId}&c=${setup.call.callId}`, { method: "POST", body: new URLSearchParams({ CallStatus: "busy" }) });
     expect(forged.status).toBe(403);
 
-    const response = await SELF.fetch(`https://calls.example.test/twilio/stream?i=${setup.installationId}&c=${setup.call.callId}`, { headers: { Upgrade: "websocket" } });
+    const response = await SELF.fetch(`https://calls.example.test/twilio/stream/${setup.installationId}/${setup.call.callId}`, { headers: { Upgrade: "websocket" } });
     const intruder = response.webSocket!;
     intruder.accept();
     const closed = new Promise<number>(resolve => intruder.addEventListener("close", event => resolve(event.code)));
@@ -266,6 +266,17 @@ describe("a call", () => {
     await signed(`/twilio/machine?i=${setup.installationId}&c=${setup.call.callId}`, { CallSid: providerCallId, AnsweredBy: "machine_end_beep" });
     expect(setup.realtime.informs.at(-1)?.text).toMatch(/voicemail/);
     expect((await stored(setup.object)).call.state).toBe("in_progress");
+  });
+
+  it("ignores a late voicemail verdict once the callee has answered the agent", async () => {
+    const setup = await placed();
+    const { providerCallId } = await live(setup);
+    await emit(setup, h => h.agentLine("Hi! I'm calling for Esteve, I'm his AI assistant."));
+    await emit(setup, h => h.calleeLine("Hello, it's me."));
+    await vi.waitFor(async () => expect((await setup.coordinator.get(owner, setup.call.callId)).transcript).toHaveLength(2));
+    await signed(`/twilio/machine?i=${setup.installationId}&c=${setup.call.callId}`, { CallSid: providerCallId, AnsweredBy: "machine_end_other" });
+    expect((await stored(setup.object)).call.state).toBe("in_progress");
+    expect(setup.telephony.hangUps).toEqual([]);
   });
 
   it("fails with a diagnostic when dialling fails, and drops when the voice session closes", async () => {

@@ -94,6 +94,11 @@ export async function verifyTwilioSignature(authToken: string, url: string, para
 
 const escapeXml = (value: string): string => value.replace(/[<>&"']/g, char => `&#${char.charCodeAt(0)};`);
 
+/** Twilio drops query strings from stream URLs, so the call identity travels in the path. */
+export function streamPath(installationId: string, callId: string): string {
+  return `/twilio/stream/${encodeURIComponent(installationId)}/${callId}`;
+}
+
 /** Connects the answered call to its call object; the token proves the stream belongs to this call. */
 export function streamTwiml(url: string, streamToken: string, digits?: string): string {
   const play = digits ? `<Play digits="${escapeXml(digits)}"/>` : "";

@@ -6,7 +6,7 @@ import { AGENT_OUTCOMES, agentTools, disclosed, KEYPAD_PATTERN, NUDGES, serviceR
 import { providers } from "./providers";
 import type { RealtimeSession } from "./realtime";
 import { diagnosticDetail, migrateCall } from "./schema";
-import { conferenceTwiml, streamTwiml } from "./twilio";
+import { conferenceTwiml, streamPath, streamTwiml } from "./twilio";
 import { CallWatch } from "./watch";
 
 export const CHECK_IN_MS = 15_000;
@@ -127,7 +127,7 @@ export class PhoneCallObject extends DurableObject<Environment> {
     this.#update(value => { value.call.state = "dialling"; value.dialledAt = Date.now(); });
     const origin = new URL(this.env.PUBLIC_ORIGIN);
     const query = `i=${encodeURIComponent(installationId)}&c=${encodeURIComponent(call.callId)}`;
-    const stream = new URL(`/twilio/stream?${query}`, origin);
+    const stream = new URL(streamPath(installationId, call.callId), origin);
     stream.protocol = "wss:";
     try {
       const { providerCallId } = await providers.telephony(this.env).dial({
@@ -170,6 +170,8 @@ export class PhoneCallObject extends DurableObject<Environment> {
     if (!stored || stored.call.state === "ended" || params.CallSid !== stored.providerCallId) return;
     const answeredBy = params.AnsweredBy ?? "";
     if (!answeredBy.startsWith("machine") && answeredBy !== "fax") return;
+    // Detection can finish late, for example behind a phone's call screening; a callee who answered the agent is a person.
+    if (answeredBy !== "fax" && this.#calleeReplied()) return;
     if (stored.call.brief.voicemail === "leave_message" && answeredBy !== "fax" && this.#realtime) {
       this.#realtime.inform(NUDGES.voicemail, true);
       return;
@@ -310,7 +312,7 @@ export class PhoneCallObject extends DurableObject<Environment> {
       if (!KEYPAD_PATTERN.test(digits) || !stored.providerCallId) return session.toolResult(call.id, "Use only 0-9, * and #.", false);
       // Bidirectional streams cannot carry tones, so the call briefly plays them and reconnects its stream.
       const origin = new URL(this.env.PUBLIC_ORIGIN);
-      const stream = new URL(`/twilio/stream?i=${encodeURIComponent(stored.installationId)}&c=${encodeURIComponent(stored.call.callId)}`, origin);
+      const stream = new URL(streamPath(stored.installationId, stored.call.callId), origin);
       stream.protocol = "wss:";
       try {
         await providers.telephony(this.env).redirect(stored.providerCallId, streamTwiml(stream.href, stored.streamToken, digits));
@@ -439,6 +441,15 @@ export class PhoneCallObject extends DurableObject<Environment> {
     const line = { at: Date.now(), speaker, text: text.slice(0, 4000) };
     this.ctx.storage.sql.exec("INSERT INTO transcript (at, speaker, text) VALUES (?, ?, ?)", line.at, line.speaker, line.text);
     for (const watch of this.#watchers) watch.send({ kind: "line", line });
+  }
+
+  #calleeReplied(): boolean {
+    let agentSpoke = false;
+    for (const line of this.#transcript()) {
+      if (line.speaker === "agent") agentSpoke = true;
+      else if (agentSpoke && line.speaker === "callee") return true;
+    }
+    return false;
   }
 
   #transcript(): PhoneTranscriptLine[] {

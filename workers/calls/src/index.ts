@@ -22,14 +22,17 @@ export default class CallsService extends WorkerEntrypoint<Environment> implemen
   /** Twilio callbacks. Every request except the media stream carries Twilio's signature. */
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/twilio/stream") {
+    if (url.pathname.startsWith("/twilio/stream/")) {
       // The stream proves itself with the per-call token in its start message.
-      const call = this.#call(url);
+      const [installationId = "", callId = ""] = url.pathname.slice("/twilio/stream/".length).split("/").map(decodeURIComponent);
+      const call = this.#callFor(installationId, callId);
       return call ? call.fetch(request) : new Response("Not Found", { status: 404 });
     }
     if (request.method !== "POST" || !url.pathname.startsWith("/twilio/")) return new Response("Not Found", { status: 404 });
     const params = new URLSearchParams(new TextDecoder().decode(await request.arrayBuffer()));
-    if (!await verifyTwilioSignature(this.env.TWILIO_AUTH_TOKEN, request.url, params, request.headers.get("X-Twilio-Signature"))) {
+    // Twilio signs the public URL it called, which a proxy in front of the Worker may rewrite.
+    const signedUrl = new URL(url.pathname + url.search, this.env.PUBLIC_ORIGIN).href;
+    if (!await verifyTwilioSignature(this.env.TWILIO_AUTH_TOKEN, signedUrl, params, request.headers.get("X-Twilio-Signature"))) {
       return new Response("Forbidden", { status: 403 });
     }
     const fields = Object.fromEntries(params);
@@ -52,7 +55,10 @@ export default class CallsService extends WorkerEntrypoint<Environment> implemen
   }
 
   #call(url: URL) {
-    const installationId = url.searchParams.get("i") ?? "", callId = url.searchParams.get("c") ?? "";
+    return this.#callFor(url.searchParams.get("i") ?? "", url.searchParams.get("c") ?? "");
+  }
+
+  #callFor(installationId: string, callId: string) {
     if (!installationId || installationId.length > 160 || !CALL_ID.test(callId)) return undefined;
     return this.env.CALLS.getByName(callObjectName(installationId, callId));
   }
