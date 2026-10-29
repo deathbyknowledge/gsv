@@ -7,6 +7,10 @@ export type AgentOutcome = typeof AGENT_OUTCOMES[number];
 export const KEYPAD_PATTERN = /^[0-9*#w]{1,32}$/;
 
 /** The three agent tools. `ask` exists only when the brief lets the agent check with the owner. */
+function ownerReachable(brief: PhoneBrief): boolean {
+  return (brief.ifOutsideLimits ?? "ask") === "ask" || brief.checkIn !== undefined;
+}
+
 export function agentTools(brief: PhoneBrief): RealtimeTool[] {
   const tools: RealtimeTool[] = [
     {
@@ -26,9 +30,9 @@ export function agentTools(brief: PhoneBrief): RealtimeTool[] {
       parameters: { type: "object", additionalProperties: false, required: ["digits"], properties: { digits: { type: "string", pattern: KEYPAD_PATTERN.source } } },
     },
   ];
-  if ((brief.ifOutsideLimits ?? "ask") === "ask") tools.unshift({
+  if (ownerReachable(brief)) tools.unshift({
     name: "ask",
-    description: "Ask the owner when the callee proposes something outside the brief. Tell the callee you are checking and keep the line.",
+    description: `Ask ${brief.onBehalfOf}, the owner, a question: when the callee proposes something outside the brief, when the brief says to check in, or whenever you need to know how the call should proceed. Tell the callee you are checking and keep the line.`,
     parameters: { type: "object", additionalProperties: false, required: ["question"], properties: { question: { type: "string" } } },
   });
   return tools;
@@ -44,6 +48,10 @@ export function serviceRules(brief: PhoneBrief): string {
     `- Your first sentence says you are calling for ${brief.onBehalfOf} and that you are their AI assistant, as part of the request itself, in the callee's language.`,
     "- Never claim to be human. If asked, say truthfully that you are an AI assistant.",
     "- Never agree to anything the brief does not allow.",
+    ...(ownerReachable(brief) ? [
+      `- ${brief.onBehalfOf} decides how the call proceeds, never the callee. Ask ${brief.onBehalfOf} with the ask tool; do not ask the callee what to do next.`,
+      "- When the brief says to check in, hold or wait for guidance, keep the line until the owner answers or you are told the owner has not answered. Do not end the call before then.",
+    ] : []),
     "- When the call is finished, call end_call, then say a short goodbye.",
   ].join("\n");
 }

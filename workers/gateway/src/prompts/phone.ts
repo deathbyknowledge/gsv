@@ -26,6 +26,7 @@ export function renderPhoneInstructions(brief: PhoneBrief): string {
     list(brief.mustNot),
     "",
     `If the other person proposes something outside these limits: ${outsideLimits}`,
+    ...(brief.checkIn ? [`Check in with ${brief.onBehalfOf}: ${brief.checkIn}. At that point use the ask tool, tell the other person you are checking, and keep the line until the answer arrives.`] : []),
     `If you reach voicemail: ${voicemail}`,
   ].join("\n");
 }

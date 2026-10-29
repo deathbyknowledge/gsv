@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { agentTools, disclosed, transcriptionLanguage } from "../src/agent";
+import { agentTools, disclosed, serviceRules, transcriptionLanguage } from "../src/agent";
+import { openAiSession } from "../src/realtime";
 import { routeDestination } from "../src/numbers";
 import { conferenceTwiml, streamTwiml, twilioSignature, TwilioTelephony, verifyTwilioSignature } from "../src/twilio";
 import type { Environment } from "../src/config";
@@ -46,10 +47,27 @@ describe("twilio", () => {
   });
 });
 
+describe("realtime session", () => {
+  it("waits for the callee to finish a thought before taking the turn", () => {
+    const session = openAiSession({ instructions: "x", tools: [], voice: "marin", transcriptionModel: "t" } as Parameters<typeof openAiSession>[0]);
+    expect(session.audio.input.turn_detection).toEqual({ type: "semantic_vad", eagerness: "low", create_response: true, interrupt_response: true });
+    expect(session.audio.input.format).toEqual({ type: "audio/pcmu" });
+  });
+});
+
 describe("voice agent", () => {
   it("offers ask only when the brief lets the agent check", () => {
     expect(agentTools(brief).map(tool => tool.name)).toEqual(["ask", "end_call", "keypad"]);
     expect(agentTools({ ...brief, ifOutsideLimits: "end" }).map(tool => tool.name)).toEqual(["end_call", "keypad"]);
+  });
+  it("offers ask for a check-in even when limits end the call, and keeps the decision with the owner", () => {
+    const checking = { ...brief, ifOutsideLimits: "end" as const, checkIn: "after they answer, before ending the call" };
+    expect(agentTools(checking).map(tool => tool.name)).toEqual(["ask", "end_call", "keypad"]);
+    const rules = serviceRules(checking);
+    expect(rules).toMatch(/Esteve Jamez decides how the call proceeds, never the callee/);
+    expect(rules).toMatch(/do not ask the callee what to do next/);
+    expect(rules).toMatch(/Do not end the call before then/);
+    expect(serviceRules({ ...brief, ifOutsideLimits: "end" })).not.toMatch(/never the callee/);
   });
   it("checks that the opening names the owner and an assistant in any language", () => {
     expect(disclosed("Hi! I'm calling for Esteve, I'm his AI assistant. Could I book a table?", brief)).toBe(true);

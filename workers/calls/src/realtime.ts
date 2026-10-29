@@ -38,6 +38,26 @@ export interface RealtimeConnector {
 }
 
 /** OpenAI Realtime over one WebSocket, authenticated with the per-call client secret. */
+/**
+ * Semantic turn detection at low eagerness waits for the callee to finish a
+ * thought, so a short "OK" or "mm" does not cut the agent off; a real
+ * interruption still stops its reply.
+ */
+export function openAiSession(setup: RealtimeSetup) {
+  return {
+    type: "realtime", instructions: setup.instructions, tool_choice: "auto",
+    tools: setup.tools.map(tool => ({ type: "function", ...tool })),
+    audio: {
+      input: {
+        format: { type: "audio/pcmu" },
+        turn_detection: { type: "semantic_vad", eagerness: "low", create_response: true, interrupt_response: true },
+        transcription: { model: setup.transcriptionModel, ...(setup.language ? { language: setup.language } : {}) },
+      },
+      output: { format: { type: "audio/pcmu" }, voice: setup.voice },
+    },
+  };
+}
+
 export class OpenAiRealtimeConnector implements RealtimeConnector {
   async open(credential: PhoneRealtimeSession, setup: RealtimeSetup, handlers: RealtimeHandlers): Promise<RealtimeSession> {
     const url = new URL(credential.url);
@@ -70,20 +90,7 @@ export class OpenAiRealtimeConnector implements RealtimeConnector {
         }
       }
     });
-    send({
-      type: "session.update",
-      session: {
-        type: "realtime", instructions: setup.instructions, tool_choice: "auto",
-        tools: setup.tools.map(tool => ({ type: "function", ...tool })),
-        audio: {
-          input: {
-            format: { type: "audio/pcmu" }, turn_detection: { type: "server_vad" },
-            transcription: { model: setup.transcriptionModel, ...(setup.language ? { language: setup.language } : {}) },
-          },
-          output: { format: { type: "audio/pcmu" }, voice: setup.voice },
-        },
-      },
-    });
+    send({ type: "session.update", session: openAiSession(setup) });
     return {
       appendAudio: payload => { if (!closed) send({ type: "input_audio_buffer.append", audio: payload }); },
       inform: (text, respond) => {
