@@ -82,9 +82,9 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
       </> : <>
         <p class="note">{t("shell.pairing.openTerminal", { app: draft.platform === "windows" ? "PowerShell" : "Terminal" })}</p>
         <p class="note">{t("shell.pairing.installStep")}</p>
-        <SetupCommand text={buildMachineInstallCommand(draft.platform, release)} label={t("shell.pairing.copyInstall")} />
+        <SetupCommand text={buildMachineInstallCommand(draft.platform, release)} label={t("shell.pairing.copyInstall")} language={draft.platform === "windows" ? "powershell" : "sh"} />
         <p class="note">{t("shell.pairing.connectStep")}</p>
-        <SetupCommand text={`${draft.platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`} label={t("shell.pairing.copyConnect")} />
+        <SetupCommand text={`${draft.platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`} label={t("shell.pairing.copyConnect")} language={draft.platform === "windows" ? "powershell" : "sh"} />
       </>}
       <p class="note">{t("shell.pairing.closeHint")}</p>
     </>}
