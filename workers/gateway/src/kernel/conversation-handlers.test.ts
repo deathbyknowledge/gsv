@@ -420,3 +420,33 @@ describe("conversation handlers", () => {
       .rejects.toThrow(`Conversation not found: ${SHIP.id}`);
   });
 });
+
+describe("conversation.send telemetry", () => {
+  it("reports the person's Ship message by platform and presence, once per committed message", async () => {
+    const append = vi.fn(async (input: any) => ({ created: true, message: canonicalMessage(input) }));
+    getConversationByIdMock.mockReturnValue({ append });
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
+      type: "res", id: frame.id, ok: true, data: { ok: true, status: "started", runId: `run:${frame.args.interaction.messageId}` },
+    }));
+    const ctx = context();
+    // SAFETY: the send handler reads only the telemetry switch from its environment.
+    ctx.env = { GSV_TELEMETRY_ENABLED: "1" } as KernelContext["env"];
+    const emitted: unknown[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((record) => { emitted.push(record); });
+    try {
+      await handleConversationSend({ conversationId: SHIP.id, text: "hello", idempotencyKey: "desktop:telemetry" }, ctx);
+      append.mockImplementationOnce(async (input: any) => ({ created: false, message: canonicalMessage(input) }));
+      await handleConversationSend({ conversationId: SHIP.id, text: "hello", idempotencyKey: "desktop:telemetry" }, ctx);
+    } finally {
+      log.mockRestore();
+    }
+    const received = emitted.filter((record: any) => record?.event?.name === "ship.message.received");
+    expect(received).toHaveLength(1);
+    // SAFETY: the filter above kept only records whose event name matched, so the event is present.
+    expect((received[0] as any).event).toEqual({
+      stream: "product", name: "ship.message.received",
+      properties: { source: "client", platform: "cli", hasText: true, hasMedia: false },
+    });
+    expect(JSON.stringify(received[0])).not.toContain("hello");
+  });
+});

@@ -7,6 +7,8 @@ import type {
 import type { InstallationIdentity } from "@humansandmachines/gsv/services/directory";
 import { parseOpaqueId } from "./domain";
 import { AccountStore } from "./store";
+import { attributionSlugSchema, emitTelemetry, type TelemetryEnvironment, type TelemetryEvent } from "@humansandmachines/gsv/telemetry";
+import type { SignupAttribution } from "./signup";
 import {
   constantTimeEqual,
   createOpaqueToken,
@@ -39,6 +41,7 @@ export class InstallationOnboardingStore {
     private readonly db: D1Database,
     private readonly accounts: AccountStore,
     private readonly resumeSecret?: string,
+    private readonly telemetry?: TelemetryEnvironment,
   ) {}
 
   async begin(
@@ -249,7 +252,7 @@ export class InstallationOnboardingStore {
     const claimId = parseOpaqueId(input?.claimId, "claimId");
     const installationId = parseOpaqueId(input?.installationId, "installationId");
     const claim = await this.db.prepare(
-      `SELECT p.operation_id, p.principal_id
+      `SELECT p.operation_id, p.principal_id, p.attribution_json
        FROM installation_onboarding_claims c
        JOIN installations i ON i.id = c.installation_id
        JOIN provisioning_operations p
@@ -261,6 +264,7 @@ export class InstallationOnboardingStore {
     ).bind(claimId, installationId).first<{
       operation_id: string;
       principal_id: string;
+      attribution_json: string | null;
     }>();
     if (!claim) throw new Error("installation onboarding claim is unavailable");
 
@@ -269,6 +273,11 @@ export class InstallationOnboardingStore {
       claim.principal_id,
       claimId,
     );
+    emitTelemetry(this.telemetry, {
+      component: "accounts",
+      installationId,
+      event: { stream: "product", name: "installation.attributed", properties: attributionProperties(claim.attribution_json) },
+    });
     return { state: "complete", installationId };
   }
 }
@@ -279,4 +288,24 @@ function installationIdentity(row: OnboardingClaimRow): InstallationIdentity {
     handle: row.handle,
     canonicalOrigin: row.canonical_origin,
   };
+}
+
+type AttributionProperties = Extract<TelemetryEvent, { name: "installation.attributed" }>["properties"];
+
+/** The website's slugs become the record's properties; a missing or malformed value reports a direct signup. */
+function attributionProperties(stored: string | null): AttributionProperties {
+  if (!stored) return { origin: "direct" };
+  let parsed: Partial<SignupAttribution>;
+  try {
+    // SAFETY: the stored value is validated field by field below; the cast only names the expected shape.
+    parsed = JSON.parse(stored) as Partial<SignupAttribution>;
+  } catch {
+    return { origin: "direct" };
+  }
+  const placement = attributionSlugSchema.safeParse(parsed.placement);
+  if (!placement.success) return { origin: "direct" };
+  const properties: AttributionProperties = { origin: "website", placement: placement.data };
+  const example = attributionSlugSchema.safeParse(parsed.example);
+  if (example.success) properties.example = example.data;
+  return properties;
 }

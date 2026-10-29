@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Process } from "./do";
 import { MAX_TERMINAL_COMMAND_FAILURES } from "./internal/lifecycle";
 import type { MessageRecord } from "./storage/store-codecs";
+import type { RunState } from "./run/state";
 import {
   ROOT_IDENTITY, captureSignals, generationRun, initProcess, processTestConfig, runInProcess, testUsage,
 } from "./do-test-harness";
@@ -278,5 +279,70 @@ describe("Send text streaming", () => {
     expect(result.streamed.map((entry) => entry.phase)).toEqual(["started", "delta", "aborted"]);
     expect(result.activeRunId).not.toBe(runId);
     expect(result.killed).toBe(operation.startsWith("kill"));
+  });
+});
+
+describe("reply telemetry", () => {
+  it("attaches the reply timing to a run's first commit only", async () => {
+    const pid = "mech-reply-timing";
+    const runId = "run-reply-timing";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    const result = await runInProcess(stub, async (process) => {
+      process.run.commitRunControlMessage = vi.fn(async (_runId, actionId) => ({ conversationId: "conv:ship", id: actionId, text: "hi" }));
+      process.store.messages.appendMessage("user", "Hello.", { runId });
+      process.runs.active = generationRun(runId, processTestConfig(pid), { conversationId: "conv:ship", inputMessageId: "msg:1", inputAt: Date.now() - 250 });
+      const first = await process.run.commitMessageRunControlAction({ runId, actionId: "send-1", text: "hi", finish: false, media: [] });
+      const replied = process.runs.active?.replied;
+      const second = await process.run.commitMessageRunControlAction({ runId, actionId: "send-2", text: "more", finish: false, media: [] });
+      return { first, second, replied, commits: process.run.commitRunControlMessage.mock.calls };
+    });
+    expect(result.first.ok && result.second.ok).toBe(true);
+    expect(result.replied).toBe(true);
+    expect(result.commits[0][2].args.replyMs).toBeGreaterThanOrEqual(250);
+    expect(result.commits[1][2].args.replyMs).toBeUndefined();
+  });
+
+  it("leaves a run that no person started without a reply timing", async () => {
+    const pid = "mech-reply-background";
+    const runId = "run-reply-background";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    const commits = await runInProcess(stub, async (process) => {
+      process.run.commitRunControlMessage = vi.fn(async (_runId, actionId) => ({ conversationId: "conv:ship", id: actionId, text: "hi" }));
+      process.store.messages.appendMessage("user", "Wake.", { runId });
+      process.runs.active = generationRun(runId, processTestConfig(pid), { conversationId: "conv:ship" });
+      await process.run.commitMessageRunControlAction({ runId, actionId: "send-1", text: "hi", finish: false, media: [] });
+      return process.run.commitRunControlMessage.mock.calls;
+    });
+    expect(commits[0][2].args.replyMs).toBeUndefined();
+  });
+
+  it("reports a person's run that ended without a reply, by category only", async () => {
+    const pid = "mech-reply-failed";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    const events = await runInProcess(stub, async (process) => {
+      process.finishDelivery.deliver = vi.fn(async () => {});
+      const enabled = process.env.GSV_TELEMETRY_ENABLED;
+      process.env.GSV_TELEMETRY_ENABLED = "1";
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const finish = (runId: string, run: Partial<RunState>, status: "error" | "aborted", reason: string) => process.run.completeRunFinish({
+          run: { runId, ...run }, startedAt: 1_000, newlyFinished: true, cleanupKeys: [],
+          payload: { pid, runId, status, reason, error: "private provider failure", queuedCount: 0, timestamp: 4_000, result: { text: null }, delivery: { kind: "none" } },
+        });
+        finish("run-a", { conversationId: "conv:ship", inputAt: 1_500, replied: true }, "error", "generation.error");
+        finish("run-b", { conversationId: "conv:ship", inputAt: 2_000 }, "aborted", "user.superseded");
+        finish("run-c", { conversationId: "conv:ship" }, "error", "generation.error");
+        return log.mock.calls.map(([record]) => record);
+      } finally {
+        log.mockRestore();
+        process.env.GSV_TELEMETRY_ENABLED = enabled;
+      }
+    });
+    const failed = events.filter((record: any) => record?.event?.name === "conversation.reply.failed").map((record: any) => record.event.properties);
+    expect(failed).toEqual([
+      { outcome: "error", failure: "generation", replied: true, durationMs: 2_500 },
+      { outcome: "aborted", failure: "superseded", replied: false, durationMs: 2_000 },
+    ]);
+    expect(JSON.stringify(events)).not.toContain("private provider failure");
   });
 });

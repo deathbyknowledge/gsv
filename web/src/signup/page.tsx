@@ -2,7 +2,7 @@ import { Fragment, type VNode } from "preact";
 import { AuthLayout } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
 import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
-import { OwnerWelcome, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
+import { OwnerWelcome, signupAttributionFromFragment, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
 import { DesktopAppLink } from "./DesktopAppLink";
 import { SignupDialog } from "./SignupDialog";
 import { presumedSpaceDomain, signupDestination } from "./navigation";
@@ -22,7 +22,10 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
     const candidate = new OwnerWelcome(snapshot, storage, accountsOrigin);
     await captureContactInvitation(candidate, contactInvitation);
     const resume = new URLSearchParams(window.location.search).get("resume") === "1";
-    if (!resume || contactInvitation) await candidate.save({ flow: "create" });
+    // The website's signup link names where it was clicked; it rides along until the Ship activates.
+    const attribution = signupAttributionFromFragment(new URLSearchParams(new URL(window.location.href).hash.slice(1)));
+    if (!resume || contactInvitation) await candidate.save(attribution ? { flow: "create", attribution } : { flow: "create" });
+    else if (attribution) await candidate.save({ attribution });
     client = candidate;
     load = async () => candidate;
   } catch (error) {
@@ -35,7 +38,11 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
   // Old signup links remain useful destinations, but their codes no longer authorize creation.
   const url = new URL(window.location.href);
   const fragment = new URLSearchParams(url.hash.slice(1));
-  if (fragment.has("invite")) { fragment.delete("invite"); url.hash = fragment.toString(); window.history.replaceState(null, "", url); }
+  if (fragment.has("invite") || fragment.has("from") || fragment.has("example")) {
+    for (const key of ["invite", "from", "example"]) fragment.delete(key);
+    url.hash = fragment.toString();
+    window.history.replaceState(null, "", url);
+  }
   const leave = async (destination: string) => {
     try {
       if (contactInvitation && client) await client.save({ contactInvite: null });

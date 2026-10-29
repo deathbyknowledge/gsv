@@ -78,7 +78,11 @@ consumer derives unrelated pseudonyms for the two streams with different HMAC
 keys. This makes an operational installation series useful for reliability
 without giving the backend a shared installation join key for the product-usage
 series. Product events are personless: they do not create or update user
-profiles.
+profiles. Product funnel measurements are taken inside the Gateway and Accounts
+and exported only as durations, booleans and closed categories; they carry no
+Process, run, message or conversation identifier, so a backend can relate them
+to each other only through the product pseudonym and time, never to an
+operational record.
 
 ## Deployment boundary
 
@@ -163,8 +167,41 @@ without granting those adapters ownership of another component's application eve
   reply route pinned for that message, so it names the client or messenger the
   reply was delivered to; the reported peer platform string and adapter name
   never leave the Gateway.
-- Accounts: activation. This is not a full signup funnel; anonymous invite/email
-  steps intentionally do not invent an installation identity or export addresses.
+  The onboarding funnel adds the person's side of the conversation.
+  `ship.message.received` reports an owner's own message to Ship when the
+  Conversation accepts it, with its source (`client` or `adapter`), the same
+  closed platform class, and whether it carried text or media; a direct
+  `proc.send` and replayed adapter receipts are not reported. The first message
+  a run commits after such a message carries `replyMs`, measured from the moment
+  the Process received the message to that commit, so it includes queueing,
+  media handling and retries but not the messenger's own delivery to the
+  Gateway. `conversation.reply.failed` reports a run a person's message started
+  that ended in `error` or `aborted`, in any Ship or Work conversation, with a
+  closed failure category (`generation`, `context`, `media`, `no_send`,
+  `command`, `delivery`, `runtime`, `superseded`, `cancelled`, `killed` or
+  `other`), whether it had already replied, and its duration; the reason and
+  cause stay in Process history. `onboarding.welcome.activated` marks the
+  transition that opens the welcome responsibility for an owner, and
+  `onboarding.welcome.delivered` reports the first Ship message accepted after
+  it, once per owner, with the time between them; the Kernel keeps both marks in
+  its private `initial-onboarding` record, so an owner whose welcome predates
+  the record is never reported. `responsibility.created` reports a record
+  entering the owner's ledger through the ordinary create syscall, as `process`
+  when Ship or a helper created it and `account` when the person did, with
+  whether it has a parent; records the Kernel seeds itself (the welcome,
+  release briefs, memory reviews, lifecycle checks, scheduled runs, mail and
+  contact intake) never pass that path and are not reported. "First
+  responsibility" and "first delegation" are backend computations over those
+  events; GSV keeps no one-time marker for either.
+- Accounts: activation and attribution. `installation.attributed` is reported
+  once when onboarding completes, with `origin: "website"` and the placement and
+  example slugs the website put in the signup link's fragment, or
+  `origin: "direct"` when there were none. The slugs are closed values the
+  website chooses, validated at the owner API, and never a visitor identity;
+  the signup page reads the fragment in the browser and keeps it in its own
+  signup state until the space request. This is not a full signup funnel;
+  anonymous invite/email steps intentionally do not invent an installation
+  identity or export addresses.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,
   workload and failure stage, plus entitlement-refresh health.
 - Gateway, Inference and Accounts: correlated model-metadata lookup outcomes and

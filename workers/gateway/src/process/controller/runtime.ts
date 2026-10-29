@@ -74,6 +74,8 @@ type SendAdmissionInput = {
   mediaKeys: string[];
   origin: string | null;
   runId: string;
+  /** When the send reached the Process, before media resolution. */
+  receivedAt: number;
 };
 
 type InstalledSend = { result: ProcSendResult; installed: boolean };
@@ -146,7 +148,7 @@ async function admitQueuedSend(
   host: Process,
   input: SendAdmissionInput,
 ): Promise<ProcSendResult> {
-  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId } = input;
+  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
   const releaseMedia = await host.resources.acquireMediaKeyAdmissions(mediaKeys);
   const releaseAdmission = await host.controller.acquireQueuedSendAdmission();
   try {
@@ -191,6 +193,7 @@ async function admitQueuedSend(
         if (args.interaction) {
           enqueueOptions.kind = "conversation.message";
           enqueueOptions.provenance = JSON.stringify(args.interaction);
+          enqueueOptions.createdAt = receivedAt;
         }
         host.store.queue.enqueue(runId, args.message, enqueueOptions);
         return {
@@ -210,6 +213,7 @@ async function admitQueuedSend(
         if (args.interaction) {
           nextRun.conversationId = args.interaction.conversationId;
           nextRun.inputMessageId = args.interaction.messageId;
+          nextRun.inputAt = receivedAt;
         }
         host.runs.active = nextRun;
         return { result: { ok: true, status: "started", runId }, installed: true };
@@ -236,7 +240,7 @@ async function admitInterruptingSend(
   host: Process,
   input: SendAdmissionInput,
 ): Promise<ProcSendResult> {
-  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId } = input;
+  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
   const releaseMedia = await host.resources.acquireMediaKeyAdmissions(mediaKeys);
   try {
     const missingMediaKey = await host.resources.firstMissingMediaKey(mediaKeys);
@@ -297,6 +301,7 @@ async function admitInterruptingSend(
       if (args.interaction) {
         nextRun.conversationId = args.interaction.conversationId;
         nextRun.inputMessageId = args.interaction.messageId;
+        nextRun.inputAt = receivedAt;
       }
       if (hasMedia) nextRun.pendingMediaMessageId = messageId;
       host.runs.active = nextRun;
@@ -737,6 +742,7 @@ export class ProcessController {
         record: next.record,
       });
       Object.assign(run, conversationRunState(next.kind, next.provenance));
+      if (run.inputMessageId) run.inputAt = next.createdAt;
       if (next.kind === "ipc.call") run.returnToCaller = true;
     } else {
       run.continuation = true;
@@ -807,6 +813,7 @@ export class ProcessController {
     if (!this.host.isInitialized()) {
       return { ok: false, error: "Process no longer exists" };
     }
+    const receivedAt = Date.now();
     const identity = this.host.identity;
     const runId = admittedRunId ?? crypto.randomUUID();
     if (admittedRunId) {
@@ -835,6 +842,7 @@ export class ProcessController {
           mediaKeys,
           origin,
           runId,
+          receivedAt,
         })
       : admitQueuedSend(this.host, {
           args,
@@ -844,6 +852,7 @@ export class ProcessController {
           mediaKeys,
           origin,
           runId,
+          receivedAt,
         });
   }
 

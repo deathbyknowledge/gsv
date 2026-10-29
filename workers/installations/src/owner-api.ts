@@ -2,7 +2,7 @@ import { z } from "zod";
 import { readJsonObject } from "./http";
 import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } from "./owner-auth-store";
 import { InstallationOwnerStore } from "./owner-store";
-import { InstallationSignup, type PendingSetup } from "./signup";
+import { InstallationSignup, type PendingSetup, type SignupAttribution } from "./signup";
 import { sendOwnerVerification } from "./owner-verification";
 import type { OwnerEmailSender } from "./owner-verification-email";
 import { parseBaseDomain } from "./domain";
@@ -11,6 +11,9 @@ const secret = z.string().regex(/^[a-f0-9]{64}$/);
 const challenge = z.strictObject({ challengeId: z.string().uuid(), browserSecret: secret, email: z.string().max(254), resend: z.boolean().optional() });
 const verification = z.strictObject({ challengeId: z.string().uuid(), browserSecret: secret, sessionSecret: secret, code: z.string().regex(/^\d{6}$/) });
 const handle = z.string().trim().toLowerCase().max(63);
+// Closed slugs the website put in the signup link; anything else is rejected with the body.
+const attributionSlug = z.string().regex(/^[a-z0-9-]{1,32}$/);
+const signupAttributionSchema: z.ZodType<SignupAttribution> = z.strictObject({ placement: attributionSlug, example: attributionSlug.optional() });
 const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-headers": "Authorization, Content-Type", "cache-control": "no-store" };
 type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>
@@ -62,8 +65,10 @@ export class InstallationOwnerApi {
         return json({ available: await this.signup.available(handle.parse(url.searchParams.get("value") ?? "")) });
       }
       if (request.method === "POST" && url.pathname === "/owner/api/spaces") {
-        const input = z.strictObject({ operationId: z.string().min(1).max(128), handle }).parse(await readJsonObject(request));
-        return json(await this.signup.prepare(input.operationId, session.principalId, input.handle));
+        const input = z.strictObject({
+          operationId: z.string().min(1).max(128), handle, attribution: signupAttributionSchema.optional(),
+        }).parse(await readJsonObject(request));
+        return json(await this.signup.prepare(input.operationId, session.principalId, input.handle, input.attribution));
       }
       return json({ error: "Not found" }, 404);
     } catch (error) {

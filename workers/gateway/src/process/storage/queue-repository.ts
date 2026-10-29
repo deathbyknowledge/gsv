@@ -36,7 +36,7 @@ export class ProcessQueueRepository {
       options.origin ?? null,
       options.provenance ?? null,
       record ? JSON.stringify(procHistoryRecordDataSchema.parse(record)) : null,
-      Date.now(),
+      options.createdAt ?? Date.now(),
     );
   }
 
@@ -56,9 +56,10 @@ export class ProcessQueueRepository {
         origin_json: string | null;
         provenance_json: string | null;
         record_json: string | null;
+        created_at: number;
       }>(
         `SELECT id, run_id, generation, role, kind, message, media_json,
-                origin_json, provenance_json, record_json
+                origin_json, provenance_json, record_json, created_at
            FROM message_queue
           ORDER BY id ASC
           LIMIT 1`,
@@ -85,6 +86,7 @@ export class ProcessQueueRepository {
       origin: row.origin_json,
       provenance: row.provenance_json,
       record,
+      createdAt: row.created_at,
     };
   }
 

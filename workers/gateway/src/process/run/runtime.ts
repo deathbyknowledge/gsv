@@ -35,7 +35,7 @@ import {
   terminalResponsibilitySnapshot, unhandledTerminalResponsibilityIds, terminalResponsibilityAdmissionKey,
 } from "../internal/events";
 import type { Process } from "../do";
-import type { RunFinishOptions, RunFinishPayload, RunResult } from "./finish";
+import { replyFailureFromFinish, type RunFinishOptions, type RunFinishPayload, type RunResult } from "./finish";
 import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import { isRoutableSyscall, type ArgsOf } from "../../syscalls";
 import { inferenceLogicalRequestId, type InferenceAttribution } from "../../inference/provider";
@@ -342,6 +342,10 @@ export class ProcessRun {
         };
       }
       const request = this.buildRunControlMessageCommitRequest(run, options);
+      // Only the run's first reply carries the timing; a correction notice never does.
+      if (run.inputAt !== undefined && !run.replied) {
+        request.args.replyMs = Math.max(0, Date.now() - run.inputAt);
+      }
       const committedMessage = await this.commitRunControlMessage(
         options.runId,
         options.actionId,
@@ -359,6 +363,9 @@ export class ProcessRun {
           deliveryId: options.actionId,
         },
       });
+      if (request.args.replyMs !== undefined) {
+        this.host.mutateActiveRun(options.runId, (current) => ({ ...current, replied: true }));
+      }
       this.consumeRunOutputMedia(options.runId, options.media);
       this.host.streams.deleteAction(options.runId, options.actionId);
       return {
@@ -770,6 +777,23 @@ export class ProcessRun {
           properties: telemetryProperties,
         },
       });
+      // A person's run that ended without a normal completion: category only, no cause.
+      if (run.inputAt !== undefined && payload.status !== "ok") {
+        emitTelemetry(this.host.env, {
+          installationId: this.host.installationId,
+          component: "gateway",
+          event: {
+            stream: "product",
+            name: "conversation.reply.failed",
+            properties: {
+              outcome: payload.status,
+              failure: replyFailureFromFinish(payload.status, payload.reason),
+              replied: run.replied === true,
+              durationMs: Math.max(0, payload.timestamp - run.inputAt),
+            },
+          },
+        });
+      }
     }
     this.host.startBackground(
       `finish delivery for ${run.runId}`,

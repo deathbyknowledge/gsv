@@ -114,3 +114,60 @@ describe("initial onboarding responsibility", () => {
   });
 
 });
+
+describe("welcome timing", () => {
+  it("records when the welcome opened and measures its first delivery once", async () => {
+    await runWithRealKernelSql((_sql, storage) => {
+      const store = new ResponsibilityStore(storage);
+      const activations: number[] = [];
+      const welcome = new InitialOnboarding(storage, store, (uid) => activations.push(uid));
+      expect(welcome.markWelcomeDelivered(1000, 500)).toBeNull();
+      welcome.prepare(1000, 1_000);
+      expect(welcome.activate(1000, 2_000)).toBe(true);
+      expect(activations).toEqual([1000]);
+      expect(welcome.activate(1000, 3_000)).toBe(true);
+      expect(activations).toEqual([1000]);
+      expect(welcome.markWelcomeDelivered(1000, 56_000)).toBe(54_000);
+      expect(welcome.markWelcomeDelivered(1000, 70_000)).toBeNull();
+      expect(welcome.createdAt(1000)).toBe(1_000);
+    });
+  });
+
+  it("times a welcome created by the previous runtime from its activation, not its seed", async () => {
+    await runWithRealKernelSql((_sql, storage) => {
+      const store = new ResponsibilityStore(storage);
+      store.create({
+        ownerUid: 1000, title: "Welcome to Ship",
+        details: { responsibilityType: "onboarding.initial", instructions: welcomeBrief.trim() },
+        blocker: "Waiting for the user to dismiss the welcome card.",
+        source: { kind: "system", component: "onboarding" }, actor: { kind: "system", component: "onboarding" },
+        assignee: { kind: "ship" }, state: "waiting", priority: "high",
+        dedupeKey: INITIAL_ONBOARDING_DEDUPE_KEY, observedByShip: true, now: 1_000,
+      });
+      const activations: number[] = [];
+      const welcome = new InitialOnboarding(storage, store, (uid) => activations.push(uid));
+      expect(welcome.activate(1000, 3_000)).toBe(true);
+      expect(activations).toEqual([1000]);
+      expect(welcome.markWelcomeDelivered(1000, 4_000)).toBe(1_000);
+      expect(welcome.markWelcomeDelivered(1000, 5_000)).toBeNull();
+    });
+  });
+
+  it("never times a welcome that was already handled before this record existed", async () => {
+    await runWithRealKernelSql((_sql, storage) => {
+      const store = new ResponsibilityStore(storage);
+      store.create({
+        ownerUid: 1000, title: "Welcome to Ship",
+        details: { responsibilityType: "onboarding.initial", instructions: welcomeBrief.trim() },
+        source: { kind: "system", component: "onboarding" }, actor: { kind: "system", component: "onboarding" },
+        assignee: { kind: "ship" }, state: "resolved", priority: "high",
+        dedupeKey: INITIAL_ONBOARDING_DEDUPE_KEY, observedByShip: true, now: 1_000,
+      });
+      const activations: number[] = [];
+      const welcome = new InitialOnboarding(storage, store, (uid) => activations.push(uid));
+      expect(welcome.activate(1000, 3_000)).toBe(false);
+      expect(activations).toEqual([]);
+      expect(welcome.markWelcomeDelivered(1000, 4_000)).toBeNull();
+    });
+  });
+});

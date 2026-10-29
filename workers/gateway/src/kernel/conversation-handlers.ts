@@ -26,6 +26,7 @@ import { getConversationById, sendFrameToProcess } from "../shared/utils";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
+import { emitTelemetry, shipPlatformFromPeer } from "@humansandmachines/gsv/telemetry";
 import { resolveCallerOwnerUid } from "./context";
 import { checkContactWhenOpened } from "./federation/gone-ships";
 import { ensurePersonalController } from "./personal-controller";
@@ -177,6 +178,22 @@ export async function handleConversationSend(
       conversationId: conversation.id,
       latestSequence: message.sequence,
     });
+    if (conversation.kind === "ship" && origin.kind === "client" && principalOf(ctx)?.account.uid === conversation.ownerUid) {
+      emitTelemetry(ctx.env, {
+        installationId: ctx.installationId,
+        component: "gateway",
+        event: {
+          stream: "product",
+          name: "ship.message.received",
+          properties: {
+            source: "client",
+            platform: shipPlatformFromPeer(origin.platform),
+            hasText: text.trim().length > 0,
+            hasMedia: Boolean(media?.length),
+          },
+        },
+      });
+    }
   }
 
   const request: RequestFrame<"proc.send"> = {

@@ -10,6 +10,7 @@ import {
   emitTelemetry,
   shipPlatformFromAdapter,
   shipPlatformFromPeer,
+  type TelemetryEvent,
 } from "@humansandmachines/gsv/telemetry";
 import {
   type ProcessRuntimePatch,
@@ -454,27 +455,41 @@ async commitProcessMessage(
       route = null;
     }
     if (appended.created && conversation.kind === "ship") {
+      const delivery = route?.kind === "connection"
+        ? "client"
+        : route?.kind === "adapter"
+          ? "adapter"
+          : "background";
+      const platform = route?.kind === "connection"
+        ? shipPlatformFromPeer(route.clientPlatform)
+        : route?.kind === "adapter"
+          ? shipPlatformFromAdapter(route.destination.adapter)
+          : "background";
+      const properties: Extract<TelemetryEvent, { name: "ship.message.committed" }>["properties"] = {
+        delivery,
+        hasMedia: Boolean(message.media?.length),
+        platform,
+      };
+      // A bad value would invalidate the whole record; keep the commit event and drop the timing instead.
+      if (Number.isSafeInteger(args.replyMs) && args.replyMs! >= 0) properties.replyMs = args.replyMs;
       emitTelemetry(this.host.bindings, {
         installationId: this.host.installationId,
         component: "gateway",
-        event: {
-          stream: "product",
-          name: "ship.message.committed",
-          properties: {
-            delivery: route?.kind === "connection"
-              ? "client"
-              : route?.kind === "adapter"
-                ? "adapter"
-                : "background",
-            hasMedia: Boolean(message.media?.length),
-            platform: route?.kind === "connection"
-              ? shipPlatformFromPeer(route.clientPlatform)
-              : route?.kind === "adapter"
-                ? shipPlatformFromAdapter(route.destination.adapter)
-                : "background",
-          },
-        },
+        event: { stream: "product", name: "ship.message.committed", properties },
       });
+      // Tracked even with telemetry off, so enabling it later never reports a stale welcome.
+      const welcomeMs = this.host.welcome.markWelcomeDelivered(process.ownerUid);
+      if (welcomeMs !== null) {
+        emitTelemetry(this.host.bindings, {
+          installationId: this.host.installationId,
+          component: "gateway",
+          event: {
+            stream: "product",
+            name: "onboarding.welcome.delivered",
+            properties: { durationMs: welcomeMs, delivery, platform },
+          },
+        });
+      }
     }
     if (route?.kind === "connection") {
       this.host.connectionRuntime.sendSignalToConnection(route.connectionId, "message.committed", {

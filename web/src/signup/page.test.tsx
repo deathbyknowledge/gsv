@@ -91,3 +91,20 @@ describe("signup entrypoint recovery", () => {
     expectContactNavigation();
   });
 });
+
+describe("signup attribution", () => {
+  it("keeps the website's signup origin for activation and takes it off the URL", async () => {
+    window.location.href = `${origin}/#from=hero&example=plan-a-trip`;
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ placement: "hero", example: "plan-a-trip" });
+    // SAFETY: the page passes the URL object it rewrote as the third replaceState argument.
+    const replaced = vi.mocked(window.history.replaceState).mock.lastCall![2] as URL;
+    expect(replaced.hash).toBe("");
+  });
+
+  it("ignores an origin that is not a plain slug", async () => {
+    window.location.href = `${origin}/#from=Hero%20Banner&example=x`;
+    const props = await screen();
+    expect((await props.load()).state.attribution).toBeUndefined();
+  });
+});

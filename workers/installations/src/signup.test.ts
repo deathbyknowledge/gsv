@@ -160,3 +160,20 @@ describe("open registration", () => {
     warn.mockRestore();
   });
 });
+
+describe("signup attribution", () => {
+  it("keeps the first request's origin and never rewrites it on a resumed signup", async () => {
+    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
+    await signup.prepare(operationId, principalId, name, { placement: "hero", example: "plan-a-trip" });
+    await signup.prepare(operationId, principalId, name, { placement: "footer" });
+    const stored = await db.prepare("SELECT attribution_json FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ attribution_json: string }>();
+    expect(JSON.parse(stored!.attribution_json)).toEqual({ placement: "hero", example: "plan-a-trip" });
+  });
+
+  it("stores nothing for a direct signup", async () => {
+    const principalId = await owner(), operationId = crypto.randomUUID();
+    await signup.prepare(operationId, principalId, handle());
+    const stored = await db.prepare("SELECT attribution_json FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ attribution_json: string | null }>();
+    expect(stored!.attribution_json).toBeNull();
+  });
+});

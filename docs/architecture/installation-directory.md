@@ -160,6 +160,12 @@ the operation before transmission; concurrent retries return the same installati
 Accounts atomically limits self-service creation to one non-deleted, non-cancelled
 Space per owner, without limiting operator-created or already-owned Spaces.
 The owner session lists unfinished setups independently of browser storage.
+The request may also carry an optional attribution: the placement and example
+slugs the website put in the signup link's fragment. The signup page reads them
+in the browser and keeps them in its own signup state; Accounts validates them
+as closed slugs, stores them once on the provisioning operation, and reports
+them on activation as `installation.attributed` (see the telemetry
+architecture). They never identify a visitor.
 
 The existing provisioning ledger owns progress and diagnostic references.
 `installations.owner_setup` identifies setups an owner may resume. The forward

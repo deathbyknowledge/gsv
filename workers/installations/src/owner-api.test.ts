@@ -142,3 +142,19 @@ it("returns unavailable for normalized policy matches and rejects direct creatio
     await policy.replace({ reserved: initial.reserved.join("\n"), blocked: initial.blocked.join("\n") });
   }
 });
+
+describe("signup attribution body", () => {
+  it("accepts closed slugs and rejects anything else with the request", async () => {
+    const f = await fixture();
+    await f.signIn();
+    const operationId = crypto.randomUUID();
+    const handle = `attr-${crypto.randomUUID()}`;
+    const rejected = await f.request("/spaces", f.sessionSecret, { operationId, handle, attribution: { placement: "Hero Banner" } });
+    expect(rejected.status).toBe(400);
+    expect(await f.accounts.getReservationByOperation(operationId)).toBeNull();
+    const accepted = await f.request("/spaces", f.sessionSecret, { operationId, handle, attribution: { placement: "hero", example: "plan-a-trip" } });
+    expect(accepted.status).toBe(200);
+    const stored = await f.accounts.getReservationByOperation(operationId);
+    expect(stored).not.toBeNull();
+  });
+});

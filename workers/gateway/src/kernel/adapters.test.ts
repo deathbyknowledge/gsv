@@ -1971,6 +1971,32 @@ describe("adapter lifecycle handlers", () => {
     }));
   });
 
+  it("reports a person's messenger message once, by adapter and presence only", async () => {
+    const ctx = makeContext({ GSV_TELEMETRY_ENABLED: "1", CHANNEL_TELEGRAM: { adapterSetActivity: vi.fn(async () => ({ ok: true as const })) } }, { upsert: vi.fn() });
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => ({
+      type: "res", id: frame.id, ok: true,
+      data: frame.call === "proc.history" ? { pendingHil: null } : { ok: true, status: "started", runId: frame.args.runId, queued: false },
+    }));
+    const inbound = {
+      adapter: "telegram", accountId: "bot",
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      message: { messageId: "provider-message-telemetry", surface: { kind: "dm" as const, id: "chat-7" }, actor: { id: "telegram:user:7" }, text: "Please remind me tomorrow." },
+    };
+    const emitted: unknown[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((record) => { emitted.push(record); });
+    try {
+      await handleAdapterInbound(inbound, ctx);
+      await handleAdapterInbound(inbound, ctx);
+    } finally {
+      log.mockRestore();
+    }
+    const received = emitted.filter((record: any) => record?.event?.name === "ship.message.received");
+    expect(received).toHaveLength(1);
+    // SAFETY: the filter above kept only records whose event name matched, so the event is present.
+    expect((received[0] as any).event.properties).toEqual({ source: "adapter", platform: "telegram", hasText: true, hasMedia: false });
+    expect(JSON.stringify(received[0])).not.toContain("remind");
+  });
+
   it("derives the same run id when an adapter retries the same provider message", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
