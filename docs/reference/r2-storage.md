@@ -62,8 +62,6 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `run_routes` | Retains the exact client endpoint or adapter destination for a process run. |
 | `ipc_calls` | Durable same-owner IPC call deadlines, terminal results, and delivery outbox state. |
 | `signal_watches` | Process-owned target connection watches. |
-| `link_previews` | Cached link preview metadata by requested URL, kept 7 days after a successful fetch and 1 hour after a failure. |
-| `link_preview_orphans` | Preview image objects no row names whose deletion failed, retried by later pruning passes. |
 
 ## Process SQLite
 
@@ -90,7 +88,6 @@ R2 remains the byte store. The current runtime uses these key families:
 | `var/media/{uid}/{pid}/{uuid}` | Process media handling | Uploaded, adapter-provided, or tool-result media attached to process messages and exposed at the matching absolute `/var/media/...` path. |
 | `home/{agent}/.gsv/media/archived-media:{hash}` | Process resource retention and history archiving | Immutable resource revisions retained by messages and transcripts, scoped to the run-as agent home. |
 | `home/{agent}/processes/{pid}/history/*.jsonl.gz` | Process reset, kill, compaction, and fork | Gzipped JSONL transcript archives scoped to the owning process. |
-| `var/cache/link-previews/{sha256}` | Kernel link previews | Preview image bytes, keyed by the SHA-256 of the image URL. Root-owned and read-only; deleted when no cached preview refers to them. |
 
 Temporary process media is deleted by prefix when the process is reset or killed. New producers retain the exact source revision directly in the run-as agent's immutable `.gsv/media` namespace; legacy process-media records are promoted before a transcript archive or terminal Message drops their last live reference. The archive identity includes the retaining Process, source key, and revision, so two reads of a mutable path before and after an edit remain distinct immutable resources while cancellation cleanup stays exclusive to one Process. Every Process, Kernel, and filesystem read validates the archive path plus its `purpose`, owning `uid` and `gid`, read-only mode `0400`, required source revision metadata, stored source content type, and current object HTTP content type. A missing legacy live object is archived as metadata-only rather than preventing reset or teardown. The `/var/media` view remains read-only for supported stored histories.
 

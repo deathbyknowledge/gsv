@@ -671,7 +671,6 @@ The current body-bearing syscalls are:
 | `fs.transfer.send` | No | Successful file bytes |
 | `net.fetch` | Optional HTTP request bytes | HTTP response bytes when the response has a body |
 | `conversation.media.read` | No | Successful legacy conversation media bytes |
-| `conversation.link.image` | No | Successful link preview image bytes |
 | `ai.transcription.create` | Required audio bytes | No |
 | `ai.image.read` | Required image bytes | Decoded UTF-8 text when caption, query, or OCR requests set `stream: true` |
 | `ai.image.generate` | No | Generated image bytes when returned inline |

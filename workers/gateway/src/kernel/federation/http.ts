@@ -2,7 +2,6 @@ import type { BinaryBody, JsonValue } from "@humansandmachines/gsv/protocol";
 import { bodyToBytes, jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import { FederationHttpError } from "./errors";
 import type { KernelContext } from "../context";
-import { isLoopbackHostname, isPublicHostname } from "../public-destination";
 
 export const MAX_PUBLIC_JSON_BYTES = 128 * 1024;
 
@@ -18,7 +17,7 @@ export async function readFederationBody(body: BinaryBody, limit: number, signal
 export function assertFederationTarget(url: string, ctx: KernelContext): void {
   const localOrigin = ctx.installationIdentity?.canonicalOrigin;
   const allowLocal = ctx.env.GSV_FEDERATION_LOCAL_DEVELOPMENT === "1"
-    && !!localOrigin && isLoopbackHostname(new URL(localOrigin).hostname);
+    && !!localOrigin && isLoopbackHost(new URL(localOrigin).hostname);
   assertFederationDestination(url, allowLocal);
 }
 
@@ -64,7 +63,29 @@ export function assertFederationDestination(value: string, allowLocal = false): 
   const url = new URL(value);
   if (url.username || url.password || url.hash) throw new Error("Federation URLs cannot contain credentials or fragments");
   const host = url.hostname.replace(/\.$/, "");
-  if (allowLocal && isLoopbackHostname(host) && (url.protocol === "http:" || url.protocol === "https:")) return;
+  if (allowLocal && isLoopbackHost(host) && (url.protocol === "http:" || url.protocol === "https:")) return;
   if (url.protocol !== "https:") throw new Error("Federation destinations must use HTTPS");
-  if (!isPublicHostname(host)) throw new Error("Federation destinations must be publicly reachable");
+  if (isLoopbackHost(host) || /(?:^|\.)(?:local|internal|lan|home|home\.arpa)$/.test(host) || (!host.includes(".") && !host.startsWith("["))) {
+    throw new Error("Federation destinations must be publicly reachable");
+  }
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    const [a, b, c] = host.split(".").map(Number);
+    if (a === 0 || a === 10 || a === 127 || a >= 224
+      || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && (b === 168 || (b === 0 && (c === 0 || c === 2)) || (b === 88 && c === 99)))
+      || (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) || (a === 203 && b === 0 && c === 113)) {
+      throw new Error("Federation destinations must be publicly reachable");
+    }
+  }
+  if (host.startsWith("[")) {
+    const [first, second] = host.slice(1, -1).split(":").map((part) => Number.parseInt(part || "0", 16));
+    if ((first & 0xe000) !== 0x2000 || first === 0x2002 || (first === 0x2001 && (second < 0x200 || second === 0xdb8)) || (first === 0x3fff && second <= 0xfff)) {
+      throw new Error("Federation destinations must be publicly reachable");
+    }
+  }
+}
+
+function isLoopbackHost(value: string): boolean {
+  const host = value.replace(/\.$/, "");
+  return host === "localhost" || host.endsWith(".localhost") || host === "[::1]" || /^127(?:\.\d+){3}$/.test(host);
 }

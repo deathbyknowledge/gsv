@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(85);
+    expect(KERNEL_MIGRATIONS).toHaveLength(84);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -401,15 +401,6 @@ describe("kernel schema migrations", () => {
     expect(statements).toContain(
       "DELETE FROM group_capabilities WHERE capability IN ('sys.link', 'sys.unlink', 'sys.link.consume')",
     );
-  });
-
-  it("caches link previews by requested URL", () => {
-    const migration = KERNEL_MIGRATIONS.find((candidate) => candidate.name === "link_previews");
-    expect(migration?.id).toBe(85);
-    const statements = migration!.statements.map((statement) => statement.trim().replace(/\s+/g, " "));
-    expect(statements[0]).toMatch(/^CREATE TABLE link_previews \( url TEXT PRIMARY KEY,/);
-    expect(statements).toContain("CREATE INDEX link_previews_expiry ON link_previews (expires_at)");
-    expect(statements.at(-1)).toMatch(/^CREATE TABLE link_preview_orphans \( image_key TEXT PRIMARY KEY,/);
   });
 
   it("adds installation-local mailbox indexes", () => {
