@@ -311,11 +311,13 @@ export function targetOptionsForRule(target: ToolApprovalTarget | undefined, tar
   if (!target || knownValues.has(targetOptionValue(target)) || target === "targets/*") {
     return baseOptions;
   }
+  // A rule's own target that no listed connection matches is a forgotten machine; saying so keeps it apart
+  // from a live connection that happens to carry that id as its name.
   return [
     ...baseOptions,
     {
       value: targetOptionValue(target),
-      label: targetLabelForRule(target, targets),
+      label: typeof target === "string" ? t("approval.target.notConnected", { id: target }) : targetLabelForRule(target, targets),
     },
   ];
 }

@@ -92,4 +92,10 @@ describe("target options", () => {
     expect(options.filter((option) => option.label === shipHome)).toHaveLength(1);
     expect(options.some((option) => option.label === `${shipHome} · dev-9`)).toBe(true);
   });
+
+  it("marks a rule's forgotten machine so it never reads like a live connection of that name", () => {
+    const options = targetOptionsForRule("macbook", [{ id: "dev-4", label: "macbook" }]);
+    expect(options.find((option) => option.value === targetOptionValue("macbook"))?.label).toBe("macbook (not connected)");
+    expect(options.find((option) => option.value === targetOptionValue("dev-4"))?.label).toBe("macbook");
+  });
 });

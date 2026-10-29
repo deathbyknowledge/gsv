@@ -33,6 +33,7 @@ export const ptBR = {
   "approval.target.shipComputer": "Lar do Ship",
   "approval.target.cloudBrowsers": "Navegadores na nuvem",
   "approval.target.cloudComputers": "Computadores na nuvem",
+  "approval.target.notConnected": "{id} (não conectado)",
   "approval.match.fsAll": "Todas as ferramentas de arquivos",
   "approval.match.fsRead": "Ler arquivos",
   "approval.match.fsWrite": "Gravar arquivos",

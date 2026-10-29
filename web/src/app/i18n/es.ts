@@ -28,6 +28,7 @@ export const es = {
   "approval.target.shipComputer": "Hogar de Ship",
   "approval.target.cloudBrowsers": "Navegadores en la nube",
   "approval.target.cloudComputers": "Ordenadores en la nube",
+  "approval.target.notConnected": "{id} (no conectado)",
   "approval.match.fsAll": "Todas las herramientas de archivos",
   "approval.match.fsRead": "Leer archivos",
   "approval.match.fsWrite": "Escribir archivos",
