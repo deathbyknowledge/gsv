@@ -62,19 +62,18 @@ export function ChatPanels({ context, active, account, targets, ready, onClose, 
       onClose={onClose} onConnected={onConnected} /></RetainedView>
     <RetainedView active={open("path")}>{path.current && <ChatPath key={`${path.current.location.kind}:${path.current.location.target}:${path.current.location.path}`}
       location={path.current.location} targets={targets} ready={ready} allowed={!!account && canConfigure(account, "fs.read")}
-      onAsk={onAsk} onFleet={onFleet} onClose={onClose} />}</RetainedView>
+      onAsk={onAsk} onFleet={onFleet} />}</RetainedView>
   </FleetDialog>;
 }
 
 /** A path Ship wrote, opened over the chat: a file's preview, or a folder's tree with its files opening in place. */
-export function ChatPath({ location, targets, ready, allowed, onAsk, onFleet, onClose }: {
+export function ChatPath({ location, targets, ready, allowed, onAsk, onFleet }: {
   location: Extract<ChatContext, { kind: "path" }>["location"];
   targets: readonly ConsoleTarget[];
   ready: boolean;
   allowed: boolean;
   onAsk: (text: string) => void;
   onFleet: (reference: FleetReference) => void;
-  onClose: () => void;
 }) {
   const t = useT();
   const [file, setFile] = useState<OpenFile | null>(location.kind === "file"
@@ -82,11 +81,13 @@ export function ChatPath({ location, targets, ready, allowed, onAsk, onFleet, on
   const [folder, setFolder] = useState<string | null>(location.kind === "dir" ? location.path : null);
   if (!allowed) return <p class="note">{t("chat.panel.noFiles")}</p>;
   const place = orderPlaces([...targets]).find((candidate) => candidate.id === location.target) ?? null;
-  if (file) return <FilePreview file={file} placeLabel={place?.label ?? location.target} enabled={ready} onAsk={onAsk}
-    expandLabel={t("shell.file.openInWork")} onExpand={() => onFleet(`file:${file.target}:${file.path}`)}
-    // A link cannot say whether it names a folder; one that does opens as the folder's tree.
-    onFolder={folder === null ? (path) => { setFolder(path); setFile(null); } : undefined}
-    onClose={() => { if (folder !== null) setFile(null); else onClose(); }} />;
+  if (file) return <>
+    {folder !== null && <button type="button" class="fleet-text-action chat-context-back" onClick={() => setFile(null)}>← {fileName(folder)}</button>}
+    <FilePreview file={file} placeLabel={place?.label ?? location.target} enabled={ready} onAsk={onAsk}
+      expandLabel={t("shell.file.openInWork")} onExpand={() => onFleet(`file:${file.target}:${file.path}`)}
+      // A link cannot say whether it names a folder; one that does opens as the folder's tree.
+      onFolder={folder === null ? (path) => { setFolder(path); setFile(null); } : undefined} />
+  </>;
   if (!place) return <p class="note">{t("chat.panel.noPlace")}</p>;
   return <div class="fleet-tree"><PlaceTree key={folder ?? ""} place={place} initialPath={folder ?? undefined}
     enabled={ready && place.online} onOpenFile={setFile} initiallyOpen /></div>;

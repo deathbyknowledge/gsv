@@ -440,9 +440,10 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
                 <button type="button" class="fleet-text-action chat-context-back" onClick={() => { setSelected(targetRow(filesPlace.id)); setFilesPlace(null); }}>← {filesPlace.label}</button>
                 <div class="fleet-tree"><PlaceTree key={`${filesPlace.id}:${filesPath ?? ""}`} place={filesPlace} initialPath={filesPath} enabled={connected && filesPlace.online} onOpenFile={selectFile} initiallyOpen /></div>
               </RetainedView>}
+              {openFile && filesPlace && <button type="button" class="fleet-text-action chat-context-back" onClick={() => setOpenFile(null)}>← {filesPath ? fileName(filesPath) : filesPlace.label}</button>}
               {openFile && <FilePreview file={openFile} placeLabel={placeLabel(openFile.target)}
                 onFolder={requestedLocation?.kind === "file" && !filesPlace && openFile.target === requestedLocation.target && openFile.path === requestedLocation.path ? openRequestedFolder : undefined}
-                onClose={() => { if (filesPlace) setOpenFile(null); else closeInspector(); }} onAsk={(text) => onZen(undefined, undefined, text)} onExpand={() => {
+                onAsk={(text) => onZen(undefined, undefined, text)} onExpand={() => {
               savedScroll.current = manifestRef.current?.scrollTop ?? 0;
               setExpandedFile(openFile);
             }} />}

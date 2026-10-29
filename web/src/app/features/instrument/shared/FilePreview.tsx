@@ -1,5 +1,9 @@
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
+import { FieldStatus } from "../../../components/ui/FieldStatus";
+import { IconButton } from "../../../components/ui/IconButton";
+import { InfoTip } from "../../../components/ui/InfoTip";
 import { LoadingState } from "../../../components/ui/Spinner";
+import { Hint } from "../../../components/ui/Tooltip";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { readFilesPath } from "../../../services/files/backend/filesService";
@@ -18,7 +22,6 @@ export function FilePreview({
   file,
   onExpand,
   placeLabel: label,
-  onClose,
   onAsk,
   onFolder,
   enabled = true,
@@ -29,7 +32,6 @@ export function FilePreview({
   /** What expanding does here, when it is not the reader (for instance opening Work). */
   expandLabel?: string;
   placeLabel: string;
-  onClose: () => void;
   onAsk: (text: string) => void;
   /** Given when the path came from a link that could not say whether it names a folder; a folder then opens as one. */
   onFolder?: (path: string) => void;
@@ -52,11 +54,28 @@ export function FilePreview({
   useEffect(() => {
     if (folder !== null) onFolder?.(folder);
   }, [folder, onFolder]);
+  const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+  useEffect(() => {
+    if (copied === "idle") return;
+    const settle = setTimeout(() => setCopied("idle"), 2000);
+    return () => clearTimeout(settle);
+  }, [copied]);
+  useEffect(() => { setCopied("idle"); }, [file.path]);
+  const copyPath = () => {
+    navigator.clipboard.writeText(file.path).then(() => setCopied("copied"), () => setCopied("failed"));
+  };
   return (
     <div>
       <h3>{file.name}</h3>
-      <div class="sub">
-        {label} · {file.path}
+      <div class="file-preview-head">
+        <div class="sub">
+          <span>{label} · {file.path}</span>
+          <Hint text={t("shell.file.copyPath")}>
+            <IconButton glyph="copy" ghost size="small" ariaLabel={t("shell.file.copyPath")} onClick={copyPath} />
+          </Hint>
+        </div>
+        <FieldStatus status={copied === "copied" ? "success" : copied === "failed" ? "error" : "none"}
+          message={copied === "copied" ? t("shell.copied") : copied === "failed" ? t("shell.code.copyFailed") : ""} />
       </div>
       <dl class="fleet-kv">
         <dt>{t("shell.file.size")}</dt>
@@ -83,14 +102,8 @@ export function FilePreview({
         <button type="button" class="fleet-text-action is-primary" onClick={() => onAsk(`Use this file as context: @${file.target} ${file.path}`)}>
           {t("shell.file.ask")}
         </button>
-        <button type="button" class="fleet-text-action" onClick={() => void navigator.clipboard?.writeText(file.path)}>
-          {t("shell.file.copyPath")}
-        </button>
-        <button type="button" class="fleet-text-action" onClick={onClose}>
-          {t("shell.close")}
-        </button>
+        <InfoTip text={t("shell.file.askNote", { place: label })} />
       </div>
-      <p class="note">{t("shell.file.askNote", { place: label })}</p>
     </div>
   );
 }

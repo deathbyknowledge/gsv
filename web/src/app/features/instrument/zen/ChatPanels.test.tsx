@@ -13,8 +13,7 @@ async function mountedPath(location: ComponentProps<typeof ChatPath>["location"]
   let tree: ComponentChildren;
   const onAsk = vi.fn();
   const onFleet = vi.fn();
-  const onClose = vi.fn();
-  function Harness() { tree = ChatPath({ location, targets, ready: true, allowed: true, onAsk, onFleet, onClose }); return null; }
+  function Harness() { tree = ChatPath({ location, targets, ready: true, allowed: true, onAsk, onFleet }); return null; }
   await root.render(<Harness />);
   const props = <P,>(component: ComponentType<P>): P => {
     const node = collectNodes(tree).find((entry) => entry.type === component);
@@ -23,7 +22,8 @@ async function mountedPath(location: ComponentProps<typeof ChatPath>["location"]
     return node.props as P;
   };
   const has = (component: ComponentType<never>) => collectNodes(tree).some((entry) => entry.type === component);
-  return { props, has, onAsk, onFleet, onClose, unmount: () => root.unmount() };
+  const back = () => collectNodes(tree).find((entry) => entry.type === "button" && String(entry.props.class).includes("chat-context-back"));
+  return { props, has, back, onAsk, onFleet, unmount: () => root.unmount() };
 }
 
 describe("ChatPath", () => {
@@ -39,8 +39,7 @@ describe("ChatPath", () => {
       expect(preview.expandLabel).toBe("open in Work");
       preview.onExpand?.();
       expect(view.onFleet).toHaveBeenCalledWith("file:gsv:/home/x/notes/plan.md");
-      preview.onClose();
-      expect(view.onClose).toHaveBeenCalledTimes(1);
+      expect(view.back()).toBeUndefined();
     } finally { await view.unmount(); }
   });
 
@@ -53,10 +52,10 @@ describe("ChatPath", () => {
       expect(tree.place.id).toBe("gsv");
       await act(() => { tree.onOpenFile({ target: "gsv", path: "~/notes/calls/mara.md", name: "mara.md" }); });
       expect(view.props(FilePreview).file.name).toBe("mara.md");
-      await act(() => { view.props(FilePreview).onClose(); });
+      expect(view.back()?.props.children).toEqual(["← ", "notes"]);
+      await act(() => { view.back()?.props.onClick?.(); });
       expect(view.has(FilePreview)).toBe(false);
       expect(view.props(PlaceTree).initialPath).toBe("~/notes/");
-      expect(view.onClose).not.toHaveBeenCalled();
     } finally { await view.unmount(); }
   });
 

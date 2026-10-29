@@ -268,6 +268,10 @@
   color: var(--text-dim);
   margin-bottom: 16px;
 }
+/* The file's place and path, with the copy action beside it and the copy outcome beneath. */
+.file-preview-head { margin-bottom: 16px; }
+.file-preview-head .sub { display: flex; align-items: center; gap: 6px; margin-bottom: 0; }
+.file-preview-head .sub > span { min-width: 0; overflow-wrap: anywhere; }
 .fleet-kv {
   display: grid;
   grid-template-columns: 110px 1fr;
