@@ -43,11 +43,6 @@ export function Button({ variant = "primary", tone, label, disabled = false, blo
       onClick={disabled ? undefined : onClick}
     >
       <span class="gsv-btn-label">{label ?? t("ui.button.label")}</span>
-      {variant === "link" ? (
-        <svg width="8" height="11" viewBox="0 0 9 12">
-          <path d="M0 0 L9 6 L0 12 Z" fill="currentColor" />
-        </svg>
-      ) : null}
     </button>
   );
 }
