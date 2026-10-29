@@ -194,12 +194,15 @@ without granting those adapters ownership of another component's application eve
   responsibility" and "first delegation" are backend computations over those
   events; GSV keeps no one-time marker for either.
 - Accounts: activation and attribution. `installation.attributed` is reported
-  once when onboarding completes, with `origin: "website"` and the placement and
-  example slugs the website put in the signup link's fragment, or
-  `origin: "direct"` when there were none. The slugs are closed values the
-  website chooses, validated at the owner API, and never a visitor identity;
-  the signup page reads the fragment in the browser and keeps it in its own
-  signup state until the space request. This is not a full signup funnel;
+  once when onboarding completes, with `origin: "website"` and a closed
+  placement class (`hero`, `final-call`, `example` or `other`) and, for example
+  cards, a closed example id, or `origin: "direct"` when there were none. The
+  signup page reads the website's slugs from the signup link's fragment in the
+  browser and keeps them in its own signup state until the space request; the
+  owner API bounds their shape and classifies them into the allowlist before
+  they are stored with the reservation, so an unknown slug becomes `other` and
+  the raw string never enters storage or a record. Nothing in it is a visitor
+  identity. This is not a full signup funnel;
   anonymous invite/email steps intentionally do not invent an installation
   identity or export addresses.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,

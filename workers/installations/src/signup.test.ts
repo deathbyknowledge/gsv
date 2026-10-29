@@ -164,10 +164,10 @@ describe("open registration", () => {
 describe("signup attribution", () => {
   it("keeps the first request's origin and never rewrites it on a resumed signup", async () => {
     const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
-    await signup.prepare(operationId, principalId, name, { placement: "hero", example: "plan-a-trip" });
-    await signup.prepare(operationId, principalId, name, { placement: "footer" });
+    await signup.prepare(operationId, principalId, name, { placement: "hero", example: "tickets" });
+    await signup.prepare(operationId, principalId, name, { placement: "final-call" });
     const stored = await db.prepare("SELECT attribution_json FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ attribution_json: string }>();
-    expect(JSON.parse(stored!.attribution_json)).toEqual({ placement: "hero", example: "plan-a-trip" });
+    expect(JSON.parse(stored!.attribution_json)).toEqual({ placement: "hero", example: "tickets" });
   });
 
   it("keeps an operation that started direct even when a retry carries an origin", async () => {

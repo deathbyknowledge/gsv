@@ -12,6 +12,7 @@ import {
   shipPlatformFromAdapter,
   shipPlatformFromPeer,
   shipPlatformSchema,
+  signupAttributionFromSlugs,
   telemetryRecordSchema,
 } from "../dist/telemetry.js";
 
@@ -462,11 +463,21 @@ describe("onboarding funnel events", () => {
     assert.equal(record("gateway", "onboarding.welcome.delivered", { durationMs: 54_000, delivery: "client" }).success, false);
   });
 
-  it("accepts only closed slugs for the signup origin", () => {
+  it("accepts only the closed placement and example classes for the signup origin", () => {
     assert.equal(record("accounts", "installation.attributed", { origin: "direct" }).success, true);
-    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero", example: "plan-a-trip" }).success, true);
-    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "Hero Banner" }).success, false);
+    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero", example: "tickets" }).success, true);
+    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "example", example: "other" }).success, true);
+    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero-heading" }).success, false);
+    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero", example: "plan-a-trip" }).success, false);
     assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero", visitorId: "abc" }).success, false);
+  });
+
+  it("classifies the website's link slugs into the allowlist and nothing else", () => {
+    assert.deepEqual(signupAttributionFromSlugs("hero-heading"), { placement: "hero" });
+    assert.deepEqual(signupAttributionFromSlugs("early-access"), { placement: "final-call" });
+    assert.deepEqual(signupAttributionFromSlugs("details-tickets", "tickets"), { placement: "example", example: "tickets" });
+    assert.deepEqual(signupAttributionFromSlugs("sidebar-promo", "plan-a-trip"), { placement: "other", example: "other" });
+    assert.deepEqual(signupAttributionFromSlugs(" HERO "), { placement: "hero" });
   });
 
   it("reports a created responsibility by who created it", () => {

@@ -244,9 +244,9 @@ describe("activation attribution", () => {
   }
 
   it("reports where a website signup came from when the Ship activates", async () => {
-    const { installationId, records } = await activate("attributed", JSON.stringify({ placement: "hero", example: "plan-a-trip" }));
+    const { installationId, records } = await activate("attributed", JSON.stringify({ placement: "example", example: "tickets" }));
     expect(records).toEqual([expect.objectContaining({ component: "accounts", installationId, event: {
-      stream: "product", name: "installation.attributed", properties: { origin: "website", placement: "hero", example: "plan-a-trip" },
+      stream: "product", name: "installation.attributed", properties: { origin: "website", placement: "example", example: "tickets" },
     } })]);
   });
 
@@ -254,7 +254,7 @@ describe("activation attribution", () => {
     expect((await activate("direct", null)).records.map((record) => record.event)).toEqual([
       { stream: "product", name: "installation.attributed", properties: { origin: "direct" } },
     ]);
-    expect((await activate("malformed", JSON.stringify({ placement: "Hero Banner", visitorId: "abc" }))).records.map((record) => record.event)).toEqual([
+    expect((await activate("malformed", JSON.stringify({ placement: "hero-heading", visitorId: "abc" }))).records.map((record) => record.event)).toEqual([
       { stream: "product", name: "installation.attributed", properties: { origin: "direct" } },
     ]);
   });

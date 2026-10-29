@@ -363,17 +363,23 @@ const onboardingWelcomeDeliveredSchema = z.strictObject({
   }),
 });
 
-// Where a signup came from, as closed slugs the website chose (a placement
-// name and an example id), never a visitor identity.
+// Where a signup came from, as closed classes of the website's Try Ship links,
+// never a visitor identity. The signup link carries free-form slugs; only these
+// allowlist values leave the classifier, and anything else becomes "other".
 export const attributionSlugSchema = z.string().check(z.regex(/^[a-z0-9-]{1,32}$/));
+export const attributionPlacementSchema = z.enum(["hero", "final-call", "example", "other"]);
+// Extend this list when the website adds an example; unknown ids classify as "other".
+export const attributionExampleSchema = z.enum([
+  "bill", "delivery", "dentist", "jessica", "kawah", "refund", "saturday", "steve", "tickets", "other",
+]);
 
 const installationAttributedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("installation.attributed"),
   properties: z.strictObject({
     origin: z.enum(["website", "direct"]),
-    placement: z.optional(attributionSlugSchema),
-    example: z.optional(attributionSlugSchema),
+    placement: z.optional(attributionPlacementSchema),
+    example: z.optional(attributionExampleSchema),
   }),
 });
 
@@ -622,6 +628,34 @@ export type IntegrationKind = z.infer<typeof integrationKindSchema>;
 export type IntegrationProvider = z.infer<typeof integrationProviderSchema>;
 export type ShipPlatform = z.infer<typeof shipPlatformSchema>;
 export type ConversationReplyFailure = z.infer<typeof conversationReplyFailureSchema>;
+export type AttributionPlacement = z.infer<typeof attributionPlacementSchema>;
+export type AttributionExample = z.infer<typeof attributionExampleSchema>;
+/** A signup's origin after classification: only allowlist values, stored and reported as such. */
+export type SignupAttribution = { placement: AttributionPlacement; example?: AttributionExample };
+
+/**
+ * Classify the slugs a Try Ship link carried into the closed attribution
+ * allowlists. The website names its hero and final-call sections and its
+ * example panels (`details-<id>`); anything else is "other", and the raw slugs
+ * never enter a record.
+ */
+export function signupAttributionFromSlugs(placement: string, example?: string): SignupAttribution {
+  const place = placement.trim().toLowerCase();
+  const classified: SignupAttribution = {
+    placement: place === "hero" || place === "hero-heading"
+      ? "hero"
+      : place === "final-call" || place === "early-access"
+        ? "final-call"
+        : place === "example" || place.startsWith("details-")
+          ? "example"
+          : "other",
+  };
+  if (example !== undefined) {
+    const parsed = attributionExampleSchema.safeParse(example.trim().toLowerCase());
+    classified.example = parsed.success ? parsed.data : "other";
+  }
+  return classified;
+}
 
 const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<
   readonly [Exclude<IntegrationProvider, "other">, ReadonlyArray<string>]

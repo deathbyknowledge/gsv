@@ -162,8 +162,9 @@ Space per owner, without limiting operator-created or already-owned Spaces.
 The owner session lists unfinished setups independently of browser storage.
 The request may also carry an optional attribution: the placement and example
 slugs the website put in the signup link's fragment. The signup page reads them
-in the browser and keeps them in its own signup state; Accounts validates them
-as closed slugs, stores them once on the provisioning operation, and reports
+in the browser and keeps them in its own signup state; Accounts classifies them
+into a closed allowlist (unknown values become `other`), writes them with the
+reservation itself so a retry can neither lose nor change them, and reports
 them on activation as `installation.attributed` (see the telemetry
 architecture). They never identify a visitor.
 

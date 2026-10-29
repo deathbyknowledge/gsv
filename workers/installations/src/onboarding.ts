@@ -7,8 +7,9 @@ import type {
 import type { InstallationIdentity } from "@humansandmachines/gsv/services/directory";
 import { parseOpaqueId } from "./domain";
 import { AccountStore } from "./store";
-import { attributionSlugSchema, emitTelemetry, type TelemetryEnvironment, type TelemetryEvent } from "@humansandmachines/gsv/telemetry";
-import type { SignupAttribution } from "./signup";
+import {
+  attributionExampleSchema, attributionPlacementSchema, emitTelemetry, type SignupAttribution, type TelemetryEnvironment, type TelemetryEvent,
+} from "@humansandmachines/gsv/telemetry";
 import {
   constantTimeEqual,
   createOpaqueToken,
@@ -292,7 +293,7 @@ function installationIdentity(row: OnboardingClaimRow): InstallationIdentity {
 
 type AttributionProperties = Extract<TelemetryEvent, { name: "installation.attributed" }>["properties"];
 
-/** The website's slugs become the record's properties; a missing or malformed value reports a direct signup. */
+/** The classified origin stored with the reservation becomes the record; a missing or malformed value reports a direct signup. */
 function attributionProperties(stored: string | null): AttributionProperties {
   if (!stored) return { origin: "direct" };
   let parsed: Partial<SignupAttribution>;
@@ -302,10 +303,10 @@ function attributionProperties(stored: string | null): AttributionProperties {
   } catch {
     return { origin: "direct" };
   }
-  const placement = attributionSlugSchema.safeParse(parsed.placement);
+  const placement = attributionPlacementSchema.safeParse(parsed.placement);
   if (!placement.success) return { origin: "direct" };
   const properties: AttributionProperties = { origin: "website", placement: placement.data };
-  const example = attributionSlugSchema.safeParse(parsed.example);
+  const example = attributionExampleSchema.safeParse(parsed.example);
   if (example.success) properties.example = example.data;
   return properties;
 }

@@ -3,11 +3,9 @@ import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { parseOpaqueId } from "./domain";
 import { OwnerAuthError } from "./owner-auth-store";
-import { emitTelemetry, exceptionDiagnostics, type TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
+import { emitTelemetry, exceptionDiagnostics, type SignupAttribution, type TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
 
 export type PendingSetup = { operationId: string; handle: string; origin: string };
-/** Where the signup click came from, as the website's own closed slugs; never a visitor identity. */
-export type SignupAttribution = { placement: string; example?: string };
 export type SignupPolicy = {
   allowsEmail?(email: string): boolean;
   prepare(input: { operationId: string; installationId: string }): Promise<void>;
@@ -48,13 +46,9 @@ export class InstallationSignup {
     const existing = await this.accounts.getReservationByOperation(operationId);
     if (!existing && !this.enabled) throw new Error("Registration is currently closed.");
     if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
-    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true });
-    // Only the request that reserved the operation sets its origin: a retry or resumed signup never
-    // rewrites it, and an operation that started direct stays direct.
-    if (attribution && !existing) {
-      await this.db.prepare("UPDATE provisioning_operations SET attribution_json = ? WHERE operation_id = ? AND attribution_json IS NULL")
-        .bind(JSON.stringify(attribution), operationId).run();
-    }
+    // The origin is written with the reservation itself, so the request that reserves the operation
+    // sets it once and a retry or resumed signup can neither lose nor rewrite it.
+    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true, attribution });
     const owned = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_setup = 1 AND owner_principal_id = ?")
       .bind(space.installationId, principalId).first();
     if (!owned) throw new Error("Ship activation is unavailable.");

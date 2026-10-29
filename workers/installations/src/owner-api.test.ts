@@ -152,9 +152,9 @@ describe("signup attribution body", () => {
     const rejected = await f.request("/spaces", f.sessionSecret, { operationId, handle, attribution: { placement: "Hero Banner" } });
     expect(rejected.status).toBe(400);
     expect(await f.accounts.getReservationByOperation(operationId)).toBeNull();
-    const accepted = await f.request("/spaces", f.sessionSecret, { operationId, handle, attribution: { placement: "hero", example: "plan-a-trip" } });
+    const accepted = await f.request("/spaces", f.sessionSecret, { operationId, handle, attribution: { placement: "details-tickets", example: "tickets" } });
     expect(accepted.status).toBe(200);
-    const stored = await f.accounts.getReservationByOperation(operationId);
-    expect(stored).not.toBeNull();
+    const stored = await env.INSTALLATIONS_DB.prepare("SELECT attribution_json FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ attribution_json: string }>();
+    expect(JSON.parse(stored!.attribution_json)).toEqual({ placement: "example", example: "tickets" });
   });
 });
