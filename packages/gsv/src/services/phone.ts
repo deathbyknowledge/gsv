@@ -55,6 +55,18 @@ export const phoneChangeSchema = z.strictObject({
 });
 export type PhoneChange = z.infer<typeof phoneChangeSchema>;
 
+/** Voice agent instructions rendered by the Kernel from its protected template and the approved brief. */
+export const phoneInstructionsSchema = z.string().trim().min(1).max(32_000);
+
+export type PhoneRealtimeSessionRequest = { installationId: string; callId: string; model: string };
+/** A short-lived credential for one realtime model session; the provider key never leaves inference. */
+export type PhoneRealtimeSession = { provider: "openai"; model: string; url: string; clientSecret: string; expiresAt: number };
+
+/** Inference-owned realtime credential minting, bound only to the calls service. */
+export interface PhoneRealtimeSessions {
+  createRealtimeSession(input: PhoneRealtimeSessionRequest): Promise<PhoneRealtimeSession>;
+}
+
 /** Deployment-authorized notifications from the calls service to the owning Kernel. */
 export interface PhoneGatewayService {
   phoneChanged(change: PhoneChange): Promise<void>;
@@ -62,7 +74,7 @@ export interface PhoneGatewayService {
 
 /** Identity is supplied by Kernel, never copied from public syscall arguments. */
 export interface InstallationPhone {
-  call(actor: PhoneActor, args: SysPhoneCallArgs): Promise<SysPhoneCallResult>;
+  call(actor: PhoneActor, args: SysPhoneCallArgs, instructions: string): Promise<SysPhoneCallResult>;
   get(actor: PhoneActor, callId: string): Promise<SysPhoneGetResult>;
   list(actor: PhoneActor, args: SysPhoneListArgs): Promise<SysPhoneListResult>;
   answer(actor: PhoneActor, args: SysPhoneAnswerArgs): Promise<SysPhoneAnswerResult>;

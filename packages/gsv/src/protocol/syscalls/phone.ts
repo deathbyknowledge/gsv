@@ -109,5 +109,15 @@ export type PhoneWatchEvent =
   | { kind: "call"; call: PhoneCall }
   | { kind: "line"; line: PhoneTranscriptLine };
 export type SysPhoneJoinArgs = { callId: string };
-/** A short-lived telephony client credential bound to one call. */
-export type SysPhoneJoinResult = { call: PhoneCall; provider: "twilio"; token: string; identity: string; expiresAt: number };
+/**
+ * A short-lived telephony client credential bound to one call. The client places
+ * one outgoing connection with `connectParams`; the service then moves the callee to it.
+ */
+export type SysPhoneJoinResult = {
+  call: PhoneCall;
+  provider: "twilio";
+  token: string;
+  identity: string;
+  expiresAt: number;
+  connectParams: Record<string, string>;
+};
