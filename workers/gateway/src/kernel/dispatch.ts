@@ -163,6 +163,7 @@ import { requestAdapterTarget } from "./adapter-targets";
 import { handleMailSend } from "./outbound-mail";
 import { handleMailList, handleMailRead, handleMailSearch } from "./inbound-mail-read";
 import { handleMailStatus } from "./outbound-status";
+import { handleNotifyRuleList, handleNotifyRuleReset, handleNotifyRuleSet } from "./notice-rules";
 import {
   handleConversationForProcess,
   handleConversationHistory,
@@ -451,6 +452,16 @@ async function dispatchKernel(
         break;
       case "mail.read":
         data = await handleMailRead(frame.args, ctx);
+        break;
+
+      case "notify.rule.list":
+        data = handleNotifyRuleList(frame.args, ctx);
+        break;
+      case "notify.rule.set":
+        data = handleNotifyRuleSet(frame.args, ctx);
+        break;
+      case "notify.rule.reset":
+        data = handleNotifyRuleReset(frame.args, ctx);
         break;
 
       case "conversation.ship":

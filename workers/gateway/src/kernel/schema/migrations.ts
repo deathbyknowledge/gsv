@@ -18,6 +18,7 @@ import { KERNEL_V081_APPROVAL_RULES_REPLACE_CODE_DEFAULTS } from "./v081_approva
 import { KERNEL_V082_OWNER_NOTICES } from "./v082_owner_notices";
 import { KERNEL_V083_MAIL_SEARCH } from "./v083_mail_search";
 import { KERNEL_V084_DROP_LINK_CHALLENGES } from "./v084_drop_link_challenges";
+import { KERNEL_V085_NOTICE_RULES } from "./v085_notice_rules";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -220,6 +221,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V082_OWNER_NOTICES,
   KERNEL_V083_MAIL_SEARCH,
   KERNEL_V084_DROP_LINK_CHALLENGES,
+  KERNEL_V085_NOTICE_RULES,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {
