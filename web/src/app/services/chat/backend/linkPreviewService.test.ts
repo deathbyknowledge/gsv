@@ -1,28 +1,30 @@
-import type { GsvBody } from "@humansandmachines/gsv/client";
 import { describe, expect, it, vi } from "vitest";
 import { fetchLinkPreview, fetchLinkPreviewImage, MAX_LINK_PREVIEW_PAGE_BYTES, pageMetadata } from "./linkPreviewService";
 
 const PAGE = "https://guide.example/start";
 
-function streamOf(chunks: string[] | Uint8Array[]) {
+function streamOf(chunks: Uint8Array[]) {
   const cancel = vi.fn();
-  const encoder = new TextEncoder();
   let index = 0;
   const stream = new ReadableStream<Uint8Array>({
     pull(controller) {
       if (index >= chunks.length) return controller.close();
-      const chunk = chunks[index++];
-      controller.enqueue(typeof chunk === "string" ? encoder.encode(chunk) : chunk);
+      controller.enqueue(chunks[index++]);
     },
     cancel,
   });
   return { stream, cancel, pulled: () => index };
 }
 
+function textStream(chunks: string[]) {
+  const encoder = new TextEncoder();
+  return streamOf(chunks.map((chunk) => encoder.encode(chunk)));
+}
+
 function client(headers: Record<string, string>, body: { stream: ReadableStream<Uint8Array> } | undefined, ok = true) {
   const request = vi.fn(async () => ({
     data: { ok, url: "https://www.guide.example/start", status: ok ? 200 : 404, statusText: "", headers, redirected: true },
-    ...(body ? { body: body as GsvBody } : undefined),
+    ...(body ? { body: { stream: body.stream } } : undefined),
   }));
   return { request };
 }
@@ -48,7 +50,7 @@ describe("link preview metadata", () => {
 
 describe("link preview fetch", () => {
   it("reads the page through net.fetch only as far as its head, then cancels the rest", async () => {
-    const body = streamOf(['<html><head><meta property="og:title" content="Start">', "</head><body>", "after the head", "never read"]);
+    const body = textStream(['<html><head><meta property="og:title" content="Start">', "</head><body>", "after the head", "never read"]);
     const gateway = client({ "content-type": "text/html; charset=utf-8" }, body);
     await expect(fetchLinkPreview(gateway, PAGE)).resolves.toEqual({
       url: PAGE, resolvedUrl: "https://www.guide.example/start", title: "Start",
@@ -61,17 +63,17 @@ describe("link preview fetch", () => {
 
   it("stops reading a page whose head never closes at the byte bound", async () => {
     const chunk = "x".repeat(64 * 1024);
-    const body = streamOf(Array.from({ length: 10 }, () => chunk));
+    const body = textStream(Array.from({ length: 10 }, () => chunk));
     await fetchLinkPreview(client({ "content-type": "text/html" }, body), PAGE);
     expect(body.pulled()).toBeLessThanOrEqual(MAX_LINK_PREVIEW_PAGE_BYTES / chunk.length + 1);
     expect(body.cancel).toHaveBeenCalled();
   });
 
   it("fails without reading a page that is not HTML or did not succeed", async () => {
-    const pdf = streamOf(["%PDF"]);
+    const pdf = textStream(["%PDF"]);
     await expect(fetchLinkPreview(client({ "content-type": "application/pdf" }, pdf), PAGE)).rejects.toThrow("not HTML");
     expect(pdf.cancel).toHaveBeenCalled();
-    await expect(fetchLinkPreview(client({ "content-type": "text/html" }, streamOf(["<head>"]), false), PAGE)).rejects.toThrow("status 404");
+    await expect(fetchLinkPreview(client({ "content-type": "text/html" }, textStream(["<head>"]), false), PAGE)).rejects.toThrow("status 404");
   });
 
   it("returns a supported image as a typed blob and refuses other types", async () => {
@@ -79,7 +81,7 @@ describe("link preview fetch", () => {
     const image = await fetchLinkPreviewImage(client({ "content-type": "image/png" }, png), "https://cdn.example/a.png");
     expect(image.type).toBe("image/png");
     expect(image.size).toBe(4);
-    await expect(fetchLinkPreviewImage(client({ "content-type": "image/svg+xml" }, streamOf(["<svg/>"])), "https://cdn.example/a.svg"))
+    await expect(fetchLinkPreviewImage(client({ "content-type": "image/svg+xml" }, textStream(["<svg/>"])), "https://cdn.example/a.svg"))
       .rejects.toThrow("not a supported image");
   });
 });
