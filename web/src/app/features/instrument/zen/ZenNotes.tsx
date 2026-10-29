@@ -133,8 +133,9 @@ function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { f
   );
 }
 
-/** Where what an event is about lives in GSV. */
-function eventLink(link: ProcHistoryEventLink): { href: string; label: TextKey } {
+/** Where what an event is about lives in GSV; calls have no page of their own yet. */
+function eventLink(link: ProcHistoryEventLink): { href: string; label: TextKey } | null {
+  if (link.kind === "phone") return null;
   return link.kind === "contact.request"
     ? { href: peoplePath({ view: "requests", requestId: link.requestId }), label: "chat.event.link.request" }
     : { href: peoplePath({ contactId: link.contactId }), label: "chat.event.link.contact" };

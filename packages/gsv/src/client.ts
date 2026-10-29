@@ -373,7 +373,6 @@ const SYSCALL_NAMES = [
   "sys.phone.answer",
   "sys.phone.note",
   "sys.phone.end",
-  "sys.phone.watch",
   "sys.phone.join",
   "sys.browser.profile.create",
   "sys.browser.profile.list",

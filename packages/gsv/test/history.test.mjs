@@ -257,6 +257,14 @@ const eventFixtures = {
   "runtime.wake": { source: "process", reason: "pending-events", pendingEvents: 1 },
   "runtime.failed": { reason: "schedule.error", error: "Could not load schedule" },
   "target.connection": { targetId: "machine:one", event: "connected", platform: "linux", observedAt: 100 },
+  "phone.asked": {
+    callId: "call:1", questionId: "q:1", question: "Only 21:30 is free. Take it?", deadlineAt: 400,
+    to: "+34910000000", business: "Restaurante Lúa", responsibilityId: "r12y:1",
+  },
+  "phone.ended": {
+    callId: "call:1", outcome: "completed", summary: "Booked for 21:30", to: "+34910000000",
+    transcriptPath: "/home/ship/calls/2026-10-29-call:1.md", responsibilityId: "r12y:1",
+  },
   "owner.notified": {
     noticeId: "contact.message:contact:1:0", topic: "contact.message", adapter: "whatsapp",
     from: "Xisca", handle: "xisca.ship.space", preview: "The photo", contactId: "contact:1", conversationId: "conv:1", messages: 1, sentAtMs: 100,
