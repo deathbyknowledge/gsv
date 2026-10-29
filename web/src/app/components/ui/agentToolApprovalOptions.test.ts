@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { capabilityLabelKey, humanToolCapabilityLabel, isCustomMatch, matchOptionsForRule, ruleCapabilityLabel, targetOptionsForRule } from "./agentToolApprovalOptions";
+import { capabilityLabelKey, humanToolCapabilityLabel, isCustomMatch, matchOptionsForRule, ruleCapabilityLabel, targetOptionsForRule, targetOptionValue } from "./agentToolApprovalOptions";
 
 /** The default `users` group (gid 100) in workers/gateway/src/kernel/capabilities.ts; keep the two in step. */
 const DEFAULT_USER_CAPABILITIES = [
@@ -84,5 +84,12 @@ describe("target options", () => {
     ]);
     expect(options.map((option) => option.label)).toEqual(expect.arrayContaining(["garage pi · dev-1", "garage pi · dev-2", "studio"]));
     expect(options.some((option) => option.label === "garage pi")).toBe(false);
+  });
+
+  it("tells a connection named like a built-in choice apart by id", () => {
+    const shipHome = targetOptionsForRule(undefined, []).find((option) => option.value === targetOptionValue("gsv"))!.label;
+    const options = targetOptionsForRule(undefined, [{ id: "dev-9", label: shipHome }]);
+    expect(options.filter((option) => option.label === shipHome)).toHaveLength(1);
+    expect(options.some((option) => option.label === `${shipHome} · dev-9`)).toBe(true);
   });
 });
