@@ -1856,8 +1856,8 @@ export const es = {
   "chat.terminal.inputFor": "Entrada para {command}",
 
   // Chat: run receipts
-  "chat.receipt.working": "trabajando",
-  "chat.receipt.worked": "ha trabajado",
+  "chat.receipt.working": "trabajando en esto",
+  "chat.receipt.worked": "ha trabajado en esto",
   "chat.receipt.notes": "notas de trabajo",
   "chat.receipt.details": "detalles de la respuesta",
   "chat.receipt.process": "esta conversación",

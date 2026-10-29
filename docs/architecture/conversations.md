@@ -62,6 +62,7 @@ the center of the visible transcript, or the first/latest message at either end,
 stays visible while typing; after leaving the input, `j` and `k` continue from that same message.
 On phones, the return-to-latest control is a down arrow at the right edge. Closed completed action
 receipts are hidden once they have a reply; action records remain inspectable in Settings → Logs.
+A receipt names the places the work touched; work that named no place reads "worked on this".
 Running work, failed actions, fallback notices, approvals and already-open receipts remain visible.
 Direct `$` commands use a compact target header on phones, with running, unavailable or failed
 states when relevant. Expand it to read the complete command, output and terminal controls.
