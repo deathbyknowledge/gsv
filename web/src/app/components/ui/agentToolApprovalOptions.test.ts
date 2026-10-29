@@ -98,4 +98,24 @@ describe("target options", () => {
     expect(options.find((option) => option.value === targetOptionValue("macbook"))?.label).toBe("macbook (not connected)");
     expect(options.find((option) => option.value === targetOptionValue("dev-4"))?.label).toBe("macbook");
   });
+
+  it("reads a stored alias as what the runtime makes of it", () => {
+    const builtin = targetOptionsForRule(undefined, []);
+    const labelOf = (value: string) => builtin.find((option) => option.value === value)!.label;
+    expect(targetOptionsForRule("any", []).find((option) => option.value === targetOptionValue("any"))?.label).toBe(labelOf(""));
+    expect(targetOptionsForRule("gateway", []).find((option) => option.value === targetOptionValue("gateway"))?.label).toBe(labelOf(targetOptionValue("gsv")));
+    expect(targetOptionsForRule("device", []).find((option) => option.value === targetOptionValue("device"))?.label)
+      .toBe(targetOptionsForRule("targets/*", []).find((option) => option.value === targetOptionValue("targets/*"))!.label);
+  });
+
+  it("keeps labels unique even when a name equals another connection's derived label", () => {
+    const options = targetOptionsForRule(undefined, [
+      { id: "dev-1", label: "garage pi" },
+      { id: "dev-2", label: "garage pi" },
+      { id: "dev-7", label: "garage pi · dev-1" },
+    ]);
+    const labels = options.map((option) => option.label);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(options.find((option) => option.value === targetOptionValue("dev-7"))?.label).toBe("garage pi · dev-1 · dev-7");
+  });
 });

@@ -1,5 +1,5 @@
 import {
-  isToolApprovalTargetSelector, toolApprovalTargetSchema, type ToolApprovalTarget,
+  isToolApprovalTargetSelector, normalizeToolApprovalTarget, toolApprovalTargetSchema, type ToolApprovalTarget,
 } from "@humansandmachines/gsv/protocol";
 import type {
   ApprovalPolicyAction,
@@ -291,35 +291,35 @@ function translated(option: { value: string; label: TextKey }): ApprovalOption {
 export function targetOptionsForRule(target: ToolApprovalTarget | undefined, targets: readonly AgentToolTarget[]): ApprovalOption[] {
   const builtinOptions = BUILTIN_TARGETS.map(translated);
   const named = targets.filter((candidate) => candidate.id.trim().length > 0);
-  // Connection names are not unique and may echo a built-in choice; a name seen twice tells itself apart by id.
-  const labelCounts = new Map<string, number>(builtinOptions.map((option) => [option.label, 1]));
-  for (const candidate of named) {
-    const label = candidate.label?.trim() || candidate.id;
-    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  const connections = named.map((candidate) => ({
+    value: targetOptionValue(candidate.id),
+    label: candidate.label?.trim() || candidate.id,
+    id: candidate.id,
+  }));
+  const options: { value: string; label: string; id?: string }[] = target === "targets/*"
+    ? [...builtinOptions, translated(LEGACY_EXTERNAL_TARGET), ...connections]
+    : [...builtinOptions, ...connections];
+  const value = targetOptionValue(target);
+  if (target !== undefined && !options.some((option) => option.value === value)) {
+    // The rule's own target, kept under its stored value: a supported alias reads as what it means, a selector
+    // as its scope, and a machine no listed connection matches as forgotten, apart from a live one of that name.
+    const canonical = normalizeToolApprovalTarget(target);
+    const alias = canonical !== target;
+    const label = alias
+      ? canonical === "targets/*" ? t(LEGACY_EXTERNAL_TARGET.label) : targetLabelForRule(canonical, targets)
+      : isToolApprovalTargetSelector(target) ? targetLabelForRule(target, targets) : t("approval.target.notConnected", { id: target });
+    options.push(isToolApprovalTargetSelector(target) || alias ? { value, label } : { value, label, id: target });
   }
-  const targetOptions = named.map((candidate) => {
-    const label = candidate.label?.trim() || candidate.id;
-    return {
-      value: targetOptionValue(candidate.id),
-      label: (labelCounts.get(label) ?? 0) > 1 && label !== candidate.id ? `${label} · ${candidate.id}` : label,
-    };
-  });
-  const knownValues = new Set([...builtinOptions, ...targetOptions].map((option) => option.value));
-  const baseOptions = target === "targets/*"
-    ? [...builtinOptions, translated(LEGACY_EXTERNAL_TARGET), ...targetOptions]
-    : [...builtinOptions, ...targetOptions];
-  if (!target || knownValues.has(targetOptionValue(target)) || target === "targets/*") {
-    return baseOptions;
+  // Connection names are not unique and may echo a built-in choice or another connection's derived label; any
+  // label still shared after a pass gains that connection's id until every option reads differently.
+  for (let pass = 0; pass < 3; pass += 1) {
+    const counts = new Map<string, number>();
+    for (const option of options) counts.set(option.label, (counts.get(option.label) ?? 0) + 1);
+    const colliding = options.filter((option) => (counts.get(option.label) ?? 0) > 1 && option.id !== undefined && !option.label.endsWith(` · ${option.id}`));
+    if (colliding.length === 0) break;
+    for (const option of colliding) option.label = `${option.label} · ${option.id}`;
   }
-  // A rule's own target that no listed connection matches is a forgotten machine; saying so keeps it apart
-  // from a live connection that happens to carry that id as its name.
-  return [
-    ...baseOptions,
-    {
-      value: targetOptionValue(target),
-      label: isToolApprovalTargetSelector(target) ? targetLabelForRule(target, targets) : t("approval.target.notConnected", { id: target }),
-    },
-  ];
+  return options.map(({ value: optionValue, label }) => ({ value: optionValue, label }));
 }
 
 export function targetIndexForRule(target: ToolApprovalTarget | undefined, targets: readonly AgentToolTarget[]): number {
