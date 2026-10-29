@@ -68,8 +68,9 @@
   align-items: center;
   gap: 2px;
 }
-.gsv-table-grip { touch-action: none; cursor: grab; }
-.gsv-table-grip.is-idle { cursor: default; }
+.gsv-table-grip { display: inline-flex; touch-action: none; }
+.gsv-table-grip .gsv-ibtn-floating { cursor: grab; }
+.gsv-table-grip.is-idle .gsv-ibtn-floating { cursor: default; }
 .gsv-table-row.is-dragging { opacity: 0.4; }
 .gsv-table-row.is-drop-before > .gsv-table-td { box-shadow: inset 0 2px 0 var(--accent); }
 .gsv-table-row.is-drop-after > .gsv-table-td { box-shadow: inset 0 -2px 0 var(--accent); }

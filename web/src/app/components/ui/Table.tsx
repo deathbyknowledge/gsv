@@ -91,6 +91,8 @@ export function Table<Row>({ caption, columns, rows, rowId, density = "default",
   const [moved, setMoved] = useState<string | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const dragRef = useRef<Drag | null>(null);
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const scrollLoop = useRef(0);
 
   useEffect(() => {
     const element = host.current;
@@ -119,6 +121,44 @@ export function Table<Row>({ caption, columns, rows, rowId, density = "default",
     setAnnouncement(t("ui.table.moved", { label: reorder.label(rows[from], from), position: to + 1, count: rows.length }));
   };
 
+  /** The nearest ancestor that scrolls, else the page: what a drag near an edge moves. */
+  const scroller = (): Element | null => {
+    for (let node = host.current?.parentElement ?? null; node; node = node.parentElement) {
+      const overflow = getComputedStyle(node).overflowY;
+      if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight) return node;
+    }
+    return document.scrollingElement;
+  };
+  // While a drag sits near the top or bottom of the view, the view scrolls so rows out of sight can be reached.
+  const trackEdges = () => {
+    const current = dragRef.current;
+    const at = pointer.current;
+    if (!current || !at) return;
+    const edge = 56;
+    const viewTop = 0;
+    const viewBottom = window.innerHeight;
+    const speed = at.y < viewTop + edge ? -Math.ceil((viewTop + edge - at.y) / 4) : at.y > viewBottom - edge ? Math.ceil((at.y - (viewBottom - edge)) / 4) : 0;
+    if (speed !== 0) {
+      scroller()?.scrollBy(0, speed);
+      const hit = rowAt(at.x, at.y);
+      const next = { ...current, over: hit?.index ?? null, after: hit?.after ?? false };
+      dragRef.current = next;
+      setDrag(next);
+    }
+    scrollLoop.current = requestAnimationFrame(trackEdges);
+  };
+  const stopEdges = () => {
+    if (scrollLoop.current) cancelAnimationFrame(scrollLoop.current);
+    scrollLoop.current = 0;
+  };
+  const stopDrag = () => {
+    dragRef.current = null;
+    pointer.current = null;
+    stopEdges();
+    setDrag(null);
+  };
+  useEffect(() => stopEdges, []);
+
   const rowAt = (x: number, y: number): { index: number; after: boolean } | null => {
     const hit = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-table-row]");
     if (!hit || !host.current?.contains(hit)) return null;
@@ -132,13 +172,17 @@ export function Table<Row>({ caption, columns, rows, rowId, density = "default",
       event.preventDefault();
       const next = { from: index, over: null, after: false, pointerId: event.pointerId };
       dragRef.current = next;
+      pointer.current = { x: event.clientX, y: event.clientY };
       setDrag(next);
-      // SAFETY: the handle is the button the event fired on.
+      // SAFETY: the handlers are attached to the grip wrapper, an element.
       (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+      stopEdges();
+      scrollLoop.current = requestAnimationFrame(trackEdges);
     },
     onPointerMove: (event: PointerEvent) => {
       const current = dragRef.current;
       if (!current || current.pointerId !== event.pointerId) return;
+      pointer.current = { x: event.clientX, y: event.clientY };
       const hit = rowAt(event.clientX, event.clientY);
       const next = { ...current, over: hit?.index ?? null, after: hit?.after ?? false };
       dragRef.current = next;
@@ -147,11 +191,11 @@ export function Table<Row>({ caption, columns, rows, rowId, density = "default",
     onPointerUp: (event: PointerEvent) => {
       const current = dragRef.current;
       if (!current || current.pointerId !== event.pointerId) return;
-      dragRef.current = null;
-      setDrag(null);
+      stopDrag();
       if (current.over !== null) move(current.from, dropIndex(current.from, current.over, current.after));
     },
-    onLostPointerCapture: () => { dragRef.current = null; setDrag(null); },
+    onPointerCancel: () => stopDrag(),
+    onLostPointerCapture: () => stopDrag(),
     onKeyDown: (event: KeyboardEvent) => {
       if (!canReorder) return;
       if (event.key === "ArrowUp") { event.preventDefault(); move(index, index - 1); }
@@ -166,7 +210,10 @@ export function Table<Row>({ caption, columns, rows, rowId, density = "default",
     const hint = (text: string) => (searching ? t("ui.table.reorderWhileSearching") : text);
     return <span class="gsv-table-reorder">
       <Hint text={hint(t("ui.table.drag"))}>
-        <IconButton glyph="grip" variant="floating" className={`gsv-table-grip${canReorder ? "" : " is-idle"}`} ariaLabel={`${t("ui.table.drag")}: ${label}`} disabled={blocked || rows.length < 2} {...handleProps(index)} />
+        {/* The wrapper takes the pointer and key events: a drag needs capture on an element, and the button inside stays a plain button. */}
+        <span class={`gsv-table-grip${canReorder ? "" : " is-idle"}`} {...handleProps(index)}>
+          <IconButton glyph="grip" variant="floating" ariaLabel={`${t("ui.table.drag")}: ${label}`} disabled={blocked || rows.length < 2} />
+        </span>
       </Hint>
       <Hint text={hint(t("ui.table.moveUp"))}>
         <IconButton glyph="arrowUp" variant="floating" ariaLabel={`${t("ui.table.moveUp")}: ${label}`} disabled={blocked || index === 0} onClick={() => move(index, index - 1)} />
