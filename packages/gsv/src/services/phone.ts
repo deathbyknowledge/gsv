@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { BinaryBody } from "../protocol/body";
 import type {
-  PhoneBrief, SysPhoneAnswerArgs, SysPhoneAnswerResult, SysPhoneCallArgs, SysPhoneCallResult,
+  PhoneBrief, PhoneBriefInput, SysPhoneAnswerArgs, SysPhoneAnswerResult, SysPhoneCallArgs, SysPhoneCallResult,
   SysPhoneEndResult, SysPhoneGetResult, SysPhoneJoinResult, SysPhoneListArgs, SysPhoneListResult,
   SysPhoneNoteArgs, SysPhoneNoteResult, SysPhoneWatchResult,
 } from "../protocol/syscalls/phone";
@@ -12,7 +12,7 @@ const line = (max: number) => z.string().trim().min(1).max(max);
 export const PHONE_MAX_CALL_MINUTES = 30;
 export const PHONE_NUMBER_PATTERN = /^\+[1-9]\d{6,14}$/;
 
-export const phoneBriefSchema = z.strictObject({
+const briefFields = {
   to: z.string().regex(PHONE_NUMBER_PATTERN, "Use an international number such as +34910000000"),
   business: line(120).optional(),
   onBehalfOf: line(100),
@@ -20,10 +20,14 @@ export const phoneBriefSchema = z.strictObject({
   mayShare: z.array(line(300)).max(12).optional(),
   mustNot: z.array(line(300)).max(12).optional(),
   ifOutsideLimits: z.enum(["ask", "end"]).optional(),
+  checkIn: line(300).optional(),
   voicemail: z.enum(["hang_up", "leave_message"]).optional(),
   language: z.string().regex(/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/).optional(),
   maxMinutes: z.number().int().min(1).max(PHONE_MAX_CALL_MINUTES).optional(),
-}) satisfies z.ZodType<PhoneBrief>;
+};
+
+export const phoneBriefSchema = z.strictObject(briefFields) satisfies z.ZodType<PhoneBrief>;
+export const phoneBriefInputSchema = z.strictObject({ ...briefFields, onBehalfOf: briefFields.onBehalfOf.optional() }) satisfies z.ZodType<PhoneBriefInput>;
 
 export const phoneActorSchema = z.strictObject({
   ownerUid: z.number().int().nonnegative(),
@@ -32,10 +36,17 @@ export const phoneActorSchema = z.strictObject({
 });
 export type PhoneActor = z.infer<typeof phoneActorSchema>;
 
+/** What the Kernel asks the service to place: the owner is named and the request has an identity. */
+export type PhoneCallRequest = { requestId: string; brief: PhoneBrief; responsibilityId?: string };
 export const phoneCallSchema = z.strictObject({
   requestId: id,
   brief: phoneBriefSchema,
   responsibilityId: id.optional(),
+}) satisfies z.ZodType<PhoneCallRequest>;
+export const phoneCallArgsSchema = z.strictObject({
+  brief: phoneBriefInputSchema,
+  responsibilityId: id.optional(),
+  requestId: id.optional(),
 }) satisfies z.ZodType<SysPhoneCallArgs>;
 export const phoneSelectorSchema = z.strictObject({ callId: id });
 export const phoneListSchema = z.strictObject({ includeEnded: z.boolean().optional() }) satisfies z.ZodType<SysPhoneListArgs>;
@@ -74,7 +85,7 @@ export interface PhoneGatewayService {
 
 /** Identity is supplied by Kernel, never copied from public syscall arguments. */
 export interface InstallationPhone {
-  call(actor: PhoneActor, args: SysPhoneCallArgs, instructions: string): Promise<SysPhoneCallResult>;
+  call(actor: PhoneActor, args: PhoneCallRequest, instructions: string): Promise<SysPhoneCallResult>;
   get(actor: PhoneActor, callId: string): Promise<SysPhoneGetResult>;
   list(actor: PhoneActor, args: SysPhoneListArgs): Promise<SysPhoneListResult>;
   answer(actor: PhoneActor, args: SysPhoneAnswerArgs): Promise<SysPhoneAnswerResult>;

@@ -9,7 +9,7 @@ import { requireCommandCapability, requireShellOptionValue } from "./common";
 const MAX_BRIEF_FILE_BYTES = 16 * 1024;
 
 const USAGE = `Usage:
-  phone call --request-id ID --work RESPONSIBILITY_ID (--file BRIEF.json | --json BRIEF)
+  phone call --work RESPONSIBILITY_ID (--file BRIEF.json | --json BRIEF)
   phone list [--all]
   phone get CALL_ID
   phone answer CALL_ID QUESTION_ID ANSWER...
@@ -20,18 +20,20 @@ A voice agent places the call and keeps to the brief; you do not speak on it.
 The brief is a JSON object:
   to            international number, for example +34910000000
   business      how the agent addresses the callee (optional)
-  onBehalfOf    the name the agent gives in its first sentence, from the owner's profile or memory
+  onBehalfOf    the name the agent gives in its first sentence (optional: defaults to the
+                owner's name; if they have not set one, the command says to ask them)
   goal          what the call must achieve
   mayShare      facts the agent may say (optional list)
   mustNot       limits the agent never crosses (optional list)
   ifOutsideLimits  ask (default) or end
+  checkIn       when the agent stops and asks the owner, holding the line (optional),
+                for example "after they give their answer, before ending the call"
   voicemail     hang_up (default) or leave_message
   language      BCP 47 language to open in (optional)
   maxMinutes    capped by the Ship's allowance (optional)
 
-The owner approves every call, with its brief, before it dials. Keep the request ID
-before calling: a retry with the same ID returns the same call; nothing redials.
-Calling returns at once. The responsibility waits on the call; a question from the
+The owner approves every call, with its brief, before it dials. One command places
+at most one call; nothing redials. Calling returns at once. The responsibility waits on the call; a question from the
 agent and the call's end arrive as events. Answer a question quickly with
 phone answer: the callee is waiting. Cancelling your run does not hang up; phone end does.
 `;
@@ -64,14 +66,12 @@ async function phoneFrame(verb: string, args: string[], shellCtx: CommandContext
       const options = new Map<string, string>();
       for (let i = 0; i < args.length; i++) {
         const option = args[i];
-        if (!["--request-id", "--work", "--file", "--json"].includes(option) || options.has(option)) throw new Error(`unexpected argument: ${option}\n${USAGE}`);
+        if (!["--work", "--file", "--json"].includes(option) || options.has(option)) throw new Error(`unexpected argument: ${option}\n${USAGE}`);
         options.set(option, requireShellOptionValue(args[++i], option));
       }
-      const requestId = options.get("--request-id");
-      if (!requestId) throw new Error("call requires --request-id; keep it to recover the call if the response is lost");
       const brief = await briefInput(options, shellCtx, fs);
       const responsibilityId = options.get("--work");
-      return { type: "req", id, call: "sys.phone.call", args: { requestId, brief, ...(responsibilityId ? { responsibilityId } : {}) } };
+      return { type: "req", id, call: "sys.phone.call", args: { brief, ...(responsibilityId ? { responsibilityId } : {}) } };
     }
     case "list":
       if (args.some((arg) => arg !== "--all")) throw new Error("list accepts only --all");

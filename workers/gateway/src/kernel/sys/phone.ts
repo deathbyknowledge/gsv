@@ -1,6 +1,6 @@
 import { cancelBinaryBody } from "@humansandmachines/gsv/protocol";
 import type { JsonObject, PhoneCall } from "@humansandmachines/gsv/protocol";
-import { phoneCallSchema, type InstallationPhone, type PhoneActor } from "@humansandmachines/gsv/services/phone";
+import { phoneCallArgsSchema, type InstallationPhone, type PhoneActor, type PhoneCallRequest } from "@humansandmachines/gsv/services/phone";
 import { principalOf, type KernelContext } from "../context";
 import { hasCapability } from "../capabilities";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
@@ -9,6 +9,7 @@ import { acquirePhone, phoneActor, withPhone } from "../phone-service";
 import { phoneCallBlocker } from "../phone-runtime";
 import { handleResponsibilityUpdate, requireWritableResponsibility } from "../responsibilities";
 import { renderPhoneInstructions } from "../../prompts/phone";
+import { phoneOwnerName } from "../profiles";
 import { raceWithAbort } from "../../shared/abort";
 import { withByteStreamFinalizer } from "../../shared/streams";
 
@@ -23,7 +24,7 @@ export async function handlePhoneRequest(frame: PhoneRequest, ctx: KernelContext
   if (HUMAN_ONLY.has(frame.call) && !actor.human) throw new Error("This phone action requires the signed-in human owner");
   if (!hasCapability(principalOf(ctx)?.calls ?? [], frame.call)) throw new Error(`EACCES: permission denied: ${frame.call}`);
   if (frame.call === "sys.phone.watch") return watch(frame, actor, ctx);
-  if (frame.call === "sys.phone.call") return { type: "res", id: frame.id, ok: true, data: await placeCall(frame.args, actor, ctx) };
+  if (frame.call === "sys.phone.call") return { type: "res", id: frame.id, ok: true, data: await placeCall(frame.args, frame.id, actor, ctx) };
   return withPhone(ctx, async (service) => {
     let data: Extract<ResponseFrame, { ok: true }>["data"];
     switch (frame.call) {
@@ -62,13 +63,24 @@ export async function handlePhoneRequest(frame: PhoneRequest, ctx: KernelContext
  * The owner approves the brief before anything dials. An agent's call keeps the
  * promise it serves: the responsibility waits on the call until it ends.
  */
-async function placeCall(raw: unknown, actor: PhoneActor, ctx: KernelContext) {
+async function placeCall(raw: unknown, frameId: string, actor: PhoneActor, ctx: KernelContext) {
   if (ctx.processId && !ctx.toolOwner) throw new Error("A Process places calls only from an approved tool call");
-  const args = phoneCallSchema.parse(raw);
-  if (ctx.processId && !args.responsibilityId) throw new Error("Agent phone calls require the responsibilityId of the work they serve");
+  const parsed = phoneCallArgsSchema.safeParse(raw);
+  if (!parsed.success) throw new Error(parsed.error.issues.map(readableIssue).join("\n"));
+  const input = parsed.data;
+  if (ctx.processId && !input.responsibilityId) throw new Error("Agent phone calls require the responsibilityId of the work they serve");
+  const onBehalfOf = input.brief.onBehalfOf ?? phoneOwnerName(actor.ownerUid, ctx);
+  if (!onBehalfOf) {
+    throw new Error("brief.onBehalfOf: your owner has not set a name. Ask them which name the call should give, then pass it as onBehalfOf");
+  }
+  const args: PhoneCallRequest = {
+    requestId: input.requestId ?? await toolRequestId(ctx) ?? frameId,
+    brief: { ...input.brief, onBehalfOf },
+    ...(input.responsibilityId ? { responsibilityId: input.responsibilityId } : {}),
+  };
   const work = args.responsibilityId ? requireWritableResponsibility(args.responsibilityId, ctx) : undefined;
   if (work && (work.state === "resolved" || work.state === "cancelled")) throw new Error(`Responsibility ${work.id} is already ${work.state}`);
-  // SAFETY: phoneCallSchema produced plain JSON from JSON syscall arguments.
+  // SAFETY: phoneCallArgsSchema produced plain JSON from JSON syscall arguments.
   await authorizeNestedOperation(ctx, "sys.phone.call", args as JsonObject);
   ctx.requestSignal?.throwIfAborted();
   const instructions = renderPhoneInstructions(args.brief);
@@ -84,6 +96,21 @@ async function placeCall(raw: unknown, actor: PhoneActor, ctx: KernelContext) {
     details: { ...current.details, phoneCall: { callId: call.callId } },
   } }, ctx);
   return result;
+}
+
+/** One tool call places at most one call, so its owning identity is the retry key. */
+async function toolRequestId(ctx: KernelContext): Promise<string | undefined> {
+  if (!ctx.processId || !ctx.toolOwner) return undefined;
+  const input = new TextEncoder().encode(`${ctx.processId}\n${ctx.toolOwner.runId}\n${ctx.toolOwner.requestId}`);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input));
+  return `tool:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** One short line per problem, so an agent can correct the brief. */
+function readableIssue(issue: { path: PropertyKey[]; message: string; code: string }): string {
+  const path = issue.path.map(String).join(".") || "arguments";
+  const missing = issue.code === "invalid_type" && /received undefined/.test(issue.message);
+  return `${path}: ${missing ? "required" : issue.message}`;
 }
 
 async function watch(frame: Extract<PhoneRequest, { call: "sys.phone.watch" }>, actor: PhoneActor, ctx: KernelContext): Promise<ResponseFrame> {

@@ -27,6 +27,8 @@ export type PhoneBrief = {
   mustNot?: string[];
   /** Ask the owner when the callee proposes something outside the brief, or end and call back. */
   ifOutsideLimits?: "ask" | "end";
+  /** When to stop and ask the owner, holding the line until the answer or the question deadline. */
+  checkIn?: string;
   voicemail?: "hang_up" | "leave_message";
   /** BCP 47 language for the opening; otherwise the agent follows the callee. */
   language?: string;
@@ -84,11 +86,17 @@ export type PhoneUsage = {
   maxCallSeconds: number;
 };
 
+/** A brief as the caller writes it; the Kernel names the owner when onBehalfOf is omitted. */
+export type PhoneBriefInput = Omit<PhoneBrief, "onBehalfOf"> & { onBehalfOf?: string };
+
 export type SysPhoneCallArgs = {
-  /** Caller-persisted identity; a retried request returns the same call. */
-  requestId: string;
-  brief: PhoneBrief;
+  brief: PhoneBriefInput;
   responsibilityId?: string;
+  /**
+   * A retried request with the same identity returns the same call. The Kernel
+   * derives it from the owning tool call when omitted.
+   */
+  requestId?: string;
 };
 export type SysPhoneCallResult = { call: PhoneCall };
 export type SysPhoneGetArgs = { callId: string };

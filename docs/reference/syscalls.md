@@ -1960,15 +1960,20 @@ with "Phone calls are not configured for this Ship", and the native `phone`
 command reports the same. The Kernel derives the installation, owner and acting
 Process; arguments never choose them, the caller ID or the provider account.
 
-`sys.phone.call({ requestId, brief, responsibilityId? })` returns `{ call }` at
+`sys.phone.call({ brief, responsibilityId?, requestId? })` returns `{ call }` at
 once, before anything rings. The brief names the destination (`to`, an
-international number), `onBehalfOf` (the name the agent gives in its first
-sentence), `goal`, and optional `business`, `mayShare`, `mustNot`,
-`ifOutsideLimits` (`ask` or `end`), `voicemail` (`hang_up` or
-`leave_message`), `language` and `maxMinutes`. The Kernel validates it, renders
-the voice agent's instructions from its protected template and the brief, and
-passes both to the service. A retry with the same `requestId` returns the same
-call; nothing redials.
+international number), `goal`, and optional `onBehalfOf` (the name the agent
+gives in its first sentence), `business`, `mayShare`, `mustNot`,
+`ifOutsideLimits` (`ask` or `end`), `checkIn` (when the agent stops to ask the
+owner, holding the line), `voicemail` (`hang_up` or `leave_message`), `language`
+and `maxMinutes`. Without `onBehalfOf`, the Kernel uses the profile name or
+account full name the owner set, and refuses the call, telling the caller to ask
+the owner, when there is none. The Kernel validates the brief, reporting each
+problem as one line such as `brief.goal: required`, renders the voice agent's
+instructions from its protected template and the brief, and passes both to the
+service. A retry with the same `requestId` returns the same call; nothing
+redials. An agent's call takes its `requestId` from the tool call that placed
+it, so one tool call places at most one call.
 
 Every call asks the owner first, and the approval shows the brief. New approval
 policies start with an `ask` rule for `sys.phone.call`, and saved policies that

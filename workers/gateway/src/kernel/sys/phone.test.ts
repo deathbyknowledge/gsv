@@ -65,6 +65,54 @@ describe("phone syscalls", () => {
     });
   });
 
+  it("keys an agent's call to the tool call that placed it", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const placed: PhoneCall = { callId: "call:1", requestId: "x", ownerUid: OWNER, processId: "proc:ship", brief, state: "queued", revision: 1, createdAt: 1 };
+      const call = vi.fn(async () => ({ call: placed }));
+      vi.spyOn(processTransport, "sendFrameToProcess").mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: true } });
+      const keys: string[] = [];
+      for (const owner of [toolOwner, toolOwner, { ...toolOwner, requestId: "tool:2" }]) {
+        const { ctx, responsibilities } = context(storage, { call }, { processId: "proc:ship", toolOwner: owner });
+        const work = responsibilities.create({ ownerUid: OWNER, title: "Book Lúa", source: { kind: "process", processId: "proc:ship" },
+          actor: { kind: "process", processId: "proc:ship" }, assignee: { kind: "ship" }, state: "active", priority: "normal",
+          observedByShip: true, now: Date.now() }).record;
+        await handlePhoneRequest({ type: "req", id: crypto.randomUUID(), call: "sys.phone.call", args: { brief, responsibilityId: work.id } }, ctx);
+        keys.push((call.mock.calls.at(-1) as unknown as [unknown, { requestId: string }])[1].requestId);
+      }
+      expect(keys[0]).toMatch(/^tool:[0-9a-f]{64}$/);
+      expect(keys[1]).toBe(keys[0]);
+      expect(keys[2]).not.toBe(keys[0]);
+    });
+  });
+
+  it("names the owner from the name they set, and asks for one rather than saying the handle", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const placed: PhoneCall = { callId: "call:1", requestId: "place", ownerUid: OWNER, brief, state: "queued", revision: 1, createdAt: 1 };
+      const call = vi.fn(async () => ({ call: placed }));
+      const { onBehalfOf: _omitted, ...unnamed } = brief;
+      const named = context(storage, { call }, { owner: { displayName: "Steve" } });
+      await handlePhoneRequest({ type: "req", id: "place", call: "sys.phone.call", args: { brief: unnamed } }, named.ctx);
+      expect(call).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ requestId: "place", brief: { ...unnamed, onBehalfOf: "Steve" } }),
+        expect.stringMatching(/on a phone call for Steve/));
+
+      const placeholder = context(storage, { call }, { owner: { displayName: "ship-handle" } });
+      await expect(handlePhoneRequest({ type: "req", id: "again", call: "sys.phone.call", args: { brief: unnamed } }, placeholder.ctx))
+        .rejects.toThrow(/brief\.onBehalfOf: .*Ask them/);
+      expect(call).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("reports each problem with the brief as one readable line", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { ctx } = context(storage, {});
+      const { goal: _goal, ...goalless } = brief;
+      const failure = handlePhoneRequest({ type: "req", id: "place", call: "sys.phone.call", args: { brief: { ...goalless, to: "112" } } }, ctx);
+      await expect(failure).rejects.toThrow("brief.goal: required");
+      await expect(failure).rejects.toThrow(/brief\.to: Use an international number/);
+      await expect(failure).rejects.not.toThrow(/"code"/);
+    });
+  });
+
   it("keeps live audio and take-over with the signed-in owner", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const process = context(storage, {}, { processId: "proc:ship", toolOwner });
@@ -144,7 +192,7 @@ describe("phone call approval", () => {
 function context(
   storage: DurableObjectStorage,
   service: Partial<InstallationPhone>,
-  options: { processId?: string; toolOwner?: KernelContext["toolOwner"] } = {},
+  options: { processId?: string; toolOwner?: KernelContext["toolOwner"]; owner?: { displayName?: string; gecos?: string } } = {},
 ) {
   const dispose = vi.fn();
   const getInstallation = vi.fn(async () => ({ ...service, [Symbol.dispose]: dispose }));
@@ -164,6 +212,9 @@ function context(
     reconcileResponsibilityWake: async () => {},
     broadcastToUserUid: vi.fn(),
     defer: () => {},
+    installationIdentity: { handle: "ship-handle" },
+    auth: { getPasswdByUid: (uid: number) => ({ uid, username: "esteve", gecos: options.owner?.gecos ?? "" }) },
+    profiles: { draft: () => options.owner?.displayName ? { fields: { displayName: options.owner.displayName } } : undefined },
   };
   // SAFETY: The phone handlers tested here reach only the supplied context services.
   const ctx = partial as unknown as KernelContext;
