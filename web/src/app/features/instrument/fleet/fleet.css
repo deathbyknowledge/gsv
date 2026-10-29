@@ -299,6 +299,8 @@
   gap: 16px;
   margin-top: 18px;
 }
+/* A help tip sits by the action it explains, at the label-row distance, not a whole action gap away. */
+.fleet-actions .gsv-infotip { margin-inline-start: -12px; }
 .fleet-text-action { border: 0; padding: 2px 0; background: none; color: var(--text-dim); font: inherit; font-size: 12px; letter-spacing: 0; text-transform: none; text-decoration: none; cursor: pointer; text-underline-offset: 5px; }
 .fleet-text-action:hover, .fleet-text-action[aria-pressed="true"] { color: var(--accent); }
 .fleet-text-action:hover, .fleet-text-action[aria-pressed="true"], .fleet-text-action:focus-visible { text-decoration: underline; }
