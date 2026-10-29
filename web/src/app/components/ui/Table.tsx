@@ -138,11 +138,14 @@ export function Table<Row>({ caption, columns, rows, rowId, density = "default",
     const at = pointer.current;
     if (!current || !at) return;
     const edge = 56;
-    const viewTop = 0;
-    const viewBottom = window.innerHeight;
+    const pane = scroller();
+    // The zones sit at the edges of what actually scrolls: a pane's own box when a pane scrolls, the viewport otherwise.
+    const box = pane && pane !== document.scrollingElement ? pane.getBoundingClientRect() : null;
+    const viewTop = Math.max(0, box?.top ?? 0);
+    const viewBottom = Math.min(window.innerHeight, box?.bottom ?? window.innerHeight);
     const speed = at.y < viewTop + edge ? -Math.ceil((viewTop + edge - at.y) / 4) : at.y > viewBottom - edge ? Math.ceil((at.y - (viewBottom - edge)) / 4) : 0;
     if (speed !== 0) {
-      scroller()?.scrollBy(0, speed);
+      pane?.scrollBy(0, speed);
       const hit = rowAt(at.x, at.y);
       const next = { ...current, over: hit?.index ?? null, after: hit?.after ?? false };
       dragRef.current = next;
