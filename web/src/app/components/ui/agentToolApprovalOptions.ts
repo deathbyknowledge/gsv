@@ -290,12 +290,20 @@ function translated(option: { value: string; label: TextKey }): ApprovalOption {
 
 export function targetOptionsForRule(target: ToolApprovalTarget | undefined, targets: readonly AgentToolTarget[]): ApprovalOption[] {
   const builtinOptions = BUILTIN_TARGETS.map(translated);
-  const targetOptions = targets
-    .filter((candidate) => candidate.id.trim().length > 0)
-    .map((candidate) => ({
+  const named = targets.filter((candidate) => candidate.id.trim().length > 0);
+  const labelCounts = new Map<string, number>();
+  for (const candidate of named) {
+    const label = candidate.label?.trim() || candidate.id;
+    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  }
+  // Connection names are not unique; two of a name tell themselves apart by id.
+  const targetOptions = named.map((candidate) => {
+    const label = candidate.label?.trim() || candidate.id;
+    return {
       value: targetOptionValue(candidate.id),
-      label: candidate.label?.trim() || candidate.id,
-    }));
+      label: (labelCounts.get(label) ?? 0) > 1 && label !== candidate.id ? `${label} · ${candidate.id}` : label,
+    };
+  });
   const knownValues = new Set([...builtinOptions, ...targetOptions].map((option) => option.value));
   const baseOptions = target === "targets/*"
     ? [...builtinOptions, translated(LEGACY_EXTERNAL_TARGET), ...targetOptions]

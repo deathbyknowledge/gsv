@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { capabilityLabelKey, humanToolCapabilityLabel, isCustomMatch, matchOptionsForRule, ruleCapabilityLabel } from "./agentToolApprovalOptions";
+import { capabilityLabelKey, humanToolCapabilityLabel, isCustomMatch, matchOptionsForRule, ruleCapabilityLabel, targetOptionsForRule } from "./agentToolApprovalOptions";
 
 /** The default `users` group (gid 100) in workers/gateway/src/kernel/capabilities.ts; keep the two in step. */
 const DEFAULT_USER_CAPABILITIES = [
@@ -72,5 +72,17 @@ describe("agent tool approval options", () => {
     expect(matchOptionsForRule("")).toHaveLength(40);
     expect(isCustomMatch("ai.text.generate")).toBe(true);
     expect(matchOptionsForRule("ai.text.generate")).toHaveLength(41);
+  });
+});
+
+describe("target options", () => {
+  it("tells two connections of one name apart by id", () => {
+    const options = targetOptionsForRule(undefined, [
+      { id: "dev-1", label: "garage pi" },
+      { id: "dev-2", label: "garage pi" },
+      { id: "dev-3", label: "studio" },
+    ]);
+    expect(options.map((option) => option.label)).toEqual(expect.arrayContaining(["garage pi · dev-1", "garage pi · dev-2", "studio"]));
+    expect(options.some((option) => option.label === "garage pi")).toBe(false);
   });
 });
