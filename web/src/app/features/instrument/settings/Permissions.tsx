@@ -1,5 +1,4 @@
 import { saveApprovalPolicy } from "./permissionService";
-import { isToolApprovalTargetSelector } from "@humansandmachines/gsv/protocol";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
@@ -89,7 +88,6 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
                 if (target) next.target = target;
                 update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? next : entry) });
               }} />
-              {rule.target && !isToolApprovalTargetSelector(rule.target) && <p class="settings-field-note">{rule.target}</p>}
             </div>
             <Select block size="small" label={t("settings.permissions.action")} ariaLabel={t("settings.permissions.ruleAction", { number: index + 1 })} options={actionOptions} selected={rule.action} disabled={usesDefault} onSelect={(value) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, action: settingsAction(value) } : entry) })} />
 
