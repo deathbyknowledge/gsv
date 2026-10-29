@@ -295,11 +295,13 @@ function useTooltipReveal(position: TooltipPosition, openOnTap = false) {
       suppressFocusOpen = false;
       setOpen(false);
     };
+    // A tap opens a tap-to-open hint. Where nothing can hover, a mouse-type press counts as a tap too: it is
+    // the only way in, and some touch surfaces report their taps as mouse presses.
     const onActivate = (event?: PointerEvent) => {
       disarm();
       suppressHover = true;
       suppressFocusOpen = true;
-      setOpen(openOnTap && event !== undefined && event.pointerType !== "mouse");
+      setOpen(openOnTap && event !== undefined && (event.pointerType !== "mouse" || !canHover));
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") onActivate();
