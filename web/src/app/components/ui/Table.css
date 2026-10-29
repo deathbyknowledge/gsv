@@ -63,6 +63,10 @@
 .gsv-table-grid .gsv-fld { margin: 0; }
 .gsv-table-td.is-reorder, .gsv-table-th.is-reorder,
 .gsv-table-td.is-actions, .gsv-table-th.is-actions { width: 1px; white-space: nowrap; }
+.gsv-table-cell { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.gsv-table-value { flex: 1 1 auto; min-width: 0; }
+.gsv-table-info { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; }
+.gsv-table-info .gsv-infotip { margin-inline-start: 0; }
 .gsv-table-reorder, .gsv-table-actions {
   display: inline-flex;
   align-items: center;
@@ -121,7 +125,8 @@
 .gsv-table-card:first-child { border-top: 0; }
 .gsv-table-card-title { font-size: 15px; line-height: 1.5; }
 .gsv-table-card-field { display: grid; gap: 4px; }
-.gsv-table-card-label { letter-spacing: 0.2em; text-transform: uppercase; color: var(--label); }
+.gsv-table-card-label { display: flex; align-items: center; gap: 4px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--label); }
+.gsv-table-card-label .gsv-table-info { width: auto; }
 .gsv-table-card .gsv-fld { margin: 0; }
 .gsv-table-card-controls {
   display: flex;

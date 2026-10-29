@@ -17,6 +17,9 @@ export interface TableColumn<Row> {
   align?: TableAlign;
   phone?: TablePhoneRole;
   cell: (row: Row, index: number) => ComponentChildren;
+  /** A help tip for one row's value. It sits beside the value in the grid, where every row reserves its slot so
+   *  values line up, and beside the column label in a block. */
+  info?: (row: Row, index: number) => ComponentChildren;
   /** The cell's words for search; a column without it is not searched. */
   text?: (row: Row) => string;
 }
@@ -251,7 +254,7 @@ export function Table<Row>({ caption, columns, rows, rowId, density = "default",
       {shown.map(({ row, index }) => <li key={rowId(row, index)} class={`gsv-table-card ${rowClass(row, index)}`} data-table-row={index}>
         {title && <div class="gsv-table-card-title">{title.cell(row, index)}</div>}
         {details.map((column) => <div key={column.key} class="gsv-table-card-field">
-          <span class="gsv-table-card-label gsv-sublabel">{column.header}</span>
+          <span class="gsv-table-card-label gsv-sublabel">{column.header}{column.info && <span class="gsv-table-info">{column.info(row, index)}</span>}</span>
           <div class={column.align === "end" ? "is-end" : undefined}>{column.cell(row, index)}</div>
         </div>)}
         {(reorder || rowActions) && <div class="gsv-table-card-controls">{controls(row, index)}{rowActions && <span class="gsv-table-actions">{rowActions(row, index)}</span>}</div>}
@@ -271,7 +274,11 @@ export function Table<Row>({ caption, columns, rows, rowId, density = "default",
         <tbody>
           {shown.map(({ row, index }) => <tr key={rowId(row, index)} class={rowClass(row, index)} data-table-row={index}>
             {reorder && <td class="gsv-table-td is-reorder">{controls(row, index)}</td>}
-            {columns.map((column) => <td key={column.key} class={`gsv-table-td${column.align === "end" ? " is-end" : ""}`}>{column.cell(row, index)}</td>)}
+            {columns.map((column) => <td key={column.key} class={`gsv-table-td${column.align === "end" ? " is-end" : ""}`}>
+              {column.info
+                ? <span class="gsv-table-cell"><span class="gsv-table-value">{column.cell(row, index)}</span><span class="gsv-table-info">{column.info(row, index)}</span></span>
+                : column.cell(row, index)}
+            </td>)}
             {rowActions && <td class="gsv-table-td is-actions"><span class="gsv-table-actions">{rowActions(row, index)}</span></td>}
           </tr>)}
         </tbody>

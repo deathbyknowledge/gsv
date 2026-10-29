@@ -52,12 +52,10 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
   };
   const ruleColumns: TableColumn<RuleRow>[] = [
     {
-      key: "tool", header: t("settings.permissions.tool"), phone: "title",
+      key: "tool", header: t("settings.permissions.tool"),
       text: ({ rule, options }) => `${humanToolCapabilityLabel(rule.match)} ${options.customToolLabel ?? ""}`,
-      cell: ({ rule, index, options }) => <span class="settings-rule-cell">
-        <Select block size="small" ariaLabel={t("settings.permissions.ruleTool", { number: index + 1 })} options={options.tools} selected={rule.match} placeholder={t("settings.permissions.chooseTool")} disabled={usesDefault} onSelect={(value) => setRule(index, { ...rule, match: value })} />
-        <span class="settings-rule-info">{options.customToolLabel && <InfoTip text={options.customToolLabel} />}</span>
-      </span>,
+      cell: ({ rule, index, options }) => <Select block size="small" ariaLabel={t("settings.permissions.ruleTool", { number: index + 1 })} options={options.tools} selected={rule.match} placeholder={t("settings.permissions.chooseTool")} disabled={usesDefault} onSelect={(value) => setRule(index, { ...rule, match: value })} />,
+      info: ({ options }) => options.customToolLabel ? <InfoTip text={options.customToolLabel} /> : null,
     },
     {
       key: "target", header: t("settings.permissions.target"),

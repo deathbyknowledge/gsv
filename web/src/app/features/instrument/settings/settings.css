@@ -126,11 +126,6 @@
 .settings-permissions .gsv-fld { margin-bottom: .75rem; }
 .settings-permissions .gsv-table { margin: .75rem 0 1rem; }
 .settings-permissions .gsv-table .gsv-fld { margin: 0; }
-.settings-rule-cell { display: flex; align-items: center; gap: 2px; min-width: 0; }
-.settings-rule-cell > .gsv-fld { flex: 1 1 auto; min-width: 0; }
-/* Every row keeps the help slot, so the pickers line up whether or not a rule needs explaining. */
-.settings-rule-info { flex: none; display: inline-flex; justify-content: center; width: 28px; }
-.settings-rule-cell .gsv-infotip { margin-inline-start: 0; }
 .settings-permissions .settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
 
 .settings-instruction-form .gsv-ta-box { min-height: 24rem; line-height: 1.7; tab-size: 2; }
