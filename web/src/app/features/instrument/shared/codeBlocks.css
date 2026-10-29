@@ -56,14 +56,16 @@
   background: none;
   padding: 0;
 }
-/* One-line variant: a single command, elided, with the copy action at the end. */
+/* One-line variant: a field holding a single command, elided, with the copy
+   action at the end and the copy outcome in the status note beneath. */
+.markdown-code-field { margin: 0.7em 0; }
+.markdown-code-field > .markdown-code-block { margin: 0; }
 .markdown-code-block.is-line {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 0 6px 0 14px;
 }
-.markdown-code-block.is-line .markdown-code-actions { margin-right: 0; }
 /* The Hint wraps the code; the wrapper takes the flexible width and the code elides inside it. */
 .markdown-code-block.is-line > :first-child { flex: 1 1 auto; min-width: 0; display: block; }
 .markdown-code-block.is-line code {
