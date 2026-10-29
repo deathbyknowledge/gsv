@@ -31,8 +31,9 @@ const compactTelegramDependencies: ManagedTelegramDependencies = {
   useConfirmConsoleAdapterPairing: () => useConfirmConsoleAdapterPairing(),
 };
 
-export function MessengerPairing({ adapter, onClose, onConnected }: {
+export function MessengerPairing({ adapter, disabled, onClose, onConnected }: {
   adapter: ManagedMessengerId;
+  disabled: boolean;
   onClose: () => void;
   onConnected: () => void;
 }) {
@@ -43,5 +44,5 @@ export function MessengerPairing({ adapter, onClose, onConnected }: {
       : adapter === "whatsapp"
         ? ManagedWhatsAppOnboardingFlow
         : SharedDiscordOnboardingFlow;
-  return <Flow dependencies={compactTelegramDependencies} onBack={onClose} onConnected={onConnected} />;
+  return <Flow dependencies={compactTelegramDependencies} disabled={disabled} onBack={onClose} onConnected={onConnected} />;
 }

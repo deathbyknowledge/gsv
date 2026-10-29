@@ -115,7 +115,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
           </li>;
         })}</ul>
         {!comingSoon && pairing === id && <fieldset disabled={!connected || !canPair || !available}>
-          <MessengerPairing adapter={id} onClose={() => setPairing(null)} onConnected={() => { setPairing(null); void refreshMessengerConnections(cache); }} />
+          <MessengerPairing adapter={id} disabled={!connected || !canPair || !available} onClose={() => setPairing(null)} onConnected={() => { setPairing(null); void refreshMessengerConnections(cache); }} />
         </fieldset>}
       </section>;
     })}

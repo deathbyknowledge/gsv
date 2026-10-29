@@ -20,6 +20,9 @@ import { useT, type Translate } from "../../../../i18n/locale";
 type ManagedTelegramOnboardingFlowProps = {
   onBack: () => void;
   onConnected: (detailId: string) => void;
+  /** The host has suspended pairing (gateway offline, no permission): the launch
+   *  link renders disabled, since a disabled fieldset does not reach anchors. */
+  disabled?: boolean;
   dependencies?: ManagedTelegramDependencies;
 };
 
@@ -56,6 +59,7 @@ const fieldStyle = { maxWidth: "520px" };
 export function ManagedTelegramOnboardingFlow({
   onBack,
   onConnected,
+  disabled,
   dependencies = defaultDependencies,
 }: ManagedTelegramOnboardingFlowProps): JSX.Element {
   return (
@@ -63,6 +67,7 @@ export function ManagedTelegramOnboardingFlow({
       adapterId="telegram"
       onBack={onBack}
       onConnected={onConnected}
+      disabled={disabled}
       dependencies={dependencies}
     />
   );
@@ -71,6 +76,7 @@ export function ManagedTelegramOnboardingFlow({
 export function ManagedSlackOnboardingFlow({
   onBack,
   onConnected,
+  disabled,
   dependencies = defaultDependencies,
 }: ManagedTelegramOnboardingFlowProps): JSX.Element {
   return (
@@ -78,17 +84,18 @@ export function ManagedSlackOnboardingFlow({
       adapterId="slack"
       onBack={onBack}
       onConnected={onConnected}
+      disabled={disabled}
       dependencies={dependencies}
     />
   );
 }
 
-export function SharedDiscordOnboardingFlow({ onBack, onConnected, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
-  return <ManagedMessengerOnboardingFlow adapterId="discord" onBack={onBack} onConnected={onConnected} dependencies={dependencies} />;
+export function SharedDiscordOnboardingFlow({ onBack, onConnected, disabled, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
+  return <ManagedMessengerOnboardingFlow adapterId="discord" onBack={onBack} onConnected={onConnected} disabled={disabled} dependencies={dependencies} />;
 }
 
-export function ManagedWhatsAppOnboardingFlow({ onBack, onConnected, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
-  return <ManagedMessengerOnboardingFlow adapterId="whatsapp" onBack={onBack} onConnected={onConnected} dependencies={dependencies} />;
+export function ManagedWhatsAppOnboardingFlow({ onBack, onConnected, disabled, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
+  return <ManagedMessengerOnboardingFlow adapterId="whatsapp" onBack={onBack} onConnected={onConnected} disabled={disabled} dependencies={dependencies} />;
 }
 
 /** Names the countries the operator's WhatsApp number cannot reach, as the adapter reports them. */
@@ -118,6 +125,7 @@ function ManagedMessengerOnboardingFlow({
   adapterId,
   onBack,
   onConnected,
+  disabled = false,
   dependencies,
 }: ManagedMessengerOnboardingFlowProps): JSX.Element {
   const t = useT();
@@ -234,7 +242,7 @@ function ManagedMessengerOnboardingFlow({
               <Button variant="secondary" label={t("settings.pairing.back")} onClick={onBack} />
               <span class="gsv-cf-footer-spacer" />
               {launchLeads
-                ? <Button variant="primary" href={launchUrl} label={launchLabel} />
+                ? <Button variant="primary" href={launchUrl} label={launchLabel} disabled={disabled} />
                 : <Link href={launchUrl}>{launchLabel}</Link>}
               <Button
                 variant={launchLeads ? "secondary" : "primary"}

@@ -1,3 +1,4 @@
+import type { JSX } from "preact";
 import { useT } from "../../i18n/locale";
 import "./Button.css";
 
@@ -48,13 +49,23 @@ export function Button({ variant = "primary", tone, label, disabled = false, blo
   );
   if (href && !disabled) {
     const external = /^https?:\/\//i.test(href);
+    // A disabled fieldset does not reach anchors, so the link-button goes inert
+    // itself: Enter and click do nothing while an enclosing fieldset is disabled
+    // (Button.css greys it out alongside the fieldset's real controls).
+    const onAnchorClick = (event: JSX.TargetedMouseEvent<HTMLAnchorElement>) => {
+      if (event.currentTarget.closest("fieldset:disabled")) {
+        event.preventDefault();
+        return;
+      }
+      onClick?.();
+    };
     return (
       <a
         {...dataAttrs}
         class={cls}
         href={href}
         aria-describedby={describedBy}
-        onClick={onClick}
+        onClick={onAnchorClick}
         {...(external ? { target: "_blank", rel: "noreferrer noopener" } : {})}
       >
         {content}

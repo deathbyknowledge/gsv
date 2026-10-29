@@ -136,6 +136,20 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(nodeWithLabel(nodes(), "I HAVE A CODE").props.variant).toBe("secondary");
   });
 
+  it("disables the launch link while the host suspends pairing", async () => {
+    await root?.unmount();
+    root = createTestRoot("Managed WhatsApp onboarding harness");
+    await root.render(
+      <ManagedWhatsAppOnboardingFlow
+        onBack={() => undefined}
+        onConnected={mocks.onConnected}
+        disabled
+        dependencies={dependencies}
+      />,
+    );
+    expect(nodeWithLabel(nodes(), "CONNECT").props.disabled).toBe(true);
+  });
+
   it("warns about the countries the adapter reports the operator's number cannot reach", async () => {
     const warning = () => nodes().find((node) => node.props.text?.includes("cannot connect"));
     expect(warning()?.props.text).toContain("Brazil (+55) and Indonesia (+62)");
