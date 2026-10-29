@@ -86,6 +86,14 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "atproto apply (--json WRITES | --file PATH)",
     "atproto blob PATH [--mime TYPE]",
   ], ["atproto.write"]),
+  phone: command("Place a phone call for the owner through a voice agent.", "Call a business or person to book, ask, confirm or change something by voice. Write a brief; a voice agent places the call within it, asks when something falls outside it, and reports back. The owner approves every call.", ["phone", "call", "ring", "telephone", "book", "reservation", "appointment", "voice"], [], [
+    "phone call --request-id ID --work RESPONSIBILITY_ID (--file BRIEF.json | --json BRIEF)",
+    "phone list [--all]",
+    "phone get CALL_ID",
+    "phone answer CALL_ID QUESTION_ID ANSWER...",
+    "phone note CALL_ID NOTE...",
+    "phone end CALL_ID",
+  ], ["sys.phone.call"]),
   mcp: command("Discover and call connected MCP integrations.", "Use an external connected service or search its available integration tools.", ["integration", "service", "connector", "api", "tools", "mcp"]),
   proc: command("Inspect, delegate to, message, and control GSV agent processes.", "Create a subagent, delegate a task, contact another agent, or inspect agent history and lifecycle.", ["agent", "subagent", "delegate", "process", "message", "history"]),
   r12y: command("Inspect and maintain durable unresolved responsibilities.", "Record work that must survive the current run, delegate it, defer it to a known wake condition, or close it with a durable outcome.", ["responsibility", "promise", "work", "task", "delegate", "waiting", "deadline", "outcome"], [], [
@@ -199,6 +207,7 @@ export class ShellDiscoveryCatalog {
         missing.push("managed mailbox");
       }
       if ((registered.name === "instance" || registered.name === "browser") && !this.ctx.env.INSTANCES) missing.push("configured instance service");
+      if (registered.name === "phone" && !this.ctx.env.PHONE) missing.push("configured calls service");
       if (registered.name === "atproto") missing.push(...atprotoMissingRequirements(this.ctx));
       const entry: ShellDiscoveryEntry = {
         kind: "command",

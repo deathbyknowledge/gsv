@@ -34,6 +34,7 @@ import { buildWikiCommand } from "./wiki";
 import { buildWebCommand } from "./web";
 import { buildFeedbackCommand } from "./feedback";
 import { buildInstanceCommands } from "./instances";
+import { buildPhoneCommand } from "./phone";
 import { ShellDiscoveryCatalog } from "./discovery";
 
 export type NativeShellCommandOptions = {
@@ -120,6 +121,7 @@ export function buildCustomCommands(
     web,
     feedback,
     ...buildInstanceCommands(ctx, options?.request),
+    buildPhoneCommand(fs, ctx, options?.request),
     flynn,
   ];
   discovery.registerCommands(nativeCommands);
