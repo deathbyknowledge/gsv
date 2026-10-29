@@ -16,6 +16,9 @@ export function readOwnerApprovalPolicy(config: KernelContext["config"], ownerUi
   return config.get(ownerApprovalPolicyKey(ownerUid)) ?? config.get(SYSTEM_APPROVAL_POLICY_KEY) ?? null;
 }
 
+/** Each call has its own brief, so allowing one would approve briefs the owner never saw. */
+const ASK_EVERY_TIME: ReadonlySet<string> = new Set(["sys.phone.call"]);
+
 /**
  * "Always allow" adds a run rule for one syscall on one target to the owner's
  * list, starting that list from the system one when the owner has none yet.
@@ -27,6 +30,7 @@ export function allowInOwnerApprovalPolicy(
   allow: { match: string; target: string },
 ): boolean {
   if (!/^[a-z][a-z0-9]*(\.[a-z0-9]+)+$/.test(allow.match) || !isConcreteTarget(allow.target)) return false;
+  if (ASK_EVERY_TIME.has(allow.match)) return false;
   const key = ownerApprovalPolicyKey(ownerUid);
   const stored = config.get(key);
   const policy = stored

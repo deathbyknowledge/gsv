@@ -54,6 +54,7 @@ import { handleAtprotoBlobRead, handleAtprotoBlobUpload, handleAtprotoIdentity, 
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
 import { handleInstanceRequest } from "./sys/instance";
+import { handlePhoneRequest } from "./sys/phone";
 import { requestInstanceTarget } from "./instance-targets";
 import { rejectBeforeDispatch } from "./request-rejection";
 import { handleSysLedgerList } from "./sys/ledger";
@@ -645,6 +646,15 @@ async function dispatchKernel(
       case "sys.browser.watch":
       case "sys.browser.input":
         return await handleInstanceRequest(frame, ctx);
+      case "sys.phone.call":
+      case "sys.phone.get":
+      case "sys.phone.list":
+      case "sys.phone.answer":
+      case "sys.phone.note":
+      case "sys.phone.end":
+      case "sys.phone.watch":
+      case "sys.phone.join":
+        return await handlePhoneRequest(frame, ctx);
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);
         break;

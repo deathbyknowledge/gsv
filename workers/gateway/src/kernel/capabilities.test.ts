@@ -165,6 +165,7 @@ describe("CapabilityStore", () => {
         "sys.pair.cancel",
         "sys.pair.create",
         "sys.pair.list",
+        "sys.phone.*",
         "sys.target.delete",
         "sys.target.get",
         "sys.target.list",

@@ -34,7 +34,7 @@ import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../../shared/message-media-limits
 import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive } from "../history/helpers";
 import { historyCursor, parseHistoryCursor } from "../history/cursor";
 import { storeIncomingProcessMedia, stringifyStoredProcessMedia, parseStoredProcessMedia, deleteProcessMedia } from "../media";
-import { appendResponsibilityBatch, normalizeProcessRuntimeEvent } from "../internal/events";
+import { appendResponsibilityBatch, normalizeProcessRuntimeEvent, phoneHistoryEvent } from "../internal/events";
 import { formatIpcMessage, formatIpcReplyMessage, formatScheduleEventMessage, renderHistoryEvent } from "../history/event-renderer";
 import type { AssistantHistoryContent, AsyncCleanupTask, CodeModeApprovalWaiter } from "../internal/contracts";
 import { extractStoredFsReadResource } from "../tool-result-media";
@@ -1671,6 +1671,20 @@ export class ProcessController {
           responsibilityIds: [event.responsibilityId],
         },
         media: preparedMedia,
+      });
+    } else if (event.type === "phone.asked" || event.type === "phone.ended") {
+      const historyEvent = phoneHistoryEvent(event);
+      admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
+        runId,
+        event: historyEvent,
+        kind: event.type,
+        dedupeId: eventId,
+        provenance: JSON.stringify({ source: "kernel", eventId, eventType: event.type, callId: event.callId }),
+        responsibilityBatch: {
+          batchId: eventId,
+          ledgerRevision: event.ledgerRevision,
+          responsibilityIds: [event.responsibilityId],
+        },
       });
     } else {
       const historyEvent: ProcHistoryEvent = {

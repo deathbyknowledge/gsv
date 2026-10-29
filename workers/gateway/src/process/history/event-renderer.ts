@@ -21,6 +21,7 @@ import { formatContextRunwayAlertMessage } from "../../prompts/context-runway";
 import { formatTargetConnectionEvent } from "../../prompts/target-events";
 import { formatOwnerNotifiedEvent } from "../../prompts/owner-notice-events";
 import { formatContactMessageEvent } from "../../prompts/contact-events";
+import { formatPhoneAskedEvent, formatPhoneEndedEvent } from "../../prompts/phone-events";
 import { formatScheduleEventMessage } from "../../prompts/schedule-events";
 export { formatScheduleEventMessage } from "../../prompts/schedule-events";
 import { formatResponsibilityReadyEvent, formatResponsibilityTransitionEvent } from "../../prompts/responsibility-events";
@@ -52,6 +53,8 @@ export function renderHistoryEvent(event: ProcHistoryEvent): string {
     case "contact.message": return formatContactMessageEvent(event.payload);
     case "target.connection": return formatTargetConnectionEvent(event.payload);
     case "owner.notified": return formatOwnerNotifiedEvent(event.payload);
+    case "phone.asked": return formatPhoneAskedEvent(event.payload);
+    case "phone.ended": return formatPhoneEndedEvent(event.payload);
     case "history.compacted": return formatCompactionSummaryMessage(event.payload);
     case "runtime.wake": return RUNTIME_EVENT_WAKE_MESSAGE;
     case "runtime.failed": return event.payload.prefix === undefined

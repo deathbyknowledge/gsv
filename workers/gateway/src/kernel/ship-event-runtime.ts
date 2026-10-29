@@ -3,6 +3,7 @@ import type { DurableTaskOptions } from "../shared/durable-tasks";
 import { sendFrameToProcess } from "../shared/utils";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { admitQueuedContactEvent } from "./federation/attention";
+import { admitQueuedPhoneEvent } from "./phone-runtime";
 import { ensurePersonalController } from "./personal-controller";
 import type { QueuedShipEvent } from "./ship-event-store";
 import type { Kernel } from "./do";
@@ -74,6 +75,9 @@ export class ShipEventRuntime {
     if (this.host.auth.isAccountDisabled(queued.ownerUid)) return "stop";
     // The owner already received the notice; Ship's record of it has nothing to revoke.
     if (queued.event.type === "owner.notified") return queued;
+    if (queued.event.type === "phone.asked" || queued.event.type === "phone.ended") {
+      return admitQueuedPhoneEvent(queued.ownerUid, queued.event, this.host.responsibilities) ? queued : "revoked";
+    }
     const ctx = this.host.buildKernelContext({ callerOwnerUid: queued.ownerUid });
     const event = admitQueuedContactEvent(queued.ownerUid, queued.eventId, queued.event, ctx);
     return event ? { ...queued, event } : "revoked";

@@ -70,6 +70,7 @@ import {
 } from "./routing";
 import { ShellSessionStore } from "./shell-sessions";
 import type { InstanceExecChange } from "@humansandmachines/gsv/services/instances";
+import type { PhoneChange } from "@humansandmachines/gsv/services/phone";
 import type { PdsService, PublicRepository } from "@humansandmachines/gsv/services/pds";
 import { acquireInstances } from "./instance-service";
 import {
@@ -200,6 +201,8 @@ import type {
 } from "./do-shared";
 import { ResponsibilityRuntime } from "./responsibility-runtime";
 import { OwnerNoticeRuntime } from "./owner-notice-runtime";
+import { PhoneRuntime } from "./phone-runtime";
+import { PhoneCallStore } from "./phone-store";
 import { OwnerNoticeStore } from "./owner-notice-store";
 import { ShipEventRuntime } from "./ship-event-runtime";
 import { ShipEventStore } from "./ship-event-store";
@@ -420,6 +423,7 @@ export function kernelRuntimes(host: Kernel) {
     responsibilityRuntime: new ResponsibilityRuntime(host),
     shipEventRuntime: new ShipEventRuntime(host),
     ownerNoticeRuntime: new OwnerNoticeRuntime(host),
+    phoneRuntime: new PhoneRuntime(host),
     browserHandoffs: new BrowserHandoffRuntime(host),
     ipc: new IpcRuntime(host),
     scheduleRuntime: new ScheduleRuntime(host),
@@ -463,6 +467,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly responsibilities: ResponsibilityStore;
   readonly shipEvents: ShipEventStore;
   readonly ownerNotices: OwnerNoticeStore;
+  readonly phoneCalls: PhoneCallStore;
   readonly welcome: InitialOnboarding;
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
@@ -486,6 +491,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   declare readonly responsibilityRuntime: ResponsibilityRuntime;
   declare readonly shipEventRuntime: ShipEventRuntime;
   declare readonly ownerNoticeRuntime: OwnerNoticeRuntime;
+  declare readonly phoneRuntime: PhoneRuntime;
   declare readonly federationRuntime: FederationRuntime;
   declare readonly processOutput: ProcessOutput;
   declare readonly adapterDelivery: AdapterDelivery;
@@ -569,6 +575,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
     this.shipEvents = new ShipEventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
+    this.phoneCalls = new PhoneCallStore(ctx.storage);
     this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
@@ -780,6 +787,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
       this.shellSessions.recordEvent(change.targetId, change);
       this.connectionRuntime.broadcastToUserUid(change.ownerUid, "instance.changed");
     } finally { service[Symbol.dispose]?.(); }
+  }
+
+  /** The calls service reports a change; the Kernel reads the call itself before acting. */
+  async phoneChanged(change: PhoneChange): Promise<void> {
+    await this.phoneRuntime.changed(change);
   }
 
   /** The published profile the public page renders. */
@@ -1669,6 +1681,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       responsibilities: this.responsibilities,
       shipEvents: this.shipEvents,
       ownerNotices: this.ownerNotices,
+      phoneCalls: this.phoneCalls,
       welcome: this.welcome,
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,

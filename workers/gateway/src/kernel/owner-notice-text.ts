@@ -81,7 +81,10 @@ export function renderOwnerNotice(notice: OwnerNotice, language: NoticeLanguage)
 }
 
 /** What the notice is about, for each client to open in its own way. */
-export function ownerNoticeLink(notice: OwnerNotice): ProcHistoryEventLink {
+/** The People pages an owner notice opens. */
+export type OwnerNoticeLink = Extract<ProcHistoryEventLink, { kind: "contact" | "contact.request" }>;
+
+export function ownerNoticeLink(notice: OwnerNotice): OwnerNoticeLink {
   return notice.topic === "contact.request" && notice.subject.approachId
     ? { kind: "contact.request", requestId: notice.subject.approachId }
     : { kind: "contact", contactId: notice.subject.contactId };
@@ -89,7 +92,7 @@ export function ownerNoticeLink(notice: OwnerNotice): ProcHistoryEventLink {
 
 /** A messenger opens the link as an address on this Ship; each adapter shows it as a button or a line of text. */
 export function messengerNoticeAction(
-  link: ProcHistoryEventLink,
+  link: OwnerNoticeLink,
   language: NoticeLanguage,
   origin: string | null,
 ): AdapterSendAction | undefined {

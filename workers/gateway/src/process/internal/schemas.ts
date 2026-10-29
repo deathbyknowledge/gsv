@@ -1,5 +1,6 @@
 /** Internal Process schemas primitives. */
 
+import { phoneAskedRuntimeEventSchema, phoneEndedRuntimeEventSchema } from "../../protocol/process-frames";
 import type { CodeModeExecArgs } from "../../syscalls/codemode";
 import { RUN_CONTROL_INSTRUCTION, SEND_TOOL_DESCRIPTION, SEND_TOOL_NAME } from "./lifecycle";
 import { MAX_MESSAGE_MEDIA_ITEMS } from "../../shared/message-media-limits";
@@ -130,10 +131,14 @@ export const contactMessageRuntimeEventSchema = z.strictObject({
   ledgerRevision: z.number().int().nonnegative().safe(),
 });
 
+export { phoneAskedRuntimeEventSchema, phoneEndedRuntimeEventSchema };
+
 export const processRuntimeEventSchema = z.discriminatedUnion("type", [
   workReturnedRuntimeEventSchema,
   responsibilityReadyRuntimeEventSchema,
   contactMessageRuntimeEventSchema,
+  phoneAskedRuntimeEventSchema,
+  phoneEndedRuntimeEventSchema,
 ]);
 
 const federationResponsibilityBaseSchema = {

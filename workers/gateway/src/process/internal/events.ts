@@ -3,12 +3,13 @@
 import {
   type ResponsibilityRecord, responsibilityRequiresAction,
 } from "@humansandmachines/gsv/protocol";
-import type { ProcessRuntimeEvent } from "../../protocol/process-frames";
+import type { ProcHistoryEvent } from "@humansandmachines/gsv/protocol";
+import type { ProcessPhoneRuntimeEvent, ProcessRuntimeEvent } from "../../protocol/process-frames";
 import type { ResponsibilityBatchState, RunState } from "../run/state";
 import type { TerminalResponsibilitySnapshot } from "./contracts";
 import {
-  contactMessageRuntimeEventSchema, processRuntimeEventSchema, responsibilityReadyRuntimeEventSchema,
-  workReturnedRuntimeEventSchema,
+  contactMessageRuntimeEventSchema, phoneAskedRuntimeEventSchema, phoneEndedRuntimeEventSchema,
+  processRuntimeEventSchema, responsibilityReadyRuntimeEventSchema, workReturnedRuntimeEventSchema,
 } from "./schemas";
 import { z } from "zod";
 
@@ -29,6 +30,12 @@ export function normalizeProcessRuntimeEvent(
     if (!result.success) throw new Error("contact.message fields are invalid");
     return result.data;
   }
+  if (discriminator.data.type === "phone.asked" || discriminator.data.type === "phone.ended") {
+    const result = (discriminator.data.type === "phone.asked" ? phoneAskedRuntimeEventSchema : phoneEndedRuntimeEventSchema)
+      .safeParse(value);
+    if (!result.success) throw new Error(`${discriminator.data.type} fields are invalid`);
+    return result.data;
+  }
   if (discriminator.data.type !== "adapter.work.returned") {
     throw new Error("Unsupported process runtime event type");
   }
@@ -37,6 +44,24 @@ export function normalizeProcessRuntimeEvent(
     throw new Error("adapter.work.returned fields are invalid");
   }
   return result.data;
+}
+
+/** The history record of a call event; the ledger revision stays with the admission. */
+export function phoneHistoryEvent(event: ProcessPhoneRuntimeEvent): ProcHistoryEvent {
+  const base = { severity: "info", audience: "model", link: { kind: "phone", callId: event.callId } } as const;
+  const common = { callId: event.callId, to: event.to, responsibilityId: event.responsibilityId,
+    ...(event.business === undefined ? {} : { business: event.business }) };
+  if (event.type === "phone.asked") {
+    return { ...base, kind: "phone.asked", payload: {
+      ...common, questionId: event.questionId, question: event.question, deadlineAt: event.deadlineAt,
+    } };
+  }
+  return { ...base, kind: "phone.ended", payload: {
+    ...common, outcome: event.outcome,
+    ...(event.summary === undefined ? {} : { summary: event.summary }),
+    ...(event.reason === undefined ? {} : { reason: event.reason }),
+    ...(event.transcriptPath === undefined ? {} : { transcriptPath: event.transcriptPath }),
+  } };
 }
 
 export function appendResponsibilityBatch(
