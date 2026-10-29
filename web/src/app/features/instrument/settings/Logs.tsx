@@ -59,7 +59,7 @@ export function Logs({ account, onProcess }: { account: ConsoleAccount; onProces
           <span role="cell" class="t">{clockTime(entry.timestamp)}</span>
           <span role="cell" class="place">{placeLabel(entry.place)}</span>
           <span role="cell" class="what">{technical ? entry.syscall : t(entry.action.key, entry.action.values)}</span>
-          <span role="cell" class="m detail" title={entry.purpose ?? entry.detail}>{entry.purpose ?? entry.detail ?? "—"}</span>
+          <span role="cell" class="m detail" title={entry.purpose || entry.detail}>{entry.purpose || entry.detail || "—"}</span>
           <span role="cell" class={`outcome ${entry.outcome === "completed" ? "ok" : entry.outcome === "failed" || entry.outcome === "denied" ? "no" : "m"}`}>{outcomeWord(t, entry.outcome)}</span>
           <span role="cell" class="m who">{processName(entry.processId)}</span>
         </div>)}
