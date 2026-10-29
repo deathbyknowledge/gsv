@@ -1081,3 +1081,30 @@ async fn accepting_a_request_says_when_the_contact_is_still_connecting() {
     assert!(!text.contains("gsv contacts send"), "{text}");
     assert!(text.contains("Connecting"), "{text}");
 }
+
+#[tokio::test]
+async fn a_timezone_edit_moves_an_existing_routine_to_that_zone() {
+    fn answer(call: &str, args: &Value) -> Value {
+        let schedule = json!({ "id": "sched:4c2d", "name": "Morning brief", "enabled": true, "createdAtMs": 0,
+            "expression": { "kind": "cron", "expr": "30 7 * * *", "timezone": "Europe/London" },
+            "target": { "kind": "responsibility", "message": "Brief me" } });
+        match call {
+            "sched.list" => json!({ "schedules": [schedule], "count": 1 }),
+            "sched.update" => {
+                json!({ "schedule": { "id": "sched:4c2d", "name": "Morning brief", "enabled": true,
+                "expression": args["patch"]["expression"] } })
+            }
+            _ => json!({}),
+        }
+    }
+    let (url, calls) = ship(answer).await;
+    let output = Cli::signed_in(&url)
+        .run(&["routines", "edit", "4c2d", "--timezone", "Europe/Amsterdam"])
+        .await;
+    show("gsv routines edit --timezone", &output);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        called(&calls, "sched.update")[0]["patch"]["expression"],
+        json!({ "kind": "cron", "expr": "30 7 * * *", "timezone": "Europe/Amsterdam" })
+    );
+}

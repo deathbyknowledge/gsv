@@ -390,6 +390,7 @@ pub(crate) async fn run(
                 .get("expression")
                 .and_then(|expression| opt_text(expression, "timezone"))
                 .map(str::to_string);
+            let moved = timezone.is_some();
             let timezone = match timezone.or(existing_timezone) {
                 Some(timezone) => timezone,
                 None => ship_timezone(&client).await,
@@ -400,6 +401,17 @@ pub(crate) async fn run(
             }
             if let Some(expression) = expression(&cadence, &timezone, render::now_ms())? {
                 patch["expression"] = expression;
+            } else if moved {
+                // A new zone alone keeps the routine's times and runs them in that zone.
+                let mut existing = schedule.get("expression").cloned().unwrap_or(Value::Null);
+                if text(&existing, "kind") != "cron" {
+                    return Err(
+                        "Only a daily, weekly or cron routine runs in a time zone; give a new time with --at or --every instead"
+                            .into(),
+                    );
+                }
+                existing["timezone"] = json!(timezone);
+                patch["expression"] = existing;
             }
             if let Some(message) = message {
                 let target = schedule.get("target").cloned().unwrap_or(Value::Null);
