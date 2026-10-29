@@ -5,7 +5,7 @@ import {
   type InstallationPhone, type PhoneActor,
 } from "@humansandmachines/gsv/services/phone";
 import { z } from "zod";
-import { PhonePolicy, routesSchema, type Environment, type PhoneLimits } from "./config";
+import { jsonVar, PhonePolicy, routesSchema, type Environment, type PhoneLimits } from "./config";
 import { callObjectName, newCallId, type ReportedChange } from "./call";
 import { routeDestination } from "./numbers";
 import { diagnosticDetail, migrateCoordinator } from "./schema";
@@ -46,7 +46,7 @@ export class CallCoordinator extends DurableObject<Environment> {
     await this.#policy.requireActive();
     const limits = await this.#policy.limits();
     if (!limits.enabled) throw new Error("Phone calls are not available for this space");
-    const destination = routeDestination(args.brief.to, routesSchema.parse(this.env.PHONE_ROUTES));
+    const destination = routeDestination(args.brief.to, routesSchema.parse(jsonVar(this.env.PHONE_ROUTES)));
     const maxSeconds = Math.min(limits.maxCallSeconds, (args.brief.maxMinutes ?? Infinity) * 60);
     const now = Date.now();
     const row = this.ctx.storage.transactionSync(() => {

@@ -27,6 +27,11 @@ export type Environment = {
   TWILIO_TWIML_APP_SID: string;
 };
 
+/** Wrangler vars arrive as JSON values, while local .dev.vars overrides arrive as JSON text. */
+export function jsonVar(value: unknown): unknown {
+  return typeof value === "string" ? JSON.parse(value) : value;
+}
+
 export const limitsSchema = z.strictObject({
   enabled: z.boolean(),
   concurrentCalls: z.number().int().min(0).max(100),
@@ -59,7 +64,7 @@ export class PhonePolicy {
     this.cache = env.ENTITLEMENTS ? new EntitlementCache(env.ENTITLEMENTS, installationId) : undefined;
   }
   async limits(): Promise<PhoneLimits> {
-    if (!this.cache) return limitsSchema.parse(this.env.PHONE_LIMITS);
+    if (!this.cache) return limitsSchema.parse(jsonVar(this.env.PHONE_LIMITS));
     const { values } = await this.cache.get();
     return limitsSchema.parse({
       enabled: values["phone.enabled"] === true,

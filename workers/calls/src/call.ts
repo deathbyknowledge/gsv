@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { PhoneCall, PhoneCallOutcome, PhoneTranscriptLine, SysPhoneAnswerArgs, SysPhoneGetResult, SysPhoneJoinResult, SysPhoneNoteArgs } from "@humansandmachines/gsv/protocol";
 import type { PhoneActor, PhoneChange } from "@humansandmachines/gsv/services/phone";
-import { realtimeConfigSchema, type Environment } from "./config";
+import { jsonVar, realtimeConfigSchema, type Environment } from "./config";
 import { AGENT_OUTCOMES, agentTools, disclosed, KEYPAD_PATTERN, NUDGES, serviceRules, transcriptionLanguage, type AgentOutcome } from "./agent";
 import { providers } from "./providers";
 import type { RealtimeSession } from "./realtime";
@@ -224,7 +224,7 @@ export class PhoneCallObject extends DurableObject<Environment> {
     if (this.#realtime) return Promise.resolve();
     this.#opening ??= (async () => {
       const stored = this.#load()!;
-      const config = realtimeConfigSchema.parse(this.env.PHONE_REALTIME);
+      const config = realtimeConfigSchema.parse(jsonVar(this.env.PHONE_REALTIME));
       try {
         const credential = await this.env.REALTIME_SESSIONS.createRealtimeSession({ installationId: stored.installationId, callId: stored.call.callId, model: config.model });
         const session = await providers.realtime().open(credential, {
