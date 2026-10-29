@@ -1,5 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { IconButton } from "../../../components/ui/IconButton";
+import { Hint } from "../../../components/ui/Tooltip";
 import { useT } from "../../../i18n/locale";
 import "./codeBlocks.css";
 
@@ -32,7 +33,10 @@ export function CodeBlock({ text, language = "", label, wrap = false, line = fal
     </span>
   </span>;
   // A single command reads as one line: overflow is elided and the copy action sits at the end.
-  if (line) return <div class="markdown-code-block is-line"><code title={text} tabIndex={0} aria-label={t("shell.code.label")}>{text}</code>{actions}</div>;
+  if (line) return <div class="markdown-code-block is-line">
+    <Hint text={text} position="bottom" openOnTap><code tabIndex={0} aria-label={t("shell.code.label")}>{text}</code></Hint>
+    {actions}
+  </div>;
   const plain = wrap || language === "" || language === "text";
   return <div class={`markdown-code-block${plain ? " is-plain-text" : ""}`}>
     <div class="markdown-code-header">

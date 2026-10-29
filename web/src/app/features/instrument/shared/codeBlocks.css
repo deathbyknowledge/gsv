@@ -60,11 +60,14 @@
 .markdown-code-block.is-line {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 2px 0 14px;
+  gap: 4px;
+  padding: 0 6px 0 14px;
 }
-.markdown-code-block.is-line > code {
-  flex: 1 1 auto;
+.markdown-code-block.is-line .markdown-code-actions { margin-right: 0; }
+/* The Hint wraps the code; the wrapper takes the flexible width and the code elides inside it. */
+.markdown-code-block.is-line > :first-child { flex: 1 1 auto; min-width: 0; display: block; }
+.markdown-code-block.is-line code {
+  display: block;
   min-width: 0;
   padding: 9px 0;
   white-space: nowrap;
@@ -74,4 +77,4 @@
   color: var(--text-hi);
   background: none;
 }
-.markdown-code-block.is-line > code:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.markdown-code-block.is-line code:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
