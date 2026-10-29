@@ -102,9 +102,26 @@ describe("signup attribution", () => {
     expect(replaced.hash).toBe("");
   });
 
+  it("drops an origin left over from an abandoned attributed visit when signup starts again directly", async () => {
+    window.location.href = origin;
+    storage.load.mockResolvedValue({ revision: "saved", value: { origin, flow: "create", sessionSecret: null,
+      challenge: null, operationId: null, handle: null, attribution: { placement: "hero" } } });
+    const props = await screen();
+    expect((await props.load()).state.attribution).toBeNull();
+  });
+
+  it("keeps the stored origin when a signup resumes without a fragment", async () => {
+    window.location.href = `${origin}/?resume=1`;
+    window.location.search = "?resume=1";
+    storage.load.mockResolvedValue({ revision: "saved", value: { origin, flow: "create", sessionSecret: null,
+      challenge: null, operationId: "op-1", handle: "resumed", attribution: { placement: "hero" } } });
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ placement: "hero" });
+  });
+
   it("ignores an origin that is not a plain slug", async () => {
     window.location.href = `${origin}/#from=Hero%20Banner&example=x`;
     const props = await screen();
-    expect((await props.load()).state.attribution).toBeUndefined();
+    expect((await props.load()).state.attribution).toBeNull();
   });
 });

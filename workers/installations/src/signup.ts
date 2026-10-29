@@ -49,8 +49,9 @@ export class InstallationSignup {
     if (!existing && !this.enabled) throw new Error("Registration is currently closed.");
     if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
     const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true });
-    // The first request's origin stands; a resumed signup never rewrites it.
-    if (attribution) {
+    // Only the request that reserved the operation sets its origin: a retry or resumed signup never
+    // rewrites it, and an operation that started direct stays direct.
+    if (attribution && !existing) {
       await this.db.prepare("UPDATE provisioning_operations SET attribution_json = ? WHERE operation_id = ? AND attribution_json IS NULL")
         .bind(JSON.stringify(attribution), operationId).run();
     }

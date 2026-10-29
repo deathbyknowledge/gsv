@@ -170,6 +170,14 @@ describe("signup attribution", () => {
     expect(JSON.parse(stored!.attribution_json)).toEqual({ placement: "hero", example: "plan-a-trip" });
   });
 
+  it("keeps an operation that started direct even when a retry carries an origin", async () => {
+    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
+    await signup.prepare(operationId, principalId, name);
+    await signup.prepare(operationId, principalId, name, { placement: "hero" });
+    const stored = await db.prepare("SELECT attribution_json FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ attribution_json: string | null }>();
+    expect(stored!.attribution_json).toBeNull();
+  });
+
   it("stores nothing for a direct signup", async () => {
     const principalId = await owner(), operationId = crypto.randomUUID();
     await signup.prepare(operationId, principalId, handle());
