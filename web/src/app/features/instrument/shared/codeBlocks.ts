@@ -30,7 +30,7 @@ export function enhanceCodeBlocks(container: HTMLElement): void {
     const paint = () => {
       render(h(IconButton, {
         glyph: "copy",
-        size: 22,
+        size: 30,
         variant: "floating",
         className: state === "idle" ? undefined : `is-${state}`,
         title: state === "copied" ? t("shell.copied") : state === "failed" ? t("shell.code.copyManually") : t("shell.code.copyTitle"),
