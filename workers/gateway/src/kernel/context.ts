@@ -40,6 +40,7 @@ import type { ScheduleStore } from "./scheduler";
 import type { MailboxStore } from "./mailbox-store";
 import type { ResponsibilityStore } from "./responsibility-store";
 import type { OwnerNoticeStore } from "./owner-notice-store";
+import type { NoticeRuleStore } from "./notice-rules";
 import type { ShipEventStore } from "./ship-event-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import type { FederationStore } from "./federation-store";
@@ -86,6 +87,7 @@ export type KernelContext = {
   responsibilities: ResponsibilityStore;
   shipEvents: ShipEventStore;
   ownerNotices: OwnerNoticeStore;
+  noticeRules: NoticeRuleStore;
   welcome: InitialOnboarding;
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;
