@@ -113,8 +113,8 @@ export function Select(props: SelectProps) {
   const current = idx >= 0 ? opts[idx] : null;
   const isOpen = open && !disabled;
   // The list opens downward unless the room below, inside the nearest scrolling ancestor and the viewport, is
-  // short of its height while the room above is larger; either way the open list is scrolled into view, so a
-  // picker low in a long page never opens out of sight.
+  // short of its height while the room above is larger, so a picker low in a long page opens upward instead
+  // of out of sight. (Scrolling the page to it would close it, as scrolling always does.)
   const [opensUp, setOpensUp] = useState(false);
   useLayoutEffect(() => {
     if (!isOpen) {
@@ -140,7 +140,6 @@ export function Select(props: SelectProps) {
     const above = anchor.top - top;
     const up = list.offsetHeight > below && above > below;
     setOpensUp(up);
-    list.scrollIntoView({ block: "nearest" });
   }, [isOpen]);
 
   const req = requirement && requirement !== "none" ? requirement : "";
