@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { encodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
+import { Select } from "../../../components/ui/Select";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
 import { parseDeviceId } from "../../../domain/deviceId";
@@ -54,7 +55,7 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
           <label>{t("shell.pairing.targetId")}<input name="pairing-target" value={draft.targetId} placeholder={t("shell.pairing.targetIdPlaceholder")} autoComplete="off" spellcheck={false} maxLength={48} onInput={(event) => owner.setTargetId(event.currentTarget.value)} /></label>
           <p class="note">{t("shell.pairing.targetIdHint")}</p>
         </>}
-        <PlatformChoice platform={draft.platform} onChange={(value) => owner.setPlatform(value)} />
+        <PlatformChoice platform={draft.platform} disabled={disabled} onChange={(value) => owner.setPlatform(value)} />
         <div class="fleet-actions"><button class="ibtn is-primary" type="submit" disabled={!draft.label.trim() || !parseDeviceId(draft.targetId)}>{pending ? <LoadingState>{t("shell.pairing.creating")}</LoadingState> : t("shell.pairing.create")}</button></div>
       </fieldset>
     </form> : !pairing ? <>
@@ -95,10 +96,13 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
   </div>;
 }
 
-function PlatformChoice({ platform, onChange }: { platform: MachineProvisionPlatform; onChange: (platform: MachineProvisionPlatform) => void }) {
+const PLATFORMS: readonly MachineProvisionPlatform[] = ["mac", "linux", "windows", "browser"];
+
+function PlatformChoice({ platform, disabled = false, onChange }: { platform: MachineProvisionPlatform; disabled?: boolean; onChange: (platform: MachineProvisionPlatform) => void }) {
   const t = useT();
-  return <label class="pairing-platform">{t("shell.pairing.place")} <select class="fleet-select" value={platform} onChange={(event) => {
-    const value = event.currentTarget.value;
-    if (value === "mac" || value === "linux" || value === "windows" || value === "browser") onChange(value);
-  }}><option value="mac">Mac</option><option value="linux">Linux</option><option value="windows">Windows</option><option value="browser">{t("shell.pairing.browser")}</option></select></label>;
+  const labels = { mac: "Mac", linux: "Linux", windows: "Windows", browser: t("shell.pairing.browser") } satisfies Record<MachineProvisionPlatform, string>;
+  return <Select block label={t("shell.pairing.place")} disabled={disabled}
+    options={PLATFORMS.map((value) => ({ label: labels[value], value }))}
+    value={PLATFORMS.indexOf(platform)}
+    onChange={(index) => onChange(PLATFORMS[index])} />;
 }
