@@ -118,4 +118,17 @@ describe("target options", () => {
     expect(new Set(labels).size).toBe(labels.length);
     expect(options.find((option) => option.value === targetOptionValue("dev-7"))?.label).toBe("garage pi · dev-1 · dev-7");
   });
+
+  it("settles a chain of names that each equal the previous derived label", () => {
+    const options = targetOptionsForRule(undefined, [
+      { id: "a", label: "pi" },
+      { id: "b", label: "pi" },
+      { id: "c", label: "pi · a" },
+      { id: "d", label: "pi · a · c" },
+      { id: "e", label: "pi · a · c · d" },
+      { id: "f", label: "pi · a · c · d · e" },
+    ]);
+    const labels = options.map((option) => option.label);
+    expect(new Set(labels).size).toBe(labels.length);
+  });
 });

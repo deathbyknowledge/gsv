@@ -311,8 +311,9 @@ export function targetOptionsForRule(target: ToolApprovalTarget | undefined, tar
     options.push(isToolApprovalTargetSelector(target) || alias ? { value, label } : { value, label, id: target });
   }
   // Connection names are not unique and may echo a built-in choice or another connection's derived label; any
-  // label still shared after a pass gains that connection's id until every option reads differently.
-  for (let pass = 0; pass < 3; pass += 1) {
+  // label still shared after a pass gains that connection's id until every option reads differently. Every pass
+  // settles at least one option, so the option count bounds the passes.
+  for (let pass = 0; pass <= options.length; pass += 1) {
     const counts = new Map<string, number>();
     for (const option of options) counts.set(option.label, (counts.get(option.label) ?? 0) + 1);
     const colliding = options.filter((option) => (counts.get(option.label) ?? 0) > 1 && option.id !== undefined && !option.label.endsWith(` · ${option.id}`));
