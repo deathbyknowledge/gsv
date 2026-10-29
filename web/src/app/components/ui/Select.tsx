@@ -140,7 +140,7 @@ export function Select(props: SelectProps) {
     const above = anchor.top - top;
     const up = list.offsetHeight > below && above > below;
     setOpensUp(up);
-  }, [isOpen]);
+  }, [isOpen, opts.length]);
 
   const req = requirement && requirement !== "none" ? requirement : "";
   const rawStatus = status && status !== "none" ? status : "";
