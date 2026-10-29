@@ -10,9 +10,10 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CallCoordinator", "PhoneCallObject"] }],
   "services": [
     { "binding": "INSTALLATION_DIRECTORY", "service": "gsv-installations" },
+    { "binding": "REALTIME_SESSIONS", "service": "gsv-inference", "entrypoint": "InferenceRealtimeEntrypoint", "props": { "authority": "realtime-sessions" } },
     { "binding": "PHONE_EVENTS", "service": "gsv", "entrypoint": "PhoneGatewayEntrypoint", "props": { "authority": "phone-notifications" } }
   ],
-  // The operator composition adds the public route for Twilio callbacks, REALTIME_SESSIONS, ENTITLEMENTS and secrets:
+  // The operator composition adds the public route for Twilio callbacks, ENTITLEMENTS and secrets:
   // TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_AUTH_TOKEN, TWILIO_TWIML_APP_SID.
   "vars": {
     "PUBLIC_ORIGIN": "https://calls.invalid",

@@ -32,3 +32,4 @@ export class InferenceService extends WorkerEntrypoint<InferenceServiceEnvironme
 export default InferenceService;
 
 export { InferenceLifecycleEntrypoint } from "./lifecycle";
+export { InferenceRealtimeEntrypoint } from "./realtime";
