@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState, useLayoutEffect } from "preact/hooks";
 import { InfoTip } from "./InfoTip";
 import { useT } from "../../i18n/locale";
 import "./Select.css";
@@ -112,6 +112,36 @@ export function Select(props: SelectProps) {
   const idx = rawIdx < 0 || opts.length === 0 ? -1 : Math.max(0, Math.min(Number(rawIdx) || 0, opts.length - 1));
   const current = idx >= 0 ? opts[idx] : null;
   const isOpen = open && !disabled;
+  // The list opens downward unless the room below, inside the nearest scrolling ancestor and the viewport, is
+  // short of its height while the room above is larger; either way the open list is scrolled into view, so a
+  // picker low in a long page never opens out of sight.
+  const [opensUp, setOpensUp] = useState(false);
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      setOpensUp(false);
+      return;
+    }
+    const list = listRef.current;
+    const trigger = list?.parentElement;
+    if (!list || !trigger) return;
+    let top = 0;
+    let bottom = window.innerHeight;
+    for (let node = trigger.parentElement; node; node = node.parentElement) {
+      const overflow = getComputedStyle(node).overflowY;
+      if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight) {
+        const bounds = node.getBoundingClientRect();
+        top = Math.max(top, bounds.top);
+        bottom = Math.min(bottom, bounds.bottom);
+        break;
+      }
+    }
+    const anchor = trigger.getBoundingClientRect();
+    const below = bottom - anchor.bottom;
+    const above = anchor.top - top;
+    const up = list.offsetHeight > below && above > below;
+    setOpensUp(up);
+    list.scrollIntoView({ block: "nearest" });
+  }, [isOpen]);
 
   const req = requirement && requirement !== "none" ? requirement : "";
   const rawStatus = status && status !== "none" ? status : "";
@@ -282,8 +312,7 @@ export function Select(props: SelectProps) {
               position: "absolute",
               left: 0,
               right: 0,
-              top: "100%",
-              marginTop: "4px",
+              ...(opensUp ? { bottom: "100%", marginBottom: "4px" } : { top: "100%", marginTop: "4px" }),
               zIndex: 20,
               background: "var(--gsv-field-surface, var(--panel-2))",
               border: "1px solid var(--border-raised)",
