@@ -91,9 +91,57 @@ Every change after the genesis goes through one function. It signs the next
 operation on the head of the DID's log that the PDS last recorded, and carries
 forward every field the change leaves alone. The PDS keeps the signed operation
 until the directory has it, so a retry after a lost response submits the same
-operation instead of signing another. A log that has moved past the recorded
-head means someone else changed the identity, and the PDS signs nothing on it:
-the change fails with `IdentityChanged`.
+operation instead of signing another. When the log has moved past the
+recorded head, the PDS checks the newer operations as described below: it
+builds on a head it adopts, and signs nothing on an identity it steps aside
+from, where the change fails with `IdentityChanged`.
+
+The PDS also notices changes it didn't make. It reads the DID's audit log
+right before it submits an operation of its own, and when the PLC directory's
+feed lists an operation for the DID, but never before a commit or a Ship-call
+signature. It walks every operation in force since the newest one it signed or
+adopted; an undo can nullify the latest. It trusts the keys that operation
+ranks above the host's key. Each later operation must be signed by one of them,
+and the trust then moves to the keys that operation ranks above the host's. A
+person's undo with their sheet, a sheet they replaced themselves and the
+operator's paper-key repair all pass. If every operation passes and the
+identity still names this PDS with the account's signing key, the PDS adopts
+the head and keeps serving. Otherwise it steps aside and refuses the account's
+writes and signatures with `IdentityChanged`, going by what it recorded. The
+identity has moved, a key the PDS doesn't trust changed it, or the host's own
+key signed an operation the PDS never submitted, so that key has leaked. When
+the read before a submission fails, the submission fails with it.
+
+One job reads the directory's feed for the whole host, so its cost follows the
+rate of PLC operations across the network, not the number of Ships. Every ten
+minutes the worker's schedule has the firehose read the PLC directory's
+`/export` after the sequence number where the last run stopped, a page of up to
+1,000 operations at a time and at most 30 pages a run, and keep only the DIDs
+the host holds. It wakes only the repository object of a DID the feed lists.
+That object reads nothing when every listed operation is one it signed or
+adopted: it records each operation's CID before it submits the operation. The
+first run begins 72 hours back, PLC's window for undoing an operation, so the
+feed sees every change a key can still undo. A change older than that waits for
+the host's next operation of its own, whose read still refuses to build on it,
+or for the operator's check. When the directory answers 429, the feed waits as
+long as its `Retry-After` asks, or backs off from ten minutes, doubling up to
+two hours, and then reads the page it stopped in again. Any other failure is
+kept for the operator and fails the run, and the next run reads on from the
+last page it finished. A host that holds no identities reads nothing.
+
+The PDS records each adoption and step-aside with the head, the operation that
+decided it and the key that signed it, for the Kernel or the operator to read
+later; it tells nobody yet. The feed also keeps, for the whole host, the last
+100 step-asides it found and the last 100 undone leaks. An undone leak is an
+operation the host's key signed that the PDS never submitted, which a person's
+sheet or the paper key later nullified. The PDS follows the undo, so the walk
+alone would lose that leak; the nullified operations in the log keep it,
+whether the undo came before the feed listed the leak or after.
+`npm run pds:identities -- audit` prints what the feed has found, how far it
+has read and why its last run failed, if it did, and reads no identity's log.
+With `--did`, it has the PDS read that one identity's log again.
+[Audit Ships' identities](../how-to/operate-gsv.md#audit-identities) is the
+procedure.
 
 ## Calls between Ships
 
@@ -443,10 +491,11 @@ an answer changes it. It forgets a relay at the first run after the deployment
 stops naming it, so a relay named again after that is asked at once and
 introduced to the host's accounts again. With no relay named, a run writes
 only to forget the relays the firehose still remembers, so the runs after that
-write nothing. The schedule runs while the deployment names a relay or a
-lexicon account. A relay that refuses or can't be reached is a warning in the
-PDS Worker's logs that names the relay and, for a refusal, the HTTP status and
-the XRPC error. The request carries only the host's hostname.
+write nothing. The schedule runs on every deployment with a PDS, since it also
+reads the PLC directory's feed for the host's identities. A relay that refuses
+or can't be reached is a warning in the PDS Worker's logs that names the relay
+and, for a refusal, the HTTP status and the XRPC error. The request carries
+only the host's hostname.
 
 A relay checks every event as sync 1.1 describes, and a Ship's repository sends
 what it needs: `#identity`, `#account` and `#sync` when the account is created,

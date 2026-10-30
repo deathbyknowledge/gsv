@@ -580,7 +580,8 @@ describe("open network host", () => {
       for (const name of ["PDS_CONTACT_EMAIL", "PDS_PRIVACY_POLICY_URL", "PDS_TERMS_OF_SERVICE_URL", "PDS_LEXICON_HANDLE", "PDS_RELAYS"]) {
         expect(host.props.env).not.toHaveProperty(name);
       }
-      expect(host.props.crons).toBeUndefined();
+      // The host still follows its identities' changes in the PLC directory on its schedule.
+      expect(host.props.crons).toEqual(["*/10 * * * *"]);
     }
   });
 

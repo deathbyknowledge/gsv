@@ -3,12 +3,16 @@ import { CODEC_DCBOR, create, toString } from "@atcute/cid";
 import { parseDidKey, Secp256k1PrivateKey, Secp256k1PrivateKeyExportable, type DidKeyString } from "@atcute/crypto";
 import {
   deriveDidFromGenesisOp,
+  normalizeOp,
   PlcClient,
   PlcClientError,
+  processIndexedEntry,
   signOperation,
   signTombstone,
   validateIncomingOp,
+  type CompatibleOperationOrTombstone,
   type DidPlcString,
+  type IndexedEntryWithSigner,
   type Operation,
   type Service,
   type UnsignedOperation,
@@ -44,10 +48,42 @@ export type IdentityHead = { cid: string; operation: Operation };
 /** What an operation states about an identity: every field an update carries forward or changes. */
 export type IdentityState = Omit<UnsignedOperation, "type" | "prev">;
 
+/**
+ * Why a host steps aside for a change to its identity: its own key signed an
+ * operation the host never submitted, a key it doesn't trust signed one, or
+ * the identity no longer names this host as its PDS with the account's signing key.
+ */
+export type StepAside = "leaked-key" | "untrusted-key" | "moved";
+
+/**
+ * What a host makes of the head of its DID's log, and when an undo nullified
+ * an operation the host's key signed that the host never submitted: a leak of
+ * the key that no longer shows among the operations in force.
+ */
+export type HeadCheck = (
+  /** The head is an operation the host signed or adopted. */
+  | { outcome: "own" }
+  /** Keys the host trusts signed every operation since its own, and the identity still names this host: the host follows the head. */
+  | { outcome: "adopted"; head: IdentityHead; signedBy: DidKeyString }
+  /** The host steps aside for the head, because of `operation`. */
+  | { outcome: StepAside; head: string; operation: string; signedBy: DidKeyString }
+) & { undoneLeaks: string[] };
+
 /** The directory's log has moved past the head the host recorded, so someone else changed the identity. */
 export class IdentityChangedError extends Error {
   constructor(did: string) {
     super(`IdentityChanged: ${did} has changed in its directory since this host last signed for it`);
+  }
+}
+
+/** The directory answered 429: the host reads it too often. */
+export class DirectoryBusyError extends Error {
+  /** The seconds the directory asked the host to wait, or null when it named none. */
+  readonly retryAfter: number | null;
+
+  constructor(retryAfter: number | null) {
+    super("DirectoryBusy: the PLC directory asked this host to wait before reading again");
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -168,6 +204,57 @@ export function parseOwnerRecoveryKey(value: string): DidKeyString {
   return value;
 }
 
+/** The owner's recovery key that rotation keys list at its rank, unless the key there is one of the operator's. */
+export function ownerRecoveryKeyOf(rotationKeys: readonly DidKeyString[], operatorKeys: readonly string[]): DidKeyString | null {
+  const key = rotationKeys[OWNER_RECOVERY_KEY_RANK];
+  return key !== undefined && !operatorKeys.includes(key) ? key : null;
+}
+
+/**
+ * Reads the DID's log and judges its head by every operation in force since
+ * the newest of `known`, the CIDs of the operations the host signed or
+ * adopted, genesis first; an undo can nullify the latest. The host trusts the
+ * keys that operation ranks above its own key. Each later operation must be
+ * signed by one of them, and the host then trusts the keys that operation
+ * ranks above its own, or all of them once its key is gone. An operation the
+ * host's key signed is one this host never submitted, so the key has leaked.
+ * Such an operation that an undo nullified is a leak the walk can't see;
+ * `undoneLeaks` gives when each was undone. A directory that answers 429
+ * throws `DirectoryBusyError`.
+ */
+export async function checkHead(env: HostEnv, did: DidPlcString, known: readonly string[], signingKey: DidKeyString): Promise<HeadCheck> {
+  const plc = new PlcClient({ serviceUrl: env.PLC_URL, fetch: readUnlessBusy });
+  const hostKey = await (await hostRotationKey(env)).exportPublicKey("did");
+  // Replays the log as processIndexedEntryLog does, keeping when each nullified operation was undone.
+  let canonical: IndexedEntryWithSigner[] = [];
+  const undoneLeaks: string[] = [];
+  for (const entry of await plc.getAuditLog(did)) {
+    const replayed = await processIndexedEntry(did, canonical, entry);
+    canonical = replayed.ops;
+    for (const undone of replayed.nullified) {
+      if (undone.signedBy === hostKey && !known.includes(undone.cid)) undoneLeaks.push(entry.createdAt);
+    }
+  }
+  const start = canonical.findLastIndex((entry) => known.includes(entry.cid));
+  const base = canonical[start];
+  const head = canonical.at(-1);
+  if (!base || !head) throw new Error(`The directory's log for ${did} doesn't begin with this host's genesis`);
+  if (base === head) return { outcome: "own", undoneLeaks };
+  let trusted = keysAboveHost(base.operation, hostKey);
+  for (const entry of canonical.slice(start + 1)) {
+    if (!trusted.includes(entry.signedBy)) {
+      const outcome = entry.signedBy === hostKey ? "leaked-key" : "untrusted-key";
+      return { outcome, head: head.cid, operation: entry.cid, signedBy: entry.signedBy, undoneLeaks };
+    }
+    trusted = keysAboveHost(entry.operation, hostKey);
+  }
+  const state = head.operation;
+  if (state.type !== "plc_operation" || !namesHost(state, env.PDS_ORIGIN) || state.verificationMethods.atproto !== signingKey) {
+    return { outcome: "moved", head: head.cid, operation: head.cid, signedBy: head.signedBy, undoneLeaks };
+  }
+  return { outcome: "adopted", head: { cid: head.cid, operation: state }, signedBy: head.signedBy, undoneLeaks };
+}
+
 /**
  * Tombstones a DID so the directory stops resolving it. The directory keeps
  * the DID's operation log, which names its handle and host. A DID the
@@ -214,6 +301,30 @@ async function operationCid(operation: Operation): Promise<string> {
 
 function hostRotationKey(env: HostEnv): Promise<Secp256k1PrivateKey> {
   return Secp256k1PrivateKey.importRaw(fromBase16(env.PLC_ROTATION_KEY));
+}
+
+/** Reads from the directory, turning its 429 into a `DirectoryBusyError` with the wait its Retry-After names. */
+export const readUnlessBusy: typeof fetch = async (input, init) => {
+  const response = await fetch(input, init);
+  if (response.status !== 429) return response;
+  await response.body?.cancel();
+  throw new DirectoryBusyError(retryAfterSeconds(response.headers.get("Retry-After")));
+};
+
+/** The seconds a Retry-After header asks for, in seconds or as an HTTP date; null when it names none. */
+function retryAfterSeconds(header: string | null): number | null {
+  const value = header?.trim() ?? "";
+  if (/^\d+$/.test(value)) return Number(value);
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, Math.ceil((at - Date.now()) / 1000));
+}
+
+/** The keys an operation ranks above the host's, which the host trusts to change the identity next: all of them once the host's key is gone. */
+function keysAboveHost(operation: CompatibleOperationOrTombstone, hostKey: DidKeyString): DidKeyString[] {
+  if (operation.type === "plc_tombstone") return [];
+  const { rotationKeys } = normalizeOp(operation);
+  const rank = rotationKeys.indexOf(hostKey);
+  return rank === -1 ? rotationKeys : rotationKeys.slice(0, rank);
 }
 
 /** Whether an operation names this host as the identity's PDS. */
