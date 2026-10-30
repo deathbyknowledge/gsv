@@ -14,7 +14,7 @@ import type { Process } from "../do";
 import type { RunState } from "../run/state";
 import {
   INTERRUPTED_RUN_CONTROL_MESSAGE, SHELL_SESSION_TARGET_KEY_PREFIX, isRunControlCall,
-  TOOL_DISPATCH_TIMEOUT_MS, NESTED_APPROVAL_TIMEOUT_MS,
+  TOOL_DISPATCH_TIMEOUT_MS, NESTED_APPROVAL_KEEP_ALIVE_MS, NESTED_APPROVAL_TIMEOUT_MS,
   CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS,
 } from "../internal/lifecycle";
 import {
@@ -1026,6 +1026,7 @@ export class ProcessTools {
     }
     this.host.store.tools.setPendingHil(pendingHil);
     try {
+      await this.keepNestedApprovalAlive(requestId);
       await this.host.sendSignal("proc.run.hil.requested", this.toProcHilRequest(pendingHil));
       return await raceWithAbort(approved, signal);
     } finally {
@@ -1034,6 +1035,29 @@ export class ProcessTools {
       }
       this.resolveCodeModeApproval(requestId, false);
       this.host.startBackground("resume registered tools after nested approval", this.processToolCalls(runId));
+    }
+  }
+
+  /**
+   * The waiter lives only in memory, and a CodeMode approval has no inbound
+   * request holding this object there, so each alarm is the event that keeps it.
+   * After a restart or deploy the same alarm finds the waiter gone and tells the
+   * model at once, rather than leaving the run parked on an unanswerable request.
+   */
+  async keepNestedApprovalAlive(requestId: string): Promise<void> {
+    if (this.host.codeModeApprovals.has(requestId)) {
+      await this.host.run.schedule(new Date(Date.now() + NESTED_APPROVAL_KEEP_ALIVE_MS), "onNestedApprovalKeepAlive", requestId);
+      return;
+    }
+    const lost = this.host.store.tools.getPendingHil(requestId);
+    if (!lost) return;
+    this.host.store.tools.clearPendingHil("error");
+    if (lost.ownerDispatchId) {
+      await this.failStartedTool(
+        lost.runId,
+        lost.ownerDispatchId,
+        `Approval request was interrupted before anyone answered: ${lost.syscall}`,
+      );
     }
   }
 

@@ -142,6 +142,61 @@ describe("nested approval window", () => {
     });
   });
 
+  it("keeps alive through the shared scheduler, without displacing other tasks", async () => {
+    const stub = await initProcess("nested-window-keep-alive", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process, state: DurableObjectState) => {
+      startedTool(process, "Shell");
+      vi.restoreAllMocks();
+      vi.spyOn(process.kernel, "readApprovalPolicy").mockResolvedValue(JSON.stringify(ASKS));
+      vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
+      const later = new Date(Date.now() + 5 * MINUTE);
+      await process.run.schedule(later, "onRunFinishDelivery", "other-work");
+      const authorized = process.tools.authorizeNestedTool(
+        { runId: RUN, requestId: DISPATCH, syscall: "mail.send", args: MAIL }, new AbortController().signal,
+      );
+      await vi.waitFor(() => expect(process.store.tools.getPendingHil()).not.toBeNull());
+      const tasks = () => state.storage.sql.exec<{ callback: string }>("SELECT callback FROM cf_agents_schedules").toArray()
+        .map(({ callback }) => callback).sort();
+      await vi.waitFor(() => expect(tasks()).toEqual(["onNestedApprovalKeepAlive", "onRunFinishDelivery"]));
+      const alarm = await state.storage.getAlarm();
+      expect(alarm).toBeLessThan(later.getTime());
+      await process.tools.keepNestedApprovalAlive(process.store.tools.getPendingHil()!.requestId);
+      expect(tasks()).toContain("onRunFinishDelivery");
+      await tap(process);
+      await expect(authorized).resolves.toBe(true);
+      await state.storage.sql.exec("DELETE FROM cf_agents_schedules");
+      process.runs.active = null;
+    });
+  });
+
+  it("tells the model when the next keep-alive finds the waiter gone after a restart", async () => {
+    const stub = await initProcess("nested-window-lost", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      startedTool(process, "Shell");
+      process.store.tools.setPendingHil({
+        requestId: "lost", runId: RUN, ownerDispatchId: DISPATCH, toolCallId: "nested", toolName: "Shell",
+        syscall: "mail.send", args: MAIL, createdAt: Date.now(),
+      });
+    });
+    await evictDurableObject(stub);
+    await runInProcess(stub, async (process: Process) => {
+      // SAFETY: the run fixture holds only the fields these approval paths read.
+      process.runs.active ??= approvedRun(RUN, {
+        config: { ...terminalTestConfig(process.pid), capabilities: ["*"] }, tools: offeredTools("Shell"), offeredToolNames: ["Shell"], approvalPolicy: ASKS,
+      }) as Process["runs"]["active"];
+      vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
+      // SAFETY: these tests never read the schedule record.
+      vi.spyOn(process.run, "schedule").mockResolvedValue(undefined as never);
+      await process.tools.keepNestedApprovalAlive("lost");
+      expect(process.store.tools.getPendingHil()).toBeNull();
+      expect(process.store.tools.getResults(RUN)).toMatchObject([{
+        status: "error", outcome: "failed", error: "Approval request was interrupted before anyone answered: mail.send",
+      }]);
+      await expect(tap(process)).resolves.toMatchObject({ ok: false });
+      process.runs.active = null;
+    });
+  });
+
   it("reports an approval whose waiter was lost to a restart as interrupted", async () => {
     const stub = await initProcess("nested-window-eviction", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {

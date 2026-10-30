@@ -178,6 +178,9 @@ export const TOOL_DISPATCH_TIMEOUT_MS = 10 * 60_000;
 /** How long a running tool waits for a person; it ends first so the tool can still report it. */
 export const NESTED_APPROVAL_TIMEOUT_MS = 9 * 60_000;
 
+/** Well inside the 70-140 seconds an idle Durable Object may be evicted after. */
+export const NESTED_APPROVAL_KEEP_ALIVE_MS = 30_000;
+
 export const MEDIA_PREPARATION_TIMEOUT_MS = 10 * 60_000;
 
 export const COMPACTION_SUMMARY_CHUNK_CHARS = 256_000;

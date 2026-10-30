@@ -30,8 +30,8 @@ describe.skipIf(!WAIT_MS)("nested approval answered after a long wait", () => {
       await new Promise((resolve) => setTimeout(resolve, WAIT_MS));
       const history = await runtime.client.proc.history({ pid: spawned.pid, includeMessages: false });
       if (!history.ok || !history.pendingHil) throw new Error(`Approval was gone after ${WAIT_MS}ms`);
-      expect(await runtime.client.proc.hil({ pid: spawned.pid, requestId: history.pendingHil.requestId, decision: "approve" }))
-        .toMatchObject({ ok: true });
+      const answered = await runtime.client.proc.hil({ pid: spawned.pid, requestId: history.pendingHil.requestId, decision: "approve" });
+      if (!answered.ok) throw new Error(`Approval answer refused after ${WAIT_MS}ms: ${answered.error}`);
       await runtime.waitFor(async () => {
         const state = await runtime.client.proc.history({ pid: spawned.pid, includeMessages: false });
         return state.ok && state.activeRunId === null;
