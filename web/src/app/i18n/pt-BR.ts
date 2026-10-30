@@ -1704,6 +1704,7 @@ export const ptBR = {
   "chat.call.mailReply": "responder a um e-mail",
   "chat.call.mail": "enviar um e-mail",
   "chat.call.publish": "publicar na rede aberta",
+  "chat.call.schedule": "agendar trabalho para mais tarde",
 
   // Chat: approval requests
   "chat.hil.read": "ler {path}",

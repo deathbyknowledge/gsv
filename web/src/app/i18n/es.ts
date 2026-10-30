@@ -1699,6 +1699,7 @@ export const es = {
   "chat.call.mailReply": "responder a un correo",
   "chat.call.mail": "enviar un correo",
   "chat.call.publish": "publicar en la red abierta",
+  "chat.call.schedule": "programar trabajo para más tarde",
 
   // Chat: approval requests
   "chat.hil.read": "leer {path}",

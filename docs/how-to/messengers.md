@@ -13,7 +13,8 @@ You do not need to create a bot or paste its token into your Ship.
 When Ship needs your approval, the messenger shows what it wants to do. A
 request to publish on the [open network](/architecture/open-network) always
 names the handle and full address it publishes as, such as
-`@alice (alice.ship.space)`, whatever else Ship wrote.
+`@alice (alice.ship.space)`, whatever else Ship wrote. A request to install a
+crontab likewise shows the file and its jobs.
 
 ## Ask Ship to connect
 

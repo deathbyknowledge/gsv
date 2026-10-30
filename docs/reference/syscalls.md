@@ -2632,6 +2632,12 @@ shell commands. Cron files
 are desired state: installing or rewriting a crontab removes and recreates the
 linked `sched.*` records, so crontab-backed schedule ids are operational ids,
 not stable cron identifiers.
+Installing one takes `sched.add`, `sched.remove` and, when it has jobs,
+`shell.exec`, whichever way the file arrives; removing one takes `sched.remove`.
+An agent's install goes through the `sched.add` approval rule as one request for
+the whole file, and a refusal leaves the previous crontab in place. A shell `>`
+empties the file when it opens it, before the new contents arrive; `crontab FILE`
+replaces the file in one step.
 Cron commands have no process-backed caller, so `proc delegate` is not valid in
 a crontab. Use `sched.list` for status, last result, source, and control.
 
