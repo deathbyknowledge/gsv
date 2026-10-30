@@ -245,7 +245,7 @@ describe("proc.abort", () => {
           args: {},
           resolve: vi.fn(),
           reject: vi.fn(),
-          timeoutId: setTimeout(() => {}, 60_000),
+          deadline: { clear() {} },
         });
         const provider = new AbortController();
         process.runAbortControllers.set("run-1", provider);

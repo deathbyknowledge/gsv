@@ -1,6 +1,7 @@
 type ProcessTestValue<T = string | number | boolean | null | undefined> = T;
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ExecutionDeadlines } from "../shared/execution-deadline";
 import { env } from "cloudflare:workers";
 import {
   buildCodeModeMcpToolBindings,
@@ -9,6 +10,55 @@ import {
 import { CODE_MODE_UNAVAILABLE_ERROR } from "../codemode/availability";
 
 describe.sequential("CodeMode executor", () => {
+  describe("execution limit while a person is asked", () => {
+    const MAIL = 'return await mail.send({ to: "a@example.invalid", subject: "Hi", text: "Hi", deliveryId: "wait" });';
+    afterEach(() => vi.useRealTimers());
+
+    it("does not count the wait, and hands the sandbox a timer that outlasts the approval window", async () => {
+      const deadlines = new ExecutionDeadlines();
+      let reached!: () => void;
+      const asked = new Promise<void>((resolve) => { reached = resolve; });
+      let answer!: (value: { state: string }) => void;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      const running = executeCodeMode(env, MAIL, async () => {
+        const release = deadlines.hold();
+        reached();
+        const result = await new Promise<{ state: string }>((resolve) => { answer = resolve; });
+        release();
+        return result;
+      }, { approvalDeadlines: deadlines });
+      await asked;
+      await vi.advanceTimersByTimeAsync(8 * 60_000);
+      answer({ state: "queued" });
+      await expect(running).resolves.toMatchObject({ status: "completed", result: { state: "queued" } });
+    });
+
+    it("still ends a script that is not waiting for a person", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      let reached!: () => void;
+      const started = new Promise<void>((resolve) => { reached = resolve; });
+      const running = executeCodeMode(env, MAIL, async () => {
+        reached();
+        return await new Promise(() => {});
+      }, { approvalDeadlines: new ExecutionDeadlines() });
+      await started;
+      await vi.advanceTimersByTimeAsync(60_001);
+      await expect(running).resolves.toEqual({ status: "failed", error: "Execution timed out" });
+    });
+
+    it("gives the sandbox's own clock enough room to outlast an approval", async () => {
+      const modules: string[] = [];
+      const loader = { get: (_id: string, build: () => { modules: Record<string, string> }) => {
+        modules.push(build().modules["executor.js"]!);
+        return { getEntrypoint: () => ({ evaluate: async () => ({ result: null, logs: [] }) }) };
+      } };
+      await executeCodeMode({ LOADER: loader } as never, "return 1;", async () => null, { approvalDeadlines: new ExecutionDeadlines() });
+      await executeCodeMode({ LOADER: loader } as never, "return 1;", async () => null);
+      expect(modules[0]).toContain("Execution timed out\")), 660000");
+      expect(modules[1]).toContain("Execution timed out\")), 60000");
+    });
+  });
+
   it("cancels a durable shell through its owning syscall without replacing its target", async () => {
     const calls: Array<{ call: string; args: Record<string, ProcessTestValue> }> = [];
     const result = await executeCodeMode(env, `
