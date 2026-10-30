@@ -16,7 +16,6 @@ import { FirstRunScreen, Section } from "./FirstRunScreen";
 let tree: ComponentChildren;
 let adapters: ConsoleAdapter[];
 let links: ConsoleIdentityLink[];
-let unreachable: string[];
 let completeError: boolean;
 let root: ReturnType<typeof createTestRoot>;
 const request = vi.fn<GSVClient["request"]>();
@@ -42,6 +41,7 @@ const action = (label: string) => {
   const section = collectNodes(tree).find((node) => node.type === Section && node.props.action === label);
   return section ? { props: { onClick: section.props.onAction } } : undefined;
 };
+const continueHere = () => collectNodes(tree).find((node) => node.type === "button" && node.props.children === "continue here");
 const button = (label: string) => collectNodes(tree).find((node) => node.type === Button && node.props.label === label);
 const pairing = () => collectNodes(tree).find((node) => node.type === MessengerPairing);
 const alert = () => collectNodes(tree).find((node) => node.type === Alert);
@@ -50,7 +50,6 @@ const click = async (node: { props: { onClick?: () => void | Promise<void> } } |
 beforeEach(() => {
   adapters = [managedAdapter("whatsapp"), managedAdapter("telegram"), managedAdapter("slack", { canLink: false })];
   links = [];
-  unreachable = ["55", "62"];
   completeError = false;
   request.mockReset();
   onComplete.mockReset();
@@ -65,7 +64,7 @@ beforeEach(() => {
     if (call === "sys.link.list") return { data: { links } };
     if (call === "adapter.pair.info") {
       const { adapter } = z.object({ adapter: z.string() }).parse(args);
-      return { data: { adapter, accountId: `managed-${adapter}`, configured: true, installUrl: "https://wa.me/31612345678?text=%2Flink", unreachableCallingCodes: unreachable } };
+      return { data: { adapter, accountId: `managed-${adapter}`, configured: true, installUrl: "https://wa.me/31612345678?text=%2Flink", unreachableCallingCodes: ["55", "62"] } };
     }
     throw new Error(`Unexpected request ${call}`);
   });
@@ -79,24 +78,24 @@ afterEach(async () => {
 describe("first-run screen", () => {
   it("lists the deployment's messengers first, then the desktop app and continuing here, laid out as Settings › Messengers", async () => {
     await mount();
-    await vi.waitFor(() => expect(sections()).toEqual(["WhatsApp", "Telegram", "Desktop app", "Continue here"]));
+    await vi.waitFor(() => expect(sections()).toEqual(["WhatsApp", "Telegram", "Desktop app"]));
     const privacy = collectNodes(tree).filter((node) => node.type === Section && node.props.info).map((node) => node.props.name);
     expect(privacy).toEqual(["WhatsApp", "Telegram"]);
     expect(collectNodes(tree).find((node) => node.type === Section)?.props.info).toContain("Ship only sees the messages you send it.");
     expect(action("connect WhatsApp")).toBeDefined();
     expect(action("connect Telegram")).toBeDefined();
     expect(action("download the app")).toBeDefined();
-    expect(action("continue")).toBeDefined();
-    expect(collectText(tree)).toContain("No WhatsApp account is connected to you.");
-    expect(collectNodes(tree).find((node) => node.type === Section && node.props.name === "Continue here")?.props.blurb).toBe("You can connect a messenger later.");
-    await vi.waitFor(() => expect(collectText(tree)).toContain("Not for numbers in Brazil (+55) and Indonesia (+62)"));
+    expect(continueHere()).toBeDefined();
+    expect(collectText(tree)).not.toContain("is connected to you");
+    expect(collectText(tree)).toContain("You can connect a messenger later.");
+    expect(collectText(tree)).not.toContain("Not for numbers");
     expect(pairing()).toBeUndefined();
     expect(onComplete).not.toHaveBeenCalled();
   });
 
   it("continues here at once", async () => {
     await mount();
-    await click(action("continue"));
+    await click(continueHere());
     expect(onComplete).toHaveBeenCalledWith("web");
   });
 
@@ -116,7 +115,8 @@ describe("first-run screen", () => {
     await mount();
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("sys.link.list", {}));
     await act(async () => {});
-    expect(sections()).toEqual(["Desktop app", "Continue here"]);
+    expect(sections()).toEqual(["Desktop app"]);
+    expect(continueHere()).toBeDefined();
     expect(request).not.toHaveBeenCalledWith("adapter.pair.info", expect.anything());
   });
 
@@ -164,6 +164,6 @@ describe("first-run screen", () => {
     completeError = true;
     await mount();
     expect(alert()?.props.text).toBe("Couldn't wake Ship.");
-    expect(action("continue")).toBeDefined();
+    expect(continueHere()).toBeDefined();
   });
 });

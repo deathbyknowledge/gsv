@@ -62,10 +62,11 @@ On a personal human account's first sign-in, a full screen in front of the chat 
 the person wants to message Ship: Web, the Desktop app, WhatsApp or Telegram. Web completes at
 once; the Desktop app choice links to the release download and continues in the web; a messenger
 pairs inline through the Settings pairing flow, and the Kernel then greets on it. Messenger
-cards appear only when the deployment offers that adapter; the WhatsApp card names the
-countries the Ship number cannot reach, and a (?) note says Ship only sees the messages sent to
-it. Finishing writes the choice and the per-user first-run flag, so the screen follows the
-account across web and Desktop and never shows again; inside Desktop the Desktop card is hidden.
+sections appear only when the deployment offers that adapter, with no "nothing connected" line;
+the embedded WhatsApp flow names the countries the Ship number cannot reach, and a (?) note says
+Ship only sees the messages sent to it. "continue here" is a text action at the end, with its note as a small label. Finishing writes the
+choice and the per-user first-run flag, so the screen follows the account across web and Desktop
+and never shows again; inside Desktop the Desktop section is hidden.
 It never applies during activation or for the administrator. If the flag cannot be loaded, a
 small notice over the chat offers Retry; a failed save keeps the screen with an error.
 

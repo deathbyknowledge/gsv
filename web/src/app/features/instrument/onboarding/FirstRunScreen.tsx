@@ -8,11 +8,9 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { LATEST_RELEASE_PAGE_URL } from "../../../domain/cliInstall";
 import { detectClientPlatform } from "../../../services/gateway/clientPlatform";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
-import { useConsoleAdapterPairingInfo } from "../../../services/system/useConsoleData";
 import { useT, type TextKey } from "../../../i18n/locale";
 import { INSTRUMENT_MESSENGERS_KEY } from "../wire/queryKeys";
 import { MessengerPairing } from "../settings/Telegram";
-import { whatsAppCountryList } from "../settings/messengers/ManagedTelegramOnboardingFlow";
 import { loadMessengerConnections } from "../settings/messengerConnectionsService";
 import { MessengerIcon } from "./MessengerIcon";
 import type { PreferredSurface } from "./useFirstRunState";
@@ -60,8 +58,9 @@ export function Section({ name, icon, info, action, onAction, disabled, blurb, c
 
 /**
  * The last onboarding step, standing in front of the chat: where does this person want to message Ship?
- * Each choice is a section like Settings › Messengers. A messenger pairs right here, through the same
- * flow Settings uses, so Ship's greeting lands there; "Continue here" completes at once.
+ * Each choice is a section like Settings › Messengers, without the "nothing connected" line: this is a
+ * first run. A messenger pairs right here, through the same flow Settings uses (which names the countries
+ * WhatsApp cannot reach), so Ship's greeting lands there; "continue here" completes at once.
  */
 export function FirstRunScreen({ ownerUid, completing, completeError, onComplete }: Props) {
   const t = useT();
@@ -78,9 +77,6 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
     return adapter?.enabled === true && adapter.supportsPairing && adapter.canLink;
   });
   const linkFor = (id: MessengerChoice) => connections.data?.links.find((link) => link.adapter === id);
-  const whatsAppOffered = offered.some(({ id }) => id === "whatsapp");
-  const whatsApp = useConsoleAdapterPairingInfo("whatsapp", whatsAppOffered);
-  const unreachable = whatsApp.data?.unreachableCallingCodes ?? [];
   const busy = completing || !connected;
   const platformName = (id: MessengerChoice) => MESSENGERS.find((entry) => entry.id === id)!.name;
   const toggle = (next: Exclude<Drawer, null>) => setDrawer((current) => JSON.stringify(current) === JSON.stringify(next) ? null : next);
@@ -105,12 +101,9 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
           action={t(openHere ? "settings.messengers.closeSetup" : "settings.messengers.connect", { name })} disabled={busy}
           onAction={() => toggle(link ? { kind: "connected", id } : { kind: "messenger", id })}
           blurb={t(sub)}>
-          {id === "whatsapp" && !openHere && unreachable.length > 0 && <p class="first-run-muted first-run-note">
-            {t("onboarding.surface.whatsappUnreachable", { countries: whatsAppCountryList(unreachable, t) })}
-          </p>}
-          <ul class="first-run-list"><li>
-            <span class="first-run-status">{link ? t("settings.messengers.connectedTo", { id: link.actorId }) : t("settings.messengers.noLinks", { name })}</span>
-          </li></ul>
+          {link && <ul class="first-run-list"><li>
+            <span class="first-run-status">{t("settings.messengers.connectedTo", { id: link.actorId })}</span>
+          </li></ul>}
           {drawer?.kind === "messenger" && drawer.id === id && <fieldset class="first-run-drawer" disabled={!connected}>
             <MessengerPairing adapter={id} disabled={!connected}
               onClose={() => { void leaveFlow(id); }}
@@ -139,8 +132,10 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
         </div>}
       </Section>}
 
-      <Section name={t("onboarding.surface.web")} blurb={t("onboarding.surface.webSub")} disabled={busy}
-        action={t("onboarding.surface.webAction")} onAction={() => { void onComplete("web"); }} />
+      <div class="first-run-continue">
+        <button type="button" class="first-run-text-action" disabled={busy} onClick={() => { void onComplete("web"); }}>{t("onboarding.surface.web")}</button>
+        <p class="first-run-continue-note">{t("onboarding.surface.webSub")}</p>
+      </div>
     </div>
   </section>;
 }

@@ -27,7 +27,6 @@
 .first-run-text-action:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .first-run-text-action:disabled { color: var(--faint); cursor: default; text-decoration: none; }
 .first-run-muted { max-width: 70ch; margin: .75rem 0 0; color: var(--text-dim); font-family: var(--gsv-font-prose); font-size: .9375rem; line-height: 1.7; }
-.first-run-note { color: var(--warn, var(--text-dim)); font-size: .875rem; }
 .first-run-list { margin: 1.25rem 0 0; padding: 0; list-style: none; }
 .first-run-list > li { display: flex; align-items: center; border-top: 1px solid var(--border); padding: 1.25rem 0; font-size: .8rem; overflow-wrap: anywhere; }
 .first-run-status { display: inline-flex; align-items: center; gap: .5rem; letter-spacing: .12em; color: var(--text-dim); }
@@ -36,6 +35,8 @@
 .first-run-text { margin: 0 0 20px; color: var(--text); font-family: var(--gsv-font-prose); font-size: 15px; line-height: 1.6; }
 .first-run-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .first-run-actions-spacer { flex: 1; }
+.first-run-continue { display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; margin-top: 3rem; font-family: var(--gsv-font-mono); text-align: right; }
+.first-run-continue-note { margin: 0; color: var(--text-dim); font-family: var(--gsv-font-prose); font-size: .75rem; line-height: 1.5; }
 /* Only a failure to load the first-run state is visible over the chat: a small notice with a retry. */
 .first-run-notice {
   position: absolute;
