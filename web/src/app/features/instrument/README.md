@@ -62,7 +62,8 @@ On a personal human account's first sign-in, a full screen in front of the chat,
 own star field whatever the chat preference says, asks where the person wants to message
 Ship: Web, the Desktop app, WhatsApp or Telegram. Web completes at
 once; the Desktop app choice links to the release download and continues in the web; a messenger
-pairs inline through the Settings pairing flow, and the Kernel then greets on it. Messenger
+pairs inline through the Settings pairing flow, and finishing from its section records it as the
+choice, which the Kernel routes the greeting to. Messenger
 sections appear only when the deployment offers that adapter, with no "nothing connected" line;
 the embedded WhatsApp flow names the countries the Ship number cannot reach, and a (?) note says
 Ship only sees the messages sent to it. "continue here" is a text action at the end, with its note as a small label. Finishing writes the

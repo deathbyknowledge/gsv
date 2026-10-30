@@ -4957,13 +4957,8 @@ describe("managed adapter pairing", () => {
       adapter: "telegram",
       accountId: "managed",
     });
-    // The paired DM becomes Ship's private destination, so the next Ship message without an active client lands there.
-    expect(ctx.adapters.privateDestinations.recordActivity).toHaveBeenCalledWith(
-      1000,
-      { kind: "adapter", adapter: "telegram", accountId: "managed", actorId: "12345", surface: { kind: "dm", id: "12345" } },
-      expect.stringMatching(/^pairing:/),
-      expect.any(Number),
-    );
+    // Pairing records the link and its DM; where Ship speaks next is decided when the first run ends (sys.config.set).
+    expect(ctx.adapters.privateDestinations.recordActivity).not.toHaveBeenCalled();
 
     await expect(handleAdapterPairDisconnect({
       adapter: "telegram",

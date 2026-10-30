@@ -352,6 +352,14 @@ export function identityLinkAllowsSurface(
   return false;
 }
 
+/** The DM a link was made through, when the link recorded one. */
+export function identityLinkDirectSurface(link: IdentityLinkRecord): AdapterSurface | null {
+  const id = metadataString(link.metadata, "surfaceId");
+  if (metadataString(link.metadata, "surfaceKind") !== "dm" || !id) return null;
+  const threadId = metadataString(link.metadata, "threadId");
+  return threadId ? { kind: "dm", id, threadId } : { kind: "dm", id };
+}
+
 export function identityLinkRouteGeneration(
   link: IdentityLinkRecord,
   surface: AdapterSurface,

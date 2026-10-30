@@ -15,7 +15,8 @@ The first time you open the web app it asks where you want to message Ship:
 **Web**, the **Desktop app**, **WhatsApp** or **Telegram**. Web opens the chat at
 once; the Desktop app choice links to the download and continues in the web
 meanwhile; a messenger pairs right there, through the same steps as **Settings →
-Messengers**, and Ship then greets you on it. Opening WhatsApp there says which
+Messengers**, and opening the chat from that messenger's section makes it where Ship
+greets you. Opening WhatsApp there says which
 countries the Ship number cannot reach, and a (?) note explains that connecting a
 messenger gives Ship only the messages you send it. The choice is recorded once
 per account, so Desktop and later visits go straight to the chat. Ship wakes as
