@@ -1,0 +1,20 @@
+{
+  "name": "@humansandmachines/gsv-calls-worker",
+  "version": "0.7.5",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@humansandmachines/gsv": "file:../../packages/gsv"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@cloudflare/workers-types": "5.20261006.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9",
+    "wrangler": "4.147.0"
+  }
+}

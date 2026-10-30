@@ -1950,6 +1950,81 @@ type InstanceSyscalls = {
 };
 ```
 
+## Phone calls: `sys.phone.*`
+
+The optional calls service places phone calls for an owner. Ship never speaks on
+a call itself: it writes a brief, and a voice agent in the service places the
+call, keeps to the brief, asks when the callee proposes something outside it,
+and reports back. Without the operator's `PHONE` binding these syscalls fail
+with "Phone calls are not configured for this Ship", and the native `phone`
+command reports the same. The Kernel derives the installation, owner and acting
+Process; arguments never choose them, the caller ID or the provider account.
+
+`sys.phone.call({ brief, responsibilityId?, requestId? })` returns `{ call }` at
+once, before anything rings. The brief names the destination (`to`, an
+international number), `goal`, and optional `onBehalfOf` (the name the agent
+gives in its first sentence), `business`, `mayShare`, `mustNot`,
+`ifOutsideLimits` (`ask` or `end`), `checkIn` (when the agent stops to ask the
+owner, holding the line), `voicemail` (`hang_up` or `leave_message`), `language`
+and `maxMinutes`. Without `onBehalfOf`, the Kernel uses the profile name or
+account full name the owner set, and refuses the call, telling the caller to ask
+the owner, when there is none. The Kernel validates the brief, reporting each
+problem as one line such as `brief.goal: required`, renders the voice agent's
+instructions from its protected template and the brief, and passes both to the
+service. A retry with the same `requestId` returns the same call; nothing
+redials. An agent's call takes its `requestId` from the tool call that placed
+it, so one tool call places at most one call.
+
+Every call asks the owner first, and the approval shows the brief. New approval
+policies start with an `ask` rule for `sys.phone.call`, and saved policies that
+allow by default gain the same rule. "Always allow" is refused for calls: each
+brief is its own approval. A Process may place a call only from an approved tool
+call and only for a writable `responsibilityId`; that work waits on the call
+(`blocker: "phone call <callId>"`) until it ends. Cancelling or aborting the run
+does not hang up.
+
+| Syscall | Caller | Result |
+| --- | --- | --- |
+| `sys.phone.get({ callId })` | owner, Ship, the placing Process | `{ call, transcript?, transcriptPath? }` |
+| `sys.phone.list({ includeEnded? })` | owner, Ship, the placing Process | `{ calls, usage }` |
+| `sys.phone.answer({ callId, questionId, answer })` | owner, Ship, the placing Process | `{ call }` |
+| `sys.phone.note({ callId, note })` | owner, Ship, the placing Process | `{ call }` |
+| `sys.phone.end({ callId })` | owner, Ship, the placing Process | `{ call }` with outcome `ended_by_owner` |
+| `sys.phone.watch({ callId })` | signed-in owner only | `{ call }` and a body of newline-delimited `PhoneWatchEvent` JSON |
+| `sys.phone.join({ callId })` | signed-in owner only | A short-lived telephony credential for take-over |
+
+The owner and Ship see all of the owner's calls; any other Process sees only the
+calls it placed. A question gets exactly one answer, or its deadline. Closing a
+watch body never affects the call; take-over is one way.
+
+The service reports changes through the deployment-authorized
+`PhoneGatewayEntrypoint`. A notification carries only identity and a revision:
+the Kernel reads the call through its own capability, ignores a revision older
+than one it applied, and never changes a call it has settled. Clients receive a
+`phone.changed` signal with `{ callId, revision, state }`. When a call Ship's
+work placed asks a question, Ship receives a `phone.asked` event at once. When
+the call ends, the Kernel writes the transcript to
+`~/calls/<date>-<callId>.md` under the Ship account's home, tells the service it
+may drop its copy, reopens the waiting work and gives Ship a `phone.ended` event
+with the outcome, the agent's summary and the transcript path. No audio is
+stored.
+
+The following argument and result types are exported from
+`@humansandmachines/gsv/protocol`:
+
+```ts
+type PhoneSyscalls = {
+  "sys.phone.call": { args: SysPhoneCallArgs; result: SysPhoneCallResult };
+  "sys.phone.get": { args: SysPhoneGetArgs; result: SysPhoneGetResult };
+  "sys.phone.list": { args: SysPhoneListArgs; result: SysPhoneListResult };
+  "sys.phone.answer": { args: SysPhoneAnswerArgs; result: SysPhoneAnswerResult };
+  "sys.phone.note": { args: SysPhoneNoteArgs; result: SysPhoneNoteResult };
+  "sys.phone.end": { args: SysPhoneEndArgs; result: SysPhoneEndResult };
+  "sys.phone.watch": { args: SysPhoneWatchArgs; result: SysPhoneWatchResult };
+  "sys.phone.join": { args: SysPhoneJoinArgs; result: SysPhoneJoinResult };
+};
+```
+
 ## System: `sys.*`
 
 `sys.*` covers setup, configuration, devices, workspaces, tokens, and account links.

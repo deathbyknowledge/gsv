@@ -67,6 +67,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.feedback",
     "sys.instance.*",
     "sys.browser.*",
+    "sys.phone.*",
     "sys.target.get",
     "sys.target.list",
     "sys.target.update",

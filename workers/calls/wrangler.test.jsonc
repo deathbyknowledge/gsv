@@ -1,0 +1,24 @@
+{
+  "name": "gsv-calls-test",
+  "main": "test/worker.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": { "bindings": [{ "name": "CALL_COORDINATORS", "class_name": "CallCoordinator" }, { "name": "CALLS", "class_name": "PhoneCallObject" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CallCoordinator", "PhoneCallObject"] }],
+  "services": [
+    { "binding": "INSTALLATION_DIRECTORY", "service": "gsv-calls-test", "entrypoint": "TestDirectory" },
+    { "binding": "PHONE_EVENTS", "service": "gsv-calls-test", "entrypoint": "TestPhoneEvents" },
+    { "binding": "REALTIME_SESSIONS", "service": "gsv-calls-test", "entrypoint": "TestRealtimeSessions" }
+  ],
+  "vars": {
+    "PUBLIC_ORIGIN": "https://calls.example.test",
+    "PHONE_LIMITS": { "enabled": true, "concurrentCalls": 1, "dailyCalls": 3, "maxCallSeconds": 360 },
+    "PHONE_ROUTES": [{ "prefix": "+1", "from": "+13213604274", "locationHint": "enam" }, { "prefix": "+34", "from": "+34910000001", "locationHint": "weur" }],
+    "PHONE_REALTIME": { "model": "gpt-realtime-2.1", "voice": "marin", "transcriptionModel": "gpt-4o-mini-transcribe" },
+    "TWILIO_ACCOUNT_SID": "ACtest",
+    "TWILIO_API_KEY_SID": "SKtest",
+    "TWILIO_API_KEY_SECRET": "test-key-secret",
+    "TWILIO_AUTH_TOKEN": "test-auth-token",
+    "TWILIO_TWIML_APP_SID": "APtest"
+  }
+}

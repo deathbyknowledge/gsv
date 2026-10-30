@@ -77,10 +77,41 @@ export type ProcessContactMessageRuntimeEvent = {
   ledgerRevision: number;
 };
 
+const phoneRuntimeEventBase = {
+  callId: z.string().trim().min(1).max(160),
+  to: z.string().trim().min(1).max(32),
+  business: z.string().optional(),
+  responsibilityId: z.string().trim().regex(/^r12y:[0-9a-f-]{36}$/u),
+  ledgerRevision: z.number().int().nonnegative().safe(),
+};
+
+export const phoneAskedRuntimeEventSchema = z.strictObject({
+  type: z.literal("phone.asked"),
+  ...phoneRuntimeEventBase,
+  questionId: z.string().trim().min(1).max(160),
+  question: z.string(),
+  deadlineAt: z.number().int().nonnegative().safe(),
+});
+
+export const phoneEndedRuntimeEventSchema = z.strictObject({
+  type: z.literal("phone.ended"),
+  ...phoneRuntimeEventBase,
+  outcome: z.enum(["completed", "callback_needed", "owner_took_over", "busy", "no_answer", "voicemail", "ended_by_owner", "refused", "dropped", "failed"]),
+  summary: z.string().optional(),
+  reason: z.string().optional(),
+  transcriptPath: z.string().optional(),
+});
+
+/** A call Ship placed asked a question or ended; it belongs to the responsibility that placed it. */
+export type ProcessPhoneRuntimeEvent =
+  | z.infer<typeof phoneAskedRuntimeEventSchema>
+  | z.infer<typeof phoneEndedRuntimeEventSchema>;
+
 export type ProcessRuntimeEvent =
   | ProcessAdapterWorkReturnedRuntimeEvent
   | ProcessResponsibilityReadyRuntimeEvent
-  | ProcessContactMessageRuntimeEvent;
+  | ProcessContactMessageRuntimeEvent
+  | ProcessPhoneRuntimeEvent;
 
 export type ProcessRuntimeEventDeliverArgs = {
   eventId: string;

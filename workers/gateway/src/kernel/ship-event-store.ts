@@ -3,7 +3,10 @@ import {
   type ProcHistoryEventLink, type ProcHistoryEventPayload, type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
-import type { ProcessContactMessageRuntimeEvent } from "../protocol/process-frames";
+import {
+  phoneAskedRuntimeEventSchema, phoneEndedRuntimeEventSchema,
+  type ProcessContactMessageRuntimeEvent, type ProcessPhoneRuntimeEvent,
+} from "../protocol/process-frames";
 
 /** A notice the owner received, recorded in Ship's history without starting a run. */
 export type OwnerNotifiedShipEvent = {
@@ -13,7 +16,7 @@ export type OwnerNotifiedShipEvent = {
 };
 
 /** An event addressed to an owner's Ship rather than to one of its replaceable pids. */
-export type ShipEvent = ProcessContactMessageRuntimeEvent | OwnerNotifiedShipEvent;
+export type ShipEvent = ProcessContactMessageRuntimeEvent | ProcessPhoneRuntimeEvent | OwnerNotifiedShipEvent;
 
 export type QueuedShipEvent = {
   eventId: string;
@@ -46,6 +49,8 @@ const contactMessageEventSchema = z.object({
 
 const shipEventSchema: z.ZodType<ShipEvent> = z.union([
   contactMessageEventSchema,
+  phoneAskedRuntimeEventSchema,
+  phoneEndedRuntimeEventSchema,
   z.object({
     type: z.literal("owner.notified"),
     payload: z.custom<ProcHistoryEventPayload<"owner.notified">>(

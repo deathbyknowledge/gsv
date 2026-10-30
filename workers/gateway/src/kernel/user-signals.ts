@@ -20,6 +20,7 @@ export const USER_CONNECTION_SIGNALS = [
   "message.aborted",
   "target.status",
   "instance.changed",
+  "phone.changed",
   "adapter.status",
   "mcp.changed",
   "ledger.changed",

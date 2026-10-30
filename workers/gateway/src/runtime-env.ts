@@ -8,6 +8,7 @@ import type { WebSearchService } from "@humansandmachines/gsv/services/web-searc
 import type { FeedbackService } from "@humansandmachines/gsv/services/feedback";
 import type { InstancesService } from "@humansandmachines/gsv/services/instances";
 import type { PdsService } from "@humansandmachines/gsv/services/pds";
+import type { PhoneService } from "@humansandmachines/gsv/services/phone";
 import type { RequestReportService } from "@humansandmachines/gsv/services/reports";
 
 /**
@@ -29,6 +30,8 @@ type GatewayDeploymentBindings = TelemetryEnvironment & {
   FEEDBACK?: FeedbackService;
   INSTANCES?: InstancesService;
   PDS?: PdsService;
+  /** The optional calls service that places phone calls for owners. */
+  PHONE?: PhoneService;
   /** The did:plc directory other Ships' identities are read from; plc.directory unless the operator names another. */
   PLC_URL?: string;
 };

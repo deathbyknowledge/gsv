@@ -11,5 +11,6 @@ export * from "./web-search";
 export * from "./feedback";
 export * from "./reports";
 export * from "./instances";
+export * from "./phone";
 export * from "./deployment";
 export * from "./operator";

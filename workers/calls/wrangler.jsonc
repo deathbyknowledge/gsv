@@ -1,0 +1,25 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gsv-calls",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "durable_objects": { "bindings": [{ "name": "CALL_COORDINATORS", "class_name": "CallCoordinator" }, { "name": "CALLS", "class_name": "PhoneCallObject" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CallCoordinator", "PhoneCallObject"] }],
+  "services": [
+    { "binding": "INSTALLATION_DIRECTORY", "service": "gsv-installations" },
+    { "binding": "REALTIME_SESSIONS", "service": "gsv-inference", "entrypoint": "InferenceRealtimeEntrypoint", "props": { "authority": "realtime-sessions" } },
+    { "binding": "PHONE_EVENTS", "service": "gsv", "entrypoint": "PhoneGatewayEntrypoint", "props": { "authority": "phone-notifications" } }
+  ],
+  // The operator composition adds the public route for Twilio callbacks, ENTITLEMENTS and secrets:
+  // TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_AUTH_TOKEN, TWILIO_TWIML_APP_SID.
+  "vars": {
+    "PUBLIC_ORIGIN": "https://calls.invalid",
+    "PHONE_LIMITS": { "enabled": false, "concurrentCalls": 0, "dailyCalls": 0, "maxCallSeconds": 360 },
+    "PHONE_ROUTES": [],
+    "PHONE_REALTIME": { "model": "gpt-realtime-2.1", "voice": "marin", "transcriptionModel": "gpt-4o-mini-transcribe" }
+  },
+  "observability": { "enabled": true }
+}

@@ -34,6 +34,7 @@ export const BODY_SYSCALL_NAMES = [
   "sys.feedback",
   "sys.browser.watch",
   "sys.browser.input",
+  "sys.phone.watch",
   "fs.read",
   "fs.transfer.send",
   "fs.transfer.receive",

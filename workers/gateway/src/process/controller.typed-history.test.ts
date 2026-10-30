@@ -175,6 +175,36 @@ describe("typed controller history producers", () => {
     });
   });
 
+  it("admits a call's question and end once each, linked to the call and the work it serves", async () => {
+    const stub = await initProcess("typed-phone-events", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      const responsibilityId = "r12y:00000000-0000-4000-8000-000000000093";
+      const asked = {
+        type: "phone.asked" as const, callId: "call:1", to: "+34910000000", business: "Restaurante Lúa",
+        questionId: "q:1", question: "Only 21:30 is free. Take it?", deadlineAt: Date.UTC(2026, 9, 29, 18, 0, 45),
+        responsibilityId, ledgerRevision: 4,
+      };
+      await process.controller.handleProcessRuntimeEventDeliver({ eventId: "phone.asked:call:1:q:1", event: asked });
+      await process.controller.handleProcessRuntimeEventDeliver({ eventId: "phone.asked:call:1:q:1", event: asked });
+      await process.controller.handleProcessRuntimeEventDeliver({ eventId: "phone.ended:call:1", event: {
+        type: "phone.ended", callId: "call:1", to: "+34910000000", outcome: "completed", summary: "Booked for 21:30",
+        transcriptPath: "/home/ship/calls/2026-10-29-call:1.md", responsibilityId, ledgerRevision: 5,
+      } });
+      await expect(process.controller.handleProcessRuntimeEventDeliver({ eventId: "phone.ended:call:2", event: {
+        type: "phone.ended", callId: "call:2", to: "+34910000000", outcome: "hung_up", responsibilityId, ledgerRevision: 5,
+      } as never })).rejects.toThrow("phone.ended fields are invalid");
+      expect(storedRecords(process)).toMatchObject([
+        { kind: "event", payload: { kind: "phone.asked", link: { kind: "phone", callId: "call:1" }, payload: { questionId: "q:1", business: "Restaurante Lúa" } } },
+        { kind: "event", payload: { kind: "phone.ended", link: { kind: "phone", callId: "call:1" }, payload: { outcome: "completed", summary: "Booked for 21:30" } } },
+      ]);
+      expect(await process.history.buildContextMessages()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ content: expect.stringContaining("phone answer call:1 q:1") }),
+        expect.objectContaining({ content: expect.stringContaining("Transcript: /home/ship/calls/2026-10-29-call:1.md") }),
+      ]));
+    });
+  });
+
   it("retains canonical interaction identity on direct and queued input", async () => {
     const stub = await initProcess("typed-input-origin", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {

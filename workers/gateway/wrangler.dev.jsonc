@@ -91,6 +91,7 @@
   },
   "services": [
     { "binding": "INSTANCES", "service": "gsv-instances-dev" },
+    { "binding": "PHONE", "service": "gsv-calls-dev" },
     {
       "binding": "ACCOUNT_HTTP",
       "service": "gsv-installations-dev"

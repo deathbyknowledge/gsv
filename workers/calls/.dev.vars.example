@@ -1,0 +1,13 @@
+# Local phone calls run beside `npm run dev` in their own process, because Twilio
+# must reach this Worker directly:
+#   cd workers/calls && npx wrangler dev -c wrangler.dev.jsonc --ip 127.0.0.1 --port 8977 --inspector-port 9330
+#   cloudflared tunnel --url http://127.0.0.1:8977
+# Use the tunnel's origin below.
+PUBLIC_ORIGIN=https://example.trycloudflare.com
+PHONE_LIMITS={"enabled":true,"concurrentCalls":1,"dailyCalls":20,"maxCallSeconds":240}
+PHONE_ROUTES=[{"prefix":"+1","from":"+15550000000"}]
+TWILIO_ACCOUNT_SID=
+TWILIO_API_KEY_SID=
+TWILIO_API_KEY_SECRET=
+TWILIO_AUTH_TOKEN=
+TWILIO_TWIML_APP_SID=

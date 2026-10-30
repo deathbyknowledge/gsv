@@ -164,6 +164,7 @@ describe("console agent behavior", () => {
       "sched.update",
       "approach.create",
       "atproto.write",
+      "sys.phone.call",
     ]);
     for (const match of ["fs.*", "shell.exec", "net.fetch"]) {
       expect(policy.rules).toContainEqual({ match, target: { route: "instance", platform: "linux" }, action: "auto" });

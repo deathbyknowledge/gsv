@@ -5,6 +5,7 @@ import { jsonObjectSchema, jsonValueSchema, type JsonObject, type JsonValue } fr
 import type { ProcHistoryContextPolicy } from "./syscalls/proc";
 import type { EventReplyTarget } from "./syscalls/interaction-origin";
 import type { ResponsibilityRecord, ResponsibilityTransition } from "./syscalls/responsibility";
+import type { PhoneCallOutcome } from "./syscalls/phone";
 
 const nonNegativeIntegerSchema = z.int().check(z.nonnegative());
 const responsibilityStateSchema = z.enum(["open", "active", "waiting", "resolved", "cancelled"]);
@@ -222,6 +223,25 @@ export const procHistoryEventPayloadSchemas = {
     version: z.optional(z.string()),
     observedAt: z.number(),
   }),
+  "phone.asked": z.strictObject({
+    callId: z.string(),
+    questionId: z.string(),
+    question: z.string(),
+    deadlineAt: z.number(),
+    to: z.string(),
+    business: z.optional(z.string()),
+    responsibilityId: z.string(),
+  }),
+  "phone.ended": z.strictObject({
+    callId: z.string(),
+    outcome: z.enum(["completed", "callback_needed", "owner_took_over", "busy", "no_answer", "voicemail", "ended_by_owner", "refused", "dropped", "failed"]),
+    summary: z.optional(z.string()),
+    reason: z.optional(z.string()),
+    to: z.string(),
+    business: z.optional(z.string()),
+    transcriptPath: z.optional(z.string()),
+    responsibilityId: z.string(),
+  }),
   "owner.notified": z.strictObject({
     noticeId: z.string(),
     topic: z.enum(["contact.message", "contact.request", "contact.invite.accepted"]),
@@ -347,6 +367,29 @@ export type ProcHistoryEventPayloadMap = {
     version?: string;
     observedAt: number;
   };
+  /** The voice agent on a call Ship placed asks the owner; the callee is waiting until the deadline. */
+  "phone.asked": {
+    callId: string;
+    questionId: string;
+    question: string;
+    deadlineAt: number;
+    /** The number called. */
+    to: string;
+    business?: string;
+    responsibilityId: string;
+  };
+  /** A call Ship placed ended; the transcript is filed under the Ship account's home. */
+  "phone.ended": {
+    callId: string;
+    outcome: PhoneCallOutcome;
+    /** The voice agent's account of the result. */
+    summary?: string;
+    reason?: string;
+    to: string;
+    business?: string;
+    transcriptPath?: string;
+    responsibilityId: string;
+  };
   /** A notice the Kernel sent to the owner's messenger, recorded so Ship understands a reply to it. */
   "owner.notified": {
     noticeId: string;
@@ -392,11 +435,13 @@ export const procHistoryTargetEventRegistry = {
  */
 export type ProcHistoryEventLink =
   | { kind: "contact"; contactId: string }
-  | { kind: "contact.request"; requestId: string };
+  | { kind: "contact.request"; requestId: string }
+  | { kind: "phone"; callId: string };
 
 export const procHistoryEventLinkSchema: z.ZodMiniType<ProcHistoryEventLink> = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("contact"), contactId: z.string() }),
   z.strictObject({ kind: z.literal("contact.request"), requestId: z.string() }),
+  z.strictObject({ kind: z.literal("phone"), callId: z.string() }),
 ]);
 
 function eventSchema<K extends ProcHistoryEventKind>(kind: K) {
@@ -439,6 +484,8 @@ export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discrim
   eventSchema("runtime.wake"),
   eventSchema("runtime.failed"),
   eventSchema("target.connection"),
+  eventSchema("phone.asked"),
+  eventSchema("phone.ended"),
   eventSchema("owner.notified"),
   z.strictObject({
     kind: z.literal("legacy"),

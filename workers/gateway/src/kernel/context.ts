@@ -39,6 +39,7 @@ import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
 import type { MailboxStore } from "./mailbox-store";
 import type { ResponsibilityStore } from "./responsibility-store";
+import type { PhoneCallStore } from "./phone-store";
 import type { OwnerNoticeStore } from "./owner-notice-store";
 import type { ShipEventStore } from "./ship-event-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
@@ -86,6 +87,7 @@ export type KernelContext = {
   responsibilities: ResponsibilityStore;
   shipEvents: ShipEventStore;
   ownerNotices: OwnerNoticeStore;
+  phoneCalls: PhoneCallStore;
   welcome: InitialOnboarding;
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;

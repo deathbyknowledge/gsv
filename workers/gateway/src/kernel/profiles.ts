@@ -85,6 +85,20 @@ export function ownerDisplayName(ownerUid: number, ctx: KernelContext): string |
   return ctx.profiles.draft(ownerUid)?.fields.displayName ?? account?.gecos ?? account?.username;
 }
 
+/**
+ * The name a phone call gives for its owner: a profile name or account full name
+ * the owner set. The handle-derived default is not a name to say aloud.
+ */
+export function phoneOwnerName(ownerUid: number, ctx: KernelContext): string | undefined {
+  const account = ctx.auth.getPasswdByUid(ownerUid);
+  const placeholders = new Set([ctx.installationIdentity?.handle, account?.username].filter(Boolean));
+  for (const value of [ctx.profiles.draft(ownerUid)?.fields.displayName, account?.gecos]) {
+    const name = value?.trim();
+    if (name && !placeholders.has(name)) return name.slice(0, 100);
+  }
+  return undefined;
+}
+
 /** The name this Ship's person goes by with someone new: their profile name, else their account's. */
 export function personName(ownerUid: number, ctx: KernelContext): string {
   const account = ctx.auth.getPasswdByUid(ownerUid);

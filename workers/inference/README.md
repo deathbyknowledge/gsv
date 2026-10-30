@@ -17,6 +17,13 @@ reference configuration routes `gsv/default` to the configured
 the `INFERENCE_API_KEY` secret and optional `INFERENCE_BASE_URL` for that default
 route. Other connections use the gateway-authorized credentials and endpoint.
 
+`InferenceRealtimeEntrypoint` mints short-lived realtime model credentials for
+the calls service, which binds it with `realtime-sessions` authority. Each
+credential is pinned to one model in `INFERENCE_REALTIME_MODELS` and to
+telephony audio, and expires a minute after minting; an open session outlives
+it. The operator key is the `INFERENCE_REALTIME_API_KEY` secret and never
+leaves this Worker. Without it, realtime sessions are refused.
+
 The reference limits are configurable Worker variables:
 
 | Variable | Default |
