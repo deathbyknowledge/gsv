@@ -1522,7 +1522,6 @@ export const ptBR = {
   "shell.prompt.commandPlace": "é executado em {place}, em {dir}",
   "shell.prompt.place": "em {place}; pressione para mudar",
   "shell.prompt.placeOffline": "{place} está sem conexão; pressione para mudar",
-  "shell.code.copy": "copiar",
   "shell.code.copyTitle": "Copiar código",
   "shell.code.copyFailed": "não foi possível copiar",
   "shell.code.copyManually": "Selecione o código e copie manualmente",

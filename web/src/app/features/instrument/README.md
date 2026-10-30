@@ -170,7 +170,7 @@ controls in the same row.
 
 Sending moves the text and attachments into the conversation immediately and clears the composer. A small spinner beside the person's name remains until the send is acknowledged. A committed message arriving before its acknowledgement shares that row using the exact message identity, independently of its text. Failed sends retain their contents and selected connection with inline retry and dismiss actions; retry reuses the original send identity and leaves a newer draft alone. Unacknowledged messages remain local to the retained Chat view and participate in warnings before its teardown, including reload and sign-out.
 
-Markdown code blocks share readable monospace sizing, contained horizontal scrolling and a quiet copy action across Chat, search excerpts and Memory. Copy preserves code whitespace without adding the renderer's final newline. Copy feedback stays outside the glyph animation; inline code wraps long tokens without widening the conversation.
+Markdown code blocks share readable monospace sizing, line wrapping for untagged and `text` blocks at every width and for tagged code on narrow columns, contained horizontal scrolling for tagged code on wide ones and a quiet copy action across Chat, search excerpts and Memory. Copy preserves code whitespace without adding the renderer's final newline. Copy feedback stays outside the glyph animation; inline code wraps long tokens without widening the conversation.
 
 Human messages align right, including the sender label; the timestamp precedes the name.
 Their text uses balanced wrapping while preserving explicit line breaks. Ship's messages

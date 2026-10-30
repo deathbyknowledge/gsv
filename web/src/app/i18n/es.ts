@@ -1517,7 +1517,6 @@ export const es = {
   "shell.prompt.commandPlace": "se ejecuta en {place}, en {dir}",
   "shell.prompt.place": "en {place}; pulsa para cambiarlo",
   "shell.prompt.placeOffline": "{place} está sin conexión; pulsa para cambiarlo",
-  "shell.code.copy": "copiar",
   "shell.code.copyTitle": "Copiar código",
   "shell.code.copyFailed": "no se ha podido copiar",
   "shell.code.copyManually": "Selecciona el código y cópialo manualmente",
