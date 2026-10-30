@@ -53,6 +53,22 @@ async function fixture() {
 }
 
 describe("desktop owner API", () => {
+  it("checks handles before email verification without granting space creation", async () => {
+    const f = await fixture();
+    const handle = `public-${crypto.randomUUID()}`;
+    const check = await f.request(`/handle?value=${handle.toUpperCase()}`);
+    expect(check.status).toBe(200);
+    expect(await check.json()).toEqual({ available: true });
+    expect((await f.request("/handle?value=not_a_handle")).status).toBe(400);
+    expect((await f.request("/handle?value=signup")).status).toBe(400);
+    expect((await f.request("/session")).status).toBe(401);
+    expect((await f.request("/spaces", undefined, { operationId: crypto.randomUUID(), handle })).status).toBe(401);
+    expect(f.send).not.toHaveBeenCalled();
+    await f.signIn();
+    await f.request("/spaces", f.sessionSecret, { operationId: crypto.randomUUID(), handle });
+    expect(await (await f.request(`/handle?value=${handle}`)).json()).toEqual({ available: false });
+  });
+
   it("replays lost verification and setup responses without duplicating mail or spaces", async () => {
     const f = await fixture();
     const verify = await f.signIn();

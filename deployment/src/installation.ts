@@ -46,6 +46,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     /** Accounts sends owner codes independently of installation-scoped mail. The operator owns the verified sender and stable secret. */
     ownerEmail?: { from: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
     ownerSignupOrigin?: string;
+    ownerSignupOriginAliases?: string[];
     openRegistration?: boolean;
     ownerOriginAliases?: string[];
   };
@@ -162,6 +163,8 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   }));
   const ownerOriginAliases = JSON.stringify(props.installations.ownerOriginAliases ?? []);
   configuredOriginAliases(ownerOriginAliases);
+  const ownerSignupOriginAliases = JSON.stringify(props.installations.ownerSignupOriginAliases ?? []);
+  configuredOriginAliases(ownerSignupOriginAliases);
   const observability = { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: false } };
   let directory = props.services?.installationDirectory;
   let database: Cloudflare.D1.Database | undefined;
@@ -181,6 +184,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       GSV_OWNER_OIDC_ISSUER: props.installations.ownerIdentity?.issuer ?? "",
       GSV_OWNER_OIDC_CLIENT_ID: props.installations.ownerIdentity?.clientId ?? "",
       GSV_OWNER_SIGNUP_ORIGIN: props.installations.ownerSignupOrigin ?? "",
+      GSV_OWNER_SIGNUP_ORIGIN_ALIASES: ownerSignupOriginAliases,
       GSV_SIGNUP_ENABLED: props.installations.openRegistration ? "true" : "false",
       GSV_OWNER_ORIGIN_ALIASES: ownerOriginAliases,
     };
@@ -226,7 +230,9 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   const extraBindings: Cloudflare.Workers.WorkerBindingProps = { GSV_PUBLIC_CONFIG: publicConfiguration };
   if (props.operatorUpdates) extraBindings.GSV_OPERATOR_UPDATES = JSON.stringify(operatorUpdateCatalogSchema.parse(props.operatorUpdates));
   if (props.installations.ownerEmail) {
-    extraBindings.GSV_OWNER_SIGNUP_URL = new URL("/owner/signup/?resume=1", props.adminOrigin).href;
+    extraBindings.GSV_OWNER_SIGNUP_URL = props.installations.ownerSignupOrigin && props.installations.ownerSignupOrigin !== props.adminOrigin
+      ? new URL("/?resume=1", props.installations.ownerSignupOrigin).href
+      : new URL("/owner/signup/?resume=1", props.adminOrigin).href;
   }
   Object.assign(extraBindings, props.services?.extraBindings);
   const runtime = yield* GsvRuntime({ ...props, compatibility,

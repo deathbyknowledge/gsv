@@ -17,7 +17,7 @@ type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>
   | { email: string; expiresAt: number; spaceDomain: string; spaces: Awaited<ReturnType<InstallationOwnerStore["spaces"]>>; setups: PendingSetup[]; signupEnabled: boolean; invites: never[] }
   | Awaited<ReturnType<InstallationSignup["prepare"]>>
   | { ok: true } | { available: boolean }
-  | { error: string; code?: OwnerAuthErrorCode | "signed_out" | "space_exists"; retryAt?: number };
+  | { error: string; code?: OwnerAuthErrorCode | "signed_out" | "space_exists" | "handle_unavailable"; retryAt?: number };
 
 /** Explicit bearer authentication; browser cookies never authorize this native API. */
 export class InstallationOwnerApi {
@@ -32,6 +32,9 @@ export class InstallationOwnerApi {
     if (url.origin !== this.origin) return json({ error: "Not found" }, 404);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     try {
+      if (request.method === "GET" && url.pathname === "/owner/api/handle") {
+        return json({ available: await this.signup.available(handle.parse(url.searchParams.get("value") ?? "")) });
+      }
       if (request.method === "POST" && url.pathname === "/owner/api/code") {
         const input = challenge.parse(await readJsonObject(request));
         const result = await sendOwnerVerification(this.auth, this.mail, this.from, {
@@ -57,9 +60,6 @@ export class InstallationOwnerApi {
       }
       // Older Desktop releases can still sign in; signup requires the new code-free client.
       if (url.pathname.startsWith("/owner/api/invites/")) return json({ error: "Update Ship to create your Ship." }, 410);
-      if (request.method === "GET" && url.pathname === "/owner/api/handle") {
-        return json({ available: await this.signup.available(handle.parse(url.searchParams.get("value") ?? "")) });
-      }
       if (request.method === "POST" && url.pathname === "/owner/api/spaces") {
         const input = z.strictObject({ operationId: z.string().min(1).max(128), handle }).parse(await readJsonObject(request));
         return json(await this.signup.prepare(input.operationId, session.principalId, input.handle));
@@ -75,6 +75,9 @@ export class InstallationOwnerApi {
       }
       if (error instanceof Error && error.message === "handle is invalid") {
         return json({ error: "Use letters, numbers or hyphens. Start and end with a letter or number." }, 400);
+      }
+      if (error instanceof Error && (error.message === "handle is unavailable" || error.message.startsWith("handle is reserved"))) {
+        return json({ error: "This username is unavailable. Choose another.", code: "handle_unavailable" }, 400);
       }
       if (error instanceof Error && error.message.startsWith("You already have a Ship")) {
         return json({ error: error.message, code: "space_exists" }, 409);

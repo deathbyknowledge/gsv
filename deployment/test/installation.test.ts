@@ -147,6 +147,15 @@ describe("public operator composition", () => {
       expect(recorded.databases).toEqual([]);
     });
 
+  it("uses the signup hostname for contact handoffs when configured", async () => {
+    await run(GsvDeployment({ ...input, installations: { ...input.installations,
+      ownerSignupOrigin: "https://signup.example.com",
+      ownerEmail: { from: "accounts@example.com", authSecret: "synthetic-test-secret" },
+    } }, dependencies));
+    expect(recorded.workers.find((worker) => worker.id === "FixtureGateway")?.props.env?.GSV_OWNER_SIGNUP_URL)
+      .toBe("https://signup.example.com/?resume=1");
+  });
+
   it.each([
     { monthlyRequests: 0, monthlyOutputTokens: 1000 },
     { monthlyRequests: 100, monthlyOutputTokens: 0 },

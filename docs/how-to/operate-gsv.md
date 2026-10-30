@@ -74,7 +74,17 @@ run times. With JavaScript disabled, they use the labelled UTC fallback.
 To let people sign up themselves, enable `GSV_SIGNUP_ENABLED` and configure
 owner email delivery. They choose a handle and verify their email at
 `<admin-origin>/owner/signup/`, the configured public signup alias, or in
-Desktop. Registration needs no invite code. One verified email can create one
+Desktop. The configured signup hostname serves the page at `/` and its
+verification API on the same origin. Route that hostname to Accounts and remove
+any edge redirect to the administration origin. Explicit legacy signup origins
+in `GSV_OWNER_SIGNUP_ORIGIN_ALIASES` redirect to the configured signup origin
+and must also be routed to Accounts. Existing `/owner/signup/` links
+on the administration origin remain usable. Handle availability is checked while
+entering the handle, before sending an email code; creation still requires a
+verified owner and rechecks availability. Taken, reserved and policy-blocked
+handles show the same unavailable message with the full address and a red input
+border. Available handles show the full address with a green input border.
+Registration needs no invite code. One verified email can create one
 Ship, and an interrupted activation resumes with the same email.
 
 With native owner email enabled, `<admin-origin>/owner/login` verifies the

@@ -47,6 +47,9 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
   /** A handle Accounts refused at creation stays marked until it is edited, whatever the public check says. */
   const rejectedHandle = useRef<string | null>(null);
   const spaceDomain = owner?.spaceDomain ?? presumedDomain;
+  const handleAddress = `${handle.trim()}.${spaceDomain}`;
+  const availableMessage = spaceDomain ? t("session.welcome.addressAvailable", { address: handleAddress }) : t("session.welcome.available");
+  const unavailableMessage = spaceDomain ? t("session.welcome.addressUnavailable", { address: handleAddress }) : t("session.welcome.taken");
 
   const run = async (operation: () => Promise<void>) => {
     if (pending.current) return;
@@ -77,7 +80,10 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       if (failure instanceof OwnerApiError && (failure.code === "handle_unavailable" || /^handle is /i.test(failure.message))) {
         setCreationAttempt(null);
         rejectedHandle.current = chosen;
-        setHandle(chosen); setHandleError(failure.message); setAvailability("unavailable"); setStep("claim");
+        setHandle(chosen);
+        setHandleError(failure.code === "handle_unavailable" || /^handle is (unavailable|reserved)/i.test(failure.message)
+          ? "" : failure.message);
+        setAvailability("unavailable"); setStep("claim");
         return;
       }
       // The code is spent once verified; any other creation failure is retried from the claim step under the same operation.
@@ -229,9 +235,9 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
           <TextInput label={t("session.welcome.handle")} value={handle} onChange={(value) => { setHandle(value.toLowerCase()); setError(""); }} disabled={busy}
             prefix="@" placeholder={t("session.welcome.handlePlaceholder")}
             status={handleError || availability === "unavailable" ? "error" : availability === "available" ? "success" : "none"}
-            message={handleError || (availability === "available" ? t("session.welcome.available") : availability === "unavailable" ? t("session.welcome.taken") : "")}
+            message={handleError || (availability === "available" ? availableMessage : availability === "unavailable" ? unavailableMessage : "")}
             inputProps={{ autoFocus: true, autoCapitalize: "none", spellcheck: false, maxLength: 63 }} />
-          {spaceDomain && <p class="desktop-welcome-detail desktop-welcome-address-preview">{t("session.welcome.addressPreview")} <span>{handle.trim() || t("session.welcome.handlePlaceholder")}.{spaceDomain}</span></p>}
+          {spaceDomain && availability !== "available" && availability !== "unavailable" && <p class="desktop-welcome-detail desktop-welcome-address-preview">{t("session.welcome.addressPreview")} <span>{handle.trim() || t("session.welcome.handlePlaceholder")}.{spaceDomain}</span></p>}
         </div>}
         {(step === "email" || (step === "claim" && !owner)) && <TextInput label={t("session.welcome.email")} value={email} onChange={setEmail} disabled={busy} placeholder={t("session.welcome.emailPlaceholder")}
           inputProps={{ autoFocus: step === "email", type: "email", autoComplete: "email", maxLength: 254, required: true }} />}

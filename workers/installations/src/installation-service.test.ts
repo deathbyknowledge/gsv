@@ -33,11 +33,12 @@ it("runs directory, onboarding and an isolated reset without any commercial tabl
   await expect(onboarding.begin(reset.installationId)).resolves.toMatchObject({ installationId: reset.installationId });
 });
 
-it.each(["https://accounts.example.com", "https://owners.example.com"])("completes owner signup at %s while reserving every configured service handle", async (origin) => {
+it.each(["https://accounts.example.com", "https://owners.example.com", "https://join.example.com"])("completes owner signup at %s while reserving every configured service handle", async (origin) => {
   const ownerHandle = `${new URL(origin).hostname.split(".")[0]}-pilot`;
   let code = "";
   const service = new InstallationService(createExecutionContext(), { ...env,
     GSV_OWNER_ORIGIN_ALIASES: '["https://owners.example.com"]',
+    GSV_OWNER_SIGNUP_ORIGIN_ALIASES: '["https://old-join.example.com"]',
     GSV_SIGNUP_ENABLED: "true", GSV_OWNER_SIGNUP_ORIGIN: "https://join.example.com", GSV_OWNER_AUTH_SECRET: "synthetic-auth-secret-".repeat(4),
     GSV_OWNER_EMAIL_FROM: "accounts@example.com", OWNER_EMAIL: {
       async send(message: EmailMessage | EmailMessageBuilder): Promise<EmailSendResult> {
@@ -47,6 +48,18 @@ it.each(["https://accounts.example.com", "https://owners.example.com"])("complet
       },
     },
   });
+  if (origin === "https://join.example.com") {
+    const page = await service.fetch(new Request(origin));
+    expect(page.status).toBe(200);
+    expect(page.headers.has("location")).toBe(false);
+    expect(await page.text()).toContain('id="gsv-deployment"');
+    for (const path of ["/admin", "/owner/login", "/owner/recover"]) {
+      expect((await service.fetch(new Request(origin + path))).status).toBe(404);
+    }
+  }
+  const availability = await service.fetch(new Request(`${origin}/owner/api/handle?value=${ownerHandle}`));
+  expect(availability.status).toBe(200);
+  expect(await availability.json()).toEqual({ available: true });
   const secret = () => (crypto.randomUUID() + crypto.randomUUID()).replaceAll("-", "");
   const sessionSecret = secret();
   const request = (path: string, body?: Record<string, string>) => service.fetch(new Request(`${origin}/owner/api${path}`, {
@@ -57,11 +70,11 @@ it.each(["https://accounts.example.com", "https://owners.example.com"])("complet
   expect((await request("/code", challenge)).status).toBe(200);
   expect((await request("/verify", { challengeId: challenge.challengeId, browserSecret: challenge.browserSecret, code, sessionSecret })).status).toBe(200);
   const operationId = crypto.randomUUID();
-  for (const handle of ["accounts", "join", "owners"]) {
+  for (const handle of ["accounts", "join", "owners", "old-join"]) {
     expect((await request(`/handle?value=${handle}`)).status).toBe(400);
     const denied = await request("/spaces", { operationId, handle });
     expect(denied.status).toBe(400);
-    expect(await denied.json()).toEqual({ error: "handle is reserved for an operator service" });
+    expect(await denied.json()).toEqual({ error: "This username is unavailable. Choose another.", code: "handle_unavailable" });
     expect(await service.resolveHostname(`${handle}.example.com`)).toEqual({ found: false });
   }
   expect(await env.INSTALLATIONS_DB.prepare("SELECT operation_id FROM provisioning_operations WHERE operation_id = ?")

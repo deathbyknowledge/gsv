@@ -80,6 +80,7 @@ export class OwnerWelcome {
   async available(handle: string): Promise<boolean | null> {
     try { return (await this.request(`/handle?value=${encodeURIComponent(handle)}`, availableSchema)).available; }
     catch (error) {
+      if (error instanceof OwnerApiError && error.code === "handle_unavailable") return false;
       if (error instanceof OwnerApiError && (error.code === "signed_out" || error.status === undefined || error.status === 429 || error.status >= 500)) return null;
       throw error;
     }
