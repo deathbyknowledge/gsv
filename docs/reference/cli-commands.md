@@ -1038,7 +1038,10 @@ answer to appear in a chat:
 ```
 
 The crontab file is the desired state: reinstalling it deletes and recreates the
-linked Kernel schedule rows, so crontab-backed `sched` ids are not stable. Use
+linked Kernel schedule rows, so crontab-backed `sched` ids are not stable. Jobs
+in a per-user crontab use your timezone unless the file sets `CRON_TZ` or `TZ`,
+and system crontabs default to the server timezone. The timezone is fixed when
+the file is installed, so reinstall it to pick up a changed preference. Use
 `sched list` to inspect next fire time, last status, error, source, and target.
 For a command that invokes `proc spawn`, status `ok` means the command was
 dispatched and the spawn was accepted; it does not mean the child finished or
