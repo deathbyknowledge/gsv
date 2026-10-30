@@ -104,7 +104,7 @@ export type ZenProps = {
   onSearchRequestHandled?: () => void;
   activityRequest?: ActivityRequest;
   requestPrefill?: string | null;
-  /** The founders' welcome card still stands over the chat, or its state is not known yet; Ship is not waking until it is dismissed. */
+  /** The owner's first run is not recorded yet, or its state is not known; Ship is not waking until it is. */
   welcomeOpen?: boolean;
 };
 

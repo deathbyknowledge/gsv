@@ -1408,17 +1408,9 @@ export const es = {
   "shell.approval.fileKilobytes": "{type} · {size} KB",
   "shell.approval.fileMegabytes": "{type} · {size} MB",
 
-  // Shell: welcome
+  // Shell: first run
   "shell.retryButton": "Reintentar",
-  "shell.welcome.loadFailed": "No se ha podido cargar la bienvenida.",
-  "shell.welcome.dismiss": "Cerrar la bienvenida",
-  "shell.welcome.title": "¡Te damos la bienvenida a tu Ship!",
-  "shell.welcome.intro": "Soy Kawah, del equipo fundador de Ship. Steve, Jessica y yo llevamos meses construyendo esto, ¡y nos alegra mucho tenerte aquí!",
-  "shell.welcome.early": "Ship aún está en sus inicios, así que puede que encuentres algún detalle por pulir. Si algo falla, resulta confuso o te hace pensar «ojalá pudiera…», nos encantaría saberlo.",
-  "shell.welcome.contact": "Puedes usar el botón «comentarios» de arriba cuando quieras, o escribirnos directamente en {discord} (y ver al perro de Steve).",
-  "shell.welcome.thanks": "Gracias por subirte a la nave desde el principio. ¡Significa mucho para todo el equipo!",
-  "shell.welcome.dismissFailed": "No se ha podido cerrar la bienvenida. Vuelve a intentarlo.",
-  "shell.welcome.start": "¡Pruébalo!",
+  "shell.firstRun.failed": "No se ha podido despertar a Ship.",
 
   // Shell: feedback
   "shell.feedback.trigger": "comentarios",
