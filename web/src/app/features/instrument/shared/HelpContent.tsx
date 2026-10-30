@@ -165,7 +165,7 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
       <h3>{t("shell.help.supportTitle")}</h3>
       {onFeedback && <button type="button" class="instrument-help-feedback" aria-haspopup="dialog" onClick={onFeedback}>{t("shell.help.feedback")}</button>}
       <a href={memoryLinkHref(HELP_MANUAL_PAGE)} onClick={navigate}>{t("shell.help.manual")}</a>
-      <a href="mailto:hello@humansandmachin.es">{t("shell.help.support")}</a>
+      <a href="mailto:support@humansandmachin.es">{t("shell.help.support")}</a>
       <a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">{t("shell.help.discord")}</a>
     </footer>
     </>}
