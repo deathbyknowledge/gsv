@@ -127,7 +127,7 @@ async function pairTarget(args: string[], ctx: KernelContext): Promise<ExecResul
   const code = encodeDevicePairingCode(gatewayUrl, pairing, secret);
   const instructions = platform === "browser" ? {
     extensionUrl: browserExtensionDownloadUrl(SERVER_RELEASE), code,
-    instructions: "Download and unzip Your Ship from the extensionUrl link. Enable developer mode in chrome://extensions and load the folder. Click the Your Ship icon in the toolbar, or find it under the Extensions button, then paste the invitation code into the extension panel.",
+    instructions: "The Your Ship extension is not in the Chrome Web Store yet, so you add it to Chrome in developer mode. Download it from the extensionUrl link and unzip it. Open chrome://extensions, turn on Developer mode, choose Load unpacked, and pick the unzipped folder. Click the Your Ship icon in the toolbar, or find it under the Extensions button, then paste the invitation code into the extension panel. It lets your Ship work in this browser, signed in as you. You can pause it from its panel anytime.",
   } : {
     installCommand: buildCliInstallCommand(platform === "windows" ? "windows" : "unix", SERVER_RELEASE, deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG).installUrl),
     pairCommand: `${platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`,

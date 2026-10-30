@@ -208,7 +208,11 @@ Default policy (`default` is `auto`; the runtime, the Process fallback, and the 
 | any target | `web.search` | `sys.mcp.call`, `mail.send`, `sched.add`, `sched.update`, `approach.create`, `atproto.write` |
 
 `sched.add` and `sched.update` are checked only when a schedule runs a command;
-message reminders never ask. `approach.create` is the Ship sending a first
+message reminders never ask. An agent installing a crontab, by `crontab FILE` or
+by writing its file, is checked as one `sched.add` that shows the file's jobs.
+Removing a crontab does not ask. A scheduled command that fires later has no
+agent run to ask through, so it runs without asking again; approving one is
+approving what it will do each time. `approach.create` is the Ship sending a first
 message request to someone who is not a contact yet. `atproto.write` is the
 Ship publishing records to the [open network](/architecture/open-network);
 uploading a file does not ask, because nothing serves it until an approved write
@@ -253,7 +257,7 @@ Every capability tool also accepts a `purpose` argument: one sentence written fo
 | `config/server/name` | `gsv` | Server name used by hostname-style tools and client metadata. |
 | `config/server/timezone` | `UTC` | Runtime timezone value. |
 | `config/server/version` | current `VERSION` | Semantic server version exposed to runtime tools. |
-| `config/shell/timeout_ms` | `120000` | Default native shell timeout. |
+| `config/shell/timeout_ms` | `120000` | Default native shell timeout. Time spent waiting for a person's approval does not count. |
 | `config/shell/network_enabled` | `true` | Enables network tools in native shell execution. |
 | `config/shell/max_output_bytes` | `524288` | Maximum stdout and stderr returned per `shell.exec`; bytes that only flow between pipeline stages or into files are not counted. |
 

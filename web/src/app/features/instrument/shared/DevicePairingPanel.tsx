@@ -3,6 +3,8 @@ import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { encodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
 import { Select } from "../../../components/ui/Select";
 import { LoadingState } from "../../../components/ui/Spinner";
+import { Select } from "../../../components/ui/Select";
+import { TextInput } from "../../../components/ui/TextInput";
 import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
 import { parseDeviceId } from "../../../domain/deviceId";
 import type { ConsoleTarget } from "../../../domain/system/consoleModels";
@@ -51,9 +53,12 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
     {!invitation ? <form class="fleet-place-form" onSubmit={(event) => { event.preventDefault(); void owner.create(); }}>
       <fieldset disabled={disabled}>
         {draft.replace ? <p class="note">{rich(t("shell.pairing.replace", { name: draft.label }), { id: <code>{draft.targetId}</code> })}</p> : <>
-          <label>{t("shell.pairing.name")}<input name="pairing-label" value={draft.label} placeholder={t("shell.pairing.namePlaceholder")} autoComplete="off" maxLength={100} onInput={(event) => owner.setLabel(event.currentTarget.value, targets.map((target) => target.deviceId))} /></label>
-          <label>{t("shell.pairing.targetId")}<input name="pairing-target" value={draft.targetId} placeholder={t("shell.pairing.targetIdPlaceholder")} autoComplete="off" spellcheck={false} maxLength={48} onInput={(event) => owner.setTargetId(event.currentTarget.value)} /></label>
-          <p class="note">{t("shell.pairing.targetIdHint")}</p>
+          <TextInput label={t("shell.pairing.name")} value={draft.label} placeholder={t("shell.pairing.namePlaceholder")} disabled={disabled}
+            inputProps={{ name: "pairing-label", autoComplete: "off", maxLength: 100 }}
+            onChange={(value) => owner.setLabel(value, targets.map((target) => target.deviceId))} />
+          <TextInput label={t("shell.pairing.targetId")} value={draft.targetId} placeholder={t("shell.pairing.targetIdPlaceholder")} description={t("shell.pairing.targetIdHint")} disabled={disabled}
+            inputProps={{ name: "pairing-target", autoComplete: "off", spellcheck: false, maxLength: 48 }}
+            onChange={(value) => owner.setTargetId(value)} />
         </>}
         <PlatformChoice platform={draft.platform} disabled={disabled} onChange={(value) => owner.setPlatform(value)} />
         <div class="fleet-actions"><button class="ibtn is-primary" type="submit" disabled={!draft.label.trim() || !parseDeviceId(draft.targetId)}>{pending ? <LoadingState>{t("shell.pairing.creating")}</LoadingState> : t("shell.pairing.create")}</button></div>

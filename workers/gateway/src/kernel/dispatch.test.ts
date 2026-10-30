@@ -243,6 +243,56 @@ describe("dispatch", () => {
     expect(registerRoute).not.toHaveBeenCalled();
   });
 
+  describe("shell.exec input", () => {
+    const failure = { status: "failed", output: "", error: 'shell.exec requires "input", the command to run' };
+    type MalformedArgs = Record<string, string | number | boolean | null>;
+    const malformed = (args: MalformedArgs) => {
+      // SAFETY: these frames model a caller that ignored the schema; hostile input arrives untyped.
+      return { type: "req", id: "bad", call: "shell.exec", args } as RequestFrame<"shell.exec">;
+    };
+    // SAFETY: this fixture supplies the dependencies used by connected target routing.
+    const connectedDeps = (send: () => void) => ({
+      connections: new Map([["conn", { id: "conn", state: { step: "connected", peer: operationPeer("macbook", ["shell.*"]) }, send }]]),
+      sendFrame,
+      registerRoute: vi.fn(async () => ({ cancel: vi.fn() })),
+      shellSessions: {
+        get: (id: string) => (id === "sh_1" ? { sessionId: "sh_1", targetId: "macbook", status: "running" } : null),
+        rememberDeviceSession: vi.fn(),
+      },
+    } as DispatchDeps);
+
+    it.each([
+      ["the default target", { command: "man send" }],
+      ["the gsv target", { command: "man send", purpose: "look it up", target: "gsv" }],
+      ["a machine target", { command: "ls", path: "/tmp", target: "macbook" }],
+      ["a non-string input", { input: 42, target: "macbook" }],
+      ["a null input", { input: null }],
+      ["a non-string input on a session", { input: 42, sessionId: "sh_1" }],
+      ["a recoverable start", { command: "ls", target: "macbook", sessionId: crypto.randomUUID(), start: true }],
+    ])("fails clearly on %s without reaching a target", async (_label, args) => {
+      const ctx = makeContext();
+      vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", true));
+      const send = vi.fn();
+      const deps = connectedDeps(send);
+
+      expect(await dispatch(malformed(args), { type: "process", id: "p" }, ctx, deps)).toEqual({
+        handled: true,
+        response: { type: "res", id: "bad", ok: true, data: failure },
+      });
+      expect(send).not.toHaveBeenCalled();
+      expect(deps.shellSessions.rememberDeviceSession).not.toHaveBeenCalled();
+    });
+
+    it("still routes a session poll that omits input to the machine that owns it", async () => {
+      const ctx = makeContext();
+      vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("macbook", true));
+      const send = vi.fn();
+
+      expect(await dispatch(malformed({ sessionId: "sh_1" }), { type: "process", id: "p" }, ctx, connectedDeps(send))).toEqual({ handled: false });
+      expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("persists a named session before forwarding and recovers it without the start response", async () => {
     await runWithRealKernelSql(async (sql) => {
       const sessionId = crypto.randomUUID();

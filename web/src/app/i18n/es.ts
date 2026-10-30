@@ -98,6 +98,7 @@ export const es = {
   "settings.loadingAccount": "Cargando tu cuenta…",
   "settings.accountUnknown": "No se ha podido identificar tu cuenta. No se pueden editar los ajustes.",
   "settings.signIn.title": "Acceso",
+  "settings.signIn.intro": "Cambia tu contraseña y prepara una forma de volver a entrar si pierdes el acceso.",
 
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (no disponible)",
@@ -106,6 +107,7 @@ export const es = {
   "settings.preferences.unsaved": "Cambios sin guardar",
   "settings.preferences.save": "Guardar cambios",
   "settings.account.title": "Cuenta",
+  "settings.account.intro": "Tu acceso y tu identidad para usar Ship.",
   "settings.account.deleteTitle": "Eliminar tu cuenta",
   "settings.account.deleteRequest": "Para eliminar tu cuenta, escribe a {email} y la eliminaremos manualmente por ti.",
   "settings.account.deleteExplanation": "Ship sigue en acceso anticipado, así que aún no hemos añadido una opción para que elimines tu cuenta directamente.",
@@ -181,14 +183,18 @@ export const es = {
 
   // Settings: standing responsibilities
   "settings.standing.title": "Responsabilidades permanentes",
-  "settings.standing.intro": "De lo que se encarga Ship cuando ocurre algo.",
+  "settings.standing.intro": "Sigue de cerca lo que Ship está atendiendo.",
   "settings.standing.noAccess": "Tu cuenta no puede leer las responsabilidades permanentes.",
+  "settings.standing.empty": "Todavía no hay nada fijo. Lo que Ship se encargue de hacer por ti aparecerá aquí.",
   "settings.standing.alwaysOn": "Siempre activa.",
   "settings.standing.alwaysOnError": "Esta responsabilidad siempre está activa.",
 
   // Settings: permissions
   "settings.permissions.title": "Permisos",
-  "settings.permissions.intro": "Elige cuándo deben preguntar Ship y sus ayudantes antes de usar una capacidad. «Permitir siempre» en una solicitud añade aquí una regla. Ganan los destinos más específicos y, después, las capacidades más específicas; si hay empate, decide el orden de la lista. Las capacidades concedidas a la cuenta siguen marcando el límite.",
+  "settings.permissions.intro": "Elige qué pueden hacer Ship y sus ayudantes por su cuenta y sobre qué te preguntan antes.",
+  "settings.permissions.noteAlways": "«Permitir siempre» en una solicitud añade aquí una regla.",
+  "settings.permissions.noteOrder": "Ganan los destinos más específicos, luego las capacidades más específicas; el orden de la lista desempata.",
+  "settings.permissions.noteGrants": "Los permisos de la cuenta siguen marcando el límite exterior.",
   "settings.permissions.loading": "Cargando permisos…",
   "settings.permissions.targetsUnavailable": "No se han podido cargar los nombres de los destinos. Los ID guardados siguen disponibles.",
   "settings.permissions.unsupported": "Esta política guardada contiene campos que este editor no puede cambiar con seguridad. Se ha mantenido sin cambios.",
@@ -219,7 +225,7 @@ export const es = {
 
   // Settings: instructions
   "settings.instructions.title": "Instrucciones",
-  "settings.instructions.intro": "Instrucciones permanentes, en Markdown. Los ayudantes heredan estas instrucciones además de las suyas. Los cambios se aplican en la próxima ejecución.",
+  "settings.instructions.intro": "Aquí queda la guía que le das a Ship sobre cómo comportarse. Los ayudantes heredan estas instrucciones junto con las suyas. Los cambios se aplican en la siguiente ejecución.",
   "settings.instructions.new": "nueva instrucción",
   "settings.instructions.newTitle": "Nueva instrucción",
   "settings.instructions.edit": "Editar instrucción",
@@ -257,7 +263,7 @@ export const es = {
   // Settings: messengers
   "settings.messengers.comingSoon": "Próximamente",
   "settings.messengers.title": "Mensajería",
-  "settings.messengers.intro": "Elige dónde hablas con tu Ship.",
+  "settings.messengers.intro": "Habla con tu Ship desde tu app de mensajería favorita.",
   "settings.messengers.telegram": "Habla con tu Ship desde Telegram.",
   "settings.messengers.slack": "Habla con tu Ship desde tu espacio de trabajo de Slack.",
   "settings.messengers.discord": "Habla con tu Ship desde mensajes directos y servidores de Discord.",
@@ -353,7 +359,7 @@ export const es = {
 
   // Settings: MCP servers
   "settings.mcp.title": "Servidores MCP",
-  "settings.mcp.intro": "Conecta herramientas y recursos a tu Ship.",
+  "settings.mcp.intro": "Dale a Ship más herramientas y fuentes, como un calendario o una base de datos, con los servidores MCP que añadas aquí.",
   "settings.mcp.noList": "Tu cuenta no puede ver la lista de servidores MCP.",
   "settings.mcp.noAdd": "Tu cuenta no puede añadir servidores MCP.",
   "settings.mcp.loading": "Cargando servidores MCP…",
@@ -496,7 +502,7 @@ export const es = {
   // Settings: desktop voice
   "settings.voice.title": "Voz",
   "settings.voice.label": "Ajustes de voz",
-  "settings.voice.intro": "Preferencias de voz para este ordenador.",
+  "settings.voice.intro": "Cómo te escucha y te habla Ship en este ordenador.",
   "settings.voice.microphone": "Micrófono",
   "settings.voice.systemDefault": "Predeterminado del sistema",
   "settings.voice.microphoneUnavailable": "El micrófono seleccionado no está disponible",
@@ -1351,6 +1357,7 @@ export const es = {
   "shell.help.startWriting": "Empezar a escribir; la tecla pulsada va al cuadro de texto",
   "shell.help.chatInput": "Chat · escritura",
   "shell.help.send": "Enviar el mensaje o ejecutar el comando",
+  "shell.help.newLine": "Nueva línea",
   "shell.help.returnToBrowse": "Volver a la navegación; antes cierra el selector de conexión",
   "shell.help.recall": "Recuperar lo último que escribiste si el cuadro de texto está vacío",
   "shell.help.placeSyntax": "@conexión",
@@ -1379,6 +1386,7 @@ export const es = {
 
   // Shell: key names in the keyboard help
   "shell.keys.enter": "Intro",
+  "shell.keys.newLine": "Mayús / Alt + Intro",
   "shell.keys.spaceOrEnter": "Espacio / Intro",
   "shell.keys.enterOrSpace": "Intro / Espacio",
   "shell.keys.save": "⌘ / Ctrl + Intro",
@@ -1475,7 +1483,7 @@ export const es = {
   "shell.pairing.cancelled": "Esta invitación se ha cancelado.",
   "shell.pairing.newInvitation": "nueva invitación",
   "shell.pairing.invitation": "Invitación para {name} · {id}. Caduca a las {time}.",
-  "shell.pairing.extensionSteps": "Descarga y descomprime la extensión. En {extensions}, activa el modo de desarrollador y carga su carpeta. Haz clic en el icono de Your Ship de la barra de herramientas, o búscalo en el botón Extensiones, y pega esta invitación en su panel.",
+  "shell.pairing.extensionSteps": "La extensión Your Ship aún no está en Chrome Web Store, así que la añades a Chrome en modo de desarrollador. Descárgala y descomprímela. Abre {extensions}, activa el Modo de desarrollador, elige Cargar descomprimida y selecciona la carpeta descomprimida. Haz clic en el icono de Your Ship de la barra de herramientas, o búscalo en el botón Extensiones, y pega esta invitación en su panel. Permite que tu Ship trabaje en este navegador con tu sesión iniciada. Puedes pausarla desde su panel cuando quieras.",
   "shell.pairing.downloadExtension": "descargar extensión",
   "shell.pairing.copyInvitation": "copiar invitación",
   "shell.pairing.openTerminal": "Abre {app} en el ordenador que quieras conectar.",
@@ -1509,7 +1517,6 @@ export const es = {
   "shell.prompt.commandPlace": "se ejecuta en {place}, en {dir}",
   "shell.prompt.place": "en {place}; pulsa para cambiarlo",
   "shell.prompt.placeOffline": "{place} está sin conexión; pulsa para cambiarlo",
-  "shell.code.copy": "copiar",
   "shell.code.copyTitle": "Copiar código",
   "shell.code.copyFailed": "no se ha podido copiar",
   "shell.code.copyManually": "Selecciona el código y cópialo manualmente",
@@ -1693,6 +1700,7 @@ export const es = {
   "chat.call.mailReply": "responder a un correo",
   "chat.call.mail": "enviar un correo",
   "chat.call.publish": "publicar en la red abierta",
+  "chat.call.schedule": "programar trabajo para más tarde",
 
   // Chat: approval requests
   "chat.hil.read": "leer {path}",
@@ -1856,8 +1864,8 @@ export const es = {
   "chat.terminal.inputFor": "Entrada para {command}",
 
   // Chat: run receipts
-  "chat.receipt.working": "trabajando",
-  "chat.receipt.worked": "ha trabajado",
+  "chat.receipt.working": "trabajando en esto",
+  "chat.receipt.worked": "ha trabajado en esto",
   "chat.receipt.notes": "notas de trabajo",
   "chat.receipt.details": "detalles de la respuesta",
   "chat.receipt.process": "esta conversación",

@@ -48,6 +48,7 @@ describe("native target pairing", () => {
       expect(invite).toMatchObject({ username: "owner", label: "My computer", targetId: "my-computer", gatewayUrl: "wss://test.staging.gsv.space/ws" });
       if (platform === "browser") {
         expect(output.extensionUrl).toBe("https://ship.space/browser?release=dev");
+        expect(output.instructions).toContain("Chrome Web Store");
         expect(output.instructions).toContain("chrome://extensions");
         expect(output.instructions).toContain("Extensions button");
         expect(output.instructions).toContain("paste the invitation code into the extension panel");

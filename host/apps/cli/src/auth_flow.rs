@@ -13,8 +13,6 @@ struct LoginRetryOptions<'a> {
     cfg: &'a CliConfig,
     cli_token: Option<String>,
     cli_username: Option<String>,
-    cli_password: Option<String>,
-    command_name: &'a str,
     has_explicit_token: bool,
 }
 
@@ -25,13 +23,14 @@ fn is_auth_failed_error(error: &(dyn std::error::Error + 'static)) -> bool {
         .unwrap_or(false)
 }
 
+/// Runs a remote command with the saved session, an explicit `GSV_TOKEN`, or
+/// a password prompt. When the saved session has ended, it asks once for the
+/// password and retries.
 pub(crate) async fn run_with_login_retry<F, Fut>(
     url: &str,
     cfg: &CliConfig,
     cli_token: Option<String>,
     cli_username: Option<String>,
-    cli_password: Option<String>,
-    command_name: &'static str,
     mut run_with_auth: F,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
@@ -45,8 +44,6 @@ where
             cfg,
             cli_token,
             cli_username,
-            cli_password,
-            command_name,
             has_explicit_token,
         },
         &mut run_with_auth,
@@ -67,8 +64,6 @@ where
         options.cfg,
         options.cli_token.clone(),
         options.cli_username.clone(),
-        options.cli_password.clone(),
-        options.command_name,
     )
     .await?;
 
@@ -85,8 +80,6 @@ where
                 options.cfg,
                 options.cli_token,
                 options.cli_username,
-                options.cli_password,
-                options.command_name,
             )
             .await?;
             run_with_auth(refreshed).await
@@ -111,6 +104,49 @@ pub(crate) fn format_unix_ms(timestamp_ms: i64) -> String {
         .unwrap_or_else(|| timestamp_ms.to_string())
 }
 
+/// The host people know their Ship by, such as `me.ship.space`.
+pub(crate) fn space_name(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| {
+            parsed.host_str().map(|host| match parsed.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host.to_string(),
+            })
+        })
+        .unwrap_or_else(|| url.to_string())
+}
+
+/// The WebSocket URL for what a person types after `gsv login`: a bare
+/// address such as `me.ship.space`, or a full http(s) or ws(s) URL.
+pub(crate) fn space_url(space: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let space = space.trim().trim_end_matches('/');
+    if space.is_empty() {
+        return Err("Give your Ship's address, for example: gsv login me.ship.space".into());
+    }
+    let with_scheme = if space.contains("://") {
+        space.to_string()
+    } else {
+        let host = space.split(['/', ':']).next().unwrap_or_default();
+        let local = host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+        format!("{}://{space}", if local { "ws" } else { "wss" })
+    };
+    let mut parsed = url::Url::parse(&with_scheme)
+        .map_err(|error| format!("`{space}` is not a Ship address: {error}"))?;
+    let scheme = match parsed.scheme() {
+        "https" | "wss" => "wss",
+        "http" | "ws" => "ws",
+        other => return Err(format!("`{other}` addresses are not supported").into()),
+    };
+    if parsed.set_scheme(scheme).is_err() || parsed.host_str().is_none() {
+        return Err(format!("`{space}` is not a Ship address").into());
+    }
+    if parsed.path().is_empty() || parsed.path() == "/" {
+        parsed.set_path("/ws");
+    }
+    Ok(parsed.to_string())
+}
+
 fn resolve_gateway_username(cfg: &CliConfig, cli_username: Option<String>) -> Option<String> {
     normalize_auth_field(cli_username).or_else(|| normalize_auth_field(cfg.gateway_username()))
 }
@@ -130,12 +166,20 @@ struct LoginIssuedTokenPayload {
     expires_at: Option<i64>,
 }
 
-async fn issue_and_store_user_session_token(
+/// A short-lived CLI session issued by `sys.token.create`.
+pub(crate) struct Session {
+    pub(crate) username: String,
+    token: String,
+    token_id: String,
+    pub(crate) expires_at: Option<i64>,
+}
+
+async fn issue_user_session(
     url: &str,
     username: Option<String>,
     password: String,
     ttl_hours: u32,
-) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
+) -> Result<Session, Box<dyn std::error::Error>> {
     let auth = GatewayAuth {
         username,
         password: Some(password),
@@ -156,7 +200,7 @@ async fn issue_and_store_user_session_token(
         .connection()
         .connect_result
         .as_ref()
-        .ok_or("Gateway did not return an account identity")?
+        .ok_or("Your Ship did not say who you are signed in as")?
         .peer
         .principal
         .account
@@ -175,35 +219,35 @@ async fn issue_and_store_user_session_token(
         .await?;
 
     let issued = serde_json::from_value::<LoginTokenCreatePayload>(payload)
-        .map_err(|error| {
-            format!(
-                "Failed to parse sys.token.create response for login: {}",
-                error
-            )
-        })?
+        .map_err(|error| format!("Your Ship returned an unreadable session: {error}"))?
         .token;
+    Ok(Session {
+        username,
+        token: issued.token,
+        token_id: issued.token_id,
+        expires_at: issued.expires_at,
+    })
+}
 
+/// Saves a session, and the Ship it belongs to when signing in to a
+/// different one.
+fn save_session(
+    session: &Session,
+    url: Option<&str>,
+) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
     CliConfig::update(|local_cfg| {
-        local_cfg.gateway.username = Some(username.clone());
-        local_cfg.gateway.session_token = Some(issued.token.clone());
-        local_cfg.gateway.session_token_id = Some(issued.token_id.clone());
-        local_cfg.gateway.session_expires_at = issued.expires_at;
+        if let Some(url) = url {
+            local_cfg.gateway.url = Some(url.to_string());
+        }
+        local_cfg.gateway.username = Some(session.username.clone());
+        local_cfg.gateway.session_token = Some(session.token.clone());
+        local_cfg.gateway.session_token_id = Some(session.token_id.clone());
+        local_cfg.gateway.session_expires_at = session.expires_at;
     })?;
-
-    if let Some(expires_at) = issued.expires_at {
-        println!(
-            "Authenticated as {}. Session cached until {}.",
-            username,
-            format_unix_ms(expires_at),
-        );
-    } else {
-        println!("Authenticated as {}. Session cached.", username);
-    }
-
     Ok(GatewayAuth {
-        username: Some(username),
+        username: Some(session.username.clone()),
         password: None,
-        token: Some(issued.token),
+        token: Some(session.token.clone()),
     })
 }
 
@@ -222,16 +266,12 @@ async fn resolve_interactive_gateway_auth(
     cfg: &CliConfig,
     token: Option<String>,
     cli_username: Option<String>,
-    cli_password: Option<String>,
-    command_name: &str,
 ) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
     let fresh_cfg = CliConfig::load();
     let username = resolve_gateway_username(&fresh_cfg, cli_username.clone())
         .or_else(|| resolve_gateway_username(cfg, cli_username));
-    let mut password = normalize_auth_field(cli_password);
-    let explicit_token = normalize_auth_field(token);
 
-    if let Some(token) = explicit_token {
+    if let Some(token) = normalize_auth_field(token) {
         let auth = GatewayAuth {
             username,
             password: None,
@@ -241,33 +281,35 @@ async fn resolve_interactive_gateway_auth(
         return Ok(auth);
     }
 
-    if password.is_none() {
-        if let Some(cached_token) = fresh_cfg.gateway_session_token() {
-            let auth = GatewayAuth {
-                username,
-                password: None,
-                token: Some(cached_token),
-            };
-            auth.validate()?;
-            return Ok(auth);
-        }
+    if let Some(cached_token) = fresh_cfg.gateway_session_token() {
+        let auth = GatewayAuth {
+            username,
+            password: None,
+            token: Some(cached_token),
+        };
+        auth.validate()?;
+        return Ok(auth);
     }
 
-    if password.is_none() {
-        if can_prompt_interactively() {
-            let prompt = format!("Gateway password for `{}`", command_name);
-            password = prompt_secret(&prompt)?;
-        } else {
-            return Err(
-                "Missing gateway session token. Run `gsv auth login` first or provide --password in non-interactive mode."
-                    .into(),
-            );
-        }
+    if fresh_cfg.gateway.url.is_none() && cfg.gateway.url.is_none() {
+        return Err(
+            "You're not signed in. Sign in with: gsv login YOUR-SHIP (for example me.ship.space)"
+                .into(),
+        );
     }
-
-    let password = password.ok_or("Password required")?;
-    issue_and_store_user_session_token(url, username, password, DEFAULT_USER_SESSION_TTL_HOURS)
-        .await
+    if !can_prompt_interactively() {
+        return Err("You're not signed in. Sign in with: gsv login".into());
+    }
+    let password = prompt_secret(&format!("Password for {}", space_name(url)))?
+        .ok_or("A password is needed to sign in")?;
+    let session =
+        issue_user_session(url, username, password, DEFAULT_USER_SESSION_TTL_HOURS).await?;
+    let auth = save_session(&session, None)?;
+    eprintln!(
+        "{}",
+        crate::render::Style::stderr().dim(&format!("Signed in as {}.", session.username))
+    );
+    Ok(auth)
 }
 
 pub(crate) fn resolve_device_gateway_auth(
@@ -286,8 +328,7 @@ pub(crate) fn resolve_device_gateway_auth(
 
     if username.is_some() && token.is_none() {
         return Err(
-            "Missing non-interactive device credential. Set --token or `gsv config --local set device.token ...`."
-                .into(),
+            "This computer isn't paired. Connect it with an invitation: gsv pair CODE".into(),
         );
     }
 
@@ -300,49 +341,97 @@ pub(crate) fn resolve_device_gateway_auth(
     Ok(auth)
 }
 
-pub(crate) async fn run_auth_login(
-    url: &str,
-    cfg: &CliConfig,
-    username: Option<String>,
-    password: Option<String>,
-    ttl_hours: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if ttl_hours == 0 {
-        return Err("--ttl-hours must be greater than 0".into());
-    }
-
-    let username =
-        normalize_auth_field(username).or_else(|| normalize_auth_field(cfg.gateway_username()));
-    let mut password = normalize_auth_field(password);
-
-    if password.is_none() && can_prompt_interactively() {
-        password = prompt_secret("Gateway password")?;
-    }
-    let password =
-        password.ok_or("Gateway password required (pass --password or run interactively)")?;
-
-    let _ = issue_and_store_user_session_token(url, username, password, ttl_hours).await?;
-    Ok(())
+pub(crate) struct LoginRequest {
+    pub(crate) space: Option<String>,
+    pub(crate) url_override: Option<String>,
+    pub(crate) username: Option<String>,
+    pub(crate) password: Option<String>,
+    pub(crate) ttl_hours: u32,
 }
 
-pub(crate) fn run_auth_logout() -> Result<(), Box<dyn std::error::Error>> {
-    let had_session = CliConfig::update(|cfg| {
-        let had_session = cfg.gateway.session_token.is_some()
-            || cfg.gateway.session_token_id.is_some()
-            || cfg.gateway.session_expires_at.is_some();
-        cfg.gateway.session_token = None;
-        cfg.gateway.session_token_id = None;
-        cfg.gateway.session_expires_at = None;
-        had_session
-    })?;
-
-    if had_session {
-        println!("Cleared cached user session token.");
-    } else {
-        println!("No cached user session token.");
+/// Signs in. Naming a different Ship switches to it only once the password
+/// is accepted, so a typo never loses the current session.
+pub(crate) async fn sign_in(
+    cfg: &CliConfig,
+    request: LoginRequest,
+) -> Result<(Session, String), Box<dyn std::error::Error>> {
+    if request.ttl_hours == 0 {
+        return Err("--ttl-hours must be greater than 0".into());
     }
+    let url = match (&request.space, &request.url_override, &cfg.gateway.url) {
+        (Some(space), _, _) => space_url(space)?,
+        (None, Some(url), _) => url.clone(),
+        (None, None, Some(url)) => url.clone(),
+        (None, None, None) => {
+            return Err("Which Ship? Give its address, for example: gsv login me.ship.space".into())
+        }
+    };
+    let same_ship = cfg.gateway.url.as_deref() == Some(url.as_str());
+    let username = normalize_auth_field(request.username).or_else(|| {
+        same_ship
+            .then(|| normalize_auth_field(cfg.gateway_username()))
+            .flatten()
+    });
+    let password = match normalize_auth_field(request.password) {
+        Some(password) => password,
+        None if can_prompt_interactively() => {
+            prompt_secret(&format!("Password for {}", space_name(&url)))?
+                .ok_or("A password is needed to sign in")?
+        }
+        None => return Err("Give the password with --password when not in a terminal".into()),
+    };
+    let session = issue_user_session(&url, username, password, request.ttl_hours).await?;
+    save_session(&session, Some(&url))?;
+    Ok((session, url))
+}
 
-    Ok(())
+/// Ends the saved session on the Ship, then forgets it here. The local copy
+/// is cleared even when the Ship can't be reached.
+pub(crate) async fn sign_out(cfg: &CliConfig) -> Result<SignOut, Box<dyn std::error::Error>> {
+    let (Some(token), Some(token_id)) = (
+        cfg.gateway.session_token.clone(),
+        cfg.gateway.session_token_id.clone(),
+    ) else {
+        clear_cached_user_session_token()?;
+        return Ok(SignOut::NotSignedIn);
+    };
+    let auth = GatewayAuth {
+        username: cfg.gateway_username(),
+        password: None,
+        token: Some(token),
+    };
+    let url = cfg.gateway_url();
+    let revoke = async {
+        let client = KernelClient::connect_with_peer(
+            &url,
+            cli_peer_identity(),
+            Vec::new(),
+            auth,
+            BinaryBodyLimits::default(),
+            |_| {},
+        )
+        .await?;
+        client
+            .request_ok("sys.token.revoke", Some(json!({ "tokenId": token_id })))
+            .await?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    };
+    let revoked = matches!(
+        tokio::time::timeout(std::time::Duration::from_secs(8), revoke).await,
+        Ok(Ok(()))
+    );
+    clear_cached_user_session_token()?;
+    Ok(if revoked {
+        SignOut::Ended
+    } else {
+        SignOut::ClearedLocally
+    })
+}
+
+pub(crate) enum SignOut {
+    NotSignedIn,
+    Ended,
+    ClearedLocally,
 }
 
 pub(crate) fn prompt_secret(prompt: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
@@ -368,8 +457,6 @@ mod tests {
             &CliConfig::default(),
             Some("fixture-token".into()),
             Some("fixture-owner".into()),
-            Some("unused-password".into()),
-            "chat",
             |auth| {
                 attempts.set(attempts.get() + 1);
                 assert_eq!(auth.username.as_deref(), Some("fixture-owner"));
@@ -392,8 +479,6 @@ mod tests {
                 &CliConfig::default(),
                 Some("fixture-token".into()),
                 Some("fixture-owner".into()),
-                None,
-                "chat",
                 |_| {
                     attempts.set(attempts.get() + 1);
                     async move {
@@ -411,6 +496,30 @@ mod tests {
             assert_eq!(error.downcast_ref::<GatewayRpcError>().unwrap().code, code);
             assert_eq!(attempts.get(), 1);
         }
+    }
+
+    #[test]
+    fn spaces_become_websocket_urls() {
+        assert_eq!(
+            space_url("me.ship.space").expect("bare host"),
+            "wss://me.ship.space/ws"
+        );
+        assert_eq!(
+            space_url("https://me.ship.space/").expect("https"),
+            "wss://me.ship.space/ws"
+        );
+        assert_eq!(
+            space_url("wss://me.example/custom/ws").expect("explicit path"),
+            "wss://me.example/custom/ws"
+        );
+        assert_eq!(
+            space_url("localhost:8787").expect("local"),
+            "ws://localhost:8787/ws"
+        );
+        space_url("").expect_err("rejected");
+        space_url("ftp://me.ship.space").expect_err("rejected");
+        assert_eq!(space_name("wss://me.ship.space/ws"), "me.ship.space");
+        assert_eq!(space_name("ws://localhost:8787/ws"), "localhost:8787");
     }
 
     #[test]

@@ -43,11 +43,15 @@ Ship can also create a browser invitation and give you a download link at
 the current public release yourself,
 [download the extension](https://ship.space/browser).
 
-Choose **Browser** in the same flow. Download and unzip the extension, called
-**Your Ship**, enable developer mode at `chrome://extensions`, and load its folder.
+Choose **Browser** in the same flow. The extension, called **Your Ship**, isn't in
+the Chrome Web Store yet, so you add it to Chrome in developer mode. Download and
+unzip it, open `chrome://extensions`, turn on **Developer mode**, choose
+**Load unpacked**, and pick the unzipped folder.
 Click the **Your Ship** icon in the browser toolbar to open its panel. If it is
 not visible, click the **Extensions** (puzzle-piece) button and select
-**Your Ship**. Paste the invitation and choose **connect this browser**.
+**Your Ship**. Paste the invitation and choose **connect this browser**. The
+extension lets your Ship work in that browser, signed in as you. You can pause it
+from its panel anytime.
 
 While your Ship works in a tab, Chrome shows a banner at the top of that tab.
 That is Chrome's notice that an extension is driving the page; it goes when the

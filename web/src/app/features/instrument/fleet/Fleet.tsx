@@ -607,8 +607,8 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
           <div class="kicker">{t("fleet.process.recently")}</div>
           {lines.map((line) => (
             <div class="line" key={line.id}>
-              <span class="t">{relativeTime(line.timestamp, now)}</span> <span class="place">{placeLabelFor(line.place)}</span> {t(line.action.key, line.action.values)}
-              <span class="m"> · {line.detail}</span>
+              <span class="t">{relativeTime(line.timestamp, now)}</span> <span class="place">{placeLabelFor(line.place)}</span> {line.purpose ?? t(line.action.key, line.action.values)}
+              {line.detail && <span class="m"> · {line.detail}</span>}
             </div>
           ))}
         </div>

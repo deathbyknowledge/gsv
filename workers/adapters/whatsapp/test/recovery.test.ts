@@ -9,6 +9,7 @@ import {
   describeWhatsAppApproval,
   prepareWhatsAppApproval,
 } from "../src/whatsapp-approval";
+import { ADAPTER_HIL_ENDED_TEXT } from "../../shared/src/hil-approval";
 
 // SAFETY: the managed test configuration binds these Workers and namespaces.
 const bindings = env as ManagedWhatsAppPeerEnv & { WHATSAPP_API: Fetcher };
@@ -104,7 +105,7 @@ it.each([404, 503])("unblocks text after an obsolete approval, starting with err
 
   await vi.waitFor(async () => {
     const text = (await messages(actorId)).map((message) => message.body.text?.body);
-    expect(text.some((value) => value?.includes("This approval is no longer pending."))).toBe(true);
+    expect(text.some((value) => value?.includes(ADAPTER_HIL_ENDED_TEXT))).toBe(true);
     expect(text).toContain("Personal received hello after obsolete approval");
     expect(text.some((value) => value?.includes("Approved"))).toBe(false);
   });
