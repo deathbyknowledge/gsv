@@ -1350,7 +1350,7 @@ export const ptBR = {
   "shell.help.discord": "Comunidade no Discord",
   "shell.help.search": "Pesquisar no Chat",
   "shell.help.views": "Visualizações e aparência",
-  "shell.help.viewsHint": "Os atalhos de navegação funcionam quando você não está digitando ou configurando uma conexão ou modelo de IA. Acesse Configurações para desativar as estrelas de fundo.",
+  "shell.help.viewsHint": "Os atalhos de navegação funcionam quando você não está digitando ou configurando uma conexão ou modelo de IA. Acesse Configurações para ativar as estrelas de fundo.",
   "shell.help.memory": "Memória",
   "shell.help.people": "Contatos",
   "shell.help.theme": "Alternar entre claro e escuro",

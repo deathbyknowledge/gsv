@@ -115,7 +115,6 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const [zenDirty, setZenDirty] = useState(false);
   /* the founders' welcome still stands over the chat; Ship is not waking until it is dismissed */
   const [welcomeOpen, setWelcomeOpen] = useState(true);
-  const [firstRunShown, setFirstRunShown] = useState(false);
   const [fleetDirty, setFleetDirty] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
   const [peopleDirty, setPeopleDirty] = useState(false);
@@ -318,7 +317,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           setHelp(false);
           setNavigationOpen((open) => !open);
         }} />
-      <FirstRun active={distance === "zen" && zenPid === null} onOpenChange={setWelcomeOpen} onShownChange={setFirstRunShown} />
+      <FirstRun active={distance === "zen" && zenPid === null} onOpenChange={setWelcomeOpen} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label={t("shell.help.label")} ref={helpRef}>
           <HelpContent distance={distance} connected={status.state === "connected"} onClose={closeHelp} onSearch={openSearch} onFeedback={feedbackAvailable ? () => {
@@ -340,7 +339,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           }} />
         </aside>
       ) : null}
-      <div class="distance" data-view={distance} data-first-run={firstRunShown ? "" : undefined} ref={scrollEdgesRef}>
+      <div class="distance" data-view={distance} ref={scrollEdgesRef}>
         <BrowserControlOverlay />
         <RetainedView active={distance === "zen"}>
           <Zen key={zenPid ?? "ship"} searchRequested={searchRequested} onSearchRequestHandled={() => setSearchRequested(false)} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {

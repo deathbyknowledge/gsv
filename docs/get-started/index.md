@@ -151,9 +151,9 @@ To request account deletion, open **Settings → Account** and email
 [hello@humansandmachin.es](mailto:hello@humansandmachin.es). During early access,
 the team handles deletion manually; there is no self-service deletion button yet.
 
-Under **Settings → Preferences → Appearance**, turn off **Show stars** for a
-plain background. This device preference also applies to sign-in. Help's
-navigation reference includes a reminder of where to find this setting.
+Under **Settings → Preferences → Appearance**, turn on **Show stars** to bring
+the sign-in star field into the chat on this device. Help's navigation
+reference includes a reminder of where to find this setting.
 
 Under **Appearance**, choose **Match system** to follow this device's light or
 dark appearance. An explicit theme choice applies to both sign-in and the app.

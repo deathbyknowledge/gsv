@@ -1344,7 +1344,7 @@ export const en = {
   "shell.help.discord": "Discord community",
   "shell.help.search": "Search Chat",
   "shell.help.views": "Views & appearance",
-  "shell.help.viewsHint": "Navigation shortcuts work when you’re not typing or setting up a connection or AI model. See Settings to toggle off background stars.",
+  "shell.help.viewsHint": "Navigation shortcuts work when you’re not typing or setting up a connection or AI model. See Settings to turn on background stars.",
   "shell.help.memory": "Memory",
   "shell.help.people": "People",
   "shell.help.theme": "Switch between light and dark",

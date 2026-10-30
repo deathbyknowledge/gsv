@@ -1345,7 +1345,7 @@ export const es = {
   "shell.help.discord": "Comunidad de Discord",
   "shell.help.search": "Buscar en Chat",
   "shell.help.views": "Vistas y apariencia",
-  "shell.help.viewsHint": "Los atajos de navegación funcionan cuando no estás escribiendo ni configurando una conexión o un modelo de IA. Ve a Configuración para desactivar las estrellas de fondo.",
+  "shell.help.viewsHint": "Los atajos de navegación funcionan cuando no estás escribiendo ni configurando una conexión o un modelo de IA. Ve a Ajustes para activar las estrellas de fondo.",
   "shell.help.memory": "Memoria",
   "shell.help.people": "Personas",
   "shell.help.theme": "Cambiar entre claro y oscuro",

@@ -26,7 +26,7 @@ export function AuthScene({ children, setup = false, layout = "ship" }: {
   const viewportRef = useInstrumentViewport();
   return (
     <div ref={viewportRef} class={`instrument gsv-auth-surface gsv-auth-scene${layout === "welcome" ? " gsv-auth-scene-welcome" : ""}${theme === "light" ? " is-light" : ""}${setup ? " gsv-auth-surface-setup" : " gsv-auth-surface-login"}`}>
-      <InstrumentBackdrop />
+      <InstrumentBackdrop stars />
       <div class="instrument-viewport">
         <header class="instrument-top gsv-auth-header">
           <div class="gsv-auth-identity"><Wordmark /><PlatformIdentity /></div>

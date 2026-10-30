@@ -14,13 +14,12 @@ let config: Map<string, string>;
 let root: ReturnType<typeof createTestRoot>;
 const request = vi.fn<GSVClient["request"]>();
 const onOpenChange = vi.fn<(open: boolean) => void>();
-const onShownChange = vi.fn<(shown: boolean) => void>();
 const connected: GsvClientStatus = { state: "connected", url: "wss://space.example/ws", username: "person", connectionId: "test", message: null };
 const SEEN_KEY = "users/1000/ui/welcome_card_seen";
 const SURFACE_KEY = "users/1000/ui/preferred_surface";
 
 let active = true;
-function Harness() { tree = FirstRun({ active, onOpenChange, onShownChange }); return null; }
+function Harness() { tree = FirstRun({ active, onOpenChange }); return null; }
 async function mount(name = "first run") {
   root = createTestRoot(name);
   await root.render(<GatewayProvider><Harness /></GatewayProvider>);
@@ -36,7 +35,6 @@ beforeEach(() => {
   config = new Map();
   request.mockReset();
   onOpenChange.mockReset();
-  onShownChange.mockReset();
   vi.stubGlobal("document", {});
   vi.stubGlobal("window", { location: { search: "" } });
   vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue(connected);
@@ -67,12 +65,10 @@ describe("first run", () => {
     await mount();
     expect(onOpenChange).toHaveBeenLastCalledWith(true);
     await vi.waitFor(() => expect(screen()).toMatchObject({ ownerUid: 1000, completing: false, completeError: false }));
-    expect(onShownChange).toHaveBeenLastCalledWith(true);
     expect(setCalls()).toHaveLength(0);
     await act(async () => { await screen()!.onComplete!("whatsapp"); });
     expect(setCalls()).toEqual([{ key: SURFACE_KEY, value: "whatsapp" }, { key: SEEN_KEY, value: "1" }]);
     await vi.waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
-    expect(onShownChange).toHaveBeenLastCalledWith(false);
     expect(tree).toBeNull();
 
     await root.unmount();
@@ -93,7 +89,6 @@ describe("first run", () => {
     expect(screen()).toBeNull();
     expect(tree).toBeNull();
     expect(onOpenChange).toHaveBeenLastCalledWith(true);
-    expect(onShownChange).toHaveBeenLastCalledWith(false);
     active = true;
     await act(async () => { await root.render(<GatewayProvider><Harness /></GatewayProvider>); });
     await vi.waitFor(() => expect(screen()).toMatchObject({ ownerUid: 1000 }));

@@ -58,9 +58,9 @@ actions and Help open in a vertical menu with touch-sized rows.
 Choosing a view, tapping outside or pressing Escape closes the menu.
 The menu button retains the unread People indicator while navigation is closed.
 
-On a personal human account's first sign-in, a full screen in front of the chat, over the
-instrument's star field with the chat kept out of sight beneath it, asks where the person
-wants to message Ship: Web, the Desktop app, WhatsApp or Telegram. Web completes at
+On a personal human account's first sign-in, a full screen in front of the chat, with its
+own star field whatever the chat preference says, asks where the person wants to message
+Ship: Web, the Desktop app, WhatsApp or Telegram. Web completes at
 once; the Desktop app choice links to the release download and continues in the web; a messenger
 pairs inline through the Settings pairing flow, and the Kernel then greets on it. Messenger
 sections appear only when the deployment offers that adapter, with no "nothing connected" line;
@@ -230,9 +230,10 @@ People supports creating and accepting invitations, pending invitation cancellat
 
 Settings owns model order and creation, permissions, instructions, and integrations. See [Settings](settings/README.md). Work keeps connection actions available for computers and browsers; People keeps invitations and first-message requests available.
 
-Settings → Preferences → Appearance includes a **Show stars** checkbox. The choice
-is remembered on this device and also applies to sign-in. Hiding the stars
-unmounts their renderer and stops its animation while retaining the shared layout.
+Settings → Preferences → Appearance includes a **Show stars** checkbox, off by
+default. The choice is remembered on this device; sign-in and the first run keep
+their stars regardless. Stars that are off have no renderer or animation, and the
+shared layout stays the same.
 Help’s navigation reference points to this setting in plain language.
 
 Processes update from owner-scoped registry signals even when created or run from another client. WireSync patches known runtime states and exits locally; new processes and changed labels reload only the process list. A change cancels any older list snapshot before it can overwrite current state. Closed lists become stale without background reads, and reconnect recovers missed changes. Raw run events remain for explicit Process observation, and registry-only notices do not reload history.

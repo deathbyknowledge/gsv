@@ -2,9 +2,10 @@
 
 One Settings surface uses the web app header and existing gateway services. It edits the signed-in account’s defaults; it never chooses another account when identity is unavailable.
 
-Preferences → Appearance also offers **Show stars**. This device-local choice
-applies immediately to the shared background across views and sign-in, and
-survives reloads. Turning stars off stops their renderer and animation.
+Preferences → Appearance also offers **Show stars**, off until the person turns it
+on. This device-local choice applies immediately to the signed-in views' shared
+background and survives reloads; sign-in and the first run always have their
+stars. Stars that are off have no renderer or animation.
 
 Appearance is the first Preferences group and applies immediately. Model order,
 reasoning, language and timezone use one sticky Save changes bar. Language is a
