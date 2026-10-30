@@ -150,6 +150,7 @@ export async function acceptManagedInboundMail(
       textPath,
       sizeBytes: metadata.rawSize,
       attachments: metadata.attachments,
+      bodyText: metadata.text,
     });
     return { messageId: recorded.message.messageId };
   } catch (error) {

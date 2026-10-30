@@ -28,13 +28,19 @@ the handle and email form. Desktop starts with **Create your Ship** and **Open
 Ship**. Choose a handle, enter your email, confirm the age, Terms and Privacy
 agreement, and select **Continue**. Your handle (`@alex`) and its address
 (`alex.example.com`) appear separately. Verify your email with the six-digit code,
-then pick a password and select **Activate Ship**. No registration invite is
-needed, and the terms you agreed to at signup are not asked again during activation.
+then pick a password and select **Activate Ship**. Tick **I'm OK with a public
+profile** first if you want people to find you by your handle; left unticked, your
+profile stays private (see [Your profile](../how-to/contact-people.md#your-profile)). No registration invite is needed, and the terms you agreed to
+at signup are not asked again during activation.
 Handles use lowercase letters, numbers and hyphens; uppercase input is converted
 automatically. Validation and availability feedback appears beside the field.
+Names already in use, reserved for official services, or blocked by the operator
+appear as unavailable. Choose another name to continue.
 One verified email can create one Ship.
 
 If creation is interrupted, retry with the same handle to resume that activation.
+While activation completes, **Opening Ship** cycles through three, two, one and
+no dots. With reduced motion enabled, the three dots stay still.
 
 A friend's invitation link opens an invitation modal on the signup page. Continue
 and verify your email; existing users choose their Ship, while new users choose a
@@ -79,7 +85,7 @@ The web app has five views:
 - **Work** lists your connections, then Ship and its helpers, with files opened from a connection.
 - **Memory** shows your personal knowledge pages.
 - **People** holds conversations, message requests and private contacts across Ships, plus your public profile.
-- **Settings** holds **Preferences** (models), **Standing responsibilities**, **Permissions**, **Instructions**, **Messengers**, **MCP servers** and **Logs** for actions and their outcomes. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
+- **Settings** holds **Preferences**, **Standing responsibilities**, **Permissions**, **Instructions**, **Messengers**, **MCP servers**, **Logs** for actions and their outcomes, and **Account**. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
 
 On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
@@ -94,6 +100,8 @@ People messages. Tap **N ongoing** (or **plans** when none are active) to open
 Each responsibility shows a short status and its next check; tap it to read the
 full waiting explanation, inspect details or ask Ship about it. Your draft stays
 intact while you look. Event-driven policies live in **Settings → Standing responsibilities**.
+
+The message input uses a thin purple caret to show where you are typing.
 
 The **+** menu attaches files, finds people and files, and prepares requests to
 create a routine, connect a computer or start a browser. These requests and
@@ -124,9 +132,30 @@ with **continue editing →** to resume it. Wider screens show the browser and r
 side by side.
 
 The Settings sidebar highlights the section you're viewing.
+Preferences starts with **Appearance**, which applies immediately on this device.
+Model order, reasoning, language and timezone share a **Save changes** bar that
+stays visible as you scroll. Language offers English, Spanish and Portuguese.
+If another language is already saved, its language code stays selected until you
+choose a replacement. An unset preference appears as **Automatic**; the interface
+may use a supported device language without changing the saved preference.
+Unsaved preferences trigger a warning when leaving; if you leave, the draft stays
+available when you return. **Discard changes** resets it.
+
+To request account deletion, open **Settings → Account** and email
+[hello@humansandmachin.es](mailto:hello@humansandmachin.es). During early access,
+the team handles deletion manually; there is no self-service deletion button yet.
+
+Under **Settings → Preferences → Appearance**, turn off **Show stars** for a
+plain background. This device preference also applies to sign-in. Help's
+navigation reference includes a reminder of where to find this setting.
+
 Under **Appearance**, choose **Match system** to follow this device's light or
 dark appearance. An explicit theme choice applies to both sign-in and the app.
 Before you choose, **Default** keeps sign-in dark and the app light.
+
+Outside a text field, press **x** to cycle through 75%, 85%, 100%, 150% and 200%
+sizes. The smallest size uses compact message text and tighter spacing to fit
+more conversation on screen. The choice is remembered on this device.
 
 The Desktop app also includes **Settings → Voice** for its microphone, shortcuts,
 and spoken replies. Enable **Handsfree mode** to talk to your Ship from any page
@@ -148,10 +177,28 @@ Ship can use cloud browsers without per-action approval by default. To change
 that, select **Cloud browsers** under **Settings → Permissions** and choose
 **Ask** or **Block**; personal computers and browsers keep their existing rules.
 
-On wider screens, open **Help** in the header and choose **Search Chat** to find earlier messages.
+Hover over or focus a top-right navigation button to see a short explanation.
+Press **w** outside a text field to open Work.
+
+The **?** Help panel (also available in the mobile menu) introduces what Ship can
+help with. **Talking to Ship** expands example requests; the other getting-started
+rows open WhatsApp connections, Memory, Permissions and your operator's privacy
+policy, when one is configured for your installation. **Keyboard shortcuts** replaces
+Help with Search Chat, general shortcuts and shortcuts for the current screen;
+**← Help** returns to getting started. Use **×** in the top-right corner to close
+either panel. **Need more help?** opens the existing
+Feedback form through **Feedback**, when feedback is available, and links to the
+Ship manual inside Memory, email support and the community Discord.
+
+Open **Help** in the header or mobile menu, choose **Keyboard shortcuts**, and choose
+**Search Chat** to find earlier messages.
 Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search in browse
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns you to where you were, with your draft.
+
+On your first visit, after dismissing the welcome card, the empty chat shows a
+quiet, centered privacy message. It clears as soon as you or Ship starts the
+conversation.
 
 The composer always shows **Message your Ship** when empty. **send** appears beside
 the prompt when you have a draft or attachments. The action row below groups **+**
@@ -162,6 +209,9 @@ While reconnecting, you can keep editing your draft and adding attachments.
 Sending becomes available when the connection returns; your draft is not sent automatically.
 The header stays above the scrolling content. Tap a message once to select it
 and show its timestamp and copy action.
+With a mouse, hovering over an older message brightens it immediately.
+Consecutive messages from the latest sender stay bright together when they are
+no more than five minutes apart.
 Scrolling selects the message nearest the center, switching to the first or latest message
 at either end. On phones, the down arrow on the right returns to the latest message.
 Text actions have a subtle underline. The **+** menu groups file and person references under

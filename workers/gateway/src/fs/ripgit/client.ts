@@ -1,3 +1,6 @@
+import { ripgitFailureKindSchema } from "@humansandmachines/gsv/telemetry";
+import { z } from "zod";
+
 export type RipgitTreeEntry = {
   name: string;
   mode: string;
@@ -170,6 +173,34 @@ type RipgitSearchResponse = {
 };
 
 const DEFAULT_BRANCH = "main";
+
+/** ripgit's answer to an error that escaped its request boundary. The cause belongs to the installation that asked. */
+const ripgitFailureSchema = z.strictObject({
+  error: z.literal("InternalError"),
+  kind: ripgitFailureKindSchema,
+  diagnosticId: z.uuid(),
+  message: z.string(),
+});
+export type RipgitFailure = z.infer<typeof ripgitFailureSchema>;
+
+export function parseRipgitFailure(text: string): RipgitFailure | null {
+  try {
+    return ripgitFailureSchema.safeParse(JSON.parse(text)).data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Names a failure for anyone outside that installation: its kind and diagnostic ID, never its cause. */
+export function ripgitFailureReference(failure: RipgitFailure): string {
+  return `${failure.kind} error, reference ${failure.diagnosticId}`;
+}
+
+/** Consumes a failed answer for an error that leaves the installation. */
+export async function ripgitFailureStatus(response: Response): Promise<string> {
+  const failure = parseRipgitFailure(await response.text().catch(() => ""));
+  return failure ? `${response.status}, ${ripgitFailureReference(failure)}` : String(response.status);
+}
 
 export class RipgitConflictError extends Error {}
 
@@ -501,6 +532,10 @@ export class RipgitClient {
 
   private async readError(response: Response, context: string): Promise<string> {
     const text = await response.text().catch(() => "");
+    const failure = parseRipgitFailure(text);
+    if (failure) {
+      return `ripgit ${context} failed: ${failure.message} (${ripgitFailureReference(failure)})`;
+    }
     if (text) {
       return text;
     }

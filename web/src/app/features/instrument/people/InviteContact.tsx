@@ -9,6 +9,7 @@ import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_CONTACTS_KEY, INSTRUMENT_CONTACT_INVITES_KEY } from "../wire/queryKeys";
 import { ContactHandlingChoice } from "./ContactHandlingChoice";
+import { submitOnEnter } from "../shared/enterToSend";
 import { useT, type TextKey } from "../../../i18n/locale";
 
 export type InvitationDraft = { code: string; issued: ContactInviteCreateResult | null; shipHandlesMessages: boolean | null };
@@ -73,8 +74,9 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
     {accepting ? <>
       {entering && <p class="people-note">{t("people.invite.paste")}</p>}
       <form class="people-form" onSubmit={(event) => { event.preventDefault(); if (!busy && allowed("contact.invite.accept") && draft.shipHandlesMessages !== null && preview && "name" in preview && !preview.expired) accept.mutate(); }}>
-        {entering && <label>{t("people.invite.codeLabel")}<textarea rows={2} value={draft.code} autoComplete="off" spellcheck={false} disabled={busy} onInput={(event) => { accept.reset(); onChange({ ...draft, code: event.currentTarget.value, shipHandlesMessages: null }); }} /></label>}
-        {preview && ("error" in preview ? <p class="people-error" role="alert">{preview.error}</p> : <div class="people-invite-person"><h2>{preview.name}</h2><span>{preview.origin}</span><p class="people-note">{t(preview.expired ? "people.invite.expired" : "people.invite.connectHint")}</p></div>)}
+        {entering && <label>{t("people.invite.codeLabel")}<textarea rows={2} value={draft.code} autoComplete="off" spellcheck={false} disabled={busy} onInput={(event) => { accept.reset(); onChange({ ...draft, code: event.currentTarget.value, shipHandlesMessages: null }); }}
+          onKeyDown={submitOnEnter} /></label>}
+        {preview && ("error" in preview ? <p class="people-error" role="alert">{preview.error}</p> : <div class="people-invite-person"><h2>{preview.name}</h2><span>{preview.handle}</span><p class="people-note">{t(preview.expired ? "people.invite.expired" : "people.invite.connectHint")}</p></div>)}
         {preview && "name" in preview && !preview.expired && choice}
         <button class="ibtn is-primary" type="submit" disabled={busy || !allowed("contact.invite.accept") || draft.shipHandlesMessages === null || !preview || "error" in preview || preview.expired}>{t(accept.isPending ? "people.invite.connecting" : "people.invite.accept")}</button>
       </form>

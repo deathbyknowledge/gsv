@@ -12,6 +12,7 @@
  */
 
 import type {
+  FrameBody,
   RequestFrame,
   ResponseFrame,
   ResponseOkFrame,
@@ -27,6 +28,7 @@ import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
 import type { FsDeviceTransport } from "../drivers/native/fs";
 import { WEB_SEARCH_TIMEOUT_MS, webSearchArgsSchema } from "@humansandmachines/gsv/services/web-search";
+import { z } from "zod";
 import {
   handleAiContext,
   handleAiConfig,
@@ -49,6 +51,7 @@ import {
   ProcessRequestError,
 } from "./proc-handlers";
 import { handleAccountCreate, handleAccountList } from "./agents";
+import { handleAtprotoBlobRead, handleAtprotoBlobUpload, handleAtprotoIdentity, handleAtprotoWrite } from "./atproto";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysTargetDelete, handleSysTargetGet, handleSysTargetList, handleSysTargetUpdate } from "./sys/target";
 import { handleInstanceRequest } from "./sys/instance";
@@ -96,10 +99,7 @@ import {
   handleSysMcpRemove,
 } from "./sys/mcp";
 import {
-  handleSysLink,
-  handleSysLinkConsume,
   handleSysLinkList,
-  handleSysUnlink,
 } from "./sys/link";
 import {
   handleAdapterConnect,
@@ -124,9 +124,18 @@ import {
 } from "./adapter-send";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import { handleContactPreferencesUpdate, handleContactBlockSet, handleContactBlockList } from "./federation/preferences";
-import { handleProfileGet, handleProfileUpdate, handleProfilePublish, handleProfileUnpublish, handleProfileResolve } from "./profiles";
+import {
+  handleContactInviteAccept,
+  handleContactInviteCancel,
+  handleContactInviteCreate,
+  handleContactInviteList,
+} from "./federation/invitations";
+import {
+  handleProfileAvatarRead, handleProfileAvatarRemove, handleProfileAvatarSet, handleProfileGet, handleProfilePublish,
+  handleProfileResolve, handleProfileUnpublish, handleProfileUpdate,
+} from "./profiles";
 import { handleConversationInbox, handleConversationViewGet, handleConversationViewUpdate } from "./conversation-views";
-import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachRetry } from "./approaches/admission";
+import { handleApproachCreate, handleApproachGet, handleApproachList, handleApproachDecide, handleApproachReport, handleApproachRetry } from "./approaches/admission";
 import {
   handleSchedulerAdd,
   handleSchedulerList,
@@ -153,6 +162,7 @@ import {
 } from "./targets";
 import { requestAdapterTarget } from "./adapter-targets";
 import { handleMailSend } from "./outbound-mail";
+import { handleMailList, handleMailRead, handleMailSearch } from "./inbound-mail-read";
 import { handleMailStatus } from "./outbound-status";
 import {
   handleConversationForProcess,
@@ -165,11 +175,6 @@ import {
 } from "./conversation-handlers";
 import {
   handleContactAliasSet,
-  handleContactIdentity,
-  handleContactInviteAccept,
-  handleContactInviteCancel,
-  handleContactInviteCreate,
-  handleContactInviteList,
   handleContactDeliveryGet,
   handleContactDeliveryList,
   handleContactDeliveryRetry,
@@ -213,6 +218,8 @@ export type DispatchDeps = {
 type FrameCancellationReason = string | Error;
 type CancellableFrameBody = {
   cancel(reason?: FrameCancellationReason): Promise<void>;
+  /** Settles once the last byte has been handed to the peer, or the body failed. */
+  sent?: Promise<void>;
 };
 type RoutingTargetArgs = { target?: string };
 
@@ -224,6 +231,8 @@ const DEFAULT_TARGET_TTL_MS = 60_000;
 // The process watchdog is ten minutes; routing must not preempt it.
 const DEFAULT_SHELL_TARGET_TTL_MS = 11 * 60_000;
 const SHELL_TIMEOUT_GRACE_MS = 10_000;
+const NEW_SHELL_INPUT_SCHEMA = z.string();
+const SESSION_SHELL_INPUT_SCHEMA = NEW_SHELL_INPUT_SCHEMA.nullish();
 
 export async function dispatch(
   frame: RequestFrame,
@@ -255,6 +264,23 @@ export async function dispatch(
     ? frame.args.sessionId?.trim() ?? ""
     : "";
   const startSession = frame.call === "shell.exec" && frame.args.start === true;
+
+  if (frame.call === "shell.exec") {
+    // Models and peers can send anything, so every target gets this check here.
+    // Only continuing a session may omit input: a machine treats that as a poll.
+    const inputSchema = sessionId && !startSession ? SESSION_SHELL_INPUT_SCHEMA : NEW_SHELL_INPUT_SCHEMA;
+    if (!inputSchema.safeParse(frame.args.input).success) {
+      return {
+        handled: true,
+        response: {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { status: "failed", output: "", error: 'shell.exec requires "input", the command to run' },
+        },
+      };
+    }
+  }
 
   if (startSession && (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId) || !target || target === GSV_TARGET_ID)) {
     return { handled: true, response: rejectBeforeDispatch(frame, 400, "Starting a named shell session requires a fresh UUID and a remote target") };
@@ -327,32 +353,28 @@ async function dispatchLocal(
   }
   const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx) };
   const requestTarget: NetFetchDeviceTransport["requestTarget"] = async (targetId, call, args, options) => {
-    let signal = options?.signal ?? nativeContext.requestSignal;
-    if (options?.ttlMs !== undefined) {
-      const deadline = AbortSignal.timeout(options.ttlMs);
-      signal = signal ? AbortSignal.any([signal, deadline]) : deadline;
-    }
+    const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body);
+    const body = deadline ? deadline.body : options?.body;
+    const signal = withDeadline(options?.signal ?? nativeContext.requestSignal, deadline);
     try {
       const response = await deps.request({
-        type: "req", id: crypto.randomUUID(), call, args: { ...args, target: targetId }, body: options?.body,
+        type: "req", id: crypto.randomUUID(), call, args: { ...args, target: targetId }, body,
       }, nativeContext, signal);
       if (!response.ok) throw new Error(response.error.message);
       // SAFETY: Kernel dispatch returns the response for this net.fetch request.
       return response as ResponseOkFrame<"net.fetch">;
     } catch (error) {
-      if (options?.body && !options.body.stream.locked) {
-        await options.body.stream.cancel(error).catch(() => {});
+      if (body && !body.stream.locked) {
+        await body.stream.cancel(error).catch(() => {});
       }
       throw error;
+    } finally {
+      deadline?.clear();
     }
   };
   const fsTransport: FsDeviceTransport = {
     requestTarget: async (targetId, call, args, options) => {
-      let signal = options?.signal ?? nativeContext.requestSignal;
-      if (options?.ttlMs !== undefined) {
-        const deadline = AbortSignal.timeout(options.ttlMs);
-        signal = signal ? AbortSignal.any([signal, deadline]) : deadline;
-      }
+      const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body);
       // SAFETY: Native filesystem operations construct the matching syscall arguments;
       // dispatch owns grants, target resolution, approval, cancellation and body cleanup.
       const request = {
@@ -360,11 +382,19 @@ async function dispatchLocal(
         id: crypto.randomUUID(),
         call,
         args: { ...args, target: targetId },
-        body: options?.body,
+        body: deadline ? deadline.body : options?.body,
       } as RequestFrame;
-      const response = await deps.request(request, nativeContext, signal);
-      if (!response.ok) throw new Error(response.error.message);
-      return response;
+      try {
+        const response = await deps.request(
+          request,
+          nativeContext,
+          withDeadline(options?.signal ?? nativeContext.requestSignal, deadline),
+        );
+        if (!response.ok) throw new Error(response.error.message);
+        return response;
+      } finally {
+        deadline?.clear();
+      }
     },
     openContactSource: async (source: Parameters<typeof openContactResourceSource>[0], signal?: AbortSignal) => {
       const contactContext = { ...nativeContext, requestSignal: signal ?? nativeContext.requestSignal };
@@ -432,6 +462,15 @@ async function dispatchKernel(
         break;
       case "mail.status":
         data = handleMailStatus(frame.args, ctx);
+        break;
+      case "mail.list":
+        data = handleMailList(frame.args, ctx);
+        break;
+      case "mail.search":
+        data = handleMailSearch(frame.args, ctx);
+        break;
+      case "mail.read":
+        data = await handleMailRead(frame.args, ctx);
         break;
 
       case "conversation.ship":
@@ -702,17 +741,8 @@ async function dispatchKernel(
       case "sys.token.revoke":
         data = handleSysTokenRevoke(frame.args, ctx);
         break;
-      case "sys.link":
-        data = handleSysLink(frame.args, ctx);
-        break;
-      case "sys.unlink":
-        data = handleSysUnlink(frame.args, ctx);
-        break;
       case "sys.link.list":
         data = handleSysLinkList(frame.args, ctx);
-        break;
-      case "sys.link.consume":
-        data = handleSysLinkConsume(frame.args, ctx);
         break;
 
       // --- account.* ---
@@ -776,6 +806,22 @@ async function dispatchKernel(
       case "profile.get":
         data = handleProfileGet(ctx);
         break;
+      case "atproto.identity":
+        data = await handleAtprotoIdentity(ctx);
+        break;
+      case "atproto.write":
+        data = await handleAtprotoWrite(frame.args, ctx);
+        break;
+      case "atproto.blob.upload":
+        data = await handleAtprotoBlobUpload(frame.args, ctx, frame.body);
+        break;
+      case "atproto.blob.read":
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleAtprotoBlobRead(frame.args, ctx),
+        };
       case "approach.create":
         data = await handleApproachCreate(frame.args, ctx);
         break;
@@ -791,6 +837,9 @@ async function dispatchKernel(
       case "approach.retry":
         data = await handleApproachRetry(frame.args, ctx);
         break;
+      case "approach.report":
+        data = await handleApproachReport(frame.args, ctx);
+        break;
       case "profile.update":
         data = handleProfileUpdate(frame.args, ctx);
         break;
@@ -803,10 +852,20 @@ async function dispatchKernel(
       case "profile.resolve":
         data = await handleProfileResolve(frame.args, ctx);
         break;
-      // --- contact.* ---
-      case "contact.identity":
-        data = await handleContactIdentity(ctx);
+      case "profile.avatar.set":
+        data = await handleProfileAvatarSet(frame.args, ctx, frame.body);
         break;
+      case "profile.avatar.remove":
+        data = handleProfileAvatarRemove(frame.args, ctx);
+        break;
+      case "profile.avatar.read":
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...handleProfileAvatarRead(frame.args, ctx),
+        };
+      // --- contact.* ---
       case "contact.invite.create":
         data = await handleContactInviteCreate(frame.args, ctx);
         break;
@@ -820,7 +879,7 @@ async function dispatchKernel(
         data = handleContactInviteCancel(frame.args, ctx);
         break;
       case "contact.list":
-        data = handleContactList(frame.args, ctx);
+        data = await handleContactList(frame.args, ctx);
         break;
       case "contact.notice.dismiss":
         data = handleContactNoticeDismiss(ctx);
@@ -949,7 +1008,7 @@ async function routeToTarget(
 
   try {
     await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse({ ...frame.args, target: target.targetId }),
-      undefined, undefined, approvalTargetIdentity(target));
+      undefined, approvalTargetIdentity(target));
     ctx.requestSignal?.throwIfAborted();
     if (ctx.toolOwner) {
       const current = await resolveVisibleTarget(ctx, target.targetId, { includeOffline: true });
@@ -1044,6 +1103,37 @@ async function routeToTarget(
   }
 
   return { handled: false };
+}
+
+type AnswerDeadline = { signal: AbortSignal; body: FrameBody | undefined; clear(): void };
+
+/**
+ * A deadline for a device's answer. With a request body it starts once the
+ * last byte has been read, so an upload's length never counts against it;
+ * the body's idle timeout guards the upload itself.
+ */
+function answerDeadline(ttlMs: number, body: FrameBody | undefined): AnswerDeadline {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => {
+    timer = setTimeout(
+      () => controller.abort(new DOMException("The operation timed out.", "TimeoutError")),
+      ttlMs,
+    );
+  };
+  if (!body) {
+    arm();
+  }
+  return {
+    signal: controller.signal,
+    body: body && { ...body, stream: body.stream.pipeThrough(new TransformStream({ flush: arm })) },
+    clear: () => clearTimeout(timer),
+  };
+}
+
+function withDeadline(signal: AbortSignal | undefined, deadline: AnswerDeadline | null): AbortSignal | undefined {
+  if (!deadline) return signal;
+  return signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
 }
 
 export function routedFrameTtlMs(frame: RequestFrame): number {

@@ -3,7 +3,7 @@ import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 import type { InstallationInstances } from "@humansandmachines/gsv/services/instances";
 import type { CloudInstance } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
-import type { TargetDescriptor } from "./targets";
+import { discoverVisibleTargets, resolveVisibleTarget, type TargetDescriptor } from "./targets";
 import { discoverInstanceTargets, requestInstanceTarget } from "./instance-targets";
 import { handleInstanceRequest, type InstanceRequest } from "./sys/instance";
 import { testPeer } from "../test-support/peers";
@@ -25,7 +25,7 @@ function context(service: Partial<InstallationInstances>, processId?: string) {
     installationId: "trusted-installation", env: { INSTANCES: { getInstallation } },
     peer: testPeer({ account: { uid: processId ? 2000 : 1000, username: processId ? "crew" : "owner", gids: [] }, calls: ["*"] }),
     processId, procs: { getOwnerUid: () => 1000 }, auth: { getPasswdByUid: () => ({ username: "owner" }) },
-    targets: { canAccess: () => false, get: () => null },
+    targets: { canAccess: () => false, get: () => null, listForUser: () => [] },
     adapters: { identityLinks: { list: () => [] } },
     ledger,
     defer: (promise: Promise<unknown>) => { deferred.push(promise); },
@@ -56,6 +56,22 @@ describe("instance gateway boundary", () => {
       description: expect.stringContaining(kind === "linux" ? "Linux computer" : "browser"),
       route: { kind: "instance", instanceId: instance.instanceId },
     }] });
+  });
+
+  it("lists a finished instance only to an exact lookup", async () => {
+    const live: CloudInstance = { ...browserInstance, expiresAt: Date.now() + 60000 };
+    const finished: CloudInstance = { ...browserInstance, instanceId: "finished", targetId: "cloud:finished", state: "stopped", stoppedAt: 1 };
+    const list = vi.fn<InstallationInstances["list"]>(async (_actor, args) => ({
+      instances: args?.includeTerminal ? [live, finished] : [live], handoffs: [], usage: {
+        periodStartsAt: 0, periodEndsAt: 1, usedSeconds: 0, reservedSeconds: 60, limitSeconds: 3600, activeInstances: 1, concurrentLimit: 2,
+      },
+    }));
+    const { ctx } = context({ list });
+    const listed = await discoverVisibleTargets(ctx, { includeOffline: true });
+    expect(listed.targets.map(value => value.targetId)).toEqual([live.targetId]);
+    expect(await resolveVisibleTarget(ctx, finished.targetId, { includeOffline: true }))
+      .toMatchObject({ targetId: finished.targetId, online: false, route: { kind: "instance", instanceId: "finished" } });
+    expect(await resolveVisibleTarget(ctx, finished.targetId)).toBeNull();
   });
 
   it("remembers yielded instance sessions and routes polling and cancellation through their saved target", async () => {

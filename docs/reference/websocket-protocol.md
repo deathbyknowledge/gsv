@@ -164,7 +164,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
 {
   "setupMode": true,
   "next": "sys.setup",
-  "setupFeatures": ["language"]
+  "setupFeatures": ["language", "profile"]
 }
 ```
 
@@ -185,8 +185,10 @@ unfinished space receives fresh setup authorization after owner verification.
 Setup-mode and provisioning responses advertise optional setup fields through
 `details.setupFeatures`. Web and Desktop probe `sys.connect` before sending an
 initial `language` in `sys.setup`, and include it only when `"language"` is
-advertised. An older Gateway without this feature still accepts account creation
-with the existing setup fields.
+advertised. `"profile"` appears only on a Gateway with an open-network host; the
+web then asks whether the owner's profile is public and sends `profile`. An older
+Gateway without these features still accepts account creation with the existing
+setup fields.
 
 ---
 
@@ -235,6 +237,30 @@ Password and token are mutually exclusive. A machine token is bound to the exact
 `peer.id` recorded when the token was created. `peer.implements` is an
 advertisement, not authority: the Kernel validates it and independently derives
 the returned grants.
+
+A wrong password answers `401`. Passwords are paced:
+
+- From each client address, an account gets five wrong passwords in a row. The
+  next attempt from that address waits 30 seconds, and each wrong password after
+  a wait doubles it, up to 15 minutes. A right password ends that address's run,
+  and a run is forgotten 15 minutes after its last wrong password or wait. One
+  address waiting never delays a sign-in from another.
+- One account gets 100 wrong passwords an hour across every address. Past that,
+  attempts wait until the hour frees a slot.
+- One client address gets 20 wrong passwords an hour across all of a Ship's
+  accounts, root included.
+
+An IPv4 address counts exactly, and an IPv6 address counts by its /64; an
+IPv4-mapped IPv6 address counts as its IPv4 address. The Kernel keeps an
+address only as a hash keyed to that Ship.
+
+While any of these applies, the password isn't checked: the attempt answers `429`
+with the same message whether or not it was right, such as "Too many sign-in
+attempts. Try again in 1 minute.", and `details.retryAfterMs`. Tokens and
+connections already signed in aren't affected. Git over HTTP is paced the same
+way: a password it refuses for a wait answers `429` with `Retry-After`, and a
+token is checked before any password, so using one never counts as a wrong
+password.
 
 ### Response
 
@@ -582,6 +608,13 @@ holds credit but sends nothing for the idle period (120 s by default) and
 answers with `CANCEL | END`; a sender waiting for credit that receives none
 within the same period fails its own stream with `ERROR | END`. A sender that
 exceeds its window is a protocol violation and is cancelled by the receiver.
+
+These idle rules, not a request deadline, bound an upload while it streams. A
+request's deadline covers waiting for its answer, so for a request with a body
+it starts once the last byte has been sent: a large file can take as long as it
+needs, provided it keeps moving. The SDK and the gateway both count deadlines
+this way, and the SDK leaves `fs.copy` without a deadline of its own because the
+gateway bounds each transfer that the copy runs.
 
 The window is the only receive-side bound. A receiver must accept any number
 of frames that fit its granted window, however small they are, so

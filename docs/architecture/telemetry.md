@@ -64,7 +64,8 @@ without turning the logical request into a failure.
 
 `inference.metadata.finished` measures configuration lookup separately from
 generation: each participating component emits its own elapsed time and outcome.
-Gateway distinguishes cache hits, misses and deadline expiry; Accounts can also
+Gateway distinguishes cache hits, misses and deadline expiry, and records a
+failed or expired lookup even though the run continues without it; Accounts can also
 report D1 SQL execution time and automatic retry attempts when provided by D1.
 The difference between these timings helps locate waiting between components;
 it does not by itself prove a platform fault. No provider/model names or error
@@ -105,17 +106,46 @@ can leave the seam disabled or attach a consumer for their own backend.
 
 If an Accounts call fails during setup authorization, activation, or recovery,
 Gateway emits `installation.setup.failed` with a diagnostic ID, the stage,
-an allowed error type, and duration. The response includes that ID. The latest
-cause is retained only in the Kernel's private `managed_setup_failure` KV record, bounded to
-8,192 characters for operator inspection; exception text never enters the response or
-telemetry.
+an allowed error type, and duration. When Accounts can't prepare a self-service
+signup, it emits the same event at the `activation` stage and keeps the cause in
+that signup's provisioning record; the person sees the diagnostic ID as the
+reference. A setup step that fails after the request is
+accepted, such as a filesystem write while the home is laid out, emits the same event
+with the `setup` stage and the step's name. Either way, the response includes the
+diagnostic ID. The person can retry a failed step with the same credentials: a step
+before the account is written runs again, and once the account exists the retry
+provisions the personal agent and machine token again and sign-in lays out the home.
+A refused request, such as an invalid username, is answered with its reason and
+records nothing. The latest cause is retained only in the Kernel's private
+`managed_setup_failure` KV record, bounded to 8,192 characters for operator
+inspection; exception text never enters the response or telemetry.
 
-The component allowlist includes Gateway, Accounts, Inference, Search and Mail.
+ripgit answers an error that escapes its Worker or a Repository object with
+`500` and a JSON body that names the failure kind, a fresh diagnostic ID and the
+cause, bounded to 1,024 bytes. It logs the whole cause as an error, and the same
+ID on the line after it, so a consumer's error fingerprint groups failures with
+the same cause. When telemetry is enabled, it also emits `ripgit.request.failed` with the ID, a closed
+route class such as `apply` or `git-upload-pack`, the kind and the duration. The
+record never includes the cause, a path or a repository name. Each failure is
+reported once, where it happened: the Worker passes on a Repository object's
+answer instead of reporting it again. Requests that carry no installation, such
+as the operator's deletion and discovery calls, record nothing until they reach
+the installation's repository index. The Gateway's ripgit client keeps the
+cause, kind and ID in the error it raises, so a setup step that fails in ripgit
+leaves all three in `managed_setup_failure`. Anything that leaves the
+installation gets only the kind and ID: the public `/git/` proxy answers any
+`5xx` with `Repository request failed (<kind> error, reference <id>)`, or
+without the parentheses when ripgit did not diagnose it, and deletion errors
+add them after the status.
+
+The component allowlist includes Gateway, Accounts, Inference, Search, Mail and
+ripgit.
 Event ownership is validated as well as the producing Worker: a mail producer
 cannot emit an inference or activation event. The deployment must wire both the
 producer switch and tail consumer; schema support alone does not export anything.
 
-`GsvRuntime` attaches an enabled tail consumer to Gateway and ripgit.
+`GsvRuntime` attaches an enabled tail consumer to Gateway and ripgit, sets
+`GSV_TELEMETRY_ENABLED` on both and keeps their logs unpersisted.
 `GsvAdapterWorker.tailConsumers` lets operators include adapter platform failures
 without granting those adapters ownership of another component's application events.
 
@@ -149,6 +179,8 @@ without granting those adapters ownership of another component's application eve
   completion, latency, result count and whether the provider confirmed cost.
 - Mail: accepted, duplicate and rejected intake; terminal outbound acceptance,
   failure or unknown delivery; deferred processing; entitlement-refresh health.
+- ripgit: unexpected request failures by route class and failure kind, joined to
+  the caller's error by diagnostic ID.
 
 A provider accepting outgoing mail does not prove recipient delivery. Unknown
 outcomes stay unknown. A successful intake does not mean summarization has

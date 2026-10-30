@@ -859,7 +859,7 @@ main() {
         echo "  Open a new shell, or run now: export PATH=\"\$HOME/.gsv/bin:\$PATH\""
     fi
     echo "  Next: finish setting up your space in your browser."
-    echo "  CLI login: gsv --url wss://your-space.example/ws auth login"
+    echo "  CLI login: gsv login your-space.example"
     echo "  Connect this computer: create an invitation in Fleet, then run gsv pair CODE"
     echo "  Open: gsv desktop"
     if [ "$OS" = "linux" ]; then

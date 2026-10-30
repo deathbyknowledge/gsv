@@ -1,3 +1,4 @@
+import { adapterDisplayName } from "@humansandmachines/gsv/protocol";
 import type {
   AdapterMessageDestination,
   AdapterSurface,
@@ -432,12 +433,6 @@ function adapterSendServiceAvailable(ctx: KernelContext, adapter: string): boole
   const key = `CHANNEL_${adapter.toUpperCase()}`;
   const binding = Object.entries(ctx.env).find(([name]) => name === key)?.[1];
   return bindingSchema.safeParse(binding).success;
-}
-
-function adapterDisplayName(adapter: string): string {
-  if (adapter === "whatsapp") return "WhatsApp";
-  if (adapter === "discord") return "Discord";
-  return adapter.charAt(0).toUpperCase() + adapter.slice(1);
 }
 
 function surfaceLabel(surface: AdapterSurface): string {

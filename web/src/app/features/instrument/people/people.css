@@ -13,8 +13,9 @@
 .people-request-entry:hover { color: var(--accent); }
 .people-request-count { color: var(--accent); }
 .people-list-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px 18px; }
-:is(.people, .chat-person) input:not([type="checkbox"], [type="radio"]), :is(.people, .chat-person) textarea, :is(.people, .chat-person) select { min-width: 0; width: 100%; box-sizing: border-box; border: 1px solid var(--border); background: var(--panel-2); padding: 10px 12px; color: var(--text); font: 16px/1.55 var(--gsv-font-prose); }
-:is(.people, .chat-person) input:focus-visible, :is(.people, .chat-person) textarea:focus-visible, :is(.people, .chat-person) select:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+/* Native fields only; design system fields (gsv-*) style themselves. */
+:is(.people, .chat-person) input:not([type="checkbox"], [type="radio"]):not(:where([class*="gsv-"])), :is(.people, .chat-person) textarea:not(:where([class*="gsv-"])), :is(.people, .chat-person) select:not(:where([class*="gsv-"])) { min-width: 0; width: 100%; box-sizing: border-box; border: 1px solid var(--border); background: var(--panel-2); padding: 10px 12px; color: var(--text); font: 16px/1.55 var(--gsv-font-prose); }
+:is(.people, .chat-person) input:not(:where([class*="gsv-"])):focus-visible, :is(.people, .chat-person) textarea:not(:where([class*="gsv-"])):focus-visible, :is(.people, .chat-person) select:not(:where([class*="gsv-"])):focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .people input.people-filter { border: 0; background: transparent; padding: 4px 0; font-size: 15px; }
 .people-rows { list-style: none; padding: 0; margin: 0; }
 .people .people-row { width: 100%; min-height: 88px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: center; column-gap: 12px; row-gap: 6px; padding: 20px 24px; text-align: left; border-left: 2px solid transparent; }
@@ -80,12 +81,14 @@
 .people-form .people-note { margin: -5px 0 4px; }
 .people-handling-choice { display: grid; gap: 14px; min-width: 0; width: 100%; margin: 18px 0; padding: 16px 0; border: 0; border-block: 1px solid var(--border); }
 .people-handling-choice legend { padding: 0 8px 0 0; color: var(--label); font: 11px/1.6 var(--gsv-font-mono); }
-.people-handling-choice label { display: flex; align-items: flex-start; gap: 12px; width: auto; color: var(--text); font: 16px/1.5 var(--gsv-font-prose); cursor: pointer; }
-.people-handling-choice input { flex: 0 0 auto; width: 15px; height: 15px; margin: 5px 0 0; accent-color: var(--accent); }
+.people-handling-choice label, .people-report-option { display: flex; align-items: flex-start; gap: 12px; width: auto; color: var(--text); font: 16px/1.5 var(--gsv-font-prose); cursor: pointer; }
+.people-handling-choice input, .people-report-option input { flex: 0 0 auto; width: 15px; height: 15px; margin: 5px 0 0; accent-color: var(--accent); }
 .people-handling-choice input:checked + span { color: var(--accent); }
-.people-handling-choice small { display: block; margin-top: 3px; color: var(--text-dim); font-size: 13px; }
+.people-handling-choice small, .people-report-option small { display: block; margin-top: 3px; color: var(--text-dim); font-size: 13px; }
 .people-handling-choice .people-note { margin: 2px 0 0; }
 .people-handling-choice:disabled { opacity: .5; }
+.people-report-option { margin-bottom: 14px; }
+.people-report-option:has(input:disabled) { opacity: .5; }
 .people-form textarea { resize: vertical; min-height: 140px; max-height: 50vh; }
 .people-recipient-list { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow-y: auto; }
 :is(.people, .chat-person) .people-recipient { display: flex; flex-direction: column; gap: 6px; width: 100%; min-height: 64px; padding: 12px 0; text-align: left; color: var(--text); font: 16px/1.5 var(--gsv-font-prose); }
@@ -143,8 +146,7 @@
   .people-list-footer .people-list-more > summary::-webkit-details-marker { display: none; }
   .people-list-footer .people-list-more > summary::before { content: "▸"; margin-right: 6px; text-decoration: none; }
   .people-list-footer .people-list-more[open] > summary::before { content: "▾"; }
-  .people-list-footer .people-self > small { font-size: 11px; line-height: 1.5; }
-  .people-self > span { display: none; }
+  .people-list-footer .people-self > span { font-size: 14px; }
   .people .people-back { display: block; }
   .people-compose h1, .people-request h1 { font-size: 27px; }
 }
@@ -256,12 +258,57 @@
 .people .people-self { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; border-top: 1px solid var(--border); padding: 14px 0 0; text-align: left; }
 .people-self > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-title); font: 500 16px/1.4 var(--gsv-font-prose); }
 .people-self > small { flex-shrink: 0; color: var(--text-dim); font: 10px/1.5 var(--gsv-font-mono); }
+.people-self > small.is-takedown { color: var(--error); text-transform: uppercase; }
 .people-self:hover > span, .people-self[aria-current="page"] > span { color: var(--accent); }
 .people-profile-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .people-own-profile { width: min(100%, 840px); box-sizing: border-box; margin-inline: auto; padding: 0 var(--people-gutter) 44px; }
 .people-own-profile h1 { margin: 0 0 12px; color: var(--text-title); font: 500 26px/1.2 var(--gsv-font-prose); }
 .people-own-profile h2 { color: var(--text-title); font: 500 24px/1.3 var(--gsv-font-prose); }
-.people-form .people-profile-representation { display: flex; align-items: center; gap: 12px; font: 15px/1.5 var(--gsv-font-prose); cursor: pointer; }
-.people-profile-representation input { flex-shrink: 0; width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
-.people-profile-address { color: var(--text-dim); font-size: 11px; overflow-wrap: anywhere; }
+.people-profile-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.people-profile-title .gsv-infotip { margin-inline-start: 0; }
+.people-profile-handle { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
+.people-profile-handle h2 { margin: 0; overflow-wrap: anywhere; }
+.people-conversation-header > .people-profile-edit { margin-inline-start: auto; }
+.people-profile-complete { display: inline-flex; vertical-align: baseline; margin-inline-start: 4px; }
+.people-profile-preview > p.people-profile-about.is-empty { color: var(--text-dim); }
+.people-profile-preview > p.people-profile-policy { color: var(--text-dim); font: 14px/1.6 var(--gsv-font-prose); }
 .people-own-profile a { overflow-wrap: anywhere; }
+/* The profile form keeps the design system fields but reads like the rest of People: prose type at the old field sizes. */
+.people .people-own-profile :is(.gsv-ta-box, .gsv-sel-val, .gsv-sel-row-copy, .gsv-cb-label, .gsv-cb-desc) { font-family: var(--gsv-font-prose); letter-spacing: normal; }
+.people .people-own-profile :is(.gsv-ta-box, .gsv-sel-val, .gsv-sel-row-copy) { font-size: 16px; line-height: 1.55; }
+.people .people-own-profile .gsv-ta-box { padding: 10px 12px; }
+.people .people-own-profile .gsv-sel-trig { padding: 10px 12px; }
+.people .people-own-profile .gsv-sel-val > small, .people .people-own-profile .gsv-sel-row-copy > small { font-size: 13px; }
+.people .people-own-profile .gsv-cb-label { font-size: 15px; line-height: 1.5; }
+.people .people-own-profile .gsv-cb-desc { font-size: 14px; line-height: 1.6; }
+.people .people-own-profile :is(.gsv-ta-box, .gsv-sel-val) { color: var(--text); }
+.people .people-own-profile :is(.gsv-ta-label, .gsv-fld-lab-t) { color: var(--label); font: 11px/1.5 var(--gsv-font-mono); letter-spacing: normal; text-transform: none; }
+/* Buttons, text actions and labels keep their design system colours but the type and spacing People used before. */
+.people .people-profile :is(.gsv-btn-primary, .gsv-btn-secondary) { padding: 9px 14px; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; }
+.people .people-profile :is(.gsv-btn-link, .gsv-btn-dghost) { min-height: 36px; padding: 5px 0; border: 0; background: none; box-shadow: none; font: 11px/1.5 var(--gsv-font-mono); letter-spacing: normal; text-transform: none; }
+.people .people-profile .gsv-btn-link svg { display: none; }
+.people .people-profile .gsv-btn-link.is-tone-neutral { color: var(--text-dim); }
+.people .people-profile .gsv-btn-dghost { color: var(--error); }
+.people .people-profile :is(.people-profile-edit, .people-profile-complete) .gsv-btn-link { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.people .people-profile .people-profile-complete .gsv-btn-link { font: 14px/1.6 var(--gsv-font-prose); }
+/* Tag sets its type inline; this page shows it at the label size it had before. */
+.people .people-profile-tag > span > span { padding: 2px 8px !important; font-size: 11px !important; letter-spacing: normal !important; }
+/* The People form lays out its own labels as stacked grids; the checkbox keeps its box beside the text, with its help text below like before. */
+.people .people-own-profile .people-form label.gsv-cb { display: inline-flex; width: auto; gap: 12px; color: inherit; font-size: inherit; }
+.people .people-own-profile .gsv-cb-fld { display: flex; flex-direction: column; gap: 4px; }
+.people .people-own-profile .gsv-cb-fld > .gsv-cb-desc { order: 1; margin: 0; }
+.people .people-own-profile :is(.gsv-cb-desc, .gsv-ta-desc, .gsv-fld-desc) { max-width: none; }
+.people :is(.gsv-ta-box, .gsv-ti-wrap) { box-sizing: border-box; }
+/* Text actions hover like People's other actions: the label must not clip the underline. */
+.people .people-profile :is(.gsv-btn-link, .gsv-btn-dghost) .gsv-btn-label { overflow: visible; }
+.people .people-profile :is(.gsv-btn-link, .gsv-btn-dghost):not(.is-disabled):is(:hover, :focus-visible) { text-decoration: underline; text-underline-offset: 4px; }
+.people .people-profile .gsv-btn-link.is-tone-neutral:not(.is-disabled):is(:hover, :focus-visible) { color: var(--accent); }
+.people .people-profile :is(.people-profile-edit, .people-profile-complete) .gsv-btn-link:not(.is-disabled):is(:hover, :focus-visible) { color: var(--accent-bright); }
+.people .people-profile .gsv-btn-dghost:not(.is-disabled):is(:hover, :focus-visible) { color: color-mix(in srgb, var(--error) 75%, var(--text-hi)); }
+/* Reserve the note's line so hovering the save buttons does not shift the page. */
+.people .people-profile .people-profile-save-note { min-height: 1.6em; margin: 0; }
+.people .people-own-profile .gsv-ta-box::placeholder { font: inherit; letter-spacing: normal; }
+/* The profile's back arrow is a 32px icon button; its narrow-layout column fits it. */
+@container instrument (max-width: 720px) { .people-profile > .people-conversation-header { grid-template-columns: 32px minmax(0, 1fr) auto; } .people-profile .people-conversation-back { align-self: center; } }
+/* Narrow screens: smaller select text so the longest option fits on one line. */
+@container instrument (max-width: 720px) { .people .people-own-profile :is(.gsv-sel-val, .gsv-sel-row-copy) { font-size: 14px; } }

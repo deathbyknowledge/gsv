@@ -1,84 +1,206 @@
-import type { ProfileFields, ProfileState, PublicProfile } from "@humansandmachines/gsv/protocol";
-import { profileFieldsSchema, publicProfileSchema } from "@humansandmachines/gsv/protocol";
+import type { ProfileAvatar, ProfileFields, ProfileState, ShipProfileRecord } from "@humansandmachines/gsv/protocol";
+import { PROFILE_AVATAR_MIME_TYPES, profileContactPolicy, profileFieldsSchema, shipProfileRecordSchema } from "@humansandmachines/gsv/protocol";
+import { z } from "zod/mini";
+import type { BlueskyProfileRecord } from "./bluesky-profile";
 
 type ProfileRow = {
   owner_uid: number;
-  subject_id: string;
   revision: number;
   draft_json: string;
-  published_alias: string | null;
+  draft_avatar_cid: string | null;
   published_revision: number | null;
   published_json: string | null;
+  published_cid: string | null;
+  mirror_json: string | null;
 };
-export type PublicProfileProjection = { ownerUid: number; revision: number; profile: PublicProfile };
-export type PublicProfileLocator = { space: true } | { alias: string } | { subjectId: string };
+type AvatarRow = { cid: string; mime_type: string; size: number };
+
+/** A profile picture with its bytes. */
+export type ProfileAvatarFile = ProfileAvatar & { bytes: Uint8Array };
+/** The saved draft at one revision: what a publish writes. */
+export type ProfileDraft = { revision: number; fields: ProfileFields; avatar: ProfileAvatar | null };
+/** A record and the draft revision it holds. */
+export type ProfilePublication = { revision: number; record: ShipProfileRecord };
+/** A record the Ship's repository holds, named by its CID. */
+export type PublishedProfileRecord = { cid: string; record: ShipProfileRecord };
+/** The space's published profile: the record its repository holds. */
+export type PublishedProfile = ProfilePublication & PublishedProfileRecord & { ownerUid: number };
+
+const avatarMimeTypeSchema = z.enum(PROFILE_AVATAR_MIME_TYPES);
 
 export class ProfileStore {
   private readonly sql: SqlStorage;
+  /** The last publication asked for; each waits for the one before it. */
+  private publications: Promise<void> = Promise.resolve();
   constructor(private readonly storage: DurableObjectStorage) { this.sql = storage.sql; }
 
-  get(ownerUid: number, origin: string): ProfileState | null {
+  /** The owner's profile as their editor shows it, with `url` as its address. */
+  get(ownerUid: number, url: string): ProfileState | null {
     const row = this.row(ownerUid);
     if (!row) return null;
-    const state: ProfileState = {
-      revision: row.revision, url: `${origin}/profile`, draft: profileFieldsSchema.parse(JSON.parse(row.draft_json)),
-    };
-    if (row.published_json && row.published_revision) state.published = { url: `${origin}/profile`, revision: row.published_revision };
+    const state: ProfileState = { revision: row.revision, url, draft: draftFields(row) };
+    const avatar = row.draft_avatar_cid ? this.avatarMetadata(row.draft_avatar_cid) : null;
+    if (avatar) state.avatar = avatar;
+    const published = publishedOf(row);
+    if (published) {
+      state.published = { url, cid: published.cid, contactPolicy: profileContactPolicy(published.record.contactPolicy), revision: published.revision };
+    }
     return state;
   }
 
-  update(ownerUid: number, subjectId: string, expectedRevision: number, draft: ProfileFields): void {
-    this.storage.transactionSync(() => {
-      const existing = this.row(ownerUid);
-      if ((existing?.revision ?? 0) !== expectedRevision) throw new Error("Profile changed; reload before saving");
-      if (!existing && this.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM social_profiles").one().count > 0) throw new Error("A Ship has one public profile");
-      if (existing && existing.subject_id !== subjectId) throw new Error("Profile identity changed");
-      this.sql.exec(`INSERT INTO social_profiles (owner_uid, subject_id, revision, draft_json) VALUES (?, ?, 1, ?)
-        ON CONFLICT(owner_uid) DO UPDATE SET revision = revision + 1, draft_json = excluded.draft_json`, ownerUid, subjectId, JSON.stringify(draft));
-    });
-  }
-
-  publish(ownerUid: number, expectedRevision: number, profile: PublicProfile): void {
-    this.storage.transactionSync(() => {
-      const row = this.requireRevision(ownerUid, expectedRevision);
-      if (profile.actor.subjectId !== row.subject_id || profile.revision !== expectedRevision) throw new Error("Profile publication identity changed");
-      if (row.published_revision === expectedRevision) return;
-      this.sql.exec(`UPDATE social_profiles SET published_alias = COALESCE(?, published_alias), published_revision = ?, published_json = ? WHERE owner_uid = ?`,
-        profile.version === 2 ? profile.alias : null, expectedRevision, JSON.stringify(profile), ownerUid);
-    });
-  }
-
-  unpublish(ownerUid: number, expectedRevision: number): void {
-    this.storage.transactionSync(() => {
-      this.requireRevision(ownerUid, expectedRevision);
-      this.sql.exec(`UPDATE social_profiles SET revision = revision + 1,
-        published_revision = NULL, published_json = NULL WHERE owner_uid = ?`, ownerUid);
-    });
-  }
-
-  published(locator: PublicProfileLocator): PublicProfileProjection | null {
-    const row = "space" in locator
-      ? this.sql.exec<ProfileRow>("SELECT * FROM social_profiles").toArray()[0]
-      : "alias" in locator
-      ? this.sql.exec<ProfileRow>("SELECT * FROM social_profiles WHERE published_alias = ?", locator.alias).toArray()[0]
-      : this.sql.exec<ProfileRow>("SELECT * FROM social_profiles WHERE subject_id = ?", locator.subjectId).toArray()[0];
-    return row?.published_json && row.published_revision
-      ? { ownerUid: row.owner_uid, revision: row.published_revision,
-        profile: publicProfileSchema.parse(JSON.parse(row.published_json)) } : null;
-  }
-
-  upgradePublication(ownerUid: number, signature: string, profile: PublicProfile): void {
-    this.sql.exec("UPDATE social_profiles SET published_json = ? WHERE owner_uid = ? AND json_extract(published_json, '$.signature') = ?",
-      JSON.stringify(profile), ownerUid, signature);
-  }
-
-  private requireRevision(ownerUid: number, revision: number): ProfileRow {
+  draft(ownerUid: number): ProfileDraft | null {
     const row = this.row(ownerUid);
-    if (!row || row.revision !== revision) throw new Error("Profile changed; reload before publishing");
-    return row;
+    if (!row) return null;
+    return { revision: row.revision, fields: draftFields(row), avatar: row.draft_avatar_cid ? this.avatarMetadata(row.draft_avatar_cid) : null };
+  }
+
+  update(ownerUid: number, expectedRevision: number, draft: ProfileFields): void {
+    this.storage.transactionSync(() => {
+      this.requireEditable(ownerUid, expectedRevision);
+      this.sql.exec(`INSERT INTO social_profiles (owner_uid, revision, draft_json) VALUES (?, 1, ?)
+        ON CONFLICT(owner_uid) DO UPDATE SET revision = revision + 1, draft_json = excluded.draft_json`, ownerUid, JSON.stringify(draft));
+    });
+  }
+
+  /** Replaces or removes the draft's picture; a profile saved for the first time starts from `initial`. */
+  setAvatar(ownerUid: number, expectedRevision: number, avatar: ProfileAvatarFile | null, initial: ProfileFields): void {
+    this.storage.transactionSync(() => {
+      const existing = this.requireEditable(ownerUid, expectedRevision);
+      if (avatar) this.keepAvatar(avatar);
+      if (existing) {
+        this.sql.exec("UPDATE social_profiles SET revision = revision + 1, draft_avatar_cid = ? WHERE owner_uid = ?", avatar?.cid ?? null, ownerUid);
+      } else {
+        this.sql.exec("INSERT INTO social_profiles (owner_uid, revision, draft_json, draft_avatar_cid) VALUES (?, 1, ?, ?)",
+          ownerUid, JSON.stringify(initial), avatar?.cid ?? null);
+      }
+      this.releaseAvatars();
+    });
+  }
+
+  /**
+   * Records the record the Ship's repository now holds for `revision`, whatever the draft became meanwhile.
+   * `mirror` is Bluesky's copy the repository holds beside it, or null for none.
+   */
+  publish(ownerUid: number, revision: number, cid: string, record: ShipProfileRecord, avatar: ProfileAvatarFile | null, mirror: BlueskyProfileRecord | null): void {
+    this.storage.transactionSync(() => {
+      // The draft may have dropped the record's picture while the repository wrote it.
+      if (avatar) this.keepAvatar(avatar);
+      this.sql.exec("UPDATE social_profiles SET published_revision = ?, published_json = ?, published_cid = ?, mirror_json = ? WHERE owner_uid = ?",
+        revision, JSON.stringify(record), cid, mirrorJson(mirror), ownerUid);
+      this.releaseAvatars();
+    });
+  }
+
+  /** The profile is private once its record is gone from the repository, whatever the draft became meanwhile. */
+  unpublish(ownerUid: number): void {
+    this.storage.transactionSync(() => {
+      this.sql.exec(`UPDATE social_profiles SET revision = revision + 1,
+        published_revision = NULL, published_json = NULL, published_cid = NULL, mirror_json = NULL WHERE owner_uid = ?`, ownerUid);
+      this.releaseAvatars();
+    });
+  }
+
+  /** The owner's record in the Ship's repository and its CID, or null while the profile is private. */
+  published(ownerUid: number): PublishedProfileRecord | null {
+    const row = this.row(ownerUid);
+    const published = row ? publishedOf(row) : null;
+    return published ? { cid: published.cid, record: published.record } : null;
+  }
+
+  /** Whether the repository holds exactly `mirror` as Bluesky's copy of the published profile, or nothing for null. */
+  holdsMirror(ownerUid: number, mirror: BlueskyProfileRecord | null): boolean {
+    return (this.row(ownerUid)?.mirror_json ?? null) === mirrorJson(mirror);
+  }
+
+  /** Records Bluesky's copy the repository now holds beside the published record, or null once it holds none. */
+  setMirror(ownerUid: number, mirror: BlueskyProfileRecord | null): void {
+    this.sql.exec("UPDATE social_profiles SET mirror_json = ? WHERE owner_uid = ?", mirrorJson(mirror), ownerUid);
+  }
+
+  /** The space's one published profile, for its public page. */
+  page(): PublishedProfile | null {
+    const row = this.sql.exec<ProfileRow>("SELECT * FROM social_profiles").toArray()[0];
+    return row ? publishedOf(row) : null;
+  }
+
+  /** A record published before profiles were records, which the repository doesn't hold yet. */
+  pendingPublication(ownerUid: number): ProfilePublication | null {
+    const row = this.row(ownerUid);
+    if (!row?.published_json || row.published_revision === null || row.published_cid !== null) return null;
+    return { revision: row.published_revision, record: shipProfileRecordSchema.parse(JSON.parse(row.published_json)) };
+  }
+
+  /** A picture the owner's draft or published record shows. */
+  ownAvatar(ownerUid: number, cid: string): ProfileAvatarFile | null {
+    const row = this.row(ownerUid);
+    const published = row ? publishedOf(row) : null;
+    const shown = row?.draft_avatar_cid === cid || published?.record.avatar?.ref.$link === cid;
+    return shown ? this.avatar(cid) : null;
+  }
+
+  avatar(cid: string): ProfileAvatarFile | null {
+    const row = this.sql.exec<AvatarRow & { bytes: ArrayBuffer }>(
+      "SELECT cid, mime_type, length(bytes) AS size, bytes FROM social_profile_avatars WHERE cid = ?", cid).toArray()[0];
+    return row ? { cid: row.cid, mimeType: avatarMimeTypeSchema.parse(row.mime_type), size: row.size, bytes: new Uint8Array(row.bytes) } : null;
+  }
+
+  /** Runs one publication at a time, in the order asked, so the repository and this store agree on the last one. */
+  async exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.publications;
+    let release!: () => void;
+    this.publications = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private avatarMetadata(cid: string): ProfileAvatar | null {
+    const row = this.sql.exec<AvatarRow>("SELECT cid, mime_type, length(bytes) AS size FROM social_profile_avatars WHERE cid = ?", cid).toArray()[0];
+    return row ? { cid: row.cid, mimeType: avatarMimeTypeSchema.parse(row.mime_type), size: row.size } : null;
+  }
+
+  private keepAvatar(avatar: ProfileAvatarFile): void {
+    this.sql.exec("INSERT OR IGNORE INTO social_profile_avatars (cid, mime_type, bytes) VALUES (?, ?, ?)",
+      avatar.cid, avatar.mimeType, avatar.bytes.slice().buffer);
+  }
+
+  /** Keeps only the pictures a draft or a published record shows. */
+  private releaseAvatars(): void {
+    this.sql.exec(`DELETE FROM social_profile_avatars WHERE cid NOT IN (
+      SELECT draft_avatar_cid FROM social_profiles WHERE draft_avatar_cid IS NOT NULL
+      UNION SELECT json_extract(published_json, '$.avatar.ref."$link"') FROM social_profiles
+        WHERE json_extract(published_json, '$.avatar.ref."$link"') IS NOT NULL
+    )`);
+  }
+
+  private requireEditable(ownerUid: number, expectedRevision: number): ProfileRow | null {
+    const existing = this.row(ownerUid);
+    if ((existing?.revision ?? 0) !== expectedRevision) throw new Error("Profile changed; reload before saving");
+    if (!existing && this.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM social_profiles").one().count > 0) throw new Error("A Ship has one public profile");
+    return existing;
   }
 
   private row(ownerUid: number): ProfileRow | null {
     return this.sql.exec<ProfileRow>("SELECT * FROM social_profiles WHERE owner_uid = ?", ownerUid).toArray()[0] ?? null;
   }
+}
+
+function draftFields(row: ProfileRow): ProfileFields {
+  return profileFieldsSchema.parse(JSON.parse(row.draft_json));
+}
+
+/** A copy as stored, which a copy made the same way matches exactly. */
+function mirrorJson(mirror: BlueskyProfileRecord | null): string | null {
+  return mirror ? JSON.stringify(mirror) : null;
+}
+
+function publishedOf(row: ProfileRow): PublishedProfile | null {
+  if (!row.published_json || row.published_revision === null || row.published_cid === null) return null;
+  return {
+    ownerUid: row.owner_uid, revision: row.published_revision, cid: row.published_cid,
+    record: shipProfileRecordSchema.parse(JSON.parse(row.published_json)),
+  };
 }

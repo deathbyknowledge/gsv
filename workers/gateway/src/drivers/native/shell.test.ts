@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../../test-support/peers";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
@@ -19,6 +19,7 @@ import {
 import * as inferenceService from "../../inference/execution-client";
 import { ModelMetadataResolver } from "../../inference/model-metadata";
 import * as federationService from "../../kernel/federation";
+import { SEND_TOOL } from "../../process/internal/schemas";
 import type { InferenceExecutor, InferenceMediaRequest } from "@humansandmachines/gsv/services/inference-execution";
 import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
@@ -159,11 +160,9 @@ function makeContact(): FederationContactRecord {
     ownerUid: IDENTITY.uid,
     state: "active",
     generation: "generation:friend",
-    remoteShipId: "ship:friend",
-    remoteSubject: { id: "subject:friend", displayName: "Flynn" },
-    remoteOrigin: "https://flynn.example",
-    remotePublicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" },
-    sharedSecret: "secret",
+    remoteDid: "did:plc:flynnaaaaaaaaaaaaaaaaaaa",
+    remoteName: "Flynn",
+    remoteHandle: "flynn.example",
     conversationId: "conversation:friend",
     threadId: "thread:friend",
     createdAtMs: 1,
@@ -273,6 +272,7 @@ function makeContext(options?: {
   }
   return focusedFixture<KernelContext>({
     broadcastToUserUid: vi.fn(),
+    didDocuments: focusedFixture<KernelContext["didDocuments"]>({ deactivated: vi.fn(() => new Set<string>()) }),
     env: testEnv,
     modelMetadata: new ModelMetadataResolver(testEnv, installationIdentity.installationId),
     installationId: installationIdentity.installationId,
@@ -293,7 +293,7 @@ function makeContext(options?: {
     config: focusedFixture<KernelContext["config"]>({
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.7.4";
+        if (key === "config/server/version") return "0.7.6";
         return configValues.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null;
       },
       getExplicit(key: string) {
@@ -369,7 +369,7 @@ function makeContext(options?: {
     processId: options?.processId === null ? undefined : options?.processId ?? "task:shell",
     processRunId: options?.processRunId,
     requestSignal: options?.requestSignal,
-    serverVersion: "0.7.4",
+    serverVersion: "0.7.6",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
     reconcileResponsibilityWake: options?.reconcileResponsibilityWake,
@@ -591,6 +591,20 @@ function enablePrivateDmHandoff(
 describe("native shell execution", () => {
   it("uses a two-minute default runtime", () => {
     expect(DEFAULT_NATIVE_SHELL_TIMEOUT_MS).toBe(120_000);
+  });
+
+  it("refuses to hold more data than fits beside the Kernel", async () => {
+    const ctx = makeContext();
+    await handleFsWrite({ path: "/tmp/large.txt", content: "a".repeat(20 * 1024 * 1024) }, ctx);
+    await handleFsWrite({ path: "/tmp/small.txt", content: "a".repeat(1024 * 1024) }, ctx);
+
+    const large = await handleShellExec({ input: "cat /tmp/large.txt | tr a b | wc -c" }, ctx);
+    expect(large.exitCode).not.toBe(0);
+    expect(large.stderr).toMatch(/size limit exceeded/);
+
+    const small = await handleShellExec({ input: "cat /tmp/small.txt | tr a b | wc -c" }, ctx);
+    expect(small).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(small.stdout.trim()).toBe(String(1024 * 1024));
   });
 
   it("reports the configured command timeout under just-bash cancellation", async () => {
@@ -1093,6 +1107,34 @@ describe("native shell capability discovery", () => {
     expect(result.stderr).toBe("1+1 records in\n1+1 records out\n5 bytes copied\n");
   });
 
+  it("keeps every byte written through a redirection", async () => {
+    const everyByte = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==";
+    const result = await handleShellExec(
+      {
+        input: [
+          "cd \"$HOME\"",
+          `printf '%s' '${everyByte}' > all.b64`,
+          "base64 -d all.b64 > all.bin",
+          "base64 -d all.b64 >> twice.bin && base64 -d all.b64 >> twice.bin",
+          "cat all.bin > copy.bin",
+          "printf 'é' > accent.txt",
+          "wc -c < all.bin && wc -c < twice.bin && wc -c < copy.bin && wc -c < accent.txt",
+          "sha256sum all.bin twice.bin copy.bin",
+        ].join(" && "),
+      },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    const lines = result.stdout.trim().split("\n").map((line) => line.trim());
+    expect(lines.slice(0, 4)).toEqual(["256", "512", "256", "2"]);
+    expect(lines.slice(4).map((line) => line.split(/\s+/)[0])).toEqual([
+      "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+      "110009dcee21620b166f3abfecb5eff7a873be729d1c2d53822e7acc5f34eb9b",
+      "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+    ]);
+  });
+
   it("truncates the destination unless dd is told conv=notrunc", async () => {
     const result = await handleShellExec(
       {
@@ -1183,6 +1225,37 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("temporary work direct line");
     expect(result.stdout).toContain("Use /ship inside that DM");
     expect(result.stdout).toContain("--attach PATH");
+  });
+
+  it("documents the Send tool as a manual topic without making it a command", async () => {
+    const context = () => makeContext({ capabilities: ["shell.exec"] });
+    const page = await handleShellExec({ input: "man send" }, context());
+
+    expect(page.ok).toBe(true);
+    expect(page.exitCode).toBe(0);
+    expect(page.stdout).toContain("SEND(1)");
+    expect(page.stdout.trimEnd().split("\n").length).toBeLessThanOrEqual(25);
+    for (const parameter of Object.keys(SEND_TOOL.parameters.properties ?? {})) {
+      expect(page.stdout).toMatch(new RegExp(`^  ${parameter}\\b`, "m"));
+    }
+    expect(page.stdout).toContain("message attach");
+    expect(page.stdout).toContain("--to DESTINATION");
+    expect(page.stdout).toContain("--also");
+    expect(page.stdout).toContain("man message");
+
+    expect((await handleShellExec({ input: "man Send" }, context())).stdout).toBe(page.stdout);
+
+    // a page, not a command: the name still does not run
+    const run = await handleShellExec({ input: "send hello" }, context());
+    expect(run.exitCode).toBe(127);
+    expect((await handleShellExec({ input: "which send" }, context())).exitCode).not.toBe(0);
+
+    // discovery lists commands, so searching for sending or attaching leads to `message`, not this page
+    const sending = await handleShellExec({ input: "man --search -- send" }, context());
+    expect(sending.stdout).toContain("command\tmessage\t");
+    expect(sending.stdout).not.toContain("\tsend\t");
+    const attaching = await handleShellExec({ input: "man --search -- 'attach a file'" }, context());
+    expect(attaching.stdout.split("\n")[2]).toContain("command\tmessage\t");
   });
 
   it("keeps transport-only messaging adapters out of the current target inventory", async () => {
@@ -4381,7 +4454,7 @@ describe("native administration shell commands", () => {
       }],
     });
     expect(contacts).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(contacts.stdout).toContain("contact:friend\tactive\tAlice\tship:friend");
+    expect(contacts.stdout).toContain("contact:friend\tactive\tAlice\t@flynn.example");
     expect(help).toMatchObject({ status: "completed", exitCode: 0 });
     expect(help.stdout).toContain("contact invite create");
     expect(list).toHaveBeenCalledWith(IDENTITY.uid, false);
@@ -4487,13 +4560,7 @@ describe("native administration shell commands", () => {
           id: "msg:one",
           conversationId: conversation.id,
           sequence: 1,
-          author: {
-            kind: "contact",
-            contactId: contact.id,
-            shipId: contact.remoteShipId,
-            subjectId: contact.remoteSubject.id,
-            displayName: contact.remoteSubject.displayName,
-          },
+          author: { kind: "contact", contactId: contact.id, displayName: contact.remoteName },
           text: "hello from Flynn",
           origin: { kind: "federation", contactId: contact.id, deliveryId: "delivery:one" },
           createdAt: 1,
@@ -4504,7 +4571,8 @@ describe("native administration shell commands", () => {
     });
     const ctx = makeContext({
       capabilities: ["shell.exec", "contact.list", "conversation.history"],
-      federation: { list: vi.fn(() => [contact]) },
+      // Its Ship was already checked this hour.
+      federation: { list: vi.fn(() => [contact]), getByConversation: vi.fn(() => contact), consumeRateLimits: vi.fn(() => Date.now() + 60_000) },
       procs: {
         get: vi.fn(() => makeProcess({
           processId: "proc:ship",
@@ -5597,6 +5665,192 @@ describe("native administration shell commands", () => {
     }));
   });
 
+  describe("sched add local one-shots", () => {
+    const madridConfig = { [`users/${IDENTITY.uid}/locale/timezone`]: "Europe/Madrid" };
+
+    function makeSchedAddContext() {
+      const create = vi.fn((input) => ({
+        id: "sched-local",
+        ownerUid: input.ownerUid,
+        creator: input.creator,
+        runAs: input.runAs,
+        name: input.name,
+        enabled: input.enabled,
+        expression: input.expression,
+        target: input.target,
+        overlapPolicy: "skip",
+        createdAtMs: input.now,
+        updatedAtMs: input.now,
+        state: {
+          nextRunAtMs: input.expression.kind === "at" ? input.expression.atMs : input.now + 60_000,
+          runningAtMs: null,
+          lastRunAtMs: null,
+          lastStatus: null,
+          lastError: null,
+          lastDurationMs: null,
+          runCount: 0,
+        },
+      }));
+      const ctx = makeContext({
+        capabilities: ["sched.add", "r12y.create"],
+        config: madridConfig,
+        schedules: { create, setWakeScheduleId: vi.fn() },
+        scheduleScheduleWake: vi.fn(async () => "wake-local"),
+      });
+      return { create, ctx };
+    }
+
+    function sched(options: string, ctx: Parameters<typeof handleShellExec>[1]) {
+      return handleShellExec({ input: `sched add --ship --name reminder ${options} --message "Remind me."` }, ctx);
+    }
+
+    beforeEach(() => {
+      vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-20T12:00:00Z"));
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it.each([
+      ["before the change", "2026-10-24T10:00", "2026-10-24T08:00:00Z", "2026-10-24T10:00:00+02:00[Europe/Madrid]"],
+      ["after the change", "2026-10-26T10:00", "2026-10-26T09:00:00Z", "2026-10-26T10:00:00+01:00[Europe/Madrid]"],
+    ])("reads --at without an offset in the owner's timezone %s", async (_label, at, utc, next) => {
+      const { create, ctx } = makeSchedAddContext();
+      const result = await sched(`--at ${at}`, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "at", atMs: Date.parse(utc) },
+      }));
+      expect(result.stdout).toBe(`schedule_id=sched-local next=${next}\n`);
+    });
+
+    it("reads --at in --timezone and reports next in that zone", async () => {
+      const { create, ctx } = makeSchedAddContext();
+      const result = await sched("--at 2026-10-26T10:00 --timezone America/New_York", ctx);
+
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "at", atMs: Date.parse("2026-10-26T14:00:00Z") },
+      }));
+      expect(result.stdout).toContain("next=2026-10-26T10:00:00-04:00[America/New_York]");
+    });
+
+    it("shows the wrong hour when a stale offset is given explicitly", async () => {
+      const { create, ctx } = makeSchedAddContext();
+      const result = await sched("--at 2026-10-26T10:00:00+02:00", ctx);
+
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "at", atMs: Date.parse("2026-10-26T08:00:00Z") },
+      }));
+      expect(result.stdout).toContain("next=2026-10-26T09:00:00+01:00[Europe/Madrid]");
+    });
+
+    it("rejects --timezone combined with an explicit offset", async () => {
+      for (const at of ["2026-10-26T10:00:00+02:00", "2026-10-26T10:00:00Z"]) {
+        const { create, ctx } = makeSchedAddContext();
+        const result = await sched(`--at ${at} --timezone Europe/Madrid`, ctx);
+
+        expect(result.status).toBe("failed");
+        expect(result.stderr).toContain("--timezone cannot be combined with an --at that has Z or a UTC offset");
+        expect(create).not.toHaveBeenCalled();
+      }
+    });
+
+    it("rejects an invalid zone, an invalid local time and a past local time", async () => {
+      const { create, ctx } = makeSchedAddContext();
+
+      const invalidZone = await sched("--at 2026-10-26T10:00 --timezone No/Such_Zone", ctx);
+      expect(invalidZone.status).toBe("failed");
+      expect(invalidZone.stderr).toContain("timezone must be a valid IANA timezone");
+
+      const invalidLocal = await sched("--at 2026-02-30T10:00", ctx);
+      expect(invalidLocal.status).toBe("failed");
+      expect(invalidLocal.stderr).toContain("invalid local time");
+
+      const past = await sched("--at 2026-10-19T10:00", ctx);
+      expect(past.status).toBe("failed");
+      expect(past.stderr).toContain("must be in the future");
+
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("accepts a local time through sched add --json", async () => {
+      const { create, ctx } = makeSchedAddContext();
+      const args = {
+        name: "reminder",
+        expression: { kind: "at", localTime: "2027-03-28T02:30", timezone: "Europe/Madrid" },
+        target: { kind: "responsibility", message: "Remind me." },
+      };
+      const result = await handleShellExec({ input: `sched add --json '${JSON.stringify(args)}'` }, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "at", atMs: Date.parse("2027-03-28T01:00:00Z") },
+      }));
+      expect(result.stdout).toContain("next=2027-03-28T03:00:00+02:00[Europe/Madrid]");
+    });
+
+    it("still reports a committed schedule when the configured zone is unusable", async () => {
+      const create = vi.fn((input) => ({
+        id: "sched-local",
+        expression: input.expression,
+        target: input.target,
+        state: { nextRunAtMs: input.expression.atMs },
+      }));
+      const ctx = makeContext({
+        capabilities: ["sched.add", "r12y.create"],
+        config: { "config/server/timezone": "No/Such_Zone" },
+        schedules: { create, setWakeScheduleId: vi.fn() },
+        scheduleScheduleWake: vi.fn(async () => "wake-local"),
+      });
+      const result = await sched("--at 2026-10-26T09:00:00Z", ctx);
+
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("next=2026-10-26T09:00:00.000Z");
+      expect(create).toHaveBeenCalledTimes(1);
+    });
+
+    it("documents the local form in sched help and the man page", async () => {
+      const { ctx } = makeSchedAddContext();
+      const help = await handleShellExec({ input: "sched help" }, ctx);
+      const man = await handleShellExec({ input: "man sched" }, ctx);
+
+      expect(help.stdout).toContain("--at TIME [--timezone ZONE]");
+      expect(man.stdout).toContain("--at 2026-10-26T10:00");
+      expect(man.stdout).toContain("first valid minute");
+      expect(man.stdout).toContain("first occurrence");
+    });
+
+    it("shows next runs in local time in sched list", async () => {
+      const state = (nextRunAtMs: number) => ({ nextRunAtMs, lastStatus: null, lastError: null });
+      const ctx = makeContext({
+        capabilities: ["sched.list"],
+        config: madridConfig,
+        schedules: {
+          list: vi.fn(() => ({ count: 2, records: [{
+            id: "sched-cron",
+            name: "brief",
+            enabled: true,
+            expression: { kind: "cron", expr: "0 9 * * *", timezone: "Asia/Tokyo" },
+            target: { kind: "responsibility", message: "Brief." },
+            state: state(Date.parse("2026-10-26T00:00:00Z")),
+          }, {
+            id: "sched-at",
+            name: "reminder",
+            enabled: true,
+            expression: { kind: "at", atMs: Date.parse("2026-10-26T09:00:00Z") },
+            target: { kind: "responsibility", message: "Remind me." },
+            state: state(Date.parse("2026-10-26T09:00:00Z")),
+          }] })),
+        },
+      });
+      const result = await handleShellExec({ input: "sched list --all" }, ctx);
+
+      expect(result.stdout).toContain("sched-cron\tyes\t2026-10-26T09:00:00+09:00[Asia/Tokyo]");
+      expect(result.stdout).toContain("sched-at\tyes\t2026-10-26T10:00:00+01:00[Europe/Madrid]");
+    });
+  });
+
   it("rejects sched add --here from a top-level shell", async () => {
     const create = vi.fn();
     const ctx = makeContext({
@@ -5658,11 +5912,11 @@ describe("native administration shell commands", () => {
     expect(ambiguous.status).toBe("failed");
     expect(ambiguous.stderr).toContain("requires exactly one");
     expect(misplacedTimezone.status).toBe("failed");
-    expect(misplacedTimezone.stderr).toContain("--timezone is only valid with --cron");
+    expect(misplacedTimezone.stderr).toContain("--timezone is only valid with --cron or a local --at");
     expect(unknown.status).toBe("failed");
     expect(unknown.stderr).toContain("unexpected argument: --wat");
     expect(timezoneLessAt.status).toBe("failed");
-    expect(timezoneLessAt.stderr).toContain("requires an ISO timestamp with Z or a UTC offset");
+    expect(timezoneLessAt.stderr).toContain("--at requires a local time such as 2026-10-26T10:00");
     expect(pastAt.status).toBe("failed");
     expect(pastAt.stderr).toContain("schedule atMs must be in the future");
     expect(create).not.toHaveBeenCalled();

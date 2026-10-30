@@ -74,12 +74,44 @@ export const inferenceFailureStageSchema = z.enum([
   "lifecycle",
 ]);
 
+/** The setup steps a Ship runs after its setup request is accepted. */
+export const installationSetupStepSchema = z.enum([
+  "bootstrap-system",
+  "write-auth-state",
+  "write-system-config",
+  "write-ai-config",
+  "issue-machine-token",
+  "ensure-home-layout",
+  "provision-personal-agent",
+]);
+
+/** The layer that reported an unexpected ripgit failure. The cause stays with ripgit's caller. */
+export const ripgitFailureKindSchema = z.enum(["runtime", "repository", "json", "encoding", "binding", "other"]);
+
+/** The ripgit operation that failed, without the repository it addressed. */
+export const ripgitRouteSchema = z.enum([
+  "apply",
+  "import",
+  "hyperspace-read",
+  "read",
+  "git-info-refs",
+  "git-upload-pack",
+  "git-receive-pack",
+  "admin",
+  "delete",
+  "registration",
+  "lifecycle",
+  "discovery",
+  "other",
+]);
+
 export const telemetryComponentSchema = z.enum([
   "gateway",
   "accounts",
   "inference",
   "search",
   "mail",
+  "ripgit",
 ]);
 
 const processRunFinishedSchema = z.strictObject({
@@ -121,7 +153,6 @@ const adapterIngressFinishedSchema = z.strictObject({
     outcome: z.enum([
       "delivered",
       "dropped",
-      "challenge",
       "handled",
       "replayed",
       "error",
@@ -328,8 +359,19 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
     properties: z.strictObject({
       diagnosticId: z.string().check(z.uuid()),
       outcome: z.literal("failed"),
-      stage: z.enum(["authorization", "recovery", "activation"]),
+      stage: z.enum(["authorization", "recovery", "activation", "setup"]),
+      step: z.optional(installationSetupStepSchema),
       errorType: telemetryErrorTypeSchema,
+      durationMs: nonNegativeIntegerSchema,
+    }),
+  }),
+  z.strictObject({
+    stream: z.literal("operational"), name: z.literal("ripgit.request.failed"),
+    properties: z.strictObject({
+      diagnosticId: z.string().check(z.uuid()),
+      outcome: z.literal("failed"),
+      route: ripgitRouteSchema,
+      kind: ripgitFailureKindSchema,
       durationMs: nonNegativeIntegerSchema,
     }),
   }),
@@ -429,7 +471,8 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
 export type TelemetryEventOwnership = Record<z.infer<typeof telemetryEventSchema>["name"], readonly z.infer<typeof telemetryComponentSchema>[]>;
 export const telemetryEventComponents = {
   "memory.review.admission.failed": ["gateway"],
-  "installation.setup.failed": ["gateway"],
+  "installation.setup.failed": ["gateway", "accounts"],
+  "ripgit.request.failed": ["ripgit"],
   "inference.client.finished": ["gateway", "inference"],
   "inference.metadata.finished": ["gateway", "inference", "accounts"],
   "entitlements.refresh.finished": ["inference", "search", "mail"],
@@ -465,6 +508,7 @@ export const telemetryRecordSchema = z.strictObject({
 }).check(z.refine((record) => telemetryEventComponents[record.event.name].some((component) => component === record.component)));
 
 export type TelemetryComponent = z.infer<typeof telemetryComponentSchema>;
+export type InstallationSetupStep = z.infer<typeof installationSetupStepSchema>;
 export type TelemetryEvent = z.infer<typeof telemetryEventSchema>;
 export type TelemetryRecord = z.infer<typeof telemetryRecordSchema>;
 export type InferenceWorkload = z.infer<typeof inferenceWorkloadSchema>;

@@ -23,6 +23,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const [setupPasswordConfirm, setSetupPasswordConfirm] = useState("");
   const [setupConsent, setSetupConsent] = useState(false);
   const [setupConsentTouched, setSetupConsentTouched] = useState(false);
+  const [setupProfilePublic, setSetupProfilePublic] = useState(false);
   const [setupStep, setSetupStep] = useState<"credentials" | "consent">("credentials");
   const setupSubmitPressed = useRef(false);
   const setupHasConsentEntry = useRef(false);
@@ -30,6 +31,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
   const setupErrors = validateSetupAccount({ password: setupPassword, passwordConfirm: setupPasswordConfirm });
   // Self-signup agreed to the terms before arriving; operator-created spaces still confirm them here.
   const setupConsentRequired = snapshot.setupConsentRequired !== false;
+  // A Ship that can publish a profile asks whether it may; left unticked, it stays private.
+  const setupProfileChoice = snapshot.setupProfileChoice === true;
   const screenRef = useRef<HTMLElement>(null);
   const busy = snapshot.phase === "authenticating";
   const visibleView = snapshot.phase === "ready" ? "ready"
@@ -140,6 +143,7 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       setSetupPasswordConfirm("");
       setSetupTouched({});
       setSetupConsent(false);
+      setSetupProfilePublic(false);
       setSetupConsentTouched(false);
       setSetupStep("credentials");
     }
@@ -183,7 +187,8 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
     setLoginValidationError(null);
     setPendingAction("setup");
     void session.setup({ ...account, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-      language: navigator.languages?.[0] || navigator.language || undefined }).catch(() => {
+      language: navigator.languages?.[0] || navigator.language || undefined,
+      ...(setupProfileChoice ? { profile: setupProfilePublic ? "public" : "private" } : undefined) }).catch(() => {
       // Error is reflected through session snapshot.
     });
   };
@@ -215,6 +220,9 @@ export function useSessionScreensState({ session, snapshot }: UseSessionScreensS
       passwordConfirm: setupPasswordConfirm,
       consent: setupConsent,
       consentError: setupConsentTouched && !setupConsent ? t("session.consent.required") : null,
+      profileChoice: setupProfileChoice,
+      profilePublic: setupProfilePublic,
+      onProfilePublic: setSetupProfilePublic,
       onPassword: setSetupPassword,
       onPasswordConfirm: setSetupPasswordConfirm,
       onConsent: (checked: boolean) => { setSetupConsent(checked); setSetupConsentTouched(true); },

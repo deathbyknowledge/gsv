@@ -12,11 +12,13 @@ import {
   type SysSetupArgs,
   type SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
+import type { InstallationSetupStep } from "@humansandmachines/gsv/telemetry";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { gsvInferenceFeaturesFromEnv } from "../../inference/features";
 import { ensurePersonalController } from "../personal-controller";
 import { normalizeLanguage } from "../language";
+import { recordSetupProfileChoice } from "../profiles";
 import { getConversationById } from "../../shared/utils";
 import {
   aiModelApiKeyConfigKey,
@@ -26,9 +28,17 @@ import {
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
 type SetupTiming = {
-  label: string;
+  label: InstallationSetupStep;
   ms: number;
 };
+
+/** A setup step that failed after the setup request was accepted. A refused request throws a plain error. */
+export class SetupStepError extends Error {
+  constructor(readonly step: InstallationSetupStep, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "SetupStepError";
+  }
+}
 
 type SetupIdentity = {
   username: string;
@@ -54,14 +64,22 @@ async function ensurePersonalConversation(
   });
 }
 
+async function runSetupStep<T>(step: InstallationSetupStep, run: () => T | Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    throw new SetupStepError(step, error);
+  }
+}
+
 async function timeSetupStep<T>(
   timings: SetupTiming[],
-  label: string,
+  label: InstallationSetupStep,
   run: () => T | Promise<T>,
 ): Promise<T> {
   const startedAt = Date.now();
   try {
-    return await run();
+    return await runSetupStep(label, run);
   } finally {
     timings.push({ label, ms: Date.now() - startedAt });
   }
@@ -273,6 +291,9 @@ export async function handleSysSetup(
   const aiModels = setupAiModelStack(ai);
   const timezone = parseTimezone(args);
   const language = args.language === undefined ? undefined : normalizeLanguage(args.language);
+  if (args.profile !== undefined && args.profile !== "public" && args.profile !== "private") {
+    throw new Error("profile must be public or private");
+  }
   const machine = parseMachineConfig(args);
   const rootPassword = readOptionalString(args.rootPassword);
   if (rootPassword && rootPassword.length < 8) {
@@ -364,6 +385,7 @@ export async function handleSysSetup(
         config.set("config/server/timezone", timezone);
       }
       if (language !== undefined) config.set(`users/${uid}/locale/language`, language);
+      if (args.profile !== undefined) recordSetupProfileChoice(uid, args.profile, ctx);
     });
 
     await timeSetupStep(timings, "write-ai-config", () => {
@@ -454,6 +476,7 @@ export async function handleSysSetup(
 export async function recoverCompletedSysSetup(
   args: SysSetupArgs,
   ctx: KernelContext,
+  source = ctx.connection?.state.source ?? null,
 ): Promise<SysSetupResult> {
   const { username, password } = parseSetupIdentity(args, ctx);
   const humans = ctx.auth.getPasswdEntries().filter((entry) => {
@@ -464,7 +487,8 @@ export async function recoverCompletedSysSetup(
   if (humans.length !== 1 || !user || humans[0]?.uid !== user.uid) {
     throw new Error("System already initialized");
   }
-  const authenticated = await ctx.auth.authenticate(username, password);
+  const authenticated = await ctx.auth.authenticate(username, password, source);
+  if (!authenticated.ok && authenticated.waitMs !== undefined) throw new Error(authenticated.error);
   if (!authenticated.ok || authenticated.identity.uid !== user.uid) {
     throw new Error("Installation setup credentials do not match");
   }
@@ -472,7 +496,7 @@ export async function recoverCompletedSysSetup(
   const preferredAgentName = ctx.auth.getPersonalAgentUid(user.uid) === null
     ? parseSetupAgentName(ctx.auth, args.agentName, username)
     : undefined;
-  await ensurePersonalConversation(user.uid, ctx, preferredAgentName);
+  await runSetupStep("provision-personal-agent", () => ensurePersonalConversation(user.uid, ctx, preferredAgentName));
 
   const machine = parseMachineConfig(args);
   let machineToken: SysSetupResult["machineToken"];
@@ -486,13 +510,13 @@ export async function recoverCompletedSysSetup(
         ctx.auth.revokeToken(token.tokenId, "setup retry", user.uid);
       }
     }
-    const issued = await ctx.auth.issueToken({
+    const issued = await runSetupStep("issue-machine-token", () => ctx.auth.issueToken({
       uid: user.uid,
       kind: "machine",
       label: machine.label ?? `machine:${machine.peerId}`,
       peerId: machine.peerId,
       expiresAt: machine.expiresAt,
-    });
+    }));
     machineToken = {
       tokenId: issued.tokenId,
       token: issued.token,

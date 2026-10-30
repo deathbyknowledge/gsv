@@ -7,9 +7,8 @@
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/deathbyknowledge/gsv)](https://github.com/deathbyknowledge/gsv/releases)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/hy9ExJJFvn)
-[![X](https://img.shields.io/badge/X-@gsvspace-000?logo=x&logoColor=white)](https://x.com/gsvspace)
-[![Docs](https://img.shields.io/badge/docs-gsv.space-111)](https://gsv.space)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deathbyknowledge/gsv)
+[![X](https://img.shields.io/badge/X-@shipdotspace-000?logo=x&logoColor=white)](https://x.com/gsvspace)
+[![Docs](https://img.shields.io/badge/docs-ship.space-111)](https://ship.space)
 
 **🚀 Public beta is here! Issues and PRs very welcome.**
 
@@ -80,20 +79,19 @@ for platform details and service rollback behavior.
 Chat from the web UI right away, or from the CLI:
 
 ```bash
-gsv chat "Hello, what can you help me with?"
+gsv login your-space.example
+gsv ship "Hello, what can you help me with?"
 ```
 
 To connect a messenger (Discord / Telegram / Slack), add more devices, and see what to do next, follow the full guide at [docs.gsv.space/get-started](https://docs.gsv.space/get-started).
 
 ## Connect a Device
 
-Connected devices are reachable by your agents from anywhere — outbound-only, so no open ports, no inbound connections, no VPN. Add one via **Ship > Devices** in the Web UI, or the CLI:
+Connected devices are reachable by your agents from anywhere — outbound-only, so no open ports, no inbound connections, no VPN. Open **Work** in the web UI, click **connect** beside Connections and create an invitation, then run the command it gives you on that computer:
 
 ```bash
-gsv auth token create --kind machine --peer macbook --label Macbook  # note the token
-gsv config --local set device.token <token>
-gsv daemon install --id macbook --workspace ~/  # background service
-gsv daemon status
+gsv pair CODE   # saves the connection and starts the background service
+gsv status
 ```
 
 Now Ship can use the shell and read/write files on that machine. Set up adapters under **Ship > Integrations**.
@@ -104,7 +102,7 @@ Ship uses Linux as a design model (not POSIX, though). Familiar, composable prim
 
 - **Cloud computer** — a small, globally reachable hub running in your Cloudflare account. It coordinates identity, state, routing, schedules, and agent loops rather than performing heavy local computation.
 - **Kernel and syscalls** — humans, agents, and the CLI use the same capability-gated primitives for processes, files, shells, networking, repositories, and configuration. The public client exposes those contracts to other clients.
-- **Processes** — agents are durable processes with PIDs, histories, permissions, pending work, and subprocesses (`gsv proc list|spawn|send|kill`).
+- **Processes** — agents are durable processes with PIDs, histories, permissions, pending work, and subprocesses (`gsv work` lists them).
 - **Targets** — the cloud runtime and connected devices implement the same targetable filesystem, shell, and network contracts. The browser extension exposes the browser through the same filesystem and shell shape. Changing the target changes where work runs, not what the syscall means.
 - **Agent tools** — models see a deliberately small surface: Read, Write, Edit, Delete, Search, Shell, CodeMode, and Send. Devices and integrations extend the system underneath those tools instead of making the tool list grow forever.
 - **Adapters** — independently deployed Workers translate external services into stable Ship actors, surfaces, and messages. The repository bundles several implementations, while the `AdapterService` contract remains open to new providers.

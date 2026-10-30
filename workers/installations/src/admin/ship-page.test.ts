@@ -9,8 +9,9 @@ import { ShipInsight } from "./insight";
 import { InstallationAdminService } from "./service";
 
 const origin = "http://localhost:8976";
+type SnapshotGateway = Pick<OperatorGatewayService, "operatorShipSnapshot">;
 
-function stack(gateway?: OperatorGatewayService, timeoutMs?: number, insightDb: Pick<D1Database, "prepare"> = env.INSTALLATIONS_DB) {
+function stack(gateway?: SnapshotGateway, timeoutMs?: number, insightDb: Pick<D1Database, "prepare"> = env.INSTALLATIONS_DB) {
   const accounts = new AccountStore(env.INSTALLATIONS_DB, "example.com");
   const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, accounts);
   const service = new InstallationAdminService(env.INSTALLATIONS_DB, accounts, onboarding,
@@ -132,7 +133,7 @@ describe("Ship page", () => {
   });
 
   it("gives up on a slow health read", async () => {
-    const gateway: OperatorGatewayService = { operatorShipSnapshot: () => new Promise(() => {}) };
+    const gateway: SnapshotGateway = { operatorShipSnapshot: () => new Promise(() => {}) };
     const { http, service } = stack(gateway, 20);
     const installationId = await createShip(http, service, "slowhealth");
     const body = await page(http, `/admin/installations/${installationId}`);
@@ -175,7 +176,7 @@ describe("Ship page", () => {
 
   it("keeps the cause when the snapshot call fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const gateway: OperatorGatewayService = { operatorShipSnapshot: async () => { throw new Error("Durable Object reset because its code was updated"); } };
+    const gateway: SnapshotGateway = { operatorShipSnapshot: async () => { throw new Error("Durable Object reset because its code was updated"); } };
     const { http, service } = stack(gateway);
     const installationId = await createShip(http, service, "unreachable");
     expect(await page(http, `/admin/installations/${installationId}`)).toContain("Health unavailable");
@@ -185,7 +186,7 @@ describe("Ship page", () => {
   });
 
   it("rejects a malformed snapshot instead of rendering it", async () => {
-    const gateway: OperatorGatewayService = { operatorShipSnapshot: async () => JSON.parse('{"found":true,"snapshot":{"version":2}}') };
+    const gateway: SnapshotGateway = { operatorShipSnapshot: async () => JSON.parse('{"found":true,"snapshot":{"version":2}}') };
     const { http, service } = stack(gateway);
     const installationId = await createShip(http, service, "badhealth");
     const body = await page(http, `/admin/installations/${installationId}`);
@@ -280,7 +281,7 @@ describe("operator audit log", () => {
     const { http, service, insight } = stack();
     const installationId = await createShip(http, service, "unchanged");
     const refused = await http.handle(form(`/admin/installations/${installationId}/reset`, {
-      operationId: `reset_${crypto.randomUUID()}`, confirmHandle: "wrong",
+      operationId: `reset_${crypto.randomUUID()}`, confirmHandle: "wrong", reason: "owner asked",
     }));
     expect(refused?.status).not.toBe(201);
     const events = (await insight.audit.list({ installationId, page: 1 })).events;

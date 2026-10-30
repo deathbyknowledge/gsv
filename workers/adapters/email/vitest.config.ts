@@ -16,6 +16,7 @@ export default defineConfig({
               const policies = new Map();
               export default class AccountsTest extends WorkerEntrypoint {
                 async setMailPolicy(installationId, values) { policies.set(installationId, values); }
+                async installationChecks(installationId) { return installationResolveAttempts.get(installationId) ?? 0; }
                 async getEntitlements({ installationId }) {
                   const now = Date.now();
                   return { version: 1, installationId, revision: "test", issuedAt: now, refreshAfter: now + 300000, expiresAt: now + 300000,
@@ -49,7 +50,7 @@ export default defineConfig({
                   if (handle.includes("missing-once") && attempts === 1) {
                     return { found: false };
                   }
-                  if (handle.includes("became-inactive")) {
+                  if (handle.includes("became-inactive") || (handle.includes("restricted-after-intake") && attempts > 1)) {
                     return {
                       found: true,
                       state: "restricted",

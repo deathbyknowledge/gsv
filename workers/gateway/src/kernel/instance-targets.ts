@@ -11,12 +11,20 @@ import { rejectBeforeDispatch } from "./request-rejection";
 
 export type InstanceTargetRoute = { kind: "instance"; instanceId: string };
 
-export async function discoverInstanceTargets(ctx: KernelContext, options: TargetListOptions): Promise<TargetDiscovery> {
+/**
+ * A stopped instance is a receipt, not a target: it never comes back online.
+ * Listings show active instances only; `finished` admits receipts for an exact
+ * lookup, so a saved shell session or a stop still reaches the service.
+ */
+export async function discoverInstanceTargets(
+  ctx: KernelContext,
+  options: TargetListOptions & { finished?: boolean },
+): Promise<TargetDiscovery> {
   const principal = principalOf(ctx);
   if (!ctx.env.INSTANCES || principal?.kind !== "human") return { targets: [], complete: true };
   const startedAt = Date.now();
   return withInstances(ctx, async (service, actor) => {
-    const inventory = await service.list(actor, { includeTerminal: options.includeOffline });
+    const inventory = await service.list(actor, { includeTerminal: options.finished ?? false });
     const targets: TargetDescriptor[] = inventory.instances.filter(value => options.includeOffline || value.state === "ready").map(value => ({
       targetId: value.targetId, ownerUid: value.ownerUid, ownerUsername: ctx.auth.getPasswdByUid(value.ownerUid)?.username ?? null,
       label: value.label, description: `Cloud ${value.kind === "linux" ? "Linux computer" : "browser"}; ${value.state}; expires ${new Date(value.expiresAt).toISOString()}`,
@@ -36,7 +44,7 @@ export async function discoverInstanceTargets(ctx: KernelContext, options: Targe
       requestId, timestamp: startedAt, principalKind: principal.kind,
       uid: principal.account.uid, ownerUid: instanceActor(ctx).ownerUid,
       pid: ctx.processId ?? null, runId: ctx.processRunId ?? null,
-      target: "gsv", call: "sys.instance.list", args: JSON.stringify({ includeTerminal: options.includeOffline ?? false }),
+      target: "gsv", call: "sys.instance.list", args: JSON.stringify({ includeTerminal: options.finished ?? false }),
       purpose: "Discover cloud instances",
     });
     ctx.ledger?.complete(requestId, {

@@ -1,0 +1,40 @@
+{
+  "lexicon": 1,
+  "id": "space.ship.profile",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A Ship's public profile. A Ship keeps one, under the record key self.",
+      "key": "literal:self",
+      "record": {
+        "type": "object",
+        "required": ["displayName", "contactPolicy"],
+        "properties": {
+          "displayName": {
+            "type": "string",
+            "minGraphemes": 1,
+            "maxGraphemes": 80,
+            "maxLength": 640
+          },
+          "about": {
+            "type": "string",
+            "maxGraphemes": 2048,
+            "maxLength": 20480
+          },
+          "avatar": {
+            "type": "blob",
+            "description": "A profile picture is a PNG, JPEG or WebP of at most 1 MB.",
+            "accept": ["image/png", "image/jpeg", "image/webp"],
+            "maxSize": 1000000
+          },
+          "contactPolicy": {
+            "type": "string",
+            "description": "What visitors may do: send a message request, ask for an invitation, or nothing. Known values are requests, invitation and closed; a Ship reads any other value as closed.",
+            "knownValues": ["requests", "invitation", "closed"],
+            "maxLength": 64
+          }
+        }
+      }
+    }
+  }
+}

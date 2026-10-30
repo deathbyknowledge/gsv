@@ -13,6 +13,7 @@ import { LineInspector, outcomeWord } from "./LedgerLine";
 import { canConfigure } from "./settingsModel";
 import { useT } from "../../../i18n/locale";
 import "../fleet/fleet.css";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 export function Logs({ account, onProcess }: { account: ConsoleAccount; onProcess: (pid: string) => void }) {
   const t = useT();
@@ -46,7 +47,7 @@ export function Logs({ account, onProcess }: { account: ConsoleAccount; onProces
   }, [active]);
 
   return <section class="settings-logs" aria-label={t("settings.logs.title")}>
-    <div class="settings-logs-heading"><h1>{t("settings.logs.title")}</h1>{allowed && <button type="button" class="settings-text-action" aria-pressed={technical} onClick={() => setTechnical((value) => !value)}>{t("settings.logs.raw")}</button>}</div>
+    <PageHeading title={t("settings.logs.title")} description={t("settings.logs.intro")} actions={allowed && <button type="button" class="settings-text-action" aria-pressed={technical} onClick={() => setTechnical((value) => !value)}>{t("settings.logs.raw")}</button>} />
     {!allowed ? <p class="settings-muted">{t("settings.logs.noAccess")}</p> : <>
       {query.error && <p class="settings-error" role="alert">{t("settings.logs.failed", { error: query.error.message })}</p>}
       {query.isPending && connected && <LoadingState variant="panel">{t("settings.logs.loading")}</LoadingState>}
@@ -58,7 +59,7 @@ export function Logs({ account, onProcess }: { account: ConsoleAccount; onProces
           <span role="cell" class="t">{clockTime(entry.timestamp)}</span>
           <span role="cell" class="place">{placeLabel(entry.place)}</span>
           <span role="cell" class="what">{technical ? entry.syscall : t(entry.action.key, entry.action.values)}</span>
-          <span role="cell" class="m detail" title={entry.detail}>{entry.detail || "—"}</span>
+          <span role="cell" class="m detail" title={entry.purpose || entry.detail}>{entry.purpose || entry.detail || "—"}</span>
           <span role="cell" class={`outcome ${entry.outcome === "completed" ? "ok" : entry.outcome === "failed" || entry.outcome === "denied" ? "no" : "m"}`}>{outcomeWord(t, entry.outcome)}</span>
           <span role="cell" class="m who">{processName(entry.processId)}</span>
         </div>)}

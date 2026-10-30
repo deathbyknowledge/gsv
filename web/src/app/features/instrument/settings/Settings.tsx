@@ -17,8 +17,9 @@ import { Mcp } from "./Mcp";
 import { OwnerAccess, PersonalPasswordReset } from "./OwnerAccess";
 import { Logs } from "./Logs";
 import { DesktopVoiceSettings } from "./DesktopVoiceSettings";
-import { useT, type TextKey } from "../../../i18n/locale";
+import { rich, useT, type TextKey } from "../../../i18n/locale";
 import "./settings.css";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 export type SettingsProps = {
   onDirtyChange?: (dirty: boolean) => void;
@@ -26,10 +27,11 @@ export type SettingsProps = {
   onInspectProcess: (pid: string) => void;
 };
 
-const SECTIONS = ["preferences", "voice", "standing", "permissions", "instructions", "messengers", "mcp", "logs", "sign-in"] as const;
+const SECTIONS = ["preferences", "voice", "standing", "permissions", "instructions", "messengers", "mcp", "logs", "account", "sign-in"] as const;
 type Section = typeof SECTIONS[number];
 const SECTION_LABELS = {
   preferences: "settings.section.preferences",
+  account: "settings.account.title",
   voice: "settings.section.voice",
   standing: "settings.section.standing",
   permissions: "settings.section.permissions",
@@ -50,7 +52,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
   const requestedSection = () => SECTIONS.find((entry) => entry === new URLSearchParams(window.location.search).get("section") && (entry !== "voice" || desktop)) ?? "preferences";
   const [section, setSection] = useState<Section>(requestedSection);
   useLayoutEffect(() => { if (active) setSection(requestedSection()); }, [active, location.revision, desktop]);
-  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, voice: false, standing: false, permissions: false, instructions: false, messengers: false, mcp: false, logs: false, "sign-in": false });
+  const [dirty, setDirty] = useState<Record<Section, boolean>>({ preferences: false, voice: false, standing: false, permissions: false, instructions: false, messengers: false, mcp: false, logs: false, account: false, "sign-in": false });
   const preferencesDirty = useCallback((value: boolean) => setDirty((old) => old.preferences === value ? old : { ...old, preferences: value }), []);
   const permissionsDirty = useCallback((value: boolean) => setDirty((old) => old.permissions === value ? old : { ...old, permissions: value }), []);
   const instructionsDirty = useCallback((value: boolean) => setDirty((old) => old.instructions === value ? old : { ...old, instructions: value }), []);
@@ -91,7 +93,13 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={active && section === "messengers"} /></div>
           <div hidden={section !== "mcp"}><Mcp account={account} active={active && section === "mcp"} onDirty={mcpDirty} /></div>
           <RetainedView active={active && section === "logs"}><Logs account={account} onProcess={onInspectProcess} /></RetainedView>
-          {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>{t("settings.signIn.title")}</h1><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
+          <section hidden={section !== "account"} aria-labelledby="settings-account-title">
+            <PageHeading id="settings-account-title" title={t("settings.account.title")} description={t("settings.account.intro")} />
+            <h2>{t("settings.account.deleteTitle")}</h2>
+            <p class="settings-intro">{rich(t("settings.account.deleteRequest"), { email: <a href="mailto:hello@humansandmachin.es">hello@humansandmachin.es</a> })}</p>
+            <p class="settings-muted">{t("settings.account.deleteExplanation")}</p>
+          </section>
+          {account.uid === 0 && <div hidden={section !== "sign-in"}><PageHeading title={t("settings.signIn.title")} description={t("settings.signIn.intro")} /><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
         </div>}
       </div>
     </div>

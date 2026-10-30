@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { JsonValue } from "./http";
 import type { InstallationDeletionReceipt, InstallationDeletionRequest, InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
+import { RequestReports } from "./request-reports";
 import { AccountStore } from "./store";
 import { InstallationResetCoordinator } from "./reset-preparation";
 import { AccountsDeletionRuntime } from "./deletion-runtime";
 import { InstallationDeletionHttp } from "./deletion-http";
 import type { InstallationDeletionManifest, InstallationDeletionInventoryResolver } from "./deletion-inventory";
 import type { InstallationDeletionDiscoveryService, InstallationDeletionInventoryImport } from "@humansandmachines/gsv/services/lifecycle-discovery";
+import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 
 class ExternalOwner implements InstallationDeletionService {
   fail = false;
@@ -92,6 +94,36 @@ describe("Accounts deletion runtime", () => {
     expect(await state.accounts.resolveInstallation(state.second.installationId)).toMatchObject({ state: "active" });
   });
 
+  it("deletes a Ship's public repository and host entries without requiring adapter inventory imports", async () => {
+    const state = await fixture();
+    const pds = new ExternalOwner();
+    const erase = vi.spyOn(pds, "eraseInstallation");
+    const gateway: InstallationDeletionDiscoveryService = {
+      inspectInstallationDeletion: vi.fn(),
+      importInstallationDeletionInventory: vi.fn(async (input) => ({ installationId: input.installationId,
+        discoverySha256: input.discoverySha256, outcome: "verified" as const, verifiedAt: state.manifest.capturedAt })),
+    };
+    const repositories = "c".repeat(32);
+    const host = "d".repeat(32);
+    state.manifest.owners.push({ id: "pds", resources: [
+      { kind: "durable-object", namespace: repositories, resourceId: "c".repeat(64), name: state.old.installationId },
+      { kind: "durable-object", namespace: host, resourceId: "d".repeat(64), name: "host" },
+      { kind: "r2", namespace: "pds-blobs", resourceId: `installations/${state.old.installationId}/` },
+    ], evidence: [{ id: "pds-scan", reference: "test://scan/pds", sha256: "c".repeat(64), capturedAt: state.manifest.capturedAt }] });
+    const runtime = new AccountsDeletionRuntime(state.db, { ...state.owners, pds }, state.resolver, 20, () => state.manifest.capturedAt,
+      { gateway, namespaces: { [repositories]: { ownerId: "pds", kind: "pds-repository" }, [host]: { ownerId: "pds", kind: "pds-host" } } });
+    await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: state.old.handle });
+    const registered = await runtime.registerInventory(state.old.installationId, state.manifest);
+    expect(await runtime.importInventory(state.old.installationId, {
+      installationId: state.old.installationId, discoverySha256: registered.sha256, resources: [],
+    })).toMatchObject({ outcome: "verified" });
+    await runtime.begin(state.old.installationId, { operationId: state.operationId, inventorySha256: registered.sha256 });
+    let status = await runtime.status(state.old.installationId);
+    for (let attempt = 0; attempt < 15 && status.phase !== "live-erased"; attempt++) status = await runtime.retry(state.old.installationId);
+    expect(status.phase).toBe("live-erased");
+    expect(erase).toHaveBeenCalledWith({ version: 1, operationId: state.operationId, installationId: state.old.installationId });
+  });
+
   it("drains owner verification records in bounded batches while retaining global owner access", async () => {
     const f = await fixture();
     const attempt = await f.db.prepare("SELECT id FROM installation_owner_attempts WHERE installation_id = ? LIMIT 1")
@@ -144,7 +176,7 @@ describe("Accounts deletion runtime", () => {
     const post = (suffix: string, body: JsonValue) => http.handle(new Request(url + suffix, {
       method: "POST", headers: { origin: "https://admin.example.com", "content-type": "application/json" }, body: JSON.stringify(body),
     }));
-    expect((await post("/retire", { operationId: state.operationId, confirmHandle: state.old.handle }))?.status).toBe(200);
+    expect((await post("/retire", { operationId: state.operationId, confirmHandle: state.old.handle, reason: "owner asked" }))?.status).toBe(200);
     expect((await state.accounts.resolveInstallation(state.old.installationId))).toMatchObject({ found: true, state: "retained" });
     const registered = z.object({ sha256: z.string() }).parse(await (await post("/inventory", state.manifest))!.json());
     expect((await post("", { operationId: state.operationId, inventorySha256: registered.sha256 }))?.status).toBe(201);
@@ -177,10 +209,96 @@ describe("Accounts deletion runtime", () => {
     expect(await state.db.prepare("SELECT * FROM installation_reset_operations WHERE previous_installation_id = ?").bind(state.old.installationId).first()).toBeNull();
   });
 
+  it("retires a space only once its operator types the handle and gives a reason, and says what retiring does", async () => {
+    const state = await fixture();
+    const audited: { name: string; installationId?: string; reason?: string | null }[] = [];
+    const http = new InstallationDeletionHttp(state.makeRuntime(), { allows: async () => true }, "https://admin.example.com",
+      async (_request, action, mutation) => { audited.push(action); return await mutation(); });
+    const post = (body: JsonValue) => http.handle(new Request(`https://admin.example.com/admin/api/installations/${state.old.installationId}/deletion/retire`, {
+      method: "POST", headers: { origin: "https://admin.example.com", "content-type": "application/json" }, body: JSON.stringify(body),
+    }));
+    const statesConsequences = expect.arrayContaining([
+      expect.stringContaining("nothing replaces it"),
+      expect.stringContaining("public profile and records"),
+      expect.stringContaining("contacts end"),
+    ]);
+    for (const [body, error] of [
+      [{ operationId: state.operationId, confirmHandle: state.old.handle }, "request reason is required"],
+      [{ operationId: state.operationId, confirmHandle: state.old.handle, reason: "  " }, "request reason is required"],
+      [{ operationId: state.operationId, reason: "owner asked" }, "confirmHandle is required"],
+    ] as const) {
+      const refused = await post(body);
+      expect(refused?.status).toBe(400);
+      await expect(refused?.json()).resolves.toEqual({ error, consequences: statesConsequences });
+    }
+    expect(audited).toEqual([]);
+    expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "active" });
+
+    expect((await post({ operationId: state.operationId, confirmHandle: state.old.handle, reason: "owner asked" }))?.status).toBe(200);
+    expect(audited).toEqual([{ name: "ship.deletion.retire", installationId: state.old.installationId, reason: "owner asked" }]);
+    expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "retained" });
+  });
+
+  it("has the PDS follow once a Ship is retired, and again whenever the retirement is repeated", async () => {
+    const state = await fixture();
+    const followed: Array<{ installationId: string; state: string | null }> = [];
+    const pds = {
+      getRepository: vi.fn(async () => null),
+      updateSubjectStatus: vi.fn(async () => { throw new Error("No takedown is expected"); }),
+      getSubjectStatus: vi.fn(async () => null),
+      locateRepository: vi.fn(async () => null),
+      reconcileAccountStatus: vi.fn(async (installationId: string) => {
+        followed.push({ installationId, state: (await state.accounts.resolveInstallation(installationId)).found
+          ? (await state.db.prepare("SELECT state FROM installations WHERE id = ?").bind(installationId).first<{ state: string }>())?.state ?? null : null });
+      }),
+    } satisfies PdsModerationService;
+    const runtime = new AccountsDeletionRuntime(state.db, state.owners, state.resolver, 20, Date.now, {}, undefined, pds);
+    const input = { operationId: state.operationId, confirmHandle: state.old.handle };
+
+    pds.reconcileAccountStatus.mockRejectedValueOnce(new Error("PDS unavailable"));
+    await expect(runtime.retire(state.old.installationId, input)).rejects.toThrow("The Ship is retired, but its open-network host could not be told.");
+    expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "retained" });
+    await runtime.retire(state.old.installationId, input);
+    await runtime.retire(state.old.installationId, input);
+    expect(followed).toEqual([
+      { installationId: state.old.installationId, state: "retained" },
+      { installationId: state.old.installationId, state: "retained" },
+    ]);
+  });
+
+  it("erases the reports a deleted Ship's person filed, a hundred at a time, and keeps another Ship's", async () => {
+    const state = await fixture();
+    const reports = new RequestReports(state.db);
+    const report = (installationId: string, requestKey: string) => reports.submit({
+      installationId, requestKey, sender: { did: "did:plc:reportedsenderaaaaaaaaaa" }, category: "spam", receivedAtMs: 1,
+    });
+    const kept = await report(state.second.installationId, "apr_kept");
+    await state.db.prepare(`INSERT INTO request_reports (id, installation_id, request_key, sender_did, category, received_at, reported_at)
+      SELECT 'report_' || value, ?, 'apr_' || value, 'did:plc:reportedsenderaaaaaaaaaa', 'spam', 1, 1 FROM json_each(?)`)
+      .bind(state.old.installationId, JSON.stringify(Array.from({ length: 150 }, (_, index) => index))).run();
+    const count = async () => (await state.db.prepare("SELECT COUNT(*) AS count FROM request_reports WHERE installation_id = ?")
+      .bind(state.old.installationId).first<{ count: number }>())!.count;
+    const runtime = state.makeRuntime();
+    await runtime.retire(state.old.installationId, { operationId: state.operationId, confirmHandle: state.old.handle });
+    const inventory = await runtime.registerInventory(state.old.installationId, state.manifest);
+    await runtime.begin(state.old.installationId, { operationId: state.operationId, inventorySha256: inventory.sha256 });
+    let status = await runtime.status(state.old.installationId);
+    let previous = await count();
+    for (let attempt = 0; attempt < 15 && status.phase !== "live-erased"; attempt++) {
+      status = await runtime.retry(state.old.installationId);
+      const remaining = await count();
+      expect(previous - remaining).toBeLessThanOrEqual(100);
+      previous = remaining;
+    }
+    expect(status.phase).toBe("live-erased");
+    expect(previous).toBe(0);
+    expect(await reports.get(kept.reportId)).toMatchObject({ installationId: state.second.installationId });
+  });
+
   it("denies unauthenticated and cross-origin administration without retiring the space", async () => {
     const state = await fixture();
     const url = `https://admin.example.com/admin/api/installations/${state.old.installationId}/deletion/retire`;
-    const input = { operationId: state.operationId, confirmHandle: state.old.handle };
+    const input = { operationId: state.operationId, confirmHandle: state.old.handle, reason: "owner asked" };
     for (const [allowed, origin] of [[false, "https://admin.example.com"], [true, "https://evil.example.com"]] as const) {
       const api = new InstallationDeletionHttp(state.makeRuntime(), { allows: async () => allowed }, "https://admin.example.com");
       expect((await api.handle(new Request(url, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(input) })))?.status).toBe(403);

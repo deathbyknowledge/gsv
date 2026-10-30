@@ -19,6 +19,7 @@ export { formatIpcReplyMessage } from "../../prompts/ipc-events";
 import { formatContextProjectionEvent } from "../../prompts/context-events";
 import { formatContextRunwayAlertMessage } from "../../prompts/context-runway";
 import { formatTargetConnectionEvent } from "../../prompts/target-events";
+import { formatOwnerNotifiedEvent } from "../../prompts/owner-notice-events";
 import { formatContactMessageEvent } from "../../prompts/contact-events";
 import { formatScheduleEventMessage } from "../../prompts/schedule-events";
 export { formatScheduleEventMessage } from "../../prompts/schedule-events";
@@ -50,6 +51,7 @@ export function renderHistoryEvent(event: ProcHistoryEvent): string {
     case "adapter.work.returned": return formatProcessRuntimeEvent({ type: event.kind, ...event.payload });
     case "contact.message": return formatContactMessageEvent(event.payload);
     case "target.connection": return formatTargetConnectionEvent(event.payload);
+    case "owner.notified": return formatOwnerNotifiedEvent(event.payload);
     case "history.compacted": return formatCompactionSummaryMessage(event.payload);
     case "runtime.wake": return RUNTIME_EVENT_WAKE_MESSAGE;
     case "runtime.failed": return event.payload.prefix === undefined
@@ -228,7 +230,9 @@ export function formatRunControlToolResult(
   if (result.ok) {
     if (result.action === "yield") return "Run yielded";
     if (result.yieldError) {
-      return `Message committed; run remains active. Yield was blocked: ${result.yieldError}\nDo not resend this message. Handle the outstanding work, then yield.`;
+      const sent = result.repeated ? "Message already sent, so not sent again" : "Message committed";
+      const tries = attempt ? ` (attempt ${attempt.count} of ${attempt.limit})` : "";
+      return `${sent}; run remains active. Yield was blocked${tries}: ${result.yieldError}\nDo not resend this message. Handle the outstanding work, then yield.`;
     }
     return result.finish
       ? "Message committed and run yielded"

@@ -1,9 +1,19 @@
-import { resourceBlockSchema, type ResourceBlock } from "@humansandmachines/gsv/protocol";
+import {
+  procHistoryEventLinkSchema, procHistoryEventPayloadSchemas, resourceBlockSchema,
+  type ProcHistoryEventLink, type ProcHistoryEventPayload, type ResourceBlock,
+} from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import type { ProcessContactMessageRuntimeEvent } from "../protocol/process-frames";
 
+/** A notice the owner received, recorded in Ship's history without starting a run. */
+export type OwnerNotifiedShipEvent = {
+  type: "owner.notified";
+  payload: ProcHistoryEventPayload<"owner.notified">;
+  link: ProcHistoryEventLink;
+};
+
 /** An event addressed to an owner's Ship rather than to one of its replaceable pids. */
-export type ShipEvent = ProcessContactMessageRuntimeEvent;
+export type ShipEvent = ProcessContactMessageRuntimeEvent | OwnerNotifiedShipEvent;
 
 export type QueuedShipEvent = {
   eventId: string;
@@ -21,7 +31,7 @@ type ShipEventRow = {
   next_attempt_at: number;
 };
 
-const shipEventSchema = z.object({
+const contactMessageEventSchema = z.object({
   type: z.literal("contact.message"),
   contactId: z.string(),
   contactGeneration: z.string(),
@@ -33,6 +43,17 @@ const shipEventSchema = z.object({
   responsibilityId: z.string(),
   ledgerRevision: z.number().int().nonnegative(),
 });
+
+const shipEventSchema: z.ZodType<ShipEvent> = z.union([
+  contactMessageEventSchema,
+  z.object({
+    type: z.literal("owner.notified"),
+    payload: z.custom<ProcHistoryEventPayload<"owner.notified">>(
+      (value) => procHistoryEventPayloadSchemas["owner.notified"].safeParse(value).success,
+    ),
+    link: z.custom<ProcHistoryEventLink>((value) => procHistoryEventLinkSchema.safeParse(value).success),
+  }),
+]);
 
 /** Durable, ordered Ship events per owner; a row leaves the queue once its Ship admits it. */
 /** How many events wait for one owner's Ship, and since when. */
@@ -71,7 +92,8 @@ export class ShipEventStore {
   queuedForContact(ownerUid: number, contactId: string): { eventId: string; responsibilityId: string }[] {
     return this.sql.exec<{ event_id: string; responsibility_id: string }>(
       `SELECT event_id, json_extract(event_json, '$.responsibilityId') AS responsibility_id FROM ship_events
-       WHERE owner_uid = ? AND json_extract(event_json, '$.contactId') = ?`,
+       WHERE owner_uid = ? AND json_extract(event_json, '$.type') = 'contact.message'
+         AND json_extract(event_json, '$.contactId') = ?`,
       ownerUid, contactId,
     ).toArray().map((row) => ({ eventId: row.event_id, responsibilityId: row.responsibility_id }));
   }

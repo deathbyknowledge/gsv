@@ -1,7 +1,7 @@
 import type { ComponentProps, VNode } from "preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { contactInvitationUrl, encodeContactInvitation } from "@humansandmachines/gsv/protocol";
-import { collectNodes } from "../app/testing/testHarness";
+import { collectNodes, collectText } from "../app/testing/testHarness";
 import type { WelcomeSnapshot, WelcomeState } from "../app/services/session/ownerWelcome";
 
 import { loadSignupPage } from "./page";
@@ -9,8 +9,8 @@ import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
 
 const storage = { load: vi.fn<() => Promise<WelcomeSnapshot>>(), save: vi.fn<(revision: string, value: WelcomeState | null) => Promise<WelcomeSnapshot>>() };
 
-const contact = encodeContactInvitation({ version: 1, origin: "https://sponsor.example", shipId: "ship:sponsor",
-  subject: { id: "subject:sponsor", displayName: "Sponsor" }, token: "x".repeat(43), expiresAtMs: Date.now() + 60_000 });
+const contact = encodeContactInvitation({ version: 2, did: "did:plc:sponsoraaaaaaaaaaaaaaaaa", handle: "sponsor.example",
+  name: "Sponsor", token: "x".repeat(43), expiresAtMs: Date.now() + 60_000 });
 const origin = "https://accounts.example.com";
 const assign = vi.fn();
 
@@ -42,9 +42,17 @@ describe("signup entrypoint recovery", () => {
   it.each([contact, encodeURIComponent(contact)])("accepts a legacy invitation fragment", async (value) => {
     window.location.href = `${origin}/#contact=${value}`;
     const props = await screen();
-    expect(props.invitation?.name).toBe("Sponsor");
+    expect(props.invitation).toMatchObject({ name: "Sponsor", handle: "sponsor.example" });
     await props.onConnect("https://custom.example.com");
     expectContactNavigation();
+  });
+
+  it("asks for a new invitation when the link is from before the update", async () => {
+    const payload = btoa(JSON.stringify({ version: 1, origin: "https://sponsor.example" })).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    window.location.href = `${origin}/#contact=gsv-contact-v1:${payload}`;
+    const page = await loadSignupPage(storage, origin);
+    expect(collectText(page)).toContain("This invitation is from before an update. Ask for a new one.");
+    expect(collectNodes(page).some((item) => item.type === OwnerWelcomeScreen)).toBe(false);
   });
 
   it("stores the canonical invitation code from a shared URL", async () => {

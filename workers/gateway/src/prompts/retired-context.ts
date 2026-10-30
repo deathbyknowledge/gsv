@@ -4,6 +4,9 @@ const RETIRED_CONTEXT_SHA256 = {
   ship: [
     "f77709808aaa01ee2493d81c20d51b57eb6982fb839edb997a113ca2ea19b985",
     "dac8e2dd1bb8342d0db8007b9841f19a4c805675c464253fc00c2886bd53f706",
+    // The bare role seeds from 09580285b and 383632989, which still said "workers".
+    "bcb10b4faee2843f785e26fe8d13e8b1e03d3e3580ba6334e12867bfdb9bb71f",
+    "c80caab1459150d56c0b76b9467ab4cccedd2c5c2b84e86150f6fbe447f0ec6a",
   ],
   memory: [
     "a2fb6a401ddf5beef1f49c63b442b490b9d69af54562af22f2baffdb7aa3daf9",

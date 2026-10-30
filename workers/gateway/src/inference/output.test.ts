@@ -54,6 +54,8 @@ describe("generation output retries", () => {
     "ReadableStream received over RPC disconnected prematurely.",
     "Network connection lost.",
     "Connection closed: this Durable Object instance is no longer active. Reconnect or retry the request.",
+    // Cloudflare's own transient failure, as a Ship's services all reported during a brief platform stall.
+    "Error: internal error; reference = rnkieip154sca78sk75m5h1b",
   ])("retries an interrupted inference transport: %s", (detail) => {
     const failure = `Inference reference: diagnostic-id\n${detail}`;
     const response: AssistantMessage = {

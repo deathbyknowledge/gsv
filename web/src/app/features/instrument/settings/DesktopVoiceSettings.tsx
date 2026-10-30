@@ -4,9 +4,11 @@ import { ShortcutRecorder } from "../../../services/platform/ShortcutRecorder";
 import { shortcutDefaults } from "../../../services/platform/shortcutKeys";
 import { useNativeVoiceSession } from "../../../services/platform/NativeVoiceSession";
 import { AppLink } from "../../../services/navigation/appNavigation";
+import { Select } from "../../../components/ui/Select";
 import { rich, useT } from "../../../i18n/locale";
 import "../../../services/platform/native-input.css";
 import "./desktop-voice.css";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onDirty(dirty: boolean): void }) {
   const t = useT();
@@ -29,19 +31,18 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
   const { preferences, setPreferences } = speech;
   const speaking = speech.status.phase === "speaking";
   return <section class="settings-voice" aria-label={t("settings.voice.label")}>
-    <h1>{t("settings.voice.title")}</h1>
-    <p class="settings-intro">{t("settings.voice.intro")}</p>
+    <PageHeading title={t("settings.voice.title")} description={t("settings.voice.intro")} />
 
-    <label>{t("settings.voice.microphone")}
-      <select value={microphone.device} disabled={!snapshot || snapshot.devices_loading || microphone.capturing}
-        onChange={(event) => microphone.setDevice(event.currentTarget.value)}>
-        <option value="">{t("settings.voice.systemDefault")}</option>
-        {microphone.device && !snapshot?.devices.some((device) => device.id === microphone.device)
-          && <option value={microphone.device}>{t("settings.voice.microphoneUnavailable")}</option>}
-        {snapshot?.devices.map((device) => <option key={device.id} value={device.id}>{device.is_default ? t("settings.voice.defaultDevice", { name: device.name }) : device.name}</option>)}
-      </select>
-      {snapshot?.devices_loading && <small role="status">{t("settings.voice.finding")}</small>}
-    </label>
+    <Select block label={t("settings.voice.microphone")} selected={microphone.device}
+      disabled={!snapshot || snapshot.devices_loading || microphone.capturing}
+      options={[
+        { label: t("settings.voice.systemDefault"), value: "" },
+        ...(microphone.device && !snapshot?.devices.some((device) => device.id === microphone.device)
+          ? [{ label: t("settings.voice.microphoneUnavailable"), value: microphone.device }] : []),
+        ...(snapshot?.devices.map((device) => ({ label: device.is_default ? t("settings.voice.defaultDevice", { name: device.name }) : device.name, value: device.id })) ?? []),
+      ]}
+      onSelect={(value) => microphone.setDevice(value)} />
+    {snapshot?.devices_loading && <p class="settings-field-note" role="status">{t("settings.voice.finding")}</p>}
     {(microphone.error || snapshot?.notice) && <p class="settings-error" role="alert">{microphone.error || snapshot?.notice}</p>}
     {!snapshot && <button type="button" class="settings-text-action" onClick={microphone.reconnect}>{t("settings.voice.reconnect")}</button>}
 
@@ -50,11 +51,10 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
       onChange={(event) => setPreferences({ enabled: event.currentTarget.checked })} />{t("settings.voice.enableHandsfree")}</label>
     {preferences.enabled && <>
       <p class="settings-muted">{t("settings.voice.handsfreeHint")}</p>
-      <label>{t("settings.voice.shortcutMode")}
-        <select value={preferences.mode} onChange={(event) => setPreferences({ mode: event.currentTarget.value === "hold" ? "hold" : "toggle" })}>
-          <option value="toggle">{t("settings.voice.toggle")}</option><option value="hold">{t("settings.voice.hold")}</option>
-        </select>
-      </label>
+      <Select block label={t("settings.voice.shortcutMode")} selected={preferences.mode} options={[
+        { label: t("settings.voice.toggle"), value: "toggle" },
+        { label: t("settings.voice.hold"), value: "hold" },
+      ]} onSelect={(value) => setPreferences({ mode: value === "hold" ? "hold" : "toggle" })} />
       {!speech.shortcuts ? <p class="settings-muted" role="status">{t("settings.voice.registering")}</p>
         : speech.shortcuts.managed ? <div class="settings-voice-shortcuts">
           <p class="settings-muted">{speech.shortcuts.description}</p>
@@ -73,11 +73,11 @@ export function DesktopVoiceSettings({ active, onDirty }: { active: boolean; onD
         </div>}
 
       <h2>{t("settings.voice.replies")}</h2>
-      <label>{t("settings.voice.readReplies")}
-        <select value={preferences.replies} onChange={(event) => setPreferences({ replies: event.currentTarget.value === "all" ? "all" : event.currentTarget.value === "off" ? "off" : "voice" })}>
-          <option value="voice">{t("settings.voice.repliesVoice")}</option><option value="all">{t("settings.voice.repliesAll")}</option><option value="off">{t("settings.voice.repliesOff")}</option>
-        </select>
-      </label>
+      <Select block label={t("settings.voice.readReplies")} selected={preferences.replies} options={[
+        { label: t("settings.voice.repliesVoice"), value: "voice" },
+        { label: t("settings.voice.repliesAll"), value: "all" },
+        { label: t("settings.voice.repliesOff"), value: "off" },
+      ]} onSelect={(value) => setPreferences({ replies: value === "all" ? "all" : value === "off" ? "off" : "voice" })} />
       <p class="settings-muted">{rich(t("settings.voice.usesLanguage"), { link: <AppLink href="/chat/settings?section=preferences">{t("settings.preferences.title")}</AppLink> })}</p>
       {languageError && <p class="settings-error" role="alert">{languageError}</p>}
       {languageUnsupported && <p class="settings-error" role="alert">{t("settings.voice.languageUnsupported")}</p>}

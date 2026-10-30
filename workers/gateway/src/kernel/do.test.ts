@@ -2125,7 +2125,7 @@ describe("Kernel process signal routing", () => {
   });
 
   it("retains the failure route when durable scheduling fails so terminal delivery can retry", async () => {
-    const route = adapterRoute("run-failed-schedule");
+    const route = { ...adapterRoute("run-failed-schedule"), replyToId: "original-message" };
     const kernel = buildKernel(route);
     const frame = {
       type: "sig" as const,
@@ -2148,7 +2148,7 @@ describe("Kernel process signal routing", () => {
     { status: "error", aborted: true },
     { status: "error", reason: "message.action.missing" },
   ])("does not add a failure notice for $status/$reason/$aborted", async (payload) => {
-    const route = adapterRoute("run-no-failure-notice");
+    const route = { ...adapterRoute("run-no-failure-notice"), replyToId: "original-message" };
     const kernel = buildKernel(route);
     const frame = {
       type: "sig" as const,
@@ -2160,8 +2160,25 @@ describe("Kernel process signal routing", () => {
     expect(kernel.runRoutes.delete).toHaveBeenCalledWith(route.runId);
   });
 
+  it("does not report a failed fallback or scheduled run to its messenger", async () => {
+    for (const route of [
+      { ...adapterRoute("r12y.ready:batch-1"), followsShip: true },
+      adapterRoute("schedule-run:occurrence-1"),
+    ]) {
+      const kernel = buildKernel(route);
+      const frame = {
+        type: "sig" as const,
+        signal: "proc.run.finished" as const,
+        payload: { pid: route.processId, runId: route.runId, status: "error", reason: "tick.error" },
+      };
+      await kernel.processOutput.handleProcessSignal(route.processId, frame, frame);
+      expect(kernel.schedule).not.toHaveBeenCalled();
+      expect(kernel.runRoutes.delete).toHaveBeenCalledWith(route.runId);
+    }
+  });
+
   it("preserves a real prior-run failure when its queued successor has already started", async () => {
-    const route = adapterRoute("run-failed-prior");
+    const route = { ...adapterRoute("run-failed-prior"), replyToId: "original-message" };
     const kernel = buildKernel(route);
     kernel.procs.get.mockReturnValue({
       processId: route.processId,

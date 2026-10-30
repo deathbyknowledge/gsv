@@ -21,18 +21,22 @@ type SetupScreenProps = {
   passwordConfirm: string;
   consent: boolean;
   consentError: string | null;
+  /** Whether the Ship asks if the owner's profile may be public. */
+  profileChoice: boolean;
+  profilePublic: boolean;
   error: string | null;
   fieldErrors: Partial<Record<keyof SetupAccount, string>>;
   onPassword: (value: string) => void;
   onPasswordConfirm: (value: string) => void;
   onConsent: (checked: boolean) => void;
+  onProfilePublic: (checked: boolean) => void;
   onBack: () => void;
   onFieldBlur: (field: keyof SetupAccount, next: EventTarget | null) => void;
   onSubmitPointerDown: () => void;
   onSubmit: (event: Event) => void;
 };
 
-export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, step, consentRequired, password, passwordConfirm, consent, consentError, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
+export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, step, consentRequired, password, passwordConfirm, consent, consentError, profileChoice, profilePublic, error, fieldErrors, onPassword, onPasswordConfirm, onConsent, onProfilePublic, onBack, onFieldBlur, onSubmitPointerDown, onSubmit }: SetupScreenProps) {
   const t = useT();
   const consentId = useId();
   const [noticeDismissed, setNoticeDismissed] = useState(false);
@@ -45,10 +49,7 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
         <Alert variant="success" text={t("session.setup.created")} onDismiss={() => setNoticeDismissed(true)} />
       </div>}
       <div class={`gsv-setup-head${credentials ? "" : " is-consent"}`}>
-        {consentRequired && <div class="gsv-setup-meta">
-          <p class="gsv-setup-space">{space}</p>
-          <p class="gsv-setup-progress">{t("session.setup.progress", { step: credentials ? 1 : 2, total: 2 })}</p>
-        </div>}
+        {consentRequired && <p class="gsv-setup-space">{space}</p>}
         <h1 id="setup-heading" class={credentials ? "gsv-setup-greeting" : undefined} data-setup-heading tabIndex={-1}>{credentials
           ? rich(t("session.setup.welcome"), { space: <span class="gsv-setup-host">{handle}<span class="gsv-setup-domain">{domain}</span></span> })
           : t("session.setup.beforeYouBegin")}</h1>
@@ -82,16 +83,42 @@ export function SetupScreen({ visible, busy, space, arrivedFromSignup = false, s
             </div>
             {consentError ? <p class="gsv-setup-consent-error" id={`${consentId}-error`} role="alert">{consentError}</p> : null}
           </div>
+          {profileChoice && <ProfileOptIn checked={profilePublic} busy={busy} onChange={onProfilePublic} />}
         </div>}
+        {credentials && !consentRequired && profileChoice && <ProfileOptIn checked={profilePublic} busy={busy} onChange={onProfilePublic} />}
         <SessionError message={error} />
         <div class="gsv-setup-actions">
           {step === "consent" ? <button type="button" class="ibtn" disabled={busy} onClick={onBack}>{t("session.back")}</button> : null}
           <button type="submit" class="ibtn is-primary" data-setup-submit disabled={busy}
             onPointerDown={(event) => { if (event.button === 0) onSubmitPointerDown(); }}>
-            {t(busy ? "session.setup.opening" : credentials && consentRequired ? "session.continue" : "session.setup.activate")}
+            {busy ? <span role="status" aria-label={t("session.setup.opening")}>
+              <span aria-hidden="true">{t("session.setup.opening")}<span class="gsv-setup-loading-dots"><span>.</span><span>.</span><span>.</span></span></span>
+            </span> : t(credentials && consentRequired ? "session.continue" : "session.setup.activate")}
           </button>
         </div>
       </form>
     </section>
   </AuthLayout>;
+}
+
+/** Asks, beside the step that activates the Ship, whether its profile may be public; unticked, nothing is published. */
+function ProfileOptIn({ checked, busy, onChange }: { checked: boolean; busy: boolean; onChange: (checked: boolean) => void }) {
+  const t = useT();
+  const id = useId();
+  const [explained, setExplained] = useState(false);
+  return <div class="gsv-setup-consent gsv-setup-profile">
+    <div class="gsv-setup-consent-row">
+      <input id={id} type="checkbox" checked={checked} disabled={busy} data-setup-profile
+        onChange={(event) => onChange(event.currentTarget.checked)} />
+      <span>
+        <label for={id}>{t("session.setup.profile.optIn")} <em class="gsv-setup-recommended">{t("session.setup.profile.recommended")}</em></label>
+        {" "}<button type="button" class="gsv-setup-profile-toggle" aria-expanded={explained} aria-controls={`${id}-info`}
+          onClick={() => setExplained((open) => !open)}>{t("session.setup.profile.difference")}</button>
+      </span>
+    </div>
+    {explained && <div class="gsv-setup-profile-info" id={`${id}-info`}>
+      <p><strong>{t("session.setup.profile.public")}</strong> {t("session.setup.profile.publicDetail")}</p>
+      <p><strong>{t("session.setup.profile.private")}</strong> {t("session.setup.profile.privateDetail")}</p>
+    </div>}
+  </div>;
 }

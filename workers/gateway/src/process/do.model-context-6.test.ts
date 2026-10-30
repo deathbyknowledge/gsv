@@ -7,6 +7,7 @@ import {
   captureSignals, mockGeneration, processTestConfig, generationRun, assistantResponse, runInProcess,
   ROOT_IDENTITY, initProcess, messageAction, mockRunEventSink, offeredTools, openAiChatSseChunk,
   responsibilityKernelResult, testUsage,
+  followRunApprovalPolicy,
 } from "./do-test-harness";
 
 describe("model context", () => {
@@ -304,6 +305,7 @@ describe("model context", () => {
       };
 
       process.store.messages.appendMessage("user", "stream retry to tool please");
+      followRunApprovalPolicy(process);
       process.runs.active = generationRun("run-chat-stream-retry-tool-only", processTestConfig(pid, {
         provider: "workers-ai",
         model: "@cf/nvidia/nemotron-3-120b-a12b",

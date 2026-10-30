@@ -19,6 +19,18 @@
 @container instrument (max-width: 720px) {
   .zen-body { --zen-gutter: 18px; }
 }
+.zen-first-open-privacy {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+  color: var(--faint);
+  font: 400 16px/1.7 var(--gsv-font-prose);
+  text-align: center;
+}
+.zen-first-open-privacy p { margin: 0; max-width: 44ch; white-space: pre-line; }
 .zen-moments {
   grid-area: 1 / 1 / 2 / -1;
   position: relative;
@@ -88,8 +100,9 @@
 .zen-people-panel .message + .message { margin-top: 18px; }
 .zen-people-panel .message time { display: block; margin-bottom: 6px; color: var(--text-dim); font: 10px/1.4 var(--gsv-font-mono); }
 .zen-people-panel .ask { margin: 0; font: 16px/1.55 var(--gsv-font-prose); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
-.zen-people-panel .reply { display: block; flex-shrink: 0; width: 100%; min-height: 64px; max-height: 120px; box-sizing: border-box; padding: 12px 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: none; color: var(--text); font: 16px/1.55 var(--gsv-font-prose); resize: vertical; }
-.zen-people-panel .reply:focus-visible { outline: none; border-top-color: var(--accent); }
+/* the reply field is the design-system TextArea; the panel only keeps it from growing over the messages */
+.zen-people-panel .reply-box > .gsv-ta { flex-shrink: 0; margin-bottom: 6px; }
+.zen-people-panel .reply-box .gsv-ta-box { max-height: 120px; }
 .zen-people-panel .send { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-block: 6px; font: 400 11px/1.5 var(--gsv-font-mono); color: var(--text-dim); }
 .zen-people-panel .send .ibtn { padding: 7px 12px; }
 .zen-people-panel .error { color: var(--error); }
@@ -167,6 +180,14 @@
 .zen-moment.is-ship.is-older .text {
   font-size: clamp(17px, 1.6vw, 22px);
 }
+.instrument.is-scale-075 .zen-content { padding-block: 12px; }
+.instrument.is-scale-075 .zen-moment { padding-block: 6px; }
+.instrument.is-scale-075 .zen-moment.is-approval { padding-block: 0; }
+.instrument.is-scale-075 .zen-moment > .who { margin-bottom: 3px; font-size: 14px; letter-spacing: .08em; }
+.instrument.is-scale-075 .zen-moment:is(.is-human, .is-ship) .text { font-size: 20px; line-height: 1.4; }
+.instrument.is-scale-075 .zen-moment.is-older { opacity: .85; }
+.instrument.is-scale-075 .zen-moment .text p { margin-bottom: .35em; }
+.instrument.is-scale-075 .zen-moment .text p:last-child { margin-bottom: 0; }
 .zen-moment .text p { margin: 0 0 0.6em; }
 .zen-moment .text p:last-child { margin-bottom: 0; }
 .zen-moment .text table {
@@ -188,7 +209,7 @@
   border-bottom: 1px solid rgba(151, 170, 255, 0.35);
 }
 /* a very long message folds once it has arrived: its first lines fade out above "read more" */
-.zen-moment .text.is-folded {
+.zen-resolving-text.is-folded {
   /* the line count is set inline from zenFold.ts; this holds where lh is unknown */
   max-height: 60vh;
   overflow: clip;
@@ -583,6 +604,46 @@
   line-height: 1.5;
   color: var(--label);
 }
+.zen-moment.is-note .note-link {
+  display: inline-block;
+  margin: 2px 0 0 calc(1ch + 10px);
+  font-family: var(--gsv-font-mono);
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.zen-moment.is-note .note-link:hover { color: var(--label); }
+/* a notice GSV sent the person: shown whole, and the whole card opens what it is about */
+.zen-moment.is-owner-notice .notice-card {
+  position: relative;
+  max-width: var(--measure-prose);
+  border: 1px solid var(--border-raised);
+  border-left: 2px solid var(--accent);
+  font-family: var(--gsv-font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  transition: border-color var(--dur-fast);
+}
+.zen-moment.is-owner-notice .notice-card:has(.notice-open:hover),
+.zen-moment.is-owner-notice .notice-card:has(.notice-open:focus-visible) { border-color: var(--accent); }
+.zen-moment.is-owner-notice .notice-open { display: block; padding: 10px 12px 26px; color: inherit; text-decoration: none; }
+.zen-moment.is-owner-notice div.notice-open { padding-bottom: 10px; }
+.zen-moment.is-owner-notice .notice-open:focus-visible { outline: none; }
+.zen-moment.is-owner-notice .notice-head { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; padding-right: 20px; }
+.zen-moment.is-owner-notice .notice-from { color: var(--label); }
+.zen-moment.is-owner-notice .notice-handle { color: var(--faint); font-size: 12px; }
+.zen-moment.is-owner-notice .notice-body { margin: 6px 0 0; color: var(--text-dim); overflow-wrap: anywhere; }
+.zen-moment.is-owner-notice .notice-count { display: block; color: var(--faint); font-size: 12px; }
+.zen-moment.is-owner-notice .notice-quiet { font-style: italic; }
+.zen-moment.is-owner-notice .notice-go { position: absolute; right: 12px; bottom: 8px; font-size: 12px; color: var(--faint); }
+.zen-moment.is-owner-notice .notice-open:hover .notice-go,
+.zen-moment.is-owner-notice .notice-open:focus-visible .notice-go { color: var(--accent); }
+/* which messenger carried the notice: a mark in the corner, named in a tooltip */
+.zen-moment.is-owner-notice .notice-carrier { position: absolute; top: 8px; right: 10px; }
+.zen-moment.is-owner-notice .notice-carrier-mark { display: inline-flex; color: var(--faint); cursor: default; }
+.zen-moment.is-owner-notice .notice-carrier-mark:hover,
+.zen-moment.is-owner-notice .notice-carrier-mark:focus-visible { color: var(--label); outline: none; }
 .zen-moment.is-note.is-open .tri { color: var(--accent); }
 .zen-moment.is-note .note-text {
   margin-top: 8px;
@@ -608,6 +669,10 @@
   height: 1.1em;
 }
 .zen-moment.is-focus.is-older { opacity: 0.85; }
+.instrument .zen-moment.is-older.is-recent { opacity: 1; }
+@media (hover: hover) {
+  .instrument .zen-moment.is-older:hover { opacity: 1; }
+}
 .zen.has-text-selection .zen-moment.is-older { opacity: 1; }
 .zen.is-browse .prompt-line { opacity: 0.55; }
 

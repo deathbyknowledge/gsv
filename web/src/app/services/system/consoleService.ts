@@ -86,7 +86,6 @@ export type CreateConsoleAgentInput = {
   description: string;
   model?: string;
   reasoning?: string;
-  approval?: string;
   /** Fixed portrait assigned at creation (see agentPresentation.pickAgentImage). */
   avatarSrc?: string;
   files: readonly ConsoleAgentContextFileDraft[];
@@ -113,7 +112,6 @@ export type SaveConsoleAgentBehaviorInput = {
   uid: number;
   model?: string;
   reasoning: string;
-  approval?: string;
 };
 
 export type SaveConsoleAgentBehaviorResult = {
@@ -194,23 +192,10 @@ export type DeleteConsoleMachineResult = {
   revokedTokens: number;
 };
 
-export type ConsumeIdentityLinkCodeInput = {
-  code: string;
-};
-
 export type RemoveIdentityLinkInput = {
   adapter: string;
   accountId: string;
   actorId: string;
-};
-
-export type IdentityLinkMutationResult = {
-  linked: boolean;
-  link: ConsoleIdentityLink | null;
-};
-
-export type RemoveIdentityLinkResult = {
-  removed: boolean;
 };
 
 export type ConnectConsoleAdapterInput = {
@@ -265,31 +250,6 @@ export async function loadConsoleModels(client: Pick<GSVClient, "call">): Promis
 
 export async function loadConsoleIdentityLinks(client: Pick<GSVClient, "call">): Promise<ConsoleIdentityLink[]> {
   return normalizeIdentityLinksPayload(await client.call("sys.link.list", {}));
-}
-
-export async function consumeIdentityLinkCode(
-  client: Pick<GSVClient, "call">,
-  input: ConsumeIdentityLinkCodeInput,
-): Promise<IdentityLinkMutationResult> {
-  const code = input.code.trim();
-  if (!code) {
-    throw new Error("link code is required");
-  }
-
-  const result = parseGatewayRecord(await client.call("sys.link.consume", { code }));
-  return normalizeIdentityLinkMutationResult(result);
-}
-
-export async function removeIdentityLink(
-  client: Pick<GSVClient, "call">,
-  input: RemoveIdentityLinkInput,
-): Promise<RemoveIdentityLinkResult> {
-  const adapter = normalizeIdentityLinkField(input.adapter, "adapter").toLowerCase();
-  const accountId = normalizeIdentityLinkField(input.accountId, "account id");
-  const actorId = normalizeIdentityLinkField(input.actorId, "actor id");
-
-  const result = parseGatewayRecord(await client.call("sys.unlink", { adapter, accountId, actorId }));
-  return { removed: result.removed === true };
 }
 
 export async function saveConsoleConfig(
@@ -800,22 +760,6 @@ export async function loadConsoleOverview(
   });
 }
 
-function normalizeIdentityLinkMutationResult(result: GatewayRecord): IdentityLinkMutationResult {
-  const links = normalizeIdentityLinksPayload({ links: result.link ? [result.link] : [] });
-  return {
-    linked: result.linked === true,
-    link: links[0] ?? null,
-  };
-}
-
-function normalizeIdentityLinkField(value: string, field: string): string {
-  const normalized = value.trim();
-  if (!normalized) {
-    throw new Error(`${field} is required`);
-  }
-  return normalized;
-}
-
 function modelValidationConfig(
   values: Record<string, string>,
 ): NonNullable<AiTextGenerateConfig["modelConfig"]> {
@@ -937,7 +881,6 @@ async function loadOptionalPayload(load: () => Promise<GatewayPayload>): Promise
 type AgentBehaviorConfigDraft = {
   model?: string;
   reasoning?: string;
-  approval?: string;
 };
 
 async function saveAgentBehaviorConfig(
@@ -948,7 +891,6 @@ async function saveAgentBehaviorConfig(
 ): Promise<void> {
   const model = input.model?.trim() ?? "";
   const reasoning = input.reasoning?.trim() ?? "";
-  const approval = input.approval?.trim() ?? "";
   const writes: Promise<unknown>[] = [];
 
   if (input.model !== undefined && (options.includeEmpty || model)) {
@@ -959,12 +901,6 @@ async function saveAgentBehaviorConfig(
     writes.push(client.sys.config.set({
       key: `users/${uid}/ai/preferred_model`,
       value: modelId ?? "",
-    }));
-  }
-  if (input.approval !== undefined && (options.includeEmpty || approval)) {
-    writes.push(client.sys.config.set({
-      key: `users/${uid}/ai/tools/approval`,
-      value: approval,
     }));
   }
   if (input.reasoning !== undefined && (options.includeEmpty || reasoning)) {

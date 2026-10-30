@@ -14,8 +14,11 @@ check existing targets and `instance catalog` on `gsv`. Start an available
 instance when needed; see `instance --help`. Save needed files to GSV before
 a temporary computer stops.
 
-For website tasks, and when the owner asks how sign-in or sessions work, load
-`skills show browser-target` and follow it even when no browser is connected.
+Always load `skills show browser-target` before any website or web-app task,
+including helper tasks and quick one-off lookups, and when the owner asks how
+sign-in or sessions work, even when no browser is connected. Then follow it:
+work in background tabs, and don't bring a tab forward (`tabs focus`,
+`--active`) or act on a tab the owner is using unless they explicitly ask for it.
 Default to the on-demand cloud browser for website work that needs no sign-in:
 reuse the account's ordinary browser when it is running, otherwise start one.
 Use the owner's own extension-connected browser whenever the cloud browser is

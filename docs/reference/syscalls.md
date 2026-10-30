@@ -44,7 +44,8 @@ for target selectors and custom policies.
 
 When a Process calls a syscall through one of its capability tools, the tool
 accepts one extra argument, `purpose`: a single sentence written for the person,
-saying why the call is being made. It is a tool argument, not a syscall
+addressing them as "you" and saying what the call achieves for them rather than
+how it works. It is a tool argument, not a syscall
 argument. It never appears in a wire `args` object and is not part of any
 signature below: the runtime lifts it off the arguments before dispatch,
 collapses whitespace, and caps it at 400 characters. The person sees it in an
@@ -192,6 +193,11 @@ a request body, and `fs.transfer.stat` reports size and revision without a
 body. Browser receivers cancel and release their body reader on cancellation or
 deadline, including when a sender stalls. Cancellation while reading leaves
 the destination unchanged. See [Frame Bodies](/reference/websocket-protocol#frame-bodies).
+
+A file written without a content type takes its extension's type. When the
+name says nothing, it is `text/plain` only if its first bytes are UTF-8 without
+NUL bytes, and `application/octet-stream` otherwise. Machines first recognise
+common formats from the bytes.
 
 For a file result, `size` is the original file size; the body descriptor length
 is the transmitted payload size and can differ when `offset` or `limit` selects
@@ -468,6 +474,60 @@ and foreign-owned deliveries. It does not re-enter compose, body storage, or
 Queue publication. This is the normal way to observe the eventual outcome of a
 send that returned `queued`.
 
+## Received mail: `mail.list`, `mail.search`, `mail.read`
+
+These read the caller's own inbox, each under its own capability, and the
+native `mail list`, `mail search` and `mail show` commands use them.
+
+```ts
+type MailMessageSummary = {
+  messageId: string;
+  receivedAt: number;
+  sentAt: number | null;
+  from: string;
+  subject: string | null;
+  summary: string | null; // filled in shortly after arrival
+  category: ManagedMailSummaryCategory | null;
+  requiresAttention: boolean | null;
+  attachmentCount: number;
+};
+type MailPage = { messages: MailMessageSummary[]; next?: string };
+
+type MailSyscalls = {
+  "mail.list": { args: { limit?: number; before?: string }; result: MailPage };
+  "mail.search": { args: { query: string; limit?: number; before?: string }; result: MailPage };
+  "mail.read": {
+    args: { messageId: string }; // or an unambiguous prefix
+    result: {
+      message: MailMessageSummary & {
+        to: string[];
+        cc: string[];
+        replyTo: string[];
+        attachments: { filename?: string; mimeType: string; size: number }[];
+        text: string;
+        truncated: boolean;
+        textPath: string;
+        rawPath: string;
+      };
+    };
+  };
+};
+```
+
+Pages run newest first, with up to 200 messages each (50 by default). To get
+the next older page, pass `next` as `before`. A cursor stays valid while new
+mail arrives, so paging neither skips nor repeats messages.
+
+`mail.search` returns messages that contain every word of the query, each
+matched as a word prefix. It looks in the sender, the recipients, the subject,
+the summary and the first 16,384 characters of the plain text. Mail that
+arrived before this index existed is searchable by its headers and summary
+only.
+
+`mail.read` returns the plain-text rendering with its headers. A message longer
+than 100,000 characters comes back cut short, with `truncated` set; the whole
+message stays readable at `textPath`.
+
 ## Web search: `web.search`
 
 Indexed web search uses the targetable `web.search` syscall, exposed as the
@@ -626,7 +686,7 @@ conversation ownership checks. Delegated processes do not inherit this read auth
 | `conversation.ship` | Kernel | Ensures and returns the caller's stable Ship conversation and current personal Process handler. |
 | `conversation.forProcess` | Kernel | Returns Ship for the personal Process or ensures a Work conversation for an owned interactive Process. |
 | `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
-| `conversation.history` | Conversation DO | Returns a page in chronological order, paging transparently across hot SQLite messages and immutable R2 segments. `beforeSequence` reads earlier messages; `afterSequence` reads later messages. |
+| `conversation.history` | Conversation DO | Returns a page in chronological order, paging transparently across hot SQLite messages and immutable R2 segments. `beforeSequence` reads earlier messages; `afterSequence` reads later messages. For a contact conversation, it then checks whether the contact's Ship is gone, at most once an hour for each contact. |
 | `conversation.search` | Conversation DO | Searches retained message indexes, newest matches first. Defaults to the caller's Ship. Only new messages are indexed; older search entries are pruned under storage pressure without deleting their original history. Archival alone does not remove a search entry. |
 | `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
@@ -650,7 +710,7 @@ type ConversationMessage = {
   author:
     | { kind: "user"; uid: number }
     | { kind: "process"; pid: string; uid: number }
-    | { kind: "contact"; contactId: string; shipId: string; subjectId: string; displayName: string };
+    | { kind: "contact"; contactId: string; displayName: string };
   text: string;
   selectedTarget?: string;
   media?: MessageAttachment[];
@@ -711,13 +771,18 @@ resource grants, delivery receipts, and Process state.
 
 Pairing is explicit and human-controlled. `contact.invite.create` returns a
 short-lived, one-use code and a shareable `url`; the other signed-in person accepts either with
-`contact.invite.accept`. The Kernel derives the remote installation and subject
-from the signed exchange. Callers never choose a remote local uid, Process,
-conversation, filesystem path, or installation id.
+`contact.invite.accept`. The code names the inviting Ship's DID, and the
+accepting Ship checks that the code's handle resolves to that DID. The
+acceptance is a Ship call signed with the accepting Ship's key, so the inviting
+Ship makes the Ship that signed it the contact, whatever name it gives. Callers
+never choose a remote local uid, Process, conversation, filesystem path, or
+installation id.
 
 Invitation links keep the URL-safe encoded payload in the `#contact=` fragment,
-without the `gsv-contact-v1:` code prefix, so mobile messengers can link the entire
-address. Existing prefixed codes and links still identify the same invitation.
+without the `gsv-contact-v2:` code prefix, so mobile messengers can link the entire
+address. Prefixed codes and links identify the same invitation. A code from
+before DIDs, with the `gsv-contact-v1:` prefix, is refused with a request for a
+new invitation.
 
 Trust changes may be initiated by the signed-in human or by that owner's exact
 canonical Ship Process. Delegated work Processes and remote callers cannot
@@ -736,21 +801,20 @@ never supplied by the remote person, and activation admits no Ship work itself.
 
 | Syscall | Behavior |
 |---|---|
-| `contact.identity` | Returns this installation's signed Ship document and the caller's local federation subject. |
 | `contact.invite.create` | Creates a one-use pairing code and shareable link, with an optional expiry of up to seven days. |
 | `contact.invite.accept` | Accepts a link or code, verifies and consumes the remote invite, creates both contact records, and ensures the local Contact conversation. |
 | `contact.invite.list` | Lists invitation lifecycle metadata without exposing recoverable invitation secrets. |
 | `contact.invite.cancel` | Cancels one unaccepted invitation. |
-| `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. |
+| `contact.list` | Lists the caller's active contacts; `includeRevoked` includes terminal relationships. It first ends any contact whose DID the directory cache already knows was deactivated, without a lookup. |
 | `contact.alias.set` | Sets or clears the owner's local name for a Contact without changing or federating its authenticated remote identity. |
 | `contact.preferences.update` | Owner or canonical Ship, revision-checked changes to saved, muted and standing Ship handling preferences. |
-| `contact.block.set` | Human-only block or unblock of one remote actor; blocking also ends its active connection and pending first-contact requests. |
-| `contact.block.list` | Reads private blocks, optionally filtered by `actor`, with cursor paging. |
+| `contact.block.set` | Human-only block or unblock of one person, named by their DID; blocking also ends their active connection and pending message requests. |
+| `contact.block.list` | Reads private blocks, optionally filtered by `did`, with cursor paging. |
 | `contact.notice.dismiss` | Dismisses the one-time notice that global contact auto-wake has been retired. |
 | `contact.revoke` | Revokes the local relationship immediately, withdraws its resource grants, terminates pending deliveries, and durably notifies the other Ship. |
 | `contact.send` | Commits one local Contact message and queues an authenticated delivery. Reusing an `idempotencyKey` with the same input returns the same logical delivery; changed input is rejected. |
 | `contact.delivery.get` | Reads the owner-scoped queued, delivered, or failed state of one retained Contact delivery. |
-| `contact.delivery.list` | Reads retained delivery status for selected messages in a contact conversation. |
+| `contact.delivery.list` | Reads retained delivery status for selected messages in a contact conversation. After answering, it checks whether the contact's Ship is gone, at most once an hour for each contact. |
 | `contact.delivery.retry` | Resumes the original recoverable delivery without appending a second message. |
 | `contact.request.list` | Lists structured incoming and outgoing cross-GSV requests. |
 | `contact.request.create` | Offers a typed request with a title and optional JSON details. |
@@ -777,16 +841,6 @@ a contact-local reference and streams bytes only when they are opened through
 `fs.transfer.send`. Revocation makes those grants unavailable.
 
 ```ts
-type FederationShipDocument = {
-  version: 1;
-  shipId: string;
-  origin: string;
-  publicKey: { kty: "EC"; crv: "P-256"; x: string; y: string };
-  protocols: ["gsv-federation/1"];
-  issuedAtMs: number;
-  signature: string;
-};
-type FederationSubject = { id: string; displayName: string };
 type ContactInviteSummary = {
   inviteId: string;
   state: "pending" | "accepted" | "expired" | "cancelled";
@@ -812,9 +866,9 @@ type ContactSummary = {
   ownerUid: number;
   state: "active" | "revoked";
   generation: string;
-  remoteShipId: string;
-  remoteSubject: FederationSubject;
-  remoteOrigin: string;
+  remoteDid?: string; // absent only for a contact that ended before DIDs
+  remoteName: string;
+  remoteHandle?: string;
   localAlias?: string;
   preferences?: { revision: number; saved: boolean; muted: boolean; shipHandlesMessages: boolean };
   blocked?: boolean;
@@ -846,10 +900,6 @@ type ContactRequestRecord = {
   updatedAtMs: number;
 };
 type ContactSyscalls = {
-  "contact.identity": {
-    args: Record<string, never>;
-    result: { document: FederationShipDocument; subject: FederationSubject };
-  };
   "contact.invite.create": {
     args: { expiresInSeconds?: number };
     result: { inviteId: string; code: string; url?: string; expiresAtMs: number };
@@ -884,7 +934,7 @@ type ContactSyscalls = {
       text: string;
       media?: ResourceBlock[];
       idempotencyKey?: string;
-      replyTo?: { actor: { shipId: string; subjectId: string }; messageId: string };
+      replyTo?: { did: string; messageId: string };
       responsibilityId?: string;
     };
     result: {
@@ -938,12 +988,12 @@ type ContactSyscalls = {
     result: { contact: ContactSummary };
   };
   "contact.block.set": {
-    args: { actor: ActorRef; blocked: boolean };
+    args: { did: string; blocked: boolean };
     result: { block: ContactBlock | null };
   };
   "contact.block.list": {
-    args: { actor?: ActorRef; cursor?: ActorRef; limit?: number };
-    result: { blocks: ContactBlock[]; nextCursor?: ActorRef };
+    args: { did?: string; cursor?: string; limit?: number };
+    result: { blocks: ContactBlock[]; nextCursor?: string };
   };
   "contact.notice.dismiss": {
     args: Record<string, never>;
@@ -980,10 +1030,22 @@ metadata. Each queued delivery retains the wire version chosen when it was creat
 
 ### Public profiles and first messages
 
-Each space has one opt-in, owner-authenticated profile at `https://SPACE/profile`. Reading the same
-address with `Accept: application/json` returns its signed document. Publication is atomic;
-draft changes stay private until the next explicit publish. No public alias is required. All profile mutations and first-contact decisions require the direct
-signed-in human; Ship may resolve a public profile but cannot publish or accept on their behalf.
+Each space has one owner-authenticated profile, published as the Ship's `space.ship.profile` record
+(record key `self`) in its [open-network repository](#open-network-atproto). The Gateway renders that
+record as the page at `https://SPACE/profile`, and older `/@name` links redirect there. Nothing is public
+until the owner chooses: `sys.setup` takes `profile: "public" | "private"` where `setupFeatures` lists
+`profile`, which it does only with the `PDS` service. Either choice saves a draft named by the Ship's handle
+with `contactPolicy: "requests"`; a public choice is published, as the owner has since edited it, at the next
+sign-in, which retries until the open-network host takes it. Without a choice, or with a private one,
+nothing publishes until an explicit publish.
+Draft changes stay private until the next explicit publish, which writes the record together with
+the profile as Bluesky shows it, an `app.bsky.actor.profile` record (record key `self`); unpublishing
+deletes both. Profile mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
+may resolve a profile and create, read, list and retry outgoing message requests (`approach.create`,
+`approach.get`, `approach.list`, `approach.retry`) on their behalf. A Ship's `approach.create` asks the
+owner first unless an approval rule matches it, and a replay of a request already sent does not ask again. Incoming requests, publishing a
+profile and every decision stay with the signed-in human; a process reading or listing an incoming
+request is rejected.
 
 ```ts
 type ProfileAndApproachSyscalls = {
@@ -1004,17 +1066,29 @@ type ProfileAndApproachSyscalls = {
     result: { profile: ProfileState };
   };
   "profile.resolve": {
-    args: { url: string };
+    args: { address: string };
     result: { profile: PublicProfile };
+  };
+  "profile.avatar.set": {
+    args: { expectedRevision: number; mimeType: "image/png" | "image/jpeg" | "image/webp" };
+    result: { profile: ProfileState };
+  };
+  "profile.avatar.remove": {
+    args: { expectedRevision: number };
+    result: { profile: ProfileState };
+  };
+  "profile.avatar.read": {
+    args: { cid: string };
+    result: ProfileAvatar;
   };
   "approach.create": {
     args: {
-      profileUrl: string;
-      recipient: ActorRef;
-      profileRevision: number;
+      did: string;
+      profileCid: string;
       displayName: string;
       text: string;
       idempotencyKey: string;
+      shipHandlesMessages?: boolean;
     };
     result: { approach: ApproachSummary };
   };
@@ -1032,33 +1106,103 @@ type ProfileAndApproachSyscalls = {
     result: { approach: ApproachSummary };
   };
   "approach.decide": {
-    args: { approachId: string; expectedRevision: number; decision: "accept" | "decline" | "withdraw" };
+    args: { approachId: string; expectedRevision: number; decision: "accept" | "decline" | "withdraw"; shipHandlesMessages?: boolean };
     result: { approach: ApproachSummary };
   };
   "approach.retry": {
     args: { approachId: string; expectedRevision: number };
     result: { approach: ApproachSummary };
   };
+  "approach.report": {
+    args: { approachId: string; category: "spam" | "harassment" | "impersonation" | "sexual" | "other"; includeMessage: boolean };
+    result: { approach: ApproachSummary };
+  };
 };
 ```
 
-`ProfileFields` contains `displayName`, `about`, `contactPolicy`
-(`requests`, `invitation` or `closed`) and `representation` (`human` or `human-and-ship`).
-`ProfileState` returns those fields as `draft`, its canonical `url`, a revision and optional published URL/revision.
-New signed documents use version 3 and domain `gsv-federation/3/profile`; federation
-transport remains v2. Readers also verify legacy v2 documents. On upgrade, the
-Kernel re-signs only the previously published snapshot at `/profile`, retaining
-the old published alias for links. Legacy HTML links redirect; JSON requests return
-the signed document directly. Concurrent unpublishing fences this conversion.
-`profile.resolve` reads a published profile, verifies the signed identity and checks
-existing contact pins. A 404 means no public profile is available at that address;
-it does not establish whether the Ship exists or prevent a private invitation.
-Creating a first message binds it to the exact recipient and profile revision the sender reviewed.
+`ProfileFields` contains `displayName` (1 to 80 characters), `about` (up to 2,048) and
+`contactPolicy` (`requests`, `invitation` or `closed`). `ProfileState` returns those fields as
+`draft`, the draft's picture as `avatar` (`{ cid, mimeType, size }`), its canonical `url`, a
+revision, and the space's recorded `handle` when the installation has one. Clients name the profile
+by that handle rather than parsing it from the URL. While the record exists, `published` gives the
+page `url`, the record's `cid`, the live `contactPolicy` and the draft `revision` the record was
+written from. A later draft revision is an unpublished change; publishing it again also retries a
+publish that failed after the draft was saved.
 
-First-contact messages expire after 30 days and accept text only, up to 32 KiB. Acceptance promotes
-the same conversation and first message through a durable, peer-bound pairing operation. Neither
-arrival nor acceptance starts Ship. Declining is private. Blocking denies future requests from that
-actor independently of whether a contact was ever accepted. Unblocking does not revive an old request.
+`profile.avatar.set` replaces the draft's picture with its request body: a PNG, JPEG or WebP of at
+most 1 MB, of declared length, whose bytes match its type. `profile.avatar.remove` removes the
+picture. Both advance the draft revision, and the picture becomes public with the next publish.
+`profile.avatar.read` returns the draft's or the published picture as the response body, for the
+owner's editor.
+
+```ts
+type ShipProfileRecord = {
+  $type: "space.ship.profile";
+  displayName: string; // 1 to 80 graphemes, at most 640 bytes
+  about?: string; // up to 2,048 graphemes and 20,480 bytes; absent when empty
+  avatar?: { $type: "blob"; ref: { $link: string }; mimeType: "image/png" | "image/jpeg" | "image/webp"; size: number };
+  contactPolicy: string; // requests, invitation or closed
+};
+```
+
+`lexicons/space/ship/profile.json` defines the record; [Lexicons](../architecture/open-network.md#lexicons)
+describes how Ship's lexicons become the SDK's validators.
+Readers ignore record fields they don't know and read an unknown `contactPolicy` as `closed`.
+The page shows the record's picture from the Ship's own host at `/profile/avatar`, served as a
+sandboxed image, and asks search engines not to index either. The page has no JSON form; other
+Ships read the record.
+
+```ts
+type BlueskyProfileRecord = {
+  $type: "app.bsky.actor.profile";
+  displayName: string; // the record's, within 64 graphemes and 640 bytes
+  description?: string; // its about, within 256 graphemes and 2,560 bytes; absent when empty
+  avatar?: { $type: "blob"; ref: { $link: string }; mimeType: "image/png" | "image/jpeg"; size: number };
+  website: string; // the profile page
+};
+```
+
+The Bluesky copy shows the same profile, linking to its page. A name or bio over Bluesky's limits is
+cut between graphemes and ends with an ellipsis. It shares the record's picture unless that is a
+WebP, which Bluesky doesn't show, or a file the operator took down. While the operator has the
+account, the profile record or the copy down, publishing deletes the copy instead of writing it. When
+the repository holds another copy than the published record makes, including none for a profile
+published before Ships kept one, the owner's next sign-in writes it once the takedowns allow, as
+does the Kernel's next reconciliation of their personal agent when a message reaches their Ship from
+any surface.
+
+`profile.resolve` takes a handle, with or without its `@`, or a profile link. A bare handle is on
+the Ship's own domain, and one on the operator's older domain names the same Ship on its primary
+domain. The Kernel resolves the handle to a DID, checks that the DID document claims the handle,
+and reads the record from the repository the document names. `PublicProfile` returns the `did`,
+`handle`, record `cid`, `displayName`, `about`, `contactPolicy` and page `url`. A 404 means no public
+profile is available at that address; it does not establish whether the Ship exists or prevent a
+private invitation. A 503 means the host the document names doesn't serve repositories right now,
+so the profile can't be read yet. A profile published as a signed document before profiles were records keeps its
+published fields and is written as a record at its owner's next sign-in or the next reconciliation
+of their personal agent.
+A message request names the recipient's `did` and the `profileCid` of the record its sender read.
+The sender's Ship refuses to send it if that record has changed or no longer takes requests, and the
+recipient's Ship refuses it on arrival for the same reasons, so a person never receives a request
+against a profile they have since changed. The approval a Ship asks for names the recipient's handle.
+
+Message requests expire after 30 days and accept text only, up to 32,768 UTF-16 code units. Ships exchange them
+with Ship-to-Ship calls signed by each Ship's DID: only the DID a request went to can accept it, and
+only its sender can withdraw it. Acceptance makes the contact on the sender's Ship, then on the
+recipient's, and promotes the same conversation and first message; the recipient's Ship asks again
+until both hold the same connection. Neither arrival nor acceptance starts Ship. Declining is private.
+Blocking denies future requests from that DID whether or not a contact was ever accepted, and a
+blocked sender hears the same refusal as a profile closed to requests. Unblocking does not revive an
+old request.
+
+`approach.report` sends a request the signed-in human received, and did not accept, to the
+operator's queue, and declines it privately if it is still waiting. The report names the sender by
+DID and verified handle, with the category and when the request arrived. With `includeMessage`, it
+also carries the sender's display name and first message exactly as the person read them; the
+Kernel reads them from the request itself, never from the caller. A request is reported once:
+reporting it again returns it unchanged, and `ApproachSummary.reportedAtMs` records when. Each person
+can report 20 requests a day. Without the deployment's `REQUEST_REPORTS` binding the call fails
+closed, and nothing changes until the operator's queue has the report. The sender's Ship is not told.
 
 ### Private conversation inbox
 
@@ -1093,6 +1237,91 @@ People reuses `conversation.history` and `conversation.search`; no separate soci
 or archive backfill exists. Contact conversations have no `handlerPid`. Other conversation kinds
 retain their ordinary handler requirement.
 
+## Open network: `atproto.*`
+
+A Ship can publish public records and files on the open network, the
+[AT Protocol](https://atproto.com) network that Bluesky and other apps read.
+The deployment's optional `PDS` service hosts one public repository per Ship;
+see [The open network](../architecture/open-network.md). Only what the person
+chooses to make public goes there. Messages, contacts and the rest of the Ship
+never do. Without the binding, these calls fail as unavailable.
+
+A Ship's account is a `did:plc` whose handle is the Ship's hostname, for
+example `alice.ship.space`. The Ship's first outward act creates it: a publish,
+an invitation, a message request or another call to a Ship.
+`atproto.identity` returns `null` until then. While
+the profile is private, writes and uploads are refused with a message naming
+People.
+
+`atproto.identity` also lists what the operator has taken down on the PDS,
+oldest first, with the reason the operator gave; readers on the open network no
+longer see those. While the whole account is down, its `status` is
+`takendown`, and writes, uploads and calls to other Ships fail. See
+[takedowns](../architecture/open-network.md#takedowns).
+
+Only the signed-in person and their Ship may publish. Other processes, Crew
+included, other accounts and machines are refused whatever their capabilities.
+When the Ship calls `atproto.write`, the person approves it first unless an
+approval rule allows it. The approval shows the handle the publish speaks as,
+the full address, every change and the files its records carry. The person
+writing directly is not asked. After approval the Kernel checks the profile
+again, so a profile made private meanwhile stops the publish.
+
+```ts
+type AtprotoSyscalls = {
+  "atproto.identity": {
+    args: Record<string, never>;
+    result: { identity: PublicRepositoryAccount | null; takedowns: PublicTakedown[] };
+  };
+  "atproto.write": {
+    args: { writes: PublicRecordWrite[] };
+    result: {
+      commit: { cid: string; rev: string };
+      results: Array<{ uri: string; cid: string | null }>;
+    };
+  };
+  "atproto.blob.upload": {
+    args: { mimeType: string };
+    result: { blob: PublicBlobRef };
+  };
+  "atproto.blob.read": {
+    args: { cid: string };
+    result: { mimeType: string; size: number };
+  };
+};
+
+type PublicRepositoryAccount = { did: string; handle: string; host: string; status?: "takendown" };
+type PublicTakedown = {
+  subject:
+    | { $type: "com.atproto.admin.defs#repoRef"; did: string }
+    | { $type: "com.atproto.repo.strongRef"; uri: string; cid: string }
+    | { $type: "com.atproto.admin.defs#repoBlobRef"; did: string; cid: string; recordUri?: string };
+  ref: string;            // the operator's reference, such as an audit event ID
+  reason: string | null;
+  at: number;             // milliseconds since the epoch
+};
+type PublicRecordWrite =
+  | { action: "create"; collection: string; rkey?: string; record: JsonObject }
+  | { action: "put"; collection: string; rkey: string; record: JsonObject }
+  | { action: "delete"; collection: string; rkey: string };
+type PublicBlobRef = { $type: "blob"; ref: { $link: string }; mimeType: string; size: number };
+```
+
+`atproto.write` commits one to ten changes together, up to 64 KiB of JSON, and
+returns one result per change in order; a delete has no record CID. A
+collection is any valid NSID except one a Ship feature owns. Today those are
+`space.ship.profile`, the profile, and `app.bsky.actor.profile`, the profile
+as Bluesky shows it, which change only in People. Ship's own
+lexicons use the `space.ship.*` namespace and live in `lexicons/space/ship/`.
+
+`atproto.blob.upload` takes a file of any type, up to 48 MiB, as a request body
+of declared length, and streams it to the repository. Uploading does not ask:
+nothing serves the file until a published record references it, so put the
+returned `blob` in a record and publish that. An upload that no record
+references within six hours expires. `atproto.blob.read` returns one of the
+Ship's own files, including one no record references yet, as the response body.
+Approval previews use it.
+
 ## Processes: `proc.*`
 
 Requests forwarded to a Process preserve its protocol error code and retryability.
@@ -1114,7 +1343,7 @@ Runtime behavior:
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable same-owner IPC. Ordinary calls are bounded: they create a call id and deadline, then later send either `ipc.reply` or `ipc.timeout` to the source process. Kernel-owned delegation may supervise the call instead: each checkpoint renews the result route and sends `ipc.overdue` without cancelling the worker. The worker's ordinary final assistant output is its durable caller result and does not require human-facing message or yield commands. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
-| `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
+| `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` adds an allow rule for the syscall and its target to the owner's approval policy, which every process of that owner follows; `remembered` reports whether the rule was added. A request without one target adds none. |
 | `proc.kill` | Process DO | Optionally archives the process history under the run-as agent's home, promotes referenced media into immutable archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry. |
 | `proc.history` | Process DO | Returns paged Process activity, message count, pending HIL, and context pressure. `format: 2` adds typed records and durable revision/reset metadata; `since` returns complete changed groups from an opaque cursor. Unexpected run or scheduling failures persist a `runtime.failed` event with reason `tick.error` or `schedule.error`, including failures before any model response. Offset paging reads from the beginning; `tail`, `beforeMessageId`, and `afterMessageId` select bounded pages. `includeMessages: false` returns status only. Historical/status pages never advance a synchronization cursor. The original `messages` projection remains available for older clients. See [Process History](../architecture/process-history.md). |
 | `proc.trace` | Process DO | Returns the bounded wall-clock span tree for recent runs. Run, context assembly, inference, reasoning, model output, tool execution, approval, and Message delivery spans carry timing plus references into `proc.history`; the trace does not duplicate private payloads. Trace state is cleared with Process history and removed by `proc.kill`. |
@@ -1731,7 +1960,7 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone and owner language preference, optional AI config, optional machine token, home layout, and imports the manual. Built-in skills are served from `/sys/skills.d` rather than copied into homes. Username, password, timezone, and BCP 47 language are validated. The Kernel prepares onboarding outside the model-visible ledger until the owner dismisses the welcome card or sends their first Ship message, then creates an open responsibility with no blocker. Retries preserve handled work. Setup recovery identifies the human separately from locked agent accounts. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone and owner language preference, optional profile choice, optional AI config, optional machine token, home layout, and imports the manual. Built-in skills are served from `/sys/skills.d` rather than copied into homes. Username, password, timezone, and BCP 47 language are validated. The Kernel prepares onboarding outside the model-visible ledger until the owner dismisses the welcome card or sends their first Ship message, then creates an open responsibility with no blocker. Retries preserve handled work. Setup recovery identifies the human separately from locked agent accounts. On a managed installation, a step that fails after the request is accepted answers `503` with a diagnostic ID, and the person can retry with the same credentials; a refused request answers `400` with its reason. That retry's password check is paced like `sys.connect`'s, and refuses with the same wait message while the account waits. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual` and registers it as a public system repository. The gateway's bundled skills are served read-only at `/sys/skills.d`, not copied into homes. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is the compatible immutable revision in `workers/gateway/src/kernel/sys/manual-version.json`. Existing installations refresh on authenticated activity when that revision changes; failures retain the installed copy and local edits are preserved. `wiki refresh gsv-manual` refreshes only the Manual. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write permitted user-overridable keys for their own account and delegated agents, including `users/<uid>/ai/` and `users/<uid>/ui/`. Instrument stores `"1"` at `users/<uid>/ui/welcome_card_seen` when the person dismisses the welcome card, so the dismissal follows the account across web and Desktop. A direct human write of this flag for their own account activates pending onboarding as an open responsibility and reconciles its wake before acknowledgment; retries do not reopen handled work. Reconnecting recovers a saved dismissal in the background without delaying sign-in. Values are coerced with `String(value)`. |
@@ -1753,13 +1982,10 @@ Runtime behavior:
 | `sys.token.list` | `handleSysTokenList` | Lists token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
 | `sys.token.revoke` | `handleSysTokenRevoke` | Revokes a token by id with optional reason. Non-root can revoke only own tokens. Missing or inaccessible token returns `revoked: false`. |
 | `sys.pair.create` | `handleSysPairCreate` | A signed-in human or permitted process creates an idempotent, ten-minute device invitation for a free target ID. Processes act for their human owner. The Kernel retains its secret hashed and creates no device credential yet. |
-| `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. |
+| `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. An invitation is paired only while the machine credential it issued is live; forgetting the machine makes it cancelled. |
 | `sys.pair.cancel` | `handleSysPairCancel` | Cancels an unused caller-owned invitation; an already-paired device and its credential remain intact. |
 | `sys.pair.redeem` | `handleSysPairRedeem` | Pre-connect enrollment. Consumes one invitation and atomically registers the receiving client's persisted random machine credential for the invitation's account and target. The same credential may recover an acknowledgement; another cannot reuse the invitation. |
-| `sys.link` | `handleSysLink` | User-role only. Links an adapter/account/actor to a uid. Adapter is lowercased; root may link to any uid, non-root only self. |
-| `sys.unlink` | `handleSysUnlink` | User-role only. Removes an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. |
 | `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
-| `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
 
 `sys.connect`, `sys.setup`, `sys.setup.assist`, and `sys.pair.redeem` are special-cased before normal auth/capability dispatch. Pairing redemption requires a valid human-issued invitation and retains the managed installation work gate. Other `sys.*` calls require a connected identity and are denied in setup mode.
 
@@ -1947,24 +2173,9 @@ type SystemSyscalls = {
     result: { revoked: boolean };
   };
 
-  "sys.link": {
-    args: { adapter: string; accountId: string; actorId: string; uid?: number };
-    result: { linked: boolean; link?: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number } };
-  };
-
-  "sys.unlink": {
-    args: { adapter: string; accountId: string; actorId: string };
-    result: { removed: boolean };
-  };
-
   "sys.link.list": {
     args: { uid?: number };
     result: { links: Array<{ adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number }> };
-  };
-
-  "sys.link.consume": {
-    args: { code: string };
-    result: { linked: boolean; link?: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number } };
   };
 
   "account.create": {
@@ -2192,10 +2403,10 @@ Runtime behavior:
 | `adapter.pair.info` | `handleAdapterPairInfo` | Signed-in human or authorized owned process. Returns adapter-owned public setup information: official bot username, install link, optional instructions for obtaining a code, and the calling codes the provider keeps the account from messaging. |
 | `adapter.pair.inspect` | `handleAdapterPairInspect` | Signed-in human or authorized owned process. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
 | `adapter.pair.confirm` | `handleAdapterPairConfirm` | Signed-in human or authorized owned process. The Kernel derives the active human owner from the authenticated session or process registry and honors process tool policy. Binds the external identity to that owner and the current installation, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. The caller cannot choose the destination uid or installation. |
-| `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. Generic `sys.unlink` refuses managed links so the two sides cannot be orphaned. |
-| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
+| `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. |
+| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, drops an unlinked DM as `pairing_required` so the adapter answers with its own pairing reply, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
-| `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. Failed and ambiguous results may include bounded, redacted `diagnostics` (exception name/message/stack/cause, provider status, error code/subcode and request ID). |
+| `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, an optional `action` to open (a label of at most 20 characters and an http or https URL, shown as a link button where the messenger supports one and as a line of text otherwise), media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. Failed and ambiguous results may include bounded, redacted `diagnostics` (exception name/message/stack/cause, provider status, error code/subcode and request ID). |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
 
 For explicit sends, the Kernel resolves the authorized linked actor for the
@@ -2262,7 +2473,7 @@ type AdapterSyscalls = {
   };
 
   "adapter.send": {
-    args: { adapter: string; accountId: string; deliveryId?: string; surface: AdapterSurface; text: string; replyToId?: string; media?: AdapterMedia[]; also?: boolean };
+    args: { adapter: string; accountId: string; deliveryId?: string; surface: AdapterSurface; text: string; action?: { kind: "open"; label: string; url: string }; replyToId?: string; media?: AdapterMedia[]; also?: boolean };
     result:
       | { ok: true; adapter: string; accountId: string; surfaceId: string; deliveryId: string; messageId?: string; deliveryState?: "sent" | "deduplicated" | "ambiguous" }
       | { ok: false; error: string; deliveryId?: string; retryable?: boolean };
@@ -2359,6 +2570,8 @@ Target watch delivery is handled by the Kernel when the target connects or disco
 
 Target connection events use the registered `target.connection` payload. The Kernel derives target identity and connection state from its authenticated connection lifecycle and rechecks the watching process's capability and target access before delivery. A `person` event enters typed Process history and notifies observing surfaces without starting a model run. `model` and `both` events use the ordinary Process event wake path. Machine peers cannot inject these internal event deliveries or claim another target's identity.
 
+The Kernel also records each notice it sends to the owner's messenger as an `owner.notified` event in their Ship's history: the topic (`contact.message`, `contact.request` or `contact.invite.accepted`), the channel, and who the notice is about as fields: the contact's name, handle and, for messages, how many there were and the start of the newest, which is the contact's untrusted text. It carries no rendered line; each client and the model render it from those fields, and only the messenger copy is text the Kernel writes. The event's `link` names what the notice is about (`{ kind: "contact", contactId }` or `{ kind: "contact.request", requestId }`); clients open it in their own interface, and only the messenger copy carries it as a URL. It is `both`-audience, so the owner sees it in their Ship conversation, and starts no run; an active run receives it as an ordinary runtime event. Only the Kernel produces it, through the same internal delivery.
+
 ```ts
 type SignalSyscalls = {
   "signal.watch": {
@@ -2450,6 +2663,14 @@ type ScheduleExpression =
   | { kind: "every"; everyMs: number; anchorMs?: number }
   | { kind: "cron"; expr: string; timezone: string };
 
+// sched.add and sched.update also accept a local one-shot. The Kernel resolves it
+// to { kind: "at"; atMs } with the offset in force on that date, using the owner's
+// timezone unless one is given. A time skipped by a clock change resolves to the
+// first valid minute after the gap; a time that happens twice, to its first occurrence.
+type ScheduleExpressionInput =
+  | ScheduleExpression
+  | { kind: "at"; localTime: string; timezone?: string }; // 2026-10-26T10:00[:00]
+
 type ScheduleTarget =
   | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
   | { kind: "process.spawn"; runAs?: string; label?: string; prompt: string; parentPid?: string; cwd?: string }
@@ -2486,12 +2707,12 @@ type SchedulerSyscalls = {
   };
 
   "sched.add": {
-    args: { name: string; description?: string; enabled?: boolean; expression: ScheduleExpression; target: ScheduleTarget };
+    args: { name: string; description?: string; enabled?: boolean; expression: ScheduleExpressionInput; target: ScheduleTarget };
     result: { schedule: ScheduleRecord };
   };
 
   "sched.update": {
-    args: { id: string; patch: { name?: string; description?: string | null; enabled?: boolean; expression?: ScheduleExpression; target?: ScheduleTarget } };
+    args: { id: string; patch: { name?: string; description?: string | null; enabled?: boolean; expression?: ScheduleExpressionInput; target?: ScheduleTarget } };
     result: { schedule: ScheduleRecord };
   };
 

@@ -67,7 +67,7 @@ describe("owner welcome", () => {
     let tree: ComponentChildren;
     function Harness() {
       tree = OwnerWelcomeScreen({ ready: true, resume: true, chooseSpace: true, initialStep: "email", load: async () => client,
-        onConnect: connect, invitation: { name: "Alice", origin: "alice.example.com" }, compact: true });
+        onConnect: connect, invitation: { name: "Alice", handle: "alice.example.com" }, compact: true });
       return null;
     }
     try {
@@ -274,12 +274,15 @@ describe("owner welcome", () => {
     } finally { await root.unmount(); }
   });
 
-  it("returns to the handle when Accounts rejects it at creation", async () => {
+  it.each([
+    { error: "handle is unavailable" },
+    { error: "This username is unavailable. Choose another.", code: "handle_unavailable" },
+  ])("returns to the handle when Accounts rejects it at creation: $error", async (failure) => {
     const store = memory({ origin: ORIGIN, flow: "create", sessionSecret: "a".repeat(64), challenge: null, operationId: "op_taken", handle: "taken" });
     const fetcher = vi.fn(async (url: string) => {
       if (url.includes("/handle?")) return Response.json({ available: true });
       if (url.endsWith("/session")) return session();
-      if (url.endsWith("/spaces")) return Response.json({ error: "handle is unavailable" }, { status: 400 });
+      if (url.endsWith("/spaces")) return Response.json(failure, { status: 400 });
       throw new Error(`Unexpected request: ${url}`);
     });
     const client = new OwnerWelcome(store.snapshot(), store, ORIGIN, fetcher);

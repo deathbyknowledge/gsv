@@ -8,6 +8,14 @@ export type ScheduleExpression =
   | { kind: "every"; everyMs: number; anchorMs?: number }
   | { kind: "cron"; expr: string; timezone: string };
 
+/**
+ * What a caller may ask for. A one-shot may name a local wall-clock time in an
+ * IANA timezone (the owner's by default); the Kernel resolves it to `atMs`.
+ */
+export type ScheduleExpressionInput =
+  | ScheduleExpression
+  | { kind: "at"; localTime: string; timezone?: string };
+
 export type ScheduleTarget =
   | {
       kind: "command.exec";
@@ -104,7 +112,7 @@ export type SchedulerAddArgs = {
   name: string;
   description?: string;
   enabled?: boolean;
-  expression: ScheduleExpression;
+  expression: ScheduleExpressionInput;
   target: ScheduleTarget;
 };
 
@@ -118,7 +126,7 @@ export type SchedulerUpdateArgs = {
     name?: string;
     description?: string | null;
     enabled?: boolean;
-    expression?: ScheduleExpression;
+    expression?: ScheduleExpressionInput;
     target?: ScheduleTarget;
   };
 };

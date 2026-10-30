@@ -1,3 +1,4 @@
+import { UsernamePolicy } from "./username-policy";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import { AccountStore } from "./store";
@@ -22,10 +23,10 @@ async function fixture() {
   let code = "";
   const send = vi.fn(async (message: EmailMessage | EmailMessageBuilder): Promise<EmailSendResult> => {
     if (!("subject" in message)) throw new Error("Expected composed mail");
-    code = message.text?.match(/code is ([0-9]{6})\./)?.[1] ?? "";
+    code = message.text?.match(/^([0-9]{6})$/m)?.[1] ?? "";
     return { messageId: crypto.randomUUID() };
   });
-  const makeApi = () => new InstallationOwnerApi(auth, owners, signup, { send }, "accounts@example.com", ORIGIN, "example.com");
+  const makeApi = () => new InstallationOwnerApi(auth, owners, signup, { send }, { from: "accounts@example.com" }, ORIGIN, "example.com");
   let api = makeApi();
   const request = async (path: string, token?: string, body?: JsonObject, headers: Record<string, string> = {}) => {
     const requestHeaders = new Headers({ "content-type": "application/json", "cf-connecting-ip": registry, ...headers });
@@ -60,7 +61,9 @@ describe("desktop owner API", () => {
     expect(check.status).toBe(200);
     expect(await check.json()).toEqual({ available: true });
     expect((await f.request("/handle?value=not_a_handle")).status).toBe(400);
-    expect((await f.request("/handle?value=signup")).status).toBe(400);
+    const reserved = await f.request("/handle?value=signup");
+    expect(reserved.status).toBe(200);
+    expect(await reserved.json()).toEqual({ available: false });
     expect((await f.request("/session")).status).toBe(401);
     expect((await f.request("/spaces", undefined, { operationId: crypto.randomUUID(), handle })).status).toBe(401);
     expect(f.send).not.toHaveBeenCalled();
@@ -74,6 +77,8 @@ describe("desktop owner API", () => {
     const verify = await f.signIn();
     f.restart();
     expect(f.send).toHaveBeenCalledTimes(1);
+    expect(f.send.mock.calls[0][0]).toMatchObject({ from: { email: "accounts@example.com", name: "Ship" } });
+    expect(f.send.mock.calls[0][0]).not.toHaveProperty("replyTo");
     expect((await f.request("/verify", undefined, verify)).status).toBe(200);
     const initialSession = await (await f.request("/session", f.sessionSecret)).json<{ spaceDomain: string; spaces: unknown[] }>();
     expect(initialSession.spaceDomain).toBe("example.com");
@@ -134,4 +139,24 @@ describe("desktop owner API", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "Use letters, numbers or hyphens. Start and end with a letter or number." });
   });
+});
+
+it("returns unavailable for normalized policy matches and rejects direct creation with a field error", async () => {
+  const f = await fixture();
+  await f.signIn();
+  const policy = new UsernamePolicy(env.INSTALLATIONS_DB);
+  const initial = await policy.list();
+  try {
+    await policy.replace({ reserved: "Shíp.Support", blocked: "Bád_Name" });
+    for (const handle of ["SHIP-SUPPORT", "BAD-NAME"]) {
+      expect(await (await f.request(`/handle?value=${handle}`, f.sessionSecret)).json()).toEqual({ available: false });
+      const operationId = crypto.randomUUID();
+      const denied = await f.request("/spaces", f.sessionSecret, { operationId, handle });
+      expect(denied.status).toBe(400);
+      expect(await denied.json()).toEqual({ error: "This username is unavailable. Choose another.", code: "handle_unavailable" });
+      expect(await f.accounts.getReservationByOperation(operationId)).toBeNull();
+    }
+  } finally {
+    await policy.replace({ reserved: initial.reserved.join("\n"), blocked: initial.blocked.join("\n") });
+  }
 });

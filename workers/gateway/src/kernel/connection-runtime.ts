@@ -30,6 +30,7 @@ import {
 import {
   ensurePersonalController,
 } from "./personal-controller";
+import { ensurePublishedProfile } from "./profiles";
 import {
   recordMachineAddedResponsibility,
 } from "./lifecycle-responsibilities";
@@ -64,6 +65,7 @@ export class ConnectionRuntime {
 
 onConnect(connection: KernelConnection<ConnectionState>): void {
     const state: ConnectionState = { step: "pending" };
+    if (connection.state.source) state.source = connection.state.source;
     connection.setState(state);
     this.host.connections.set(connection.id, connection);
   }
@@ -231,6 +233,10 @@ async handleSysConnect(
         ownerUid,
         kind: "ship",
       });
+      // Publishing waits on the open-network host and its directory, which sign-in doesn't.
+      ctx.defer(ensurePublishedProfile(ownerUid, ctx).catch((cause: unknown) => {
+        console.warn("[Kernel] Failed to bring the published profile up to date:", exceptionDiagnostics(cause));
+      }));
     }
 
     if (ctx.auth.credentialEpoch(outcome.peer.principal.account.uid) !== credentialEpoch

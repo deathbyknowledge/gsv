@@ -1,7 +1,8 @@
 import type { ConversationMessage, JsonObject, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import type { FederationContactRecord, FederationInboxRecord, FederationOutboxLocalMessage } from "../federation-store";
-import type { ShipEvent } from "../ship-event-store";
+import type { ProcessContactMessageRuntimeEvent } from "../../protocol/process-frames";
 import { handleResponsibilityGet } from "../responsibilities";
 import { requireContactCaller } from "./authority";
 
@@ -13,7 +14,7 @@ export function bindContactReply(contact: FederationContactRecord, message: Fede
   requireContactCaller(ctx, true);
   const work = handleResponsibilityGet({ id: responsibilityId }, ctx).responsibility;
   if (work.assignee.kind !== "ship" || terminal(work)) throw new Error("Replies must continue an open Ship responsibility");
-  ctx.federation.bindReplyWait(contact, message.messageId, message.social?.reference.actor, work.id);
+  ctx.federation.bindReplyWait(contact, message.messageId, work.id);
 }
 
 /**
@@ -36,27 +37,42 @@ export function cancelContactHandling(contact: FederationContactRecord, ctx: Ker
 /**
  * Queue a handled contact message for Ship. Each message becomes its own Ship event;
  * the responsibility only records that this contact is owed attention, so a message
- * reuses one that is still open instead of rewriting it.
+ * reuses one that is still open instead of rewriting it. A message Ship doesn't handle
+ * becomes a notice for the person instead.
  */
 export function admitContactMessage(contact: FederationContactRecord, inbox: FederationInboxRecord, message: ConversationMessage, ctx: KernelContext): boolean {
   return ctx.federation.transaction(() => {
     const current = ctx.federation.get(contact.id);
     if (!current || current.generation !== inbox.contactGeneration || current.state !== "active" || current.blocked) return false;
     if (!ctx.federation.claimMessageAttention(inbox)) return false;
-    const reply = ctx.federation.replyResponsibilities(current, message.social?.replyTo);
+    // Work waits on this Ship's own messages, so a reply quoting the contact's waits on none.
+    const replyTo = message.social?.replyTo;
+    const reply = replyTo && replyTo.did !== ctx.shipIdentity.current() ? [] : ctx.federation.replyResponsibilities(current, replyTo);
     // A message without an explicit reply is unambiguous only while one task is awaiting this contact.
     const task = reply.length === 1 ? ctx.responsibilities.get(current.ownerUid, reply[0]) : null;
     let work: ResponsibilityRecord | null = null;
     if (task && task.assignee.kind === "ship" && !terminal(task)) work = attend(task, ctx);
     else if (current.preferences.shipHandlesMessages) work = pendingMessages(current, ctx);
-    if (!work) return false;
-    const event: ShipEvent = {
+    if (!work) {
+      // The person handles this message, so their messenger hears of it.
+      if (!current.preferences.muted) {
+        ctx.ownerNotices.noteContactMessage(current.ownerUid, {
+          contactId: current.id,
+          contactGeneration: current.generation,
+          conversationId: message.conversationId,
+          from: contactDisplayName(current),
+          preview: message.text,
+        }, message.sequence, Date.now());
+      }
+      return false;
+    }
+    const event: ProcessContactMessageRuntimeEvent = {
       type: "contact.message",
       contactId: current.id,
       contactGeneration: current.generation,
       conversationId: message.conversationId,
       messageId: message.id,
-      from: current.localAlias ?? current.remoteSubject.displayName,
+      from: contactDisplayName(current),
       text: message.text,
       responsibilityId: work.id,
       ledgerRevision: ctx.responsibilities.revision(current.ownerUid),
@@ -74,7 +90,9 @@ export function admitContactMessage(contact: FederationContactRecord, inbox: Fed
  * work while the message waited, the message joins standing handling as a newly
  * arriving one would; cancelled work withdraws it. Returns the event to deliver.
  */
-export function admitQueuedContactEvent(ownerUid: number, eventId: string, event: ShipEvent, ctx: KernelContext): ShipEvent | null {
+export function admitQueuedContactEvent(
+  ownerUid: number, eventId: string, event: ProcessContactMessageRuntimeEvent, ctx: KernelContext,
+): ProcessContactMessageRuntimeEvent | null {
   return ctx.federation.transaction(() => {
     const contact = ctx.federation.get(event.contactId);
     if (!contact || contact.ownerUid !== ownerUid || contact.generation !== event.contactGeneration ||
@@ -108,7 +126,7 @@ function pendingMessages(contact: FederationContactRecord, ctx: KernelContext): 
   const existing = standingHandling(contact, ctx);
   if (existing) return attend(existing, ctx);
   return ctx.responsibilities.create({
-    ownerUid: contact.ownerUid, title: `Pending messages from ${contact.localAlias ?? contact.remoteSubject.displayName}`,
+    ownerUid: contact.ownerUid, title: `Pending messages from ${contactDisplayName(contact)}`,
     details: { contactId: contact.id, conversationId: contact.conversationId, contactGeneration: contact.generation },
     source: actor, audience: { conversationIds: [contact.conversationId] }, assignee: { kind: "ship" },
     state: "open", priority: "normal", dedupeKey: `${handoffPrefix(contact)}${crypto.randomUUID()}`,

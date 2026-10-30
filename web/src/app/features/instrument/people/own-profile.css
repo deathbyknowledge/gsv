@@ -1,0 +1,20 @@
+/* The profile picture is square with sharp corners, as the public page shows it. */
+.people-picture { display: grid; gap: 10px; width: 100%; }
+.people-picture-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; }
+.people-picture-image { display: block; flex: none; width: 72px; height: 72px; border: 1px solid var(--border); background: var(--panel); object-fit: cover; }
+.people-picture-image.is-empty { background: var(--panel-2); }
+.people-picture > .people-note { margin: 0; }
+.people-profile-preview .people-picture-image { width: 96px; height: 96px; margin-bottom: 14px; }
+.people-profile-notice { margin-block: 20px 4px; padding: 18px 20px; border: 1px solid var(--border); background: var(--panel); }
+.people-profile-notice h2 { margin: 0 0 8px; color: var(--text-title); font: 500 16px/1.4 var(--gsv-font-prose); }
+.people-profile-notice p { margin: 0 0 10px; color: var(--text); font: 14px/1.6 var(--gsv-font-prose); }
+.people-profile-notice .people-actions { margin-top: 14px; }
+.people-profile-notice.is-takedown { border-color: color-mix(in srgb, var(--error) 40%, var(--border)); }
+.people-profile-takedowns { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.people-profile-takedowns li { padding-top: 12px; border-top: 1px solid var(--border); }
+.people-profile-takedowns strong { color: var(--text-title); font: 500 14px/1.5 var(--gsv-font-prose); overflow-wrap: anywhere; }
+.people-profile-takedowns p { margin: 4px 0 0; }
+/* "open network" reads as part of its sentence, underlined like other hinted text. */
+.people-term .gsv-tt { font-family: inherit; }
+.people-term-label { border-bottom: 1px dashed var(--primary-hi); cursor: help; }
+.people-term-label:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }

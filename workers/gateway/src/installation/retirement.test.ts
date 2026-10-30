@@ -10,6 +10,7 @@ import { InstallationRetirement, INSTALLATION_RETIREMENT_KEY, MULTIPART_UPLOAD_P
 import { GatewayDeletionDiscovery } from "./deletion-discovery";
 import { PROCESS_KILLED_TOMBSTONE_KEY, tombstoneKilledProcessStorage } from "../process/internal/lifecycle";
 import { createInstallationStorage, installationStoragePrefix } from "./storage";
+import type { GatewayEnv } from "../runtime-env";
 
 function request() {
   return { version: 1 as const, operationId: crypto.randomUUID(), installationId: crypto.randomUUID() };
@@ -327,6 +328,20 @@ describe("installation resource retirement", () => {
     const foreign = { kind: "mail" as const, objectId: "a".repeat(64), name: input.installationId };
     await expect(discovery.inspect({ installationId: input.installationId, resources: [foreign] })).rejects.toThrow("not owned by Gateway");
     await expect(discovery.import({ installationId: input.installationId, discoverySha256: "a".repeat(64), resources: [foreign] })).rejects.toThrow("not owned by Gateway");
+  });
+
+  it("keeps ripgit's failure reference, but not its cause, when repository discovery fails", async () => {
+    const input = request();
+    const diagnosticId = crypto.randomUUID();
+    const ripgit = {
+      fetch: async () => Response.json({
+        error: "InternalError", kind: "repository", diagnosticId, message: "index unavailable for drafts/salary-review.md",
+      }, { status: 500 }),
+    };
+    // SAFETY: repository discovery reaches no binding other than ripgit.
+    const discovery = new GatewayDeletionDiscovery({ RIPGIT: ripgit } as GatewayEnv);
+    await expect(discovery.inspect({ installationId: input.installationId, resources: [{ kind: "ripgit", objectId: "a".repeat(64) }] }))
+      .rejects.toThrow(new RegExp(`^Ripgit discovery failed \\(500, repository error, reference ${diagnosticId}\\)$`));
   });
 
   it("resumes a verified inventory import without sealing the first batch", async () => {

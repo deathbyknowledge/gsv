@@ -59,5 +59,9 @@ export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
     { match: "web.search", action: "auto" },
     { match: "sys.mcp.call", action: "ask" },
     { match: "mail.send", action: "ask" },
+    { match: "sched.add", action: "ask" },
+    { match: "sched.update", action: "ask" },
+    { match: "approach.create", action: "ask" },
+    { match: "atproto.write", action: "ask" },
   ],
 };

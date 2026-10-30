@@ -170,6 +170,10 @@ database keeps its explicit migration runner instead: supply its existing
 directory Worker and do not give Alchemy migration ownership of those ledgers.
 Deployments with an existing Mail queue also follow the
 [reader-before-writer upgrade](https://github.com/deathbyknowledge/gsv/blob/main/deployment/mail-queue-upgrade.md).
+A deployment whose Ships are from before the open network first deploys gsv
+`5ddf104ed` and applies the contacts move its operator guide describes. Later
+revisions end any contact still named the old way, and drop the message
+requests, blocks and deliveries waiting with it.
 
 The common stack does not adopt an old standalone deployment in place. Keep
 that deployment on its preserved source or release until its data has been

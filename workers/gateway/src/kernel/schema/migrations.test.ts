@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(71);
+    expect(KERNEL_MIGRATIONS).toHaveLength(84);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -393,6 +393,14 @@ describe("kernel schema migrations", () => {
       "DELETE FROM signal_watches WHERE signal LIKE 'notification.%'",
     );
     expect(statements).toContain("DROP TABLE notifications");
+  });
+
+  it("removes Kernel link codes", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain("DROP TABLE link_challenges");
+    expect(statements).toContain(
+      "DELETE FROM group_capabilities WHERE capability IN ('sys.link', 'sys.unlink', 'sys.link.consume')",
+    );
   });
 
   it("adds installation-local mailbox indexes", () => {

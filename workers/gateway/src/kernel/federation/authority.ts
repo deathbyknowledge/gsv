@@ -2,7 +2,7 @@ import type { ContactSummary } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "../context";
 import { principalOf, resolveCallerOwnerUid } from "../context";
 import { isLocked } from "../../auth/shadow";
-import type { FederationContactRecord } from "../federation-store";
+import type { FederationContactRecord, ReachableContact } from "../federation-store";
 import { hasCapability } from "../capabilities";
 import { z } from "zod/mini";
 
@@ -31,16 +31,22 @@ export function requireContactCaller(ctx: KernelContext, directHuman: boolean): 
   return ownerUid;
 }
 
+/** Every active contact names a DID, as does the contact of every delivery; only one that ended before DIDs has none. */
+export function assertContactReachable(contact: FederationContactRecord): asserts contact is ReachableContact {
+  if (contact.remoteDid === undefined) throw new Error(`Contact ${contact.id} has no DID`);
+}
+
 export function requireOwnedActiveContact(
   contactIdValue: string,
   ownerUid: number,
   ctx: KernelContext,
-): FederationContactRecord {
+): ReachableContact {
   const contactId = contactIdValue.trim();
   const contact = ctx.federation.get(contactId);
   if (!contact || contact.ownerUid !== ownerUid || contact.state !== "active") {
     throw new Error(`Contact not found: ${contactId}`);
   }
+  assertContactReachable(contact);
   return contact;
 }
 
@@ -48,7 +54,7 @@ export function requireOwnedActiveContactGeneration(
   expected: FederationContactRecord,
   ownerUid: number,
   ctx: KernelContext,
-): FederationContactRecord {
+): ReachableContact {
   const current = requireOwnedActiveContact(expected.id, ownerUid, ctx);
   if (current.generation !== expected.generation) {
     throw new Error("Contact generation changed during operation");
@@ -92,12 +98,11 @@ export function contactSummary(contact: FederationContactRecord): ContactSummary
     ownerUid: contact.ownerUid,
     state: contact.state,
     generation: contact.generation,
-    remoteShipId: contact.remoteShipId,
-    remoteSubject: contact.remoteSubject,
-    remoteOrigin: contact.remoteOrigin,
+    ...(contact.remoteDid !== undefined ? { remoteDid: contact.remoteDid } : undefined),
+    remoteName: contact.remoteName,
+    ...(contact.remoteHandle !== undefined ? { remoteHandle: contact.remoteHandle } : undefined),
     preferences: contact.preferences,
     blocked: contact.blocked,
-    ...(contact.protocol ? { protocol: contact.protocol } : undefined),
     ...(contact.localAlias !== undefined ? { localAlias: contact.localAlias } : undefined),
     conversationId: contact.conversationId,
     createdAtMs: contact.createdAtMs,

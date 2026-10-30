@@ -4,6 +4,7 @@ import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } f
 import { InstallationOwnerStore } from "./owner-store";
 import { InstallationSignup, type PendingSetup } from "./signup";
 import { sendOwnerVerification } from "./owner-verification";
+import type { OwnerEmailSender } from "./owner-verification-email";
 import { parseBaseDomain } from "./domain";
 
 const secret = z.string().regex(/^[a-f0-9]{64}$/);
@@ -22,7 +23,7 @@ type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>
 /** Explicit bearer authentication; browser cookies never authorize this native API. */
 export class InstallationOwnerApi {
   constructor(private readonly auth: InstallationOwnerAuthStore, private readonly owners: InstallationOwnerStore,
-    private readonly signup: InstallationSignup, private readonly mail: SendEmail, private readonly from: string,
+    private readonly signup: InstallationSignup, private readonly mail: SendEmail, private readonly sender: OwnerEmailSender,
     private readonly origin: string, private readonly baseDomain: string) {}
 
   async handle(request: Request): Promise<Response | null> {
@@ -37,7 +38,7 @@ export class InstallationOwnerApi {
       }
       if (request.method === "POST" && url.pathname === "/owner/api/code") {
         const input = challenge.parse(await readJsonObject(request));
-        const result = await sendOwnerVerification(this.auth, this.mail, this.from, {
+        const result = await sendOwnerVerification(this.auth, this.mail, this.sender, {
           ...input, purpose: "login", ip: request.headers.get("cf-connecting-ip") ?? "local",
         });
         return json(result, result.deliveryStatus === "sent" ? 200 : result.deliveryStatus === "sending" ? 202 : 503);

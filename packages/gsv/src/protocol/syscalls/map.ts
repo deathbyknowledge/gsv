@@ -130,12 +130,8 @@ import type {
   SysTargetListResult,
   SysTargetUpdateArgs,
   SysTargetUpdateResult,
-  SysLinkArgs,
-  SysLinkConsumeArgs,
-  SysLinkConsumeResult,
   SysLinkListArgs,
   SysLinkListResult,
-  SysLinkResult,
   SysMcpAddArgs,
   SysMcpAddResult,
   SysMcpCallArgs,
@@ -166,8 +162,6 @@ import type {
   SysTokenListResult,
   SysTokenRevokeArgs,
   SysTokenRevokeResult,
-  SysUnlinkArgs,
-  SysUnlinkResult,
 } from "./system";
 import type {
   SchedulerAddArgs,
@@ -252,6 +246,22 @@ import type {
   SignalWatchResult,
 } from "./signal";
 import type {
+  AtprotoBlobReadArgs,
+  AtprotoBlobReadResult,
+  AtprotoBlobUploadArgs,
+  AtprotoBlobUploadResult,
+  AtprotoIdentityArgs,
+  AtprotoIdentityResult,
+  AtprotoWriteArgs,
+  AtprotoWriteResult,
+} from "./atproto";
+import type {
+  MailListArgs,
+  MailListResult,
+  MailReadArgs,
+  MailReadResult,
+  MailSearchArgs,
+  MailSearchResult,
   MailSendArgs,
   MailSendResult,
   MailStatusArgs,
@@ -282,8 +292,6 @@ import type {
 import type {
   ContactAliasSetArgs,
   ContactAliasSetResult,
-  ContactIdentityArgs,
-  ContactIdentityResult,
   ContactInviteAcceptArgs,
   ContactInviteAcceptResult,
   ContactInviteCancelArgs,
@@ -322,9 +330,10 @@ import type {
 import type {
   ProfileGetArgs, ProfileGetResult, ProfileUpdateArgs, ProfileUpdateResult,
   ProfilePublishArgs, ProfilePublishResult, ProfileUnpublishArgs, ProfileUnpublishResult,
-  ProfileResolveArgs, ProfileResolveResult,
+  ProfileResolveArgs, ProfileResolveResult, ProfileAvatarSetArgs, ProfileAvatarSetResult,
+  ProfileAvatarRemoveArgs, ProfileAvatarRemoveResult, ProfileAvatarReadArgs, ProfileAvatarReadResult,
 } from "./profile";
-import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachRetryArgs } from "./approach";
+import type { ApproachCreateArgs, ApproachGetArgs, ApproachResult, ApproachListArgs, ApproachListResult, ApproachDecideArgs, ApproachReportArgs, ApproachRetryArgs } from "./approach";
 
 export type SyscallDomains = {
   "fs.read": { args: FsReadArgs; result: FsReadResult };
@@ -348,6 +357,9 @@ export type SyscallDomains = {
 
   "mail.send": { args: MailSendArgs; result: MailSendResult };
   "mail.status": { args: MailStatusArgs; result: MailStatusResult };
+  "mail.list": { args: MailListArgs; result: MailListResult };
+  "mail.search": { args: MailSearchArgs; result: MailSearchResult };
+  "mail.read": { args: MailReadArgs; result: MailReadResult };
 
   "conversation.ship": { args: ConversationShipArgs; result: ConversationShipResult };
   "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };
@@ -365,14 +377,22 @@ export type SyscallDomains = {
   "profile.publish": { args: ProfilePublishArgs; result: ProfilePublishResult };
   "profile.unpublish": { args: ProfileUnpublishArgs; result: ProfileUnpublishResult };
   "profile.resolve": { args: ProfileResolveArgs; result: ProfileResolveResult };
+  "profile.avatar.set": { args: ProfileAvatarSetArgs; result: ProfileAvatarSetResult };
+  "profile.avatar.remove": { args: ProfileAvatarRemoveArgs; result: ProfileAvatarRemoveResult };
+  "profile.avatar.read": { args: ProfileAvatarReadArgs; result: ProfileAvatarReadResult };
+
+  "atproto.identity": { args: AtprotoIdentityArgs; result: AtprotoIdentityResult };
+  "atproto.write": { args: AtprotoWriteArgs; result: AtprotoWriteResult };
+  "atproto.blob.upload": { args: AtprotoBlobUploadArgs; result: AtprotoBlobUploadResult };
+  "atproto.blob.read": { args: AtprotoBlobReadArgs; result: AtprotoBlobReadResult };
 
   "approach.create": { args: ApproachCreateArgs; result: ApproachResult };
   "approach.get": { args: ApproachGetArgs; result: ApproachResult };
   "approach.list": { args: ApproachListArgs; result: ApproachListResult };
   "approach.decide": { args: ApproachDecideArgs; result: ApproachResult };
   "approach.retry": { args: ApproachRetryArgs; result: ApproachResult };
+  "approach.report": { args: ApproachReportArgs; result: ApproachResult };
 
-  "contact.identity": { args: ContactIdentityArgs; result: ContactIdentityResult };
   "contact.invite.create": { args: ContactInviteCreateArgs; result: ContactInviteCreateResult };
   "contact.invite.accept": { args: ContactInviteAcceptArgs; result: ContactInviteAcceptResult };
   "contact.invite.list": { args: ContactInviteListArgs; result: ContactInviteListResult };
@@ -477,10 +497,7 @@ export type SyscallDomains = {
   "sys.pair.list": { args: SysPairListArgs; result: SysPairListResult };
   "sys.pair.cancel": { args: SysPairCancelArgs; result: SysPairCancelResult };
   "sys.pair.redeem": { args: SysPairRedeemArgs; result: SysPairRedeemResult };
-  "sys.link": { args: SysLinkArgs; result: SysLinkResult };
-  "sys.unlink": { args: SysUnlinkArgs; result: SysUnlinkResult };
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
-  "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };

@@ -7,7 +7,16 @@ import { operatorResourceAttestationSchema } from "./operator-resource-contracts
 import type { AccountsDeletionRuntime } from "./deletion-runtime";
 import { AdminForbiddenError, type InstallationAdminAccess } from "./admin/access";
 import type { AdminAuditRecorder } from "./admin/insight";
-import { hasExpectedOrigin, noStoreHeaders, readJsonObject, readRequestBody, requireString, type JsonValue } from "./http";
+import { readConfirmedAction, UnconfirmedActionError } from "./admin/api";
+import { OpenNetworkFollowError } from "./admin/service";
+import { hasExpectedOrigin, noStoreHeaders, readJsonObject, readRequestBody, requireString, type JsonObject, type JsonValue } from "./http";
+
+/** What retiring a Ship, the first step of deleting it, does to its person; a refused retirement says it. */
+const RETIRE_CONSEQUENCES: readonly string[] = [
+  "The person's Ship stops at once, for good, and nothing replaces it: sessions, devices, messengers and background work end, and it can't be reactivated.",
+  "Their public profile and records stop being served, and leave the open network when deletion erases the Ship's data and tombstones its DID. Their contacts end then.",
+  "Nothing is erased yet: retiring is the first step of deleting the Ship, and erasure starts only when the deletion begins.",
+];
 
 /** Deletion control uses the existing operator authentication and mutation origin. */
 export class InstallationDeletionHttp {
@@ -27,9 +36,20 @@ export class InstallationDeletionHttp {
     let installationId: string;
     try { installationId = decodeURIComponent(route[1]!); }
     catch { return await this.route(request, route); }
+    let body: JsonObject | undefined;
+    let reason: string | undefined;
+    if (route[2] === "retire") {
+      // Its audit row keeps the reason, so the request is read and checked before the row is written.
+      try {
+        body = await readJsonObject(request);
+        reason = readConfirmedAction(body).reason;
+      } catch (error) {
+        return deletionFailure(error instanceof Error ? error : new Error("request failed"));
+      }
+    }
     try {
-      return await this.audited(request, { name: `ship.deletion.${route[2] ?? "begin"}`, installationId },
-        () => this.route(request, route), (response) => ({ refused: !response.ok }));
+      return await this.audited(request, { name: `ship.deletion.${route[2] ?? "begin"}`, installationId, reason },
+        () => this.route(request, route, body), (response) => ({ refused: !response.ok }));
     } catch (error) {
       if (error instanceof AdminForbiddenError) return json({ error: "Forbidden" }, 403);
       // route() answers its own failures, so this is the audit record itself failing.
@@ -38,7 +58,7 @@ export class InstallationDeletionHttp {
     }
   }
 
-  private async route(request: Request, route: RegExpExecArray): Promise<Response> {
+  private async route(request: Request, route: RegExpExecArray, read?: JsonObject): Promise<Response> {
     try {
       const installationId = decodeURIComponent(route[1]);
       const action = route[2];
@@ -74,21 +94,27 @@ export class InstallationDeletionHttp {
         const input = accountsDeletionInspectionSchema.parse(JSON.parse(new TextDecoder().decode(await readRequestBody(request, 256 * 1024))));
         return json(await this.runtime.inspect(installationId, input));
       }
-      const body = await readJsonObject(request);
+      const body = read ?? await readJsonObject(request);
+      if (action === "retire") return json(await this.runtime.retire(installationId, readConfirmedAction(body).input));
       const operationId = requireString(body.operationId, "operationId");
-      if (action === "retire") return json(await this.runtime.retire(installationId, { operationId, confirmHandle: requireString(body.confirmHandle, "confirmHandle") }));
       return json(await this.runtime.begin(installationId, { operationId, inventorySha256: requireString(body.inventorySha256, "inventorySha256") }), 201);
     } catch (error) {
-      if (error instanceof z.ZodError || error instanceof SyntaxError || error instanceof URIError) {
-        return json({ error: "request deletion payload is invalid" }, 400);
-      }
-      const message = error instanceof Error ? error.message : "";
-      if (["installation", "operationId ", "handle ", "request ", "JSON ", "inventorySha256 "].some((prefix) => message.startsWith(prefix))) {
-        return json({ error: message }, message.includes("missing-inventory") ? 409 : 400);
-      }
-      return json({ error: "The deletion request could not be completed." }, 503);
+      return deletionFailure(error instanceof Error ? error : new Error("request failed"));
     }
   }
+}
+
+function deletionFailure(error: Error): Response {
+  if (error instanceof z.ZodError || error instanceof SyntaxError || error instanceof URIError) {
+    return json({ error: "request deletion payload is invalid" }, 400);
+  }
+  if (error instanceof UnconfirmedActionError) return json({ error: error.message, consequences: [...RETIRE_CONSEQUENCES] }, 400);
+  if (error instanceof OpenNetworkFollowError) return json({ error: error.message }, 503);
+  const message = error.message;
+  if (["installation", "operationId ", "handle ", "request ", "JSON ", "inventorySha256 "].some((prefix) => message.startsWith(prefix))) {
+    return json({ error: message }, message.includes("missing-inventory") ? 409 : 400);
+  }
+  return json({ error: "The deletion request could not be completed." }, 503);
 }
 
 function json(value: JsonValue, status = 200): Response {

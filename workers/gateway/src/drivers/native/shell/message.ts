@@ -114,7 +114,7 @@ async function searchMessages(args: string[], ctx: KernelContext): Promise<ExecR
       conversationId = requireShellOptionValue(args[++index], option);
       if (conversationId.startsWith("contact:")) {
         requireCommandCapability(ctx, "contact.list");
-        const contact = handleContactList({ includeRevoked: true }, ctx).contacts.find(({ id }) => id === conversationId);
+        const contact = (await handleContactList({ includeRevoked: true }, ctx)).contacts.find(({ id }) => id === conversationId);
         if (!contact) throw new Error(`Contact not found: ${conversationId}`);
         conversationId = contact.conversationId;
       }
@@ -171,7 +171,7 @@ async function showMessageHistory(args: string[], ctx: KernelContext): Promise<E
   let conversationId = target.trim();
   if (conversationId.startsWith("contact:")) {
     requireCommandCapability(ctx, "contact.list");
-    const contact = handleContactList({ includeRevoked: true }, ctx).contacts
+    const contact = (await handleContactList({ includeRevoked: true }, ctx)).contacts
       .find(({ id }) => id === conversationId);
     if (!contact) throw new Error(`Contact not found: ${conversationId}`);
     conversationId = contact.conversationId;
@@ -379,7 +379,7 @@ async function listDestinations(args: string[], ctx: KernelContext): Promise<Exe
       })
     : [];
   const contacts = canListContacts
-    ? handleContactList({ includeRevoked: flags.has("--all") }, ctx).contacts
+    ? (await handleContactList({ includeRevoked: flags.has("--all") }, ctx)).contacts
     : [];
   const destinations = [
     ...adapters.map((entry) => ({

@@ -219,14 +219,17 @@ The canonical outbound path is:
 Again, the adapter is a transport surface, not the place where durable agent
 or conversation state lives.
 
-A failed run with an existing adapter destination queues one bounded system
-notice before the Kernel removes its run route. The notice retains that exact
-destination and route generation through the ordinary durable delivery retry
-path, with a stable delivery identity. It contains no provider error or private
-run content and does not create an agent-authored conversation Message. The
-failure details remain inspectable in Process history. Cancelled or superseded
-runs do not send failure notices, and connection-only runs do not select a
-messenger just to report a failure.
+A failed run that a message from an adapter surface started queues one bounded
+system notice, in reply to that message, before the Kernel removes its run
+route. The notice retains that exact destination and route generation through
+the ordinary durable delivery retry path, with a stable delivery identity. It
+contains no provider error or private run content and does not create an
+agent-authored conversation Message. The failure details remain inspectable in
+Process history. Cancelled or superseded runs do not send failure notices, and
+connection-only runs do not select a messenger just to report a failure. A run
+that no message started, such as a responsibility review that follows Ship to
+its fallback messenger or a scheduled run, sends no failure notice either: no
+one on that messenger asked for it.
 
 HIL uses the same structured request rather than a prompt-text side channel.
 Web, Desktop, and CLI receive `proc.run.hil.requested` as a broadcast signal; an
@@ -239,6 +242,15 @@ authenticated and durably correlated inside its adapter, then sent as an
 ordinary `proc.hil` request through a Kernel-derived, interaction-scoped
 linked-human peer. The adapter service account never receives ambient
 `proc.hil` authority, and provider reply threading is not authorization.
+
+An `adapter.send` may also carry one `action`: a label of at most 20 characters
+and an http or https address to open. Adapters that declare native actions show
+it as a link button: Telegram under the message, WhatsApp as a `cta_url` message
+inside the 24-hour window. An address the provider can't open from a button,
+media, approval controls and WhatsApp's out-of-window template keep the link as
+a line of text under the message, and adapters without native actions always
+receive it that way from the shared frame handler. The action is part of the
+delivery's content, so a replay with a different action is a different delivery.
 
 An approval for a deleted or inaccessible Process is terminal. The Kernel
 preserves the protocol error code, so the adapter resolves the callback as stale
@@ -338,7 +350,7 @@ worker failure cannot leave a durable record without a wake-up. This uses the
 account's existing storage and wake-up mechanism rather than introducing a
 second ingress scheduler or blob store.
 
-Command replies and link challenges use the receipt's stable delivery ids. The
+Command replies use the receipt's stable delivery ids. The
 Kernel prepares and completes the receipt with the
 exact result. Before provider delivery, the adapter replaces its durable raw
 payload with normalized response records. It then passes each response through
@@ -346,8 +358,8 @@ the same account-local outbound ledger used by normal sends. A response retry
 therefore cannot re-enter the Kernel or renormalize actor identity. A crash
 before that transition can replay the stable Kernel receipt without repeating
 side effects; after it, a restart replays only the stored response with its
-stable delivery id. Link challenges are skipped after their expiry, and
-retry-safe response failures stop after ten durably counted attempts. Completed
+stable delivery id. A response with an expiry, such as a pairing code, is
+skipped once it expires, and retry-safe response failures stop after ten durably counted attempts. Completed
 Kernel receipts are capped and retained for seven days.
 
 Outbound messages cross the adapter-worker boundary with a stable
@@ -378,7 +390,7 @@ Message remains in conversation history and its delivery outcome remains
 inspectable in Process activity. Approval attempt one is durably scheduled
 before Process acknowledges the HIL signal; provider notification failure
 therefore cannot clear or fail a pending approval.
-Link challenges and adapter command responses use this same outbound ledger.
+Adapter command responses use this same outbound ledger.
 The Kernel derives their delivery ids before the
 durable ingress claim and returns normalized response metadata. Provider
 delivery begins only after the inbound Gateway RPC returns, so it does not make

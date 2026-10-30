@@ -474,6 +474,27 @@
       "manual": [
         "pages/devices-workplaces/cloud-browsers.md"
       ]
+    },
+    {
+      "id": "open-network",
+      "paths": [
+        "lexicons/**",
+        "tools/protocol/generate-ship-lexicons.mjs",
+        "tools/protocol/check-ship-method-errors.mjs",
+        "tools/protocol/ship-lexicon-rules.mjs",
+        "workers/pds/**",
+        "packages/gsv/src/services/pds.ts",
+        "packages/gsv/src/protocol/syscalls/atproto.ts",
+        "workers/gateway/src/kernel/atproto.ts",
+        "workers/gateway/src/kernel/federation/gone-ships.ts",
+    "workers/gateway/src/kernel/ships/did-directory.ts",
+        "workers/gateway/src/drivers/native/shell/atproto.ts",
+        "workers/gateway/src/atproto-did.ts"
+      ],
+      "docs": [
+        "docs/architecture/open-network.md",
+        "docs/reference/syscalls.md"
+      ]
     }
   ]
 }

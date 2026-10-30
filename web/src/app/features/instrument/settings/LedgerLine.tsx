@@ -43,9 +43,9 @@ export function LineInspector({
   const failed = line.outcome === "failed" || line.outcome === "denied";
   return (
     <div>
-      <h3>{t(line.action.key, line.action.values)}</h3>
+      <h3>{line.purpose ?? t(line.action.key, line.action.values)}</h3>
       <div class="sub">
-        {placeLabelFor(line.place)} · <LineTime timestamp={line.timestamp} />
+        {line.purpose && <>{t(line.action.key, line.action.values)} · </>}{placeLabelFor(line.place)} · <LineTime timestamp={line.timestamp} />
       </div>
       <dl class="fleet-kv">
         <dt>{t("settings.logs.outcome")}</dt>

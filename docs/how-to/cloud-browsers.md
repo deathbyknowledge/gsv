@@ -51,10 +51,10 @@ still affect how quickly an action appears.
 Sign in directly on the website in this view, including any verification code.
 Ship can also request your help with a particular website. Open the request in
 Ship, or follow its link from your messenger and sign in to Ship. For these
-explicit requests, automation pauses until you choose **I’m done — resume Ship**,
+explicit requests, automation pauses until you choose **I’m done, resume Ship**,
 Ship cancels the request, or it expires. Closing the viewer leaves the request
 available.
-Choose **I’m done — resume Ship** after you finish signing in or completing the
+Choose **I’m done, resume Ship** after you finish signing in or completing the
 requested steps. Once saving succeeds, the view confirms completion and stays
 open, following Ship again.
 Requests expire after fifteen minutes or when the browser stops, whichever comes
@@ -95,7 +95,7 @@ handoff, and before an ordinary stop. Closing a website tab does not forget its
 saved data. Restore completes before the next browser becomes ready. If restore
 fails, that start fails visibly rather than opening an empty replacement.
 
-**I’m done — resume Ship** finishes a login handoff only after its save succeeds.
+**I’m done, resume Ship** finishes a login handoff only after its save succeeds.
 If saving fails, human control and the waiting Ship task stay open; retry
 completion or cancel the request. Cancelling remains available while a save is
 in progress.
@@ -197,7 +197,10 @@ Every instance has a fixed lifetime. Reusing it does not extend that lifetime
 or reserve more time. Ship or you can stop it sooner with **stop browser**.
 A stopped or failed instance stays terminal; another start creates another browser
 with a new eight-character ID. Export useful files before stopping: temporary
-files disappear. Stopped browsers leave the ordinary Work list. `instance list
+files disappear. Stopped browsers leave the ordinary Work list and `target list`,
+even with offline targets included: a finished instance never comes back online.
+Its target ID still resolves for an exact request, such as polling a saved shell
+session. `instance list
 --all` includes your 64 most recently created terminal browsers alongside active
 ones. Inventory omits per-site save issues; `instance get ID` retrieves recent
 details. Older instances retain their identity, status and start-request receipts

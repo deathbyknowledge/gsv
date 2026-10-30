@@ -116,7 +116,9 @@ The Process deduplicates by event id. A producer that changes the ledger in the 
 transaction marks that change announced, so the ledger does not wake Ship for it;
 once the event is admitted, the records it names get the same recovery wake as a
 delivered batch, and the run that receives it gates yield on those records. Contact
-messages are the first producer.
+messages are the first producer. An `owner.notified` event names no records and starts
+no run: Process records it in history for the next generation, or adds it to the run
+already active.
 
 The producer decides again before every delivery attempt, including after the Ship
 controller starts, whether a queued event may still reach Ship. A contact message
@@ -134,10 +136,14 @@ be empty. Future and delegated records retain their own wake conditions.
 Delivery is revisioned and idempotent. If event admission fails, the persisted batch
 remains pending and the Kernel scheduler retries it. A recovered Ship requests any
 missing transitions after its last observed revision before generating.
-After successful admission, actionable work gets a five-minute recovery wake. Any
-real state change clears that retry and installs the record's new deadline, lease, or
-check condition. This prevents a provider or terminal-action failure from silently
-stranding an otherwise open responsibility without polling deferred or delegated work.
+After successful admission, actionable work gets a five-minute recovery wake. Each
+further recovery wake that finds the record untouched waits longer: 15 minutes, then an
+hour, then every six hours. Any real state change clears that retry and installs the
+record's new deadline, lease, or check condition, and a wake for a change, check,
+deadline, lease, or Ship event starts again at five minutes. This prevents a provider or
+terminal-action failure from silently stranding an otherwise open responsibility
+without polling deferred or delegated work, and a Ship that keeps failing to handle a
+record reaches its owner a few times a day rather than every five minutes.
 
 When a human or Process explicitly puts a Ship assignment into `waiting`, the ledger
 sets `nextCheckAtMs` to 24 hours later if no future check remains. An earlier future

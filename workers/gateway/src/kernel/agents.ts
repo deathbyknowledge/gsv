@@ -23,6 +23,7 @@ import type {
   AccountSummary,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { isLocked } from "../auth/shadow";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
@@ -42,6 +43,7 @@ import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePersonalMemory } from "./personal-memory";
 import { reconcileOperatorUpdates } from "./operator-updates";
+import { ensurePublishedProfile } from "./profiles";
 import { shipContextFiles } from "../prompts/personal-intelligence";
 import { contextFiles } from "../prompts/context";
 
@@ -187,6 +189,10 @@ export async function ensurePersonalAgent(
       const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
       const identity = accountIdentity(auth, reconciled);
       reconcileOperatorUpdates(human.uid, ctx.responsibilities, ctx.env.GSV_OPERATOR_UPDATES, Date.now(), ctx.welcome.createdAt(human.uid));
+      // Publishing waits on the open-network host, which reaching the Ship doesn't.
+      ctx.defer(ensurePublishedProfile(human.uid, ctx).catch((cause: unknown) => {
+        console.warn("[Kernel] Failed to bring the published profile up to date:", exceptionDiagnostics(cause));
+      }));
       await ensureAccountHomeLayout(ctx.env, identity, {
         seedPromptContext: true,
         personalAgent: true,

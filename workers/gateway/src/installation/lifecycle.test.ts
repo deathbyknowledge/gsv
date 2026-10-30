@@ -3,7 +3,7 @@ import type {
   InstallationDirectoryService,
 } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ManagedInstallationGate, managedInstallationWorkGate } from "./lifecycle";
+import { ManagedInstallationGate, managedInstallationWorkGate, setupFeatures } from "./lifecycle";
 
 function directory(
   result: InstallationDirectoryResult,
@@ -32,6 +32,11 @@ describe("managed installation lifecycle", () => {
         canonicalOrigin: "https://operator.example", state: "provisioning" }),
     }, "inst_operator")).resolves.toEqual({ allowed: false, code: 503, message: "Finish setting up your Ship",
       details: { setupRecovery: true, setupFeatures: ["language"] } });
+  });
+
+  it("offers the profile choice at setup only where an open-network host can publish it", () => {
+    expect(setupFeatures({})).toEqual(["language"]);
+    expect(setupFeatures({ PDS: {} })).toEqual(["language", "profile"]);
   });
 
   it("fails closed without an installation directory", async () => {

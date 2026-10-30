@@ -1,6 +1,6 @@
 {
   "name": "ripgit-tests",
-  "version": "0.7.4",
+  "version": "0.7.6",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",

@@ -33,6 +33,11 @@ it("runs directory, onboarding and an isolated reset without any commercial tabl
   await expect(onboarding.begin(reset.installationId)).resolves.toMatchObject({ installationId: reset.installationId });
 });
 
+it("keeps no record of the move to DIDs once every Ship names its contacts by DID", async () => {
+  expect((await env.INSTALLATIONS_DB.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'identity_moves%'")
+    .all()).results).toEqual([]);
+});
+
 it.each(["https://accounts.example.com", "https://owners.example.com", "https://join.example.com"])("completes owner signup at %s while reserving every configured service handle", async (origin) => {
   const ownerHandle = `${new URL(origin).hostname.split(".")[0]}-pilot`;
   let code = "";
@@ -40,10 +45,12 @@ it.each(["https://accounts.example.com", "https://owners.example.com", "https://
     GSV_OWNER_ORIGIN_ALIASES: '["https://owners.example.com"]',
     GSV_OWNER_SIGNUP_ORIGIN_ALIASES: '["https://old-join.example.com"]',
     GSV_SIGNUP_ENABLED: "true", GSV_OWNER_SIGNUP_ORIGIN: "https://join.example.com", GSV_OWNER_AUTH_SECRET: "synthetic-auth-secret-".repeat(4),
-    GSV_OWNER_EMAIL_FROM: "accounts@example.com", OWNER_EMAIL: {
+    GSV_OWNER_EMAIL_FROM: "login@ship.space", GSV_OWNER_EMAIL_REPLY_TO: "hello@humansandmachin.es", OWNER_EMAIL: {
       async send(message: EmailMessage | EmailMessageBuilder): Promise<EmailSendResult> {
         if (!("subject" in message)) throw new Error("Expected composed mail");
-        code = message.text?.match(/code is ([0-9]{6})\./)?.[1] ?? "";
+        expect(message).toMatchObject({ from: { email: "login@ship.space", name: "Ship" },
+          replyTo: "hello@humansandmachin.es", subject: "Your Ship sign-in code" });
+        code = message.text?.match(/^([0-9]{6})$/m)?.[1] ?? "";
         return { messageId: crypto.randomUUID() };
       },
     },
@@ -71,7 +78,9 @@ it.each(["https://accounts.example.com", "https://owners.example.com", "https://
   expect((await request("/verify", { challengeId: challenge.challengeId, browserSecret: challenge.browserSecret, code, sessionSecret })).status).toBe(200);
   const operationId = crypto.randomUUID();
   for (const handle of ["accounts", "join", "owners", "old-join"]) {
-    expect((await request(`/handle?value=${handle}`)).status).toBe(400);
+    const availability = await request(`/handle?value=${handle}`);
+    expect(availability.status).toBe(200);
+    expect(await availability.json()).toEqual({ available: false });
     const denied = await request("/spaces", { operationId, handle });
     expect(denied.status).toBe(400);
     expect(await denied.json()).toEqual({ error: "This username is unavailable. Choose another.", code: "handle_unavailable" });

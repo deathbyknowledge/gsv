@@ -29,6 +29,7 @@ import {
   cancelBinaryBody,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame, FrameError } from "./protocol/frames";
+import { ATPROTO_DID_PATH, serveAtprotoDid } from "./atproto-did";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
   createPublicAssetFileSystem,
@@ -37,7 +38,9 @@ import {
 } from "./public-assets";
 import { isWebSocketRequest } from "./shared/utils";
 import {
+  forgetInstallationRoute,
   getKernelByInstallationId,
+  InstallationRouteUnavailable,
   resolveInstallationRoute,
 } from "./installation/routing";
 import {
@@ -46,11 +49,12 @@ import {
 import { managedInstallationWorkGate } from "./installation/lifecycle";
 import { createInstallationStorage } from "./installation/storage";
 import { createInstallationRipgit } from "./installation/ripgit";
-import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
+import { buildGitProxyRequest, getBasicAuth, matchGitPath, publicGitResponse } from "./git";
 import * as z from "zod/mini";
 import type { ServicePeerProfile } from "./kernel/peer";
-import { isFederationPublicPath } from "./kernel/federation";
+import { isShipXrpcPath } from "./kernel/ships/xrpc";
 import { matchPublicProfilePath, servePublicProfileRequest } from "./public-profiles";
+import { limitShipCalls } from "./ship-call-limit";
 import type { GatewayEnv } from "./runtime-env";
 import { DEPLOYMENT_PRESENTATION_PATH, deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
 
@@ -71,9 +75,10 @@ export default {
     }
 
     const publicAssetMatch = matchPublicAssetPath(url.pathname);
-    const gitMatch = matchGitPath(url);
+    const gitMatch = matchGitPath(request);
     const websocketRequest = url.pathname === "/ws" && isWebSocketRequest(request);
-    const federationPath = isFederationPublicPath(url.pathname);
+    // Ship-to-Ship calls reach only an existing Ship; they never provision one.
+    const federationPath = isShipXrpcPath(url.pathname);
     const profilePath = matchPublicProfilePath(url.pathname);
     const browserAssetRequest = (
       request.method === "GET" || request.method === "HEAD"
@@ -83,12 +88,26 @@ export default {
       && url.pathname !== "/ws"
       && url.pathname !== "/oauth/callback"
       && url.pathname !== "/.well-known/oauth-client/gsv.json"
+      && url.pathname !== ATPROTO_DID_PATH
       && !federationPath
       && !profilePath;
 
-    const route = await resolveInstallationRoute(request, {
-      allowProvisioning: websocketRequest || browserAssetRequest,
-    });
+    // A public read may take a route Accounts gave in the last minute; a connection, git, a Ship's call or a sign-in callback asks again.
+    const publicRead = (request.method === "GET" || request.method === "HEAD")
+      && !websocketRequest
+      && !gitMatch
+      && !federationPath
+      && url.pathname !== "/oauth/callback";
+    let route;
+    try {
+      route = await resolveInstallationRoute(request, {
+        allowProvisioning: websocketRequest || browserAssetRequest,
+        cached: publicRead,
+      });
+    } catch (error) {
+      if (!(error instanceof InstallationRouteUnavailable)) throw error;
+      return new Response(error.message, { status: 503, headers: { "retry-after": "5", "cache-control": "no-store" } });
+    }
     if (!route) {
       return new Response("Not Found", { status: 404 });
     }
@@ -108,11 +127,18 @@ export default {
       });
     }
 
+    if (url.pathname === ATPROTO_DID_PATH) {
+      return serveAtprotoDid(request, env.PDS, route.identity.installationId);
+    }
+
     if (publicAssetMatch) {
       const storage = createInstallationStorage(env.STORAGE, route.identity.installationId);
       const fs = createPublicAssetFileSystem({ STORAGE: storage });
       return servePublicAssetRequest(request, fs, publicAssetMatch);
     }
+    // A flood of calls to a Ship stops here, before it reaches the Kernel.
+    const shipCallsLimited = federationPath && await limitShipCalls(request, env.SHIP_CALLS, route.identity.installationId);
+    if (shipCallsLimited) return shipCallsLimited;
     const kernelDO = await getKernelByInstallationId(
       env.KERNEL,
       route.identity.installationId,
@@ -122,13 +148,18 @@ export default {
       // look into this method
       await kernelDO.ensureInstallationIdentity(route.identity);
     } catch {
+      // A retired or replaced Kernel refuses here; the next request asks Accounts for the hostname again.
+      forgetInstallationRoute(request);
       console.error("[Gateway] Kernel installation identity check failed");
       return new Response("Installation unavailable", { status: 503 });
     }
 
     if (profilePath) {
-      return servePublicProfileRequest(request, profilePath,
-        (locator) => kernelDO.getPublicProfileProjection(locator));
+      const { primaryDomain } = deploymentPresentation(env.GSV_PUBLIC_CONFIG);
+      return servePublicProfileRequest(request, profilePath, {
+        page: () => kernelDO.getPublicProfile(),
+        avatar: () => kernelDO.getPublicProfileAvatar(),
+      }, primaryDomain ? `https://${primaryDomain}` : undefined);
     }
 
     if (federationPath) {
@@ -144,29 +175,38 @@ export default {
     }
 
     if (gitMatch) {
+      // Internal and unknown method/path combinations have no public caller.
+      if (gitMatch.access === "refuse") {
+        return new Response("Not Found", { status: 404 });
+      }
       const basicAuth = getBasicAuth(request);
       const authorized = await kernelDO.authorizeGitHttp({
         owner: gitMatch.owner,
         repo: gitMatch.repo,
-        write: gitMatch.write,
+        write: gitMatch.access === "write",
         username: basicAuth?.username,
         credential: basicAuth?.credential,
+        address: request.headers.get("CF-Connecting-IP"),
       });
       if (!authorized.ok) {
-        return authorized.status === 401
-          ? new Response(authorized.message, {
+        if (authorized.status === 401) {
+          return new Response(authorized.message, {
             status: 401,
             headers: { "WWW-Authenticate": 'Basic realm="gsv"' },
-          })
-          : new Response(authorized.message, { status: authorized.status });
+          });
+        }
+        return new Response(authorized.message, {
+          status: authorized.status,
+          headers: authorized.retryAfterSeconds === undefined ? undefined : { "Retry-After": String(authorized.retryAfterSeconds) },
+        });
       }
 
-      return createInstallationRipgit(
+      return publicGitResponse(await createInstallationRipgit(
         env.RIPGIT,
         route.identity.installationId,
       ).fetch(
         await buildGitProxyRequest(request, gitMatch, authorized.username),
-      );
+      ));
     }
 
     if (request.method === "GET" || request.method === "HEAD") {

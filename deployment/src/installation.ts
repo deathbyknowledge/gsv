@@ -3,8 +3,8 @@ import { configuredOriginAliases, deploymentPresentationSchema, type PublicDeplo
 import { operatorUpdateCatalogSchema, type OperatorUpdateCatalog } from "../../packages/gsv/src/services/operator-updates.ts";
 import * as Output from "alchemy/Output";
 import { operatorResourceCatalogSchema, type OperatorResourceCatalog } from "../../workers/installations/src/operator-resource-contracts.ts";
-import { GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
-import { GsvDeletionDiscoveryBindings, GsvDeletionResourceBindings, gsvAdapterDeletionNamespaces, type GsvDeletionNamespace, type GsvDeletionResourceScopes } from "./deletion-bindings.ts";
+import { assertGsvPds, GsvRuntime, gsvRuntimeDependencies, type GsvRuntimeProps, type GsvRuntimeServices } from "./runtime.ts";
+import { GsvDeletionDiscoveryBindings, GsvDeletionResourceBindings, gsvAdapterDeletionNamespaces, gsvPdsDeletionNamespaces, type GsvDeletionNamespace, type GsvDeletionResourceScopes } from "./deletion-bindings.ts";
 
 export type GsvOperatorAccess = { kind: "operator" } | {
   kind: "cloudflare-access"; teamDomain: string; audience: string | Output.Output<string>;
@@ -44,7 +44,7 @@ export type GsvDeploymentProps = Omit<GsvRuntimeProps, "services"> & {
     migrationsDirectory: string;
     ownerIdentity?: { issuer: string; clientId: string; clientSecret?: Cloudflare.Workers.WorkerBindingProps[string] };
     /** Accounts sends owner codes independently of installation-scoped mail. The operator owns the verified sender and stable secret. */
-    ownerEmail?: { from: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
+    ownerEmail?: { from: string; replyTo?: string; allowedRecipients?: string[]; authSecret: Cloudflare.Workers.WorkerBindingProps[string] };
     ownerSignupOrigin?: string;
     ownerSignupOriginAliases?: string[];
     openRegistration?: boolean;
@@ -105,6 +105,19 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     || admin.protocol !== "https:" || !admin.hostname.endsWith(`.${props.domain}`)) {
     throw new Error("Deployment requires a base domain and an HTTPS administration origin below it");
   }
+  if (props.pds) {
+    assertGsvPds(props.pds);
+    // Accounts reserves the pds handle, so no Ship can claim the PDS's hostname.
+    if (props.routing && new URL(props.pds.origin).hostname !== `pds.${props.domain}`) {
+      throw new Error("When the deployment owns routing, the PDS must be at pds.<domain>");
+    }
+    // Accounts routes one label below each domain to a Ship, except the reserved lexicons handle.
+    const handle = props.pds.lexiconHandle;
+    if (handle && [props.domain, ...props.domainAliases ?? []].some((domain) => handle.endsWith(`.${domain}`)
+      && !handle.slice(0, -domain.length - 1).includes(".") && handle !== `lexicons.${domain}`)) {
+      throw new Error("A lexicon handle one label below the deployment's domain must be lexicons.<domain>");
+    }
+  }
   const signup = props.installations.ownerSignupOrigin ? new URL(props.installations.ownerSignupOrigin) : undefined;
   if (signup && (signup.origin !== props.installations.ownerSignupOrigin || signup.protocol !== "https:"
     || (props.routing && !signup.hostname.endsWith(`.${props.domain}`)))) {
@@ -148,6 +161,8 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       // GsvRuntime disables gateway persistence for its default tail-consumer setup; ripgit keeps its own default.
       if (observability || !props.telemetry) requireResource("cloudflare-workers-logs", props.names.gateway);
       requireResource("cloudflare-workers-logs", props.names.ripgit);
+      // The PDS's logs persist as the Gateway's do.
+      if (props.pds && (observability || !props.telemetry)) requireResource("cloudflare-workers-logs", props.pds.workerName);
     }
     // The public executor always exposes native Workers AI, whose text transport uses the account's `default` AI Gateway.
     requireResource("provider", "workers-ai");
@@ -195,6 +210,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
         allowedSenderAddresses: [owner.from], allowedDestinationAddresses: owner.allowedRecipients,
       });
       bindings.GSV_OWNER_EMAIL_FROM = owner.from;
+      if (owner.replyTo) bindings.GSV_OWNER_EMAIL_REPLY_TO = owner.replyTo;
       bindings.GSV_OWNER_AUTH_SECRET = owner.authSecret;
     }
     if (props.telemetry) bindings.GSV_TELEMETRY_ENABLED = "1";
@@ -267,6 +283,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     ...(webSearchLifecycle?.namespaces.map((namespace) => ({ ...namespace, ownerId: "web-search", worker: webSearchLifecycle.worker })) ?? []),
     ...(instancesLifecycle?.namespaces.map(namespace => ({ ...namespace, ownerId: "instances", worker: instancesLifecycle.worker })) ?? []),
     ...gsvAdapterDeletionNamespaces(props.services?.adapters ?? []),
+    ...(runtime.pds ? gsvPdsDeletionNamespaces(runtime.pds) : []),
   ]);
   if (catalog && database) {
     const adapters = props.services?.adapters ?? [];
@@ -274,10 +291,12 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
       .pipe(Output.map(([databaseId, ...adapterNames]): GsvDeletionResourceScopes => {
         // Supplied adapter Workers own their observability; their persisted-log scope must be explicitly declared.
         for (const name of adapterNames) requireResource("cloudflare-workers-logs", name);
-        return { accounts: [{ kind: "d1", namespace: databaseId }],
+        const scopes: GsvDeletionResourceScopes = { accounts: [{ kind: "d1", namespace: databaseId }],
           gateway: [{ kind: "r2", namespace: props.names.storageBucket }], inference: [],
           ...Object.fromEntries(adapters.map((adapter) => [adapter.id, []])),
         };
+        if (props.pds) scopes.pds = [{ kind: "r2", namespace: props.pds.bucketName }];
+        return scopes;
       }));
     yield* GsvDeletionResourceBindings(`${props.logicalPrefix}DirectoryDeletionResourcesBinding`, directory, scopes, catalog);
   }
@@ -291,6 +310,11 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     if (signup && signup.hostname !== admin.hostname) {
       yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}InstallationsSignupRoute`, {
         zoneId: props.routing.zoneId, pattern: `${signup.hostname}/*`, script: directory.workerName,
+      }).pipe(retain(props.allowResourceDeletion !== true));
+    }
+    if (runtime.pds) {
+      yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}PdsRoute`, {
+        zoneId: props.routing.zoneId, pattern: `pds.${props.domain}/*`, script: runtime.pds.workerName,
       }).pipe(retain(props.allowResourceDeletion !== true));
     }
     yield* Cloudflare.Workers.WorkerRoute(`${props.logicalPrefix}GatewayRoute`, {

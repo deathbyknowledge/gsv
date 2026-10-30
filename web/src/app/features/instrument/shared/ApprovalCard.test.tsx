@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
+import { InfoTip } from "../../../components/ui/InfoTip";
 import { Hint } from "../../../components/ui/Tooltip";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { ApprovalCard, type ApprovalCardProps } from "./ApprovalCard";
@@ -31,8 +32,8 @@ describe("approval card", () => {
     const onDecide = vi.fn();
     const tree = await approvalCardTree({ ...props, request, onDecide });
     const nodes = collectNodes(tree);
-    const hint = nodes.find((node) => node.type === Hint);
-    expect(hint?.props.text).toBe("Allow Ship or this helper to run any shell command on my mac without asking again. Others still ask.");
+    const hint = nodes.find((node) => node.type === Hint && collectText(node) === "Always allow");
+    expect(hint?.props.text).toBe("Stop asking before “Run shell commands” on my mac, for Ship and every helper. Change this in Settings → Permissions.");
     nodes.find((node) => node.type === "button" && collectText(node) === "Always allow")?.props.onClick?.();
     expect(onDecide).toHaveBeenLastCalledWith("approve", true);
     nodes.find((node) => node.type === "button" && collectText(node).includes("Allow once"))?.props.onClick?.();
@@ -47,11 +48,39 @@ describe("approval card", () => {
     expect(onDecide).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { ...request, target: "targets/*" },
-    { ...request, syscall: "mail.send" },
-  ])("does not offer shell permission for $syscall on $target", async (pending) => {
-    expect(collectText(await approvalCardTree({ ...props, request: pending }))).not.toContain("Always allow");
+  it("keeps the heading visible and tucks its secondary notes into tooltips", async () => {
+    const onInspect = vi.fn();
+    const tree = await approvalCardTree({ ...props, request, onInspect });
+    const header = collectNodes(tree).find((node) => node.props.class === "q");
+    expect(collectText(header).replace(/\s+/g, " ")).toBe("approval · my mac");
+    const inspect = collectNodes(header).find((node) => node.type === Hint);
+    expect(inspect?.props.text).toBe("Inspect this approval in Work");
+    expect(inspect?.props).not.toHaveProperty("openOnTap");
+    const button = collectNodes(inspect).find((node) => node.type === "button");
+    expect(button?.props).not.toHaveProperty("title");
+    button?.props.onClick?.();
+    expect(onInspect).toHaveBeenCalledOnce();
+    const note = collectNodes(header).find((node) => node.type === InfoTip);
+    expect(note?.props).toMatchObject({ text: "Nothing runs until you answer.", label: "About this approval" });
+    expect(collectText(collectNodes(tree).find((node) => node.props.class === "keys"))).not.toContain("Nothing runs");
+  });
+
+  it("shows a plain heading with the note when the approval cannot be inspected", async () => {
+    const tree = await approvalCardTree({ ...props, request, label: "crew", onInspect: undefined });
+    const header = collectNodes(tree).find((node) => node.props.class === "q");
+    expect(collectText(header).replace(/\s+/g, " ")).toBe("crew · my mac");
+    expect(collectNodes(header).some((node) => node.type === "button" || node.type === Hint)).toBe(false);
+    expect(collectNodes(header).some((node) => node.type === InfoTip)).toBe(true);
+  });
+
+  it("does not offer Always allow for a request that names no single place", async () => {
+    expect(collectText(await approvalCardTree({ ...props, request: { ...request, target: "targets/*" } }))).not.toContain("Always allow");
+  });
+
+  it("offers Always allow for any kind of request on one place", async () => {
+    const tree = await approvalCardTree({ ...props, request: { ...request, toolName: "CodeMode", syscall: "mail.send", target: "gsv", args: {} } });
+    expect(collectText(tree)).toContain("Always allow");
+    expect(collectNodes(tree).find((node) => node.type === Hint && collectText(node) === "Always allow")?.props.text).toContain("“Send mail”");
   });
 
   it("leads with the model's purpose and folds the command away", async () => {
@@ -98,6 +127,29 @@ describe("approval card", () => {
     expect(text).not.toContain("mail.send");
     expect(text).not.toContain("private");
     expect(text).not.toContain("$");
+  });
+
+  it("names who a publish speaks as, every change, and the files its records carry", async () => {
+    const picture = { $type: "blob", ref: { $link: "bafkreipicture" }, mimeType: "image/png", size: 2_097_152 };
+    const tree = await approvalCardTree({ ...props, request: { ...request, syscall: "atproto.write", target: "gsv", args: {
+      handle: "alice",
+      address: "alice.ship.space",
+      writes: [
+        { action: "put", collection: "com.example.note", rkey: "first", record: { $type: "com.example.note", text: "hello", picture } },
+        { action: "delete", collection: "com.example.note", rkey: "old" },
+      ],
+    } } });
+    const text = collectText(tree);
+    expect(text).toContain("Publish to the open network");
+    expect(text).toMatch(/Publishes to the open network as\s+@alice/);
+    expect(text).toContain("add or replace com.example.note/first");
+    expect(text).toContain("remove com.example.note/old");
+    const nodes = collectNodes(tree);
+    const handle = nodes.find((node) => node.type === Hint && collectText(node) === "@alice");
+    expect(handle?.props.text).toBe("alice.ship.space");
+    // Each file the records carry renders once, keyed by its CID.
+    expect(nodes.filter((node) => node.key === "bafkreipicture")).toHaveLength(1);
+    expect(collectText(nodes.find((node) => node.props.class === "machine-rail"))).toBe("com.example.note/first · com.example.note/old");
   });
 
   it.each<{ syscall: string; args: JsonObject }>([

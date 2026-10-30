@@ -1,24 +1,31 @@
+import { GSVClient, type GsvClientStatus } from "@humansandmachines/gsv/client";
 import type { ContactSummary } from "@humansandmachines/gsv/protocol";
+import type { ComponentChildren, JSX, VNode } from "preact";
+import { useState } from "preact/hooks";
+import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
-import { ContactNoticePanel, noticeName, preview, replyIntentFor, type ContactNotice, type ContactNoticeMessage } from "./ContactNotice";
+import type { ConsoleAccount } from "../../../domain/system/consoleModels";
+import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
+import { TextArea, type TextAreaProps } from "../../../components/ui/TextArea";
+import { collectNodes, collectText, createTestRoot, deferred } from "../../../testing/testHarness";
+import { ContactNoticePanel, ContactReplyBox, EMPTY_REPLY, noticeName, preview, replyIntentFor, type ContactNotice, type ContactNoticeMessage } from "./ContactNotice";
 
 let root: ReturnType<typeof createTestRoot> | undefined;
-afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlobals(); });
+afterEach(async () => { await root?.unmount(); root = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 function message(sequence: number, text: string, byShip = false): ContactNoticeMessage {
   return { id: `message:${sequence}`, conversationId: "conversation:ada", sequence, text, createdAt: sequence, media: [],
-    author: { kind: "contact", contactId: "contact:ada", shipId: "ship:ada", subjectId: "subject:ada", displayName: "Ada Lovelace" },
+    author: { kind: "contact", contactId: "contact:ada", displayName: "Ada Lovelace" },
     origin: { kind: "federation", contactId: "contact:ada", deliveryId: `delivery:${sequence}` },
-    social: { threadId: "thread:ada", reference: { actor: { shipId: "ship:ada", subjectId: "subject:ada" }, messageId: `origin:${sequence}` }, provenance: byShip ? { kind: "process", processId: "proc:ada" } : { kind: "human" } } };
+    social: { threadId: "thread:ada", reference: { did: "did:plc:adaaaaaaaaaaaaaaaaaaaaaa", messageId: `origin:${sequence}` }, provenance: byShip ? { kind: "process", processId: "proc:ada" } : { kind: "human" } } };
 }
 const notice: ContactNotice = {
   contactId: "contact:ada", conversationId: "conversation:ada", displayName: "Ada Lovelace",
   messages: [message(1, "hey — free to look at the release notes before i send them out?")],
 };
 const contact: ContactSummary = {
-  id: notice.contactId, ownerUid: 1000, state: "active", generation: "generation:one", remoteShipId: "ship:ada",
-  remoteSubject: { id: "subject:ada", displayName: "Ada Lovelace" }, remoteOrigin: "https://ada.example",
+  id: notice.contactId, ownerUid: 1000, state: "active", generation: "generation:one", remoteDid: "did:plc:adaaaaaaaaaaaaaaaaaaaaaa",
+  remoteName: "Ada Lovelace", remoteHandle: "ada.example",
   conversationId: notice.conversationId, localAlias: "Ada", createdAtMs: 1, updatedAtMs: 1,
 };
 
@@ -86,5 +93,60 @@ describe("the contact notice", () => {
   it("falls back to the name the peer sent when the contact is not loaded", () => {
     expect(noticeName(notice, undefined)).toBe("Ada Lovelace");
     expect(noticeName(notice, contact)).toBe("Ada");
+  });
+});
+
+const owner: ConsoleAccount = { uid: 1000, username: "owner", displayName: "Owner", relation: "self", runnable: false, gecos: "", capabilities: ["*"] };
+function status(state: GsvClientStatus["state"]): GsvClientStatus {
+  return { state, url: "wss://space.example/ws", username: "owner", connectionId: null, message: null };
+}
+
+describe("the contact reply box", () => {
+  it("keeps the reply editable while reconnecting and only holds the send", async () => {
+    const statuses = new Set<(next: GsvClientStatus) => void>();
+    vi.spyOn(GSVClient.prototype, "getStatus").mockImplementation(() => status("connected"));
+    vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation((listener) => { statuses.add(listener); return () => { statuses.delete(listener); }; });
+    const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(() => deferred<never>().promise);
+    vi.stubGlobal("document", {});
+    vi.stubGlobal("window", { location: { protocol: "https:", host: "space.example", search: "" }, sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } });
+    let tree: ComponentChildren;
+    function Harness() {
+      const [draft, setDraft] = useState(EMPTY_REPLY);
+      tree = ContactReplyBox({ notice, contact, account: owner, draft, onDraft: setDraft, onSent: () => {} });
+      return null;
+    }
+    root = createTestRoot("Contact reply box");
+    await root.render(<GatewayProvider><Harness /></GatewayProvider>);
+    // SAFETY: the node is the design-system TextArea the reply box renders, so it carries TextArea props.
+    const reply = () => (collectNodes(tree).find((node) => node.type === TextArea) as VNode<TextAreaProps> | undefined)?.props;
+    const sendButton = () => collectNodes(tree).find((node) => node.type === "button")?.props;
+    const type = (value: string) => act(() => { reply()?.onChange?.(value); });
+    const pressEnter = () => act(() => {
+      // SAFETY: entersToSend reads only the key, modifiers and composition state, and claims the key.
+      const enter = { key: "Enter", shiftKey: false, isComposing: false, preventDefault: () => {} } as JSX.TargetedKeyboardEvent<HTMLTextAreaElement>;
+      reply()?.textareaProps?.onKeyDown?.(enter);
+    });
+
+    await act(() => { for (const listener of statuses) listener(status("disconnected")); });
+    expect(reply()?.disabled).toBe(false);
+    expect(reply()?.textareaProps?.["aria-label"]).toBe("Reply to Ada");
+    await type("yes, go ahead");
+    expect(reply()?.value).toBe("yes, go ahead");
+    expect(sendButton()?.disabled).toBe(true);
+    expect(collectText(tree)).toContain("Reconnecting...");
+    await act(() => { sendButton()?.onClick?.(); });
+    await pressEnter();
+    expect(request).not.toHaveBeenCalled();
+
+    await act(() => { for (const listener of statuses) listener(status("connected")); });
+    expect(reply()?.value).toBe("yes, go ahead");
+    expect(reply()?.disabled).toBe(false);
+    expect(sendButton()?.disabled).toBe(false);
+    expect(collectText(tree)).not.toContain("Reconnecting...");
+    expect(request).not.toHaveBeenCalled();
+
+    await pressEnter();
+    expect(request).toHaveBeenCalledOnce();
+    expect(reply()?.disabled).toBe(true);
   });
 });

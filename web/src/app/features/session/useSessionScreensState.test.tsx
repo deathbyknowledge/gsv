@@ -107,6 +107,40 @@ describe("minimal account setup", () => {
     } finally { await screen.unmount(); }
   });
 
+  it("keeps the profile private unless the owner ticks the opt-in beside the terms", async () => {
+    for (const [ticked, profile] of [[false, "private"], [true, "public"]] as const) {
+      const screen = await setupScreen("/onboarding");
+      try {
+        await screen.change({ setupProfileChoice: true });
+        await act(() => {
+          screen.state().setup.onPassword("password123");
+          screen.state().setup.onPasswordConfirm("password123");
+        });
+        await act(() => screen.state().setup.onSubmit(new Event("submit")));
+        expect(screen.state().setup).toMatchObject({ step: "consent", profileChoice: true, profilePublic: false });
+        await act(() => screen.state().setup.onConsent(true));
+        if (ticked) await act(() => screen.state().setup.onProfilePublic(true));
+        await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
+        expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX", profile });
+      } finally { await screen.unmount(); }
+    }
+  });
+
+  it("offers the profile opt-in beside the password when signup already took the terms", async () => {
+    const screen = await setupScreen("/onboarding");
+    try {
+      await screen.change({ setupConsentRequired: false, arrivedFromSignup: true, setupProfileChoice: true });
+      await act(() => {
+        screen.state().setup.onPassword("password123");
+        screen.state().setup.onPasswordConfirm("password123");
+        screen.state().setup.onProfilePublic(true);
+      });
+      await act(() => { void screen.state().setup.onSubmit(new Event("submit")); });
+      expect(screen.state().setup.step).toBe("credentials");
+      expect(screen.setup).toHaveBeenCalledWith({ password: "password123", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", language: "es-MX", profile: "public" });
+    } finally { await screen.unmount(); }
+  });
+
   it("defers blur errors until submit when a pointer press does not focus Continue", async () => {
     const screen = await setupScreen();
     try {

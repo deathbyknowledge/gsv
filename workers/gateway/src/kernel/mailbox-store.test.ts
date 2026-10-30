@@ -62,11 +62,9 @@ describe("MailboxStore", () => {
       }));
 
       expect(store.list(1000)).toMatchObject({
-        count: 1,
         messages: [{ messageId: "mail_aaaaaaaa" }],
       });
       expect(store.list(1001)).toMatchObject({
-        count: 1,
         messages: [{ messageId: "mail_bbbbbbbb" }],
       });
       expect(store.getMessage(1000, "mail_b")).toBeNull();
@@ -97,7 +95,7 @@ describe("MailboxStore", () => {
       expect(store.recordMessage(messageInput({
         intakeId: "intake-retry-with-new-id",
       })).created).toBe(false);
-      expect(store.list(1000).count).toBe(1);
+      expect(store.list(1000).messages).toHaveLength(1);
       expect(store.getIntake("intake-retry-with-new-id")).toMatchObject({
         messageId: "mail_aaaaaaaa",
         digest: `sha256:${"a".repeat(64)}`,
@@ -115,7 +113,7 @@ describe("MailboxStore", () => {
         messageId: "mail_bbbbbbbb",
         digest: `sha256:${"b".repeat(64)}`,
       }))).toThrow("Mail intake identity conflicts");
-      expect(store.list(1000).count).toBe(1);
+      expect(store.list(1000).messages).toHaveLength(1);
       expect(store.getMessageById("mail_bbbbbbbb")).toBeNull();
     });
   });
@@ -154,35 +152,75 @@ describe("MailboxStore", () => {
     });
   });
 
-  it("searches bounded message metadata and supports pagination", async () => {
+  it("searches headers, bodies and summaries by word", async () => {
     await runWithRealKernelSql((sql) => {
       const store = new MailboxStore(sql);
       store.ensureMailbox("mailbox:1000:primary", 1000, "hank@gsv.space");
-      store.recordMessage(messageInput());
+      store.ensureMailbox("mailbox:1001:primary", 1001, "sam@gsv.space");
+      store.recordMessage(messageInput({ bodyText: "Your pumpkin order has shipped." }));
       store.recordMessage(messageInput({
         messageId: "mail_bbbbbbbb",
         intakeId: "intake-b",
         digest: `sha256:${"b".repeat(64)}`,
         envelopeFrom: "billing@example.net",
         displayFrom: "Example Billing",
-        subject: `Your ${"x".repeat(64)} receipt`,
+        subject: "Your receipt",
         receivedAt: 3_000,
         rawPath: "/home/hank/.gsv/mail/inbox/mail_bbbbbbbb/raw.eml",
         textPath: "/home/hank/.gsv/mail/inbox/mail_bbbbbbbb/message.txt",
       }));
+      store.recordMessage(messageInput({
+        messageId: "mail_cccccccc",
+        mailboxId: "mailbox:1001:primary",
+        intakeId: "intake-c",
+        digest: `sha256:${"c".repeat(64)}`,
+        envelopeTo: "sam@gsv.space",
+        bodyText: "Another pumpkin.",
+        rawPath: "/home/sam/.gsv/mail/inbox/mail_cccccccc/raw.eml",
+        textPath: "/home/sam/.gsv/mail/inbox/mail_cccccccc/message.txt",
+      }));
+      store.completeSummary("mail_bbbbbbbb", {
+        summary: "Invoice for the October hosting plan.",
+        category: "transactional",
+        requiresAttention: false,
+        confidence: 0.9,
+      });
 
-      expect(store.search(1000, "billing")).toMatchObject({
-        count: 1,
-        messages: [{ messageId: "mail_bbbbbbbb" }],
-      });
-      expect(store.search(1000, "x".repeat(64))).toMatchObject({
-        count: 1,
-        messages: [{ messageId: "mail_bbbbbbbb" }],
-      });
-      expect(store.list(1000, 1, 1)).toMatchObject({
-        count: 2,
-        messages: [{ messageId: "mail_aaaaaaaa" }],
-      });
+      const ids = (query: string) => store.search(1000, query).messages.map((message) => message.messageId);
+      expect(ids("pumpkin")).toEqual(["mail_aaaaaaaa"]);
+      expect(ids("pump")).toEqual(["mail_aaaaaaaa"]);
+      expect(ids("billing")).toEqual(["mail_bbbbbbbb"]);
+      expect(ids("hosting invoice")).toEqual(["mail_bbbbbbbb"]);
+      expect(ids("billing hosting")).toEqual(["mail_bbbbbbbb"]);
+      expect(ids("receipt pumpkin")).toEqual([]);
+      expect(ids('"OR" NEAR(-x')).toEqual([]);
+    });
+  });
+
+  it("pages newest first with a cursor instead of an offset", async () => {
+    await runWithRealKernelSql((sql) => {
+      const store = new MailboxStore(sql);
+      store.ensureMailbox("mailbox:1000:primary", 1000, "hank@gsv.space");
+      for (const [index, letter] of ["a", "b", "c"].entries()) {
+        store.recordMessage(messageInput({
+          messageId: `mail_${letter.repeat(8)}`,
+          intakeId: `intake-${letter}`,
+          digest: `sha256:${letter.repeat(64)}`,
+          subject: "Weekly digest",
+          receivedAt: 2_000 + index * 1_000,
+        }));
+      }
+
+      const first = store.list(1000, { limit: 2 });
+      expect(first.messages.map((message) => message.messageId)).toEqual(["mail_cccccccc", "mail_bbbbbbbb"]);
+      expect(first.next).toBeDefined();
+      const second = store.list(1000, { limit: 2, before: first.next });
+      expect(second.messages.map((message) => message.messageId)).toEqual(["mail_aaaaaaaa"]);
+      expect(second.next).toBeUndefined();
+
+      const searched = store.search(1000, "digest", { limit: 1, before: first.next });
+      expect(searched.messages.map((message) => message.messageId)).toEqual(["mail_aaaaaaaa"]);
+      expect(() => store.list(1000, { before: "not-a-cursor" })).toThrow("cursor");
     });
   });
 });

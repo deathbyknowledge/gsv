@@ -10,6 +10,11 @@ apps offered in **Messengers**. You connect your account on that messenger with
 a short-lived code.
 You do not need to create a bot or paste its token into your Ship.
 
+When Ship needs your approval, the messenger shows what it wants to do. A
+request to publish on the [open network](/architecture/open-network) always
+names the handle and full address it publishes as, such as
+`@alice (alice.ship.space)`, whatever else Ship wrote.
+
 ## Ask Ship to connect
 
 Ask Ship to connect the messenger you want. It gets the current connection
@@ -24,6 +29,11 @@ to another Ship, redeeming the code moves that connection to this Ship.
 Send another message in the messenger after connecting to start talking to Ship.
 
 You can also connect through **Settings → Messengers**, using the steps below.
+WhatsApp appears first, followed by Telegram. Slack and Discord carry a small
+**Coming soon** label and their Connect and Reconnect controls are disabled,
+even when the deployment enables pairing. Existing links can still be inspected
+or disconnected. The Slack and Discord instructions below describe the adapter
+flows used through Ship; they are not currently available in Settings.
 
 ## Telegram
 
@@ -62,7 +72,7 @@ a command from an older prompt.
 
 ## Slack
 
-1. In Ship, open **Messengers → Slack** and choose **Install Ship in Slack**.
+1. Ask Ship for the Slack connection instructions and open its installation link.
 2. Approve the official Ship app for the intended Slack workspace. If another
    member already installed it there, you can continue with that installation.
 3. Mention `@GSV` in a channel, or send the app a direct message. Ship sends a
@@ -126,13 +136,16 @@ replies with text and attachments, and a long reply arrives as several
 messages, one per prose paragraph. Headings stay with the following block;
 code blocks, lists, tables and quotations stay together. Approval
 prompts arrive with **Allow once**, **Always allow** and **Block** buttons; the
-decision comes back as a reply quoting the prompt.
+decision comes back as a reply quoting the prompt. **Always allow** adds the
+same rule as in the app, shown in **Settings → Permissions**.
 
 While Ship works on a message you sent from WhatsApp, it reacts to that message
 with 👀 and removes the reaction when it replies, asks for approval or stops.
 The typing indicator appears only just before a reply arrives. Work Ship starts
 for another reason, such as a contact's message, a schedule or a message from
 the web app, adds no 👀 to your chat.
+Reacting to one of Ship's messages, or removing a reaction, sends Ship nothing
+and gets no reply.
 
 Markdown document uploads keep their `.md` filename and original contents;
 the WhatsApp messenger uploads them as plain text because Meta does not accept

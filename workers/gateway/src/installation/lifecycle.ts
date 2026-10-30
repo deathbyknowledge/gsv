@@ -21,13 +21,19 @@ type ResolvedManagedInstallation = Extract<
 export type ManagedInstallationLifecycleBindings = {
   INSTALLATION_DIRECTORY?: InstallationDirectoryService;
   GSV_OWNER_SIGNUP_URL?: string;
+  PDS?: unknown;
 };
 
+/** The optional `sys.setup` arguments this Ship accepts: a profile choice only where an open-network host can publish it. */
+export function setupFeatures(bindings: Pick<ManagedInstallationLifecycleBindings, "PDS">): string[] {
+  return bindings.PDS ? ["language", "profile"] : ["language"];
+}
+
 export function setupRecoveryDetails(
-  bindings: Pick<ManagedInstallationLifecycleBindings, "GSV_OWNER_SIGNUP_URL">,
+  bindings: Pick<ManagedInstallationLifecycleBindings, "GSV_OWNER_SIGNUP_URL" | "PDS">,
   installation: ResolvedManagedInstallation,
 ): SetupRecoveryDetails {
-  const details: SetupRecoveryDetails = { setupRecovery: true, setupFeatures: ["language"] };
+  const details: SetupRecoveryDetails = { setupRecovery: true, setupFeatures: setupFeatures(bindings) };
   if (installation.ownerSetupRecovery && bindings.GSV_OWNER_SIGNUP_URL) {
     details.setupUrl = bindings.GSV_OWNER_SIGNUP_URL;
   }
@@ -65,10 +71,12 @@ const UNAVAILABLE: ManagedInstallationWorkGate = {
   code: 503,
   message: "Managed installation is unavailable",
 };
+/** What a request hears when Accounts cannot answer for its Ship in time. */
+export const SHIP_UNREACHABLE_MESSAGE = "Ship is briefly unreachable; try again in a moment";
 const UNREACHABLE: ManagedInstallationWorkGate = {
   allowed: false,
   code: 503,
-  message: "Ship is briefly unreachable; try again in a moment",
+  message: SHIP_UNREACHABLE_MESSAGE,
 };
 
 /**

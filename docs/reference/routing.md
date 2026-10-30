@@ -174,7 +174,7 @@ unconditional `/ship` action.
 Inbound behavior:
 
 - Linked actor: resolve the local uid and deliver to a process.
-- Unlinked DM actor: return a link challenge such as `gsv auth link CODE`.
+- Unlinked DM actor: drop the message as `pairing_required`; the adapter answers with its own pairing reply.
 - Unlinked non-DM actor: drop the message as `unlinked_actor`.
 
 A `surface_routes` entry selects the process for one linked actor on an exact

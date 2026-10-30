@@ -1,0 +1,15 @@
+{
+  // What surrounds the host in a deployment: a PLC directory, Accounts, and the Kernel's publisher binding.
+  "name": "gsv-pds-smoke",
+  "main": "worker.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "services": [
+    {
+      "binding": "PDS",
+      "service": "gsv-pds-smoke-host",
+      "entrypoint": "PdsPublisherEntrypoint",
+      "props": { "authority": "kernel-publish" }
+    }
+  ]
+}

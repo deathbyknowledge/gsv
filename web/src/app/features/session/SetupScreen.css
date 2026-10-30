@@ -11,8 +11,6 @@
 .gsv-setup-head h1 { margin: 12px 0; color: var(--text-hi); font-family: var(--gsv-font-prose); font-size: 28px; font-weight: 500; line-height: 1.3; }
 .gsv-setup-head p { margin: 0; color: var(--text-dim); font-family: var(--gsv-font-prose); font-size: 16px; line-height: 1.7; }
 .gsv-setup-head .gsv-setup-space { color: var(--accent); font-family: var(--gsv-font-mono); font-size: 12px; overflow-wrap: anywhere; }
-.gsv-setup-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
-.gsv-setup-head .gsv-setup-progress { flex: none; font-size: 12px; }
 .gsv-setup-head h1.gsv-setup-greeting { font-size: 18px; font-weight: 400; color: var(--text); }
 .gsv-setup-host { display: block; color: var(--text-hi); font-family: var(--gsv-font-mono); font-size: 32px; font-weight: 500; overflow-wrap: anywhere; }
 .gsv-setup-domain { color: var(--text-dim); font-size: .62em; white-space: nowrap; }
@@ -32,3 +30,21 @@
 .gsv-setup-actions { display: flex; justify-content: flex-end; gap: 16px; padding-top: 8px; }
 .gsv-setup-actions button:first-child:not(:only-child) { margin-right: auto; }
 .gsv-setup-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.gsv-setup-loading-dots { display: inline-flex; }
+.gsv-setup-loading-dots span { animation: gsv-setup-dot-one 1.6s steps(1) infinite; }
+.gsv-setup-loading-dots span:nth-child(2) { animation-name: gsv-setup-dot-two; }
+.gsv-setup-loading-dots span:nth-child(3) { animation-name: gsv-setup-dot-three; }
+@keyframes gsv-setup-dot-one { 0% { opacity: 1; } 75%, 100% { opacity: 0; } }
+@keyframes gsv-setup-dot-two { 0% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes gsv-setup-dot-three { 0% { opacity: 1; } 25%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .gsv-setup-loading-dots span { animation: none; }
+}
+/* the profile opt-in reads like the consent row, with its explanation folded away until asked for */
+.gsv-setup-profile { display: grid; gap: 6px; }
+.gsv-setup-recommended { font-style: italic; }
+.gsv-setup-profile-toggle { display: inline; padding: 0; border: 0; background: none; color: var(--text-dim); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.gsv-setup-profile-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.gsv-setup-profile-info { display: grid; gap: 8px; margin-left: 26px; padding: 10px 12px; border: 1px solid var(--border-raised); color: var(--text-dim); }
+.gsv-setup-profile-info p { margin: 0; }
+.gsv-setup-profile-info strong { color: var(--text); font-weight: 600; }

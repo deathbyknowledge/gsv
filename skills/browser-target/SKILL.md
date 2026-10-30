@@ -45,14 +45,34 @@ use the id returned by discovery or provisioning.
    Keep it open if the user asks or ongoing work still needs it.
    In the user's own browser, always close every tab you opened once the work
    is done, unless the user asked for that page to be opened or kept, and
-   never close tabs you did not open.
+   never close tabs you did not open. A tab deliberately left waiting, for a
+   code or an approval, stays open and is named in the report.
    Instance commands accept its displayed eight-character ID.
 
 ## Choosing A Browser
 
+- You should ALWAYS choose the shortest and simplest path to deliver the task.
+
+EXAMPLE 1: 
+"Where do I find nail polish near me?"
+Assess scenario: there are no browsers connected.  
+GOOD: Open a cloud browser and search for "nail polish close to user's location". You know their location from what you already know about them.  
+BAD: Require user to install browser extension so you can use a signed in session to detect their location and find nearby shops.
+
+EXAMPLE 2: 
+"Fill in the taxes form for me"
+GOOD: Check your current responsibilities and the tabs the user has open. Find a tab from tax authority with an empty form. Confirm if that's what user means, complete the form in the background and handover the work when complete. 
+BAD: Look up the user's tax obligations. Start a new search for the tax authority website. Ask the user what is the form, ignoring they already have it open in a tab. 
+
+EXAMPLE 3: 
+"Check if my yoga class is cancelled tomorrow" (via Whatsapp)
+GOOD: No browser connected. Recall the user's usual yoga class and check its website with a cloud browser to see if it's being offered tomorrow. Reply: "Yes, the class is happening, but I couldn't check if you have reserved it already because I am not signed in."
+BAD: "I can't check if the class is happening because your personal browser is down and I can't sign in."
+
 - Respect a stated preference without re-arguing it. If the user has said they would rather use their own browser, for example "I don't want to share my logins with Ship", use it.
 - Reuse only a cloud browser that fits the task. `instance list` on `gsv` shows each active cloud browser with its `profileId` and whether it is `isolated` (temporary); `browser profile list` marks which profile is the automatic one. For signed-in work use the browser on the account's automatic profile; use a named profile only when the task calls for that profile; use a temporary browser only for work that needs no login or for a site the person already signed into in that instance, while it runs.
 - Never infer login persistence from `instance catalog` output or an instance lifetime. The lifetime caps one instance, not the logins: an ordinary start restores the account's saved logins.
+- Account creation, a first sign-in and profile edits on a site known to reject datacenter traffic, such as social media and email, run in the person's own browser on their own connection, never from a cloud browser.
 
 ## Signed-In Sessions: Two Routes
 
@@ -61,6 +81,44 @@ Explain both routes only when the user asks how sign-in or sessions work, or whe
 **Cloud browser with saved logins.** Lead with convenience: it keeps working with their computer off, they sign in once through a handoff link, the login is remembered from then on, and credentials stay out of chat. If they want to see it work first, they can watch the cloud browser's live view from Chat or Fleet, or try Ship on a task that needs no login in their own browser through the Your Ship extension, before giving it any logins. Set expectations with the limits when relevant: passkeys and hardware keys do not work, nothing is copied from their personal browser, some sites ask to sign in again, sessions can expire, and some sites, such as social media and email, detect and reject clicks from a cloud browser.
 
 **Their own browser through the Your Ship extension.** Costs: Chrome must be open on their machine with the extension paired, actions run on their real profile, connected browsers ask for approval by default, and they can pause or stop the connection at any time.
+
+## When A Page Waits For A Real Gesture
+
+Some browser features refuse synthetic input: clipboard reads and writes, file
+pickers, permission prompts and payment sheets are the usual cases. That is not
+a block and the feature is not unavailable. The page is waiting for a real user
+gesture, so ask the person for that one click rather than switching to another
+mechanism, then continue.
+
+## When A Site Blocks Automation
+
+Some sites detect scripted input and refuse it. An accepted click with
+`no-change-detected` is not evidence of that on its own; inspect the snapshot
+first as described under Pages and Tabs. Treat the site as blocking only when
+the page shows it: a CAPTCHA or verification challenge, an "unusual activity"
+or "automated traffic" message, or the same accepted action still rejected after
+one inspected retry. Then do not push through. Repeating the action, varying the
+routine, or trying to work around a challenge triggers bot flags that can get
+the person's account restricted. Never work around a wall with another phone
+number, a temporary number, a VPN or a new account. Stop, tell the user what the
+site blocked, and hand the blocked step to them: a challenge is always completed
+by the person, through a handoff link on a cloud browser or directly in their own
+browser, never by scripted input in any browser. If the site rejects the cloud
+browser itself rather than challenging the action, offer to run the task in
+their own browser through the Your Ship extension instead. Continue once they
+say the step is done.
+
+Speed alone reads as a bot. On anything account-facing, take one action at a
+time with real pauses between them: no bursts, no reload-and-resubmit, one
+attempt per step. A wall is information, not a puzzle.
+
+A frightening screen is not necessarily the end state. A "suspended", "locked"
+or "unusual activity" page is often a challenge that clears once the person
+completes it; inspect and report what you see before escalating or recreating
+anything.
+
+Codes and approval prompts expire within minutes. Handle them in the same pass
+and never park them for later.
 
 ## Build Trust At The User's Pace
 
@@ -89,7 +147,7 @@ Cloud-only `instance` and `browser` management commands run on `gsv`, not on the
 browser target. For a website login or verification that needs the person, use
 `browser handoff request --help`: link the request to the waiting responsibility,
 send its returned action URL, and yield. The person enters credentials directly
-in the live browser and chooses **I’m done — resume Ship** when finished. Keep
+in the live browser and chooses **I’m done, resume Ship** when finished. Keep
 credentials out of chat. The handoff saves website state before reopening the
 waiting work. Ordinary live viewing does not pause browser automation.
 
@@ -318,8 +376,18 @@ page snapshot --tab "$tab_id"
 page click --tab "$tab_id" 'a.more-information'
 ```
 
-Use `tabs open --active` only when the user explicitly asks to see or switch to
-new content. For example:
+Never take the person's focus. Opening or activating a tab in a browser they
+are using pulls them out of their work: their keystrokes and clicks land on your
+page. Keep all browser work in the background: never bring a tab forward with
+`tabs focus`, never open one with `--active`, never open a new window or popout,
+and never act on the tab they are looking at. If a step needs the foreground,
+ask them to leave that browser alone for the duration or wait and run it when
+they are elsewhere. If they say they are being moved, stop the run at once.
+Run one job per browser: never drive the same browser from two tasks at once.
+On a flaky connected browser, retry once, then report.
+
+Use `--active` only when the user explicitly asks to see or switch to that
+content. For example, when asked to show a result:
 
 ```bash
 tabs open --active /home/browser/screenshots/tab-123.png

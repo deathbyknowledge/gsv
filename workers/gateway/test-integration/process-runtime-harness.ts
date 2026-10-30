@@ -43,6 +43,9 @@ export type ProcessRuntimeHarness = {
 export async function startProcessRuntimeHarness(options: {
   workersAi?: boolean;
   instances?: boolean;
+  pds?: boolean;
+  /** The profile choice the person makes at setup. */
+  profile?: "public" | "private";
   managedMailQueue?: string;
 } = {}): Promise<ProcessRuntimeHarness> {
   const ai = await startOpenAiFixture();
@@ -53,7 +56,8 @@ export async function startProcessRuntimeHarness(options: {
   try {
     harness = createGatewayTestHarness(options);
     const { url } = await harness.listen();
-    if (options.managedMailQueue) {
+    // Mail and the open network address the Ship by its handle under its canonical origin.
+    if (options.managedMailQueue || options.pds) {
       const { INTEGRATION_STATE } = await harness.getWorker<{
         INTEGRATION_STATE: DurableObjectNamespace<IntegrationState>;
       }>("gsv-test-dependencies").getEnv();
@@ -66,6 +70,7 @@ export async function startProcessRuntimeHarness(options: {
       password: PASSWORD,
       agentName: "process-runtime-agent",
       timezone: "Europe/Amsterdam",
+      profile: options.profile,
     });
 
     client = new GSVClient({

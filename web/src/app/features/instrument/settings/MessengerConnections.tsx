@@ -13,12 +13,13 @@ import { loadMessengerConnections, messengerConnectionStatus, type MessengerConn
 import { canConfigure } from "./settingsModel";
 import { SettingsError, type SettingsSectionProps } from "./settingsShared";
 import { useT, type TextKey } from "../../../i18n/locale";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 const MESSENGERS: ReadonlyArray<{ id: ManagedMessengerId; name: string; blurb: TextKey }> = [
+  { id: "whatsapp", name: "WhatsApp", blurb: "settings.messengers.whatsapp" },
   { id: "telegram", name: "Telegram", blurb: "settings.messengers.telegram" },
   { id: "slack", name: "Slack", blurb: "settings.messengers.slack" },
   { id: "discord", name: "Discord", blurb: "settings.messengers.discord" },
-  { id: "whatsapp", name: "WhatsApp", blurb: "settings.messengers.whatsapp" },
 ];
 const STATUS_LABELS = {
   connected: "settings.messengers.status.connected",
@@ -50,8 +51,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
   });
 
   return <section class="settings-messengers" aria-labelledby="settings-messengers-title">
-    <h1 id="settings-messengers-title">{t("settings.messengers.title")}</h1>
-    <p class="settings-intro">{t("settings.messengers.intro")}</p>
+    <PageHeading id="settings-messengers-title" title={t("settings.messengers.title")} description={t("settings.messengers.intro")} />
     {!canList && <p class="settings-muted">{t("settings.messengers.noAccess")}</p>}
     <SettingsError error={connections.error ?? unlink.error} />
     {connections.isPending && connected && canList && <LoadingState variant="panel">{t("settings.messengers.loading")}</LoadingState>}
@@ -61,11 +61,12 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
       const links = connections.data.links.filter((entry) => entry.adapter === id);
       const available = adapter?.enabled && adapter.supportsPairing;
       const canPair = adapter?.canLink === true;
-      const canConnect = connected && canPair && available && !unlink.isPending;
+      const comingSoon = id === "slack" || id === "discord";
+      const canConnect = !comingSoon && connected && canPair && available && !unlink.isPending;
       return <section class="settings-messenger" key={id} aria-label={name}>
         <div class="settings-messenger-heading">
-          <h2>{name}</h2>
-          <button class="settings-text-action" disabled={pairing === id ? unlink.isPending : !canConnect} onClick={() => { setRemoving(null); setPairing(pairing === id ? null : id); }}>
+          <h2>{name}{comingSoon && <small class="settings-coming-soon">{t("settings.messengers.comingSoon")}</small>}</h2>
+          <button class="settings-text-action" disabled={comingSoon || (pairing === id ? unlink.isPending : !canConnect)} onClick={() => { if (comingSoon) return; setRemoving(null); setPairing(pairing === id ? null : id); }}>
             {pairing === id ? t("settings.messengers.closeSetup") : links.length ? t("settings.messengers.connectAnother") : t("settings.messengers.connect", { name })}
           </button>
         </div>
@@ -87,13 +88,13 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
                 <button class="settings-text-action settings-danger" disabled={!connected || !canUnlink || unlink.isPending} onClick={() => unlink.mutate(link)}>{unlink.isPending ? <LoadingState>{t("settings.messengers.unlinking")}</LoadingState> : t("settings.messengers.confirm")}</button>
                 <button class="settings-text-action" disabled={unlink.isPending} onClick={() => setRemoving(null)}>{t("settings.messengers.keep")}</button>
               </> : <>
-                <button class="settings-text-action" disabled={!canConnect} onClick={() => { setRemoving(null); setPairing(id); }}>{t("settings.messengers.reconnect")}</button>
+                <button class="settings-text-action" disabled={!canConnect} onClick={() => { if (!canConnect) return; setRemoving(null); setPairing(id); }}>{t("settings.messengers.reconnect")}</button>
                 <button class="settings-text-action settings-danger" disabled={!connected || !canUnlink || unlink.isPending} onClick={() => { unlink.reset(); setRemoving(link); setPairing(null); }}>{t("settings.messengers.unlink")}</button>
               </>}
             </div>
           </li>;
         })}</ul>
-        {pairing === id && <fieldset disabled={!connected || !canPair || !available}>
+        {!comingSoon && pairing === id && <fieldset disabled={!connected || !canPair || !available}>
           <MessengerPairing adapter={id} onClose={() => setPairing(null)} onConnected={() => { setPairing(null); void refreshMessengerConnections(cache); }} />
         </fieldset>}
       </section>;

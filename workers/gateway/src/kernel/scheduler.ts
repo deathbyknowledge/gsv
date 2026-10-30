@@ -1,11 +1,12 @@
 import type { KernelContext, PrincipalView } from "./context";
 import { principalOf } from "./context";
 import { resolveCallerOwnerUid } from "./context";
-import { normalizeTimezone, ownerTimezone } from "./timezone";
+import { normalizeTimezone, ownerTimezone, resolveLocalTime } from "./timezone";
 import { hasCapability } from "./capabilities";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import type {
   ScheduleExpression,
+  ScheduleExpressionInput,
   SchedulePrincipal,
   ScheduleRecord,
   SchedulerAddArgs,
@@ -587,7 +588,7 @@ export async function handleSchedulerAdd(
   const target = normalizeShipScheduleTarget(normalizeScheduleTarget(args.target), ctx);
   validateScheduleTargetAccess(target, ctx);
   if (target.kind === "command.exec") {
-    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "sched.add", { ...args, target }, "ask");
+    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "sched.add", { ...args, target });
     assertSchedulableAtExpression(expression, args.enabled !== false, Date.now());
   }
 
@@ -638,7 +639,7 @@ export async function handleSchedulerUpdate(
   if (nextTarget.kind === "command.exec" && (nextEnabled || args.patch.target !== undefined)) {
     await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "sched.update", {
       ...args, patch: { ...args.patch, target: nextTarget },
-    }, "ask");
+    });
     if (store.getStored(existing.id)?.updatedAtMs !== existing.updatedAtMs) {
       throw new Error("Schedule changed while waiting for approval; read it again before updating");
     }
@@ -694,10 +695,15 @@ export async function handleSchedulerRun(
 }
 
 export function normalizeScheduleExpression(
-  expression: ScheduleExpression,
+  expression: ScheduleExpressionInput,
   ctx?: KernelContext,
 ): ScheduleExpression {
+  const defaultTimezone = () => ctx ? ownerTimezone(ctx.config, resolveCallerOwnerUid(ctx)) : "UTC";
   if (expression.kind === "at") {
+    if ("localTime" in expression) {
+      const timezone = normalizeTimezone(expression.timezone || defaultTimezone());
+      return { kind: "at", atMs: resolveLocalTime(expression.localTime, timezone) };
+    }
     return { kind: "at", atMs: normalizeTimestamp(expression.atMs, "schedule atMs") };
   }
   if (expression.kind === "after") {
@@ -720,7 +726,7 @@ export function normalizeScheduleExpression(
   if (expression.kind === "cron") {
     const expr = normalizeRequiredText(expression.expr, "cron expression");
     parseCronFields(expr);
-    const timezone = normalizeTimezone(expression.timezone || (ctx ? ownerTimezone(ctx.config, resolveCallerOwnerUid(ctx)) : "UTC"));
+    const timezone = normalizeTimezone(expression.timezone || defaultTimezone());
     return { kind: "cron", expr, timezone };
   }
   // SAFETY: the discriminated ScheduleExpression union is exhausted above.

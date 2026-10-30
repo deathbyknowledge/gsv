@@ -14,14 +14,13 @@ import type { Process } from "../do";
 import type { RunState } from "../run/state";
 import {
   INTERRUPTED_RUN_CONTROL_MESSAGE, SHELL_SESSION_TARGET_KEY_PREFIX, isRunControlCall,
-  TOOL_APPROVAL_OVERRIDES_KEY, TOOL_DISPATCH_TIMEOUT_MS, CODE_MODE_APPROVAL_TIMEOUT_MS,
+  TOOL_DISPATCH_TIMEOUT_MS, CODE_MODE_APPROVAL_TIMEOUT_MS,
   CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS,
 } from "../internal/lifecycle";
 import {
-  approvalNeedsTargetMetadata, parseToolApprovalPolicy, resolveToolApproval, resolveToolApprovalTarget, takePurpose,
+  KERNEL_AUTHORIZED_SYSCALLS, approvalNeedsTargetMetadata, parseToolApprovalPolicy, resolveToolApproval, resolveToolApprovalTarget, takePurpose,
   type ToolApprovalPolicy, type ToolApprovalResolution, type ToolApprovalRule,
 } from "../approval";
-import { approvalRuleKey } from "../context/formatters";
 import { normalizeOptionalString, parseOptionalJsonObject, cancelResponseBody } from "../internal/messages";
 import { cancelProcessRequests, sendFrameToKernel } from "../../shared/utils";
 import { stringifyStoredProcessMedia } from "../media";
@@ -113,9 +112,15 @@ export class ProcessTools {
     if (!hasCapability(context.capabilities, args.syscall)) {
       throw new Error(`Permission denied: ${args.syscall}`);
     }
-    const approval = resolveToolApproval(context.approvalPolicy, args.syscall, args.args, args.target);
+    let approval = resolveToolApproval(context.approvalPolicy, args.syscall, args.args, args.target);
+    if (approval.action === "ask") {
+      approval = resolveToolApproval(
+        await this.readCurrentApprovalPolicy(context.runId, context.approvalPolicy, signal),
+        args.syscall, args.args, args.target,
+      );
+    }
     if (approval.action === "deny") return false;
-    if (approval.action === "auto" && (approval.matchedRule || args.defaultAction !== "ask")) return true;
+    if (approval.action === "auto") return true;
     const approved = await this.waitForCodeModeApproval(
       context.runId, context.dispatchId, crypto.randomUUID(),
       syscallToolName(args.syscall) ?? args.syscall, args.syscall, args.args, context.purpose, signal,
@@ -131,14 +136,41 @@ export class ProcessTools {
       return run.approvalPolicy;
     }
 
-    const accountPolicy = parseToolApprovalPolicy(run.config?.accountApprovalPolicy ?? null);
-    const overrides = this.loadToolApprovalOverrides();
-    run.approvalPolicy = {
-      default: accountPolicy.default,
-      rules: [...overrides, ...accountPolicy.rules],
-    };
+    run.approvalPolicy = parseToolApprovalPolicy(run.config?.accountApprovalPolicy ?? null);
     this.host.runs.active = run;
     return run.approvalPolicy;
+  }
+
+  /**
+   * The owner's policy as it is now, so an allow chosen on another process's
+   * request applies before this one asks. Without an answer the run's own
+   * policy stands, which still asks.
+   */
+  async readCurrentApprovalPolicy(runId: string, runPolicy: ToolApprovalPolicy, signal?: AbortSignal): Promise<ToolApprovalPolicy> {
+    let raw: string | null;
+    try {
+      raw = await this.host.kernel.readApprovalPolicy(signal);
+    } catch (error) {
+      signal?.throwIfAborted();
+      console.warn(JSON.stringify({ component: "process", event: "approval_policy_read_failed", error: errorMessageFromUnknown(error) }));
+      return runPolicy;
+    }
+    const policy = parseToolApprovalPolicy(raw);
+    this.host.mutateActiveRun(runId, (run) => ({ ...run, approvalPolicy: policy }));
+    return policy;
+  }
+
+  /** Resolves a call against the run's policy, reading the current one before settling on asking. */
+  async resolveRunApproval(
+    runId: string,
+    policy: ToolApprovalPolicy,
+    syscall: string,
+    args: JsonObject,
+    signal?: AbortSignal,
+  ): Promise<ToolApprovalResolution & { args: JsonObject }> {
+    const approval = await this.resolveApproval(policy, syscall, args, signal);
+    if (approval.action !== "ask") return approval;
+    return this.resolveApproval(await this.readCurrentApprovalPolicy(runId, policy, signal), syscall, args, signal);
   }
 
   async resolveApproval(
@@ -238,60 +270,23 @@ export class ProcessTools {
     }));
   }
 
-  rememberToolApproval(pendingHil: PendingHilRecord, run: RunState): boolean {
-    const rule = this.buildToolApprovalOverride(pendingHil.syscall, pendingHil.args);
-    const overrides = this.loadToolApprovalOverrides();
-    const key = approvalRuleKey(rule);
-    const alreadyStored = overrides.some((override) => approvalRuleKey(override) === key);
-
-    if (!alreadyStored) {
-      this.host.store.state.setValue(
-        TOOL_APPROVAL_OVERRIDES_KEY,
-        JSON.stringify([rule, ...overrides]),
-      );
-    }
-
-    if (
-      run.approvalPolicy &&
-      !run.approvalPolicy.rules.some((override) => approvalRuleKey(override) === key)
-    ) {
-      run.approvalPolicy.rules.unshift(rule);
-      this.host.runs.active = run;
-    }
-
-    return true;
-  }
-
-  buildToolApprovalOverride(syscall: string, args: JsonObject): ToolApprovalRule {
-    const prepared = this.prepareToolArgs(syscall, args);
-    const target = resolveToolApprovalTarget(syscall, prepared.args);
-    return {
-      match: syscall,
-      target,
-      action: "auto",
-    };
-  }
-
-  loadToolApprovalOverrides(): ToolApprovalRule[] {
-    const raw = this.host.store.state.getValue(TOOL_APPROVAL_OVERRIDES_KEY);
-    if (!raw) {
-      return [];
-    }
-
+  /** "Always allow" becomes a rule in the owner's policy, which every one of their processes reads. */
+  async rememberToolApproval(pendingHil: PendingHilRecord): Promise<boolean> {
+    const prepared = this.prepareToolArgs(pendingHil.syscall, pendingHil.args);
+    const allow = { match: pendingHil.syscall, target: resolveToolApprovalTarget(pendingHil.syscall, prepared.args) };
+    let allowed: boolean;
     try {
-      const parsed = jsonValueSchema.parse(JSON.parse(raw));
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-      return parseToolApprovalPolicy(
-        JSON.stringify({
-          default: "auto",
-          rules: parsed,
-        }),
-      ).rules;
-    } catch {
-      return [];
+      allowed = await this.host.kernel.allowTool(allow);
+    } catch (error) {
+      console.warn(JSON.stringify({ component: "process", event: "tool_allow_failed", error: errorMessageFromUnknown(error) }));
+      return false;
     }
+    if (!allowed) return false;
+    const rule: ToolApprovalRule = { ...allow, action: "auto" };
+    this.host.mutateActiveRun(pendingHil.runId, (run) => run.approvalPolicy
+      ? { ...run, approvalPolicy: { ...run.approvalPolicy, rules: [rule, ...run.approvalPolicy.rules] } }
+      : run);
+    return true;
   }
 
   toProcHilRequest(record: PendingHilRecord | null): ProcHilRequest | null {
@@ -566,7 +561,7 @@ export class ProcessTools {
     const { args: rawArgs, purpose } = takePurpose(jsonObjectSchema.parse(toolCall.args));
     let approval: ToolApprovalResolution & { args: JsonObject };
     try {
-      approval = await this.resolveApproval(approvalPolicy, syscall, rawArgs, this.host.run.runAbortSignal(run.runId));
+      approval = await this.resolveRunApproval(run.runId, approvalPolicy, syscall, rawArgs, this.host.run.runAbortSignal(run.runId));
     } catch (error) {
       if (!this.host.handleRunStopped(run.runId)) {
         this.host.store.tools.fail(toolCall.dispatchId, `Tool approval failed: ${errorMessageFromUnknown(error)}`);
@@ -889,7 +884,9 @@ export class ProcessTools {
     }
 
     const toolCallId = `codemode-${crypto.randomUUID()}`;
-    const approval = await this.resolveApproval(context?.approvalPolicy ?? { default: "auto", rules: [] }, call, args, signal);
+    const approval = context
+      ? await this.resolveRunApproval(context.runId, context.approvalPolicy, call, args, signal)
+      : await this.resolveApproval({ default: "auto", rules: [] }, call, args, signal);
     const toolArgs = approval.args;
 
     const approvedTarget = approval.approvedTarget;
@@ -899,7 +896,7 @@ export class ProcessTools {
       if (approval.action === "deny") {
         throw new Error(`Tool execution denied by policy: ${call}`);
       }
-      if (approval.action === "ask") {
+      if (approval.action === "ask" && !KERNEL_AUTHORIZED_SYSCALLS.has(call)) {
         if (!hasCapability(context.capabilities, call)) {
           throw new Error(`Permission denied: ${call}`);
         }

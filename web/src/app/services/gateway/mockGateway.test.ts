@@ -63,6 +63,19 @@ describe("mock gateway", () => {
     expect(mockGatewayRequested()).toBe(true);
   });
 
+  it("transcribes voice without losing the contact fixtures", async () => {
+    const client = await connectedClient();
+    const transcript = await client.request("ai.transcription.create", { pid: "p-ship", audio: { mimeType: "audio/webm" }, mode: "transcribe" });
+    expect(transcript.data).toEqual({
+      text: "Can you check the studio backup and tell me if it finished",
+      language: "en", duration: 3.2, provider: "mock", model: "mock-transcribe",
+    });
+    const contacts = await client.request("contact.list", {});
+    expect(contacts.data.contacts).toHaveLength(1);
+    const inbox = await client.request("conversation.inbox", {});
+    expect(inbox.data.entries).toHaveLength(1);
+  });
+
   it("lets the owner choose a language, kept in this browser, and refuses other config", async () => {
     const client = await connectedClient();
     const accounts = z.object({ accounts: z.array(z.object({ relation: z.string(), capabilities: z.array(z.string()).optional() })) })
@@ -109,17 +122,18 @@ describe("mock gateway", () => {
     const client = await connectedClient();
     const raised: JsonValue[] = [];
     client.onSignal((signal, payload) => { if (signal === "proc.run.hil.requested" && payload !== undefined) raised.push(payload); });
-    for (const text of ["/approve-old", "/approve-mail", "/approve-file"]) {
+    for (const text of ["/approve-old", "/approve-mail", "/approve-file", "/approve-publish"]) {
       await client.request("conversation.send", { conversationId: "c-ship", text, idempotencyKey: text });
       await vi.runAllTimersAsync();
       const request = hilSchema.parse(raised.at(-1));
       await client.request("proc.hil", { pid: request.pid, requestId: request.requestId, decision: "deny" });
       await vi.runAllTimersAsync();
     }
-    expect(raised.map((payload) => hilSchema.parse(payload))).toMatchObject([
+    expect(raised).toMatchObject([
       { syscall: "shell.exec", target: "studio" },
       { syscall: "mail.send", purpose: expect.stringContaining("Mike") },
       { syscall: "fs.write", target: "studio", purpose: expect.stringContaining("notes") },
+      { syscall: "atproto.write", target: "gsv", args: expect.objectContaining({ handle: "esteve", address: "esteve.ship.space" }) },
     ]);
     expect(hilSchema.parse(raised[0])).not.toHaveProperty("purpose");
   });
