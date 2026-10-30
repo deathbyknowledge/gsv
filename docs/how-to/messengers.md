@@ -35,6 +35,17 @@ even when the deployment enables pairing. Existing links can still be inspected
 or disconnected. The Slack and Discord instructions below describe the adapter
 flows used through Ship; they are not currently available in Settings.
 
+## Quote a message
+
+Reply to a message by quoting it, and Ship sees what you quoted and who wrote it, so "yes, that
+one" is enough. This works in Telegram, Discord and WhatsApp, for your own messages and Ship's.
+Slack has no quote action: replying in a thread continues that thread instead.
+
+Long quotes are shortened. For a photo or file, Ship sees what it was, not the file again. Ship
+can't see quotes of messages more than 90 days old, sent before this feature, or sent elsewhere, and
+it can't see quotes of approval requests or notices. In those cases it knows that you quoted something
+it can't see, and it asks rather than guesses.
+
 ## Telegram
 
 1. In Ship, open **Messengers → Telegram** and use the link to open the official

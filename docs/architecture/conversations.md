@@ -379,6 +379,10 @@ read the user's conversations. Processes cannot append user messages or recursiv
 Adapter ingress and Process message commits use private Kernel-owned paths after
 the Kernel has resolved owner, route, Process, and conversation identity.
 
+A quoted reply on a messenger does not change the canonical Message. The Kernel reads the quoted
+Message for Process context under the [quoted reply](/architecture/adapter-model#quoted-replies)
+scope, and the conversation stores only the text the person wrote.
+
 Conversation IDs are opaque. Installation identity remains the outer physical boundary for the
 Kernel, Conversation Durable Object names, and R2 keys.
 
