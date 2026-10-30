@@ -94,6 +94,7 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
             <h4>{t("shell.help.chatInput")}</h4>
             <dl>
               <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.send")}</dd>
+              <dt>{t("shell.keys.newLine")}</dt><dd>{t("shell.help.newLine")}</dd>
               <dt>Esc</dt><dd>{t("shell.help.returnToBrowse")}</dd>
               <dt>↑</dt><dd>{t("shell.help.recall")}</dd>
               <dt>{t("shell.help.placeSyntax")}</dt><dd>{t("shell.help.chooseTarget")}</dd>
@@ -131,6 +132,7 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
             <h4>{t("shell.help.contactMessages")}</h4>
             <dl>
               <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.sendMessage")}</dd>
+              <dt>{t("shell.keys.newLine")}</dt><dd>{t("shell.help.newLine")}</dd>
             </dl>
           </>}
           {distance === "settings" && <>

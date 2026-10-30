@@ -52,6 +52,7 @@ import {
   type JsonObject,
   type JsonValue,
   type ProcContextState,
+  type DevicePairing,
   type ProcHilRequest,
   type ProcHistoryRecord,
   type ProcHistoryRecordData,
@@ -153,6 +154,8 @@ function at(daysAgo: number, hour: number, minute: number): number {
 const LINES: [who: "you" | "ship", createdAt: number, text: string][] = [
   ["you", at(1, 9, 12), "Can you pull the notes from yesterday's call with Mara and put the action items somewhere I'll find them?"],
   ["ship", at(1, 9, 13), "Done. Three action items are in your notes under Mara: the deck for Thursday, the intro to Lena, and the follow-up on pricing. I set a reminder for the deck on Wednesday evening."],
+  ["you", at(1, 12, 2), "Paste the paragraph I need to send Lena so I can copy it as is."],
+  ["ship", at(1, 12, 2), "Here it is, exactly as you drafted it:\n\n```\nHi Lena, thanks again for Tuesday. As discussed, I'll send the revised deck by Thursday and loop Mara in on the pricing thread so we can close the quote before the end of the week.\nBest, Alex\n```"],
   ["you", at(1, 18, 40), "What's still open from this week?"],
   ["ship", at(1, 18, 40), "Two things. The pricing follow-up with Mara, and the studio backup, which has failed since Monday because the drive is nearly full."],
   ["you", at(0, 8, 5), "Morning. Anything I should know before the standup?"],
@@ -168,6 +171,9 @@ const LONG_REPLY = [
   "The drive filled up because the build caches from the last three releases were never cleared; together they took about 140 GB. I removed the ones older than a week, which brought free space back to a third of the disk, and the overnight run completed in forty minutes.",
   "Two things would keep this from happening again. A weekly clean of caches older than fourteen days, which I can add as a routine, and a warning when free space drops under a tenth of the disk. Say the word and I will set both up.",
 ].join("\n\n");
+
+/** Invitations created from the connect panel; the mock never pairs them. */
+const pairings: DevicePairing[] = [];
 
 const targets: SysTargetSummary[] = [
   { targetId: "studio", ownerUid: OWNER.uid, ownerUsername: OWNER.username, label: "studio", description: "MacBook Pro", implements: ["fs.*", "shell.*"], platform: "darwin", version: "0.6.0", online: true, lastSeenAt: Date.now() },
@@ -360,11 +366,7 @@ type PendingApproval = ApprovalScenario & { request: ProcHilRequest };
 /** The Kernel's welcome wake has no question: that run was started by a responsibility, not a message. */
 type OpenRun = { runId: string; question: ConversationMessage | null; open: OpenStep | null; approval: PendingApproval | null; superseded: boolean };
 type Revised = { revision: number; record: ProcHistoryRecord };
-type MockIdentityLink = { adapter: string; accountId: string; actorId: string; uid: number; linkedByUid: number; createdAt: number };
-
 type World = {
-  /** Messenger links the mock has confirmed this session; Settings and the first-run screen read them. */
-  links: MockIdentityLink[];
   messages: ConversationMessage[]; sequence: number;
   records: Revised[]; revision: number; messageId: number; recordId: number;
   ledger: SysLedgerLine[];
@@ -372,8 +374,12 @@ type World = {
   context: ProcContextState | null; contextRevision: number;
   run: OpenRun | null; connections: number; sockets: Set<MockSocket>;
 };
-const world: World = { links: [], messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
+const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
 const fresh = freshRequested();
+/* Telegram starts linked so Settings › Messengers shows a connected messenger beside the unlinked ones. */
+let messengerLinks: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number }[] = fresh ? [] : [
+  { adapter: "telegram", accountId: "mock-telegram", actorId: "351913787780", uid: OWNER.uid, createdAt: at(3, 10, 0), linkedByUid: OWNER.uid },
+];
 let streamSeq = 0;
 
 function record(who: "you" | "ship", text: string, createdAt: number, runId: string): ConversationMessage {
@@ -941,7 +947,9 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     /* Settings › Messengers: every messenger is deployed and unlinked, so each pairing flow can be looked at */
     case "adapter.list": return respond(id, { adapters: ["telegram", "slack", "discord", "whatsapp"].map((adapter) => ({ adapter, available: true, enabled: true, canLink: true,
-      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true, accounts: [] })) });
+      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true,
+      /* A linked messenger reports its account as connected; disconnecting drops both. */
+      accounts: messengerLinks.filter((link) => link.adapter === adapter).map((link) => ({ accountId: link.accountId, connected: true, authenticated: true })) })) });
     case "adapter.pair.info": {
       const { adapter } = z.object({ adapter: z.string() }).parse(args);
       return respond(id, { adapter, accountId: `mock-${adapter}`, configured: true,
@@ -955,7 +963,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "adapter.pair.confirm": {
       const { adapter } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
       // The link shows up in Settings and on the first-run screen, as the Kernel's identity link would.
-      if (!world.links.some((link) => link.adapter === adapter)) world.links.push({ adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", uid: OWNER.uid, linkedByUid: OWNER.uid, createdAt: Date.now() });
+      if (!messengerLinks.some((link) => link.adapter === adapter)) messengerLinks.push({ adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", uid: OWNER.uid, linkedByUid: OWNER.uid, createdAt: Date.now() });
       return respond(id, { paired: true, adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", surfaceId: "mock-surface", uid: OWNER.uid });
     }
     case "contact.list": return respond(id, { contacts: fresh ? [] : [maraContact] });
@@ -1038,7 +1046,30 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
-    case "sys.link.list": return respond(id, { links: world.links });
+    case "sys.pair.create": {
+      const { id: pairingId, targetId, label } = z.object({ id: z.string(), targetId: z.string(), label: z.string() }).parse(args);
+      const existing = pairings.find((pairing) => pairing.id === pairingId);
+      if (existing) return respond(id, { pairing: existing });
+      const createdAt = Date.now();
+      const pairing: DevicePairing = { id: pairingId, username: OWNER.username, targetId, label, createdAt, expiresAt: createdAt + 15 * 60_000, state: "pending" };
+      pairings.push(pairing);
+      return respond(id, { pairing });
+    }
+    case "sys.pair.list": return respond(id, { pairings });
+    case "sys.pair.cancel": {
+      const { id: pairingId } = z.object({ id: z.string() }).parse(args);
+      const pairing = pairings.find((entry) => entry.id === pairingId);
+      if (!pairing) return refuse(id, 404, "Invitation not found");
+      pairing.state = "cancelled";
+      return respond(id, { pairing });
+    }
+    case "sys.link.list": return respond(id, { links: messengerLinks });
+    case "adapter.pair.disconnect": {
+      const { adapter, accountId, actorId } = z.object({ adapter: z.string(), accountId: z.string(), actorId: z.string() }).parse(args);
+      const before = messengerLinks.length;
+      messengerLinks = messengerLinks.filter((link) => !(link.adapter === adapter && link.accountId === accountId && link.actorId === actorId));
+      return respond(id, { disconnected: messengerLinks.length < before, adapter, accountId, actorId });
+    }
     case "r12y.list": {
       const { states, includeTerminal, offset = 0, limit = 100 } = responsibilityListArgs.parse(args);
       const records = responsibilities.filter((record) => states ? states.includes(record.state) : includeTerminal || !["resolved", "cancelled"].includes(record.state));

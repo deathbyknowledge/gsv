@@ -92,6 +92,8 @@ const FILE_LINES = new Map<string, TextKey>([
 ]);
 
 export function hilRequestLine(request: ProcHilRequest): HilRequestLine | null {
+  const cronJobs = request.syscall === "sched.add" ? argText(request, "jobs") : null;
+  if (cronJobs) return { lead: "none", text: `${argText(request, "path") ?? ""}\n${cronJobs}`.trimStart() };
   switch (request.syscall) {
     case "atproto.write": {
       const publication = hilPublication(request);

@@ -14,7 +14,7 @@ import type { Process } from "../do";
 import type { RunState } from "../run/state";
 import {
   INTERRUPTED_RUN_CONTROL_MESSAGE, SHELL_SESSION_TARGET_KEY_PREFIX, isRunControlCall,
-  TOOL_DISPATCH_TIMEOUT_MS, CODE_MODE_APPROVAL_TIMEOUT_MS,
+  TOOL_DISPATCH_TIMEOUT_MS, NESTED_APPROVAL_KEEP_ALIVE_MS, NESTED_APPROVAL_TIMEOUT_MS,
   CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS,
 } from "../internal/lifecycle";
 import {
@@ -23,6 +23,7 @@ import {
 } from "../approval";
 import { normalizeOptionalString, parseOptionalJsonObject, cancelResponseBody } from "../internal/messages";
 import { cancelProcessRequests, sendFrameToKernel } from "../../shared/utils";
+import { ExecutionDeadlines } from "../../shared/execution-deadline";
 import { stringifyStoredProcessMedia } from "../media";
 import { unwrapStoredToolResult } from "../tool-result-media";
 import { z } from "zod";
@@ -82,6 +83,8 @@ type AdmittedToolCall = {
 
 export class ProcessTools {
   private approvalQueue: Promise<void> | null = null;
+  /** One active run at a time, so a person's answer holds every deadline of this Process's running tools. */
+  private readonly executionDeadlines = new ExecutionDeadlines();
 
   constructor(private readonly host: Process) {}
 
@@ -363,7 +366,7 @@ export class ProcessTools {
         continue;
       }
       this.host.codeModeResponses.delete(id);
-      clearTimeout(waiter.timeoutId);
+      waiter.deadline.clear();
       waiter.reject(new Error(message));
     }
 
@@ -776,6 +779,7 @@ export class ProcessTools {
           requestId,
         ]);
       }
+      if (context) options.approvalDeadlines = this.executionDeadlines;
       return await executeCodeMode(
         this.host.env,
         args.code,
@@ -835,6 +839,7 @@ export class ProcessTools {
           ]),
           mcpToolBindings: await this.getCodeModeMcpToolBindings(signal),
           signal,
+          approvalDeadlines: this.executionDeadlines,
         },
       );
       if (this.host.handleRunStopped(runId) || !this.host.store.tools.getPending(dispatchId)) {
@@ -962,12 +967,14 @@ export class ProcessTools {
     let release!: () => void;
     const queued = new Promise<void>((resolve) => { release = resolve; });
     this.approvalQueue = queued;
+    const releaseDeadlines = this.executionDeadlines.hold();
     try {
       if (previous) await previous;
       signal?.throwIfAborted();
       if (!this.pendingToolForRun(runId, dispatchId)) return false;
       return await this.requestNestedApproval(runId, dispatchId, toolCallId, toolName, call, args, purpose, signal);
     } finally {
+      releaseDeadlines();
       release();
       if (this.approvalQueue === queued) this.approvalQueue = null;
     }
@@ -987,14 +994,14 @@ export class ProcessTools {
       throw new Error("Another action is waiting for approval; retry after the human decides");
     }
     const requestId = crypto.randomUUID();
-    const approved = new Promise<boolean>((resolve) => {
+    const approved = new Promise<boolean>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.host.codeModeApprovals.delete(requestId);
         if (this.host.store.tools.getPendingHil(requestId)) {
           this.host.store.tools.clearPendingHil();
         }
-        resolve(false);
-      }, CODE_MODE_APPROVAL_TIMEOUT_MS);
+        reject(new Error(`Approval request timed out before anyone answered: ${call}`));
+      }, NESTED_APPROVAL_TIMEOUT_MS);
       this.host.codeModeApprovals.set(requestId, {
         runId,
         dispatchId,
@@ -1002,6 +1009,7 @@ export class ProcessTools {
         timeoutId,
       });
     });
+    void approved.catch(() => {});
 
     const pendingHil: PendingHilRecord = {
       requestId,
@@ -1018,6 +1026,7 @@ export class ProcessTools {
     }
     this.host.store.tools.setPendingHil(pendingHil);
     try {
+      await this.keepNestedApprovalAlive(requestId);
       await this.host.sendSignal("proc.run.hil.requested", this.toProcHilRequest(pendingHil));
       return await raceWithAbort(approved, signal);
     } finally {
@@ -1026,6 +1035,29 @@ export class ProcessTools {
       }
       this.resolveCodeModeApproval(requestId, false);
       this.host.startBackground("resume registered tools after nested approval", this.processToolCalls(runId));
+    }
+  }
+
+  /**
+   * The waiter lives only in memory, and a CodeMode approval has no inbound
+   * request holding this object there, so each alarm is the event that keeps it.
+   * After a restart or deploy the same alarm finds the waiter gone and tells the
+   * model at once, rather than leaving the run parked on an unanswerable request.
+   */
+  async keepNestedApprovalAlive(requestId: string): Promise<void> {
+    if (this.host.codeModeApprovals.has(requestId)) {
+      await this.host.run.schedule(new Date(Date.now() + NESTED_APPROVAL_KEEP_ALIVE_MS), "onNestedApprovalKeepAlive", requestId);
+      return;
+    }
+    const lost = this.host.store.tools.getPendingHil(requestId);
+    if (!lost) return;
+    this.host.store.tools.clearPendingHil("error");
+    if (lost.ownerDispatchId) {
+      await this.failStartedTool(
+        lost.runId,
+        lost.ownerDispatchId,
+        `Approval request was interrupted before anyone answered: ${lost.syscall}`,
+      );
     }
   }
 
@@ -1054,7 +1086,7 @@ export class ProcessTools {
     const reqFrame = frameData as RequestFrame;
 
     const pending = new Promise<ResponseFrame>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
+      const deadline = this.executionDeadlines.start(CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS, () => {
         this.host.codeModeResponses.delete(id);
         this.host.startBackground(
           `CodeMode timeout cancellation for ${id}`,
@@ -1063,7 +1095,7 @@ export class ProcessTools {
           ),
         );
         reject(new Error(`Timed out waiting for ${call}`));
-      }, CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS);
+      });
       this.host.codeModeResponses.set(id, {
         runId,
         ownerDispatchId,
@@ -1071,7 +1103,7 @@ export class ProcessTools {
         args,
         resolve,
         reject,
-        timeoutId,
+        deadline,
       });
     });
     void pending.catch(() => {});
@@ -1085,7 +1117,7 @@ export class ProcessTools {
           throw new Error(`Run stopped before ${call} completed`);
         }
         this.host.codeModeResponses.delete(id);
-        clearTimeout(waiter.timeoutId);
+        waiter.deadline.clear();
         if (response.ok) {
           this.rememberShellSessionTargetFromResult(call, args, response.data ?? null);
         }
@@ -1106,7 +1138,7 @@ export class ProcessTools {
           const waiter = this.host.codeModeResponses.get(id);
           if (waiter) {
             this.host.codeModeResponses.delete(id);
-            clearTimeout(waiter.timeoutId);
+            waiter.deadline.clear();
             waiter.reject(new Error(reason));
           }
           this.host.startBackground(
@@ -1122,7 +1154,7 @@ export class ProcessTools {
       const waiter = this.host.codeModeResponses.get(id);
       if (waiter) {
         this.host.codeModeResponses.delete(id);
-        clearTimeout(waiter.timeoutId);
+        waiter.deadline.clear();
       }
       throw error;
     }

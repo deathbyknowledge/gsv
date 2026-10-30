@@ -387,9 +387,11 @@ manage the human owner's invitations. See [Connect devices](../how-to/connect-de
 
 For `--platform browser`, the JSON result includes `extensionUrl` and `code`.
 The URL opens `https://ship.space/browser?release=RELEASE` for the gateway's
-release. Download and unzip the extension, load its folder from
-`chrome://extensions` with developer mode enabled, then open **Your Ship** from
-the toolbar or Extensions button and paste `code` into its panel.
+release. The extension is not in the Chrome Web Store yet, so it is added in
+developer mode: download and unzip it, turn on **Developer mode** in
+`chrome://extensions`, choose **Load unpacked** and pick the unzipped folder, then
+open **Your Ship** from the toolbar or Extensions button and paste `code` into
+its panel.
 
 
 ```bash
@@ -705,9 +707,9 @@ crontab -l
 crontab FILE
 crontab -r
 sched list [--all]
-sched add --ship --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
-sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
-sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
+sched add --ship --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at TIME [--timezone ZONE]) --message MESSAGE
+sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at TIME [--timezone ZONE]) --message MESSAGE
+sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at TIME [--timezone ZONE]) --message MESSAGE
 sched add --json JSON
 sched enable <id>
 sched disable <id>
@@ -1009,12 +1011,20 @@ copy its opaque Ship destination id; provider account, actor, and surface ids ar
 not part of the agent-facing command contract.
 A successful `responsibility` firing records durable responsibility creation, not
 completion of its work. A successful `process.event` firing records event admission,
-not completion of a model turn or reply. Choose exactly one time expression. `--at`
-requires a future ISO timestamp with `Z` or an explicit numeric UTC offset.
+not completion of a model turn or reply. Choose exactly one time expression.
+
+`--at` takes a future local time such as `2026-10-26T10:00`, read in `--timezone`
+or your own timezone using the offset in force on that date. A local time skipped
+by a clock change runs at the first valid minute after the gap, and one that
+happens twice runs at its first occurrence. An ISO timestamp with `Z` or a numeric
+UTC offset also works, and refuses `--timezone`. Either way the schedule stores one
+fixed instant. `sched add` and `sched list` show the next run as local time, offset
+and zone, for example `next=2026-10-26T10:00:00+01:00[Europe/Madrid]`.
 
 ```bash
 sched add --ship --name animal-facts --every 2m --message "Send one obscure animal fact."
 sched add --ship --name daily-brief --cron "0 9 * * *" --timezone Europe/Amsterdam --message "Prepare the daily brief."
+sched add --ship --name dentist --at 2026-10-26T10:00 --timezone Europe/Madrid --message "Remind me about the dentist."
 sched add --to MESSAGE_DESTINATION_ID --name standup --cron "0 9 * * 1-5" --message "Standup starts now."
 ```
 
@@ -1035,6 +1045,11 @@ dispatched and the spawn was accepted; it does not mean the child finished or
 delivered output. `sched list --all` includes disabled schedules; it does not
 mean all users. `sched add --json` is a low-level compatibility path for direct
 `sched.*` payloads.
+
+An agent's crontab install, by `crontab FILE` or a write to the file, may wait
+for the person to approve its jobs under the
+[`sched.add` rule](./configuration.md#tool-approval-policy). A person installing
+their own crontab is not asked.
 
 ## Version
 

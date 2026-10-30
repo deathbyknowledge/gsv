@@ -44,7 +44,6 @@ async function runCrontabCommand(
   }
 
   if (parsed.action === "remove") {
-    requireCommandCapability(ctx, "sched.remove");
     const removed = await service.removeUserCrontab(parsed.username);
     if (!removed) {
       return { stdout: "", stderr: `no crontab for ${parsed.username}\n`, exitCode: 1 };
@@ -60,8 +59,6 @@ async function runCrontabCommand(
     };
   }
 
-  requireCommandCapability(ctx, "sched.add");
-  requireCommandCapability(ctx, "sched.remove");
   const sourcePath = commandCtx.fs.resolvePath(commandCtx.cwd, parsed.file);
   const content = await fs.readFile(sourcePath);
   await service.installUserCrontab(parsed.username, content);

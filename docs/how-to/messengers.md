@@ -13,7 +13,13 @@ You do not need to create a bot or paste its token into your Ship.
 When Ship needs your approval, the messenger shows what it wants to do. A
 request to publish on the [open network](/architecture/open-network) always
 names the handle and full address it publishes as, such as
-`@alice (alice.ship.space)`, whatever else Ship wrote.
+`@alice (alice.ship.space)`, whatever else Ship wrote. A request to install a
+crontab likewise shows the file and its jobs.
+
+A request raised while Ship is already running a command waits up to 9 minutes
+for your answer. If you answer a request that has ended, whether it timed out,
+was interrupted by a new message or was answered elsewhere, the messenger says
+your answer wasn't used; ask Ship to try again if it still needs doing.
 
 ## Ask Ship to connect
 

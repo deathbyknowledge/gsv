@@ -1361,6 +1361,7 @@ export const en = {
   "shell.help.startWriting": "Start writing; the keystroke lands in the prompt",
   "shell.help.chatInput": "Chat · input",
   "shell.help.send": "Send the message or run the command",
+  "shell.help.newLine": "New line",
   "shell.help.returnToBrowse": "Return to browse; closes the connection picker first",
   "shell.help.recall": "Recall the last input when the prompt is empty",
   "shell.help.placeSyntax": "@connection",
@@ -1389,6 +1390,7 @@ export const en = {
 
   // Shell: key names in the keyboard help
   "shell.keys.enter": "Enter",
+  "shell.keys.newLine": "Shift / Alt + Enter",
   "shell.keys.spaceOrEnter": "Space / Enter",
   "shell.keys.enterOrSpace": "Enter / Space",
   "shell.keys.save": "⌘ / Ctrl + Enter",
@@ -1498,7 +1500,7 @@ export const en = {
   "shell.pairing.cancelled": "This invitation was cancelled.",
   "shell.pairing.newInvitation": "new invitation",
   "shell.pairing.invitation": "Invitation for {name} · {id}. Expires at {time}.",
-  "shell.pairing.extensionSteps": "Download and unzip the extension. In {extensions}, enable developer mode and load its folder. Click the Your Ship icon in the toolbar, or find it under the Extensions button, then paste this invitation into its panel.",
+  "shell.pairing.extensionSteps": "The Your Ship extension isn't in the Chrome Web Store yet, so you add it to Chrome in developer mode. Download and unzip it. Open {extensions}, turn on Developer mode, choose Load unpacked, and pick the unzipped folder. Click the Your Ship icon in the toolbar, or find it under the Extensions button, and paste this invitation into its panel. It lets your Ship work in this browser, signed in as you. You can pause it from its panel anytime.",
   "shell.pairing.downloadExtension": "download extension",
   "shell.pairing.copyInvitation": "copy invitation",
   "shell.pairing.openTerminal": "Open {app} on the computer you want to connect.",
@@ -1532,7 +1534,6 @@ export const en = {
   "shell.prompt.commandPlace": "runs on {place} in {dir}",
   "shell.prompt.place": "on {place}; press to change",
   "shell.prompt.placeOffline": "{place} is offline; press to change",
-  "shell.code.copy": "copy",
   "shell.code.copyTitle": "Copy code",
   "shell.code.copyFailed": "couldn't copy",
   "shell.code.copyManually": "Select the code and copy it manually",
@@ -1716,6 +1717,7 @@ export const en = {
   "chat.call.mailReply": "reply to an email",
   "chat.call.mail": "send an email",
   "chat.call.publish": "publish to the open network",
+  "chat.call.schedule": "schedule work to run later",
 
   // Chat: approval requests
   "chat.hil.read": "read {path}",
