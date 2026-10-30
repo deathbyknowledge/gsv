@@ -92,10 +92,10 @@ The Kernel owns the conversation directory and membership:
   chat for the first time creates an open onboarding responsibility through the ordinary
   wake path. Ship sends a welcome in the owner's preferred language, initially detected from
   the browser. The welcome is a canonical Message shared across clients. A user can
-  write first, including on surfaces without the card: onboarding becomes visible
-  before that message reaches Ship. Until either action, onboarding stays internal
+  write first, including on a surface that never wrote the flag: onboarding becomes
+  visible before that message reaches Ship. Until either action, onboarding stays internal
   to the Kernel rather than appearing as a blocked responsibility.
-  After greeting, Ship waits for a reply. Repeated dismissal
+  After greeting, Ship waits for a reply. Repeated flag writes
   and reconnects recover pending work without reopening a handled welcome.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.

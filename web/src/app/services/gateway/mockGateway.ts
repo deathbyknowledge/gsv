@@ -5,10 +5,10 @@
  * `?mock=1` (http://localhost:5180/?mock=1); production builds drop this module. The choice sticks to
  * the tab, since Instrument rewrites the URL on navigation, and `?mock=0` turns it off again. A seeded
  * session lands straight in Zen signed in; with storage cleared, any username and password sign in.
- * `?fresh=1` is a brand-new space instead: no conversation, and opening the chat wakes Ship the way
- * the Kernel does, a quiet beat, a long think, then the welcome landing whole.
+ * `?fresh=1` is a brand-new space instead: no conversation, the welcome card up, and dismissing it
+ * wakes Ship the way the Kernel does, a quiet beat, a long think, then the welcome landing whole.
  * `?fresh=0` returns to the seeded conversation.
- * Of the config, this browser keeps only the first-run flag and the Language preference, so
+ * Of the config, this browser keeps only the welcome card's dismissal and the Language preference, so
  * Settings can switch the interface language; other settings refuse to save.
  * The real GSVClient runs unchanged over an in-memory WebSocket, so the frames, statuses and signals
  * are the ones the wire would carry, in the order the gateway emits them: stream events, run output,
@@ -89,7 +89,7 @@ export function mockGatewayRequested(): boolean {
   }
 }
 
-/** A fresh space sticks to the tab like the mock itself; asking for it again makes the first run pending again. */
+/** A fresh space sticks to the tab like the mock itself; asking for it again puts the welcome card back up. */
 function freshRequested(): boolean {
   try {
     const asked = new URLSearchParams(window.location.search).get("fresh");
@@ -132,7 +132,7 @@ let ownProfile: ProfileState = {
 };
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
-/** The config this browser keeps for the mock, with its storage key: the first-run flag and the owner's language. */
+/** The config this browser keeps for the mock, with its storage key: the welcome card's dismissal and the owner's language. */
 const STORED_CONFIG = new Map([
   [`users/${OWNER.uid}/ui/welcome_card_seen`, WELCOME_SEEN],
   [`users/${OWNER.uid}/locale/language`, "gsv.mock.language"],
@@ -841,7 +841,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
   switch (call) {
     case "sys.connect":
       world.sockets.add(socket);
-      // Reconnecting after the first run was recorded resumes the welcome, as the Kernel does on sign-in.
+      // Reconnecting after the card was dismissed resumes the welcome, as the Kernel does on sign-in.
       if (fresh && window.localStorage.getItem(WELCOME_SEEN) === "1") void wake();
       return respond(id, connectResult(connectArgs.safeParse(args).data?.protocol ?? 4));
     case "sys.token.create": {
