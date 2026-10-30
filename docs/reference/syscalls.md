@@ -2663,6 +2663,14 @@ type ScheduleExpression =
   | { kind: "every"; everyMs: number; anchorMs?: number }
   | { kind: "cron"; expr: string; timezone: string };
 
+// sched.add and sched.update also accept a local one-shot. The Kernel resolves it
+// to { kind: "at"; atMs } with the offset in force on that date, using the owner's
+// timezone unless one is given. A time skipped by a clock change resolves to the
+// first valid minute after the gap; a time that happens twice, to its first occurrence.
+type ScheduleExpressionInput =
+  | ScheduleExpression
+  | { kind: "at"; localTime: string; timezone?: string }; // 2026-10-26T10:00[:00]
+
 type ScheduleTarget =
   | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
   | { kind: "process.spawn"; runAs?: string; label?: string; prompt: string; parentPid?: string; cwd?: string }
@@ -2699,12 +2707,12 @@ type SchedulerSyscalls = {
   };
 
   "sched.add": {
-    args: { name: string; description?: string; enabled?: boolean; expression: ScheduleExpression; target: ScheduleTarget };
+    args: { name: string; description?: string; enabled?: boolean; expression: ScheduleExpressionInput; target: ScheduleTarget };
     result: { schedule: ScheduleRecord };
   };
 
   "sched.update": {
-    args: { id: string; patch: { name?: string; description?: string | null; enabled?: boolean; expression?: ScheduleExpression; target?: ScheduleTarget } };
+    args: { id: string; patch: { name?: string; description?: string | null; enabled?: boolean; expression?: ScheduleExpressionInput; target?: ScheduleTarget } };
     result: { schedule: ScheduleRecord };
   };
 
