@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../../test-support/peers";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
@@ -5633,6 +5633,192 @@ describe("native administration shell commands", () => {
     }));
   });
 
+  describe("sched add local one-shots", () => {
+    const madridConfig = { [`users/${IDENTITY.uid}/locale/timezone`]: "Europe/Madrid" };
+
+    function makeSchedAddContext() {
+      const create = vi.fn((input) => ({
+        id: "sched-local",
+        ownerUid: input.ownerUid,
+        creator: input.creator,
+        runAs: input.runAs,
+        name: input.name,
+        enabled: input.enabled,
+        expression: input.expression,
+        target: input.target,
+        overlapPolicy: "skip",
+        createdAtMs: input.now,
+        updatedAtMs: input.now,
+        state: {
+          nextRunAtMs: input.expression.kind === "at" ? input.expression.atMs : input.now + 60_000,
+          runningAtMs: null,
+          lastRunAtMs: null,
+          lastStatus: null,
+          lastError: null,
+          lastDurationMs: null,
+          runCount: 0,
+        },
+      }));
+      const ctx = makeContext({
+        capabilities: ["sched.add", "r12y.create"],
+        config: madridConfig,
+        schedules: { create, setWakeScheduleId: vi.fn() },
+        scheduleScheduleWake: vi.fn(async () => "wake-local"),
+      });
+      return { create, ctx };
+    }
+
+    function sched(options: string, ctx: Parameters<typeof handleShellExec>[1]) {
+      return handleShellExec({ input: `sched add --ship --name reminder ${options} --message "Remind me."` }, ctx);
+    }
+
+    beforeEach(() => {
+      vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-20T12:00:00Z"));
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it.each([
+      ["before the change", "2026-10-24T10:00", "2026-10-24T08:00:00Z", "2026-10-24T10:00:00+02:00[Europe/Madrid]"],
+      ["after the change", "2026-10-26T10:00", "2026-10-26T09:00:00Z", "2026-10-26T10:00:00+01:00[Europe/Madrid]"],
+    ])("reads --at without an offset in the owner's timezone %s", async (_label, at, utc, next) => {
+      const { create, ctx } = makeSchedAddContext();
+      const result = await sched(`--at ${at}`, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "at", atMs: Date.parse(utc) },
+      }));
+      expect(result.stdout).toBe(`schedule_id=sched-local next=${next}\n`);
+    });
+
+    it("reads --at in --timezone and reports next in that zone", async () => {
+      const { create, ctx } = makeSchedAddContext();
+      const result = await sched("--at 2026-10-26T10:00 --timezone America/New_York", ctx);
+
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "at", atMs: Date.parse("2026-10-26T14:00:00Z") },
+      }));
+      expect(result.stdout).toContain("next=2026-10-26T10:00:00-04:00[America/New_York]");
+    });
+
+    it("shows the wrong hour when a stale offset is given explicitly", async () => {
+      const { create, ctx } = makeSchedAddContext();
+      const result = await sched("--at 2026-10-26T10:00:00+02:00", ctx);
+
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "at", atMs: Date.parse("2026-10-26T08:00:00Z") },
+      }));
+      expect(result.stdout).toContain("next=2026-10-26T09:00:00+01:00[Europe/Madrid]");
+    });
+
+    it("rejects --timezone combined with an explicit offset", async () => {
+      for (const at of ["2026-10-26T10:00:00+02:00", "2026-10-26T10:00:00Z"]) {
+        const { create, ctx } = makeSchedAddContext();
+        const result = await sched(`--at ${at} --timezone Europe/Madrid`, ctx);
+
+        expect(result.status).toBe("failed");
+        expect(result.stderr).toContain("--timezone cannot be combined with an --at that has Z or a UTC offset");
+        expect(create).not.toHaveBeenCalled();
+      }
+    });
+
+    it("rejects an invalid zone, an invalid local time and a past local time", async () => {
+      const { create, ctx } = makeSchedAddContext();
+
+      const invalidZone = await sched("--at 2026-10-26T10:00 --timezone No/Such_Zone", ctx);
+      expect(invalidZone.status).toBe("failed");
+      expect(invalidZone.stderr).toContain("timezone must be a valid IANA timezone");
+
+      const invalidLocal = await sched("--at 2026-02-30T10:00", ctx);
+      expect(invalidLocal.status).toBe("failed");
+      expect(invalidLocal.stderr).toContain("invalid local time");
+
+      const past = await sched("--at 2026-10-19T10:00", ctx);
+      expect(past.status).toBe("failed");
+      expect(past.stderr).toContain("must be in the future");
+
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("accepts a local time through sched add --json", async () => {
+      const { create, ctx } = makeSchedAddContext();
+      const args = {
+        name: "reminder",
+        expression: { kind: "at", localTime: "2027-03-28T02:30", timezone: "Europe/Madrid" },
+        target: { kind: "responsibility", message: "Remind me." },
+      };
+      const result = await handleShellExec({ input: `sched add --json '${JSON.stringify(args)}'` }, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "at", atMs: Date.parse("2027-03-28T01:00:00Z") },
+      }));
+      expect(result.stdout).toContain("next=2027-03-28T03:00:00+02:00[Europe/Madrid]");
+    });
+
+    it("still reports a committed schedule when the configured zone is unusable", async () => {
+      const create = vi.fn((input) => ({
+        id: "sched-local",
+        expression: input.expression,
+        target: input.target,
+        state: { nextRunAtMs: input.expression.atMs },
+      }));
+      const ctx = makeContext({
+        capabilities: ["sched.add", "r12y.create"],
+        config: { "config/server/timezone": "No/Such_Zone" },
+        schedules: { create, setWakeScheduleId: vi.fn() },
+        scheduleScheduleWake: vi.fn(async () => "wake-local"),
+      });
+      const result = await sched("--at 2026-10-26T09:00:00Z", ctx);
+
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("next=2026-10-26T09:00:00.000Z");
+      expect(create).toHaveBeenCalledTimes(1);
+    });
+
+    it("documents the local form in sched help and the man page", async () => {
+      const { ctx } = makeSchedAddContext();
+      const help = await handleShellExec({ input: "sched help" }, ctx);
+      const man = await handleShellExec({ input: "man sched" }, ctx);
+
+      expect(help.stdout).toContain("--at TIME [--timezone ZONE]");
+      expect(man.stdout).toContain("--at 2026-10-26T10:00");
+      expect(man.stdout).toContain("first valid minute");
+      expect(man.stdout).toContain("first occurrence");
+    });
+
+    it("shows next runs in local time in sched list", async () => {
+      const state = (nextRunAtMs: number) => ({ nextRunAtMs, lastStatus: null, lastError: null });
+      const ctx = makeContext({
+        capabilities: ["sched.list"],
+        config: madridConfig,
+        schedules: {
+          list: vi.fn(() => ({ count: 2, records: [{
+            id: "sched-cron",
+            name: "brief",
+            enabled: true,
+            expression: { kind: "cron", expr: "0 9 * * *", timezone: "Asia/Tokyo" },
+            target: { kind: "responsibility", message: "Brief." },
+            state: state(Date.parse("2026-10-26T00:00:00Z")),
+          }, {
+            id: "sched-at",
+            name: "reminder",
+            enabled: true,
+            expression: { kind: "at", atMs: Date.parse("2026-10-26T09:00:00Z") },
+            target: { kind: "responsibility", message: "Remind me." },
+            state: state(Date.parse("2026-10-26T09:00:00Z")),
+          }] })),
+        },
+      });
+      const result = await handleShellExec({ input: "sched list --all" }, ctx);
+
+      expect(result.stdout).toContain("sched-cron\tyes\t2026-10-26T09:00:00+09:00[Asia/Tokyo]");
+      expect(result.stdout).toContain("sched-at\tyes\t2026-10-26T10:00:00+01:00[Europe/Madrid]");
+    });
+  });
+
   it("rejects sched add --here from a top-level shell", async () => {
     const create = vi.fn();
     const ctx = makeContext({
@@ -5694,11 +5880,11 @@ describe("native administration shell commands", () => {
     expect(ambiguous.status).toBe("failed");
     expect(ambiguous.stderr).toContain("requires exactly one");
     expect(misplacedTimezone.status).toBe("failed");
-    expect(misplacedTimezone.stderr).toContain("--timezone is only valid with --cron");
+    expect(misplacedTimezone.stderr).toContain("--timezone is only valid with --cron or a local --at");
     expect(unknown.status).toBe("failed");
     expect(unknown.stderr).toContain("unexpected argument: --wat");
     expect(timezoneLessAt.status).toBe("failed");
-    expect(timezoneLessAt.stderr).toContain("requires an ISO timestamp with Z or a UTC offset");
+    expect(timezoneLessAt.stderr).toContain("--at requires a local time such as 2026-10-26T10:00");
     expect(pastAt.status).toBe("failed");
     expect(pastAt.stderr).toContain("schedule atMs must be in the future");
     expect(create).not.toHaveBeenCalled();
