@@ -28,6 +28,7 @@ import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
 import type { FsDeviceTransport } from "../drivers/native/fs";
 import { WEB_SEARCH_TIMEOUT_MS, webSearchArgsSchema } from "@humansandmachines/gsv/services/web-search";
+import { z } from "zod";
 import {
   handleAiContext,
   handleAiConfig,
@@ -230,6 +231,8 @@ const DEFAULT_TARGET_TTL_MS = 60_000;
 // The process watchdog is ten minutes; routing must not preempt it.
 const DEFAULT_SHELL_TARGET_TTL_MS = 11 * 60_000;
 const SHELL_TIMEOUT_GRACE_MS = 10_000;
+const NEW_SHELL_INPUT_SCHEMA = z.string();
+const SESSION_SHELL_INPUT_SCHEMA = NEW_SHELL_INPUT_SCHEMA.nullish();
 
 export async function dispatch(
   frame: RequestFrame,
@@ -261,6 +264,23 @@ export async function dispatch(
     ? frame.args.sessionId?.trim() ?? ""
     : "";
   const startSession = frame.call === "shell.exec" && frame.args.start === true;
+
+  if (frame.call === "shell.exec") {
+    // Models and peers can send anything, so every target gets this check here.
+    // Only continuing a session may omit input: a machine treats that as a poll.
+    const inputSchema = sessionId && !startSession ? SESSION_SHELL_INPUT_SCHEMA : NEW_SHELL_INPUT_SCHEMA;
+    if (!inputSchema.safeParse(frame.args.input).success) {
+      return {
+        handled: true,
+        response: {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { status: "failed", output: "", error: 'shell.exec requires "input", the command to run' },
+        },
+      };
+    }
+  }
 
   if (startSession && (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId) || !target || target === GSV_TARGET_ID)) {
     return { handled: true, response: rejectBeforeDispatch(frame, 400, "Starting a named shell session requires a fresh UUID and a remote target") };
