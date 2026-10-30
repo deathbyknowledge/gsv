@@ -1423,7 +1423,7 @@ export const es = {
   "onboarding.surface.web": "seguir aquí",
   "onboarding.surface.webSub": "Puedes conectar una app de mensajes más adelante.",
   "onboarding.surface.desktop": "App de escritorio",
-  "onboarding.surface.desktopSub": "Su propia ventana en macOS, Windows y Linux",
+  "onboarding.surface.desktopSub": "Descarga la beta para macOS, Windows o Linux",
   "onboarding.surface.desktopAction": "descargar la app",
   "onboarding.surface.messengerPrivacy": "Conectar una app de mensajes no da a Ship acceso a tu cuenta, tus contactos ni otros chats. Ship solo ve los mensajes que le envías.",
   "onboarding.surface.whatsappSub": "Escribe a Ship desde WhatsApp en tu móvil",

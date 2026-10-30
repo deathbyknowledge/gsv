@@ -58,8 +58,9 @@ actions and Help open in a vertical menu with touch-sized rows.
 Choosing a view, tapping outside or pressing Escape closes the menu.
 The menu button retains the unread People indicator while navigation is closed.
 
-On a personal human account's first sign-in, a full screen in front of the chat asks where
-the person wants to message Ship: Web, the Desktop app, WhatsApp or Telegram. Web completes at
+On a personal human account's first sign-in, a full screen in front of the chat, over the
+instrument's star field with the chat kept out of sight beneath it, asks where the person
+wants to message Ship: Web, the Desktop app, WhatsApp or Telegram. Web completes at
 once; the Desktop app choice links to the release download and continues in the web; a messenger
 pairs inline through the Settings pairing flow, and the Kernel then greets on it. Messenger
 sections appear only when the deployment offers that adapter, with no "nothing connected" line;

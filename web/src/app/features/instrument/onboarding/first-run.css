@@ -1,13 +1,14 @@
-/* The first run stands in front of the chat below the header until the person has chosen where to message Ship. */
+/* The first run stands in front of the chat below the header until the person has chosen where to message Ship.
+ * It sits over the instrument's star field; the views beneath it stay mounted but out of sight. */
 .first-run {
   position: absolute;
   z-index: 20;
   inset: var(--instrument-header-height) 0 0;
   overflow: auto;
-  background: var(--void);
   color: var(--text);
   font-family: var(--gsv-font-prose);
 }
+.distance[data-first-run] { visibility: hidden; }
 .first-run-panel {
   box-sizing: border-box;
   width: min(54rem, 100%);
