@@ -1698,6 +1698,7 @@ export const en = {
   "chat.call.mailReply": "reply to an email",
   "chat.call.mail": "send an email",
   "chat.call.publish": "publish to the open network",
+  "chat.call.schedule": "schedule work to run later",
 
   // Chat: approval requests
   "chat.hil.read": "read {path}",

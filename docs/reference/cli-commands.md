@@ -1044,6 +1044,11 @@ delivered output. `sched list --all` includes disabled schedules; it does not
 mean all users. `sched add --json` is a low-level compatibility path for direct
 `sched.*` payloads.
 
+An agent's crontab install, by `crontab FILE` or a write to the file, may wait
+for the person to approve its jobs under the
+[`sched.add` rule](./configuration.md#tool-approval-policy). A person installing
+their own crontab is not asked.
+
 ## Version
 
 ```bash

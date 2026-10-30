@@ -10,6 +10,7 @@ import {
 } from "./shell";
 import {
   handleFsCopy,
+  handleFsDelete,
   handleFsRead,
   handleFsTransferReceive,
   handleFsTransferSend,
@@ -3854,7 +3855,7 @@ describe("native administration shell commands", () => {
       resolveGids: vi.fn(() => IDENTITY.gids),
     };
     const ctx = makeContext({
-      capabilities: ["sched.add", "sched.remove", "sched.list"],
+      capabilities: ["shell.exec", "sched.add", "sched.remove", "sched.list"],
       auth,
       caps: {
         resolve: vi.fn(() => ["shell.*"]),
@@ -4023,7 +4024,7 @@ describe("native administration shell commands", () => {
     };
     const ctx = makeContext({
       identity: agent,
-      capabilities: ["sched.add", "sched.remove", "sched.list"],
+      capabilities: ["shell.exec", "sched.add", "sched.remove", "sched.list"],
       auth,
       caps: {
         resolve: vi.fn(() => ["shell.exec"]),
@@ -6141,5 +6142,240 @@ describe("native administration shell commands", () => {
     } finally {
       exec.mockRestore();
     }
+  });
+});
+
+describe("crontab approval", () => {
+  const JOBS = "# refresh the digest\nCRON_TZ=Europe/Amsterdam\n0 9 * * * proc list\n\n30 18 * * 1-5 cat notes.txt\n";
+  const JOBS_TO_APPROVE = "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc list\n30 18 * * 1-5 cat notes.txt";
+  const PREVIOUS = "0 1 * * * echo previous\n";
+  const USER_PATH = "/var/spool/cron/sam";
+  const OWNER = { runId: "run-cron", requestId: "call-owner" };
+  type CronFileRecord = { path: string; ownerUid: number | null; content: string; createdAtMs: number; updatedAtMs: number };
+
+  /** An installed crontab with one linked schedule, in the state a later install must either replace or leave alone. */
+  function cronContext(options: {
+    capabilities?: string[];
+    inRun?: boolean;
+    identity?: ProcessIdentity;
+  } = {}) {
+    const identity = options.identity ?? IDENTITY;
+    const previousPath = identity.uid === 0 ? "/etc/cron.d/nightly" : USER_PATH;
+    const cronFiles = new Map<string, CronFileRecord>([
+      [previousPath, { path: previousPath, ownerUid: identity.uid, content: PREVIOUS, createdAtMs: 1, updatedAtMs: 1 }],
+    ]);
+    const links = new Map<string, string[]>([[previousPath, ["sched-previous"]]]);
+    const schedules = new Map<string, { id: string; wakeScheduleId: string | null }>([
+      ["sched-previous", { id: "sched-previous", wakeScheduleId: null }],
+    ]);
+    const create = vi.fn((input: { target: unknown; expression: unknown; name: string }) => {
+      const record = { ...input, id: `sched-${schedules.size + 1}`, wakeScheduleId: null, state: { nextRunAtMs: null } };
+      schedules.set(record.id, record);
+      return record;
+    });
+    const entry = (username: string) => username === identity.username || username === "sam"
+      ? { username, uid: identity.uid, gid: identity.gid, gecos: "", home: identity.home, shell: "/bin/init" }
+      : null;
+    const ctx = makeContext({
+      identity,
+      capabilities: options.capabilities ?? ["shell.exec", "fs.write", "fs.read", "sched.add", "sched.remove", "sched.list"],
+      processId: options.inRun === false ? null : "task:cron",
+      processRunId: options.inRun === false ? undefined : OWNER.runId,
+      auth: {
+        getPasswdByUsername: vi.fn(entry),
+        getPasswdByUid: vi.fn((uid: number) => uid === identity.uid ? entry(identity.username) : null),
+        resolveGids: vi.fn(() => identity.gids),
+      },
+      caps: { resolve: vi.fn(() => ["shell.*"]) },
+      schedules: {
+        create,
+        setWakeScheduleId: vi.fn(),
+        getStored: vi.fn((id: string) => schedules.get(id) ?? null),
+        remove: vi.fn((id: string) => {
+          const existing = schedules.get(id) ?? null;
+          schedules.delete(id);
+          return existing;
+        }),
+        getCronFile: vi.fn((path: string) => cronFiles.get(path) ?? null),
+        listCronFiles: vi.fn(() => [...cronFiles.values()]),
+        upsertCronFile: vi.fn((input: { path: string; ownerUid: number | null; content: string; now: number }) => {
+          const record = { path: input.path, ownerUid: input.ownerUid, content: input.content, createdAtMs: input.now, updatedAtMs: input.now };
+          cronFiles.set(input.path, record);
+          return record;
+        }),
+        removeCronFile: vi.fn((path: string) => {
+          const existing = cronFiles.get(path) ?? null;
+          cronFiles.delete(path);
+          return existing;
+        }),
+        cronFileScheduleIds: vi.fn((path: string) => links.get(path) ?? []),
+        clearCronFileScheduleLinks: vi.fn((path: string) => links.delete(path)),
+        linkCronFileSchedule: vi.fn((path: string, scheduleId: string) => {
+          links.set(path, [...(links.get(path) ?? []), scheduleId]);
+        }),
+      },
+      scheduleScheduleWake: vi.fn(async () => "wake-1"),
+    });
+    if (options.inRun !== false) ctx.requestId = OWNER.requestId;
+    return { ctx, cronFiles, schedules, create };
+  }
+
+  function answerApprovals(approved: boolean) {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => (
+      frame.type === "req" && frame.call === "proc.tool.authorize"
+        ? { type: "res", id: frame.id, ok: true, data: { approved } }
+        : null
+    ));
+  }
+
+  function approvalRequests() {
+    return sendFrameToProcessMock.mock.calls
+      .map(([, , frame]) => frame)
+      .filter((frame) => frame.type === "req" && frame.call === "proc.tool.authorize");
+  }
+
+  async function installByCommand(ctx: KernelContext) {
+    await env.STORAGE.put("home/sam/jobs.cron", JOBS);
+    const result = await handleShellExec({ input: "crontab jobs.cron" }, ctx);
+    return { installed: result.ok === true && result.exitCode === 0, error: result.ok ? result.stderr : result.error };
+  }
+
+  async function installByWrite(ctx: KernelContext) {
+    const result = await handleFsWrite({ path: USER_PATH, content: JOBS }, ctx);
+    return { installed: result.ok, error: result.ok ? "" : result.error };
+  }
+
+  async function installByRedirect(ctx: KernelContext) {
+    await env.STORAGE.put("home/sam/jobs.cron", JOBS);
+    const result = await handleShellExec({ input: `cat jobs.cron > ${USER_PATH}` }, ctx);
+    return { installed: result.ok === true && result.exitCode === 0, error: result.ok ? result.stderr : result.error };
+  }
+
+  const ROUTES = [
+    ["crontab FILE", installByCommand],
+    ["a write to the spool path", installByWrite],
+    ["a shell redirect to the spool path", installByRedirect],
+  ] as const;
+
+  it.each(ROUTES)("asks once for the whole file on %s", async (_route, install) => {
+    answerApprovals(true);
+    const { ctx, cronFiles, create } = cronContext();
+
+    const { installed, error } = await install(ctx);
+
+    expect(error).toBe("");
+    expect(installed).toBe(true);
+    expect(approvalRequests()).toHaveLength(1);
+    expect(approvalRequests()[0]).toMatchObject({
+      args: { ...OWNER, syscall: "sched.add", args: { path: USER_PATH, jobs: JOBS_TO_APPROVE } },
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(cronFiles.get(USER_PATH)?.content).toBe(JOBS);
+  });
+
+  it.each(ROUTES.slice(0, 2))("leaves the previous crontab untouched when %s is refused", async (_route, install) => {
+    answerApprovals(false);
+    const { ctx, cronFiles, schedules, create } = cronContext();
+
+    const { installed, error } = await install(ctx);
+
+    expect(installed).toBe(false);
+    expect(error).toContain("not approved");
+    expect(create).not.toHaveBeenCalled();
+    expect(cronFiles.get(USER_PATH)?.content).toBe(PREVIOUS);
+    expect([...schedules.keys()]).toEqual(["sched-previous"]);
+  });
+
+  it("installs nothing when a shell redirect is refused, though the redirect has already emptied the file", async () => {
+    answerApprovals(false);
+    const { ctx, cronFiles, schedules, create } = cronContext();
+
+    const { installed, error } = await installByRedirect(ctx);
+
+    expect(installed).toBe(false);
+    expect(error).toContain("not approved");
+    expect(create).not.toHaveBeenCalled();
+    expect(cronFiles.get(USER_PATH)?.content).toBe("");
+    expect([...schedules.keys()]).toEqual([]);
+  });
+
+  it("asks once for an appended crontab, showing the jobs it keeps, and keeps them when refused", async () => {
+    answerApprovals(false);
+    const { ctx, cronFiles, schedules, create } = cronContext();
+    await env.STORAGE.put("home/sam/jobs.cron", JOBS);
+
+    await handleShellExec({ input: `cat jobs.cron >> ${USER_PATH}` }, ctx);
+
+    expect(approvalRequests()).toHaveLength(1);
+    expect(approvalRequests()[0]).toMatchObject({
+      args: { syscall: "sched.add", args: { path: USER_PATH, jobs: `0 1 * * * echo previous\n${JOBS_TO_APPROVE}` } },
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(cronFiles.get(USER_PATH)?.content).toBe(PREVIOUS);
+    expect([...schedules.keys()]).toEqual(["sched-previous"]);
+  });
+
+  it("asks before a process writes a system crontab, naming the account each job runs as", async () => {
+    answerApprovals(false);
+    const root: ProcessIdentity = { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" };
+    const { ctx, cronFiles, create } = cronContext({ identity: root });
+
+    const result = await handleFsWrite({ path: "/etc/cron.d/nightly", content: "0 4 * * * sam proc list\n" }, ctx);
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("not approved") });
+    expect(approvalRequests()[0]).toMatchObject({
+      args: { syscall: "sched.add", args: { path: "/etc/cron.d/nightly", jobs: "0 4 * * * sam proc list" } },
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(cronFiles.get("/etc/cron.d/nightly")?.content).toBe(PREVIOUS);
+  });
+
+  it.each(ROUTES)("does not prompt a human installing through %s", async (_route, install) => {
+    const { ctx, create } = cronContext({ inRun: false });
+
+    const { installed, error } = await install(ctx);
+
+    expect(error).toBe("");
+    expect(installed).toBe(true);
+    expect(approvalRequests()).toHaveLength(0);
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not ask to remove a crontab or install one with no jobs", async () => {
+    const removal = cronContext();
+    expect(await handleShellExec({ input: "crontab -r" }, removal.ctx)).toMatchObject({ ok: true, exitCode: 0 });
+    expect(removal.cronFiles.has(USER_PATH)).toBe(false);
+
+    const emptied = cronContext();
+    expect(await handleFsWrite({ path: USER_PATH, content: "# nothing yet\n" }, emptied.ctx)).toMatchObject({ ok: true });
+    expect([...emptied.schedules.keys()]).toEqual([]);
+
+    expect(approvalRequests()).toHaveLength(0);
+  });
+
+  it.each([
+    ["sched.add", ["shell.exec", "fs.write", "sched.remove"]],
+    ["sched.remove", ["shell.exec", "fs.write", "sched.add"]],
+    ["shell.exec", ["fs.write", "sched.add", "sched.remove"]],
+  ])("refuses a spool write without %s before asking", async (capability, capabilities) => {
+    answerApprovals(true);
+    const { ctx, cronFiles, create } = cronContext({ capabilities, inRun: false });
+
+    const { installed, error } = await installByWrite(ctx);
+
+    expect(installed).toBe(false);
+    expect(error).toContain(`Permission denied: ${capability}`);
+    expect(approvalRequests()).toHaveLength(0);
+    expect(create).not.toHaveBeenCalled();
+    expect(cronFiles.get(USER_PATH)?.content).toBe(PREVIOUS);
+  });
+
+  it("requires sched.remove to remove a crontab through the spool path", async () => {
+    const { ctx, cronFiles } = cronContext({ capabilities: ["fs.delete", "fs.write"], inRun: false });
+
+    const result = await handleFsDelete({ path: USER_PATH }, ctx);
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("Permission denied: sched.remove") });
+    expect(cronFiles.get(USER_PATH)?.content).toBe(PREVIOUS);
   });
 });

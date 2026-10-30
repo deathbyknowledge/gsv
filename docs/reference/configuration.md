@@ -208,7 +208,11 @@ Default policy (`default` is `auto`; the runtime, the Process fallback, and the 
 | any target | `web.search` | `sys.mcp.call`, `mail.send`, `sched.add`, `sched.update`, `approach.create`, `atproto.write` |
 
 `sched.add` and `sched.update` are checked only when a schedule runs a command;
-message reminders never ask. `approach.create` is the Ship sending a first
+message reminders never ask. An agent installing a crontab, by `crontab FILE` or
+by writing its file, is checked as one `sched.add` that shows the file's jobs.
+Removing a crontab does not ask. A scheduled command that fires later has no
+agent run to ask through, so it runs without asking again; approving one is
+approving what it will do each time. `approach.create` is the Ship sending a first
 message request to someone who is not a contact yet. `atproto.write` is the
 Ship publishing records to the [open network](/architecture/open-network);
 uploading a file does not ask, because nothing serves it until an approved write
