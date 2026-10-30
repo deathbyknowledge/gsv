@@ -55,7 +55,7 @@ beforeEach(() => {
   onComplete.mockReset();
   onComplete.mockResolvedValue(undefined);
   vi.stubGlobal("document", {});
-  vi.stubGlobal("window", { location: { search: "" }, navigator: { userAgent: "Mozilla/5.0 (Macintosh)", platform: "MacIntel", maxTouchPoints: 0 } });
+  vi.stubGlobal("window", { location: { search: "", origin: "https://jessica.ship.space" }, navigator: { userAgent: "Mozilla/5.0 (Macintosh)", platform: "MacIntel", maxTouchPoints: 0 } });
   vi.spyOn(GSVClient.prototype, "getStatus").mockReturnValue(connected);
   vi.spyOn(GSVClient.prototype, "onStatus").mockReturnValue(() => {});
   vi.spyOn(GSVClient.prototype, "request").mockImplementation(request);
@@ -86,6 +86,7 @@ describe("first-run screen", () => {
     expect(action("connect Telegram")).toBeDefined();
     expect(action("download the app")).toBeDefined();
     expect(continueHere()).toBeDefined();
+    expect(collectText(tree)).toContain("You can always reach your Ship at jessica.ship.space.");
     expect(collectText(tree)).not.toContain("is connected to you");
     expect(collectText(tree)).toContain("You can connect a messenger later.");
     expect(collectText(tree)).not.toContain("Not for numbers");

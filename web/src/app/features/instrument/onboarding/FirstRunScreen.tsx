@@ -7,6 +7,7 @@ import { InfoTip } from "../../../components/ui/InfoTip";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { LATEST_RELEASE_PAGE_URL } from "../../../domain/cliInstall";
 import { detectClientPlatform } from "../../../services/gateway/clientPlatform";
+import { gatewayHttpOrigin } from "../../../services/platform/gatewayOrigin";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useT, type TextKey } from "../../../i18n/locale";
 import { INSTRUMENT_MESSENGERS_KEY } from "../wire/queryKeys";
@@ -90,7 +91,7 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
   return <section class="first-run" aria-labelledby="first-run-title">
     <div class="first-run-panel">
       <h1 id="first-run-title">{t("onboarding.surface.title")}</h1>
-      <p class="first-run-lead">{t("onboarding.surface.lead")}</p>
+      <p class="first-run-lead">{t("onboarding.surface.lead", { address: new URL(gatewayHttpOrigin()).host })}</p>
       {completeError && <Alert variant="error" text={t("shell.firstRun.failed")} />}
       {connections.isPending && connected && <LoadingState variant="panel">{t("onboarding.surface.loading")}</LoadingState>}
 

@@ -1419,7 +1419,7 @@ export const es = {
 
   // Onboarding: where to message Ship
   "onboarding.surface.title": "¿Desde dónde quieres escribir a Ship?",
-  "onboarding.surface.lead": "Ship es el mismo desde donde le hables. Puedes gestionar tus conexiones en Configuración → Mensajería cuando quieras.",
+  "onboarding.surface.lead": "Siempre puedes encontrar a tu Ship en {address}. Gestiona tus conexiones en Ajustes → Mensajería cuando quieras.",
   "onboarding.surface.web": "seguir aquí",
   "onboarding.surface.webSub": "Puedes conectar una app de mensajes más adelante.",
   "onboarding.surface.desktop": "App de escritorio",

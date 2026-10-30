@@ -1424,7 +1424,7 @@ export const ptBR = {
 
   // Onboarding: where to message Ship
   "onboarding.surface.title": "Por onde você quer falar com o Ship?",
-  "onboarding.surface.lead": "O Ship é o mesmo por onde você falar com ele. Você pode gerenciar suas conexões em Configurações → Apps de mensagem a qualquer momento.",
+  "onboarding.surface.lead": "Você sempre pode encontrar o seu Ship em {address}. Gerencie suas conexões em Configurações → Apps de mensagem a qualquer momento.",
   "onboarding.surface.web": "continuar aqui",
   "onboarding.surface.webSub": "Você pode conectar um app de mensagem depois.",
   "onboarding.surface.desktop": "App para computador",

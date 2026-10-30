@@ -1418,7 +1418,7 @@ export const en = {
 
   // Onboarding: where to message Ship
   "onboarding.surface.title": "Where do you want to message Ship?",
-  "onboarding.surface.lead": "Ship is the same wherever you talk to it. You can manage your connections on Settings → Messengers at any time.",
+  "onboarding.surface.lead": "You can always reach your Ship at {address}. Manage your connections on Settings → Messengers at any time.",
   "onboarding.surface.web": "continue here",
   "onboarding.surface.webSub": "You can connect a messenger later.",
   "onboarding.surface.desktop": "Desktop app",
