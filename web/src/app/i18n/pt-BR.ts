@@ -1202,6 +1202,7 @@ export const ptBR = {
   "session.welcome.invited": "Você recebeu um convite para o Ship",
   "session.welcome.join": "Junte-se ao Ship",
   "session.welcome.create": "Criar seu Ship",
+  "session.welcome.alreadyHaveShip": "Já tem um Ship?",
   "session.welcome.createDetail": "Escolha um nome de usuário e confirme seu e-mail",
   "session.welcome.emailTitle": "Seu e-mail",
   "session.welcome.checkEmail": "Confira seu e-mail",
@@ -1251,6 +1252,7 @@ export const ptBR = {
   "session.policy.privacyPolicies": "Confira as políticas do seu operador sobre compartilhamento, retenção, acesso, correção e exclusão.",
 
   // Session: age and policy consent
+  "session.productEmails.choice": "Quero receber de vez em quando um email com novidades legais do Ship",
   "session.consent.age": "Confirmo que tenho 18 anos ou mais.",
   "session.consent.ageTerms": "Confirmo que tenho 18 anos ou mais e concordo com os {terms}.",
   "session.consent.agePrivacy": "Confirmo que tenho 18 anos ou mais e declaro ciência da {privacy}.",

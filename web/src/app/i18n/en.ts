@@ -1196,6 +1196,7 @@ export const en = {
   "session.welcome.invited": "You’re invited to Ship",
   "session.welcome.join": "Join Ship",
   "session.welcome.create": "Create your Ship",
+  "session.welcome.alreadyHaveShip": "Already have a Ship?",
   "session.welcome.createDetail": "Pick a handle, confirm your email",
   "session.welcome.emailTitle": "Your email",
   "session.welcome.checkEmail": "Check your email",
@@ -1245,6 +1246,7 @@ export const en = {
   "session.policy.privacyPolicies": "Check your operator's policies on sharing, retention, access, corrections, and deletion.",
 
   // Session: age and policy consent
+  "session.productEmails.choice": "Email me occasionally with cool Ship updates",
   "session.consent.age": "I confirm that I’m 18 or older.",
   "session.consent.ageTerms": "I confirm that I’m 18 or older and agree to the {terms}.",
   "session.consent.agePrivacy": "I confirm that I’m 18 or older and acknowledge the {privacy}.",

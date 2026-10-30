@@ -39,6 +39,7 @@ if (import.meta.env.DEV) {
 }
 
 let active = activate(locales[0], english);
+export const currentLocale = (): string => active.locale.tag;
 /** The most recently requested language, so a slower earlier load cannot replace a newer choice. */
 let requested = active.locale;
 const listeners = new Set<() => void>();

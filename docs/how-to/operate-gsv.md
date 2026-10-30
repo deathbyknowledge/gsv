@@ -397,3 +397,53 @@ another disposable directory. Model calls still require an available provider.
 This composition and the migration tooling have local D1 and configuration tests.
 Local success is not evidence that a cloud deployment has completed; verify a
 fresh deployment end to end before giving anyone a Ship on it.
+
+## Optional signup emails
+
+The web signup header links to the configured primary domain. The handle/email
+form has no Back button; other public signup steps link Back to that homepage.
+**Already have a Ship?** in the center of the signup top bar links to
+`/owner/signup/?view=welcome`, which offers both creating a Ship and opening
+an existing one by email or space address.
+
+During signup, people can optionally check **Email me occasionally with cool Ship updates**.
+The box starts unchecked and is separate from the required account agreement.
+For new signups, Accounts queues explicit choices made when creating a Ship with a verified
+email. Sign-in and email verification alone never subscribe anyone.
+
+To deliver these requests, apply `0034_product_email_signup.sql` and
+`0035_product_email_users.sql`, bind an
+Accounts-only `BUTTONDOWN_API_KEY`, and set `GSV_PRODUCT_EMAIL_ENABLED=true`.
+The Accounts scheduled handler calls `runProductEmailJobs`; commercial
+compositions import it from the installations package's `product-email` export.
+Requests wait durably while sending is disabled or Buttondown is unavailable.
+Inspect `product_email_signups.due_at`, `attempts` and `last_error` for failures.
+Retries reuse one request ID, and completed requests are not replayed.
+
+Buttondown owns subscriptions and the unsubscribe link in each product email.
+Checked signups receive the `user` tag. New subscribers receive
+that tag; existing subscribed addresses have it appended without replacing tags
+such as `early-access` or changing their subscription state. Pending, unsubscribed,
+blocked and other suppressed addresses remain untouched. Signup requests store the choice's wording version, locale, timestamp
+and verified address; the temporary signup IP is cleared after delivery.
+The adapter uses Buttondown's [subscriber API](https://docs.buttondown.com/api-subscribers-create),
+[tag append behavior](https://docs.buttondown.com/tags)
+and [idempotency keys](https://docs.buttondown.com/api-idempotency-keys).
+
+
+Migration `0035_product_email_users.sql` also queues a one-time backfill of
+existing verified, active owners with at least one active Ship. It excludes
+unverified or disabled owners, incomplete signups and retired Ships. Multiple
+Ships for one email produce one request. Backfill records use source
+`ship-existing-user-backfill`, wording version `operator-backfill-2026-10-30`
+and locale `und`; these identify an operator backfill, not a recorded checkbox
+choice. Existing signup records retain their original evidence. Previously
+completed requests are checked again for the `user` tag with new idempotency
+keys, preserving any existing `newsletter` or `early-access` tags.
+
+Keep delivery disabled while applying the migrations and deploying the updated
+Accounts worker, then enable it. The existing cron drains the backfill in batches
+of 30, using the same retries and Buttondown suppression checks as new signups.
+The migration takes a snapshot; users created afterward still need the checkbox.
+Verify one new opted-in signup and one backfilled owner in Buttondown before
+considering rollout complete.

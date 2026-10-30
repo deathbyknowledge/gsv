@@ -29,7 +29,8 @@
     "./owner-http": "./src/owner-http.ts",
     "./owner-service": "./src/owner-service.ts",
     "./owner-front-door": "./src/owner-front-door.ts",
-    "./signup": "./src/signup.ts"
+    "./signup": "./src/signup.ts",
+    "./product-email": "./src/product-email.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

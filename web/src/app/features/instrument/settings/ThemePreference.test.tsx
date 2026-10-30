@@ -25,7 +25,7 @@ it("lets a fresh device pin Light directly instead of presenting it as already s
   let signInTheme: string;
   function Harness() {
     tree = ThemePreference();
-    signInTheme = useColorTheme("dark").theme;
+    signInTheme = useColorTheme("light").theme;
     return null;
   }
   // SAFETY: Appearance renders one design-system Select.
@@ -36,7 +36,7 @@ it("lets a fresh device pin Light directly instead of presenting it as already s
     expect(select().props.options).not.toContainEqual(expect.objectContaining({ value: "" }));
     expect(select().props.placeholder).toBe("Default");
     expect(stored.has("gsv.instrument.theme")).toBe(false);
-    expect(signInTheme!).toBe("dark");
+    expect(signInTheme!).toBe("light");
 
     await act(() => select().props.onSelect?.("light"));
     expect(select().props.selected).toBe("light");
