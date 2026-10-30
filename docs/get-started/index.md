@@ -16,8 +16,8 @@ detected from your browser; the chat reads "Ship is waking up" until its first
 message lands. If Ship cannot be woken, choose **Retry**. You can write first,
 ask Ship to switch languages, or change **Settings → Preferences → Language**.
 The greeting stays in your conversation across devices.
-The card links to the community Discord; the **Feedback** button in the header
-is available when your operator offers it.
+The **Feedback** button in the header is available when your operator offers
+it, and **Help** links to the community Discord.
 Start with what you want to do. You can connect computers and browsers from **Work** and
 configure models and other connections from **Settings** when you need them.
 
