@@ -4853,6 +4853,7 @@ describe("managed adapter pairing", () => {
     expect(ctx.adapters.identityLinks.get("telegram", "managed", "12345")).toBeNull();
     expect(service.adapterPairingActivate).not.toHaveBeenCalled();
     expect(service.adapterPairingFinalize).not.toHaveBeenCalled();
+    expect(ctx.adapters.privateDestinations.recordActivity).not.toHaveBeenCalled();
   });
 
   it("discovers the platform bot and confirms the displayed Telegram identity", async () => {
@@ -4956,6 +4957,8 @@ describe("managed adapter pairing", () => {
       adapter: "telegram",
       accountId: "managed",
     });
+    // Pairing records the link and its DM; where Ship speaks next is decided when the first run ends (sys.config.set).
+    expect(ctx.adapters.privateDestinations.recordActivity).not.toHaveBeenCalled();
 
     await expect(handleAdapterPairDisconnect({
       adapter: "telegram",

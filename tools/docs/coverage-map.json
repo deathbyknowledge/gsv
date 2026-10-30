@@ -121,7 +121,8 @@
     {
       "id": "instrument-shell",
       "paths": [
-        "web/src/app/features/instrument/Instrument.tsx"
+        "web/src/app/features/instrument/Instrument.tsx",
+        "web/src/app/features/instrument/onboarding/**"
       ],
       "docs": [
         "docs/get-started/index.md"

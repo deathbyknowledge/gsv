@@ -150,7 +150,7 @@ sets `nextCheckAtMs` to 24 hours later if no future check remains. An earlier fu
 deadline brings that default forward. An explicit check time is preserved, and
 `nextCheckAtMs: null` explicitly clears the check. Metadata-only edits do not postpone
 it. System producers keep their own wake conditions. Initial onboarding stays in
-Kernel-owned pending state until the owner dismisses the welcome card or sends
+Kernel-owned pending state until the owner finishes the first-run surface choice or sends
 their first Ship message. Only then does it enter the ledger as open work, without
 a blocker, through the ordinary wake path.
 
@@ -264,15 +264,16 @@ enabled or disabled per owner without changing the subsystem's underlying data.
 System-owned producers use the same ledger contract:
 
 - Provisioning a new personal intelligence durably prepares its onboarding brief
-  in Kernel storage, outside the responsibility ledger and model context. Dismissing
-  the welcome card records `users/<uid>/ui/welcome_card_seen = 1`, creates one open,
+  in Kernel storage, outside the responsibility ledger and model context. Finishing the
+  first-run surface choice records `users/<uid>/ui/preferred_surface` and then
+  `users/<uid>/ui/welcome_card_seen = 1`, creates one open,
   high-priority responsibility titled "Welcome to Ship" with no blocker, and
-  schedules its ordinary wake before acknowledging the dismissal. Its creation and
-  update timestamps both reflect activation, not prior onboarding progress. A saved dismissal
+  schedules its ordinary wake before acknowledging the write. Its creation and
+  update timestamps both reflect activation, not prior onboarding progress. A saved flag
   retries pending welcome activation on reconnect without delaying sign-in. Handled
   and edited records are left alone.
-  A user can also start the conversation before dismissal or on a surface without
-  the card: their first message activates onboarding before Process admission;
+  A user can also start the conversation before that flag is written, or on a
+  surface without it: their first message activates onboarding before Process admission;
   wake recovery is scheduled afterwards, including if admission fails. Root actions
   and messages to other work do not activate onboarding. Ship sends its welcome in
   the owner's language and waits for a reply.

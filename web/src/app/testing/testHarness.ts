@@ -7,6 +7,21 @@ import type { ConsoleAdapter, ConsoleAdapterAccount } from "../domain/system/con
 
 export type TestNodeProps = {
   "aria-label"?: string;
+  blurb?: string;
+  action?: string;
+  info?: string;
+  name?: string;
+  onAction?: () => void;
+  active?: boolean;
+  adapter?: string;
+  completeError?: boolean;
+  completing?: boolean;
+  dataAttrs?: Record<`data-${string}`, string | number | boolean>;
+  onClose?: () => void;
+  onComplete?: (choice: string) => Promise<void>;
+  onConnected?: () => void;
+  ownerUid?: number;
+  selected?: boolean;
   boxed?: boolean;
   children?: ComponentChildren;
   class?: string;
@@ -15,6 +30,7 @@ export type TestNodeProps = {
   href?: string;
   id?: string;
   label?: string;
+  labelInfo?: string;
   message?: string;
   onChange?: (value: string) => void;
   onfocusout?: (event: { relatedTarget: EventTarget | null; currentTarget: { contains(node: EventTarget): boolean } }) => void;

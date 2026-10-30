@@ -99,7 +99,7 @@ export function ManagedWhatsAppOnboardingFlow({ onBack, onConnected, disabled, d
 }
 
 /** Names the countries the operator's WhatsApp number cannot reach, as the adapter reports them. */
-function whatsAppCountryList(codes: readonly string[], t: Translate): string {
+export function whatsAppCountryList(codes: readonly string[], t: Translate): string {
   const sorted = [...codes].sort();
   if (sorted.join(",") === "55,62") return t("settings.pairing.whatsappCountries.both");
   return sorted

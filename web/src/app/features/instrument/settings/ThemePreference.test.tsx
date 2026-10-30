@@ -45,7 +45,7 @@ it("lets a fresh device pin Light directly instead of presenting it as already s
   } finally { await root.unmount(); }
 });
 
-it.each([false, true])("hides stars across the app and sign-in with blocked storage: %s", async (blocked) => {
+it.each([false, true])("keeps the chat stars off until asked, on this device, with blocked storage: %s", async (blocked) => {
   vi.resetModules();
   const stored = new Map<string, string>();
   vi.stubGlobal("document", {});
@@ -69,23 +69,28 @@ it.each([false, true])("hides stars across the app and sign-in with blocked stor
   const root = createTestRoot("Stars preference");
   try {
     await root.render(<><Appearance /><Backdrop /></>);
-    expect(checkbox().props.checked).toBe(true);
-    expect(stars()).toHaveLength(1);
-    // SAFETY: The checkbox handler reads only currentTarget.checked.
-    await act(() => checkbox().props.onChange?.({ currentTarget: { checked: false } } as JSX.TargetedEvent<HTMLInputElement>));
     expect(checkbox().props.checked).toBe(false);
     expect(stars()).toHaveLength(0);
-    if (!blocked) expect(stored.get("gsv.instrument.stars")).toBe("false");
+    // SAFETY: The checkbox handler reads only currentTarget.checked.
+    await act(() => checkbox().props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>));
+    expect(checkbox().props.checked).toBe(true);
+    expect(stars()).toHaveLength(1);
+    if (!blocked) expect(stored.get("gsv.instrument.stars")).toBe("true");
 
     // Leaving the signed-in view mounts a fresh background without the settings controls.
     await root.render(null);
     await root.render(<Backdrop />);
-    expect(stars()).toHaveLength(0);
-    await root.render(<><Appearance /><Backdrop /></>);
-    expect(checkbox().props.checked).toBe(false);
-    // SAFETY: The checkbox handler reads only currentTarget.checked.
-    await act(() => checkbox().props.onChange?.({ currentTarget: { checked: true } } as JSX.TargetedEvent<HTMLInputElement>));
     expect(stars()).toHaveLength(1);
-    if (!blocked) expect(stored.get("gsv.instrument.stars")).toBe("true");
+    await root.render(<><Appearance /><Backdrop /></>);
+    expect(checkbox().props.checked).toBe(true);
+    // SAFETY: The checkbox handler reads only currentTarget.checked.
+    await act(() => checkbox().props.onChange?.({ currentTarget: { checked: false } } as JSX.TargetedEvent<HTMLInputElement>));
+    expect(stars()).toHaveLength(0);
+    if (!blocked) expect(stored.get("gsv.instrument.stars")).toBe("false");
+
+    // Sign-in keeps its stars whatever the chat preference says.
+    function SignInBackdrop() { background = InstrumentBackdrop({ stars: true }); return null; }
+    await root.render(<SignInBackdrop />);
+    expect(stars()).toHaveLength(1);
   } finally { await root.unmount(); }
 });

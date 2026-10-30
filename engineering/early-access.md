@@ -42,8 +42,9 @@ local credentials. A global owner session does not grant ordinary Kernel access.
   second installation.
 - Offer the existing computer enrollment flow after authentication. The user's
   first message remains their own; onboarding never inserts or sends prompt text.
-  Dismissing the welcome card wakes Ship to send its greeting in the owner's
-  preferred language. The greeting stays in the conversation across clients.
+  Choosing where to message Ship (web, Desktop app, WhatsApp or Telegram) wakes
+  Ship to send its greeting in the owner's preferred language, on the messenger
+  paired there if one was. The greeting stays in the conversation across clients.
   A user can also write first; Ship responds to their message.
 
 The welcome screen owns these two choices. Each subsequent screen asks for the

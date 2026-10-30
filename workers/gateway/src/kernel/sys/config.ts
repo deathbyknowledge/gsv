@@ -16,6 +16,7 @@
  */
 
 import type { KernelContext } from "../context";
+import { identityLinkDirectSurface } from "../adapter-destinations";
 import { requirePrincipal } from "../context";
 import { resolveCallerOwnerUid } from "../context";
 import type {
@@ -169,9 +170,27 @@ export async function handleSysConfigSet(
 
   ctx.config.set(args.key, value);
   if (principal.kind === "human" && !ctx.processId && uid >= 1000
-    && args.key === `users/${uid}/ui/welcome_card_seen` && value === "1"
-    && ctx.welcome.activate(uid)) {
-    await ctx.reconcileResponsibilityWake(uid);
+    && args.key === `users/${uid}/ui/welcome_card_seen` && value === "1") {
+    routeFirstRunToChosenMessenger(ctx, uid);
+    if (ctx.welcome.activate(uid)) await ctx.reconcileResponsibilityWake(uid);
   }
   return { ok: true };
+}
+
+/**
+ * The first run ends with where the person wants to message Ship. A messenger choice makes that
+ * messenger's DM Ship's private destination, so the greeting lands there before anyone has written
+ * from it; web and Desktop leave routing to the client that is open. Pairing alone decides nothing.
+ */
+function routeFirstRunToChosenMessenger(ctx: KernelContext, uid: number): void {
+  const chosen = ctx.config.get(`users/${uid}/ui/preferred_surface`);
+  if (chosen === null || chosen === "web" || chosen === "desktop") return;
+  const link = ctx.adapters.identityLinks.list(uid)
+    .filter((entry) => entry.adapter === chosen)
+    .sort((a, b) => b.createdAt - a.createdAt)[0];
+  const surface = link ? identityLinkDirectSurface(link) : null;
+  if (!link || !surface) return;
+  ctx.adapters.privateDestinations.recordActivity(uid, {
+    kind: "adapter", adapter: link.adapter, accountId: link.accountId, actorId: link.actorId, surface,
+  }, `first-run:${uid}`, Date.now());
 }

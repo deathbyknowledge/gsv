@@ -58,12 +58,19 @@ actions and Help open in a vertical menu with touch-sized rows.
 Choosing a view, tapping outside or pressing Escape closes the menu.
 The menu button retains the unread People indicator while navigation is closed.
 
-On first sign-in, a spacious, nonmodal welcome card with large text appears above the web app's
-views for a personal human account. Closing it or choosing Try it out saves a
-per-user UI config flag, so the card stays dismissed across web and Desktop
-sessions. It never appears during activation or for the administrator. The Discord link opens
-separately, and the existing Feedback control remains in the header when available.
-If its saved state cannot be loaded, the card offers Retry without requiring a new session.
+On a personal human account's first sign-in, a full screen in front of the chat, with its
+own star field whatever the chat preference says, asks where the person wants to message
+Ship: Web, the Desktop app, WhatsApp or Telegram. Web completes at
+once; the Desktop app choice links to the release download and continues in the web; a messenger
+pairs inline through the Settings pairing flow, and finishing from its section records it as the
+choice, which the Kernel routes the greeting to. Messenger
+sections appear only when the deployment offers that adapter, with no "nothing connected" line;
+the embedded WhatsApp flow names the countries the Ship number cannot reach, and a (?) note says
+Ship only sees the messages sent to it. "continue here" is a text action at the end, with its note as a small label. Finishing writes the
+choice and the per-user first-run flag, so the screen follows the account across web and Desktop
+and never shows again; inside Desktop the Desktop section is hidden.
+It never applies during activation or for the administrator. If the flag cannot be loaded, a
+small notice over the chat offers Retry; a failed save keeps the screen with an error.
 
 Chat, Work, Memory and Settings mount on their first visit and retain their local
 state until the signed-in session ends. Moving between them keeps drafts,
@@ -153,9 +160,9 @@ state, so a replaced Ship asks again while a reset keeps it. A hover/focus toolt
 explains that scope; it never changes another Process's policy or
 remembers a denial.
 
-Chat owns the conversation. Dismissing the welcome card records the owner's choice and wakes Ship through its initial onboarding responsibility; a failed request leaves the card available to retry. Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
+Chat owns the conversation. Finishing the first-run surface choice records the first-run flag and wakes Ship through its initial onboarding responsibility; a failed request keeps the screen available to retry. Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
 
-After the first welcome card is dismissed, the empty Ship chat shows a centered,
+On a new owner's first visit, the empty Ship chat shows a centered,
 muted privacy message until either person starts the conversation. It never
 appears in helper conversations, over existing messages, or while history is
 loading or unavailable. The notice sits behind the transcript without intercepting
@@ -224,9 +231,10 @@ People supports creating and accepting invitations, pending invitation cancellat
 
 Settings owns model order and creation, permissions, instructions, and integrations. See [Settings](settings/README.md). Work keeps connection actions available for computers and browsers; People keeps invitations and first-message requests available.
 
-Settings → Preferences → Appearance includes a **Show stars** checkbox. The choice
-is remembered on this device and also applies to sign-in. Hiding the stars
-unmounts their renderer and stops its animation while retaining the shared layout.
+Settings → Preferences → Appearance includes a **Show stars** checkbox, off by
+default. The choice is remembered on this device; sign-in and the first run keep
+their stars regardless. Stars that are off have no renderer or animation, and the
+shared layout stays the same.
 Help’s navigation reference points to this setting in plain language.
 
 Processes update from owner-scoped registry signals even when created or run from another client. WireSync patches known runtime states and exits locally; new processes and changed labels reload only the process list. A change cancels any older list snapshot before it can overwrite current state. Closed lists become stale without background reads, and reconnect recovers missed changes. Raw run events remain for explicit Process observation, and registry-only notices do not reload history.

@@ -7,6 +7,7 @@ import { CapabilityStore } from "./capabilities";
 import type { KernelContext } from "./context";
 import { AccountRecoveryStore } from "./account-recovery";
 import { IdentityLinkStore } from "./identity-links";
+import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
 import { assertAdapterMessageDestinationAccess } from "./adapter-destinations";
 import { AdapterStatusStore } from "./adapter-status";
 import { handleAdapterPairConfirm, handleAdapterPairDisconnect } from "./adapter-pairing";
@@ -30,7 +31,7 @@ async function fixture(work: (recovery: AccountRecoveryStore, ctx: KernelContext
       invalidateAccountConnections: vi.fn(), broadcastToUserUid: vi.fn(),
       defer: (promise: Promise<unknown>) => { void promise.catch(() => undefined); },
       responsibilitySources: { isEnabled: () => false }, responsibilities: { listActiveByDedupeKeyPrefix: () => [] },
-      adapters: { identityLinks: new IdentityLinkStore(sql), status: new AdapterStatusStore(sql), surfaceRoutes: { get: () => null } },
+      adapters: { identityLinks: new IdentityLinkStore(sql), status: new AdapterStatusStore(sql), surfaceRoutes: { get: () => null }, privateDestinations: new PrivateAdapterDestinationStore(sql) },
     } as KernelContext;
     await work(recovery, ctx, sql);
   });

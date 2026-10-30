@@ -123,7 +123,7 @@ The app should feel like a serious workstation tool.
 
 Use [Instrument](../web/src/app/features/instrument/README.md) and [Settings](../web/src/app/features/instrument/settings/README.md) as the product and interaction contracts.
 
-Instrument is the default web entrypoint. Login and installation onboarding enter the same UI; the first-day introduction is an ordinary Ship message generated after the early-access welcome card is dismissed, or in response to the user’s first message. Shared components serve the current surfaces.
+Instrument is the default web entrypoint. Login and installation onboarding enter the same UI; the first-day introduction is an ordinary Ship message generated once a new owner has chosen where to message Ship (web, Desktop app, WhatsApp or Telegram), or in response to the user’s first message. Shared components serve the current surfaces.
 
 Core rules:
 - global navigation chooses the kind of work; tables and inspectors choose the object

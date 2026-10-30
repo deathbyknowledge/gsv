@@ -4,6 +4,8 @@ import type { KernelContext } from "../context";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
 import { ResponsibilityStore } from "../responsibility-store";
 import { InitialOnboarding, INITIAL_ONBOARDING_DEDUPE_KEY } from "../onboarding-responsibility";
+import { IdentityLinkStore } from "../identity-links";
+import { PrivateAdapterDestinationStore } from "../private-adapter-destinations";
 import { handleSysConfigGet, handleSysConfigSet } from "./config";
 
 type EntryMap = Record<string, string>;
@@ -115,6 +117,30 @@ describe("sys.config.get", () => {
       expect(ctx.responsibilities.nextWakeAt(1000, Date.now())).toBeNull();
       expect(ctx.responsibilities.get(1000, seed.id)?.blocker).toBe("Waiting for a reply");
       expect(reconcile).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it.each([
+    ["telegram", true],
+    ["whatsapp", false],
+    ["web", false],
+    ["desktop", false],
+  ])("routes Ship to the messenger the first run chose (%s → routed: %s), never on pairing alone", async (chosen, routed) => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = makeContext(1000, { "users/1000/ui/preferred_surface": chosen });
+      ctx.responsibilities = new ResponsibilityStore(storage);
+      ctx.welcome = new InitialOnboarding(storage, ctx.responsibilities);
+      const identityLinks = new IdentityLinkStore(sql);
+      const privateDestinations = new PrivateAdapterDestinationStore(sql);
+      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+      ctx.adapters = { identityLinks, privateDestinations } as KernelContext["adapters"];
+      identityLinks.link("telegram", "managed", "12345", 1000, 1000, { managed: true, surfaceKind: "dm", surfaceId: "12345" });
+      expect(privateDestinations.get(1000)).toBeNull();
+
+      await handleSysConfigSet({ key: "users/1000/ui/welcome_card_seen", value: "1" }, ctx);
+      expect(privateDestinations.get(1000)?.destination ?? null).toEqual(routed
+        ? { kind: "adapter", adapter: "telegram", accountId: "managed", actorId: "12345", surface: { kind: "dm", id: "12345" } }
+        : null);
     });
   });
 
