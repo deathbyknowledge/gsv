@@ -8,14 +8,14 @@ export const productEmailChoice = z.strictObject({
 });
 export type ProductEmailChoice = z.infer<typeof productEmailChoice>;
 export type ProductEmailEnvironment = { GSV_PRODUCT_EMAIL_ENABLED?: string; BUTTONDOWN_API_KEY?: string };
-type Signup = { email: string; request_id: string; wording_version: string; locale: string; requested_at: number; ip: string | null };
+type Signup = { email: string; request_id: string; wording_version: string; locale: string; requested_at: number; ip: string | null; source: string };
 
 /** Signup has already authorized this verified owner. Replays never create another subscription request. */
 export async function queueProductEmail(db: D1Database, owner: PrincipalRecord, choice: ProductEmailChoice, ip?: string): Promise<void> {
   const now = Date.now();
   await db.prepare(`INSERT INTO product_email_signups(email,principal_id,request_id,wording_version,locale,requested_at,verified_at,ip,due_at)
     VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(email) DO NOTHING`)
-    .bind(owner.email, owner.id, crypto.randomUUID(), choice.wordingVersion, choice.locale, now, owner.emailVerifiedAt, ip ?? null, now).run();
+    .bind(owner.email.trim().toLowerCase(), owner.id, crypto.randomUUID(), choice.wordingVersion, choice.locale, now, owner.emailVerifiedAt, ip ?? null, now).run();
 }
 
 /** Buttondown owns subscriber status and unsubscribe handling; Accounts only delivers explicit signup requests. */
@@ -44,10 +44,10 @@ export async function runProductEmailJobs(db: D1Database, env: ProductEmailEnvir
       if (existing.ok) {
         const subscriber = z.object({ type: z.string(), tags: z.array(z.string()) }).parse(await existing.json());
         const subscribed = ["regular", "premium", "gifted", "trialed", "churning", "churned", "past_due", "paused", "unpaid", "upcoming"].includes(subscriber.type);
-        if (subscribed && !subscriber.tags.includes("newsletter")) {
+        if (subscribed && !subscriber.tags.includes("user")) {
           const response = await fetcher(subscriberUrl, { method: "PATCH", headers: { ...headers,
-            "X-Buttondown-Collision-Behavior": "add", "X-Idempotency-Key": `${row.request_id}:newsletter` },
-            signal: AbortSignal.timeout(15_000), body: JSON.stringify({ tags: ["newsletter"] }) });
+            "X-Buttondown-Collision-Behavior": "add", "X-Idempotency-Key": `${row.request_id}:user` },
+            signal: AbortSignal.timeout(15_000), body: JSON.stringify({ tags: ["user"] }) });
           await response.body?.cancel();
           if (!response.ok) throw new Error(`buttondown_http_${response.status}`);
         }
@@ -55,8 +55,8 @@ export async function runProductEmailJobs(db: D1Database, env: ProductEmailEnvir
         await existing.body?.cancel();
         if (existing.status !== 404) throw new Error(`buttondown_http_${existing.status}`);
         const response = await fetcher(endpoint, { method: "POST", headers: { ...headers, "X-Idempotency-Key": row.request_id }, signal: AbortSignal.timeout(15_000),
-          body: JSON.stringify({ email_address: row.email, type: "regular", tags: ["newsletter"], ip_address: row.ip ?? undefined,
-            metadata: { source: "ship-signup", wording_version: row.wording_version, locale: row.locale, requested_at: row.requested_at } }) });
+          body: JSON.stringify({ email_address: row.email, type: "regular", tags: ["user"], ip_address: row.ip ?? undefined,
+            metadata: { source: row.source, wording_version: row.wording_version, locale: row.locale, requested_at: row.requested_at } }) });
         await response.body?.cancel();
         if (!response.ok) throw new Error(`buttondown_http_${response.status}`);
       }
@@ -70,3 +70,4 @@ export async function runProductEmailJobs(db: D1Database, env: ProductEmailEnvir
     }
   }
 }
+

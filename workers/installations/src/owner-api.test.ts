@@ -99,7 +99,7 @@ describe("desktop owner API", () => {
     expect(provider).toHaveBeenCalledTimes(optedIn ? 2 : 0);
     if (optedIn) {
       expect(await marketing()).toMatchObject({ email: f.challenge.email, completed_at: expect.any(Number), attempts: 1, ip: null });
-      expect(JSON.parse(String(provider.mock.calls[1][1]?.body))).toMatchObject({ email_address: f.challenge.email, type: "regular", tags: ["newsletter"] });
+      expect(JSON.parse(String(provider.mock.calls[1][1]?.body))).toMatchObject({ email_address: f.challenge.email, type: "regular", tags: ["user"] });
     } else expect(await marketing()).toBeNull();
     expect((await f.request("/logout", f.sessionSecret, {})).status).toBe(200);
     expect((await f.request("/session", f.sessionSecret)).status).toBe(401);
@@ -158,3 +158,4 @@ it("returns unavailable for normalized policy matches and rejects direct creatio
     await policy.replace({ reserved: initial.reserved.join("\n"), blocked: initial.blocked.join("\n") });
   }
 });
+
