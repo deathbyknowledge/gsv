@@ -1482,7 +1482,7 @@ export const en = {
   "shell.pairing.cancelled": "This invitation was cancelled.",
   "shell.pairing.newInvitation": "new invitation",
   "shell.pairing.invitation": "Invitation for {name} · {id}. Expires at {time}.",
-  "shell.pairing.extensionSteps": "Download and unzip the extension. In {extensions}, enable developer mode and load its folder. Click the Your Ship icon in the toolbar, or find it under the Extensions button, then paste this invitation into its panel.",
+  "shell.pairing.extensionSteps": "The Your Ship extension isn't in the Chrome Web Store yet, so you add it to Chrome in developer mode. Download and unzip it. Open {extensions}, turn on Developer mode, choose Load unpacked, and pick the unzipped folder. Click the Your Ship icon in the toolbar, or find it under the Extensions button, and paste this invitation into its panel. It lets your Ship work in this browser, signed in as you. You can pause it from its panel anytime.",
   "shell.pairing.downloadExtension": "download extension",
   "shell.pairing.copyInvitation": "copy invitation",
   "shell.pairing.openTerminal": "Open {app} on the computer you want to connect.",

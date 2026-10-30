@@ -52,6 +52,7 @@ import {
   type JsonObject,
   type JsonValue,
   type ProcContextState,
+  type DevicePairing,
   type ProcHilRequest,
   type ProcHistoryRecord,
   type ProcHistoryRecordData,
@@ -167,6 +168,9 @@ const LONG_REPLY = [
   "The drive filled up because the build caches from the last three releases were never cleared; together they took about 140 GB. I removed the ones older than a week, which brought free space back to a third of the disk, and the overnight run completed in forty minutes.",
   "Two things would keep this from happening again. A weekly clean of caches older than fourteen days, which I can add as a routine, and a warning when free space drops under a tenth of the disk. Say the word and I will set both up.",
 ].join("\n\n");
+
+/** Invitations created from the connect panel; the mock never pairs them. */
+const pairings: DevicePairing[] = [];
 
 const targets: SysTargetSummary[] = [
   { targetId: "studio", ownerUid: OWNER.uid, ownerUsername: OWNER.username, label: "studio", description: "MacBook Pro", implements: ["fs.*", "shell.*"], platform: "darwin", version: "0.6.0", online: true, lastSeenAt: Date.now() },
@@ -1032,6 +1036,23 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
     case "sys.link.list": return respond(id, { links: [] });
+    case "sys.pair.create": {
+      const { id: pairingId, targetId, label } = z.object({ id: z.string(), targetId: z.string(), label: z.string() }).parse(args);
+      const existing = pairings.find((pairing) => pairing.id === pairingId);
+      if (existing) return respond(id, { pairing: existing });
+      const createdAt = Date.now();
+      const pairing: DevicePairing = { id: pairingId, username: OWNER.username, targetId, label, createdAt, expiresAt: createdAt + 15 * 60_000, state: "pending" };
+      pairings.push(pairing);
+      return respond(id, { pairing });
+    }
+    case "sys.pair.list": return respond(id, { pairings });
+    case "sys.pair.cancel": {
+      const { id: pairingId } = z.object({ id: z.string() }).parse(args);
+      const pairing = pairings.find((entry) => entry.id === pairingId);
+      if (!pairing) return refuse(id, 404, "Invitation not found");
+      pairing.state = "cancelled";
+      return respond(id, { pairing });
+    }
     case "r12y.list": {
       const { states, includeTerminal, offset = 0, limit = 100 } = responsibilityListArgs.parse(args);
       const records = responsibilities.filter((record) => states ? states.includes(record.state) : includeTerminal || !["resolved", "cancelled"].includes(record.state));
