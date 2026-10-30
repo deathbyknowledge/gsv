@@ -8,11 +8,10 @@ import { collectNodes, collectText, createTestRoot } from "../../../testing/test
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
-import { ListRow } from "../../../components/ui/ListRow";
 import { LATEST_RELEASE_PAGE_URL } from "../../../domain/cliInstall";
 import { MessengerPairing } from "../settings/Telegram";
 import type { ConsoleAdapter, ConsoleIdentityLink } from "../../../domain/system/consoleModels";
-import { FirstRunScreen } from "./FirstRunScreen";
+import { FirstRunScreen, Section } from "./FirstRunScreen";
 
 let tree: ComponentChildren;
 let adapters: ConsoleAdapter[];
@@ -37,8 +36,12 @@ async function mount() {
   await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
   await vi.waitFor(() => expect(collectText(tree)).toContain("Where do you want to message Ship?"));
 }
-const rows = () => collectNodes(tree).filter((node) => node.type === ListRow);
-const row = (label: string) => rows().find((node) => node.props.label === label);
+/** The sections, in order, by name; each carries its action and privacy note as props. */
+const sections = () => collectNodes(tree).filter((node) => node.type === Section).map((node) => node.props.name);
+const action = (label: string) => {
+  const section = collectNodes(tree).find((node) => node.type === Section && node.props.action === label);
+  return section ? { props: { onClick: section.props.onAction } } : undefined;
+};
 const button = (label: string) => collectNodes(tree).find((node) => node.type === Button && node.props.label === label);
 const pairing = () => collectNodes(tree).find((node) => node.type === MessengerPairing);
 const alert = () => collectNodes(tree).find((node) => node.type === Alert);
@@ -74,14 +77,18 @@ afterEach(async () => {
 });
 
 describe("first-run screen", () => {
-  it("lists the deployment's messengers first, then the desktop app and continuing here, naming the countries WhatsApp cannot reach", async () => {
+  it("lists the deployment's messengers first, then the desktop app and continuing here, laid out as Settings › Messengers", async () => {
     await mount();
-    await vi.waitFor(() => expect(row("WhatsApp")).toBeDefined());
-    expect(rows().map((node) => node.props.label)).toEqual(["WhatsApp", "Telegram", "Desktop app", "Continue here"]);
-    expect(row("WhatsApp")?.props.labelInfo).toContain("Ship only sees the messages you send it.");
-    expect(row("Telegram")?.props.labelInfo).toContain("Ship only sees the messages you send it.");
-    expect(row("Continue here")?.props.labelInfo).toBeUndefined();
-    expect(row("Continue here")?.props.sub).toBe("You can connect a messenger later.");
+    await vi.waitFor(() => expect(sections()).toEqual(["WhatsApp", "Telegram", "Desktop app", "Continue here"]));
+    const privacy = collectNodes(tree).filter((node) => node.type === Section && node.props.info).map((node) => node.props.name);
+    expect(privacy).toEqual(["WhatsApp", "Telegram"]);
+    expect(collectNodes(tree).find((node) => node.type === Section)?.props.info).toContain("Ship only sees the messages you send it.");
+    expect(action("connect WhatsApp")).toBeDefined();
+    expect(action("connect Telegram")).toBeDefined();
+    expect(action("download the app")).toBeDefined();
+    expect(action("continue")).toBeDefined();
+    expect(collectText(tree)).toContain("No WhatsApp account is connected to you.");
+    expect(collectNodes(tree).find((node) => node.type === Section && node.props.name === "Continue here")?.props.blurb).toBe("You can connect a messenger later.");
     await vi.waitFor(() => expect(collectText(tree)).toContain("Not for numbers in Brazil (+55) and Indonesia (+62)"));
     expect(pairing()).toBeUndefined();
     expect(onComplete).not.toHaveBeenCalled();
@@ -89,18 +96,17 @@ describe("first-run screen", () => {
 
   it("continues here at once", async () => {
     await mount();
-    await click(row("Continue here"));
+    await click(action("continue"));
     expect(onComplete).toHaveBeenCalledWith("web");
   });
 
-  it("opens the desktop drawer with the release download, and continues in the web meanwhile", async () => {
+  it("opens the desktop section with the release download, closes it again, and continues in the web meanwhile", async () => {
     await mount();
-    await click(row("Desktop app"));
+    await click(action("download the app"));
     expect(button("DOWNLOAD THE DESKTOP APP")?.props.href).toBe(LATEST_RELEASE_PAGE_URL);
-    expect(row("Desktop app")?.props.active).toBe(true);
-    await click(row("Desktop app"));
+    await click(action("close"));
     expect(button("DOWNLOAD THE DESKTOP APP")).toBeUndefined();
-    await click(row("Desktop app"));
+    await click(action("download the app"));
     await click(button("CONTINUE IN THE WEB FOR NOW"));
     expect(onComplete).toHaveBeenCalledWith("desktop");
   });
@@ -110,20 +116,20 @@ describe("first-run screen", () => {
     await mount();
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("sys.link.list", {}));
     await act(async () => {});
-    expect(rows().map((node) => node.props.label)).toEqual(["Desktop app", "Continue here"]);
+    expect(sections()).toEqual(["Desktop app", "Continue here"]);
     expect(request).not.toHaveBeenCalledWith("adapter.pair.info", expect.anything());
   });
 
-  it("pairs a messenger in its drawer, then offers the chat once it is connected", async () => {
+  it("pairs a messenger in its section, then offers the chat once it is connected", async () => {
     await mount();
-    await vi.waitFor(() => expect(row("Telegram")).toBeDefined());
-    await click(row("Telegram"));
+    await vi.waitFor(() => expect(action("connect Telegram")).toBeDefined());
+    await click(action("connect Telegram"));
     expect(pairing()?.props.adapter).toBe("telegram");
-    expect(row("WhatsApp")).toBeDefined();
+    expect(action("connect WhatsApp")).toBeDefined();
     await act(async () => { pairing()!.props.onClose!(); });
     await vi.waitFor(() => expect(pairing()).toBeUndefined());
 
-    await click(row("Telegram"));
+    await click(action("connect Telegram"));
     await act(async () => { pairing()!.props.onConnected!(); });
     expect(alert()?.props.text).toContain("Ship will say hello on Telegram");
     expect(onComplete).not.toHaveBeenCalled();
@@ -133,12 +139,13 @@ describe("first-run screen", () => {
 
   it("treats leaving the flow with the messenger linked as the choice", async () => {
     await mount();
-    await vi.waitFor(() => expect(row("WhatsApp")).toBeDefined());
-    await click(row("WhatsApp"));
+    await vi.waitFor(() => expect(action("connect WhatsApp")).toBeDefined());
+    await click(action("connect WhatsApp"));
     links = [whatsAppLink];
     await act(async () => { pairing()!.props.onClose!(); });
     await vi.waitFor(() => expect(button("OPEN CHAT")).toBeDefined());
     expect(alert()?.props.text).toContain("Ship will say hello on WhatsApp");
+    expect(collectText(tree)).toContain("connected to 31612345678");
     await click(button("OPEN CHAT"));
     expect(onComplete).toHaveBeenCalledWith("whatsapp");
   });
@@ -146,17 +153,17 @@ describe("first-run screen", () => {
   it("shows an already paired messenger as connected and offers the chat from it", async () => {
     links = [whatsAppLink];
     await mount();
-    await vi.waitFor(() => expect(row("WhatsApp")?.props.sub).toBe("Connected"));
-    await click(row("WhatsApp"));
+    await vi.waitFor(() => expect(collectText(tree)).toContain("connected to 31612345678"));
+    await click(action("connect WhatsApp"));
     expect(pairing()).toBeUndefined();
     await click(button("OPEN CHAT"));
     expect(onComplete).toHaveBeenCalledWith("whatsapp");
   });
 
-  it("shows the failure to record a choice and keeps the rows available", async () => {
+  it("shows the failure to record a choice and keeps the sections available", async () => {
     completeError = true;
     await mount();
     expect(alert()?.props.text).toBe("Couldn't wake Ship.");
-    expect(row("Continue here")).toBeDefined();
+    expect(action("continue")).toBeDefined();
   });
 });

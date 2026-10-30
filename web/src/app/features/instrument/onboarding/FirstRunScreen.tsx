@@ -1,8 +1,9 @@
+import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
-import { ListRow } from "../../../components/ui/ListRow";
+import { InfoTip } from "../../../components/ui/InfoTip";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { LATEST_RELEASE_PAGE_URL } from "../../../domain/cliInstall";
 import { detectClientPlatform } from "../../../services/gateway/clientPlatform";
@@ -17,7 +18,7 @@ import { MessengerIcon } from "./MessengerIcon";
 import type { PreferredSurface } from "./useFirstRunState";
 
 type MessengerChoice = "whatsapp" | "telegram";
-/** Which row's drawer is open; a messenger's drawer holds the pairing flow until it reports the connection. */
+/** Which section is open; a messenger's holds the pairing flow until it reports the connection. */
 type Drawer =
   | { kind: "desktop" }
   | { kind: "messenger"; id: MessengerChoice }
@@ -36,10 +37,31 @@ type Props = {
   onComplete: (choice: PreferredSurface) => Promise<void>;
 };
 
+/** One choice, laid out as a messenger is in Settings › Messengers: heading with its action, a line about it, and what opens beneath. */
+export function Section({ name, icon, info, action, onAction, disabled, blurb, children }: {
+  name: string;
+  icon?: ComponentChildren;
+  info?: string;
+  action: string;
+  onAction: () => void;
+  disabled: boolean;
+  blurb: string;
+  children?: ComponentChildren;
+}) {
+  return <section class="first-run-section" aria-label={name}>
+    <div class="first-run-heading">
+      <h2 class="first-run-name">{icon}{name}{info && <InfoTip text={info} position="right" />}</h2>
+      <button type="button" class="first-run-text-action" disabled={disabled} onClick={onAction}>{action}</button>
+    </div>
+    <p class="first-run-muted">{blurb}</p>
+    {children}
+  </section>;
+}
+
 /**
  * The last onboarding step, standing in front of the chat: where does this person want to message Ship?
- * Each row opens as a drawer, as Settings › Messengers does. A messenger pairs right here, through the
- * same flow Settings uses, so Ship's greeting lands there; "Continue here" completes at once.
+ * Each choice is a section like Settings › Messengers. A messenger pairs right here, through the same
+ * flow Settings uses, so Ship's greeting lands there; "Continue here" completes at once.
  */
 export function FirstRunScreen({ ownerUid, completing, completeError, onComplete }: Props) {
   const t = useT();
@@ -55,13 +77,13 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
     const adapter = connections.data?.adapters.find((entry) => entry.adapter === id);
     return adapter?.enabled === true && adapter.supportsPairing && adapter.canLink;
   });
-  const linked = (id: MessengerChoice) => connections.data?.links.some((link) => link.adapter === id) === true;
+  const linkFor = (id: MessengerChoice) => connections.data?.links.find((link) => link.adapter === id);
   const whatsAppOffered = offered.some(({ id }) => id === "whatsapp");
   const whatsApp = useConsoleAdapterPairingInfo("whatsapp", whatsAppOffered);
   const unreachable = whatsApp.data?.unreachableCallingCodes ?? [];
   const busy = completing || !connected;
   const platformName = (id: MessengerChoice) => MESSENGERS.find((entry) => entry.id === id)!.name;
-  const open = (next: Exclude<Drawer, null>) => setDrawer((current) => JSON.stringify(current) === JSON.stringify(next) ? null : next);
+  const toggle = (next: Exclude<Drawer, null>) => setDrawer((current) => JSON.stringify(current) === JSON.stringify(next) ? null : next);
   /* the flow's own Done and Back both leave it; a messenger linked meanwhile is the person's choice */
   const leaveFlow = async (id: MessengerChoice) => {
     const latest = await connections.refetch();
@@ -69,57 +91,56 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
     setDrawer(paired ? { kind: "connected", id } : null);
   };
 
-  const connectedDrawer = (id: MessengerChoice) => <div class="first-run-drawer">
-    <Alert variant="success" title={t("onboarding.surface.connectedTitle")} text={t("onboarding.surface.connectedText", { platform: platformName(id) })} />
-    <div class="first-run-actions">
-      <span class="first-run-actions-spacer" />
-      <Button variant="primary" label={t("onboarding.surface.openChat")} disabled={busy} onClick={() => { void onComplete(id); }} />
-    </div>
-  </div>;
-
   return <section class="first-run" aria-labelledby="first-run-title">
     <div class="first-run-panel">
       <h1 id="first-run-title">{t("onboarding.surface.title")}</h1>
       <p class="first-run-lead">{t("onboarding.surface.lead")}</p>
       {completeError && <Alert variant="error" text={t("shell.firstRun.failed")} />}
       {connections.isPending && connected && <LoadingState variant="panel">{t("onboarding.surface.loading")}</LoadingState>}
-      <div class="first-run-list gsv-cf-framed">
-        {offered.map(({ id, name, sub }) => {
-          const paired = linked(id);
-          const openHere = drawer?.kind !== "desktop" && drawer?.id === id;
-          return <div key={id} class="first-run-row" data-first-run-choice={id}>
-            <ListRow label={name} labelInfo={t("onboarding.surface.messengerPrivacy")} status="none" chevron active={openHere}
-              leading={<MessengerIcon id={id} />}
-              sub={t(paired ? "onboarding.surface.connectedSub" : sub)}
-              onClick={() => { if (busy) return; open(paired ? { kind: "connected", id } : { kind: "messenger", id }); }} />
-            {id === "whatsapp" && !openHere && unreachable.length > 0 && <p class="first-run-row-note">
-              {t("onboarding.surface.whatsappUnreachable", { countries: whatsAppCountryList(unreachable, t) })}
-            </p>}
-            {drawer?.kind === "messenger" && drawer.id === id && <div class="first-run-drawer">
-              <MessengerPairing adapter={id} disabled={!connected}
-                onClose={() => { void leaveFlow(id); }}
-                onConnected={() => { setDrawer({ kind: "connected", id }); void connections.refetch(); }} />
-            </div>}
-            {drawer?.kind === "connected" && drawer.id === id && connectedDrawer(id)}
-          </div>;
-        })}
-        {!inDesktopApp && <div class="first-run-row" data-first-run-choice="desktop">
-          <ListRow label={t("onboarding.surface.desktop")} sub={t("onboarding.surface.desktopSub")} status="none" chevron active={drawer?.kind === "desktop"}
-            onClick={() => { if (!busy) open({ kind: "desktop" }); }} />
-          {drawer?.kind === "desktop" && <div class="first-run-drawer">
-            <p class="first-run-text">{t("onboarding.surface.desktopText")}</p>
+
+      {offered.map(({ id, name, sub }) => {
+        const link = linkFor(id);
+        const openHere = drawer !== null && drawer.kind !== "desktop" && drawer.id === id;
+        return <Section key={id} name={name} icon={<MessengerIcon id={id} />} info={t("onboarding.surface.messengerPrivacy")}
+          action={t(openHere ? "settings.messengers.closeSetup" : "settings.messengers.connect", { name })} disabled={busy}
+          onAction={() => toggle(link ? { kind: "connected", id } : { kind: "messenger", id })}
+          blurb={t(sub)}>
+          {id === "whatsapp" && !openHere && unreachable.length > 0 && <p class="first-run-muted first-run-note">
+            {t("onboarding.surface.whatsappUnreachable", { countries: whatsAppCountryList(unreachable, t) })}
+          </p>}
+          <ul class="first-run-list"><li>
+            <span class="first-run-status">{link ? t("settings.messengers.connectedTo", { id: link.actorId }) : t("settings.messengers.noLinks", { name })}</span>
+          </li></ul>
+          {drawer?.kind === "messenger" && drawer.id === id && <fieldset class="first-run-drawer" disabled={!connected}>
+            <MessengerPairing adapter={id} disabled={!connected}
+              onClose={() => { void leaveFlow(id); }}
+              onConnected={() => { setDrawer({ kind: "connected", id }); void connections.refetch(); }} />
+          </fieldset>}
+          {drawer?.kind === "connected" && drawer.id === id && <div class="first-run-drawer">
+            <Alert variant="success" title={t("onboarding.surface.connectedTitle")} text={t("onboarding.surface.connectedText", { platform: platformName(id) })} />
             <div class="first-run-actions">
               <span class="first-run-actions-spacer" />
-              <Button variant="secondary" label={t("onboarding.surface.continueHere")} disabled={busy} onClick={() => { void onComplete("desktop"); }} />
-              <Button variant="primary" href={LATEST_RELEASE_PAGE_URL} label={t("onboarding.surface.download")} />
+              <Button variant="primary" label={t("onboarding.surface.openChat")} disabled={busy} onClick={() => { void onComplete(id); }} />
             </div>
           </div>}
+        </Section>;
+      })}
+
+      {!inDesktopApp && <Section name={t("onboarding.surface.desktop")} blurb={t("onboarding.surface.desktopSub")} disabled={busy}
+        action={t(drawer?.kind === "desktop" ? "settings.messengers.closeSetup" : "onboarding.surface.desktopAction")}
+        onAction={() => toggle({ kind: "desktop" })}>
+        {drawer?.kind === "desktop" && <div class="first-run-drawer">
+          <p class="first-run-text">{t("onboarding.surface.desktopText")}</p>
+          <div class="first-run-actions">
+            <span class="first-run-actions-spacer" />
+            <Button variant="secondary" label={t("onboarding.surface.continueHere")} disabled={busy} onClick={() => { void onComplete("desktop"); }} />
+            <Button variant="primary" href={LATEST_RELEASE_PAGE_URL} label={t("onboarding.surface.download")} />
+          </div>
         </div>}
-        <div class="first-run-row" data-first-run-choice="web">
-          <ListRow label={t("onboarding.surface.web")} sub={t("onboarding.surface.webSub")} status="none" chevron
-            onClick={() => { if (!busy) void onComplete("web"); }} />
-        </div>
-      </div>
+      </Section>}
+
+      <Section name={t("onboarding.surface.web")} blurb={t("onboarding.surface.webSub")} disabled={busy}
+        action={t("onboarding.surface.webAction")} onAction={() => { void onComplete("web"); }} />
     </div>
   </section>;
 }

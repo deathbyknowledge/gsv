@@ -7,6 +7,11 @@ import type { ConsoleAdapter, ConsoleAdapterAccount } from "../domain/system/con
 
 export type TestNodeProps = {
   "aria-label"?: string;
+  blurb?: string;
+  action?: string;
+  info?: string;
+  name?: string;
+  onAction?: () => void;
   active?: boolean;
   adapter?: string;
   completeError?: boolean;

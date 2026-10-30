@@ -1429,6 +1429,8 @@ export const ptBR = {
   "onboarding.surface.webSub": "Você pode conectar um app de mensagem depois.",
   "onboarding.surface.desktop": "App para computador",
   "onboarding.surface.desktopSub": "Uma janela própria no macOS, Windows e Linux",
+  "onboarding.surface.desktopAction": "baixar o app",
+  "onboarding.surface.webAction": "continuar",
   "onboarding.surface.messengerPrivacy": "Conectar um app de mensagem não dá ao Ship acesso à sua conta, aos seus contatos nem a outras conversas. O Ship só vê as mensagens que você envia para ele.",
   "onboarding.surface.whatsappSub": "Fale com o Ship pelo WhatsApp no seu celular",
   "onboarding.surface.telegramSub": "Fale com o Ship pelo Telegram",

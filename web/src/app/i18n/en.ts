@@ -1423,6 +1423,8 @@ export const en = {
   "onboarding.surface.webSub": "You can connect a messenger later.",
   "onboarding.surface.desktop": "Desktop app",
   "onboarding.surface.desktopSub": "Its own window on macOS, Windows and Linux",
+  "onboarding.surface.desktopAction": "download the app",
+  "onboarding.surface.webAction": "continue",
   "onboarding.surface.messengerPrivacy": "Connecting a messenger doesn't give Ship access to your account, contacts or other chats. Ship only sees the messages you send it.",
   "onboarding.surface.whatsappSub": "Message Ship from WhatsApp on your phone",
   "onboarding.surface.telegramSub": "Message Ship from Telegram",
