@@ -5763,7 +5763,7 @@ describe("native administration shell commands", () => {
       vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-20T12:00:00Z"));
     });
     afterEach(() => {
-      vi.restoreAllMocks();
+      vi.mocked(Date.now).mockRestore();
     });
 
     it.each([
