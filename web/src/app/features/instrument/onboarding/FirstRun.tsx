@@ -22,7 +22,8 @@ export function FirstRun({ active, onOpenChange }: Props) {
     void complete();
   }, [active, ownerUid, completing, completeError, complete]);
 
-  if (loadState !== "failed" && !completeError) return null;
+  /* the failure stays recorded while another view is open; the notice waits for the chat */
+  if (!active || (loadState !== "failed" && !completeError)) return null;
   return <p class="first-run-notice" role="alert">
     {t("shell.firstRun.failed")}
     <button type="button" disabled={!connected || completing} onClick={loadState === "failed" ? retryLoad : () => { void complete(); }}>{t("shell.retryButton")}</button>

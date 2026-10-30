@@ -91,6 +91,23 @@ describe("first run", () => {
     await vi.waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
   });
 
+  it("keeps a load failure to itself while another view is open, and offers the retry once the chat is", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    request.mockImplementationOnce(async () => { throw new Error("temporarily unavailable"); });
+    active = false;
+    await mount("failed elsewhere");
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("account.list", {}));
+    await act(async () => {});
+    expect(tree).toBeNull();
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    active = true;
+    await act(async () => { await root.render(<GatewayProvider><Harness /></GatewayProvider>); });
+    expect(collectText(tree)).toContain("Couldn't wake Ship.");
+    await act(async () => { retryButton().props.onClick!(); });
+    await vi.waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
+    expect(setCalls()).toHaveLength(1);
+  });
+
   it("records the first run separately for another person", async () => {
     seen.set(1000, "1");
     uid = 1001;
