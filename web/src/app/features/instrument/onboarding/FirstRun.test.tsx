@@ -16,7 +16,8 @@ const onOpenChange = vi.fn<(open: boolean) => void>();
 const connected: GsvClientStatus = { state: "connected", url: "wss://space.example/ws", username: "person", connectionId: "test", message: null };
 const SEEN_KEY = "users/1000/ui/welcome_card_seen";
 
-function Harness() { tree = FirstRun({ onOpenChange }); return null; }
+let active = true;
+function Harness() { tree = FirstRun({ active, onOpenChange }); return null; }
 async function mount(name = "first run") {
   root = createTestRoot(name);
   await root.render(<GatewayProvider><Harness /></GatewayProvider>);
@@ -26,6 +27,7 @@ const setCalls = () => request.mock.calls.filter(([call]) => call === "sys.confi
 
 beforeEach(() => {
   uid = 1000;
+  active = true;
   seen = new Map();
   request.mockReset();
   onOpenChange.mockReset();
@@ -73,6 +75,20 @@ describe("first run", () => {
     await vi.waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
     expect(setCalls()).toHaveLength(0);
     expect(tree).toBeNull();
+  });
+
+  it("waits for the Ship chat to be the open view before waking Ship", async () => {
+    active = false;
+    await mount("other view");
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("sys.config.get", { key: SEEN_KEY }));
+    await act(async () => {});
+    expect(setCalls()).toHaveLength(0);
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    expect(tree).toBeNull();
+    active = true;
+    await act(async () => { await root.render(<GatewayProvider><Harness /></GatewayProvider>); });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("sys.config.set", { key: SEEN_KEY, value: "1" }));
+    await vi.waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
   });
 
   it("records the first run separately for another person", async () => {
