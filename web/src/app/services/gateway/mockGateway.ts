@@ -53,7 +53,6 @@ import {
   type JsonObject,
   type JsonValue,
   type ProcContextState,
-  type DevicePairing,
   type ProcHilRequest,
   type ProcHistoryRecord,
   type ProcHistoryRecordData,

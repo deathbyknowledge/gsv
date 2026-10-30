@@ -3,7 +3,6 @@ import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { encodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
 import { Select } from "../../../components/ui/Select";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { Select } from "../../../components/ui/Select";
 import { TextInput } from "../../../components/ui/TextInput";
 import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
 import { parseDeviceId } from "../../../domain/deviceId";
