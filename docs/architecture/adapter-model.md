@@ -350,7 +350,7 @@ worker failure cannot leave a durable record without a wake-up. This uses the
 account's existing storage and wake-up mechanism rather than introducing a
 second ingress scheduler or blob store.
 
-Command replies and link challenges use the receipt's stable delivery ids. The
+Command replies use the receipt's stable delivery ids. The
 Kernel prepares and completes the receipt with the
 exact result. Before provider delivery, the adapter replaces its durable raw
 payload with normalized response records. It then passes each response through
@@ -358,8 +358,8 @@ the same account-local outbound ledger used by normal sends. A response retry
 therefore cannot re-enter the Kernel or renormalize actor identity. A crash
 before that transition can replay the stable Kernel receipt without repeating
 side effects; after it, a restart replays only the stored response with its
-stable delivery id. Link challenges are skipped after their expiry, and
-retry-safe response failures stop after ten durably counted attempts. Completed
+stable delivery id. A response with an expiry, such as a pairing code, is
+skipped once it expires, and retry-safe response failures stop after ten durably counted attempts. Completed
 Kernel receipts are capped and retained for seven days.
 
 Outbound messages cross the adapter-worker boundary with a stable
@@ -390,7 +390,7 @@ Message remains in conversation history and its delivery outcome remains
 inspectable in Process activity. Approval attempt one is durably scheduled
 before Process acknowledges the HIL signal; provider notification failure
 therefore cannot clear or fail a pending approval.
-Link challenges and adapter command responses use this same outbound ledger.
+Adapter command responses use this same outbound ledger.
 The Kernel derives their delivery ids before the
 durable ingress claim and returns normalized response metadata. Provider
 delivery begins only after the inbound Gateway RPC returns, so it does not make

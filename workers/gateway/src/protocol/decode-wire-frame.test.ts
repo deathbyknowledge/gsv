@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import {
   decodeWireFrameJson,
   decodeWireResponse,
@@ -138,6 +139,28 @@ describe("decodeWireFrameJson", () => {
       payload: { nonce: "nonce-1" },
       seq: 4,
     }))).toMatchObject({ type: "sig", signal: "peer.ping" });
+  });
+
+  it("accepts a one-shot schedule given as a local time, but not mixed with an instant", () => {
+    const frame = (expression: JsonValue) => JSON.stringify({
+      type: "req",
+      id: "local-schedule",
+      call: "sched.add",
+      args: { name: "reminder", expression, target: { kind: "responsibility", message: "Remind me." } },
+    });
+    for (const expression of [
+      { kind: "at", atMs: 1_793_000_000_000 },
+      { kind: "at", localTime: "2026-10-26T10:00" },
+      { kind: "at", localTime: "2026-10-26T10:00", timezone: "Europe/Madrid" },
+    ]) {
+      expect(decodeWireFrameJson(frame(expression))).toMatchObject({ args: { expression } });
+    }
+    for (const expression of [
+      { kind: "at", atMs: 1_793_000_000_000, timezone: "Europe/Madrid" },
+      { kind: "at", atMs: 1_793_000_000_000, localTime: "2026-10-26T10:00" },
+    ]) {
+      expect(() => decodeWireFrameJson(frame(expression))).toThrow(InvalidWireFrameError);
+    }
   });
 
   it("distinguishes malformed JSON from a structurally invalid frame", () => {

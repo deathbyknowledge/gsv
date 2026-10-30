@@ -532,39 +532,33 @@ describe("InboundDeliveryLedger", () => {
       providerMessageId: "provider-multi",
     }, 100);
     const send = vi.fn(async (message: { deliveryId: string }) =>
-      message.deliveryId === "challenge-multi"
+      message.deliveryId === "first-multi"
         ? {
             ok: false as const,
-            error: "challenge unavailable",
+            error: "first unavailable",
             retryable: true,
           }
         : { ok: true as const }
     );
+    const surface = { kind: "dm" as const, id: "chat-multi" };
 
-    await expect(pending.attempt("provider-multi", async () =>
-      adapterInboundResultDisposition({
-        ok: true,
-        challenge: {
-          deliveryId: "challenge-multi",
-          code: "CODE",
-          prompt: "Link this account",
-          expiresAt: Number.MAX_SAFE_INTEGER,
-        },
-        reply: { deliveryId: "reply-multi", text: "Reply too" },
-      }, {
-        surface: { kind: "dm", id: "chat-multi" },
-        providerMessageId: "provider-multi",
-      }), send)).resolves.toEqual({
+    await expect(pending.attempt("provider-multi", async () => ({
+      terminal: true,
+      responses: [
+        { message: { deliveryId: "first-multi", surface, text: "First" } },
+        { message: { deliveryId: "reply-multi", surface, text: "Reply too" } },
+      ],
+    }), send)).resolves.toEqual({
       state: "pending",
-      error: "challenge unavailable",
+      error: "first unavailable",
     });
     expect(send.mock.calls.map(([message]) => message.deliveryId)).toEqual([
-      "challenge-multi",
+      "first-multi",
       "reply-multi",
     ]);
   });
 
-  it("drops an expired link challenge without calling the provider", async () => {
+  it("drops an expired response without calling the provider", async () => {
     const storage = new MemoryStorage();
     const pending = ledger(storage);
     const send = vi.fn(async () => ({ ok: true as const }));
@@ -572,19 +566,13 @@ describe("InboundDeliveryLedger", () => {
     await pending.enqueueAndArm("provider-7", { providerMessageId: "provider-7" }, 100);
 
     try {
-      await expect(pending.attempt("provider-7", async () =>
-        adapterInboundResultDisposition({
-          ok: true,
-          challenge: {
-            deliveryId: "sensitive-challenge-id",
-            code: "SENSITIVE-CODE",
-            prompt: "Link this account",
-            expiresAt: 0,
-          },
-        }, {
-          surface: { kind: "dm", id: "chat-7" },
-          providerMessageId: "provider-7",
-        }), send)).resolves.toEqual({ state: "completed" });
+      await expect(pending.attempt("provider-7", async () => ({
+        terminal: true,
+        responses: [{
+          message: { deliveryId: "sensitive-pairing-id", surface: { kind: "dm" as const, id: "chat-7" }, text: "Pair with SENSITIVE-CODE" },
+          expiresAt: 0,
+        }],
+      }), send)).resolves.toEqual({ state: "completed" });
       expect(send).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledWith(JSON.stringify({
         component: "adapter",
@@ -663,7 +651,8 @@ describe("InboundDeliveryLedger", () => {
 });
 
 describe("adapterInboundRequiresPairing", () => {
-  it("requests fresh pairing only for a terminal revoked identity or link challenge", () => {
+  it("requests fresh pairing only when the Kernel has no current link", () => {
+    expect(adapterInboundRequiresPairing({ ok: true, droppedReason: "pairing_required" })).toBe(true);
     expect(adapterInboundRequiresPairing({ ok: true, droppedReason: "revoked_identity" })).toBe(true);
     expect(adapterInboundRequiresPairing({ ok: true, droppedReason: "revoked_identity", replayed: "completed" })).toBe(true);
     expect(adapterInboundRequiresPairing({ ok: true, challenge: {
@@ -677,7 +666,7 @@ describe("adapterInboundRequiresPairing", () => {
 });
 
 describe("adapterInboundResultDisposition", () => {
-  it("normalizes stable response ids and challenge expiry", () => {
+  it("normalizes stable response ids and ignores a replayed link challenge", () => {
     const surface = { kind: "dm" as const, id: "chat-1" };
 
     expect(adapterInboundResultDisposition({
@@ -699,16 +688,6 @@ describe("adapterInboundResultDisposition", () => {
     })).toEqual({
       terminal: true,
       responses: [
-        {
-          message: {
-            deliveryId: "challenge-1",
-            surface,
-            actorId: "provider:actor-1",
-            text: "Link this account",
-            replyToId: "provider-1",
-          },
-          expiresAt: 123,
-        },
         {
           message: {
             deliveryId: "reply-1",

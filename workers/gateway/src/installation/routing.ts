@@ -4,10 +4,13 @@ import type {
   ManagedInstallationState,
 } from "@humansandmachines/gsv/protocol";
 import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { Kernel } from "../kernel/do";
 import {
   parseInstallationId,
+  type InstallationIdentity,
 } from "./identity";
+import { SHIP_UNREACHABLE_MESSAGE } from "./lifecycle";
 import type { GatewayEnv } from "../runtime-env";
 
 const PROCESS_DURABLE_OBJECT_PREFIX = "process:";
@@ -135,18 +138,137 @@ function assertDurableObjectNameLength(name: string): void {
   }
 }
 
+export type InstallationRoute = { identity: InstallationIdentity };
+
+/** How long an active route answers a hostname's public reads before Accounts is asked again. */
+const ROUTE_CONFIRMATION_MS = 60_000;
+/** Hostnames one isolate remembers routes for; the oldest answer gives way first. */
+const REMEMBERED_HOSTNAMES = 1_024;
+/**
+ * How long a request waits for Accounts to route its hostname. Accounts
+ * answers in milliseconds, and within a few seconds in its slowest minutes;
+ * a lookup still waiting by then has stalled, and the request ends with an
+ * answer it can retry instead of hanging.
+ */
+const ROUTE_LOOKUP_TIMEOUT_MS = 5_000;
+
+/** Accounts did not route the hostname in time; the request may be retried. */
+export class InstallationRouteUnavailable extends Error {
+  constructor(options?: ErrorOptions) {
+    super(SHIP_UNREACHABLE_MESSAGE, options);
+    this.name = "InstallationRouteUnavailable";
+  }
+}
+
+type RememberedRoute = { route: InstallationRoute; confirmedAt: number };
+type HostnameRoutes = {
+  remembered: Map<string, RememberedRoute>;
+  lookups: Map<string, Promise<InstallationDirectoryResult>>;
+};
+
+/**
+ * Each isolate's routes, per directory binding. Only an active route is
+ * remembered. A hostname Accounts does not route, routes to a Ship that is
+ * not active, or cannot answer for is asked again on every request, so a
+ * random wildcard hostname still allocates nothing, and any newer answer
+ * replaces a remembered one.
+ */
+const hostnameRoutes = new WeakMap<InstallationDirectoryService, HostnameRoutes>();
+
+/**
+ * Routes a request's hostname through Accounts. A `cached` request, a public
+ * read, may take an active route Accounts gave within the last minute and
+ * share a lookup already under way; any other request asks Accounts itself.
+ */
 export async function resolveInstallationRoute(
   request: Request,
-  options: { allowProvisioning?: boolean } = {},
-) {
+  options: { allowProvisioning?: boolean; cached?: boolean } = {},
+): Promise<InstallationRoute | null> {
   const hostname = new URL(request.url).hostname;
-  // SAFETY: Deployment binds the trusted directory RPC contract described by GatewayEnv.
-  const directory = (env as Env & GatewayEnv).INSTALLATION_DIRECTORY;
+  const directory = installationDirectory();
   if (!directory) throw new Error("Installation directory is not configured");
+  const routes = routesFor(directory);
+  const remembered = routes.remembered.get(hostname);
+  if (options.cached && remembered && Date.now() - remembered.confirmedAt < ROUTE_CONFIRMATION_MS) {
+    return remembered.route;
+  }
+  let lookup = options.cached ? routes.lookups.get(hostname) : undefined;
+  if (!lookup) {
+    lookup = lookUpHostname(directory, routes, hostname);
+    if (options.cached) {
+      const shared: Promise<InstallationDirectoryResult> = lookup.finally(() => forgetLookup(routes, hostname, shared));
+      lookup = shared;
+      routes.lookups.set(hostname, shared);
+    }
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let result: InstallationDirectoryResult;
+  try {
+    result = await Promise.race([
+      lookup,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Accounts lookup timed out")), ROUTE_LOOKUP_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    // A stalled lookup may never settle, so the next read asks Accounts again.
+    forgetLookup(routes, hostname, lookup);
+    console.warn("[Gateway] Accounts route lookup failed:", exceptionDiagnostics(error));
+    throw new InstallationRouteUnavailable({ cause: error });
+  } finally {
+    clearTimeout(timer);
+  }
+  return routeFor(result, options.allowProvisioning ?? false);
+}
+
+function forgetLookup(routes: HostnameRoutes, hostname: string, lookup: Promise<InstallationDirectoryResult>): void {
+  if (routes.lookups.get(hostname) === lookup) routes.lookups.delete(hostname);
+}
+
+/** Forgets a hostname's remembered route, as when the Kernel it names refuses the request. */
+export function forgetInstallationRoute(request: Request): void {
+  const directory = installationDirectory();
+  if (directory) hostnameRoutes.get(directory)?.remembered.delete(new URL(request.url).hostname);
+}
+
+function routesFor(directory: InstallationDirectoryService): HostnameRoutes {
+  let routes = hostnameRoutes.get(directory);
+  if (!routes) {
+    routes = { remembered: new Map(), lookups: new Map() };
+    hostnameRoutes.set(directory, routes);
+  }
+  return routes;
+}
+
+function installationDirectory(): InstallationDirectoryService | undefined {
+  // SAFETY: Deployment binds the trusted directory RPC contract described by GatewayEnv.
+  return (env as Env & GatewayEnv).INSTALLATION_DIRECTORY;
+}
+
+/** Asks Accounts, then remembers its answer if that is an active route; any other answer forgets the hostname's route. */
+async function lookUpHostname(
+  directory: InstallationDirectoryService,
+  routes: HostnameRoutes,
+  hostname: string,
+): Promise<InstallationDirectoryResult> {
+  const askedAt = Date.now();
   const result = await directory.resolveHostname(hostname);
+  routes.remembered.delete(hostname);
+  const route = routeFor(result, false);
+  if (route) {
+    routes.remembered.set(hostname, { route, confirmedAt: askedAt });
+    for (const oldest of routes.remembered.keys()) {
+      if (routes.remembered.size <= REMEMBERED_HOSTNAMES) break;
+      routes.remembered.delete(oldest);
+    }
+  }
+  return result;
+}
+
+function routeFor(result: InstallationDirectoryResult, allowProvisioning: boolean): InstallationRoute | null {
   if (!result.found || !isRoutableManagedInstallationState(
     result.state,
-    options.allowProvisioning ?? false,
+    allowProvisioning,
   )) {
     return null;
   }

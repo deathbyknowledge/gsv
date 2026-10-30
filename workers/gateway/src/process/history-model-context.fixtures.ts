@@ -46,12 +46,12 @@ type EventFixture = { event: ProcHistoryEvent; text: string; origin?: Interactio
 export function goldenEvents(): EventFixture[] {
   const policy = { overflow: "auto-compact" as const, compactAtPressure: 0.9, compactToPressure: 0.4, updatedAt: GOLDEN_TIME };
   const previous: ContextProjection = {
-    version: 1, runtime: { date: "2023-11-14", timezone: "UTC" },
+    version: 1, runtime: { date: "Tuesday, 2023-11-14", timezone: "UTC" },
     targets: [{ id: "old-target", implements: ["fs.read"] }], mcpServers: ["old-server"],
     skills: { mode: "summary", entries: [{ id: "old-skill", description: "Old synthetic skill" }] },
   };
   const current: ContextProjection = {
-    version: 1, runtime: { date: "2023-11-15", timezone: "Europe/Amsterdam" },
+    version: 1, runtime: { date: "Wednesday, 2023-11-15", timezone: "Europe/Amsterdam" },
     targets: [{ id: "new-target", label: "Synthetic target", implements: ["fs.read", "shell.exec"] }],
     mcpServers: ["new-server"], skills: { mode: "summary", entries: [{ id: "new-skill", description: "New synthetic skill" }] },
     mailbox: { address: "golden@gsv.space" },

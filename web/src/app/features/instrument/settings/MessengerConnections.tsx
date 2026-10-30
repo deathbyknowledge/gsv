@@ -16,6 +16,7 @@ import { loadMessengerConnections, messengerConnectionStatus, type MessengerConn
 import { canConfigure } from "./settingsModel";
 import { SettingsError, type SettingsSectionProps } from "./settingsShared";
 import { useT, type TextKey } from "../../../i18n/locale";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 const MESSENGERS: ReadonlyArray<{ id: ManagedMessengerId; name: string; blurb: TextKey }> = [
   { id: "whatsapp", name: "WhatsApp", blurb: "settings.messengers.whatsapp" },
@@ -53,8 +54,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
   });
 
   return <section class="settings-messengers" aria-labelledby="settings-messengers-title">
-    <h1 id="settings-messengers-title">{t("settings.messengers.title")}</h1>
-    <p class="settings-intro">{t("settings.messengers.intro")}</p>
+    <PageHeading id="settings-messengers-title" title={t("settings.messengers.title")} description={t("settings.messengers.intro")} />
     {!canList && <p class="settings-muted">{t("settings.messengers.noAccess")}</p>}
     <SettingsError error={connections.error ?? unlink.error} />
     {connections.isPending && connected && canList && <LoadingState variant="panel">{t("settings.messengers.loading")}</LoadingState>}

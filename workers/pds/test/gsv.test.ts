@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { PUBLIC_BLOB_MAX_BYTES } from "@humansandmachines/gsv/services/pds";
 import { fromBase64Url } from "@atcute/multibase";
-import { admitInstallation } from "../src/gsv/admission";
+import { admitInstallation, followAdmission } from "../src/gsv/admission";
 import type { PdsEnv } from "../src/gsv/env";
 import { PdsPublisherEntrypoint } from "../src/gsv/publisher";
 import { MAX_BLOB_BYTES } from "../src/host/repo";
@@ -135,38 +135,43 @@ describe("publishing for an installation", () => {
 describe("public reads", () => {
   const repoStatus = z.object({ did: z.string(), active: z.boolean(), status: z.string().optional() });
 
-  it("serves an installation's repository only while Accounts reports it active", async () => {
+  it("serves an installation's repository as it follows Accounts' state, without asking Accounts for a read", async () => {
     const ship = accounts.add();
     const repository = await publisher().getInstallation(ship.installationId);
     const { did } = await repository.ensureAccount(ship.handle);
-    await deliver(env.REPOS.getByName(ship.installationId));
+    const repo = env.REPOS.getByName(ship.installationId);
+    await deliver(repo);
     const describe = () => serve("com.atproto.repo.describeRepo", { repo: ship.handle });
     const status = () => serve("com.atproto.sync.getRepoStatus", { did });
+    const asked = vi.spyOn(accounts, "resolveInstallation");
 
     expect((await read(z.object({ did: z.string() }), describe())).did).toBe(did);
     expect(await read(repoStatus, status())).toMatchObject({ did, active: true });
+    expect(asked).not.toHaveBeenCalled();
 
     accounts.setState(ship.installationId, "restricted");
+    await followAdmission(accounts, ship.installationId, repo);
+    asked.mockClear();
     expect(await errorOf(describe())).toBe("RepoSuspended");
     expect(await read(repoStatus, status())).toEqual({ did, active: false, status: "suspended" });
 
     accounts.setState(ship.installationId, "retained");
+    await followAdmission(accounts, ship.installationId, repo);
+    asked.mockClear();
     expect(await errorOf(describe())).toBe("RepoNotFound");
     expect(await read(repoStatus, status())).toEqual({ did, active: false, status: "deleted" });
+    expect(asked).not.toHaveBeenCalled();
   });
 
-  it("reports an Accounts failure as an upstream failure, without serving the repository", async () => {
+  it("keeps serving reads while Accounts cannot answer", async () => {
     const ship = accounts.add();
     const repository = await publisher().getInstallation(ship.installationId);
     const { did } = await repository.ensureAccount(ship.handle);
     await deliver(env.REPOS.getByName(ship.installationId));
     vi.spyOn(accounts, "resolveInstallation").mockRejectedValue(new Error("Accounts unavailable"));
-    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const response = await serve("com.atproto.sync.getLatestCommit", { did });
-    expect(response.status).toBe(502);
-    expect(await errorOf(Promise.resolve(response))).toBe("UpstreamFailure");
-    expect(errors).toHaveBeenCalledWith("Installation lookup failed", expect.any(Error));
+    expect(response.status).toBe(200);
   });
 
   it.each<[InstallationState, string]>([
