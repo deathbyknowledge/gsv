@@ -19,6 +19,7 @@ import {
 import * as inferenceService from "../../inference/execution-client";
 import { ModelMetadataResolver } from "../../inference/model-metadata";
 import * as federationService from "../../kernel/federation";
+import { SEND_TOOL } from "../../process/internal/schemas";
 import type { InferenceExecutor, InferenceMediaRequest } from "@humansandmachines/gsv/services/inference-execution";
 import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
@@ -1224,6 +1225,37 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("temporary work direct line");
     expect(result.stdout).toContain("Use /ship inside that DM");
     expect(result.stdout).toContain("--attach PATH");
+  });
+
+  it("documents the Send tool as a manual topic without making it a command", async () => {
+    const context = () => makeContext({ capabilities: ["shell.exec"] });
+    const page = await handleShellExec({ input: "man send" }, context());
+
+    expect(page.ok).toBe(true);
+    expect(page.exitCode).toBe(0);
+    expect(page.stdout).toContain("SEND(1)");
+    expect(page.stdout.trimEnd().split("\n").length).toBeLessThanOrEqual(25);
+    for (const parameter of Object.keys(SEND_TOOL.parameters.properties ?? {})) {
+      expect(page.stdout).toMatch(new RegExp(`^  ${parameter}\\b`, "m"));
+    }
+    expect(page.stdout).toContain("message attach");
+    expect(page.stdout).toContain("--to DESTINATION");
+    expect(page.stdout).toContain("--also");
+    expect(page.stdout).toContain("man message");
+
+    expect((await handleShellExec({ input: "man Send" }, context())).stdout).toBe(page.stdout);
+
+    // a page, not a command: the name still does not run
+    const run = await handleShellExec({ input: "send hello" }, context());
+    expect(run.exitCode).toBe(127);
+    expect((await handleShellExec({ input: "which send" }, context())).exitCode).not.toBe(0);
+
+    // discovery lists commands, so searching for sending or attaching leads to `message`, not this page
+    const sending = await handleShellExec({ input: "man --search -- send" }, context());
+    expect(sending.stdout).toContain("command\tmessage\t");
+    expect(sending.stdout).not.toContain("\tsend\t");
+    const attaching = await handleShellExec({ input: "man --search -- 'attach a file'" }, context());
+    expect(attaching.stdout.split("\n")[2]).toContain("command\tmessage\t");
   });
 
   it("keeps transport-only messaging adapters out of the current target inventory", async () => {
