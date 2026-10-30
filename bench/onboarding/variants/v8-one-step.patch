@@ -1,0 +1,193 @@
+diff --git i/packages/gsv/src/protocol/events.ts w/packages/gsv/src/protocol/events.ts
+index 783081add..061a572cf 100644
+--- i/packages/gsv/src/protocol/events.ts
++++ w/packages/gsv/src/protocol/events.ts
+@@ -124,6 +124,7 @@ export const procHistoryEventPayloadSchemas = {
+     ledgerRevision: nonNegativeIntegerSchema,
+     responsibilityIds: z.array(z.string()),
+     receivedAtMs: z.number(),
++    firstContact: z.optional(z.boolean()),
+   }),
+   "contact.message": z.strictObject({
+     contactId: z.string(),
+@@ -291,6 +292,8 @@ export type ProcHistoryEventPayloadMap = {
+     ledgerRevision: number;
+     responsibilityIds: string[];
+     receivedAtMs: number;
++    /** The process had no history when the batch arrived: nobody has written and nothing was sent. */
++    firstContact?: boolean;
+   };
+   /** One message from a contact Ship handles; its attachments are the event's media. */
+   "contact.message": {
+diff --git i/workers/gateway/src/drivers/native/shell/r12y.ts w/workers/gateway/src/drivers/native/shell/r12y.ts
+index 84f797732..221cfb180 100644
+--- i/workers/gateway/src/drivers/native/shell/r12y.ts
++++ w/workers/gateway/src/drivers/native/shell/r12y.ts
+@@ -121,7 +121,7 @@ async function runR12yCommand(args: string[], ctx: KernelContext): Promise<ExecR
+       }
+       const patch = responsibilityPatchSchema.parse(JSON.parse(rest[2]));
+       const updated = await handleResponsibilityUpdate({ id, patch }, ctx);
+-      return result(`${JSON.stringify(updated)}\n`);
++      return result(updatedRecord(updated));
+     }
+     case "start":
+       requireArgumentCount(rest, 1, "start requires: r12y start ID");
+@@ -195,7 +195,7 @@ async function updateState(
+     id: requireId(args[0]),
+     patch: { state },
+   }, ctx);
+-  return result(`${JSON.stringify(updated)}\n`);
++  return result(updatedRecord(updated));
+ }
+ 
+ async function updateTerminal(
+@@ -215,7 +215,7 @@ async function updateTerminal(
+   const patch: ResponsibilityPatch = { state };
+   if (resolution) patch.resolution = resolution;
+   const updated = await handleResponsibilityUpdate({ id, patch }, ctx);
+-  return result(`${JSON.stringify(updated)}\n`);
++  return result(updatedRecord(updated));
+ }
+ 
+ async function waitResponsibility(args: string[], ctx: KernelContext): Promise<ExecResult> {
+@@ -234,7 +234,7 @@ async function waitResponsibility(args: string[], ctx: KernelContext): Promise<E
+     throw new Error("wait requires --until ISO or --blocker TEXT");
+   }
+   const updated = await handleResponsibilityUpdate({ id, patch }, ctx);
+-  return result(`${JSON.stringify(updated)}\n`);
++  return result(updatedRecord(updated));
+ }
+ 
+ async function delegateResponsibility(args: string[], ctx: KernelContext): Promise<ExecResult> {
+@@ -250,7 +250,7 @@ async function delegateResponsibility(args: string[], ctx: KernelContext): Promi
+       leaseExpiresAtMs: parseTimestamp(args[3], "--until"),
+     },
+   }, ctx);
+-  return result(`${JSON.stringify(updated)}\n`);
++  return result(updatedRecord(updated));
+ }
+ 
+ function renderResponsibilityList(records: ResponsibilityRecord[], revision: number): string {
+@@ -290,6 +290,12 @@ function requireArgumentCount(args: string[], count: number, message: string): v
+   if (args.length !== count) throw new Error(message);
+ }
+ 
++/** A state change confirms what changed; `r12y show` is how to read a record's details again. */
++function updatedRecord(updated: { responsibility: ResponsibilityRecord }): string {
++  const { details, ...record } = updated.responsibility;
++  return `${JSON.stringify({ ...updated, responsibility: record })}\n`;
++}
++
+ function result(stdout: string): ExecResult {
+   return { stdout, stderr: "", exitCode: 0 };
+ }
+diff --git i/workers/gateway/src/kernel/responsibility-runtime.ts w/workers/gateway/src/kernel/responsibility-runtime.ts
+index ba911870e..7d7a2a3bb 100644
+--- i/workers/gateway/src/kernel/responsibility-runtime.ts
++++ w/workers/gateway/src/kernel/responsibility-runtime.ts
+@@ -77,8 +77,10 @@ async scheduleResponsibilityWakeAt(
+     wakeAtMs: number,
+     previousTaskId: string | null,
+   ): Promise<void> {
++    // Work that is already due wakes now; rounding up only guards a future check against the scheduler's whole seconds.
++    const now = Date.now();
+     const wakeAt = new Date(
+-      Math.ceil(Math.max(Date.now() + 1_000, wakeAtMs) / 1_000) * 1_000,
++      wakeAtMs <= now ? now : Math.ceil(Math.max(now + 1_000, wakeAtMs) / 1_000) * 1_000,
+     );
+     const task = await this.host.schedule(
+       wakeAt,
+diff --git i/workers/gateway/src/process/controller/runtime.ts w/workers/gateway/src/process/controller/runtime.ts
+index 68c81b049..15643a3bf 100644
+--- i/workers/gateway/src/process/controller/runtime.ts
++++ w/workers/gateway/src/process/controller/runtime.ts
+@@ -1615,6 +1615,7 @@ export class ProcessController {
+           ledgerRevision: event.ledgerRevision,
+           responsibilityIds: event.responsibilityIds,
+           receivedAtMs: Date.now(),
++          ...(this.host.store.messages.messageCount() === 0 ? { firstContact: true } : {}),
+         },
+         severity: "info",
+         audience: "model",
+diff --git i/workers/gateway/src/process/run/runtime.ts w/workers/gateway/src/process/run/runtime.ts
+index 869d2a088..c0378284f 100644
+--- i/workers/gateway/src/process/run/runtime.ts
++++ w/workers/gateway/src/process/run/runtime.ts
+@@ -197,7 +197,7 @@ export class ProcessRun {
+       media,
+     });
+     if (!sent.ok || !command.finish) return sent;
+-    const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
++    const responsibilityCheck = await this.verifyTerminalResponsibilities(runId, true);
+     return responsibilityCheck.ok
+       ? { ...sent, responsibilityAdmissionKey: responsibilityCheck.admissionKey }
+       : { ...sent, finish: false, yieldError: responsibilityCheck.error };
+@@ -463,7 +463,7 @@ export class ProcessRun {
+     }
+   }
+ 
+-  async verifyTerminalResponsibilities(runId: string): Promise<TerminalResponsibilityCheck> {
++  async verifyTerminalResponsibilities(runId: string, messageSent = false): Promise<TerminalResponsibilityCheck> {
+     const run = this.host.runs.active;
+     if (!run || run.runId !== runId) {
+       return { ok: false, error: "The run is no longer active" };
+@@ -474,10 +474,20 @@ export class ProcessRun {
+     }
+     const loaded = await this.loadTerminalResponsibilityRecords(runId, snapshot.responsibilityIds);
+     if (!loaded.ok) return loaded;
+-    const unhandled = unhandledTerminalResponsibilityIds(
++    let unhandled = unhandledTerminalResponsibilityIds(
+       snapshot.responsibilityIds,
+       loaded.records,
+     );
++    // A message that went out on the welcome leaves it waiting for the person's reply.
++    if (messageSent) {
++      const welcome = unhandled.filter((id) => loaded.records.get(id)?.details?.responsibilityType === "onboarding.initial");
++      for (const id of welcome) {
++        await this.host.kernel.kernelRpc("r12y.update", {
++          id, patch: { state: "waiting", blocker: "Waiting for the user to reply" },
++        }, this.runAbortSignal(runId));
++      }
++      unhandled = unhandled.filter((id) => !welcome.includes(id));
++    }
+     if (unhandled.length === 0) {
+       return { ok: true, admissionKey: snapshot.admissionKey };
+     }
+diff --git i/workers/gateway/src/prompts/onboarding/welcome.md w/workers/gateway/src/prompts/onboarding/welcome.md
+index 3627b6d05..7a5b0a805 100644
+--- i/workers/gateway/src/prompts/onboarding/welcome.md
++++ w/workers/gateway/src/prompts/onboarding/welcome.md
+@@ -16,13 +16,12 @@ The user understands what you can do by experiencing POSITIVE IMPACT in their li
+ 
+ ## Instructions
+ 
+-0 - Send the welcome yourself through Send. The first message should introduce yourself briefly and ask the user to introduce themselves. This is an example:
++0 - The first time this responsibility reaches you, with state open and no message from the user, nothing has happened yet and there is nothing to check. Everything you need is here: this brief and the runtime facts. Do not run `r12y`, read a manual, list files or look anything up. Your only action is one Send with `yield` true, in the preferred language from your runtime facts. Introduce yourself briefly and ask the user to introduce themselves. This is the message; say it naturally in their language:
+ ```
+ Hi, I'm Ship, your personal assistant. I'm here to do the things you'd rather not deal with: booking restaurants, planning trips, sorting out emails, managing your calendar, even making purchases and tracking parcels for you.
+ Tell me a little about yourself. Is there anything I can help with?
+ ```
+-If the user has already written to you, skip the welcome: answer their message and continue from STEP 1 or STEP 2 as fits.
+-After the welcome or your answer, mark this responsibility waiting for the user's reply, then yield; do not send a second message in the same turn.
++Ship marks this responsibility waiting for you when that message goes out. If the user has already written to you, skip the welcome: answer their message with Send and `yield` true. Do not send a second message in the same turn. Continue from STEP 1 or STEP 2 when they reply.
+ If the user replies without naming a task, go to STEP 1.
+ If the user already picks a task they want help with, move on to STEP 2.
+ At any point during this conversation, if the user starts a new task you should consider it STEP 2 of this flow.
+diff --git i/workers/gateway/src/prompts/responsibility-events.ts w/workers/gateway/src/prompts/responsibility-events.ts
+index bde2daa8f..feb0f281b 100644
+--- i/workers/gateway/src/prompts/responsibility-events.ts
++++ w/workers/gateway/src/prompts/responsibility-events.ts
+@@ -57,6 +57,13 @@ export function renderResponsibilityBaseline(
+ }
+ 
+ export function formatResponsibilityReadyEvent(event: ProcHistoryEventPayload<"responsibility.ready">): string {
++  if (event.firstContact) {
++    return [
++      `Responsibility ready at ${new Date(event.receivedAtMs).toISOString()}: ${event.responsibilityIds.map((id) => `\`${id}\``).join(", ")}.`,
++      "This is your first run. Nobody has written to you and you have sent nothing, so there is no earlier conversation or state to check. Start now from the snapshot and the responsibility's details.",
++      "Resolve, cancel, delegate, or explicitly defer actionable work before yielding. Call Send with yield true when finished; omit text only when no user follow-up is needed.",
++    ].join("\n\n");
++  }
+   return [
+     `Responsibility review requested at ${new Date(event.receivedAtMs).toISOString()}.`,
+     `Review these responsibilities using the snapshot, later updates, and recent conversation: ${event.responsibilityIds.map((id) => `\`${id}\``).join(", ")}.`,

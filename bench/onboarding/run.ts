@@ -34,6 +34,7 @@ const { values: flags } = parseArgs({
     timeout: { type: "string", default: "300000" },
     settle: { type: "string", default: "4000" },
     reasoning: { type: "string" },
+    reply: { type: "string" },
     "dump-requests": { type: "boolean", default: false },
     "ripgit-latency": { type: "string", default: "0" },
     keep: { type: "boolean", default: false },
@@ -42,6 +43,14 @@ const { values: flags } = parseArgs({
 
 const OUT = resolve(HERE, "runs", flags.label);
 const SPEND_FILE = resolve(HERE, "runs", "spend.jsonl");
+
+const AUTO_REPLY: Record<string, string> = {
+  en: "I'm Bob, I work in finance in LA.",
+  es: "Soy Rosa, estudio estadística y vivo en Sevilla.",
+  de: "Ich bin Jonas, ich arbeite in der Buchhaltung in Hamburg.",
+  fr: "Je suis Claire, je suis comptable à Lyon.",
+  ja: "ボブです。大阪で経理の仕事をしています。",
+};
 
 async function totalSpend(): Promise<number> {
   try {
@@ -118,6 +127,7 @@ type RunResult = {
   records: unknown[];
   trace: unknown[];
   ripgit: RipgitCall[];
+  reply: { steps: ModelStep[]; firstMessageMs: number | null; endMs: number | null; messages: string[]; state: string | null } | null;
   dismissedAt: number;
   costUsd: number;
 };
@@ -131,7 +141,7 @@ async function oneRun(proxy: RecordingProxy, lang: string, run: number): Promise
   const result: RunResult = {
     label: flags.label, lang, run, ok: false, error: null, setupMs: 0,
     dismissToFirstRequestMs: null, dismissToRunEndMs: null, dismissToFirstMessageMs: null,
-    firstMessage: null, messages: [], responsibilityState: null, steps: [], ledger: [], records: [], trace: [], ripgit: [], dismissedAt: 0, costUsd: 0,
+    firstMessage: null, messages: [], responsibilityState: null, steps: [], ledger: [], records: [], trace: [], ripgit: [], reply: null, dismissedAt: 0, costUsd: 0,
   };
   try {
     const { url } = await harness.listen();
@@ -147,7 +157,7 @@ async function oneRun(proxy: RecordingProxy, lang: string, run: number): Promise
       username,
       password: PASSWORD,
       language: lang,
-      timezone: lang === "es" ? "Europe/Madrid" : lang === "de" ? "Europe/Berlin" : "America/New_York",
+      timezone: lang === "es" ? "Europe/Madrid" : lang === "de" ? "Europe/Berlin" : lang === "ja" ? "Asia/Tokyo" : "America/New_York",
     });
     result.setupMs = Date.now() - setupStart;
 
@@ -230,6 +240,45 @@ async function oneRun(proxy: RecordingProxy, lang: string, run: number): Promise
     }
     result.ripgit = proxy.takeRipgit();
     result.ok = finishedAt !== null && result.steps.length > 0;
+
+    if (flags.reply) {
+      const before = result.messages.length;
+      const sentAt = Date.now();
+      const replyText = flags.reply === "auto" ? AUTO_REPLY[lang] ?? AUTO_REPLY.en : flags.reply;
+      await client.conversation.send({ conversationId: conversation.id, text: replyText, idempotencyKey: `bench-reply-${sentAt}` });
+      let replyAt: number | null = null;
+      let endAt: number | null = null;
+      let quiet: number | null = null;
+      let seen = false;
+      while (Date.now() < sentAt + timeoutMs) {
+        const now = await client.conversation.history({ conversationId: conversation.id });
+        const replies = now.messages.filter((message) => message.author.kind !== "user");
+        if (replies.length > before && replyAt === null) replyAt = Date.now();
+        const processes = await client.proc.list({});
+        const active = processes.processes.some((process) => (process.activeRunId ?? null) !== null || (process.queuedCount ?? 0) > 0);
+        if (active) seen = true;
+        if (active || !seen) {
+          quiet = null;
+          endAt = null;
+        } else {
+          quiet ??= Date.now();
+          endAt ??= Date.now();
+          if (Date.now() - quiet >= Number(flags.settle)) break;
+        }
+        await new Promise((done) => setTimeout(done, 100));
+      }
+      const steps = proxy.take();
+      const final = await client.conversation.history({ conversationId: conversation.id });
+      const after = await client.r12y.list({ includeTerminal: true });
+      result.reply = {
+        steps,
+        firstMessageMs: replyAt === null ? null : replyAt - sentAt,
+        endMs: endAt === null ? null : endAt - sentAt,
+        messages: final.messages.map((message) => message.text ?? ""),
+        state: after.responsibilities.find((record) => record.details?.responsibilityType === "onboarding.initial")?.state ?? null,
+      };
+      result.costUsd += steps.reduce((sum, step) => sum + step.costUsd, 0);
+    }
   } catch (error) {
     result.error = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     result.steps = result.steps.length ? result.steps : proxy.take();

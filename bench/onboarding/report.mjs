@@ -129,6 +129,15 @@ for (const label of process.argv.slice(2)) {
     for (const [key, count] of [...paths].sort((a, b) => b[1] - a[1]).slice(0, 12)) console.log(`  ${(count / during.length).toFixed(1)}/run ${key}`);
   }
 
+  const replied = ok.filter((run) => run.reply);
+  if (replied.length) {
+    console.log(`\nsecond turn (n=${replied.length}): steps ${cell(replied.map((run) => run.reply.steps.length))}, to first reply s ${cell(replied.map((run) => run.reply.firstMessageMs), 1000)}, to end s ${cell(replied.map((run) => run.reply.endMs), 1000)}, state after ${[...new Set(replied.map((run) => run.reply.state))].join(",")}`);
+    for (const run of replied.slice(0, Number(process.env.SHOW_MESSAGES ?? 3))) {
+      const calls = run.reply.steps.flatMap((step) => step.toolCalls.map(classify)).join(" > ");
+      console.log(`  [${run.lang}] ${calls}\n    ${JSON.stringify(run.reply.messages.at(-1))}`);
+    }
+  }
+
   console.log("\nfirst messages:");
   for (const run of ok.slice(0, Number(process.env.SHOW_MESSAGES ?? 3))) console.log(`  [${run.lang}] ${JSON.stringify(run.firstMessage)}`);
 }

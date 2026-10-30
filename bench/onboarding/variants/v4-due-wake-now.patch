@@ -1,0 +1,16 @@
+diff --git i/workers/gateway/src/kernel/responsibility-runtime.ts w/workers/gateway/src/kernel/responsibility-runtime.ts
+index ba911870e..7d7a2a3bb 100644
+--- i/workers/gateway/src/kernel/responsibility-runtime.ts
++++ w/workers/gateway/src/kernel/responsibility-runtime.ts
+@@ -77,8 +77,10 @@ async scheduleResponsibilityWakeAt(
+     wakeAtMs: number,
+     previousTaskId: string | null,
+   ): Promise<void> {
++    // Work that is already due wakes now; rounding up only guards a future check against the scheduler's whole seconds.
++    const now = Date.now();
+     const wakeAt = new Date(
+-      Math.ceil(Math.max(Date.now() + 1_000, wakeAtMs) / 1_000) * 1_000,
++      wakeAtMs <= now ? now : Math.ceil(Math.max(now + 1_000, wakeAtMs) / 1_000) * 1_000,
+     );
+     const task = await this.host.schedule(
+       wakeAt,

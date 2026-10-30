@@ -1,0 +1,62 @@
+diff --git i/workers/gateway/src/drivers/native/shell/r12y.ts w/workers/gateway/src/drivers/native/shell/r12y.ts
+index 84f797732..221cfb180 100644
+--- i/workers/gateway/src/drivers/native/shell/r12y.ts
++++ w/workers/gateway/src/drivers/native/shell/r12y.ts
+@@ -121,7 +121,7 @@ async function runR12yCommand(args: string[], ctx: KernelContext): Promise<ExecR
+       }
+       const patch = responsibilityPatchSchema.parse(JSON.parse(rest[2]));
+       const updated = await handleResponsibilityUpdate({ id, patch }, ctx);
+-      return result(`${JSON.stringify(updated)}\n`);
++      return result(updatedRecord(updated));
+     }
+     case "start":
+       requireArgumentCount(rest, 1, "start requires: r12y start ID");
+@@ -195,7 +195,7 @@ async function updateState(
+     id: requireId(args[0]),
+     patch: { state },
+   }, ctx);
+-  return result(`${JSON.stringify(updated)}\n`);
++  return result(updatedRecord(updated));
+ }
+ 
+ async function updateTerminal(
+@@ -215,7 +215,7 @@ async function updateTerminal(
+   const patch: ResponsibilityPatch = { state };
+   if (resolution) patch.resolution = resolution;
+   const updated = await handleResponsibilityUpdate({ id, patch }, ctx);
+-  return result(`${JSON.stringify(updated)}\n`);
++  return result(updatedRecord(updated));
+ }
+ 
+ async function waitResponsibility(args: string[], ctx: KernelContext): Promise<ExecResult> {
+@@ -234,7 +234,7 @@ async function waitResponsibility(args: string[], ctx: KernelContext): Promise<E
+     throw new Error("wait requires --until ISO or --blocker TEXT");
+   }
+   const updated = await handleResponsibilityUpdate({ id, patch }, ctx);
+-  return result(`${JSON.stringify(updated)}\n`);
++  return result(updatedRecord(updated));
+ }
+ 
+ async function delegateResponsibility(args: string[], ctx: KernelContext): Promise<ExecResult> {
+@@ -250,7 +250,7 @@ async function delegateResponsibility(args: string[], ctx: KernelContext): Promi
+       leaseExpiresAtMs: parseTimestamp(args[3], "--until"),
+     },
+   }, ctx);
+-  return result(`${JSON.stringify(updated)}\n`);
++  return result(updatedRecord(updated));
+ }
+ 
+ function renderResponsibilityList(records: ResponsibilityRecord[], revision: number): string {
+@@ -290,6 +290,12 @@ function requireArgumentCount(args: string[], count: number, message: string): v
+   if (args.length !== count) throw new Error(message);
+ }
+ 
++/** A state change confirms what changed; `r12y show` is how to read a record's details again. */
++function updatedRecord(updated: { responsibility: ResponsibilityRecord }): string {
++  const { details, ...record } = updated.responsibility;
++  return `${JSON.stringify({ ...updated, responsibility: record })}\n`;
++}
++
+ function result(stdout: string): ExecResult {
+   return { stdout, stderr: "", exitCode: 0 };
+ }

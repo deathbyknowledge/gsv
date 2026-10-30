@@ -1,0 +1,51 @@
+diff --git i/packages/gsv/src/protocol/events.ts w/packages/gsv/src/protocol/events.ts
+index 783081add..061a572cf 100644
+--- i/packages/gsv/src/protocol/events.ts
++++ w/packages/gsv/src/protocol/events.ts
+@@ -124,6 +124,7 @@ export const procHistoryEventPayloadSchemas = {
+     ledgerRevision: nonNegativeIntegerSchema,
+     responsibilityIds: z.array(z.string()),
+     receivedAtMs: z.number(),
++    firstContact: z.optional(z.boolean()),
+   }),
+   "contact.message": z.strictObject({
+     contactId: z.string(),
+@@ -291,6 +292,8 @@ export type ProcHistoryEventPayloadMap = {
+     ledgerRevision: number;
+     responsibilityIds: string[];
+     receivedAtMs: number;
++    /** The process had no history when the batch arrived: nobody has written and nothing was sent. */
++    firstContact?: boolean;
+   };
+   /** One message from a contact Ship handles; its attachments are the event's media. */
+   "contact.message": {
+diff --git i/workers/gateway/src/process/controller/runtime.ts w/workers/gateway/src/process/controller/runtime.ts
+index 68c81b049..15643a3bf 100644
+--- i/workers/gateway/src/process/controller/runtime.ts
++++ w/workers/gateway/src/process/controller/runtime.ts
+@@ -1615,6 +1615,7 @@ export class ProcessController {
+           ledgerRevision: event.ledgerRevision,
+           responsibilityIds: event.responsibilityIds,
+           receivedAtMs: Date.now(),
++          ...(this.host.store.messages.messageCount() === 0 ? { firstContact: true } : {}),
+         },
+         severity: "info",
+         audience: "model",
+diff --git i/workers/gateway/src/prompts/responsibility-events.ts w/workers/gateway/src/prompts/responsibility-events.ts
+index bde2daa8f..feb0f281b 100644
+--- i/workers/gateway/src/prompts/responsibility-events.ts
++++ w/workers/gateway/src/prompts/responsibility-events.ts
+@@ -57,6 +57,13 @@ export function renderResponsibilityBaseline(
+ }
+ 
+ export function formatResponsibilityReadyEvent(event: ProcHistoryEventPayload<"responsibility.ready">): string {
++  if (event.firstContact) {
++    return [
++      `Responsibility ready at ${new Date(event.receivedAtMs).toISOString()}: ${event.responsibilityIds.map((id) => `\`${id}\``).join(", ")}.`,
++      "This is your first run. Nobody has written to you and you have sent nothing, so there is no earlier conversation or state to check. Start now from the snapshot and the responsibility's details.",
++      "Resolve, cancel, delegate, or explicitly defer actionable work before yielding. Call Send with yield true when finished; omit text only when no user follow-up is needed.",
++    ].join("\n\n");
++  }
+   return [
+     `Responsibility review requested at ${new Date(event.receivedAtMs).toISOString()}.`,
+     `Review these responsibilities using the snapshot, later updates, and recent conversation: ${event.responsibilityIds.map((id) => `\`${id}\``).join(", ")}.`,
