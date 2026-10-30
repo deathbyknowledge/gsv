@@ -353,6 +353,36 @@ export function renderManualPage(topic: string): string | null {
         "",
       ].join("\n");
 
+    case "send":
+      return [
+        "SEND(1)",
+        "",
+        "NAME",
+        "  Send - the model tool that messages the person this run is for",
+        "",
+        "DESCRIPTION",
+        "  Send is a tool beside Shell, not a shell command: call it directly. It delivers",
+        "  to this run's directed endpoint and cannot name another destination. Runs",
+        "  answering `proc call` or `proc delegate` have no Send: their text is the result.",
+        "",
+        "PARAMETERS",
+        "  text    The message. Without yield, the run continues after it is sent.",
+        "  yield   true ends the run, after the message if there is one.",
+        "  attach  Up to 20 files to send with it. If one fails, nothing is sent.",
+        "",
+        "ATTACHING A FILE",
+        "  Send {\"text\": \"Here it is.\", \"attach\": [\"/tmp/report.pdf\"], \"yield\": true}",
+        "  An entry is PATH on gsv, TARGET:PATH on another target, or [TARGET]:PATH when",
+        "  the target id has a colon. Text is optional when files are named.",
+        "",
+        "SHELL FORMS",
+        "  `message send` is the same action from Shell, but it cannot name files: stage",
+        "  gsv files first with `message attach`. For another destination, use",
+        "  `message send --to DESTINATION [--attach PATH]... --also`; --attach needs --to.",
+        "  See `man message`.",
+        "",
+      ].join("\n");
+
     case "yield":
       return [
         "YIELD(1)",
