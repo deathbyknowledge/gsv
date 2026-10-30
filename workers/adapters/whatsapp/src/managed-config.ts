@@ -97,18 +97,6 @@ export function managedWhatsAppUnreachableCallingCodes(
 }
 
 /** The agent-facing sentence about who this number cannot reach; empty when it reaches everyone. */
-export function managedWhatsAppReachNote(
-  env: Pick<ManagedWhatsAppConfigEnv, "WHATSAPP_DISPLAY_NUMBER" | "WHATSAPP_UNREACHABLE_CALLING_CODES">,
-): string {
-  const unreachable = managedWhatsAppUnreachableCallingCodes(env);
-  if (!unreachable.length) return "";
-  const names = new Map(WHATSAPP_CROSS_BORDER_COUNTRIES);
-  const countries = unreachable
-    .map((code) => names.has(code) ? `${names.get(code)} (+${code})` : `+${code}`)
-    .join(" and ");
-  return `Meta currently blocks this number from messaging WhatsApp numbers in ${countries}, so people there cannot receive the code. If the user may be there, tell them before they try and offer another enabled messenger or email.`;
-}
-
 export function managedWhatsAppChatUrl(value: string | undefined): string | undefined {
   if (!validManagedWhatsAppDisplayNumber(value)) return undefined;
   return `https://wa.me/${managedWhatsAppDisplayDigits(value)}?text=${encodeURIComponent("/link")}`;
