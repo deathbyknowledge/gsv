@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Your Ship",
   "description": "Lets your Ship use this browser, signed in as you.",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/gsv-16.png",

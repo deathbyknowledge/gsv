@@ -4,6 +4,8 @@ import type { CodeModeMcpToolBinding } from "../codemode/mcp";
 import type { SyscallName } from "../syscalls";
 import type { CodeModeExecResult } from "../syscalls/codemode";
 import { raceWithAbort } from "../shared/abort";
+import type { ExecutionDeadlines } from "../shared/execution-deadline";
+import { TOOL_DISPATCH_TIMEOUT_MS } from "./internal/lifecycle";
 import {
   NET_FETCH, FS_DELETE, FS_EDIT, FS_READ, FS_SEARCH, FS_WRITE, MAIL_SEND, SHELL_EXEC, SYS_MCP_CALL,
 } from "../syscalls/constants";
@@ -22,6 +24,8 @@ export type CodeModeExecutionOptions = {
   mailDeliveryBase?: string;
   mcpToolBindings?: CodeModeMcpToolBinding[];
   signal?: AbortSignal;
+  /** Set when a nested call can ask a person: the execution limit then stops while they are asked. */
+  approvalDeadlines?: ExecutionDeadlines;
 };
 
 export type CodeModeToolRequest = (
@@ -286,6 +290,9 @@ function looksLikeFunctionExpression(source: string): boolean {
     || /^[A-Za-z_$][\w$]*\s*=>/.test(source);
 }
 
+/** The sandbox's own timer cannot pause, so under an approval it only backstops the host's deadline. */
+const CODE_MODE_SANDBOX_BACKSTOP_MS = CODE_MODE_EXECUTION_TIMEOUT_MS + TOOL_DISPATCH_TIMEOUT_MS;
+
 export async function executeCodeMode(
   env: CodeModeEnvironment,
   code: string,
@@ -300,26 +307,32 @@ export async function executeCodeMode(
   }
   const executor = new DynamicWorkerExecutor({
     loader: env.LOADER,
-    timeout: CODE_MODE_EXECUTION_TIMEOUT_MS,
+    timeout: options?.approvalDeadlines ? CODE_MODE_SANDBOX_BACKSTOP_MS : CODE_MODE_EXECUTION_TIMEOUT_MS,
     globalOutbound: null,
   });
+  const expiry = new AbortController();
+  const deadline = options?.approvalDeadlines?.start(
+    CODE_MODE_EXECUTION_TIMEOUT_MS,
+    () => expiry.abort(new Error("Execution timed out")),
+  );
+  const signal = options?.signal ? AbortSignal.any([options.signal, expiry.signal]) : expiry.signal;
   const request = async (call: SyscallName, args: JsonObject) => {
-    if (options?.signal?.aborted) {
+    if (signal.aborted) {
       // Resolve the host RPC and throw in the sandbox; rejecting a late RPC is
       // reported as unhandled after the outer execution has already returned.
-      return codeModeAbortResult(options.signal);
+      return codeModeAbortResult(signal);
     }
     let result: JsonValue;
     try {
       result = await requestTool(call, args);
     } catch (error) {
-      if (options?.signal?.aborted) {
-        return codeModeAbortResult(options.signal);
+      if (signal.aborted) {
+        return codeModeAbortResult(signal);
       }
       throw error;
     }
-    if (options?.signal?.aborted) {
-      return codeModeAbortResult(options.signal);
+    if (signal.aborted) {
+      return codeModeAbortResult(signal);
     }
     return result;
   };
@@ -377,13 +390,15 @@ export async function executeCodeMode(
   try {
     response = await raceWithAbort(
       executor.execute(buildCodeModeSource(code, options), providers),
-      options?.signal,
+      signal,
     );
   } catch (error) {
     return {
       status: "failed",
       error: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    deadline?.clear();
   }
   const logs = response.logs && response.logs.length > 0 ? response.logs : undefined;
   if (response.error) {

@@ -130,14 +130,17 @@ Daemon-writable configuration never selects the service pipe's owner.
 
 ## `gsv`
 
-`gsv auth login` defaults to the personal account and asks only for its password.
+`gsv login` defaults to the personal account and asks only for its password.
 `--username root` selects administration; machine enrollment retains its explicit
 account identity. The shared gateway client accepts omitted human usernames and
 the CLI stores the identity returned by the Kernel with its session token.
 
-`gsv` is an operator client. It owns gateway administration, authentication,
-chat and process commands, deployment, OS service installation/control for
-`gsvd`, and the client sides of local Desktop and daemon control.
+`gsv` is Ship from the terminal. It owns sign-in, the human-facing commands
+(Ship conversation, contacts, mail, work, approvals, routines, memory, files and
+remote commands), pairing, OS service installation/control for `gsvd`, and the
+client sides of local Desktop and daemon control. Every command renders through
+one shared module (`host/apps/cli/src/render.rs`) and offers `--json` for the
+full structured result.
 
 `gsv daemon install|start|restart|stop|uninstall` controls the OS service.
 Linux and macOS use the current user; Windows uses the native SCM boot service. `gsv daemon status|reload|reconnect|diagnostics` talks to the running

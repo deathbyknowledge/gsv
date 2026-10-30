@@ -326,14 +326,15 @@
 .fleet-place-form { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
 .fleet-place-form h4 { margin: 0; font-size: 13px; font-weight: 400; color: var(--text-title); }
 .fleet-place-form label { display: grid; gap: 8px; margin-top: 14px; font-size: 12px; color: var(--label); }
-.fleet-place-form input { min-width: 0; width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); padding: 6px; }
+.fleet-place-form label input { min-width: 0; width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); padding: 6px; }
 .fleet-place-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .fleet-place-form textarea { min-width: 0; width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); padding: 8px; min-height: 5rem; resize: vertical; }
-.fleet-place-form :disabled { opacity: .5; cursor: not-allowed; }
+.fleet-place-form label :disabled { opacity: .5; cursor: not-allowed; }
 .fleet-connection { overflow-wrap: anywhere; }
 .fleet-connection .is-on { color: var(--online); }
 .fleet-connection .fleet-setup { max-height: 16rem; overflow: auto; }
-.fleet-connection input:focus-visible, .fleet-connection textarea:focus-visible, .fleet-connection select:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.device-pairing .gsv-fld { width: 100%; max-width: 42rem; margin-top: 14px; }
+.device-pairing .gsv-fld + .gsv-fld { margin-top: 1.5rem; }
 .fleet-setup-command .fleet-actions { margin-top: 8px; color: var(--text-dim); font-size: 12px; }
 .fleet-setup-command .fleet-copy-command { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 10px; letter-spacing: 0.06em; }
 .fleet-copy-command svg { display: block; flex: none; }

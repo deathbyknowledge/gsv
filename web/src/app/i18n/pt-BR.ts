@@ -103,6 +103,7 @@ export const ptBR = {
   "settings.loadingAccount": "Carregando sua conta…",
   "settings.accountUnknown": "Não foi possível identificar sua conta. As configurações não podem ser editadas.",
   "settings.signIn.title": "Login",
+  "settings.signIn.intro": "Altere sua senha e configure um jeito de voltar a entrar se você perder o acesso.",
 
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (indisponível)",
@@ -111,6 +112,7 @@ export const ptBR = {
   "settings.preferences.unsaved": "Alterações não salvas",
   "settings.preferences.save": "Salvar alterações",
   "settings.account.title": "Conta",
+  "settings.account.intro": "Seu login e sua identidade para usar o Ship.",
   "settings.account.deleteTitle": "Excluir sua conta",
   "settings.account.deleteRequest": "Para excluir sua conta, envie um e-mail para {email} e faremos a exclusão manualmente para você.",
   "settings.account.deleteExplanation": "O Ship ainda está em acesso antecipado, por isso ainda não adicionamos uma opção para você excluir sua conta por conta própria.",
@@ -186,14 +188,18 @@ export const ptBR = {
 
   // Settings: standing responsibilities
   "settings.standing.title": "Responsabilidades fixas",
-  "settings.standing.intro": "Do que o Ship cuida quando algo acontece.",
+  "settings.standing.intro": "Acompanhe o que o Ship está cuidando.",
   "settings.standing.noAccess": "Sua conta não pode ler as responsabilidades fixas.",
+  "settings.standing.empty": "Ainda não há nada fixo. O que o Ship cuidar por você vai aparecer aqui.",
   "settings.standing.alwaysOn": "Sempre ativa.",
   "settings.standing.alwaysOnError": "Esta responsabilidade está sempre ativa.",
 
   // Settings: permissions
   "settings.permissions.title": "Permissões",
-  "settings.permissions.intro": "Escolha quando o Ship e seus ajudantes devem perguntar antes de usar uma capacidade. “Sempre permitir” em um pedido adiciona uma regra aqui. Destinos mais específicos têm prioridade, depois capacidades mais específicas; a ordem da lista desempata. As capacidades concedidas à conta continuam definindo o limite máximo.",
+  "settings.permissions.intro": "Escolha o que o Ship e seus ajudantes podem fazer sozinhos e sobre o que perguntam antes.",
+  "settings.permissions.noteAlways": "“Sempre permitir” em um pedido adiciona uma regra aqui.",
+  "settings.permissions.noteOrder": "Destinos mais específicos vencem, depois capacidades mais específicas; a ordem da lista desempata.",
+  "settings.permissions.noteGrants": "As permissões da conta continuam definindo o limite externo.",
   "settings.permissions.loading": "Carregando permissões…",
   "settings.permissions.targetsUnavailable": "Não foi possível carregar os nomes dos destinos. Os IDs de destino salvos continuam disponíveis.",
   "settings.permissions.unsupported": "Esta política salva contém campos que este editor não consegue alterar com segurança. Ela foi mantida sem alterações.",
@@ -224,7 +230,7 @@ export const ptBR = {
 
   // Settings: instructions
   "settings.instructions.title": "Instruções",
-  "settings.instructions.intro": "Suas instruções permanentes, em Markdown. Os ajudantes herdam suas instruções junto com as próprias. As alterações valem a partir da próxima execução.",
+  "settings.instructions.intro": "A orientação que você dá ao Ship sobre como se comportar fica registrada aqui. Os ajudantes herdam essas instruções junto com as deles. As mudanças valem a partir da próxima execução.",
   "settings.instructions.new": "nova instrução",
   "settings.instructions.newTitle": "Nova instrução",
   "settings.instructions.edit": "Editar instrução",
@@ -262,7 +268,7 @@ export const ptBR = {
   // Settings: messengers
   "settings.messengers.comingSoon": "Em breve",
   "settings.messengers.title": "Apps de mensagem",
-  "settings.messengers.intro": "Escolha onde você conversa com seu Ship.",
+  "settings.messengers.intro": "Fale com o seu Ship pelo seu app de mensagem favorito.",
   "settings.messengers.telegram": "Converse com seu Ship pelo Telegram.",
   "settings.messengers.slack": "Converse com seu Ship pelo seu espaço de trabalho do Slack.",
   "settings.messengers.discord": "Converse com seu Ship por mensagens diretas e servidores do Discord.",
@@ -358,7 +364,7 @@ export const ptBR = {
 
   // Settings: MCP servers
   "settings.mcp.title": "Servidores MCP",
-  "settings.mcp.intro": "Conecte ferramentas e recursos ao seu Ship.",
+  "settings.mcp.intro": "Dê ao Ship mais ferramentas e fontes, como uma agenda ou um banco de dados, pelos servidores MCP que você adicionar aqui.",
   "settings.mcp.noList": "Sua conta não pode ver a lista de servidores MCP.",
   "settings.mcp.noAdd": "Sua conta não pode adicionar servidores MCP.",
   "settings.mcp.loading": "Carregando servidores MCP…",
@@ -501,7 +507,7 @@ export const ptBR = {
   // Settings: desktop voice
   "settings.voice.title": "Voz",
   "settings.voice.label": "Configurações de voz",
-  "settings.voice.intro": "Preferências de voz para este computador.",
+  "settings.voice.intro": "Como o Ship ouve e fala neste computador.",
   "settings.voice.microphone": "Microfone",
   "settings.voice.systemDefault": "Padrão do sistema",
   "settings.voice.microphoneUnavailable": "O microfone selecionado não está disponível",
@@ -1356,6 +1362,7 @@ export const ptBR = {
   "shell.help.startWriting": "Começar a escrever; a tecla digitada vai para a caixa de texto",
   "shell.help.chatInput": "Chat · digitação",
   "shell.help.send": "Enviar a mensagem ou executar o comando",
+  "shell.help.newLine": "Nova linha",
   "shell.help.returnToBrowse": "Voltar à navegação; antes fecha o seletor de conexão",
   "shell.help.recall": "Recuperar a última entrada quando a caixa de texto estiver vazia",
   "shell.help.placeSyntax": "@conexão",
@@ -1384,6 +1391,7 @@ export const ptBR = {
 
   // Shell: key names in the keyboard help
   "shell.keys.enter": "Enter",
+  "shell.keys.newLine": "Shift / Alt + Enter",
   "shell.keys.spaceOrEnter": "Espaço / Enter",
   "shell.keys.enterOrSpace": "Enter / Espaço",
   "shell.keys.save": "⌘ / Ctrl + Enter",
@@ -1480,7 +1488,7 @@ export const ptBR = {
   "shell.pairing.cancelled": "Este convite foi cancelado.",
   "shell.pairing.newInvitation": "novo convite",
   "shell.pairing.invitation": "Convite para {name} · {id}. Expira às {time}.",
-  "shell.pairing.extensionSteps": "Baixe e descompacte a extensão. Em {extensions}, ative o modo de desenvolvedor e carregue a pasta dela. Clique no ícone Your Ship na barra de ferramentas, ou encontre-o no botão Extensões, e cole este convite no painel dela.",
+  "shell.pairing.extensionSteps": "A extensão Your Ship ainda não está na Chrome Web Store, então você a adiciona ao Chrome no modo do desenvolvedor. Baixe e descompacte o arquivo. Abra {extensions}, ative o Modo do desenvolvedor, escolha Carregar sem compactação e selecione a pasta descompactada. Clique no ícone Your Ship na barra de ferramentas, ou encontre-o no botão Extensões, e cole este convite no painel dela. Ela permite que seu Ship trabalhe neste navegador, conectado como você. Você pode pausá-la no painel dela quando quiser.",
   "shell.pairing.downloadExtension": "baixar extensão",
   "shell.pairing.copyInvitation": "copiar convite",
   "shell.pairing.openTerminal": "Abra {app} no computador que você quer conectar.",
@@ -1514,7 +1522,6 @@ export const ptBR = {
   "shell.prompt.commandPlace": "é executado em {place}, em {dir}",
   "shell.prompt.place": "em {place}; pressione para mudar",
   "shell.prompt.placeOffline": "{place} está sem conexão; pressione para mudar",
-  "shell.code.copy": "copiar",
   "shell.code.copyTitle": "Copiar código",
   "shell.code.copyFailed": "não foi possível copiar",
   "shell.code.copyManually": "Selecione o código e copie manualmente",
@@ -1698,6 +1705,7 @@ export const ptBR = {
   "chat.call.mailReply": "responder a um e-mail",
   "chat.call.mail": "enviar um e-mail",
   "chat.call.publish": "publicar na rede aberta",
+  "chat.call.schedule": "agendar trabalho para mais tarde",
 
   // Chat: approval requests
   "chat.hil.read": "ler {path}",
@@ -1861,8 +1869,8 @@ export const ptBR = {
   "chat.terminal.inputFor": "Entrada para {command}",
 
   // Chat: run receipts
-  "chat.receipt.working": "trabalhando",
-  "chat.receipt.worked": "trabalhou",
+  "chat.receipt.working": "trabalhando nisso",
+  "chat.receipt.worked": "trabalhou nisso",
   "chat.receipt.notes": "notas de trabalho",
   "chat.receipt.details": "detalhes da resposta",
   "chat.receipt.process": "esta conversa",

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, u
 import type { JSX } from "preact";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { useT } from "../../../i18n/locale";
+import { insertsNewline } from "./enterToSend";
 
 export type PromptPlace = {
   id: string;
@@ -270,6 +271,7 @@ export const PromptLine = forwardRef<PromptLineHandle, PromptLineProps>(function
     const input = inputRef.current;
     if (!input || event.isComposing) return;
     if (onKeyIntercept?.(event, input.value)) return;
+    if (insertsNewline(event, input)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void send();

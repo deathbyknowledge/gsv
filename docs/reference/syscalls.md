@@ -2632,6 +2632,12 @@ shell commands. Cron files
 are desired state: installing or rewriting a crontab removes and recreates the
 linked `sched.*` records, so crontab-backed schedule ids are operational ids,
 not stable cron identifiers.
+Installing one takes `sched.add`, `sched.remove` and, when it has jobs,
+`shell.exec`, whichever way the file arrives; removing one takes `sched.remove`.
+An agent's install goes through the `sched.add` approval rule as one request for
+the whole file, and a refusal leaves the previous crontab in place. A shell `>`
+empties the file when it opens it, before the new contents arrive; `crontab FILE`
+replaces the file in one step.
 Cron commands have no process-backed caller, so `proc delegate` is not valid in
 a crontab. Use `sched.list` for status, last result, source, and control.
 
@@ -2662,6 +2668,14 @@ type ScheduleExpression =
   | { kind: "after"; afterMs: number }
   | { kind: "every"; everyMs: number; anchorMs?: number }
   | { kind: "cron"; expr: string; timezone: string };
+
+// sched.add and sched.update also accept a local one-shot. The Kernel resolves it
+// to { kind: "at"; atMs } with the offset in force on that date, using the owner's
+// timezone unless one is given. A time skipped by a clock change resolves to the
+// first valid minute after the gap; a time that happens twice, to its first occurrence.
+type ScheduleExpressionInput =
+  | ScheduleExpression
+  | { kind: "at"; localTime: string; timezone?: string }; // 2026-10-26T10:00[:00]
 
 type ScheduleTarget =
   | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
@@ -2699,12 +2713,12 @@ type SchedulerSyscalls = {
   };
 
   "sched.add": {
-    args: { name: string; description?: string; enabled?: boolean; expression: ScheduleExpression; target: ScheduleTarget };
+    args: { name: string; description?: string; enabled?: boolean; expression: ScheduleExpressionInput; target: ScheduleTarget };
     result: { schedule: ScheduleRecord };
   };
 
   "sched.update": {
-    args: { id: string; patch: { name?: string; description?: string | null; enabled?: boolean; expression?: ScheduleExpression; target?: ScheduleTarget } };
+    args: { id: string; patch: { name?: string; description?: string | null; enabled?: boolean; expression?: ScheduleExpressionInput; target?: ScheduleTarget } };
     result: { schedule: ScheduleRecord };
   };
 
