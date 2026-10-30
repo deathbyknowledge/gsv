@@ -24,6 +24,7 @@ import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionStore } from "./shell-sessions";
 import type { ShellExecResult } from "@humansandmachines/gsv/protocol";
 import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
+import { ExecutionDeadlines, type ExecutionDeadline } from "../shared/execution-deadline";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
 import type { FsDeviceTransport } from "../drivers/native/fs";
@@ -351,9 +352,10 @@ async function dispatchLocal(
   if (ctx.approvedTarget) {
     return rejectBeforeDispatch(frame, 403, "Approval target changed before dispatch; retry the operation");
   }
-  const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx) };
+  const executionDeadlines = ctx.executionDeadlines ?? new ExecutionDeadlines();
+  const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx), executionDeadlines };
   const requestTarget: NetFetchDeviceTransport["requestTarget"] = async (targetId, call, args, options) => {
-    const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body);
+    const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body, executionDeadlines);
     const body = deadline ? deadline.body : options?.body;
     const signal = withDeadline(options?.signal ?? nativeContext.requestSignal, deadline);
     try {
@@ -374,7 +376,7 @@ async function dispatchLocal(
   };
   const fsTransport: FsDeviceTransport = {
     requestTarget: async (targetId, call, args, options) => {
-      const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body);
+      const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body, executionDeadlines);
       // SAFETY: Native filesystem operations construct the matching syscall arguments;
       // dispatch owns grants, target resolution, approval, cancellation and body cleanup.
       const request = {
@@ -1112,13 +1114,13 @@ type AnswerDeadline = { signal: AbortSignal; body: FrameBody | undefined; clear(
  * last byte has been read, so an upload's length never counts against it;
  * the body's idle timeout guards the upload itself.
  */
-function answerDeadline(ttlMs: number, body: FrameBody | undefined): AnswerDeadline {
+function answerDeadline(ttlMs: number, body: FrameBody | undefined, deadlines: ExecutionDeadlines): AnswerDeadline {
   const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let deadline: ExecutionDeadline | undefined;
   const arm = () => {
-    timer = setTimeout(
-      () => controller.abort(new DOMException("The operation timed out.", "TimeoutError")),
+    deadline = deadlines.start(
       ttlMs,
+      () => controller.abort(new DOMException("The operation timed out.", "TimeoutError")),
     );
   };
   if (!body) {
@@ -1127,7 +1129,7 @@ function answerDeadline(ttlMs: number, body: FrameBody | undefined): AnswerDeadl
   return {
     signal: controller.signal,
     body: body && { ...body, stream: body.stream.pipeThrough(new TransformStream({ flush: arm })) },
-    clear: () => clearTimeout(timer),
+    clear: () => deadline?.clear(),
   };
 }
 

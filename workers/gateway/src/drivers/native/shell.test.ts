@@ -20,6 +20,8 @@ import {
 import * as inferenceService from "../../inference/execution-client";
 import { ModelMetadataResolver } from "../../inference/model-metadata";
 import * as federationService from "../../kernel/federation";
+import * as outboundMail from "../../kernel/outbound-mail";
+import { authorizeNestedOperation } from "../../kernel/tool-approval";
 import { SEND_TOOL } from "../../process/internal/schemas";
 import type { InferenceExecutor, InferenceMediaRequest } from "@humansandmachines/gsv/services/inference-execution";
 import * as sharedUtils from "../../shared/utils";
@@ -617,6 +619,58 @@ describe("native shell execution", () => {
     expect(result).toMatchObject({
       status: "failed",
       error: "Command timed out after 10ms",
+    });
+  });
+
+  describe("while a person is asked to approve", () => {
+    const MAIL_COMMAND = "mail send --to person@example.invalid --subject Hello --message Hi --delivery-id window";
+
+    function mailAwaitingAnswer() {
+      let answer!: (approved: boolean) => void;
+      sendFrameToProcessMock.mockImplementation(async (_installation: string, _pid: string, frame: { id?: string }) =>
+        await new Promise((resolve) => {
+          // SAFETY: the authorization caller reads only ok and data.approved.
+          answer = (approved) => resolve({ type: "res", id: frame.id ?? "approval", ok: true, data: { approved } } as never);
+        }));
+      const dispatched = vi.fn();
+      const send = vi.spyOn(outboundMail, "handleMailSend").mockImplementation(async (input, mailCtx) => {
+        // SAFETY: the Process mock never reads these arguments.
+        await authorizeNestedOperation(mailCtx, "mail.send", input as never);
+        dispatched();
+        return { ok: true, deliveryId: "window", outboundId: "outbound", state: "queued", from: "a@example.invalid", to: "b@example.invalid", subject: "Hello", replayed: false };
+      });
+      const ctx = makeContext({ capabilities: ["shell.exec", "mail.send"], processRunId: "run" });
+      ctx.toolOwner = { runId: "run", requestId: "shell" };
+      ctx.defer = () => {};
+      return { ctx, send, dispatched, answer: (approved: boolean) => answer(approved) };
+    }
+
+    afterEach(() => vi.useRealTimers());
+
+    it("does not count the wait against the command timeout", async () => {
+      const { ctx, send, dispatched, answer } = mailAwaitingAnswer();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        const running = handleShellExec({ input: MAIL_COMMAND }, ctx);
+        await vi.advanceTimersByTimeAsync(DEFAULT_NATIVE_SHELL_TIMEOUT_MS * 4);
+        expect(dispatched).not.toHaveBeenCalled();
+        answer(true);
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(running).resolves.toMatchObject({ status: "completed", exitCode: 0 });
+        expect(dispatched).toHaveBeenCalledOnce();
+      } finally { send.mockRestore(); }
+    });
+
+    it("still applies the command timeout once the person has answered", async () => {
+      const { ctx, send, answer } = mailAwaitingAnswer();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        const running = handleShellExec({ input: `${MAIL_COMMAND} && sleep 600`, timeout: 10_000 }, ctx);
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        answer(true);
+        await vi.advanceTimersByTimeAsync(10_001);
+        await expect(running).resolves.toMatchObject({ status: "failed", error: "Command timed out after 10000ms" });
+      } finally { send.mockRestore(); }
     });
   });
 
