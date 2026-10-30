@@ -86,6 +86,8 @@
 .gsv-sel-list {
   max-height: min(320px, 42vh);
   overflow-y: auto;
+  /* A long list opens scrolled to its choice, which shows the scrollbar; keep it off the rows' end. */
+  scrollbar-gutter: stable;
 }
 .gsv-sel-row {
   appearance: none;
@@ -94,7 +96,7 @@
   align-items: center;
   gap: 9px;
   margin: 0;
-  padding: 10px 12px;
+  padding: 10px 20px 10px 12px; /* room at the end for an overlay scrollbar beside the choice marker */
   border: 0;
   background: transparent;
   color: inherit;

@@ -1,12 +1,17 @@
 import { saveApprovalPolicy } from "./permissionService";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
-import { useState } from "preact/hooks";
+import { useMemo, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleConfig, loadConsoleTargets } from "../../../services/system/consoleService";
 import { APPROVAL_ACTIONS, actionLabel, humanToolCapabilityLabel, targetOptionValue, targetFromOptionValue } from "../../../components/ui/agentToolApprovalOptions";
+import { Button } from "../../../components/ui/Button";
+import { IconButton } from "../../../components/ui/IconButton";
+import { InfoTip } from "../../../components/ui/InfoTip";
 import { Select } from "../../../components/ui/Select";
 import { LoadingState } from "../../../components/ui/Spinner";
+import { Table, type TableColumn } from "../../../components/ui/Table";
+import { Hint } from "../../../components/ui/Tooltip";
 import { defaultApprovalPolicyForConfig } from "../../../domain/system/consoleAgentBehavior";
 import { INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import { canConfigure, readSettingsPolicy, settingsAction, settingsPolicySchema, SETTINGS_CONFIG_KEY, type SettingsPolicy } from "./settingsModel";
@@ -29,9 +34,13 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
   const [error, setError] = useState<Error | null>(null);
   const [saved, setSaved] = useState(false);
   const usesDefault = draft?.inherited ?? !original;
-  const policy = usesDefault ? readSettingsPolicy(inherited) : draft?.policy ?? readSettingsPolicy(original);
+  // Parsed once per source string: a reparse on every render would hand each rule a fresh object, and with it a
+  // fresh row identity, so unrelated updates would remount every row.
+  const inheritedPolicy = useMemo(() => readSettingsPolicy(inherited), [inherited]);
+  const originalPolicy = useMemo(() => readSettingsPolicy(original), [original]);
+  const policy = usesDefault ? inheritedPolicy : draft?.policy ?? originalPolicy;
   const nextValue = usesDefault ? "" : policy ? JSON.stringify(policy) : original;
-  const dirty = draft !== null && (usesDefault ? original !== "" : JSON.stringify(readSettingsPolicy(original)) !== nextValue);
+  const dirty = draft !== null && (usesDefault ? original !== "" : JSON.stringify(originalPolicy) !== nextValue);
   useSettingsDirty(dirty, onDirty);
   const editable = connected && !!config.data && !config.isError && canConfigure(account, "sys.config.set") && policy !== null;
   const save = useMutation({
@@ -40,6 +49,49 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
     onSuccess: async () => { await cache.invalidateQueries({ queryKey: SETTINGS_CONFIG_KEY }); setDraft(null); setSaved(true); },
   });
   const update = (next: SettingsPolicy) => { setDraft({ inherited: false, policy: next, base: draft?.base ?? original }); setSaved(false); setError(null); };
+  // A rule has no id of its own, so one travels with the rule object: a move keeps it, and an edit hands it to
+  // the edited copy. The table keys rows by it, so a moved rule keeps its focus and its highlight.
+  const ruleIds = useRef(new WeakMap<SettingsPolicy["rules"][number], string>());
+  const nextRuleId = useRef(0);
+  const ruleId = (rule: SettingsPolicy["rules"][number]) => {
+    let id = ruleIds.current.get(rule);
+    if (!id) {
+      nextRuleId.current += 1;
+      id = `rule-${nextRuleId.current}`;
+      ruleIds.current.set(rule, id);
+    }
+    return id;
+  };
+  const ruleRows = (policy?.rules ?? []).map((rule, index) => ({ rule, index, options: permissionOptionsForRule(rule, targets) }));
+  type RuleRow = (typeof ruleRows)[number];
+  const setRule = (index: number, next: SettingsPolicy["rules"][number]) => {
+    if (!policy) return;
+    ruleIds.current.set(next, ruleId(policy.rules[index]));
+    update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? next : entry) });
+  };
+  const ruleColumns: TableColumn<RuleRow>[] = [
+    {
+      key: "tool", header: t("settings.permissions.tool"),
+      text: ({ rule, options }) => `${humanToolCapabilityLabel(rule.match)} ${options.customToolLabel ?? ""}`,
+      cell: ({ rule, index, options }) => <Select block size="small" ariaLabel={t("settings.permissions.ruleTool", { number: index + 1 })} options={options.tools} selected={rule.match} placeholder={t("settings.permissions.chooseTool")} disabled={usesDefault} onSelect={(value) => setRule(index, { ...rule, match: value })} />,
+      info: ({ options }) => options.customToolLabel ? <InfoTip text={options.customToolLabel} /> : null,
+    },
+    {
+      key: "target", header: t("settings.permissions.target"),
+      text: ({ rule, options }) => options.targets.find((option) => option.value === targetOptionValue(rule.target))?.label ?? "",
+      cell: ({ rule, index, options }) => <Select block size="small" ariaLabel={t("settings.permissions.ruleTarget", { number: index + 1 })} options={options.targets} selected={targetOptionValue(rule.target)} disabled={usesDefault} onSelect={(value) => {
+        const target = targetFromOptionValue(value);
+        const next: SettingsPolicy["rules"][number] = { match: rule.match, action: rule.action };
+        if (target) next.target = target;
+        setRule(index, next);
+      }} />,
+    },
+    {
+      key: "action", header: t("settings.permissions.action"),
+      text: ({ rule }) => actionLabel(rule.action),
+      cell: ({ rule, index }) => <Select block size="small" ariaLabel={t("settings.permissions.ruleAction", { number: index + 1 })} options={actionOptions} selected={rule.action} disabled={usesDefault} onSelect={(value) => setRule(index, { ...rule, action: settingsAction(value) })} />,
+    },
+  ];
   return <section class="settings-permissions" aria-labelledby="settings-permissions-title">
     <h1 id="settings-permissions-title">{t("settings.permissions.title")}</h1>
     <p class="settings-intro">{t("settings.permissions.intro")}</p>
@@ -51,8 +103,7 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
       <details><summary>{t("settings.permissions.inspect")}</summary><pre>{original}</pre></details>
       <p class="settings-muted">{t("settings.permissions.replaceHint")}</p>
       <button class="settings-text-action" type="button" disabled={!connected || config.isError || !canConfigure(account, "sys.config.set")} onClick={() => {
-        const replacement = readSettingsPolicy(inherited);
-        if (replacement) update(replacement);
+        if (inheritedPolicy) update(inheritedPolicy);
       }}>{t("settings.permissions.prepareReplacement")}</button>
     </div>}
     {!canConfigure(account, "sys.config.set") && <p class="settings-muted">{t("settings.permissions.readOnly")}</p>}
@@ -69,34 +120,23 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
         }} />{t("settings.permissions.useInherited")}</label>
         {policy && <>
           <Select block label={t("settings.permissions.default")} options={actionOptions} selected={policy.default} disabled={usesDefault} onSelect={(value) => update({ ...policy, default: settingsAction(value) })} />
-          <ol class="settings-rules">{policy.rules.map((rule, index) => {
-            const options = permissionOptionsForRule(rule, targets);
-            return <li key={index}>
-            <div class="settings-rule-move">
-              <button class="settings-text-action" type="button" aria-label={t("settings.permissions.moveUp")} title={t("settings.permissions.moveUp")} disabled={usesDefault || index === 0} onClick={() => { const rules = [...policy.rules]; [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]]; update({ ...policy, rules }); }}>↑</button>
-              <button class="settings-text-action" type="button" aria-label={t("settings.permissions.moveDown")} title={t("settings.permissions.moveDown")} disabled={usesDefault || index === policy.rules.length - 1} onClick={() => { const rules = [...policy.rules]; [rules[index + 1], rules[index]] = [rules[index], rules[index + 1]]; update({ ...policy, rules }); }}>↓</button>
-            </div>
-            <div class="settings-rule-tool">
-              <Select block size="small" label={t("settings.permissions.tool")} ariaLabel={t("settings.permissions.ruleTool", { number: index + 1 })} options={options.tools} selected={rule.match} placeholder={t("settings.permissions.chooseTool")} disabled={usesDefault} onSelect={(value) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, match: value } : entry) })} />
-              {options.customToolLabel && <p class="settings-field-note">{options.customToolLabel}</p>}
-              <button class="settings-text-action settings-rule-remove" type="button" disabled={usesDefault} onClick={() => update({ ...policy, rules: policy.rules.filter((_, at) => at !== index) })}>{t("common.remove")}</button>
-            </div>
-            <div class="settings-rule-field">
-              <Select block size="small" label={t("settings.permissions.target")} ariaLabel={t("settings.permissions.ruleTarget", { number: index + 1 })} options={options.targets} selected={targetOptionValue(rule.target)} disabled={usesDefault} onSelect={(value) => {
-                const target = targetFromOptionValue(value);
-                const next: SettingsPolicy["rules"][number] = { match: rule.match, action: rule.action };
-                if (target) next.target = target;
-                update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? next : entry) });
-              }} />
-            </div>
-            <Select block size="small" label={t("settings.permissions.action")} ariaLabel={t("settings.permissions.ruleAction", { number: index + 1 })} options={actionOptions} selected={rule.action} disabled={usesDefault} onSelect={(value) => update({ ...policy, rules: policy.rules.map((entry, at) => at === index ? { ...entry, action: settingsAction(value) } : entry) })} />
-
-          </li>;
-          })}</ol>
+          <Table caption={t("settings.permissions.rules")} rows={ruleRows} rowId={(entry) => ruleId(entry.rule)} columns={ruleColumns} density="compact"
+            search={{ label: t("settings.permissions.searchRules"), placeholder: t("settings.permissions.searchRules") }}
+            reorder={{ disabled: usesDefault, label: (entry) => t("settings.permissions.rule", { number: entry.index + 1 }), onMove: (from, to) => {
+              const rules = [...policy.rules];
+              const [moving] = rules.splice(from, 1);
+              rules.splice(to, 0, moving);
+              update({ ...policy, rules });
+            } }}
+            rowActions={(entry) => <Hint text={t("settings.permissions.removeRule")}>
+              <IconButton glyph="delete" variant="floating" ariaLabel={`${t("settings.permissions.removeRule")}: ${t("settings.permissions.rule", { number: entry.index + 1 })}`} disabled={usesDefault}
+                onClick={() => update({ ...policy, rules: policy.rules.filter((_, at) => at !== entry.index) })} />
+            </Hint>}
+            empty={<p>{t("settings.permissions.noRules")}</p>} />
           <div class="settings-actions">
-            <button class="settings-text-action" type="button" disabled={usesDefault} onClick={() => update({ ...policy, rules: [...policy.rules, { match: "", action: "ask" }] })}>{t("settings.permissions.addRule")}</button>
-            <button class="ibtn" type="submit" disabled={!dirty}>{save.isPending ? <LoadingState>{t("common.saving")}</LoadingState> : t("settings.permissions.save")}</button>
-            {dirty && <button class="settings-text-action" type="button" onClick={() => { setDraft(null); setError(null); save.reset(); }}>{t("common.discardChanges")}</button>}
+            <Button variant="secondary" label={t("settings.permissions.addRule")} disabled={usesDefault} onClick={() => update({ ...policy, rules: [...policy.rules, { match: "", action: "ask" }] })} />
+            <Button variant="primary" type="submit" label={save.isPending ? t("common.saving") : t("settings.permissions.save")} disabled={!dirty || save.isPending} />
+            {dirty && <Button variant="link" label={t("common.discardChanges")} onClick={() => { setDraft(null); setError(null); save.reset(); }} />}
             {saved && <span role="status">{t("common.saved")}</span>}
           </div>
         </>}

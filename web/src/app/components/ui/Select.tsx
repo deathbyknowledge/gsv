@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState, useLayoutEffect } from "preact/hooks";
 import { InfoTip } from "./InfoTip";
 import { useT } from "../../i18n/locale";
 import "./Select.css";
@@ -112,6 +112,35 @@ export function Select(props: SelectProps) {
   const idx = rawIdx < 0 || opts.length === 0 ? -1 : Math.max(0, Math.min(Number(rawIdx) || 0, opts.length - 1));
   const current = idx >= 0 ? opts[idx] : null;
   const isOpen = open && !disabled;
+  // The list opens downward unless the room below, inside the nearest scrolling ancestor and the viewport, is
+  // short of its height while the room above is larger, so a picker low in a long page opens upward instead
+  // of out of sight. (Scrolling the page to it would close it, as scrolling always does.)
+  const [opensUp, setOpensUp] = useState(false);
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      setOpensUp(false);
+      return;
+    }
+    const list = listRef.current;
+    const trigger = list?.parentElement;
+    if (!list || !trigger) return;
+    let top = 0;
+    let bottom = window.innerHeight;
+    for (let node = trigger.parentElement; node; node = node.parentElement) {
+      const overflow = getComputedStyle(node).overflowY;
+      if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight) {
+        const bounds = node.getBoundingClientRect();
+        top = Math.max(top, bounds.top);
+        bottom = Math.min(bottom, bounds.bottom);
+        break;
+      }
+    }
+    const anchor = trigger.getBoundingClientRect();
+    const below = bottom - anchor.bottom;
+    const above = anchor.top - top;
+    const up = list.offsetHeight > below && above > below;
+    setOpensUp(up);
+  }, [isOpen, opts.length]);
 
   const req = requirement && requirement !== "none" ? requirement : "";
   const rawStatus = status && status !== "none" ? status : "";
@@ -140,16 +169,22 @@ export function Select(props: SelectProps) {
   useEffect(() => {
     if (isOpen) {
       setHighlight(Math.max(0, idx));
-      listRef.current?.focus();
+      // Focus without scrolling: a list hanging past the page's edge must not scroll the page, which would close it.
+      listRef.current?.focus({ preventScroll: true });
     }
   }, [isOpen]);
 
+  // Keep the highlighted option within the list's own scroll, never by scrolling an ancestor: the page
+  // scrolling under an open list closes it.
   useEffect(() => {
     if (!isOpen) return;
+    const list = listRef.current;
     const row = document.getElementById(optId(highlight));
-    if (row instanceof HTMLElement) {
-      row.scrollIntoView({ block: "nearest" });
-    }
+    if (!list || !(row instanceof HTMLElement)) return;
+    const bounds = list.getBoundingClientRect();
+    const target = row.getBoundingClientRect();
+    if (target.top < bounds.top) list.scrollTop -= bounds.top - target.top;
+    else if (target.bottom > bounds.bottom) list.scrollTop += target.bottom - bounds.bottom;
   }, [highlight, isOpen]);
 
   const openList = () => {
@@ -282,8 +317,7 @@ export function Select(props: SelectProps) {
               position: "absolute",
               left: 0,
               right: 0,
-              top: "100%",
-              marginTop: "4px",
+              ...(opensUp ? { bottom: "100%", marginBottom: "4px" } : { top: "100%", marginTop: "4px" }),
               zIndex: 20,
               background: "var(--gsv-field-surface, var(--panel-2))",
               border: "1px solid var(--border-raised)",
