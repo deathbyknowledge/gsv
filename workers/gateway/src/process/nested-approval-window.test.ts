@@ -15,6 +15,7 @@ const ASKS: ToolApprovalPolicy = { default: "ask", rules: [] };
 /** A run whose Shell or CodeMode call is already executing, which is where nested approvals are raised. */
 function startedTool(process: Process, tool: "Shell" | "CodeMode") {
   const syscall = tool === "Shell" ? "shell.exec" : "codemode.exec";
+  // SAFETY: the run fixture holds only the fields these approval paths read.
   process.runs.active = approvedRun(RUN, {
     config: { ...terminalTestConfig(process.pid), capabilities: ["*"] }, tools: offeredTools(tool), offeredToolNames: [tool], approvalPolicy: ASKS,
   }) as Process["runs"]["active"];
@@ -22,6 +23,7 @@ function startedTool(process: Process, tool: "Shell" | "CodeMode") {
   process.store.tools.markDispatched(DISPATCH);
   vi.spyOn(process.kernel, "readApprovalPolicy").mockResolvedValue(JSON.stringify(ASKS));
   vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
+  // SAFETY: these tests never read the schedule record.
   vi.spyOn(process.run, "schedule").mockResolvedValue(undefined as never);
 }
 
@@ -33,7 +35,7 @@ async function tap(process: Process, decision: "approve" | "deny" = "approve"): 
 async function settled<T>(promise: Promise<T>) {
   return await promise.then(
     (value) => ({ value }),
-    (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+    (error: Error) => ({ error: error.message }),
   );
 }
 
@@ -65,6 +67,7 @@ describe("nested approval window", () => {
     const stub = await initProcess("nested-window-codemode", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       startedTool(process, "CodeMode");
+      // SAFETY: only ok and data of this fixture frame are read.
       const dispatched = vi.spyOn(process.tools, "dispatchCodeModeSyscall")
         .mockResolvedValue({ type: "res", id: "fetch", ok: true, data: { status: 200 } } as never);
       fakeClock();
@@ -85,8 +88,12 @@ describe("nested approval window", () => {
     await runInProcess(stub, async (process: Process) => {
       startedTool(process, "CodeMode");
       let answer!: (frame: never) => void;
-      vi.spyOn(sharedUtils, "sendFrameToKernel").mockReturnValue(new Promise((resolve) => { answer = resolve as never; }));
-      const cancel = vi.spyOn(sharedUtils, "cancelProcessRequests").mockResolvedValue(0 as never);
+      // SAFETY: only ok and data of this fixture frame are read.
+      vi.spyOn(sharedUtils, "sendFrameToKernel").mockReturnValue(new Promise((resolve) => {
+        // SAFETY: only ok and data of this fixture frame are read.
+        answer = resolve as never;
+      }));
+      const cancel = vi.spyOn(sharedUtils, "cancelProcessRequests").mockResolvedValue(0);
       fakeClock();
       const syscall = process.tools.dispatchCodeModeSyscall(RUN, "nested-mail", "mail.send", MAIL, undefined, DISPATCH);
       const authorized = process.tools.authorizeNestedTool(
@@ -96,6 +103,7 @@ describe("nested approval window", () => {
       expect(cancel).not.toHaveBeenCalled();
       await expect(tap(process)).resolves.toMatchObject({ ok: true });
       await expect(authorized).resolves.toBe(true);
+      // SAFETY: only ok and data of this fixture frame are read.
       answer({ type: "res", id: "nested-mail", ok: true, data: {} } as never);
       await expect(syscall).resolves.toMatchObject({ ok: true });
       process.runs.active = null;
@@ -147,10 +155,12 @@ describe("nested approval window", () => {
     await runInProcess(stub, async (process: Process) => {
       expect(process.codeModeApprovals.size).toBe(0);
       expect(process.store.tools.getPendingHil()).toMatchObject({ syscall: "mail.send" });
+      // SAFETY: the run fixture holds only the fields these approval paths read.
       process.runs.active ??= approvedRun(RUN, {
         config: { ...terminalTestConfig(process.pid), capabilities: ["*"] }, tools: offeredTools("Shell"), offeredToolNames: ["Shell"], approvalPolicy: ASKS,
       }) as Process["runs"]["active"];
       vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
+      // SAFETY: these tests never read the schedule record.
       vi.spyOn(process.run, "schedule").mockResolvedValue(undefined as never);
       await expect(tap(process)).resolves.toEqual({
         ok: false, error: "Tool execution was interrupted while waiting for approval",

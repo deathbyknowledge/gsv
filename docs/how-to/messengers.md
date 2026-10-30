@@ -15,6 +15,11 @@ request to publish on the [open network](/architecture/open-network) always
 names the handle and full address it publishes as, such as
 `@alice (alice.ship.space)`, whatever else Ship wrote.
 
+A request raised while Ship is already running a command waits up to 9 minutes
+for your answer. If you answer a request that has ended, whether it timed out,
+was interrupted by a new message or was answered elsewhere, the messenger says
+your answer wasn't used; ask Ship to try again if it still needs doing.
+
 ## Ask Ship to connect
 
 Ask Ship to connect the messenger you want. It gets the current connection

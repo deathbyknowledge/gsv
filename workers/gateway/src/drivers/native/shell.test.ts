@@ -628,10 +628,12 @@ describe("native shell execution", () => {
       let answer!: (approved: boolean) => void;
       sendFrameToProcessMock.mockImplementation(async (_installation: string, _pid: string, frame: { id?: string }) =>
         await new Promise((resolve) => {
+          // SAFETY: the authorization caller reads only ok and data.approved.
           answer = (approved) => resolve({ type: "res", id: frame.id ?? "approval", ok: true, data: { approved } } as never);
         }));
       const dispatched = vi.fn();
       const send = vi.spyOn(outboundMail, "handleMailSend").mockImplementation(async (input, mailCtx) => {
+        // SAFETY: the Process mock never reads these arguments.
         await authorizeNestedOperation(mailCtx, "mail.send", input as never);
         dispatched();
         return { ok: true, deliveryId: "window", outboundId: "outbound", state: "queued", from: "a@example.invalid", to: "b@example.invalid", subject: "Hello", replayed: false };

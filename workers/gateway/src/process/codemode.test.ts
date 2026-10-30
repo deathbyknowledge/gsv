@@ -52,8 +52,10 @@ describe.sequential("CodeMode executor", () => {
         modules.push(build().modules["executor.js"]!);
         return { getEntrypoint: () => ({ evaluate: async () => ({ result: null, logs: [] }) }) };
       } };
-      await executeCodeMode({ LOADER: loader } as never, "return 1;", async () => null, { approvalDeadlines: new ExecutionDeadlines() });
-      await executeCodeMode({ LOADER: loader } as never, "return 1;", async () => null);
+      // SAFETY: the executor only calls get and evaluate on this loader.
+      const env = { LOADER: loader } as never;
+      await executeCodeMode(env, "return 1;", async () => null, { approvalDeadlines: new ExecutionDeadlines() });
+      await executeCodeMode(env, "return 1;", async () => null);
       expect(modules[0]).toContain("Execution timed out\")), 660000");
       expect(modules[1]).toContain("Execution timed out\")), 60000");
     });
