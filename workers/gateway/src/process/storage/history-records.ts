@@ -1,7 +1,7 @@
 import type { ThinkingContent, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 import {
   jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema, resourceBlockSchema,
-  type JsonObject, type JsonValue, type ProcHistoryEventKind, type ProcHistoryRecordData,
+  type JsonObject, type JsonValue, type ProcHistoryEventKind, type ProcHistoryMessageQuote, type ProcHistoryRecordData,
   type ResourceBlock, type ProcHistoryMedia, type InteractionOrigin,
   type ProcHistoryArchivedResultPayload,
 } from "@humansandmachines/gsv/protocol";
@@ -21,6 +21,7 @@ type MessageHistoryOptions = {
   queueKind?: string;
   provenance?: JsonObject;
   selectedTarget?: string;
+  quote?: ProcHistoryMessageQuote;
 };
 
 const LEGACY_COMPACTION_PREFIX = "Process history compacted.\n";
@@ -104,6 +105,7 @@ export function inferHistoryRecords(
         direction: "in", text: message.content, media, origin,
       };
       if (options.selectedTarget !== undefined) payload.selectedTarget = options.selectedTarget;
+      if (options.quote !== undefined) payload.quote = options.quote;
       const interaction = jsonObjectSchema.safeParse(options.provenance);
       if (interaction.success) {
         const messageId = interaction.data.messageId;
