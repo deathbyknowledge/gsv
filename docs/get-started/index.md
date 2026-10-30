@@ -111,6 +111,10 @@ a handle such as `@esteve` or a full address for another Ship. **Reference a fil
 adds a file’s connection and path as soon as you select its name. Use **../** at the
 top of a connection’s file list to move toward its filesystem root.
 
+Select an attached file's name to preview supported text, source files, images or PDFs
+without downloading it. The preview stays open if its message leaves the loaded
+conversation; **close** or Escape dismisses it. **download** remains a separate action.
+
 In the browser and when added to your Home Screen, the header and bottom controls
 leave room for your phone's notch and home indicator. The star field still fills
 the screen, continuing behind the home indicator in the Home Screen app.

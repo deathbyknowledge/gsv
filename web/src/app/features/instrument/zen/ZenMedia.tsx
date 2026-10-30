@@ -4,6 +4,7 @@ import { useChatMediaSource, useMediaObjectUrl } from "../../../services/chat/ho
 import type { ChatMediaUpload } from "../../../services/chat/domain/processes";
 import { useMediaPreview } from "../../../services/platform/MediaPreview";
 import { useT, type TextKey } from "../../../i18n/locale";
+import { useAttachmentPreview } from "./AttachmentPreviews";
 import type { ZenPaste } from "./zenAttachments";
 
 /** What an attachment is called when it arrives without a usable file name. */
@@ -46,27 +47,36 @@ export function ZenDraftPaste({ paste, onRemove, onChange, disabled }: { paste: 
 export function ZenMedia({ media, processId, onReady }: { media: unknown; processId: string; onReady?: () => void }) {
   const t = useT();
   const preview = useMediaPreview();
+  const previewAttachment = useAttachmentPreview();
   const descriptor = parseChatMedia(media);
   const kind = chatMediaKind(media);
   const filename = descriptor.filename && !/^archived-media:[a-f\d]{64}$/.test(descriptor.filename)
     ? descriptor.filename : t(MEDIA_NAMES[kind]);
   const opensAsImage = /^image\/(png|jpeg|gif|webp|avif|bmp|x-icon)$/i.test(descriptor.mimeType ?? "");
-  const { source, error, available, retry } = useChatMediaSource(descriptor, processId);
+  const { source, blob, error, available, retry } = useChatMediaSource(descriptor, processId);
   const downloadTarget = source.startsWith("blob:") ? undefined : "_blank";
+  /** Files with resolved bytes open in the viewer; players, remote links and downloads keep their own paths. */
+  const openable = kind !== "video" && kind !== "audio" && ((blob && previewAttachment !== null) || (preview !== null && opensAsImage));
+  const openAttachment = () => {
+    if (opensAsImage && preview) preview({ source, filename, description: descriptor.description || filename });
+    else if (blob) previewAttachment?.({ blob, mimeType: descriptor.mimeType ?? blob.type, filename, description: descriptor.description || filename });
+  };
   return <figure class={`zen-media is-${kind}`}>
     {error ? <p class="zen-media-error" role="alert">{t("chat.media.loadFailed", { filename })} <button type="button" onClick={() => void retry()}>{t("chat.retry")}</button></p>
       : !available ? <p class="zen-media-error">{t("chat.media.unavailable", { filename })}</p>
       : source ? <>
         {kind === "image" && <a class="zen-media-image" href={source} download={opensAsImage ? undefined : filename} target={opensAsImage ? "_blank" : downloadTarget} rel="noreferrer"
-          onClick={preview && opensAsImage ? (event) => {
+          onClick={opensAsImage && (preview || (blob && previewAttachment)) ? (event) => {
             event.preventDefault();
-            preview({ source, filename, description: descriptor.description || filename });
+            openAttachment();
           } : undefined}><img src={source} alt={descriptor.description || filename} loading="lazy" onLoad={onReady} /></a>}
         {kind === "video" && <video controls preload="metadata" src={source} onLoadedMetadata={onReady} />}
         {kind === "audio" && <audio controls preload="metadata" src={source} />}
       </> : <LoadingState>{t("chat.media.loading", { filename })}</LoadingState>}
     <figcaption>
-      {source ? <a href={source} download={filename} target={downloadTarget} rel="noreferrer">{filename}</a> : <span>{filename}</span>}
+      {source && openable ? <button type="button" onClick={openAttachment}>{filename}</button>
+        : source ? <a href={source} download={filename} target={downloadTarget} rel="noreferrer">{filename}</a> : <span>{filename}</span>}
+      {source && openable && <a href={source} download={filename} target={downloadTarget} rel="noreferrer">{t("fleet.file.download")}</a>}
       <span>{formatChatMediaSize(descriptor.size)}</span>
     </figcaption>
     {descriptor.transcription && <details><summary>{t("chat.media.transcription")}</summary><p>{descriptor.transcription}</p></details>}

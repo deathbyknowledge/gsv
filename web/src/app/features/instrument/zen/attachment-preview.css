@@ -1,0 +1,15 @@
+.attachment-preview { position: fixed; inset: 0; box-sizing: border-box; margin: auto; width: min(70rem, calc(var(--instrument-width, 100vw) / var(--type-scale, 1) - 2rem)); height: calc(var(--instrument-height, 100dvh) / var(--type-scale, 1) - 2rem); max-width: none; max-height: none; padding: 1rem; border: 1px solid var(--border-raised); background: var(--panel); color: var(--text); text-align: left; font: .85rem/1.6 var(--gsv-font-mono); }
+.attachment-preview[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 1rem; }
+.attachment-preview::backdrop { background: rgb(0 0 0 / .65); }
+.attachment-preview header { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem 1.5rem; min-width: 0; }
+.attachment-preview header > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.attachment-preview header a, .attachment-preview header button { flex-shrink: 0; padding: .3rem 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: .25em; }
+.attachment-preview-content { min-width: 0; min-height: 0; overflow: auto; }
+.attachment-preview-content > pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.attachment-preview-content > img { width: 100%; height: 100%; max-height: none; object-fit: contain; }
+.attachment-preview-content > object { display: block; width: 100%; height: 100%; border: 0; }
+.attachment-preview-note { margin: 0; color: var(--text-dim); font-size: .75rem; }
+.zen-media figcaption button { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; text-align: inherit; overflow-wrap: anywhere; }
+.attachment-preview .zen-prose { font: 1rem/1.6 var(--gsv-font-prose); overflow-wrap: anywhere; }
+.attachment-preview .zen-prose table { display: block; max-width: 100%; overflow-x: auto; }
+.attachment-preview .zen-prose :not(pre) > code { white-space: pre-wrap; overflow-wrap: anywhere; }
