@@ -165,7 +165,7 @@ describe("public inference executor RPC", () => {
     const local = new InferenceService(createExecutionContext(), { ...configured, GSV_TELEMETRY_ENABLED: true });
     const lookup = { installationId: "inst_metadata", lookupId: crypto.randomUUID() };
     try {
-      await expect(local.resolveModel("gsv", "default", lookup)).resolves.toMatchObject({ contextWindowTokens: 1_310_720 });
+      await expect(local.resolveModel("gsv", "default", lookup)).resolves.toMatchObject({ contextWindowTokens: 1_048_576 });
       expect(telemetryRecordSchema.parse(log.mock.calls[0][0])).toMatchObject({
         component: "inference", installationId: lookup.installationId,
         event: { name: "inference.metadata.finished", properties: { lookupId: lookup.lookupId, outcome: "ok" } },
@@ -175,7 +175,7 @@ describe("public inference executor RPC", () => {
       expect(JSON.stringify(log.mock.calls)).not.toContain("private-model");
       await local.resolveModel("gsv", "default", { ...lookup, lookupId: "invalid" });
       expect(log).toHaveBeenCalledTimes(2);
-      await expect(service.resolveModel("gsv", "default", lookup)).resolves.toMatchObject({ contextWindowTokens: 1_310_720 });
+      await expect(service.resolveModel("gsv", "default", lookup)).resolves.toMatchObject({ contextWindowTokens: 1_048_576 });
     } finally { log.mockRestore(); }
   });
   it.each(["default", "InferenceService"] as const)("serves execution through the %s entrypoint", async (entrypoint) => {
@@ -192,7 +192,7 @@ describe("public inference executor RPC", () => {
   });
 
   it("resolves operator defaults and newly available binding models", async () => {
-    expect(await service.resolveModel("gsv", "default")).toMatchObject({ provider: "gsv", model: "default", contextWindowTokens: 1_310_720 });
+    expect(await service.resolveModel("gsv", "default")).toMatchObject({ provider: "gsv", model: "default", contextWindowTokens: 1_048_576 });
     expect(await service.resolveModel("workers-ai", "@cf/test/new-model")).toMatchObject({ contextWindowTokens: 12345 });
   });
   it("rejects unknown installations before allocating durable state", async () => {

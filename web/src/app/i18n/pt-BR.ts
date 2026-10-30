@@ -103,6 +103,7 @@ export const ptBR = {
   "settings.loadingAccount": "Carregando sua conta…",
   "settings.accountUnknown": "Não foi possível identificar sua conta. As configurações não podem ser editadas.",
   "settings.signIn.title": "Login",
+  "settings.signIn.intro": "Altere sua senha e configure um jeito de voltar a entrar se você perder o acesso.",
 
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (indisponível)",
@@ -111,6 +112,7 @@ export const ptBR = {
   "settings.preferences.unsaved": "Alterações não salvas",
   "settings.preferences.save": "Salvar alterações",
   "settings.account.title": "Conta",
+  "settings.account.intro": "Seu login e sua identidade para usar o Ship.",
   "settings.account.deleteTitle": "Excluir sua conta",
   "settings.account.deleteRequest": "Para excluir sua conta, envie um e-mail para {email} e faremos a exclusão manualmente para você.",
   "settings.account.deleteExplanation": "O Ship ainda está em acesso antecipado, por isso ainda não adicionamos uma opção para você excluir sua conta por conta própria.",
@@ -186,14 +188,18 @@ export const ptBR = {
 
   // Settings: standing responsibilities
   "settings.standing.title": "Responsabilidades fixas",
-  "settings.standing.intro": "Do que o Ship cuida quando algo acontece.",
+  "settings.standing.intro": "Acompanhe o que o Ship está cuidando.",
   "settings.standing.noAccess": "Sua conta não pode ler as responsabilidades fixas.",
+  "settings.standing.empty": "Ainda não há nada fixo. O que o Ship cuidar por você vai aparecer aqui.",
   "settings.standing.alwaysOn": "Sempre ativa.",
   "settings.standing.alwaysOnError": "Esta responsabilidade está sempre ativa.",
 
   // Settings: permissions
   "settings.permissions.title": "Permissões",
-  "settings.permissions.intro": "Escolha quando o Ship e seus ajudantes devem perguntar antes de usar uma capacidade. “Sempre permitir” em um pedido adiciona uma regra aqui. Destinos mais específicos têm prioridade, depois capacidades mais específicas; a ordem da lista desempata. As capacidades concedidas à conta continuam definindo o limite máximo.",
+  "settings.permissions.intro": "Escolha o que o Ship e seus ajudantes podem fazer sozinhos e sobre o que perguntam antes.",
+  "settings.permissions.noteAlways": "“Sempre permitir” em um pedido adiciona uma regra aqui.",
+  "settings.permissions.noteOrder": "Destinos mais específicos vencem, depois capacidades mais específicas; a ordem da lista desempata.",
+  "settings.permissions.noteGrants": "As permissões da conta continuam definindo o limite externo.",
   "settings.permissions.loading": "Carregando permissões…",
   "settings.permissions.targetsUnavailable": "Não foi possível carregar os nomes dos destinos. Os IDs de destino salvos continuam disponíveis.",
   "settings.permissions.unsupported": "Esta política salva contém campos que este editor não consegue alterar com segurança. Ela foi mantida sem alterações.",
@@ -224,7 +230,7 @@ export const ptBR = {
 
   // Settings: instructions
   "settings.instructions.title": "Instruções",
-  "settings.instructions.intro": "Suas instruções permanentes, em Markdown. Os ajudantes herdam suas instruções junto com as próprias. As alterações valem a partir da próxima execução.",
+  "settings.instructions.intro": "A orientação que você dá ao Ship sobre como se comportar fica registrada aqui. Os ajudantes herdam essas instruções junto com as deles. As mudanças valem a partir da próxima execução.",
   "settings.instructions.new": "nova instrução",
   "settings.instructions.newTitle": "Nova instrução",
   "settings.instructions.edit": "Editar instrução",
@@ -262,7 +268,7 @@ export const ptBR = {
   // Settings: messengers
   "settings.messengers.comingSoon": "Em breve",
   "settings.messengers.title": "Apps de mensagem",
-  "settings.messengers.intro": "Escolha onde você conversa com seu Ship.",
+  "settings.messengers.intro": "Fale com o seu Ship pelo seu app de mensagem favorito.",
   "settings.messengers.telegram": "Converse com seu Ship pelo Telegram.",
   "settings.messengers.slack": "Converse com seu Ship pelo seu espaço de trabalho do Slack.",
   "settings.messengers.discord": "Converse com seu Ship por mensagens diretas e servidores do Discord.",
@@ -363,7 +369,7 @@ export const ptBR = {
 
   // Settings: MCP servers
   "settings.mcp.title": "Servidores MCP",
-  "settings.mcp.intro": "Conecte ferramentas e recursos ao seu Ship.",
+  "settings.mcp.intro": "Dê ao Ship mais ferramentas e fontes, como uma agenda ou um banco de dados, pelos servidores MCP que você adicionar aqui.",
   "settings.mcp.noList": "Sua conta não pode ver a lista de servidores MCP.",
   "settings.mcp.noAdd": "Sua conta não pode adicionar servidores MCP.",
   "settings.mcp.loading": "Carregando servidores MCP…",
@@ -506,7 +512,7 @@ export const ptBR = {
   // Settings: desktop voice
   "settings.voice.title": "Voz",
   "settings.voice.label": "Configurações de voz",
-  "settings.voice.intro": "Preferências de voz para este computador.",
+  "settings.voice.intro": "Como o Ship ouve e fala neste computador.",
   "settings.voice.microphone": "Microfone",
   "settings.voice.systemDefault": "Padrão do sistema",
   "settings.voice.microphoneUnavailable": "O microfone selecionado não está disponível",
@@ -1209,7 +1215,7 @@ export const ptBR = {
   "session.welcome.signInWithEmail": "Entrar com e-mail",
   "session.welcome.sendCode": "Enviar código",
   "session.welcome.confirm": "Confirmar",
-  "session.welcome.codeSent": "Digite o código enviado para {email}.",
+  "session.welcome.codeSent": "Digite o código enviado para {email}. Confira também sua pasta de spam.",
   "session.welcome.invitationPrompt": "Entre ou crie seu Ship para se conectar.",
   "session.welcome.handle": "Nome de usuário",
   "session.welcome.handlePlaceholder": "seu-nome",
@@ -1412,17 +1418,9 @@ export const ptBR = {
   "shell.approval.fileKilobytes": "{type} · {size} KB",
   "shell.approval.fileMegabytes": "{type} · {size} MB",
 
-  // Shell: welcome
+  // Shell: first run
   "shell.retryButton": "Tentar de novo",
-  "shell.welcome.loadFailed": "Não foi possível carregar as boas-vindas.",
-  "shell.welcome.dismiss": "Fechar as boas-vindas",
-  "shell.welcome.title": "Boas-vindas ao seu Ship!",
-  "shell.welcome.intro": "Sou Kawah, do time fundador do Ship. Steve, Jessica e eu passamos os últimos meses construindo isto, e estamos muito felizes por você estar aqui!",
-  "shell.welcome.early": "O Ship ainda está no começo, então você pode encontrar algumas arestas para aparar. Se algo quebrar, parecer confuso ou fizer você pensar \"queria que ele pudesse…\", adoraríamos saber.",
-  "shell.welcome.contact": "Você pode usar o botão \"comentários\" lá em cima a qualquer momento, ou falar direto com a gente no {discord} (e ver o cachorro do Steve).",
-  "shell.welcome.thanks": "Agradecemos por estar entre as primeiras pessoas a embarcar. Isso significa muito para nós!",
-  "shell.welcome.dismissFailed": "Não foi possível fechar as boas-vindas. Tente de novo.",
-  "shell.welcome.start": "Experimente!",
+  "shell.firstRun.failed": "Não foi possível acordar o Ship.",
 
   // Shell: feedback
   "shell.feedback.trigger": "comentários",
@@ -1866,8 +1864,8 @@ export const ptBR = {
   "chat.terminal.inputFor": "Entrada para {command}",
 
   // Chat: run receipts
-  "chat.receipt.working": "trabalhando",
-  "chat.receipt.worked": "trabalhou",
+  "chat.receipt.working": "trabalhando nisso",
+  "chat.receipt.worked": "trabalhou nisso",
   "chat.receipt.notes": "notas de trabalho",
   "chat.receipt.details": "detalhes da resposta",
   "chat.receipt.process": "esta conversa",
@@ -2434,10 +2432,7 @@ export const ptBR = {
   "fleet.ledger.sysPairList": "verificou convites",
   "fleet.ledger.sysPairCancel": "cancelou um convite",
   "fleet.ledger.sysPairRedeem": "conectou um computador ou navegador",
-  "fleet.ledger.sysLink": "conectou uma conta de app de mensagem",
-  "fleet.ledger.sysUnlink": "desconectou uma conta de app de mensagem",
   "fleet.ledger.sysLinkList": "listou contas de app de mensagem",
-  "fleet.ledger.sysLinkConsume": "confirmou uma conta de app de mensagem",
   "fleet.ledger.accountCreate": "criou uma conta",
   "fleet.ledger.accountList": "listou contas",
   "fleet.ledger.accountOwnerLink": "iniciou a verificação do titular",

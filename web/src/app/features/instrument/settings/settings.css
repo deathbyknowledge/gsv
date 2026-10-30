@@ -10,7 +10,6 @@
 .settings-content section { max-width: 54rem; }
 .settings h1, .settings h2 { font: inherit; color: var(--text); margin: 0 0 1.5rem; }
 .settings section.settings-logs { max-width: none; }
-.settings-logs-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
 .settings-logs-list { overflow-x: auto; margin-bottom: 1rem; }
 .settings-logs .fleet-ledger { min-width: 48rem; }
 @container instrument (max-width: 720px) {
@@ -29,6 +28,8 @@
 .settings p:not(.gsv-prose) { line-height: 1.7; }
 .settings-intro { max-width: 65ch; color: var(--text-dim); margin-bottom: 2rem; font-family: var(--gsv-font-prose); font-size: 1rem; }
 .settings-intro a { text-decoration: underline; text-underline-offset: .2em; }
+.settings-notes { margin: 0 0 var(--space-5); padding-left: 1.1em; color: var(--text-dim); font-family: var(--gsv-font-prose); font-size: .9375rem; max-width: 65ch; }
+.settings-notes li + li { margin-top: var(--space-1); }
 .settings-muted, .settings small { color: var(--text-dim); }
 .settings p.settings-muted { max-width: 70ch; font-family: var(--gsv-font-prose); font-size: .9375rem; }
 .settings-error { color: var(--error); overflow-wrap: anywhere; }
@@ -119,7 +120,6 @@
 .settings-mcp-header .settings-text-action { margin-bottom: .6rem; }
 .settings-server-heading { display: flex; justify-content: space-between; gap: 1rem; }
 .settings-permissions h1 { margin-bottom: .75rem; }
-.settings-permissions .settings-intro { font-size: .875rem; margin-bottom: .75rem; }
 .settings-permissions p.settings-muted { font-size: .8125rem; line-height: 1.5; }
 .settings-permissions .gsv-fld { margin-bottom: .75rem; }
 .settings-rules { list-style: none; padding: 0; margin: .75rem 0; }

@@ -390,6 +390,19 @@ function record(who: "you" | "ship", text: string, createdAt: number, runId: str
 }
 if (!fresh) for (const [who, createdAt, text] of LINES) record(who, text, createdAt, `run-${world.sequence + 1}`);
 
+/** The Kernel's ledger behind the seeded replies: Ship's purposes on most calls, one older call without, so Work shows both. */
+const LEDGER: [runId: string, timestamp: number, target: string, call: string, args: JsonObject, purpose: string | null][] = [
+  ["run-1", at(1, 9, 12), "gsv", "fs.search", { query: "Mara", path: "/home/esteve/notes" }, "find the notes from yesterday's call with Mara"],
+  ["run-1", at(1, 9, 12), "gsv", "codemode.exec", { code: "const notes = await fs.read(\"/home/esteve/notes/calls/mara-0915.md\");\nconst items = notes.content.split(\"\\n\").filter((line) => line.startsWith(\"- [ ]\"));\nreturn items;" }, "pull the action items out of the Mara call notes"],
+  ["run-1", at(1, 9, 13), "gsv", "fs.write", { path: "/home/esteve/notes/mara.md", content: "# Mara\n\n- [ ] Deck for Thursday\n- [ ] Intro to Lena\n- [ ] Follow up on pricing\n" }, "save the three action items in your notes under Mara"],
+  ["run-1", at(1, 9, 13), "gsv", "sched.add", { name: "deck for Thursday" }, "remind you about the deck on Wednesday evening"],
+  ["run-3", at(0, 8, 5), "studio", "shell.exec", { input: "tail -5 /var/log/studio-backup.log", target: "studio" }, null],
+];
+if (!fresh) world.ledger = LEDGER.map(([runId, timestamp, target, call, args, purpose], index) => ({
+  seq: index + 1, timestamp, principalKind: "process", uid: SHIP.uid, pid: SHIP.pid, runId, target, call,
+  args: JSON.stringify(args), purpose, outcome: "ok", error: null, durationMs: 900, tokens: null, costNanoUsd: null,
+}));
+
 /** One history group: the records share a messageId and land in one revision, the way a Process appends them. */
 function appendGroup(runId: string, data: ProcHistoryRecordData[], metadata?: ProcMessageMetadata): number {
   const messageId = ++world.messageId;

@@ -8,7 +8,6 @@ import {
   checkConsoleOpenAiCodexOAuth,
   connectConsoleAdapter,
   confirmConsoleAdapterPairing,
-  consumeIdentityLinkCode,
   createConsoleAgent,
   deleteConsoleMachine,
   disconnectConsoleAdapter,
@@ -28,7 +27,6 @@ import {
   loadConsoleTargets,
   pollConsoleOpenAiCodexOAuth,
   refreshConsoleMcpServer,
-  removeIdentityLink,
   removeConsoleMcpServer,
   runConsoleProcessAction,
   saveConsoleConfig,
@@ -45,19 +43,16 @@ import {
   type ConsoleAdapterPairingCandidate,
   type ConsoleAdapterPairingInfo,
   type ConsoleAdapterPairingResult,
-  type ConsumeIdentityLinkCodeInput,
   type CreateConsoleAgentInput,
   type CreateConsoleAgentResult,
   type DeleteConsoleMachineInput,
   type DeleteConsoleMachineResult,
   type ConsoleAgentContextFile,
-  type IdentityLinkMutationResult,
   type InspectConsoleAdapterPairingInput,
   type LoadConsoleOverviewOptions,
   type PollConsoleOpenAiCodexOAuthInput,
   type PollConsoleOpenAiCodexOAuthResult,
   type RemoveIdentityLinkInput,
-  type RemoveIdentityLinkResult,
   type RunConsoleProcessActionInput,
   type RunConsoleProcessActionResult,
   type SaveConsoleAgentBehaviorInput,
@@ -367,26 +362,6 @@ async function invalidateConsoleIdentityState(queryClient: ReturnType<typeof use
     queryClient.invalidateQueries({ queryKey: consoleTargetsQueryKey }),
     queryClient.invalidateQueries({ queryKey: consoleOverviewQueryKey }),
   ]);
-}
-
-export function useConsumeIdentityLinkCode() {
-  const { client } = useGateway();
-  const queryClient = useQueryClient();
-
-  return useMutation<IdentityLinkMutationResult, Error, ConsumeIdentityLinkCodeInput>({
-    mutationFn: (input) => consumeIdentityLinkCode(client, input),
-    onSuccess: async () => invalidateConsoleIdentityState(queryClient),
-  });
-}
-
-export function useRemoveIdentityLink() {
-  const { client } = useGateway();
-  const queryClient = useQueryClient();
-
-  return useMutation<RemoveIdentityLinkResult, Error, RemoveIdentityLinkInput>({
-    mutationFn: (input) => removeIdentityLink(client, input),
-    onSuccess: async () => invalidateConsoleIdentityState(queryClient),
-  });
 }
 
 export function useConnectConsoleAdapter() {

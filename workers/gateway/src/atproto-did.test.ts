@@ -80,3 +80,74 @@ describe("ATProto handle resolution", () => {
     );
   });
 });
+
+describe("remembered handle answers", () => {
+  const URL_ADA = "https://ada.ship.space/.well-known/atproto-did";
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("answers for a minute from the DID the host gave, so a takedown shows within a minute", async () => {
+    vi.useFakeTimers();
+    let account: PublicRepositoryAccount = { ...ACCOUNT, host: "https://pds.ship.space" };
+    const f = fixture(async () => account);
+    expect(await (await resolve(URL_ADA, f.pds)).text()).toBe(ACCOUNT.did);
+    account = { ...account, status: "takendown" };
+
+    await vi.advanceTimersByTimeAsync(59_000);
+    const remembered = await resolve(URL_ADA, f.pds, "HEAD");
+    expect(remembered.status).toBe(200);
+    expect(remembered.headers.get("cache-control")).toBe("no-store");
+    expect(f.getInstallation).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((await resolve(URL_ADA, f.pds)).status).toBe(404);
+    expect(f.getInstallation).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks the host every time about a hostname it gave no DID for, so a new account resolves at once", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const live = { ...ACCOUNT, host: "https://pds.ship.space" };
+    const answers: (PublicRepositoryAccount | null | Error)[] = [
+      null,
+      { ...live, handle: "ada.gsv.space" },
+      { ...live, status: "takendown" },
+      new Error("PDS unavailable"),
+      live,
+    ];
+    const f = fixture(async () => {
+      const next = answers.shift();
+      if (next instanceof Error) throw next;
+      return next ?? null;
+    });
+    const statuses = [];
+    for (let i = 0; i < 5; i += 1) statuses.push((await resolve(URL_ADA, f.pds)).status);
+    expect(statuses).toEqual([404, 404, 404, 503, 200]);
+    expect(f.getInstallation).toHaveBeenCalledTimes(5);
+  });
+
+  it("asks the host again once the hostname routes to another installation", async () => {
+    const f = fixture(async () => ({ ...ACCOUNT, host: "https://pds.ship.space" }));
+    await resolve(URL_ADA, f.pds);
+    const moved = await serveAtprotoDid(new Request(URL_ADA), f.pds, "inst_reset");
+    expect(moved.status).toBe(200);
+    expect(f.getInstallation.mock.calls).toEqual([[INSTALLATION_ID], ["inst_reset"]]);
+  });
+
+  it("remembers at most 1,024 hostnames, forgetting the oldest answer first", async () => {
+    const getInstallation = vi.fn(async (installationId: string) => ({
+      account: async () => ({ did: `did:plc:${installationId}`, handle: `${installationId}.ship.space`, host: "https://pds.ship.space" }),
+      [Symbol.dispose]: () => undefined,
+    }));
+    // SAFETY: The route reads only the repository's account.
+    const pds = { getInstallation } as never;
+    const ask = (name: string) => serveAtprotoDid(new Request(`https://${name}.ship.space/.well-known/atproto-did`), pds, name);
+    for (let i = 0; i <= 1_024; i += 1) await ask(`s${i}`);
+    getInstallation.mockClear();
+    expect(await (await ask("s1")).text()).toBe("did:plc:s1");
+    expect(getInstallation).not.toHaveBeenCalled();
+    expect(await (await ask("s0")).text()).toBe("did:plc:s0");
+    expect(getInstallation).toHaveBeenCalledWith("s0");
+  });
+});

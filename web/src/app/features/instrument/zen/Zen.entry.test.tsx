@@ -715,7 +715,7 @@ describe("Zen conversation entry", () => {
     } finally { await zen.unmount(); }
   });
 
-  it("does not say Ship is waking while the welcome card still stands", async () => {
+  it("does not say Ship is waking while the first run is still pending", async () => {
     const zen = await mountedZen(undefined, undefined, false, false, true);
     try {
       await vi.waitFor(() => expect(zen.props(PromptLine).disabled).toBe(false));

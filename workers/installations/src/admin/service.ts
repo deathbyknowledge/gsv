@@ -25,11 +25,26 @@ export const RESET_CONSEQUENCES: readonly string[] = [
   "Nothing is erased yet: this Ship's data is kept as pending deletion until a separate deletion removes it.",
 ];
 
+const FOLLOWED_STATES = { active: "reactivated", restricted: "suspended", retained: "retired" } as const;
+
 /** Accounts kept a Ship's new lifecycle state, but the deployment's PDS could not follow it. */
 export class OpenNetworkFollowError extends Error {
-  constructor(readonly state: "active" | "restricted", options: ErrorOptions) {
-    super(`The Ship is ${state === "restricted" ? "suspended" : "reactivated"}, but its open-network host could not be told.`, options);
+  constructor(readonly state: keyof typeof FOLLOWED_STATES, options: ErrorOptions) {
+    super(`The Ship is ${FOLLOWED_STATES[state]}, but its open-network host could not be told.`, options);
     this.name = "OpenNetworkFollowError";
+  }
+}
+
+/** Has the deployment's PDS follow the state Accounts now holds for an installation; repeating the change tells it again. */
+export async function followOnOpenNetwork(
+  pds: PdsModerationService | undefined,
+  installationId: string,
+  state: OpenNetworkFollowError["state"],
+): Promise<void> {
+  try {
+    await pds?.reconcileAccountStatus(installationId);
+  } catch (error) {
+    throw new OpenNetworkFollowError(state, { cause: error });
   }
 }
 
@@ -56,11 +71,7 @@ export class InstallationAdminService extends InstallationAdminStore {
    */
   override async setInstallationState(installationId: string, state: "active" | "restricted"): Promise<void> {
     await super.setInstallationState(installationId, state);
-    try {
-      await this.pds?.reconcileAccountStatus(installationId);
-    } catch (error) {
-      throw new OpenNetworkFollowError(state, { cause: error });
-    }
+    await followOnOpenNetwork(this.pds, installationId, state);
   }
 
   getUsernamePolicy(): Promise<UsernamePolicyLists> {
@@ -96,6 +107,8 @@ export class InstallationAdminService extends InstallationAdminStore {
   ): Promise<IssuedAdminInstallation> {
     const installationId = parseOpaqueId(installationIdValue, "installationId");
     const reset = await this.resets.reset({ installationId, operationId: input.operationId, confirmHandle: input.confirmHandle });
+    // The retired Ship's public repository stops being served once the PDS follows.
+    await followOnOpenNetwork(this.pds, reset.previousInstallationId, "retained");
     const onboarding = await this.onboarding.begin(reset.installationId);
     return {
       installation: await this.requireInstallation(reset.installationId), onboarding,

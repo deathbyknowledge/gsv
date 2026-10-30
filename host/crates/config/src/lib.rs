@@ -672,7 +672,7 @@ url = "wss://gateway.stevej.workers.dev/ws"
 # Non-interactive gateway credential (legacy "token" field, keep secret!)
 token = "your-token-here"
 
-# Cached short-lived user session token (written by `gsv auth login`)
+# Cached short-lived user session token (written by `gsv login`)
 # session_token = "gsv_user_..."
 # session_token_id = "uuid"
 # session_expires_at = 1735689600000
