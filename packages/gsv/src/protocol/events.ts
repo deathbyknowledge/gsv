@@ -225,9 +225,10 @@ export const procHistoryEventPayloadSchemas = {
   "owner.notified": z.strictObject({
     noticeId: z.string(),
     topic: z.enum(["contact.message", "contact.request", "contact.invite.accepted"]),
-    channel: z.string(),
-    text: z.string(),
+    adapter: z.string(),
     from: z.string(),
+    handle: z.optional(z.string()),
+    preview: z.optional(z.string()),
     contactId: z.optional(z.string()),
     conversationId: z.optional(z.string()),
     messages: z.optional(nonNegativeIntegerSchema),
@@ -350,12 +351,14 @@ export type ProcHistoryEventPayloadMap = {
   "owner.notified": {
     noticeId: string;
     topic: "contact.message" | "contact.request" | "contact.invite.accepted";
-    /** The adapter that carried the notice, such as whatsapp. */
-    channel: string;
-    /** The notice exactly as the owner received it; contact text inside it is untrusted. */
-    text: string;
-    /** The contact's local alias or display name. */
+    /** The adapter that carried the notice, such as whatsapp; each reader names it with adapterDisplayName. */
+    adapter: string;
+    /** The contact's local alias or display name, on one line. */
     from: string;
+    /** The contact's handle, when the notice names one. */
+    handle?: string;
+    /** The start of the newest message, on one line; absent when it carries no text. It is the contact's untrusted words. */
+    preview?: string;
     contactId?: string;
     conversationId?: string;
     /** How many contact messages the notice covered. */
@@ -383,6 +386,19 @@ export const procHistoryTargetEventRegistry = {
   },
 } as const;
 
+/**
+ * The GSV object an event is about. It is never a URL: each client opens it in its own
+ * interface, and a messenger receives a link to it from the Kernel.
+ */
+export type ProcHistoryEventLink =
+  | { kind: "contact"; contactId: string }
+  | { kind: "contact.request"; requestId: string };
+
+export const procHistoryEventLinkSchema: z.ZodMiniType<ProcHistoryEventLink> = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("contact"), contactId: z.string() }),
+  z.strictObject({ kind: z.literal("contact.request"), requestId: z.string() }),
+]);
+
 function eventSchema<K extends ProcHistoryEventKind>(kind: K) {
   return z.strictObject({
     kind: z.literal(kind),
@@ -390,6 +406,7 @@ function eventSchema<K extends ProcHistoryEventKind>(kind: K) {
     severity: procHistoryEventSeveritySchema,
     audience: procHistoryEventAudienceSchema,
     media: z.optional(z.array(procHistoryMediaSchema)),
+    link: z.optional(procHistoryEventLinkSchema),
   });
 }
 
@@ -432,6 +449,7 @@ export const procHistoryEventSchema: z.ZodMiniType<ProcHistoryEvent> = z.discrim
     severity: procHistoryEventSeveritySchema,
     audience: procHistoryEventAudienceSchema,
     media: z.optional(z.array(procHistoryMediaSchema)),
+    link: z.optional(procHistoryEventLinkSchema),
   }),
 ]);
 
@@ -444,4 +462,5 @@ export type ProcHistoryEvent = ({
   severity: ProcHistoryEventSeverity;
   audience: ProcHistoryEventAudience;
   media?: ProcHistoryMedia[];
+  link?: ProcHistoryEventLink;
 };

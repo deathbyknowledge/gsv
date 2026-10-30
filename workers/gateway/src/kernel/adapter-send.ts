@@ -136,7 +136,7 @@ export async function handleAdapterSend(
 export async function deliverAdapterDestination(
   destination: AdapterMessageDestination,
   ownerUid: number,
-  message: Pick<AdapterSendArgs, "deliveryId" | "text" | "media" | "replyToId"> & {
+  message: Pick<AdapterSendArgs, "deliveryId" | "text" | "action" | "media" | "replyToId"> & {
     routeGeneration?: string;
   },
   ctx: KernelContext,
@@ -165,7 +165,7 @@ export async function deliverAdapterDestination(
 }
 
 async function deliverAdapterMessage(
-  args: Pick<AdapterSendArgs, "adapter" | "accountId" | "deliveryId" | "surface" | "text" | "media" | "replyToId"> & {
+  args: Pick<AdapterSendArgs, "adapter" | "accountId" | "deliveryId" | "surface" | "text" | "action" | "media" | "replyToId"> & {
     actorId?: string;
     routeGeneration?: string;
   },
@@ -217,7 +217,7 @@ async function deliverAdapterMessage(
 }
 
 async function deliverAdapterMessageOwned(
-  args: Pick<AdapterSendArgs, "adapter" | "accountId" | "deliveryId" | "surface" | "text" | "media" | "replyToId"> & {
+  args: Pick<AdapterSendArgs, "adapter" | "accountId" | "deliveryId" | "surface" | "text" | "action" | "media" | "replyToId"> & {
     actorId?: string;
     routeGeneration?: string;
   },
@@ -297,6 +297,7 @@ async function deliverAdapterMessageOwned(
       deliveryId,
       surface: args.surface,
       text: args.text,
+      ...(args.action === undefined ? undefined : { action: args.action }),
       ...(args.replyToId === undefined ? undefined : { replyToId: args.replyToId }),
       ...(args.media === undefined ? undefined : { media: args.media }),
     },

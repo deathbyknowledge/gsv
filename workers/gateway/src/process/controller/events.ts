@@ -21,7 +21,7 @@ export async function deliverProcessEvent(
   const eventId = z.string().regex(/^[a-zA-Z0-9._:-]{1,200}$/).parse(args.eventId);
   const event = procHistoryEventSchema.parse(args.event);
   if (event.kind === "owner.notified") {
-    if (event.severity !== "info" || event.audience !== "model") {
+    if (event.severity !== "info" || event.audience !== "both") {
       throw new Error("Process event is not registered for this delivery path");
     }
     // A notice joins an active run like any runtime event; otherwise it waits, without

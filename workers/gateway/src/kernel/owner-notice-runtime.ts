@@ -3,11 +3,11 @@ import type { DurableTaskOptions } from "../shared/durable-tasks";
 import { stableOpaqueId } from "../shared/stable-id";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { deliverAdapterDestination } from "./adapter-send";
-import { adapterDisplayName, identityLinkRouteGeneration } from "./adapter-destinations";
+import { identityLinkRouteGeneration } from "./adapter-destinations";
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import type { OwnerNotice } from "./owner-notice-store";
-import { noticeLanguage, renderOwnerNotice } from "./owner-notice-text";
+import { messengerNoticeAction, noticeLanguage, ownerNoticeLink, ownerNoticeParts, renderOwnerNotice } from "./owner-notice-text";
 import type { OwnerNotifiedShipEvent } from "./ship-event-store";
 
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
@@ -55,20 +55,20 @@ export class OwnerNoticeRuntime {
       return true;
     }
     const { destination } = preferred;
-    const link = ctx.adapters.identityLinks.get(destination.adapter, destination.accountId, destination.actorId);
-    const routeGeneration = link ? identityLinkRouteGeneration(link, destination.surface) : undefined;
-    const text = renderOwnerNotice(
-      current,
-      noticeLanguage(ctx.config.get(`users/${notice.ownerUid}/locale/language`)),
-      ctx.installationIdentity?.canonicalOrigin ?? null,
-    );
+    const identityLink = ctx.adapters.identityLinks.get(destination.adapter, destination.accountId, destination.actorId);
+    const routeGeneration = identityLink ? identityLinkRouteGeneration(identityLink, destination.surface) : undefined;
+    const language = noticeLanguage(ctx.config.get(`users/${notice.ownerUid}/locale/language`));
+    const line = renderOwnerNotice(current, language);
+    const link = ownerNoticeLink(current);
+    const action = messengerNoticeAction(link, language, ctx.installationIdentity?.canonicalOrigin ?? null);
     // A forgotten row comes back with a new creation time, so a round is never named twice.
     const noticeId = `${notice.key}:${notice.createdAtMs}:${notice.round}`;
     // Adapters bind a delivery id to its content: a retry after the text changed is a new delivery.
-    const deliveryId = await stableOpaqueId("owner-notice", [noticeId, text]);
+    const deliveryId = await stableOpaqueId("owner-notice", [noticeId, line, action?.label ?? "", action?.url ?? ""]);
     const result = await deliverAdapterDestination(destination, notice.ownerUid, {
       deliveryId,
-      text,
+      text: line,
+      ...(action === undefined ? undefined : { action }),
       ...(routeGeneration === undefined ? undefined : { routeGeneration }),
     }, ctx);
     const now = Date.now();
@@ -88,14 +88,14 @@ export class OwnerNoticeRuntime {
       payload: {
         noticeId,
         topic: current.topic,
-        channel: adapterDisplayName(destination.adapter),
-        text,
-        from: current.subject.from,
+        adapter: destination.adapter,
+        ...ownerNoticeParts(current),
         contactId: current.subject.contactId,
         ...(current.subject.conversationId ? { conversationId: current.subject.conversationId } : undefined),
         ...(current.topic === "contact.message" ? { messages: current.pendingCount } : undefined),
         sentAtMs: now,
       },
+      link,
     };
     this.host.ctx.storage.transactionSync(() => {
       this.host.ownerNotices.sent(notice, now);

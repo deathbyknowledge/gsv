@@ -129,6 +129,74 @@ describe("dispatch", () => {
       : { ok: false, error: "Permission denied: fs.copy" } } });
   });
 
+  it("counts a cross-target copy's deadline from the end of its upload", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // The platform timer ignores fake time; this one follows it.
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("The operation timed out.", "TimeoutError")), ms);
+      return controller.signal;
+    });
+    try {
+      const ctx = makeContext();
+      vi.mocked(ctx.targets.get).mockImplementation((id: string) => deviceRecord(id, true));
+      const source = { target: "laptop", path: "/tmp/episode.mp4" };
+      const destination = { target: "desktop", path: "/tmp/episode.mp4" };
+      let upload!: ReadableStreamDefaultController<Uint8Array>;
+      const uploadStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          upload = controller;
+          controller.enqueue(new TextEncoder().encode("cl"));
+        },
+      });
+      let abortedWhileStreaming: boolean | undefined;
+      let abortedBeforeDeadline: boolean | undefined;
+      let abortedAfterDeadline: boolean | undefined;
+      const request: DispatchDeps["request"] = vi.fn(async (frame, _ctx, signal) => {
+        if (frame.call === "fs.transfer.stat") {
+          return frame.args.target === "laptop"
+            ? { type: "res", id: frame.id, ok: true, data: { ok: true, path: source.path, size: 4, isFile: true, isDirectory: false, contentType: "video/mp4" } }
+            : { type: "res", id: frame.id, ok: true, data: { ok: false, error: "ENOENT" } };
+        }
+        if (frame.call === "fs.transfer.send") {
+          return {
+            type: "res", id: frame.id, ok: true,
+            data: { ok: true, size: 4, contentType: "video/mp4" },
+            body: { length: 4, contentType: "video/mp4", stream: uploadStream },
+          };
+        }
+        const reader = frame.body!.stream.getReader();
+        await reader.read();
+        await vi.advanceTimersByTimeAsync(130_000);
+        abortedWhileStreaming = signal?.aborted;
+        upload.enqueue(new TextEncoder().encode("ip"));
+        upload.close();
+        while (!(await reader.read()).done) {}
+        await vi.advanceTimersByTimeAsync(119_000);
+        abortedBeforeDeadline = signal?.aborted;
+        await vi.advanceTimersByTimeAsync(2_000);
+        abortedAfterDeadline = signal?.aborted;
+        return { type: "res", id: frame.id, ok: true, data: { ok: true, bytesWritten: 4 } };
+      });
+      // SAFETY: A cross-target native copy uses only ordinary dispatch requests.
+      const deps = { request } as DispatchDeps;
+      const result = await dispatch(
+        { type: "req", id: "copy", call: "fs.copy", args: { source, destination } },
+        { type: "kernel", id: "copy" },
+        ctx,
+        deps,
+      );
+
+      expect(abortedWhileStreaming).toBe(false);
+      expect(abortedBeforeDeadline).toBe(false);
+      expect(abortedAfterDeadline).toBe(true);
+      expect(result).toMatchObject({ handled: true, response: { ok: true } });
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
   it("routes web search to its selected provider without leaking routing metadata", async () => {
     const ctx = makeContext();
     vi.mocked(ctx.targets.get).mockReturnValue(deviceRecord("search-provider", true, ["web.search"]));

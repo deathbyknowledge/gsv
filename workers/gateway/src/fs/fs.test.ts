@@ -740,6 +740,60 @@ describe("GsvFs write metadata", () => {
     );
   });
 
+  it("types an extensionless file by its bytes", async () => {
+    const fs = makeFs(SAM);
+    const binary = new Uint8Array([0x8f, 0x00, 0xd2, 0x41, 0xff, 0x13]);
+    const text = new TextEncoder().encode("Hola, ¿qué tal?\n");
+
+    await fs.writeFile(`/${TEST_PREFIX}blob`, binary);
+    await fs.writeFile(`/${TEST_PREFIX}README`, text);
+    await fs.writeFileStream(`/${TEST_PREFIX}streamed-blob`, bytesToStream(binary), { expectedSize: binary.byteLength });
+    await fs.writeFileStream(`/${TEST_PREFIX}Makefile`, bytesToStream(text), { expectedSize: text.byteLength });
+    await fs.writeFile(`/${TEST_PREFIX}empty`, new Uint8Array());
+
+    const types = await Promise.all(["blob", "README", "streamed-blob", "Makefile", "empty"].map(async (name) =>
+      (await env.STORAGE.head(`${TEST_PREFIX}${name}`))?.httpMetadata?.contentType));
+    expect(types).toEqual([
+      "application/octet-stream",
+      "text/plain",
+      "application/octet-stream",
+      "text/plain",
+      "text/plain",
+    ]);
+    expect(await fs.readFileBuffer(`/${TEST_PREFIX}streamed-blob`)).toEqual(binary);
+  });
+
+  it("types buffered and streamed writes by the same leading bytes", async () => {
+    const fs = makeFs(SAM);
+    const bytes = new Uint8Array(8_193).fill(0x61);
+    bytes[8_192] = 0;
+
+    await fs.writeFile(`/${TEST_PREFIX}buffered-long`, bytes);
+    await fs.writeFileStream(`/${TEST_PREFIX}streamed-long`, bytesToStream(bytes), { expectedSize: bytes.byteLength });
+
+    const types = await Promise.all(["buffered-long", "streamed-long"].map(async (name) =>
+      (await env.STORAGE.head(`${TEST_PREFIX}${name}`))?.httpMetadata?.contentType));
+    expect(types).toEqual(["text/plain", "text/plain"]);
+  });
+
+  it("types a streamed file by its leading bytes, however they are chunked", async () => {
+    const fs = makeFs(SAM);
+    const chunks = [new Uint8Array([0x41]), new Uint8Array([0x00, 0xff])];
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const next = chunks.shift();
+        if (next) controller.enqueue(next);
+        else controller.close();
+      },
+    });
+
+    await fs.writeFileStream(`/${TEST_PREFIX}chunked-blob`, stream, { expectedSize: 3 });
+
+    const head = await env.STORAGE.head(`${TEST_PREFIX}chunked-blob`);
+    expect(head?.httpMetadata?.contentType).toBe("application/octet-stream");
+    expect(await fs.readFileBuffer(`/${TEST_PREFIX}chunked-blob`)).toEqual(new Uint8Array([0x41, 0x00, 0xff]));
+  });
+
   it("streams writes to R2 with supplied HTTP metadata", async () => {
     const fs = makeFs(SAM);
     const bytes = new TextEncoder().encode("streamed data");
@@ -1021,6 +1075,28 @@ describe("GsvFs directory removal", () => {
     await fs.writeFile(`/${TEST_PREFIX}beta/file.txt`, "hello");
 
     await expect(fs.rm(`/${TEST_PREFIX}beta`)).rejects.toThrow("ENOTEMPTY");
+  });
+
+  it("lists every entry of a folder larger than one R2 page", async () => {
+    const fs = makeFs(ROOT);
+    const names = Array.from({ length: 1_050 }, (_, index) => `mail-${String(index).padStart(4, "0")}`);
+    for (let start = 0; start < names.length; start += 50) {
+      await Promise.all(names.slice(start, start + 50).map((name) =>
+        putFile(`${TEST_PREFIX}large/${name}`, "x", { uid: "0", gid: "0", mode: "644" })));
+    }
+    await putFile(`${TEST_PREFIX}large/zz/inner`, "x", { uid: "0", gid: "0", mode: "644" });
+
+    expect(await fs.readdir(`/${TEST_PREFIX}large`)).toEqual([...names, "zz"]);
+  });
+
+  it("refuses to list a folder past its entry limit instead of returning part of it", async () => {
+    await Promise.all(["a", "b", "c"].map((name) =>
+      putFile(`${TEST_PREFIX}capped/${name}`, "x", { uid: "0", gid: "0", mode: "644" })));
+    const backend = new R2MountBackend(env.STORAGE, ROOT, { readdirEntryLimit: 2 });
+
+    await expect(backend.readdir(`/${TEST_PREFIX}capped`)).rejects.toThrow(
+      `E2BIG: more than 2 entries in '/${TEST_PREFIX}capped'`,
+    );
   });
 });
 

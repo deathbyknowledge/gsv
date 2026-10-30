@@ -62,6 +62,7 @@ the center of the visible transcript, or the first/latest message at either end,
 stays visible while typing; after leaving the input, `j` and `k` continue from that same message.
 On phones, the return-to-latest control is a down arrow at the right edge. Closed completed action
 receipts are hidden once they have a reply; action records remain inspectable in Settings → Logs.
+A receipt names the places the work touched; work that named no place reads "worked on this".
 Running work, failed actions, fallback notices, approvals and already-open receipts remain visible.
 Direct `$` commands use a compact target header on phones, with running, unavailable or failed
 states when relevant. Expand it to read the complete command, output and terminal controls.
@@ -121,10 +122,12 @@ change that causes them. One row per contact collapses repeated messages, and a 
 goes out once keeps its row as a receipt. Before sending, the Kernel rechecks the subject:
 an unread conversation from an active, unblocked, unmuted contact Ship doesn't handle, or a
 request still pending. It then sends through the owner's private messenger destination,
-unless the owner's selected client is active. Request notices name the sender only; message
+unless the owner's selected client is active, with an action that opens the contact or request
+in People on the messenger (a link button where it has one). Request notices name the sender only; message
 text from a stranger never leaves People. Each sent notice queues an `owner.notified` Ship
 event, which Process records for the next generation without starting a run, so Ship can
-answer a reply to it.
+answer a reply to it. The owner sees the same event in their Ship conversation as a card built from its fields
+(who wrote, which messenger, the start of the message) with a link to the contact or request in People.
 
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more

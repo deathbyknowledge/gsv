@@ -11,6 +11,7 @@ import { canConfigure, SETTINGS_MCP_KEY, signInUrl } from "./settingsModel";
 import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./settingsShared";
 import { parseMcpHeaders, type McpHeaderDraft } from "./mcpHeaders";
 import { useT } from "../../../i18n/locale";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 export function Mcp({ account, active, onDirty }: SettingsSectionProps) {
   const t = useT();
@@ -46,8 +47,7 @@ export function Mcp({ account, active, onDirty }: SettingsSectionProps) {
     onSuccess: async () => { setRemoveId(null); await cache.invalidateQueries({ queryKey: SETTINGS_MCP_KEY }); },
   });
   return <section aria-labelledby="settings-mcp-title">
-    <h1 id="settings-mcp-title">{t("settings.mcp.title")}</h1>
-    <p class="settings-intro">{t("settings.mcp.intro")}</p>
+    <PageHeading id="settings-mcp-title" title={t("settings.mcp.title")} description={t("settings.mcp.intro")} />
     {!canList && <p class="settings-muted">{t("settings.mcp.noList")}</p>}
     <SettingsError error={servers.error ?? change.error} />
     {servers.isPending && connected && canList && <LoadingState variant="panel">{t("settings.mcp.loading")}</LoadingState>}

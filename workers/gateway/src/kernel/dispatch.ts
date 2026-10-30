@@ -12,6 +12,7 @@
  */
 
 import type {
+  FrameBody,
   RequestFrame,
   ResponseFrame,
   ResponseOkFrame,
@@ -97,10 +98,7 @@ import {
   handleSysMcpRemove,
 } from "./sys/mcp";
 import {
-  handleSysLink,
-  handleSysLinkConsume,
   handleSysLinkList,
-  handleSysUnlink,
 } from "./sys/link";
 import {
   handleAdapterConnect,
@@ -163,6 +161,7 @@ import {
 } from "./targets";
 import { requestAdapterTarget } from "./adapter-targets";
 import { handleMailSend } from "./outbound-mail";
+import { handleMailList, handleMailRead, handleMailSearch } from "./inbound-mail-read";
 import { handleMailStatus } from "./outbound-status";
 import {
   handleConversationForProcess,
@@ -218,6 +217,8 @@ export type DispatchDeps = {
 type FrameCancellationReason = string | Error;
 type CancellableFrameBody = {
   cancel(reason?: FrameCancellationReason): Promise<void>;
+  /** Settles once the last byte has been handed to the peer, or the body failed. */
+  sent?: Promise<void>;
 };
 type RoutingTargetArgs = { target?: string };
 
@@ -332,32 +333,28 @@ async function dispatchLocal(
   }
   const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx) };
   const requestTarget: NetFetchDeviceTransport["requestTarget"] = async (targetId, call, args, options) => {
-    let signal = options?.signal ?? nativeContext.requestSignal;
-    if (options?.ttlMs !== undefined) {
-      const deadline = AbortSignal.timeout(options.ttlMs);
-      signal = signal ? AbortSignal.any([signal, deadline]) : deadline;
-    }
+    const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body);
+    const body = deadline ? deadline.body : options?.body;
+    const signal = withDeadline(options?.signal ?? nativeContext.requestSignal, deadline);
     try {
       const response = await deps.request({
-        type: "req", id: crypto.randomUUID(), call, args: { ...args, target: targetId }, body: options?.body,
+        type: "req", id: crypto.randomUUID(), call, args: { ...args, target: targetId }, body,
       }, nativeContext, signal);
       if (!response.ok) throw new Error(response.error.message);
       // SAFETY: Kernel dispatch returns the response for this net.fetch request.
       return response as ResponseOkFrame<"net.fetch">;
     } catch (error) {
-      if (options?.body && !options.body.stream.locked) {
-        await options.body.stream.cancel(error).catch(() => {});
+      if (body && !body.stream.locked) {
+        await body.stream.cancel(error).catch(() => {});
       }
       throw error;
+    } finally {
+      deadline?.clear();
     }
   };
   const fsTransport: FsDeviceTransport = {
     requestTarget: async (targetId, call, args, options) => {
-      let signal = options?.signal ?? nativeContext.requestSignal;
-      if (options?.ttlMs !== undefined) {
-        const deadline = AbortSignal.timeout(options.ttlMs);
-        signal = signal ? AbortSignal.any([signal, deadline]) : deadline;
-      }
+      const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body);
       // SAFETY: Native filesystem operations construct the matching syscall arguments;
       // dispatch owns grants, target resolution, approval, cancellation and body cleanup.
       const request = {
@@ -365,11 +362,19 @@ async function dispatchLocal(
         id: crypto.randomUUID(),
         call,
         args: { ...args, target: targetId },
-        body: options?.body,
+        body: deadline ? deadline.body : options?.body,
       } as RequestFrame;
-      const response = await deps.request(request, nativeContext, signal);
-      if (!response.ok) throw new Error(response.error.message);
-      return response;
+      try {
+        const response = await deps.request(
+          request,
+          nativeContext,
+          withDeadline(options?.signal ?? nativeContext.requestSignal, deadline),
+        );
+        if (!response.ok) throw new Error(response.error.message);
+        return response;
+      } finally {
+        deadline?.clear();
+      }
     },
     openContactSource: async (source: Parameters<typeof openContactResourceSource>[0], signal?: AbortSignal) => {
       const contactContext = { ...nativeContext, requestSignal: signal ?? nativeContext.requestSignal };
@@ -437,6 +442,15 @@ async function dispatchKernel(
         break;
       case "mail.status":
         data = handleMailStatus(frame.args, ctx);
+        break;
+      case "mail.list":
+        data = handleMailList(frame.args, ctx);
+        break;
+      case "mail.search":
+        data = handleMailSearch(frame.args, ctx);
+        break;
+      case "mail.read":
+        data = await handleMailRead(frame.args, ctx);
         break;
 
       case "conversation.ship":
@@ -707,17 +721,8 @@ async function dispatchKernel(
       case "sys.token.revoke":
         data = handleSysTokenRevoke(frame.args, ctx);
         break;
-      case "sys.link":
-        data = handleSysLink(frame.args, ctx);
-        break;
-      case "sys.unlink":
-        data = handleSysUnlink(frame.args, ctx);
-        break;
       case "sys.link.list":
         data = handleSysLinkList(frame.args, ctx);
-        break;
-      case "sys.link.consume":
-        data = handleSysLinkConsume(frame.args, ctx);
         break;
 
       // --- account.* ---
@@ -1078,6 +1083,37 @@ async function routeToTarget(
   }
 
   return { handled: false };
+}
+
+type AnswerDeadline = { signal: AbortSignal; body: FrameBody | undefined; clear(): void };
+
+/**
+ * A deadline for a device's answer. With a request body it starts once the
+ * last byte has been read, so an upload's length never counts against it;
+ * the body's idle timeout guards the upload itself.
+ */
+function answerDeadline(ttlMs: number, body: FrameBody | undefined): AnswerDeadline {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => {
+    timer = setTimeout(
+      () => controller.abort(new DOMException("The operation timed out.", "TimeoutError")),
+      ttlMs,
+    );
+  };
+  if (!body) {
+    arm();
+  }
+  return {
+    signal: controller.signal,
+    body: body && { ...body, stream: body.stream.pipeThrough(new TransformStream({ flush: arm })) },
+    clear: () => clearTimeout(timer),
+  };
+}
+
+function withDeadline(signal: AbortSignal | undefined, deadline: AnswerDeadline | null): AbortSignal | undefined {
+  if (!deadline) return signal;
+  return signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
 }
 
 export function routedFrameTtlMs(frame: RequestFrame): number {

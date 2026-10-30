@@ -97,6 +97,7 @@ export const en = {
   "settings.loadingAccount": "Loading your account…",
   "settings.accountUnknown": "Your account could not be identified. Settings cannot be edited.",
   "settings.signIn.title": "Sign-in",
+  "settings.signIn.intro": "Change your password and set up a way back in if you lose access.",
 
   // Settings: preferences and models
   "settings.unavailableOption": "{value} (unavailable)",
@@ -105,6 +106,7 @@ export const en = {
   "settings.preferences.unsaved": "Unsaved changes",
   "settings.preferences.save": "Save changes",
   "settings.account.title": "Account",
+  "settings.account.intro": "Your login and identity to use Ship.",
   "settings.account.deleteTitle": "Delete your account",
   "settings.account.deleteRequest": "To delete your account, email {email} and we’ll delete it manually for you.",
   "settings.account.deleteExplanation": "Ship is still in early access, so we haven’t added a self-service deletion option yet.",
@@ -180,14 +182,18 @@ export const en = {
 
   // Settings: standing responsibilities
   "settings.standing.title": "Standing responsibilities",
-  "settings.standing.intro": "What Ship takes care of when something happens.",
+  "settings.standing.intro": "Keep track of what Ship is taking care of.",
   "settings.standing.noAccess": "Your account cannot read standing responsibilities.",
+  "settings.standing.empty": "Nothing standing yet. The things Ship takes care of for you will show up here.",
   "settings.standing.alwaysOn": "Always on.",
   "settings.standing.alwaysOnError": "This responsibility is always on.",
 
   // Settings: permissions
   "settings.permissions.title": "Permissions",
-  "settings.permissions.intro": "Choose when Ship and its helpers ask before using a capability. “Always allow” on a request adds a rule here. More specific targets win, then more specific capabilities; list order breaks ties. Account capability grants still set the outer limit.",
+  "settings.permissions.intro": "Choose what Ship and its helpers may do on their own and what they ask you about first.",
+  "settings.permissions.noteAlways": "“Always allow” on a request adds a rule here.",
+  "settings.permissions.noteOrder": "More specific targets win, then more specific capabilities; list order breaks ties.",
+  "settings.permissions.noteGrants": "Account capability grants still set the outer limit.",
   "settings.permissions.loading": "Loading permissions…",
   "settings.permissions.targetsUnavailable": "Target names could not be loaded. Stored target IDs remain available.",
   "settings.permissions.unsupported": "This saved policy contains fields this editor cannot safely change. It has been kept unchanged.",
@@ -218,7 +224,7 @@ export const en = {
 
   // Settings: instructions
   "settings.instructions.title": "Instructions",
-  "settings.instructions.intro": "Your standing instructions, in Markdown. Helpers inherit these instructions alongside their own. Changes take effect on the next run.",
+  "settings.instructions.intro": "Guidance you give to Ship on how to behave is recorded here. Helpers inherit these instructions alongside their own. Changes take effect on the next run.",
   "settings.instructions.new": "new instruction",
   "settings.instructions.newTitle": "New instruction",
   "settings.instructions.edit": "Edit instruction",
@@ -256,7 +262,7 @@ export const en = {
   // Settings: messengers
   "settings.messengers.comingSoon": "Coming soon",
   "settings.messengers.title": "Messengers",
-  "settings.messengers.intro": "Choose where you talk to your Ship.",
+  "settings.messengers.intro": "Talk to your Ship from your favorite messenger app.",
   "settings.messengers.telegram": "Talk to your Ship from Telegram.",
   "settings.messengers.slack": "Talk to your Ship from your Slack workspace.",
   "settings.messengers.discord": "Talk to your Ship from Discord DMs and servers.",
@@ -352,7 +358,7 @@ export const en = {
 
   // Settings: MCP servers
   "settings.mcp.title": "MCP servers",
-  "settings.mcp.intro": "Connect tools and resources to your Ship.",
+  "settings.mcp.intro": "Give Ship extra tools and sources, like a calendar or a database, through MCP servers you add here.",
   "settings.mcp.noList": "Your account cannot list MCP servers.",
   "settings.mcp.noAdd": "Your account cannot add MCP servers.",
   "settings.mcp.loading": "Loading MCP servers…",
@@ -495,7 +501,7 @@ export const en = {
   // Settings: desktop voice
   "settings.voice.title": "Voice",
   "settings.voice.label": "Voice settings",
-  "settings.voice.intro": "Voice preferences for this computer.",
+  "settings.voice.intro": "How Ship listens and speaks on this computer.",
   "settings.voice.microphone": "Microphone",
   "settings.voice.systemDefault": "System default",
   "settings.voice.microphoneUnavailable": "Selected microphone unavailable",
@@ -1199,7 +1205,7 @@ export const en = {
   "session.welcome.signInWithEmail": "Sign in with email",
   "session.welcome.sendCode": "Send code",
   "session.welcome.confirm": "Confirm",
-  "session.welcome.codeSent": "Enter the code sent to {email}.",
+  "session.welcome.codeSent": "Enter the code sent to {email}. Check your spam folder too.",
   "session.welcome.invitationPrompt": "Sign in or create your Ship to connect.",
   "session.welcome.handle": "Handle",
   "session.welcome.handlePlaceholder": "your-name",
@@ -1779,7 +1785,14 @@ export const en = {
   "chat.event.approval": "{pid} is waiting for your approval of {syscall} on {target}.",
   "chat.event.returned": "Returned from helper {pid}.",
   "chat.event.connected": "{target} connected.",
-  "chat.event.ownerNotified": "Notified you on {channel}: {text}",
+  "chat.event.ownerNotified": "Notified you on {channel} about {from}",
+  "chat.notice.sentOn": "Sent to you on {channel}",
+  "chat.notice.messages": "{count} messages · newest",
+  "chat.notice.attachment": "Sent an attachment",
+  "chat.notice.request": "Wants to message you.",
+  "chat.notice.accepted": "Accepted your invitation.",
+  "chat.event.link.contact": "Open",
+  "chat.event.link.request": "Review",
   "chat.event.disconnected": "{target} disconnected.",
   "chat.event.wake": "A runtime event arrived while this conversation was busy.",
   "chat.tool.waitingInput": "Waiting for tool input.",
@@ -1850,8 +1863,8 @@ export const en = {
   "chat.terminal.inputFor": "Input for {command}",
 
   // Chat: run receipts
-  "chat.receipt.working": "working",
-  "chat.receipt.worked": "worked",
+  "chat.receipt.working": "working on this",
+  "chat.receipt.worked": "worked on this",
   "chat.receipt.notes": "working notes",
   "chat.receipt.details": "response details",
   "chat.receipt.process": "this conversation",
@@ -1917,6 +1930,7 @@ export const en = {
   "chat.text.less": "show less",
   "chat.note.error": "error",
   "chat.note.event": "event",
+  "chat.note.notice": "notice",
   "chat.note.memory": "memory",
   "chat.note.hide": "hide details",
   "chat.note.details": "details",
@@ -2285,6 +2299,9 @@ export const en = {
   "fleet.ledger.codemodeRun": "ran a script",
   "fleet.ledger.mailSend": "sent an email",
   "fleet.ledger.mailStatus": "checked email delivery",
+  "fleet.ledger.mailList": "listed email",
+  "fleet.ledger.mailSearch": "searched email",
+  "fleet.ledger.mailRead": "read an email",
   "fleet.ledger.conversationShip": "opened Ship",
   "fleet.ledger.conversationForProcess": "found the conversation of Ship or a helper",
   "fleet.ledger.conversationList": "listed conversations",
@@ -2414,10 +2431,7 @@ export const en = {
   "fleet.ledger.sysPairList": "checked connection invitations",
   "fleet.ledger.sysPairCancel": "cancelled a connection invitation",
   "fleet.ledger.sysPairRedeem": "connected a computer or browser",
-  "fleet.ledger.sysLink": "connected a messenger account",
-  "fleet.ledger.sysUnlink": "disconnected a messenger account",
   "fleet.ledger.sysLinkList": "listed messenger accounts",
-  "fleet.ledger.sysLinkConsume": "confirmed a messenger account",
   "fleet.ledger.accountCreate": "created an account",
   "fleet.ledger.accountList": "listed accounts",
   "fleet.ledger.accountOwnerLink": "started owner verification",

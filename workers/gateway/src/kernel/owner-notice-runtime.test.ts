@@ -30,17 +30,18 @@ describe("owner notice delivery", () => {
 
       expect(send).toHaveBeenCalledExactlyOnceWith(WHATSAPP, OWNER, {
         deliveryId: expect.stringMatching(/^owner-notice:[0-9a-f]{64}$/),
-        text: "💬 Ada: are we still on for tomorrow?\nOpen: https://person.example/people?contact=contact%3Aada",
+        text: "💬 Ada: are we still on for tomorrow?",
+        action: { kind: "open", label: "Open in People", url: "https://person.example/people?contact=contact%3Aada" },
       }, expect.anything());
       expect(notices.next(OWNER)).toBeNull();
       expect(shipEvents.next(OWNER)).toMatchObject({
         eventId: `owner.notified:contact.message:contact:ada:${at}:0`,
         event: { type: "owner.notified", payload: {
-          noticeId: `contact.message:contact:ada:${at}:0`, topic: "contact.message", channel: "WhatsApp", from: "Ada",
-          contactId: "contact:ada", conversationId: "conv:ada", messages: 1,
-          text: "💬 Ada: are we still on for tomorrow?\nOpen: https://person.example/people?contact=contact%3Aada",
-        } },
+          noticeId: `contact.message:contact:ada:${at}:0`, topic: "contact.message", adapter: "whatsapp", from: "Ada",
+          contactId: "contact:ada", conversationId: "conv:ada", messages: 1, preview: "are we still on for tomorrow?",
+        }, link: { kind: "contact", contactId: "contact:ada" } },
       });
+      expect(shipEvents.next(OWNER)?.event.payload).not.toHaveProperty("text");
       expect(host.shipEventRuntime.queue).toHaveBeenCalledWith(OWNER);
     });
   });
@@ -153,17 +154,21 @@ describe("owner notice delivery", () => {
 
   it("names a message request's sender without its text, in the owner's language", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
-      const { runtime, notices, state } = fixture(storage);
+      const { runtime, notices, shipEvents, state } = fixture(storage);
       const send = sent();
       state.language = "es-ES";
       notices.noteOnce(OWNER, "contact.request:approach:bo", "contact.request", {
         contactId: "contact:bo", approachId: "approach:bo", from: "Bo\nYour bank", handle: "bo.ship.space",
       }, Date.now());
       await runtime.onOwnerNotices(OWNER, { id: "task:one" });
-      expect(send.mock.calls[0]?.[2].text).toBe(
-        "📬 Solicitud de mensaje de Bo Your bank (@bo.ship.space). Léela y decide en Personas.\n"
-        + "Abrir: https://person.example/people?view=requests&request=approach%3Abo",
-      );
+      expect(send.mock.calls[0]?.[2]).toMatchObject({
+        text: "📬 Solicitud de mensaje de Bo Your bank (@bo.ship.space). Léela y decide en Personas.",
+        action: { kind: "open", label: "Revisar solicitud", url: "https://person.example/people?view=requests&request=approach%3Abo" },
+      });
+      expect(shipEvents.next(OWNER)?.event).toMatchObject({
+        payload: { from: "Bo Your bank", handle: "bo.ship.space" },
+        link: { kind: "contact.request", requestId: "approach:bo" },
+      });
     });
   });
 

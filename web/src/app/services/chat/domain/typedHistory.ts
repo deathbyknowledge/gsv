@@ -1,4 +1,4 @@
-import type { JsonValue, ProcHistoryEvent, ProcHistoryRecord, ProcHistoryArchivedRecord, ResponsibilityState } from "@humansandmachines/gsv/protocol";
+import { adapterDisplayName, type JsonValue, type ProcHistoryEvent, type ProcHistoryRecord, type ProcHistoryArchivedRecord, type ResponsibilityState } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { t, type TextKey } from "../../../i18n/locale";
 import type { ChatTranscriptRow } from "./transcript";
@@ -65,7 +65,7 @@ export function historyEventText(event: ProcHistoryEvent): string {
       target: event.payload.label ?? event.payload.targetId,
     });
     case "runtime.wake": return t("chat.event.wake");
-    case "owner.notified": return t("chat.event.ownerNotified", { channel: event.payload.channel, text: event.payload.text });
+    case "owner.notified": return t("chat.event.ownerNotified", { channel: adapterDisplayName(event.payload.adapter), from: event.payload.from });
   }
   return generic;
 }

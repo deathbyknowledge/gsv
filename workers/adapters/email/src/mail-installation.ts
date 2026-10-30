@@ -30,6 +30,8 @@ const ALARM_BATCH_SIZE = 20;
 const SUMMARY_RESERVATION_MS = 5 * 60 * 1000;
 const INITIAL_RETRY_MS = 5_000;
 const MAX_RETRY_MS = 60 * 60 * 1000;
+/** How long a summary waits before checking again whether its space can use its mail allowance. */
+const UNAVAILABLE_RECHECK_MS = 5 * 60 * 1000;
 const MAX_ENVELOPE_ADDRESS_LENGTH = 512;
 const MAX_MESSAGE_ID_LENGTH = 512;
 const MAX_LIST_LIMIT = 100;
@@ -797,7 +799,7 @@ export class MailInstallation extends DurableObject<MailEnv> {
       }
       limits = allowance;
     } catch {
-      this.deferSummaryFailure(row.intake_id, row.summary_attempts, "Mail allowance unavailable", false);
+      this.deferUnavailableSummary(row.intake_id);
       return;
     }
     this.retirement.requireLive();
@@ -925,6 +927,24 @@ export class MailInstallation extends DurableObject<MailEnv> {
       );
       return "reserved";
     });
+  }
+
+  /**
+   * Waits before checking again a summary that hasn't started because its
+   * space is inactive or its allowance can't be read. Nothing was attempted,
+   * so the attempt count stays as it was.
+   */
+  private deferUnavailableSummary(intakeId: string): void {
+    const now = Date.now();
+    this.ctx.storage.sql.exec(
+      `UPDATE mail_intakes
+       SET summary_next_attempt_at = ?, updated_at = ?
+       WHERE intake_id = ? AND summary_state IN ('pending', 'deferred')`,
+      now + UNAVAILABLE_RECHECK_MS,
+      now,
+      intakeId,
+    );
+    logRetry(this.env, this.installationId, "summary", "Mail allowance unavailable");
   }
 
   private deferSummaryFailure(

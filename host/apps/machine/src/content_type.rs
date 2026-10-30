@@ -19,50 +19,70 @@ pub async fn sniff_header(file: &mut tokio::fs::File) -> std::io::Result<Vec<u8>
     Ok(header)
 }
 
-/// The content type the bytes say, else the one the extension says.
+/// The content type the bytes say, else the one the extension says, else
+/// text only when the bytes read as text.
 pub fn content_type_for(header: &[u8], path: &Path) -> &'static str {
     infer::get(header)
         .map(|kind| kind.mime_type())
-        .unwrap_or_else(|| content_type_from_extension(path))
+        .or_else(|| content_type_from_extension(path))
+        .unwrap_or_else(|| {
+            if reads_as_text(header) {
+                "text/plain"
+            } else {
+                "application/octet-stream"
+            }
+        })
 }
 
-pub fn content_type_from_extension(path: &Path) -> &'static str {
-    match path
+/// UTF-8 without NUL bytes; a character cut off by the end of the header still counts.
+fn reads_as_text(header: &[u8]) -> bool {
+    if header.contains(&0) {
+        return false;
+    }
+    match std::str::from_utf8(header) {
+        Ok(_) => true,
+        Err(error) => error.error_len().is_none(),
+    }
+}
+
+fn content_type_from_extension(path: &Path) -> Option<&'static str> {
+    let content_type = match path
         .extension()
         .and_then(|extension| extension.to_str())
         .map(str::to_ascii_lowercase)
-        .as_deref()
+        .as_deref()?
     {
-        Some("md") => "text/markdown",
-        Some("json" | "map") => "application/json",
-        Some("yaml" | "yml") => "application/yaml",
-        Some("xml") => "application/xml",
-        Some("toml") => "application/toml",
-        Some("js" | "cjs" | "mjs" | "jsx") => "application/javascript",
-        Some("ts" | "tsx") => "application/typescript",
-        Some("html" | "htm") => "text/html",
-        Some("css") => "text/css",
-        Some("txt" | "log") => "text/plain",
-        Some("csv") => "text/csv",
-        Some("sh") => "text/x-shellscript",
-        Some("py") => "text/x-python",
-        Some("png") => "image/png",
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("svg") => "image/svg+xml",
-        Some("wasm") => "application/wasm",
-        Some("data") => "application/octet-stream",
-        Some("mp3") => "audio/mpeg",
-        Some("wav") => "audio/wav",
-        Some("ogg") => "audio/ogg",
-        Some("webm") => "audio/webm",
-        Some("m4a") => "audio/mp4",
-        Some("mp4") => "video/mp4",
-        Some("mov") => "video/quicktime",
-        Some("pdf") => "application/pdf",
-        _ => "text/plain",
-    }
+        "md" => "text/markdown",
+        "json" | "map" => "application/json",
+        "yaml" | "yml" => "application/yaml",
+        "xml" => "application/xml",
+        "toml" => "application/toml",
+        "js" | "cjs" | "mjs" | "jsx" => "application/javascript",
+        "ts" | "tsx" => "application/typescript",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "txt" | "log" => "text/plain",
+        "csv" => "text/csv",
+        "sh" => "text/x-shellscript",
+        "py" => "text/x-python",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "wasm" => "application/wasm",
+        "data" => "application/octet-stream",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "webm" => "audio/webm",
+        "m4a" => "audio/mp4",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "pdf" => "application/pdf",
+        _ => return None,
+    };
+    Some(content_type)
 }
 
 #[cfg(test)]
@@ -86,6 +106,24 @@ mod tests {
         );
         assert_eq!(
             content_type_for(b"", Path::new("unknown.zzz")),
+            "text/plain"
+        );
+    }
+
+    #[test]
+    fn bytes_without_a_known_format_or_extension_are_text_only_when_they_read_as_text() {
+        let binary = [0x8f, 0x00, 0xd2, 0x41, 0xff, 0x13];
+        assert_eq!(
+            content_type_for(&binary, Path::new("blob")),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            content_type_for("Hola, ¿qué tal?\n".as_bytes(), Path::new("README")),
+            "text/plain"
+        );
+        let cut = "señal".as_bytes();
+        assert_eq!(
+            content_type_for(&cut[..3], Path::new("Makefile")),
             "text/plain"
         );
     }

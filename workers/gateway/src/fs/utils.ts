@@ -86,4 +86,5 @@ export function formatSize(bytes: number): string {
 export {
   inferFsContentType as inferContentType,
   isTextContentType,
+  sniffFsContentType as sniffContentType,
 } from "@humansandmachines/gsv/protocol";
