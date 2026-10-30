@@ -1362,6 +1362,7 @@ export const ptBR = {
   "shell.help.startWriting": "Começar a escrever; a tecla digitada vai para a caixa de texto",
   "shell.help.chatInput": "Chat · digitação",
   "shell.help.send": "Enviar a mensagem ou executar o comando",
+  "shell.help.newLine": "Nova linha",
   "shell.help.returnToBrowse": "Voltar à navegação; antes fecha o seletor de conexão",
   "shell.help.recall": "Recuperar a última entrada quando a caixa de texto estiver vazia",
   "shell.help.placeSyntax": "@conexão",
@@ -1390,6 +1391,7 @@ export const ptBR = {
 
   // Shell: key names in the keyboard help
   "shell.keys.enter": "Enter",
+  "shell.keys.newLine": "Shift / Alt + Enter",
   "shell.keys.spaceOrEnter": "Espaço / Enter",
   "shell.keys.enterOrSpace": "Enter / Espaço",
   "shell.keys.save": "⌘ / Ctrl + Enter",

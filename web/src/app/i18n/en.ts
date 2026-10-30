@@ -1356,6 +1356,7 @@ export const en = {
   "shell.help.startWriting": "Start writing; the keystroke lands in the prompt",
   "shell.help.chatInput": "Chat · input",
   "shell.help.send": "Send the message or run the command",
+  "shell.help.newLine": "New line",
   "shell.help.returnToBrowse": "Return to browse; closes the connection picker first",
   "shell.help.recall": "Recall the last input when the prompt is empty",
   "shell.help.placeSyntax": "@connection",
@@ -1384,6 +1385,7 @@ export const en = {
 
   // Shell: key names in the keyboard help
   "shell.keys.enter": "Enter",
+  "shell.keys.newLine": "Shift / Alt + Enter",
   "shell.keys.spaceOrEnter": "Space / Enter",
   "shell.keys.enterOrSpace": "Enter / Space",
   "shell.keys.save": "⌘ / Ctrl + Enter",

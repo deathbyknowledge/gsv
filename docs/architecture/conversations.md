@@ -55,6 +55,8 @@ On phones, both the prompt and its attachment, connection and recording controls
 area as the browser toolbar or keyboard opens and closes. The star field keeps its full height.
 Installed PWAs fill the screen, including the home-indicator area. The bottom safe-area inset
 is padding inside each surface; it does not shorten the page or its star field.
+In the composer, Enter sends; Shift+Enter or Alt+Enter inserts a new line, and Ctrl+Enter or Cmd+Enter
+still sends. Contact replies and contact requests use the same keys, and Help lists them.
 The keyboard's return key requests a Send action. iOS owns the field-navigation and Done bar above its keyboard;
 the web app cannot hide that bar through a supported browser API.
 Clicking or tapping a message selects it without scrolling. Scrolling selects the message nearest
