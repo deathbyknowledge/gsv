@@ -113,7 +113,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [zenDirty, setZenDirty] = useState(false);
-  /* the owner's first run is not recorded yet; Ship is not waking until it is */
+  /* the founders' welcome still stands over the chat; Ship is not waking until it is dismissed */
   const [welcomeOpen, setWelcomeOpen] = useState(true);
   const [fleetDirty, setFleetDirty] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);

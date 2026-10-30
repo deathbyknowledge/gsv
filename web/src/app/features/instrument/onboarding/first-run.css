@@ -2,7 +2,7 @@
 .first-run-notice {
   position: absolute;
   z-index: 20;
-  top: 16px;
+  top: calc(var(--instrument-header-height) + 12px);
   left: 50%;
   transform: translateX(-50%);
   box-sizing: border-box;
