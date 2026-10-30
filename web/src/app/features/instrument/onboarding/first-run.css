@@ -1,4 +1,34 @@
-/* Only a failure to wake Ship is visible: a small notice over the chat with a retry. */
+/* The first run stands in front of the chat below the header until the person has chosen where to message Ship. */
+.first-run {
+  position: absolute;
+  z-index: 20;
+  inset: var(--instrument-header-height) 0 0;
+  overflow: auto;
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--gsv-font-prose);
+}
+.first-run-panel {
+  box-sizing: border-box;
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 48px 24px 40px;
+}
+.first-run-panel h1 { margin: 0 0 12px; color: var(--text-hi); font-size: 28px; font-weight: 500; line-height: 1.3; }
+.first-run-lead { margin: 0 0 28px; color: var(--text-dim); font-size: 16px; line-height: 1.6; }
+.first-run-panel .gsv-alert { margin-bottom: 16px; }
+/* one framed list; every choice is a full-width row whose drawer opens beneath it */
+.first-run-list.gsv-cf-framed { padding: 0; }
+.first-run-row + .first-run-row { border-top: 1px solid var(--border); }
+.first-run-row .lr { padding: 18px 20px; }
+.first-run-row .lr-leading { color: var(--accent); }
+.first-run-row .lr-sub { white-space: normal; font-family: var(--gsv-font-prose); letter-spacing: 0; font-size: 14px; }
+.first-run-row-note { margin: -6px 0 0; padding: 0 20px 16px 56px; color: var(--warn, var(--text-dim)); font-size: 13px; line-height: 1.5; }
+.first-run-drawer { padding: 4px 20px 20px; border-top: 1px dashed var(--border); }
+.first-run-text { margin: 12px 0 20px; color: var(--text); font-size: 15px; line-height: 1.6; }
+.first-run-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.first-run-actions-spacer { flex: 1; }
+/* Only a failure to load the first-run state is visible over the chat: a small notice with a retry. */
 .first-run-notice {
   position: absolute;
   z-index: 20;
@@ -24,3 +54,10 @@
   text-underline-offset: 2px;
 }
 .first-run-notice button:disabled { color: var(--text-dim); text-decoration: none; }
+@container instrument (max-width: 600px) {
+  .first-run-panel { padding: 24px 16px 32px; }
+  .first-run-panel h1 { font-size: 22px; }
+  .first-run-row .lr { padding: 14px 14px; }
+  .first-run-row-note { padding: 0 14px 14px 50px; }
+  .first-run-drawer { padding: 4px 14px 16px; }
+}

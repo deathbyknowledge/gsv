@@ -1417,6 +1417,27 @@ export const es = {
   "shell.retryButton": "Reintentar",
   "shell.firstRun.failed": "No se ha podido despertar a Ship.",
 
+  // Onboarding: where to message Ship
+  "onboarding.surface.title": "¿Desde dónde quieres escribir a Ship?",
+  "onboarding.surface.lead": "Ship es el mismo desde donde le hables. Puedes gestionar tus conexiones en Configuración → Mensajería cuando quieras.",
+  "onboarding.surface.web": "Seguir aquí",
+  "onboarding.surface.webSub": "Puedes conectar una app de mensajes más adelante.",
+  "onboarding.surface.desktop": "App de escritorio",
+  "onboarding.surface.desktopSub": "Su propia ventana en macOS, Windows y Linux",
+  "onboarding.surface.messengerPrivacy": "Conectar una app de mensajes no da a Ship acceso a tu cuenta, tus contactos ni otros chats. Ship solo ve los mensajes que le envías.",
+  "onboarding.surface.whatsappSub": "Escribe a Ship desde WhatsApp en tu móvil",
+  "onboarding.surface.telegramSub": "Escribe a Ship desde Telegram",
+  "onboarding.surface.whatsappUnreachable": "No disponible para números de {countries}: Meta impide que el número de Ship les escriba, así que el código nunca llega.",
+  "onboarding.surface.connectedSub": "Conectado",
+  "onboarding.surface.loading": "Comprobando qué apps de mensajes están disponibles…",
+  "onboarding.surface.desktopText": "Descarga la app, inicia sesión con el nombre y la contraseña que acabas de elegir, y Ship estará ahí. La web sigue disponible también.",
+  "onboarding.surface.back": "ATRÁS",
+  "onboarding.surface.download": "DESCARGAR LA APP DE ESCRITORIO",
+  "onboarding.surface.continueHere": "SEGUIR EN LA WEB POR AHORA",
+  "onboarding.surface.connectedTitle": "Conectado",
+  "onboarding.surface.connectedText": "Ship te saludará en {platform} en un momento. Tu conversación es la misma aquí y allí.",
+  "onboarding.surface.openChat": "ABRIR EL CHAT",
+
   // Shell: feedback
   "shell.feedback.trigger": "comentarios",
   "shell.feedback.title": "Comentarios",

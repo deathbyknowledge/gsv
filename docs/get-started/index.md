@@ -11,11 +11,19 @@ another username. Continue to review the early-access disclosure and confirm the
 age, Terms of Service and Privacy Policy
 agreement before creating your account. **Back** lets you revise your credentials.
 Creating your account signs you in and opens Chat, your conversation with your Ship.
-The first time you open the web app, Ship wakes and greets you in a language
-detected from your browser; the chat reads "Ship is waking up" until its first
-message lands. If Ship cannot be woken, choose **Retry**. You can write first,
-ask Ship to switch languages, or change **Settings → Preferences → Language**.
-The greeting stays in your conversation across devices.
+The first time you open the web app it asks where you want to message Ship:
+**Web**, the **Desktop app**, **WhatsApp** or **Telegram**. Web opens the chat at
+once; the Desktop app choice links to the download and continues in the web
+meanwhile; a messenger pairs right there, through the same steps as **Settings →
+Messengers**, and Ship then greets you on it. The screen says which countries
+the Ship WhatsApp number cannot reach, and a (?) note explains that connecting a
+messenger gives Ship only the messages you send it. The choice is recorded once
+per account, so Desktop and later visits go straight to the chat. Ship wakes as
+soon as you choose and greets you in a language detected from your browser; the
+chat reads "Ship is waking up" until its first message lands. If the choice
+cannot be saved, choose **Retry**. You can write first, ask Ship to switch
+languages, or change **Settings → Preferences → Language**. The greeting stays
+in your conversation across devices.
 The **Feedback** button in the header is available when your operator offers
 it, and **Help** links to the community Discord.
 Start with what you want to do. You can connect computers and browsers from **Work** and
@@ -194,7 +202,7 @@ Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search 
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns you to where you were, with your draft.
 
-On your first visit, while Ship wakes, the empty chat shows a
+On your first visit, once you have chosen where to message Ship and while it wakes, the empty chat shows a
 quiet, centered privacy message. It clears as soon as you or Ship starts the
 conversation.
 

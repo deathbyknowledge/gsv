@@ -70,6 +70,7 @@ import { z } from "zod";
 const MOCK_FLAG = "gsv.ui.mock";
 const FRESH_FLAG = "gsv.ui.mock.fresh";
 const WELCOME_SEEN = "gsv.mock.welcome_seen";
+const PREFERRED_SURFACE = "gsv.mock.preferred_surface";
 /** The session service's persisted token (sessionService.ts); seeding one is how the mock signs in without the form. */
 const SESSION_TOKEN_KEY = "gsv.ui.session.token.v1";
 const SEEDED_TOKEN_ID = "mock-session";
@@ -96,6 +97,7 @@ function freshRequested(): boolean {
     if (asked === "1") {
       window.sessionStorage.setItem(FRESH_FLAG, "1");
       window.localStorage.removeItem(WELCOME_SEEN);
+      window.localStorage.removeItem(PREFERRED_SURFACE);
     }
     if (asked === "0") window.sessionStorage.removeItem(FRESH_FLAG);
     return window.sessionStorage.getItem(FRESH_FLAG) === "1";
@@ -135,6 +137,7 @@ const SHIP_CONVERSATION = "c-ship";
 /** The config this browser keeps for the mock, with its storage key: the welcome card's dismissal and the owner's language. */
 const STORED_CONFIG = new Map([
   [`users/${OWNER.uid}/ui/welcome_card_seen`, WELCOME_SEEN],
+  [`users/${OWNER.uid}/ui/preferred_surface`, PREFERRED_SURFACE],
   [`users/${OWNER.uid}/locale/language`, "gsv.mock.language"],
 ]);
 const MODEL = { api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet-4-5", responseModel: "claude-sonnet-4-5-20250929" };
@@ -357,7 +360,11 @@ type PendingApproval = ApprovalScenario & { request: ProcHilRequest };
 /** The Kernel's welcome wake has no question: that run was started by a responsibility, not a message. */
 type OpenRun = { runId: string; question: ConversationMessage | null; open: OpenStep | null; approval: PendingApproval | null; superseded: boolean };
 type Revised = { revision: number; record: ProcHistoryRecord };
+type MockIdentityLink = { adapter: string; accountId: string; actorId: string; uid: number; linkedByUid: number; createdAt: number };
+
 type World = {
+  /** Messenger links the mock has confirmed this session; Settings and the first-run screen read them. */
+  links: MockIdentityLink[];
   messages: ConversationMessage[]; sequence: number;
   records: Revised[]; revision: number; messageId: number; recordId: number;
   ledger: SysLedgerLine[];
@@ -365,12 +372,8 @@ type World = {
   context: ProcContextState | null; contextRevision: number;
   run: OpenRun | null; connections: number; sockets: Set<MockSocket>;
 };
-const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
+const world: World = { links: [], messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
 const fresh = freshRequested();
-/* Telegram starts linked so Settings › Messengers shows a connected messenger beside the unlinked ones. */
-let messengerLinks: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number }[] = fresh ? [] : [
-  { adapter: "telegram", accountId: "mock-telegram", actorId: "351913787780", uid: OWNER.uid, createdAt: at(3, 10, 0), linkedByUid: OWNER.uid },
-];
 let streamSeq = 0;
 
 function record(who: "you" | "ship", text: string, createdAt: number, runId: string): ConversationMessage {
@@ -938,13 +941,11 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     /* Settings › Messengers: every messenger is deployed and unlinked, so each pairing flow can be looked at */
     case "adapter.list": return respond(id, { adapters: ["telegram", "slack", "discord", "whatsapp"].map((adapter) => ({ adapter, available: true, enabled: true, canLink: true,
-      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true,
-      /* A linked messenger reports its account as connected; disconnecting drops both. */
-      accounts: messengerLinks.filter((link) => link.adapter === adapter).map((link) => ({ accountId: link.accountId, connected: true, authenticated: true })) })) });
+      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true, accounts: [] })) });
     case "adapter.pair.info": {
       const { adapter } = z.object({ adapter: z.string() }).parse(args);
       return respond(id, { adapter, accountId: `mock-${adapter}`, configured: true,
-        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink" } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
+        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink", unreachableCallingCodes: ["55", "62"] } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
     }
     case "adapter.pair.inspect": {
       const { adapter, code } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
@@ -953,6 +954,8 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "adapter.pair.confirm": {
       const { adapter } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
+      // The link shows up in Settings and on the first-run screen, as the Kernel's identity link would.
+      if (!world.links.some((link) => link.adapter === adapter)) world.links.push({ adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", uid: OWNER.uid, linkedByUid: OWNER.uid, createdAt: Date.now() });
       return respond(id, { paired: true, adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", surfaceId: "mock-surface", uid: OWNER.uid });
     }
     case "contact.list": return respond(id, { contacts: fresh ? [] : [maraContact] });
@@ -1035,13 +1038,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
-    case "sys.link.list": return respond(id, { links: messengerLinks });
-    case "adapter.pair.disconnect": {
-      const { adapter, accountId, actorId } = z.object({ adapter: z.string(), accountId: z.string(), actorId: z.string() }).parse(args);
-      const before = messengerLinks.length;
-      messengerLinks = messengerLinks.filter((link) => !(link.adapter === adapter && link.accountId === accountId && link.actorId === actorId));
-      return respond(id, { disconnected: messengerLinks.length < before, adapter, accountId, actorId });
-    }
+    case "sys.link.list": return respond(id, { links: world.links });
     case "r12y.list": {
       const { states, includeTerminal, offset = 0, limit = 100 } = responsibilityListArgs.parse(args);
       const records = responsibilities.filter((record) => states ? states.includes(record.state) : includeTerminal || !["resolved", "cancelled"].includes(record.state));

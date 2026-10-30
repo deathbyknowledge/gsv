@@ -1416,6 +1416,27 @@ export const en = {
   "shell.retryButton": "Retry",
   "shell.firstRun.failed": "Couldn't wake Ship.",
 
+  // Onboarding: where to message Ship
+  "onboarding.surface.title": "Where do you want to message Ship?",
+  "onboarding.surface.lead": "Ship is the same wherever you talk to it. You can manage your connections on Settings → Messengers at any time.",
+  "onboarding.surface.web": "Continue here",
+  "onboarding.surface.webSub": "You can connect a messenger later.",
+  "onboarding.surface.desktop": "Desktop app",
+  "onboarding.surface.desktopSub": "Its own window on macOS, Windows and Linux",
+  "onboarding.surface.messengerPrivacy": "Connecting a messenger doesn't give Ship access to your account, contacts or other chats. Ship only sees the messages you send it.",
+  "onboarding.surface.whatsappSub": "Message Ship from WhatsApp on your phone",
+  "onboarding.surface.telegramSub": "Message Ship from Telegram",
+  "onboarding.surface.whatsappUnreachable": "Not for numbers in {countries}: Meta blocks the Ship number from messaging them, so the code never arrives.",
+  "onboarding.surface.connectedSub": "Connected",
+  "onboarding.surface.loading": "Checking which messengers are available…",
+  "onboarding.surface.desktopText": "Download the app, sign in with the handle and password you just chose, and Ship is there. The web stays available too.",
+  "onboarding.surface.back": "BACK",
+  "onboarding.surface.download": "DOWNLOAD THE DESKTOP APP",
+  "onboarding.surface.continueHere": "CONTINUE IN THE WEB FOR NOW",
+  "onboarding.surface.connectedTitle": "Connected",
+  "onboarding.surface.connectedText": "Ship will say hello on {platform} in a moment. Your conversation is the same here and there.",
+  "onboarding.surface.openChat": "OPEN CHAT",
+
   // Shell: feedback
   "shell.feedback.trigger": "feedback",
   "shell.feedback.title": "Feedback",

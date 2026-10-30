@@ -3,6 +3,10 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 
 /** The per-account flag the Kernel watches: a human writing "1" here activates Ship's initial onboarding. */
 export const FIRST_RUN_SEEN = "ui/welcome_card_seen";
+/** Where the person said they want to message Ship, recorded next to the flag. */
+export const PREFERRED_SURFACE = "ui/preferred_surface";
+
+export type PreferredSurface = "web" | "desktop" | "whatsapp" | "telegram";
 
 export type FirstRunState = {
   /** The first run still stands in front of the chat: not loaded yet, failed to load, or not completed. */
@@ -13,7 +17,7 @@ export type FirstRunState = {
   completing: boolean;
   completeError: boolean;
   retryLoad: () => void;
-  complete: () => Promise<void>;
+  complete: (choice: PreferredSurface) => Promise<void>;
 };
 
 /** A new owner's first run. The flag follows the account between the web app and Desktop. */
@@ -51,14 +55,15 @@ export function useFirstRunState(): FirstRunState {
     return () => { cancelled = true; };
   }, [client, connected, loadState]);
 
-  const complete = useCallback(async () => {
+  /* the choice is recorded first; the flag goes last, since writing it wakes Ship */
+  const complete = useCallback(async (choice: PreferredSurface) => {
     if (ownerUid === null || pendingCompletion.current) return;
-    const key = `users/${ownerUid}/${FIRST_RUN_SEEN}`;
     pendingCompletion.current = true;
     setCompleting(true);
     setCompleteError(false);
     try {
-      await client.sys.config.set({ key, value: "1" });
+      await client.sys.config.set({ key: `users/${ownerUid}/${PREFERRED_SURFACE}`, value: choice });
+      await client.sys.config.set({ key: `users/${ownerUid}/${FIRST_RUN_SEEN}`, value: "1" });
       setOwnerUid(null);
     } catch (cause) {
       console.error("Could not record the first run", cause);

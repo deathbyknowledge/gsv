@@ -150,7 +150,7 @@ sets `nextCheckAtMs` to 24 hours later if no future check remains. An earlier fu
 deadline brings that default forward. An explicit check time is preserved, and
 `nextCheckAtMs: null` explicitly clears the check. Metadata-only edits do not postpone
 it. System producers keep their own wake conditions. Initial onboarding stays in
-Kernel-owned pending state until the owner first opens their chat or sends
+Kernel-owned pending state until the owner finishes the first-run surface choice or sends
 their first Ship message. Only then does it enter the ledger as open work, without
 a blocker, through the ordinary wake path.
 
@@ -264,8 +264,9 @@ enabled or disabled per owner without changing the subsystem's underlying data.
 System-owned producers use the same ledger contract:
 
 - Provisioning a new personal intelligence durably prepares its onboarding brief
-  in Kernel storage, outside the responsibility ledger and model context. The first
-  chat open records `users/<uid>/ui/welcome_card_seen = 1`, creates one open,
+  in Kernel storage, outside the responsibility ledger and model context. Finishing the
+  first-run surface choice records `users/<uid>/ui/preferred_surface` and then
+  `users/<uid>/ui/welcome_card_seen = 1`, creates one open,
   high-priority responsibility titled "Welcome to Ship" with no blocker, and
   schedules its ordinary wake before acknowledging the write. Its creation and
   update timestamps both reflect activation, not prior onboarding progress. A saved flag
