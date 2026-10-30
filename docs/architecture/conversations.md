@@ -333,7 +333,8 @@ Chat opens conversation search through **Help → Keyboard shortcuts → Search 
 `/` in browse mode and `Ctrl/Cmd+F` in Chat remain available. The unmodified `w` key opens Work outside text fields; `f` is available for ordinary typing. People uses the same search
 dialog and syscall for the selected contact conversation. Selecting a result shows the
 original message and surrounding messages in the dialog, preserving the conversation position and
-any draft when the dialog closes.
+any draft when the dialog closes. The matched message starts open and in view; other very long
+messages fold behind **read more**, as they do in Chat.
 
 `conversation.search` searches canonical message text using the Conversation DO's SQLite FTS5 index.
 Words are literal prefixes, combined with AND; punctuation is not a query language. Results contain
