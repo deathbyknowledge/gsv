@@ -616,6 +616,18 @@ describe("managed WhatsApp clean-instance flow", () => {
       replyToId: "wamid.in.7",
     })).resolves.toMatchObject({ ok: true, messageId: expect.stringMatching(/^wamid\.out\./) });
     const paragraphRecords = (await graphRecords()).slice(recordsBeforeParagraphs);
+    // Every message of the split delivery is reported, in order, so a quote of any of them can resolve.
+    const paragraphIds = paragraphRecords.filter((record) => record.kind === "message").map((record) => record.result.id);
+    expect(paragraphIds).toHaveLength(5);
+    expect(paragraphIds.every((id) => id?.startsWith("wamid.out."))).toBe(true);
+    await expect(peer.sendMessage("installation_test", {
+      deliveryId: "outbound-paragraphs-1",
+      surface: { kind: "dm", id: ACTOR },
+      actorId: ACTOR,
+      routeGeneration: relinked.route.generation,
+      text: `Hi Hank!\n\nHere is the **report**.\n\n${"word ".repeat(1_000).trimEnd()}\n\nAnything else?`,
+      replyToId: "wamid.in.7",
+    })).resolves.toMatchObject({ ok: true, deduplicated: true, messageId: paragraphIds[0], messageIds: paragraphIds });
     expect(paragraphRecords.map((record) => record.kind)).toEqual(["message", "read", "message", "read", "message", "read", "message", "read", "message"]);
     const paragraphMessages = paragraphRecords.filter((record) => record.kind === "message");
     expect(paragraphMessages.map((record) => record.body.text?.body)).toEqual([
@@ -633,6 +645,25 @@ describe("managed WhatsApp clean-instance flow", () => {
       status: "read",
       message_id: "wamid.in.7",
       typing_indicator: { type: "text" },
+    });
+
+    // Quoting a message on WhatsApp sends only its provider id; the Kernel owns what that id means.
+    expect((await SELF.fetch(await notification("wamid.in.quote", {
+      type: "text",
+      text: { body: "yes, that one" },
+      context: { from: "34600000000", id: "wamid.out.1" },
+    }))).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(await gatewayCalls()).toContainEqual(expect.objectContaining({
+        call: "adapter.inbound",
+        args: expect.objectContaining({
+          message: expect.objectContaining({
+            messageId: "wamid.in.quote",
+            text: "yes, that one",
+            replyToId: "wamid.out.1",
+          }),
+        }),
+      }));
     });
 
     // Binary audio is uploaded first and sent by media id; audio carries no caption,

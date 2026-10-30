@@ -143,7 +143,7 @@ export default defineConfig({
                     return Response.json({ ok: true, result });
                   }
                   if (method === "sendMediaGroup") {
-                    const result = [{ message_id: nextMessageId++ }];
+                    const result = (typeof body.media === "string" ? JSON.parse(body.media) : body.media).map(() => ({ message_id: nextMessageId++ }));
                     messages.push({ method, body, result });
                     return Response.json({ ok: true, result });
                   }

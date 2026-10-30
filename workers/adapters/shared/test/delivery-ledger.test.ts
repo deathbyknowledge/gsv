@@ -4,6 +4,7 @@ import {
   classifyNonIdempotentProviderStatus,
   DeliveryLedger,
   fingerprintOutboundDelivery,
+  MAX_DELIVERY_MESSAGE_IDS,
 } from "../src/delivery-ledger";
 
 const REQUEST_FINGERPRINT = "a".repeat(64);
@@ -133,6 +134,35 @@ describe("DeliveryLedger", () => {
       claimed: false,
       result: { ok: true, deduplicated: true },
     });
+  });
+
+  it("retains every provider id of a split delivery across a retry and a replay", async () => {
+    const ledger = memoryLedger();
+    const first = await ledger.claim("delivery-ids", REQUEST_FINGERPRINT);
+    if (!first.claimed) throw new Error("expected a delivery claim");
+    await ledger.recordProgress("delivery-ids", first.attemptId, { sent: 1, messageId: "part-1", messageIds: ["part-1"], formatVersion: 1 });
+    await ledger.releaseRetryable("delivery-ids", first.attemptId);
+
+    const retry = await ledger.claim("delivery-ids", REQUEST_FINGERPRINT);
+    if (!retry.claimed) throw new Error("expected a retry claim");
+    expect(retry.progress.messageIds).toEqual(["part-1"]);
+    await ledger.succeed("delivery-ids", retry.attemptId, "part-1", ["part-1", "part-2"]);
+
+    await expect(ledger.claim("delivery-ids", REQUEST_FINGERPRINT)).resolves.toEqual({
+      claimed: false,
+      result: { ok: true, messageId: "part-1", messageIds: ["part-1", "part-2"], deduplicated: true },
+    });
+  });
+
+  it("bounds the provider ids it retains for one delivery", async () => {
+    const ledger = memoryLedger();
+    const claim = await ledger.claim("delivery-many", REQUEST_FINGERPRINT);
+    if (!claim.claimed) throw new Error("expected a delivery claim");
+    const ids = Array.from({ length: MAX_DELIVERY_MESSAGE_IDS + 5 }, (_, index) => `part-${index}`);
+    await ledger.succeed("delivery-many", claim.attemptId, "part-0", ids);
+    const replay = await ledger.claim("delivery-many", REQUEST_FINGERPRINT);
+    if (replay.claimed || !replay.result.ok) throw new Error("expected a replay");
+    expect(replay.result.messageIds).toEqual(ids.slice(0, MAX_DELIVERY_MESSAGE_IDS));
   });
 
   it("keeps an interrupted delivery of several provider messages ambiguous", async () => {
