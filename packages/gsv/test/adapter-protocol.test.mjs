@@ -12,7 +12,7 @@ import {
   isAdapterProviderSendResult,
   isAdapterWorkerStatusResult,
 } from "../dist/protocol/adapters.js";
-import { isAdapterConnectResult } from "../dist/protocol/syscalls/adapter.js";
+import { adapterSendResultSchema, isAdapterConnectResult } from "../dist/protocol/syscalls/adapter.js";
 import {
   adapterServiceDescriptorSchema,
   adapterTargetCancelResultSchema,
@@ -258,4 +258,18 @@ test("validates adapter worker and provider results", () => {
   assert.equal(isAdapterWorkerStatusResult([{ ...status, authenticated: "yes" }]), false);
   assert.equal(isAdapterWorkerStatusResult([{ ...status, accountId: " default " }]), false);
   assert.equal(isAdapterWorkerStatusResult({ accounts: [status] }), false);
+});
+
+test("reports every provider message id of a split delivery", () => {
+  const result = {
+    ok: true,
+    adapter: "whatsapp",
+    accountId: "managed",
+    surfaceId: "34600000000",
+    deliveryId: "delivery-1",
+    messageId: "wamid.1",
+    messageIds: ["wamid.1", "wamid.2"],
+  };
+  assert.deepEqual(adapterSendResultSchema.parse(result), result);
+  assert.equal(adapterSendResultSchema.safeParse({ ...result, messageIds: "wamid.1" }).success, false);
 });
