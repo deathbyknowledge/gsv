@@ -58,7 +58,7 @@ actions and Help open in a vertical menu with touch-sized rows.
 Choosing a view, tapping outside or pressing Escape closes the menu.
 The menu button retains the unread People indicator while navigation is closed.
 
-On first sign-in, a spacious, nonmodal welcome card with large text appears above the web app's
+On first sign-in, a compact, nonmodal welcome card (520px wide, chat-sized prose) appears above the web app's
 views for a personal human account. Closing it or choosing Try it out saves a
 per-user UI config flag, so the card stays dismissed across web and Desktop
 sessions. It never appears during activation or for the administrator. The Discord link opens
