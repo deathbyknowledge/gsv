@@ -102,6 +102,8 @@ Reconnecting a Slack account moves future messages only after confirmation
 succeeds; delayed messages and replies from the old connection are rejected.
 
 Slack supports incoming files and Ship resource attachments in addressed messages.
+Links in Ship's replies unfurl the way links from any member do, so a page
+or image shows its preview card.
 With personal Slack authorization, the connected workspace can also appear as a
 read-only filesystem and command target. The operator-owned app performs writes;
 your personal OAuth token determines read visibility. See the Slack messenger's
@@ -140,7 +142,8 @@ Platform. You message that number from your own WhatsApp account.
 You can send text, photos, documents, voice notes, videos, and locations. Ship
 replies with text and attachments, and a long reply arrives as several
 messages, one per prose paragraph. Headings stay with the following block;
-code blocks, lists, tables and quotations stay together. Approval
+code blocks, lists, tables and quotations stay together. When a message
+contains a link, WhatsApp shows the preview card for the first one. Approval
 prompts arrive with **Allow once**, **Always allow** and **Block** buttons; the
 decision comes back as a reply quoting the prompt. **Always allow** adds the
 same rule as in the app, shown in **Settings → Permissions**.

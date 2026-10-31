@@ -339,7 +339,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     });
     await vi.waitFor(async () => {
       expect(await sentMessages()).toContainEqual(expect.objectContaining({
-        body: expect.objectContaining({ text: { preview_url: false, body: "Connected to https://test.gsv.space" } }),
+        body: expect.objectContaining({ text: { preview_url: true, body: "Connected to https://test.gsv.space" } }),
       }));
     });
 
@@ -657,7 +657,7 @@ describe("managed WhatsApp clean-instance flow", () => {
       body: expect.objectContaining({ to: ACTOR, type: "audio", audio: { id: upload!.result.id } }),
     }));
     expect(await sentMessages()).toContainEqual(expect.objectContaining({
-      body: expect.objectContaining({ type: "text", text: { preview_url: false, body: "audio reply" } }),
+      body: expect.objectContaining({ type: "text", text: { preview_url: true, body: "audio reply" } }),
     }));
     const sentAudioCount = (await sentMessages()).filter((record) => record.body.type === "audio").length;
     await expect(peer.sendMessage("installation_test", {
