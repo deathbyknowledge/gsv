@@ -2,7 +2,6 @@ import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectFlowDef } from "../../../../components/connect-flow/connectFlowTypes";
 import {
-  collectText,
   createTestRoot,
   flowStepNodes,
   nodeWithLabel,
@@ -125,7 +124,8 @@ describe("ManagedSlackOnboardingFlow", () => {
     const install = nodes().find((node) => (
       node.props.href === "https://slack.gsv.example/slack/install"
     ));
-    expect(collectText(install)).toBe("INSTALL Ship IN SLACK");
+    expect(install?.props.label).toBe("INSTALL Ship IN SLACK");
+    expect(install?.props.variant).toBe("primary");
     expect(install?.props.href)
       .toBe("https://slack.gsv.example/slack/install");
   });

@@ -20,6 +20,9 @@ import { useT, type Translate } from "../../../../i18n/locale";
 type ManagedTelegramOnboardingFlowProps = {
   onBack: () => void;
   onConnected: (detailId: string) => void;
+  /** The host has suspended pairing (gateway offline, no permission): the launch
+   *  link renders disabled, since a disabled fieldset does not reach anchors. */
+  disabled?: boolean;
   dependencies?: ManagedTelegramDependencies;
 };
 
@@ -56,6 +59,7 @@ const fieldStyle = { maxWidth: "520px" };
 export function ManagedTelegramOnboardingFlow({
   onBack,
   onConnected,
+  disabled,
   dependencies = defaultDependencies,
 }: ManagedTelegramOnboardingFlowProps): JSX.Element {
   return (
@@ -63,6 +67,7 @@ export function ManagedTelegramOnboardingFlow({
       adapterId="telegram"
       onBack={onBack}
       onConnected={onConnected}
+      disabled={disabled}
       dependencies={dependencies}
     />
   );
@@ -71,6 +76,7 @@ export function ManagedTelegramOnboardingFlow({
 export function ManagedSlackOnboardingFlow({
   onBack,
   onConnected,
+  disabled,
   dependencies = defaultDependencies,
 }: ManagedTelegramOnboardingFlowProps): JSX.Element {
   return (
@@ -78,17 +84,18 @@ export function ManagedSlackOnboardingFlow({
       adapterId="slack"
       onBack={onBack}
       onConnected={onConnected}
+      disabled={disabled}
       dependencies={dependencies}
     />
   );
 }
 
-export function SharedDiscordOnboardingFlow({ onBack, onConnected, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
-  return <ManagedMessengerOnboardingFlow adapterId="discord" onBack={onBack} onConnected={onConnected} dependencies={dependencies} />;
+export function SharedDiscordOnboardingFlow({ onBack, onConnected, disabled, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
+  return <ManagedMessengerOnboardingFlow adapterId="discord" onBack={onBack} onConnected={onConnected} disabled={disabled} dependencies={dependencies} />;
 }
 
-export function ManagedWhatsAppOnboardingFlow({ onBack, onConnected, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
-  return <ManagedMessengerOnboardingFlow adapterId="whatsapp" onBack={onBack} onConnected={onConnected} dependencies={dependencies} />;
+export function ManagedWhatsAppOnboardingFlow({ onBack, onConnected, disabled, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
+  return <ManagedMessengerOnboardingFlow adapterId="whatsapp" onBack={onBack} onConnected={onConnected} disabled={disabled} dependencies={dependencies} />;
 }
 
 /** Names the countries the operator's WhatsApp number cannot reach, as the adapter reports them. */
@@ -118,6 +125,7 @@ function ManagedMessengerOnboardingFlow({
   adapterId,
   onBack,
   onConnected,
+  disabled = false,
   dependencies,
 }: ManagedMessengerOnboardingFlowProps): JSX.Element {
   const t = useT();
@@ -157,8 +165,15 @@ function ManagedMessengerOnboardingFlow({
   const firstStepText = installsApp
     ? t(isDiscord ? "settings.pairing.installDiscord" : "settings.pairing.installSlack")
     : isWhatsApp
-      ? chatNumber ? t("settings.pairing.whatsappStartNumber", { number: chatNumber }) : t("settings.pairing.whatsappStart")
+      ? t("settings.pairing.whatsappStart")
       : t("settings.pairing.telegramStart");
+  const launchLabel = installsApp
+    ? info.data?.installUrl ? t("settings.pairing.installIn", { platform: platform.toUpperCase() }) : t("settings.pairing.viewSetup", { platform: platform.toUpperCase() })
+    : isWhatsApp
+      ? info.data?.installUrl ? t("settings.pairing.connect") : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
+      : botUsername ? t("settings.pairing.connect") : t("settings.pairing.viewSetup", { platform: "TELEGRAM" });
+  // Opening the messenger is the step, so the launch control leads whenever the link is real.
+  const launchLeads = installsApp || isWhatsApp ? Boolean(info.data?.installUrl) : Boolean(botUsername);
 
   const inspectCode = async () => {
     if (!code.trim() || inspect.isPending) return;
@@ -211,6 +226,8 @@ function ManagedMessengerOnboardingFlow({
               title={t("settings.pairing.startIn", { platform: platform.toUpperCase() })}
               text={firstStepText}
             />
+            {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{chatNumber ? t("settings.pairing.whatsappManual", { number: chatNumber }) : t("settings.pairing.whatsappManualNoNumber")}</p> : null}
+            {!installsApp && !isWhatsApp && botUsername ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.telegramManual", { bot: `@${botUsername}` })}</p> : null}
             {info.isError ? (
               <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform })} />
             ) : !info.data?.configured ? (
@@ -224,13 +241,11 @@ function ManagedMessengerOnboardingFlow({
             <div class="gsv-cf-footer">
               <Button variant="secondary" label={t("settings.pairing.back")} onClick={onBack} />
               <span class="gsv-cf-footer-spacer" />
-              <Link href={launchUrl}>{installsApp
-                ? info.data?.installUrl ? t("settings.pairing.installIn", { platform: platform.toUpperCase() }) : t("settings.pairing.viewSetup", { platform: platform.toUpperCase() })
-                : isWhatsApp
-                  ? info.data?.installUrl ? t("settings.pairing.open", { name: "WHATSAPP" }) : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
-                  : t("settings.pairing.open", { name: botUsername ? `@${botUsername}` : "TELEGRAM" })}</Link>
+              {launchLeads
+                ? <Button variant="primary" href={launchUrl} label={launchLabel} disabled={disabled} />
+                : <Link href={launchUrl}>{launchLabel}</Link>}
               <Button
-                variant="primary"
+                variant={launchLeads ? "secondary" : "primary"}
                 label={t("settings.pairing.haveCode")}
                 disabled={!info.data?.configured}
                 onClick={() => setStep(STEP_CODE)}

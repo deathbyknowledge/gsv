@@ -373,6 +373,10 @@ type World = {
 };
 const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
 const fresh = freshRequested();
+/* Telegram starts linked so Settings › Messengers shows a connected messenger beside the unlinked ones. */
+let messengerLinks: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number }[] = fresh ? [] : [
+  { adapter: "telegram", accountId: "mock-telegram", actorId: "351913787780", uid: OWNER.uid, createdAt: at(3, 10, 0), linkedByUid: OWNER.uid },
+];
 let streamSeq = 0;
 
 function record(who: "you" | "ship", text: string, createdAt: number, runId: string): ConversationMessage {
@@ -940,7 +944,9 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     /* Settings › Messengers: every messenger is deployed and unlinked, so each pairing flow can be looked at */
     case "adapter.list": return respond(id, { adapters: ["telegram", "slack", "discord", "whatsapp"].map((adapter) => ({ adapter, available: true, enabled: true, canLink: true,
-      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true, accounts: [] })) });
+      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true,
+      /* A linked messenger reports its account as connected; disconnecting drops both. */
+      accounts: messengerLinks.filter((link) => link.adapter === adapter).map((link) => ({ accountId: link.accountId, connected: true, authenticated: true })) })) });
     case "adapter.pair.info": {
       const { adapter } = z.object({ adapter: z.string() }).parse(args);
       return respond(id, { adapter, accountId: `mock-${adapter}`, configured: true,
@@ -1035,7 +1041,6 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
-    case "sys.link.list": return respond(id, { links: [] });
     case "sys.pair.create": {
       const { id: pairingId, targetId, label } = z.object({ id: z.string(), targetId: z.string(), label: z.string() }).parse(args);
       const existing = pairings.find((pairing) => pairing.id === pairingId);
@@ -1052,6 +1057,13 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       if (!pairing) return refuse(id, 404, "Invitation not found");
       pairing.state = "cancelled";
       return respond(id, { pairing });
+    }
+    case "sys.link.list": return respond(id, { links: messengerLinks });
+    case "adapter.pair.disconnect": {
+      const { adapter, accountId, actorId } = z.object({ adapter: z.string(), accountId: z.string(), actorId: z.string() }).parse(args);
+      const before = messengerLinks.length;
+      messengerLinks = messengerLinks.filter((link) => !(link.adapter === adapter && link.accountId === accountId && link.actorId === actorId));
+      return respond(id, { disconnected: messengerLinks.length < before, adapter, accountId, actorId });
     }
     case "r12y.list": {
       const { states, includeTerminal, offset = 0, limit = 100 } = responsibilityListArgs.parse(args);

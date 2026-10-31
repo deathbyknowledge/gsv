@@ -25,7 +25,7 @@
 }
 .settings h1 { font-size: 1.3rem; text-transform: lowercase; }
 .settings h2 { margin-top: 2.5rem; font-size: 1rem; font-weight: 500; }
-.settings p { line-height: 1.7; }
+.settings p:not(.gsv-prose) { line-height: 1.7; }
 .settings-intro { max-width: 65ch; color: var(--text-dim); margin-bottom: 2rem; font-family: var(--gsv-font-prose); font-size: 1rem; }
 .settings-intro a { text-decoration: underline; text-underline-offset: .2em; }
 .settings-notes { margin: 0 0 var(--space-5); padding-left: 1.1em; color: var(--text-dim); font-family: var(--gsv-font-prose); font-size: .9375rem; max-width: 65ch; }
@@ -41,7 +41,7 @@
 .settings .gsv-fld .gsv-fld-desc { max-width: none; }
 .settings-field-note { margin: -1rem 0 1.5rem; max-width: 42rem; color: var(--text-dim); font-size: .75rem; }
 /* design-system controls dim their own disabled state */
-.settings button:disabled:not(.gsv-sel-trig):not(.gsv-ti-btn):not(.gsv-ti-x) { opacity: .45; cursor: not-allowed; }
+.settings button:disabled:not(.gsv-btn):not(.gsv-sel-trig):not(.gsv-ti-btn):not(.gsv-ti-x) { opacity: .45; cursor: not-allowed; }
 .settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; font-size: .75rem; color: var(--text-dim); }
 .settings-form { padding-bottom: 2rem; }
 .settings-check { flex-direction: row !important; align-items: center !important; }
@@ -101,19 +101,17 @@
 .settings-model-login a { color: var(--accent); }
 .settings-login-code { color: var(--text); letter-spacing: .15em; }
 .settings-telegram { padding-bottom: 1rem; }
-.settings-telegram-flow { margin-top: 1.5rem; }
-.settings-telegram-step { font-size: .8rem; color: var(--text-dim); margin-bottom: 1rem; }
+.settings-telegram-flow { margin-top: .25rem; }
 /* the console shell spaces a step's text from its field with a flex gap; the compact shell has no such gap */
-.settings-telegram-flow .gsv-cf-desc { margin-bottom: 1.25rem; }
 .settings-messenger { padding-bottom: 1rem; }
 .settings-messenger-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
 .settings-messenger-heading h2 { margin: 0; }
-.settings-coming-soon { display: inline-block; margin-left: .75rem; padding: .15rem .4rem; border: 1px solid var(--border); font-size: .65rem; font-weight: 400; vertical-align: middle; white-space: nowrap; }
+.settings-messenger-name { display: inline-flex; align-items: center; gap: .5rem; }
 .settings-messenger-links { margin: 0; }
-.settings-messenger-status { display: inline-flex; align-items: center; gap: .5rem; font-size: .75rem; }
-.settings-messenger-status i { width: .4rem; height: .4rem; background: var(--text-dim); flex-shrink: 0; }
-.settings-messenger-links .settings-messenger-status.is-connected { color: var(--online); }
-.settings-messenger-status.is-connected i { background: currentColor; }
+.settings-list > li.settings-messenger-state { flex-direction: row; align-items: center; gap: 0; }
+.settings-messenger-status { display: inline-flex; align-items: center; gap: .5rem; letter-spacing: .12em; color: var(--text-dim); }
+.settings-messenger-status::before { content: ""; width: .4rem; height: .4rem; background: currentColor; flex: none; }
+.settings-messenger-state .gsv-infotip { margin-inline-start: -2px; }
 .settings-messenger-links .settings-server-heading { flex-wrap: wrap; align-items: baseline; }
 .settings-mcp-options { border-top: 1px solid var(--border); padding-block: 1rem; margin-bottom: 1rem; font-size: .8rem; }
 .settings-mcp-options summary { color: var(--text-dim); cursor: pointer; }

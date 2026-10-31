@@ -19,13 +19,6 @@
   color: var(--alert-color);
   margin-top: -1px;
 }
-/* The alert icon is decorative — neutralise IconButton's interactive hover so
-   it reads as an icon, keeping the variant colour. */
-.gsv-alert-icon .gsv-ibtn-ghost,
-.gsv-alert-icon .gsv-ibtn-ghost:hover {
-  color: var(--alert-color);
-  cursor: default;
-}
 
 .gsv-alert-body {
   min-width: 0;

@@ -306,3 +306,11 @@
   background: var(--active);
   color: var(--text-muted);
 }
+
+/* A link-button inside a disabled fieldset reads and behaves as disabled: the
+   fieldset cannot disable an anchor, so the DS greys it out here and Button.tsx
+   makes its activation inert. */
+fieldset:disabled a.gsv-btn {
+  pointer-events: none;
+  opacity: 0.45;
+}

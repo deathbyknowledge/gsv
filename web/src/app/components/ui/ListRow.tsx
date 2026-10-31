@@ -2,6 +2,7 @@ import type { ComponentChildren, JSX } from "preact";
 import { IconButton } from "./IconButton";
 import { Tag, type TagTone } from "./Tag";
 import { Hint } from "./Tooltip";
+import { dotGlow } from "./StatusDot";
 import { useT } from "../../i18n/locale";
 import "./ListRow.css";
 
@@ -105,10 +106,9 @@ export function ListRow({
   const dotStyle: JSX.CSSProperties = {
     width: "8px",
     height: "8px",
-    borderRadius: "50%",
     flex: "none",
     background: dc,
-    ...(st === "idle" ? undefined : { boxShadow: `0 0 7px ${dc}` }),
+    ...(st === "idle" ? undefined : { boxShadow: dotGlow(dc) }),
   };
 
   const content = (

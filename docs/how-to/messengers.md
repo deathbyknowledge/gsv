@@ -43,8 +43,9 @@ flows used through Ship; they are not currently available in Settings.
 
 ## Telegram
 
-1. In Ship, open **Messengers → Telegram** and use the link to open the official
-   Ship bot.
+1. In Ship, open **Messengers → Telegram** and choose **Connect**. It opens a
+   chat with the official Ship bot. To message it manually instead, find the
+   bot handle shown under the instructions.
 2. Send the bot any private message. It replies with a short-lived code.
 3. Enter that code back in Ship. Ship shows the Telegram display name, handle,
    and numeric ID that requested it.
@@ -126,11 +127,12 @@ confirmed author and observed destination.
 Ship uses one operator-owned WhatsApp Business number on the WhatsApp Business
 Platform. You message that number from your own WhatsApp account.
 
-1. In Ship, open **Settings → Messengers → WhatsApp**. It shows the Ship number
-   and a link that opens WhatsApp on it.
-2. Send the number any message. It replies with instructions and a separate
-   code-only message you can copy. The code expires in 10 minutes. If your
-   number is already connected to another Ship, send `/link` to get a new code.
+1. In Ship, open **Settings → Messengers → WhatsApp** and choose **Connect**.
+   It opens a chat with the Ship number, with the pairing message already filled
+   in. To message Ship manually instead, send `/link` to the number shown under
+   the instructions.
+2. Send that message. It replies with instructions and a separate code-only
+   message you can copy. The code expires in 10 minutes.
 3. Enter the code back in Ship. Ship shows the WhatsApp profile name and the
    masked number that requested it.
 4. Confirm only if that is your WhatsApp number. The code alone cannot choose a

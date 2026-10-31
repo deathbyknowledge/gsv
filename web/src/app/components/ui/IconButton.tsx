@@ -226,3 +226,17 @@ export function IconButton({ glyph = "back", size = "medium", disabled = false, 
     </button>
   );
 }
+
+/** Glyph — one of the IconButton glyphs as a static, non-interactive icon
+ *  (no button, no focus, no tooltip). For decorative uses such as an Alert's
+ *  leading icon; the caller supplies any accessible name on its wrapper. */
+export function Glyph({ glyph, size = 20 }: { glyph: IconButtonGlyph; size?: number }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: `${size}px`, height: `${size}px`, flex: "none" }}
+    >
+      {GLYPHS[glyph]}
+    </span>
+  );
+}
