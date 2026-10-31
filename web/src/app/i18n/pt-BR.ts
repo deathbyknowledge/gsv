@@ -1415,17 +1415,9 @@ export const ptBR = {
   "shell.approval.fileKilobytes": "{type} · {size} KB",
   "shell.approval.fileMegabytes": "{type} · {size} MB",
 
-  // Shell: welcome
+  // Shell: first run
   "shell.retryButton": "Tentar de novo",
-  "shell.welcome.loadFailed": "Não foi possível carregar as boas-vindas.",
-  "shell.welcome.dismiss": "Fechar as boas-vindas",
-  "shell.welcome.title": "Boas-vindas ao seu Ship!",
-  "shell.welcome.intro": "Sou Kawah, do time fundador do Ship. Steve, Jessica e eu passamos os últimos meses construindo isto, e estamos muito felizes por você estar aqui!",
-  "shell.welcome.early": "O Ship ainda está no começo, então você pode encontrar algumas arestas para aparar. Se algo quebrar, parecer confuso ou fizer você pensar \"queria que ele pudesse…\", adoraríamos saber.",
-  "shell.welcome.contact": "Você pode usar o botão \"comentários\" lá em cima a qualquer momento, ou falar direto com a gente no {discord} (e ver o cachorro do Steve).",
-  "shell.welcome.thanks": "Agradecemos por estar entre as primeiras pessoas a embarcar. Isso significa muito para nós!",
-  "shell.welcome.dismissFailed": "Não foi possível fechar as boas-vindas. Tente de novo.",
-  "shell.welcome.start": "Experimente!",
+  "shell.firstRun.failed": "Não foi possível acordar o Ship.",
 
   // Shell: feedback
   "shell.feedback.trigger": "comentários",

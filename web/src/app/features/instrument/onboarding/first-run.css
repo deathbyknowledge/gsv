@@ -1,0 +1,26 @@
+/* Only a failure to wake Ship is visible: a small notice over the chat with a retry. */
+.first-run-notice {
+  position: absolute;
+  z-index: 20;
+  top: calc(var(--instrument-header-height) + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  max-width: calc(100% - 32px);
+  margin: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--border-raised);
+  background: var(--panel);
+  color: var(--text);
+  font-family: var(--gsv-font-prose);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.first-run-notice button {
+  margin-left: 10px;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.first-run-notice button:disabled { color: var(--text-dim); text-decoration: none; }

@@ -1409,17 +1409,9 @@ export const en = {
   "shell.approval.fileKilobytes": "{type} · {size} KB",
   "shell.approval.fileMegabytes": "{type} · {size} MB",
 
-  // Shell: welcome
+  // Shell: first run
   "shell.retryButton": "Retry",
-  "shell.welcome.loadFailed": "Couldn't load the welcome.",
-  "shell.welcome.dismiss": "Dismiss welcome",
-  "shell.welcome.title": "Welcome to your Ship!",
-  "shell.welcome.intro": "I'm Kawah, one of the founders of Ship. Steve, Jessica and I have been building this for the past months, and we're really happy you're here!",
-  "shell.welcome.early": "Ship is still early, so you might run into some rough edges. If something breaks, feels confusing, or makes you think \"I wish it could…\", we'd love to hear from you.",
-  "shell.welcome.contact": "You can use the Feedback button in the top anytime, or talk to us directly on {discord} (and see Steve's dog).",
-  "shell.welcome.thanks": "Thanks for being one of the first. It means a lot to us!",
-  "shell.welcome.dismissFailed": "Couldn't finish dismissing the welcome. Please try again.",
-  "shell.welcome.start": "Try it out!",
+  "shell.firstRun.failed": "Couldn't wake Ship.",
 
   // Shell: feedback
   "shell.feedback.trigger": "feedback",

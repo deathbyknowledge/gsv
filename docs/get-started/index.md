@@ -11,15 +11,13 @@ another username. Continue to review the early-access disclosure and confirm the
 age, Terms of Service and Privacy Policy
 agreement before creating your account. **Back** lets you revise your credentials.
 Creating your account signs you in and opens Chat, your conversation with your Ship.
-The first time you open the web app, a welcome card from Kawah appears with the
-heading "Welcome to your Ship!" and large, readable text. Close it
-or choose **Try it out!** to dismiss it for your account across web and Desktop.
-If the welcome cannot be loaded, choose **Retry** to check again.
-Ship then greets you in a language detected from your browser. You can write first,
+The first time you open the web app, Ship wakes and greets you in a language
+detected from your browser; the chat reads "Ship is waking up" until its first
+message lands. If Ship cannot be woken, choose **Retry**. You can write first,
 ask Ship to switch languages, or change **Settings → Preferences → Language**.
-The welcome stays in your conversation across devices.
-The card links to the community Discord; the **Feedback** button in the header
-is available when your operator offers it.
+The greeting stays in your conversation across devices.
+The **Feedback** button in the header is available when your operator offers
+it, and **Help** links to the community Discord.
 Start with what you want to do. You can connect computers and browsers from **Work** and
 configure models and other connections from **Settings** when you need them.
 
@@ -196,7 +194,7 @@ Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search 
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns you to where you were, with your draft.
 
-On your first visit, after dismissing the welcome card, the empty chat shows a
+On your first visit, while Ship wakes, the empty chat shows a
 quiet, centered privacy message. It clears as soon as you or Ship starts the
 conversation.
 
