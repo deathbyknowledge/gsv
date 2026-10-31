@@ -2020,6 +2020,7 @@ export const en = {
   "chat.panel.person": "Person",
   "chat.panel.files": "Reference a file",
   "chat.panel.connect": "Connect a computer",
+  "chat.panel.noPlace": "That place isn't connected right now.",
   "chat.panel.noFiles": "Your account cannot read files.",
   "chat.plans.open": "Open plans · {count} ongoing",
   "chat.plans.ongoing": "{count} ongoing",

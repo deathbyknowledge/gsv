@@ -16,6 +16,9 @@ Blocks without a language tag, and `text` blocks, wrap at every width; tagged co
 indentation and internal line breaks without adding the renderer's final newline to the clipboard.
 Chat renders human messages as plain text with clickable web URLs. External web links in human
 messages and Ship's Markdown replies open in a new tab.
+A path in Ship's text, such as `~/notes/plan.md` or `/tmp/exports/`, opens over the chat
+when you have file access: a file opens in its preview and a path ending in `/` opens that
+folder's file list. Paths inside code spans and code blocks stay plain text.
 Human messages align right, with the timestamp before the sender's name, and balance line
 lengths to avoid a short final line. Ship's messages align left.
 The Chat transcript scrolls vertically. Long words, URLs and compaction notes wrap within the

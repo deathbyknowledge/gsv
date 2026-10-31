@@ -2026,6 +2026,7 @@ export const ptBR = {
   "chat.panel.person": "Pessoa",
   "chat.panel.files": "Referenciar um arquivo",
   "chat.panel.connect": "Conectar um computador",
+  "chat.panel.noPlace": "Esse lugar não está conectado agora.",
   "chat.panel.noFiles": "Sua conta não pode ler arquivos.",
   "chat.plans.open": "Abrir planos · {count} em andamento",
   "chat.plans.ongoing": "{count} em andamento",

@@ -2021,6 +2021,7 @@ export const es = {
   "chat.panel.person": "Persona",
   "chat.panel.files": "Referenciar un archivo",
   "chat.panel.connect": "Conectar un ordenador",
+  "chat.panel.noPlace": "Ese lugar no está conectado ahora mismo.",
   "chat.panel.noFiles": "Tu cuenta no puede leer archivos.",
   "chat.plans.open": "Abrir planes · {count} en curso",
   "chat.plans.ongoing": "{count} en curso",

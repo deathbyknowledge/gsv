@@ -1,5 +1,5 @@
 import DOMPurify from "dompurify";
-import { parse as parseMarkdown } from "marked";
+import { Marked, parse as parseMarkdown, type MarkedExtension, type MarkedOptions } from "marked";
 
 /** The same sanitizing path the chat transcript uses: marked, then DOMPurify, never raw provider text. */
 const purifier = DOMPurify();
@@ -26,7 +26,8 @@ export function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
-function trimUrlPunctuation(value: string): string {
+/** Drops sentence punctuation and unbalanced closing brackets that follow a link written in prose. */
+export function trimUrlPunctuation(value: string): string {
   let url = value;
   while (url) {
     const last = url.at(-1)!;
@@ -75,10 +76,23 @@ function sanitize(value: string): string {
   return escapeHtml(value);
 }
 
-/** Markdown to sanitized HTML. Falls back to escaped text if parsing fails. */
-export function renderMarkdownHtml(value: string): string {
+const extendedParsers = new WeakMap<MarkedExtension, Marked>();
+
+/** A parser with one extra syntax, kept apart from the shared default so other surfaces never gain it. */
+function extendedParser(extension: MarkedExtension): Marked {
+  let parser = extendedParsers.get(extension);
+  if (!parser) {
+    parser = new Marked(extension);
+    extendedParsers.set(extension, parser);
+  }
+  return parser;
+}
+
+/** Markdown to sanitized HTML, optionally with one extra inline syntax. Falls back to escaped text if parsing fails. */
+export function renderMarkdownHtml(value: string, extension?: MarkedExtension): string {
   try {
-    const html = parseMarkdown(value, { async: false, breaks: true, gfm: true });
+    const options: MarkedOptions & { async: false } = { async: false, breaks: true, gfm: true };
+    const html = extension ? extendedParser(extension).parse(value, options) : parseMarkdown(value, options);
     return sanitize(String(html));
   } catch {
     return sanitize(value);

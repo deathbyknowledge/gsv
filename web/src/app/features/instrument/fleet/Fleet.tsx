@@ -3,6 +3,7 @@ import { FileReader } from "./FileReader";
 import { FilePreview } from "../shared/FilePreview";
 import { PlaceTree, type OpenFile } from "../shared/PlaceFiles";
 import { FleetDialog } from "./FleetDialog";
+import { fileName } from "../../../services/files/domain/paths";
 import { assignedTo, useResponsibilities } from "../shared/Responsibilities";
 import { useDraftGuard } from "../shared/useDraftGuard";
 import type { ActivityRequest } from "../zen/chatContextModel";
@@ -43,6 +44,7 @@ import {
   type Place,
   shortPid,
   fleetReferenceRow,
+  fileRowLocation,
   isApprovalReference,
   isConnectReference,
   type FleetReference,
@@ -97,6 +99,8 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const initialRow = fleetReferenceRow(initialReference);
   const initialConnect = isConnectReference(initialReference) ? initialReference.to : null;
   const approvalReference = isApprovalReference(initialReference) ? initialReference : null;
+  /* a path linked from Ship's text: a file opens in its preview, a folder in the place's tree */
+  const requestedLocation = fileRowLocation(initialRow);
 
   const targetsQuery = useQuery({
     queryKey: INSTRUMENT_TARGETS_KEY,
@@ -142,8 +146,10 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const [connecting, setConnecting] = useState<"place" | null>(initialConnect);
   useLayoutEffect(() => {
     setSelected(initialRow);
-    setFilesPlace(null);
-    setOpenFile(null);
+    const requestedPlace = requestedLocation ? places.find((place) => place.id === requestedLocation.target) ?? null : null;
+    setFilesPath(requestedLocation?.kind === "dir" ? requestedLocation.path : undefined);
+    setFilesPlace(requestedLocation?.kind === "dir" ? requestedPlace : null);
+    setOpenFile(requestedLocation?.kind === "file" ? { target: requestedLocation.target, path: requestedLocation.path, name: fileName(requestedLocation.path) } : null);
     setExpandedFile(null);
     setCreatingProcess(false);
     setConnecting(initialConnect);
@@ -179,6 +185,8 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   }, [shownProcesses.length, processLimit]);
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
   const [filesPlace, setFilesPlace] = useState<Place | null>(null);
+  /** The folder the tree starts in; unset starts at the place's home. */
+  const [filesPath, setFilesPath] = useState<string | undefined>(undefined);
   const [expandedFile, setExpandedFile] = useState<OpenFile | null>(null);
   const savedScroll = useRef(0);
   const selectRow = useCallback((row: FleetRow) => {
@@ -196,6 +204,16 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
     setConnecting(null);
     setInspectorOpen(true);
   }, []);
+  /** A linked path that turned out to be a folder opens in the tree instead of the file preview. */
+  const requestedTarget = requestedLocation?.target;
+  const openRequestedFolder = useCallback((path: string) => {
+    const place = places.find((entry) => entry.id === requestedTarget);
+    if (!place) return;
+    setSelected(`dir:${place.id}:${path}`);
+    setFilesPath(path);
+    setFilesPlace(place);
+    setOpenFile(null);
+  }, [requestedTarget, places]);
   const cmdPlace = selectedPlace ?? places.find((place) => place.id === CLOUD_TARGET_ID) ?? null;
 
   const openCmd = useCallback(() => onCommand(cmdPlace?.id ?? CLOUD_TARGET_ID), [onCommand, cmdPlace?.id]);
@@ -419,10 +437,13 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
           ) : filesPlace || openFile ? (
             <>
               {filesPlace && <RetainedView active={active && inspectorOpen && !expandedFile && !openFile}>
-                <button type="button" class="fleet-text-action chat-context-back" onClick={() => setFilesPlace(null)}>← {filesPlace.label}</button>
-                <div class="fleet-tree"><PlaceTree key={filesPlace.id} place={filesPlace} enabled={connected && filesPlace.online} onOpenFile={selectFile} initiallyOpen /></div>
+                <button type="button" class="fleet-text-action chat-context-back" onClick={() => { setSelected(targetRow(filesPlace.id)); setFilesPlace(null); }}>← {filesPlace.label}</button>
+                <div class="fleet-tree"><PlaceTree key={`${filesPlace.id}:${filesPath ?? ""}`} place={filesPlace} initialPath={filesPath} enabled={connected && filesPlace.online} onOpenFile={selectFile} initiallyOpen /></div>
               </RetainedView>}
-              {openFile && <FilePreview file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => { if (filesPlace) setOpenFile(null); else closeInspector(); }} onAsk={(text) => onZen(undefined, undefined, text)} onExpand={() => {
+              {openFile && filesPlace && <button type="button" class="fleet-text-action chat-context-back" onClick={() => setOpenFile(null)}>← {filesPath ? fileName(filesPath) : filesPlace.label}</button>}
+              {openFile && <FilePreview file={openFile} placeLabel={placeLabel(openFile.target)}
+                onFolder={requestedLocation?.kind === "file" && !filesPlace && openFile.target === requestedLocation.target && openFile.path === requestedLocation.path ? openRequestedFolder : undefined}
+                onAsk={(text) => onZen(undefined, undefined, text)} onExpand={() => {
               savedScroll.current = manifestRef.current?.scrollTop ?? 0;
               setExpandedFile(openFile);
             }} />}
@@ -436,7 +457,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
               runsToday={runsToday.get(selectedPlace.id) ?? 0}
               now={now}
               onRun={openCmd}
-              onBrowse={() => setFilesPlace(selectedPlace)}
+              onBrowse={() => { setFilesPath(undefined); setFilesPlace(selectedPlace); }}
               onZen={onZen}
             />
           ) : selectedProcess ? (

@@ -35,6 +35,7 @@ let targetsReady: Promise<void> | null;
 let hasMore: boolean;
 let historyUnavailable: boolean;
 let ownerUid: number;
+let ownerCapabilities: string[] | null;
 let gateway: string;
 let shipPid: string;
 let activeRunId: string | null;
@@ -66,6 +67,7 @@ beforeEach(() => {
   hasMore = false;
   historyUnavailable = false;
   ownerUid = 1000;
+  ownerCapabilities = null;
   gateway = "wss://space.example/ws";
   shipPid = "ship";
   activeRunId = null;
@@ -92,7 +94,8 @@ beforeEach(() => {
       createdAt: 1, lastActiveAt: 1, cwd: "/home/algo" }] } };
     if (call === "sys.target.list") { await targetsReady; return { data: { targets } }; }
     if (call === "sys.config.get") return { data: { entries: [] } };
-    if (call === "account.list") return { data: { accounts: [] } };
+    if (call === "account.list") return { data: { accounts: ownerCapabilities ? [{ uid: ownerUid, username: "hank", displayName: "Hank",
+      relation: "self", runnable: false, capabilities: ownerCapabilities }] : [] } };
     if (call === "conversation.forProcess") return { data: { conversation: conversation(z.object({ pid: z.string() }).parse(args).pid) } };
     if (call === "conversation.history") {
       if (historyUnavailable) throw new Error("history unavailable");
@@ -831,6 +834,20 @@ describe("Zen conversation entry", () => {
       expect(zen.props(ZenText).opened).toBe(false);
       expect(zen.text()).not.toContain("I am the Ship. Who are you?");
       expect(send).not.toHaveBeenCalled();
+    } finally { await zen.unmount(); }
+  });
+
+  it.each([[["fs.read"], true], [["conversation.send"], false]])("links paths in Ship's messages to Work for a reader with %j: %s", async (capabilities, linked) => {
+    ownerCapabilities = capabilities;
+    messages = [message("process", "Saved in /home/hank/lease/ with a summary.")];
+    const zen = await mountedZen();
+    try {
+      // The account has loaded once its capabilities enable the add menu; only fs.read links the path.
+      await vi.waitFor(() => expect(zen.nodes().find((node) => node.type === "button" && node.props.role === "menuitem"
+        && collectText(node).includes(linked ? "reference" : "create a routine"))?.props.disabled).toBe(false));
+      await vi.waitFor(() => expect(zen.props(ZenText).text).toBe("Saved in /home/hank/lease/ with a summary."));
+      expect(zen.props(ZenText).linkFiles).toBe(linked);
+      expect(zen.props(ZenText).onClick).toBeTypeOf("function");
     } finally { await zen.unmount(); }
   });
 

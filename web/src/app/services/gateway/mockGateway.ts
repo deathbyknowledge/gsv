@@ -150,7 +150,7 @@ function at(daysAgo: number, hour: number, minute: number): number {
 
 const LINES: [who: "you" | "ship", createdAt: number, text: string][] = [
   ["you", at(1, 9, 12), "Can you pull the notes from yesterday's call with Mara and put the action items somewhere I'll find them?"],
-  ["ship", at(1, 9, 13), "Done. Three action items are in your notes under Mara: the deck for Thursday, the intro to Lena, and the follow-up on pricing. I set a reminder for the deck on Wednesday evening."],
+  ["ship", at(1, 9, 13), "Done. Three action items are in /home/esteve/notes/mara.md: the deck for Thursday, the intro to Lena, and the follow-up on pricing. The full call notes are in ~/notes/calls/. I set a reminder for the deck on Wednesday evening."],
   ["you", at(1, 12, 2), "Paste the paragraph I need to send Lena so I can copy it as is."],
   ["ship", at(1, 12, 2), "Here it is, exactly as you drafted it:\n\n```\nHi Lena, thanks again for Tuesday. As discussed, I'll send the revised deck by Thursday and loop Mara in on the pricing thread so we can close the quote before the end of the week.\nBest, Alex\n```"],
   ["you", at(1, 18, 40), "What's still open from this week?"],
@@ -256,6 +256,7 @@ type Step = {
   failure?: string;
 };
 
+const MARA_NOTES = "# Mara\n\n- Deck for Thursday (reminder Wednesday evening)\n- Intro to Lena\n- Follow up on pricing\n";
 const NOTES = "# Backups\n\nStudio drive: /Volumes/Studio, 1.8 TB.\nNightly rsync to /Volumes/Backups at 02:00 (launchd).\nKeep 30 days; caches under Library/Caches/Builds are not backed up.\n\nFailing since Monday: drive at 95%, rsync exits before finishing.\n";
 
 const DF = "Filesystem      Size   Used  Avail Capacity  Mounted on\n/dev/disk4s1   1.8Ti  1.7Ti   96Gi    95%    /Volumes/Studio";
@@ -1087,12 +1088,14 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "fs.read": {
       const { path: requestedPath } = z.object({ path: z.string() }).parse(args);
-      const path = ["~", "."].includes(requestedPath) ? "/home/esteve" : requestedPath;
+      const path = requestedPath === "." ? OWNER.home : requestedPath.replace(/^~(?=\/|$)/, OWNER.home);
       if (path === "/") return respond(id, { ok: true, path, files: [], directories: ["home"] });
       if (path === "/home") return respond(id, { ok: true, path, files: [], directories: ["esteve"] });
       if (path === "/home/esteve") return respond(id, { ok: true, path, files: ["notes.md"], directories: ["notes"] });
-      if (path === "/home/esteve/notes") return respond(id, { ok: true, path, files: ["backups.md"], directories: [] });
-      return socket.textResponse(id, { ok: true, path, kind: "text", contentType: "text/markdown", lines: 8, size: NOTES.length }, NOTES);
+      if (path === "/home/esteve/notes") return respond(id, { ok: true, path, files: ["backups.md", "mara.md"], directories: ["calls"] });
+      if (path === "/home/esteve/notes/calls") return respond(id, { ok: true, path, files: ["mara-pricing.md"], directories: [] });
+      const content = path === "/home/esteve/notes/mara.md" ? MARA_NOTES : NOTES;
+      return socket.textResponse(id, { ok: true, path, kind: "text", contentType: "text/markdown", lines: content.split("\n").length - 1, size: content.length }, content);
     }
     case "sys.mcp.list": return respond(id, { servers: [] });
     case "repo.list": return respond(id, { repos: [] });

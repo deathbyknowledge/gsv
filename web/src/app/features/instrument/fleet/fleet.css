@@ -268,6 +268,10 @@
   color: var(--text-dim);
   margin-bottom: 16px;
 }
+/* The file's place and path, with the copy action beside it and the copy outcome beneath. */
+.file-preview-head { margin-bottom: 16px; }
+.file-preview-head .sub { display: flex; align-items: center; gap: 6px; margin-bottom: 0; }
+.file-preview-head .sub > span { min-width: 0; overflow-wrap: anywhere; }
 .fleet-kv {
   display: grid;
   grid-template-columns: 110px 1fr;
@@ -295,6 +299,8 @@
   gap: 16px;
   margin-top: 18px;
 }
+/* A help tip sits by the action it explains, at the label-row distance, not a whole action gap away. */
+.fleet-actions .gsv-infotip { margin-inline-start: -12px; }
 .fleet-text-action { border: 0; padding: 2px 0; background: none; color: var(--text-dim); font: inherit; font-size: 12px; letter-spacing: 0; text-transform: none; text-decoration: none; cursor: pointer; text-underline-offset: 5px; }
 .fleet-text-action:hover, .fleet-text-action[aria-pressed="true"] { color: var(--accent); }
 .fleet-text-action:hover, .fleet-text-action[aria-pressed="true"], .fleet-text-action:focus-visible { text-decoration: underline; }

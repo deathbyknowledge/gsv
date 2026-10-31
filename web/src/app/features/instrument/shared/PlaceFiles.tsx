@@ -105,8 +105,15 @@ function DirNode({
   );
 }
 
-export function PlaceTree({ place, enabled, onOpenFile, initiallyOpen }: { place: Place; enabled: boolean; onOpenFile: OpenFileHandler; initiallyOpen?: boolean }) {
+export function PlaceTree({ place, enabled, onOpenFile, initiallyOpen, initialPath }: {
+  place: Place;
+  enabled: boolean;
+  onOpenFile: OpenFileHandler;
+  initiallyOpen?: boolean;
+  /** The folder to start in, when a link named one; otherwise the place's home. */
+  initialPath?: string;
+}) {
   // the cloud home understands "~"; a machine reads relative to the daemon's home, so "." is the same place there
-  const [path, setPath] = useState(place.id === CLOUD_TARGET_ID ? "~" : ".");
+  const [path, setPath] = useState(initialPath ?? (place.id === CLOUD_TARGET_ID ? "~" : "."));
   return <DirNode place={place} path={path} name={place.label} depth={0} enabled={enabled} onOpenFile={onOpenFile} initiallyOpen={initiallyOpen} onParent={setPath} />;
 }
