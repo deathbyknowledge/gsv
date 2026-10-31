@@ -157,6 +157,8 @@ without granting those adapters ownership of another component's application eve
   redacted error detail and available provider codes/status/request ID. The
   adapter owns provider interpretation; diagnostics survive its durable delivery
   receipt and the canonical `adapter.send` result, including ambiguous outcomes.
+  `adapter.quote.resolved` reports whether a quoted reply's lookup resolved, was
+  unmapped, was unavailable, failed or timed out, with its duration and never its text.
   A committed Ship reply also carries a closed `platform` class for the surface
   that receives it: `web`, `phone`, `tablet`, `desktop`, `cli`, `telegram`,
   `discord`, `slack`, `background`, or `other`. The Kernel derives it from the

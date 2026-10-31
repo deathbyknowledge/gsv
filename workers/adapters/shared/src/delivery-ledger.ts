@@ -11,6 +11,8 @@ const DEFAULT_MAX_RECORDS = 4096;
 const MAX_DELIVERY_ID_BYTES = 200;
 const MAX_ERROR_LENGTH = 1000;
 const MAX_MESSAGE_ID_LENGTH = 256;
+/** Past this, later messages of one very long delivery simply cannot be quoted. */
+export const MAX_DELIVERY_MESSAGE_IDS = 64;
 const RECORD_PREFIX = "outbound_delivery:v1:record:";
 const META_KEY = "outbound_delivery:v1:meta";
 
@@ -22,6 +24,8 @@ const META_KEY = "outbound_delivery:v1:meta";
 export type DeliveryProgress = {
   sent: number;
   messageId?: string;
+  /** Every provider message accepted so far; absent on receipts from before they were kept. */
+  messageIds?: string[];
   /** Adapter-owned partition format; absent on receipts from the first staging build. */
   formatVersion?: number;
 };
@@ -49,6 +53,7 @@ type DeliveryRecord = (
       deliveryId: string;
       requestFingerprint: string;
       messageId?: string;
+      messageIds?: string[];
       createdAt: number;
       expiresAt: number;
     }
@@ -310,6 +315,7 @@ export class DeliveryLedger {
     deliveryId: string,
     attemptId: string,
     messageId?: string,
+    messageIds?: readonly string[],
   ): Promise<void> {
     await this.replaceAttempt(deliveryId, attemptId, (attempt) => {
       const replacement: Extract<DeliveryRecord, { state: "sent" }> = {
@@ -320,6 +326,7 @@ export class DeliveryLedger {
       expiresAt: attempt.expiresAt,
       };
       if (messageId) replacement.messageId = truncate(messageId, MAX_MESSAGE_ID_LENGTH);
+      if (messageIds && messageIds.length > 1) replacement.messageIds = normalizeMessageIds(messageIds);
       return replacement;
     });
   }
@@ -426,6 +433,7 @@ function claimFromExisting(record: DeliveryRecord): DeliveryClaim {
         deduplicated: true,
       };
       if (record.messageId) result.messageId = record.messageId;
+      if (record.messageIds) result.messageIds = record.messageIds;
       return {
         claimed: false,
         result,
@@ -508,7 +516,8 @@ function isDeliveryRecord(value: DeliveryMeta | DeliveryRecord | null | undefine
     return isDeliveryProgress(record.progress);
   }
   if (record.state === "sent") {
-    return record.messageId === undefined || isStringValue(record.messageId);
+    return (record.messageId === undefined || isStringValue(record.messageId))
+      && isMessageIds(record.messageIds);
   }
   if (record.state === "ambiguous" || record.state === "failed") {
     return isStringValue(record.error);
@@ -521,15 +530,25 @@ function isDeliveryProgress(value: DeliveryProgress | undefined): boolean {
   return Number.isSafeInteger(value.sent)
     && value.sent >= 0
     && (value.formatVersion === undefined || (Number.isSafeInteger(value.formatVersion) && value.formatVersion >= 0))
-    && (value.messageId === undefined || isStringValue(value.messageId));
+    && (value.messageId === undefined || isStringValue(value.messageId))
+    && isMessageIds(value.messageIds);
 }
 
 function normalizeProgress(progress: DeliveryProgress): DeliveryProgress {
   const sent = positiveIntegerOrZero(progress.sent, "progress.sent");
   const normalized: DeliveryProgress = { sent };
   if (progress.messageId) normalized.messageId = truncate(progress.messageId, MAX_MESSAGE_ID_LENGTH);
+  if (progress.messageIds?.length) normalized.messageIds = normalizeMessageIds(progress.messageIds);
   if (progress.formatVersion !== undefined) normalized.formatVersion = positiveIntegerOrZero(progress.formatVersion, "progress.formatVersion");
   return normalized;
+}
+
+function normalizeMessageIds(messageIds: readonly string[]): string[] {
+  return messageIds.slice(0, MAX_DELIVERY_MESSAGE_IDS).map((id) => truncate(id, MAX_MESSAGE_ID_LENGTH));
+}
+
+function isMessageIds(value: string[] | undefined): boolean {
+  return value === undefined || (Array.isArray(value) && value.every(isStringValue));
 }
 
 function positiveIntegerOrZero(value: number, name: string): number {

@@ -1988,6 +1988,100 @@ describe("Kernel process signal routing", () => {
     expect(stopOrder).toBeGreaterThan(adapterFrame.mock.invocationCallOrder[0]!);
   });
 
+  describe("provider message references", () => {
+    function deliveredKernel(sendResult: Record<string, KernelTestValue>) {
+      const route = {
+        kind: "adapter",
+        runId: "run-refs",
+        processId: "proc-1",
+        uid: 1000,
+        destination: {
+          kind: "adapter",
+          adapter: "whatsapp",
+          accountId: "managed",
+          actorId: "34600000000",
+          surface: { kind: "dm", id: "34600000000" },
+        },
+        routeGeneration: "generation-1",
+      };
+      const kernel = buildKernel(route);
+      const adapterFrame = vi.fn(async (_installation: { installationId: string }, context: { deliveryId: string }, frame: { id: string }) => ({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          adapter: "whatsapp",
+          accountId: "managed",
+          surfaceId: "34600000000",
+          deliveryId: context.deliveryId,
+          ...sendResult,
+        },
+      }));
+      kernel.installationEnv = { CHANNEL_WHATSAPP: { adapterFrame, adapterSetActivity: vi.fn(async () => ({ ok: true })) } };
+      kernel.adapters.messageRefs = { record: vi.fn() };
+      kernel.buildProcessContext = vi.fn(() => ({
+        env: kernel.installationEnv,
+        installationId: TEST_INSTALLATION_ID,
+        adapters: {
+          identityLinks: {
+            get: vi.fn(() => ({
+              uid: 1000,
+              metadata: { managed: true, surfaceKind: "dm", surfaceId: "34600000000", routeGeneration: "generation-1" },
+            })),
+          },
+          surfaceRoutes: { get: vi.fn(() => null) },
+          privateDestinations: { clearIfMatches: vi.fn() },
+        },
+      }));
+      // SAFETY: this fixture binds the private method to a Kernel-shaped test double.
+      kernel.adapterDelivery.deliverAdapterRouteEvent = (AdapterDelivery.prototype as any).deliverAdapterRouteEvent.bind(kernel.adapterDelivery);
+      return { kernel, route };
+    }
+    const SCOPE = {
+      ownerUid: 1000,
+      adapter: "whatsapp",
+      accountId: "managed",
+      surface: { kind: "dm", id: "34600000000" },
+    };
+    const TARGET = { conversationId: "conv:home", messageId: "message-1", sequence: 2 };
+
+    it("maps every provider message of a committed message to its canonical reference", async () => {
+      const { kernel, route } = deliveredKernel({ messageId: "wamid.a", messageIds: ["wamid.a", "wamid.b"], deliveryState: "sent" });
+      await expect(kernel.adapterDelivery.deliverAdapterRouteEvent(route, committedMessageFrame(route, "message-1", "reply")))
+        .resolves.toEqual({ state: "delivered" });
+      expect(kernel.adapters.messageRefs.record).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining(SCOPE), TARGET, ["wamid.a", "wamid.b"],
+      );
+    });
+
+    it("maps a retried delivery from the ledger's replayed ids", async () => {
+      const { kernel, route } = deliveredKernel({ messageId: "wamid.a", messageIds: ["wamid.a", "wamid.b"], deliveryState: "deduplicated" });
+      await kernel.adapterDelivery.deliverAdapterRouteEvent(route, committedMessageFrame(route, "message-1", "reply"));
+      expect(kernel.adapters.messageRefs.record).toHaveBeenCalledWith(expect.anything(), TARGET, ["wamid.a", "wamid.b"]);
+    });
+
+    it("maps the single id of an adapter that reports only one", async () => {
+      const { kernel, route } = deliveredKernel({ messageId: "discord-1", deliveryState: "sent" });
+      await kernel.adapterDelivery.deliverAdapterRouteEvent(route, committedMessageFrame(route, "message-1", "reply"));
+      expect(kernel.adapters.messageRefs.record).toHaveBeenCalledWith(expect.anything(), TARGET, ["discord-1"]);
+    });
+
+    it("maps nothing for an ambiguous delivery, whose provider id is unknown", async () => {
+      const { kernel, route } = deliveredKernel({ deliveryState: "ambiguous" });
+      await expect(kernel.adapterDelivery.deliverAdapterRouteEvent(route, committedMessageFrame(route, "message-1", "reply")))
+        .resolves.toMatchObject({ state: "ambiguous" });
+      expect(kernel.adapters.messageRefs.record).not.toHaveBeenCalled();
+    });
+
+    it("never turns a delivered message into a retry when mapping it fails", async () => {
+      const { kernel, route } = deliveredKernel({ messageId: "wamid.a", deliveryState: "sent" });
+      kernel.adapters.messageRefs.record.mockImplementation(() => { throw new Error("sql"); });
+      await expect(kernel.adapterDelivery.deliverAdapterRouteEvent(route, committedMessageFrame(route, "message-1", "reply")))
+        .resolves.toEqual({ state: "delivered" });
+    });
+  });
+
   function historyResponse(pendingHil: ReturnType<typeof hilPayload> | null) {
     return {
       type: "res",

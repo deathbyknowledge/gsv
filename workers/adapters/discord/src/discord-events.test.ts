@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { discordHelloSchema, discordMessagePayloadSchema, discordReadyPayloadSchema, parseDiscordGatewayFrame } from "./discord-events";
+import { discordHelloSchema, discordMessagePayloadSchema, discordReadyPayloadSchema, discordReplyToId, parseDiscordGatewayFrame } from "./discord-events";
 
 describe("Discord provider packet boundaries", () => {
   it("decodes connection controls independently from message dispatches", () => {
@@ -10,6 +10,16 @@ describe("Discord provider packet boundaries", () => {
     const ready = parseDiscordGatewayFrame(JSON.stringify({ op: 0, t: "READY", s: 1, d: { session_id: "session", resume_gateway_url: "wss://gateway.discord.gg", user: { id: "123", username: "bot" } } }));
     expect(discordReadyPayloadSchema.parse(ready.d).session_id).toBe("session");
     expect(() => discordMessagePayloadSchema.parse(ready.d)).toThrow();
+  });
+
+  it("treats a reply as a quote, and a forward as something else", () => {
+    const message = (message_reference?: { type?: number; message_id?: string }) => discordMessagePayloadSchema.parse({
+      id: "message", channel_id: "channel", content: "hello", message_reference,
+    });
+    expect(discordReplyToId(message())).toBeUndefined();
+    expect(discordReplyToId(message({ message_id: "quoted" }))).toBe("quoted");
+    expect(discordReplyToId(message({ type: 0, message_id: "quoted" }))).toBe("quoted");
+    expect(discordReplyToId(message({ type: 1, message_id: "forwarded" }))).toBeUndefined();
   });
 
   it("requires message identity at the message boundary and rejects malformed control packets", () => {

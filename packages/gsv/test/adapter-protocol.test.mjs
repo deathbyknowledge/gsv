@@ -226,6 +226,18 @@ test("validates adapter worker and provider results", () => {
     deduplicated: false,
   }), true);
   assert.equal(isAdapterProviderSendResult({
+    ok: true,
+    messageId: "provider-1",
+    messageIds: ["provider-1", "provider-2"],
+    deduplicated: false,
+  }), true);
+  assert.equal(isAdapterProviderSendResult({
+    ok: true,
+    messageId: "provider-1",
+    messageIds: [1],
+    deduplicated: false,
+  }), false);
+  assert.equal(isAdapterProviderSendResult({
     ok: false,
     error: "unknown outcome",
     ambiguous: true,

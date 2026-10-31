@@ -262,6 +262,24 @@ describe("telemetry contract", () => {
     }
   });
 
+  it("accepts quote lookup outcomes without quoted content", () => {
+    const resolved = createTelemetryRecord({
+      installationId: "inst_telemetry",
+      component: "gateway",
+      event: {
+        stream: "operational",
+        name: "adapter.quote.resolved",
+        properties: { adapter: "whatsapp", surface: "dm", outcome: "unmapped", durationMs: 3 },
+      },
+    });
+
+    assert.equal(telemetryRecordSchema.safeParse(resolved).success, true);
+    assert.equal(telemetryRecordSchema.safeParse({
+      ...resolved,
+      event: { ...resolved.event, properties: { ...resolved.event.properties, text: "private quote" } },
+    }).success, false);
+  });
+
   it("accepts terminal adapter route diagnostics without delivery content", () => {
     const failure = createTelemetryRecord({
       installationId: "inst_telemetry",

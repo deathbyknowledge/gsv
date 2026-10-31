@@ -11,7 +11,7 @@ import { cancelBinaryBody, cancelResponseBody } from "../../shared/src/media-bod
 import type { AdapterDeliveryContext, AdapterOutboundMessage, AdapterPairingActivateInput, AdapterPairingCandidate, AdapterPairingDisconnectInput, AdapterPairingPreparation, AdapterPairingPrepareInput, AdapterSendResult, AdapterSurface, BinaryBody } from "../../shared/src/types";
 import { deliverDiscordMessage } from "./discord-delivery";
 import { extractDiscordMedia } from "./discord-inbound-media";
-import { discordMessagePayloadSchema, type DiscordMessagePayload } from "./discord-events";
+import { discordMessagePayloadSchema, discordReplyToId, type DiscordMessagePayload } from "./discord-events";
 import { discordActor, discordId, discordPeerName, discordUser, newDiscordPairingCode, parseDiscordAccount } from "./shared-identity";
 import type { SharedDiscordEnv } from "./shared-application";
 
@@ -179,7 +179,7 @@ export class DiscordPeer extends DurableObject<SharedDiscordEnv> {
       message: {
         messageId: input.message.id, surface, actor: { id: state.actorId, name: state.actorName },
         text: text || "[Media]", media: media.media, wasMentioned: input.mentioned,
-        replyToId: input.message.message_reference?.message_id, timestamp: input.message.timestamp ? Date.parse(input.message.timestamp) : Date.now(),
+        replyToId: discordReplyToId(input.message), timestamp: input.message.timestamp ? Date.parse(input.message.timestamp) : Date.now(),
       },
     }, media.body);
     if (adapterInboundRequiresPairing(result)) {

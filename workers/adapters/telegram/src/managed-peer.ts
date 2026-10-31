@@ -10,6 +10,7 @@ import {
 import {
   DeliveryLedger,
   fingerprintOutboundDelivery,
+  MAX_DELIVERY_MESSAGE_IDS,
   type DeliveryFailureKind,
 } from "../../shared/src/delivery-ledger";
 import {
@@ -119,7 +120,8 @@ type PairingIssue = { code: string; claimId: string; expiresAt: number };
 type ManagedPairingStub = { initialize(input: ManagedTelegramPairingRecord): Promise<{ created: boolean }> };
 type TelegramApiPayload = Parameters<typeof callManagedTelegramApi>[2];
 /** One provider message of a delivery; resolves to the Telegram message id it produced. */
-type DeliveryPart = () => Promise<string | undefined>;
+/** The messages one provider call sent, in order: an album is several. */
+type DeliveryPart = () => Promise<string[]>;
 
 const STATE_KEY = "managed_telegram_peer:v1:state";
 const INBOUND_PREFIX = "managed_telegram_peer:v1:inbound:";
@@ -767,7 +769,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
               fetcher,
               index === chunks.length - 1 ? options : {},
             );
-            return String(sent.message_id);
+            return [String(sent.message_id)];
           });
         }
         if (options.replyMarkup) anchor = parts.length - 1;
@@ -781,24 +783,24 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
           const deliveryBytes = mediaBytes.slice(mediaOffset, mediaOffset + delivery.length);
           mediaOffset += delivery.length;
           parts.push(async () => {
-            const firstSent = delivery.length === 1
-              ? await sendTelegramMediaMessage(
+            const sent = delivery.length === 1
+              ? [await sendTelegramMediaMessage(
                   callApi,
                   chatId,
                   delivery[0],
                   deliveryBytes[0],
                   caption,
                   replyToMessageId,
-                )
-              : (await sendTelegramMediaGroupMessage(
+                )]
+              : await sendTelegramMediaGroupMessage(
                   callApi,
                   chatId,
                   delivery,
                   deliveryBytes,
                   caption,
                   replyToMessageId,
-                ))[0];
-            return firstSent ? String(firstSent.message_id) : undefined;
+                );
+            return sent.map((item) => String(item.message_id));
           });
         }
       }
@@ -806,20 +808,27 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       // Every accepted part is recorded before the next provider call, so a
       // retry of this delivery resumes after the parts the person already has.
       let anchorMessageId = claim.progress.messageId;
+      const messageIds = [...claim.progress.messageIds ?? []];
       for (let index = claim.progress.sent; index < parts.length; index += 1) {
         if (sentInAttempt > 0) await this.pauseBetweenParts(chatId, fetcher);
         attemptedProviderSend = true;
-        const messageId = await parts[index]!();
+        const sent = await parts[index]!();
         sentInAttempt += 1;
-        if (index === anchor) anchorMessageId = messageId;
+        if (index === anchor) anchorMessageId = sent[0];
+        messageIds.push(...sent);
         await this.deliveries.recordProgress(message.deliveryId, claim.attemptId, {
           sent: index + 1,
           messageId: anchorMessageId,
+          messageIds,
           formatVersion: legacyGrouping ? 0 : 1,
         });
       }
-      await this.deliveries.succeed(message.deliveryId, claim.attemptId, anchorMessageId);
-      return { ok: true, messageId: anchorMessageId };
+      await this.deliveries.succeed(message.deliveryId, claim.attemptId, anchorMessageId, messageIds);
+      return {
+        ok: true,
+        messageId: anchorMessageId,
+        ...(messageIds.length > 1 ? { messageIds: messageIds.slice(0, MAX_DELIVERY_MESSAGE_IDS) } : undefined),
+      };
     } catch (error) {
       // A definite rejection resumes at the first unsent part on retry; an
       // unknown provider outcome stays ambiguous and is never replayed.

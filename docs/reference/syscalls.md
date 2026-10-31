@@ -2463,7 +2463,7 @@ type AdapterSyscalls = {
   };
 
   "adapter.inbound": {
-    args: { adapter: string; accountId: string; deliveryId: string; message: { messageId: string; surface: AdapterSurface; actor?: { id: string; name?: string; handle?: string }; text: string; media?: AdapterMedia[]; replyToId?: string; replyToText?: string; timestamp?: number; wasMentioned?: boolean } };
+    args: { adapter: string; accountId: string; deliveryId: string; message: { messageId: string; surface: AdapterSurface; actor?: { id: string; name?: string; handle?: string }; text: string; media?: AdapterMedia[]; replyToId?: string; timestamp?: number; wasMentioned?: boolean } };
     result: { ok: boolean; delivered?: { uid: number; pid: string; runId: string; queued: boolean }; reply?: { deliveryId: string; text: string; replyToId?: string }; challenge?: { deliveryId: string; code: string; prompt: string; expiresAt: number }; replayed?: "in_progress" | "completed"; droppedReason?: string; error?: string };
   };
 
@@ -2475,7 +2475,7 @@ type AdapterSyscalls = {
   "adapter.send": {
     args: { adapter: string; accountId: string; deliveryId?: string; surface: AdapterSurface; text: string; action?: { kind: "open"; label: string; url: string }; replyToId?: string; media?: AdapterMedia[]; also?: boolean };
     result:
-      | { ok: true; adapter: string; accountId: string; surfaceId: string; deliveryId: string; messageId?: string; deliveryState?: "sent" | "deduplicated" | "ambiguous" }
+      | { ok: true; adapter: string; accountId: string; surfaceId: string; deliveryId: string; messageId?: string; messageIds?: string[]; deliveryState?: "sent" | "deduplicated" | "ambiguous" }
       | { ok: false; error: string; deliveryId?: string; retryable?: boolean };
   };
 
@@ -2509,8 +2509,12 @@ action and direct the user to Chat. Opaque request identities are never rendered
 or parsed from free-form adapter messages. A native callback invokes ordinary
 `proc.hil` with the exact `requestId` through a Kernel-derived linked-human peer;
 actor, surface, route generation, provider-message correlation, human capability,
-and pending state are all rechecked. `replyToId` remains provider threading
-metadata and is not authorization.
+and pending state are all rechecked. `replyToId` is the provider id of a message
+the person quoted. It is not authorization: the Kernel resolves it only within the
+same owner, adapter account and surface, as described in
+[quoted replies](/architecture/adapter-model#quoted-replies). An adapter sets it only
+for a real quote. `messageId` is the first provider message of a delivery; a delivery
+split into several provider messages also reports all of them in `messageIds`.
 
 Routed adapter notifications and final replies are retained as Kernel-scheduled
 work under the stable delivery id. The exact adapter receives one correlated
