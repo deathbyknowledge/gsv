@@ -1974,6 +1974,9 @@ export class ProcessRun {
       case "onRunFinishDelivery":
         await this.host.finishDelivery.deliver(task.payload);
         return;
+      case "onNestedApprovalKeepAlive":
+        await this.host.tools.keepNestedApprovalAlive(task.payload);
+        return;
       case "onToolDispatchTimeout":
         await this.onToolDispatchTimeout(task.payload);
         return;

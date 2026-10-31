@@ -182,6 +182,18 @@ const adapterDeliveryFinishedSchema = z.strictObject({
   }),
 });
 
+const adapterQuoteResolvedSchema = z.strictObject({
+  stream: z.literal("operational"),
+  name: z.literal("adapter.quote.resolved"),
+  properties: z.strictObject({
+    ...exceptionDiagnosticProperties,
+    adapter: adapterNameSchema,
+    surface: z.enum(["dm", "group", "channel", "thread"]),
+    outcome: z.enum(["resolved", "unmapped", "unavailable", "failed", "timed_out"]),
+    durationMs: nonNegativeIntegerSchema,
+  }),
+});
+
 const adapterRouteDeliveryFailedSchema = z.strictObject({
   stream: z.literal("operational"),
   name: z.literal("adapter.route_delivery.failed"),
@@ -207,7 +219,7 @@ const delegationFinishedSchema = z.strictObject({
   }),
 });
 
-export const inferenceProviderSchema = z.enum(["workers-ai", "modal", "together", "gsv", "other"]);
+export const inferenceProviderSchema = z.enum(["workers-ai", "modal", "together", "prime-intellect", "gsv", "other"]);
 
 const inferenceRequestFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
@@ -550,6 +562,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   processCompactionCompletedSchema,
   adapterIngressFinishedSchema,
   adapterDeliveryFinishedSchema,
+  adapterQuoteResolvedSchema,
   adapterRouteDeliveryFailedSchema,
   delegationFinishedSchema,
   inferenceRequestFinishedSchema,
@@ -586,6 +599,7 @@ export const telemetryEventComponents = {
   "process.compaction.failed": ["gateway"],
   "adapter.ingress.finished": ["gateway"],
   "adapter.delivery.finished": ["gateway"],
+  "adapter.quote.resolved": ["gateway"],
   "adapter.route_delivery.failed": ["gateway"],
   "delegation.finished": ["gateway"],
   "inference.request.finished": ["inference"],

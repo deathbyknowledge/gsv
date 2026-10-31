@@ -9,10 +9,12 @@ import { hasCapability } from "./capabilities";
 import type { KernelContext, PrincipalView } from "./context";
 import { principalOf, requirePrincipal } from "./context";
 import { resolveCallerOwnerUid } from "./context";
+import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import {
   armSchedule,
   normalizeScheduleExpression,
 } from "./scheduler";
+import { ownerTimezone } from "./timezone";
 
 const USER_CRON_PREFIX = "/var/spool/cron/";
 const SYSTEM_CRON_PREFIX = "/etc/cron.d/";
@@ -100,7 +102,7 @@ async function installUserCrontab(ctx: KernelContext, username: string, content:
 async function removeUserCrontab(ctx: KernelContext, username: string): Promise<boolean> {
   const user = requireUser(ctx, username);
   assertCanManageUserCrontab(ctx, user);
-  return removeCronFile(ctx, userCronPath(user.username));
+  return await removeCronFile(ctx, userCronPath(user.username));
 }
 
 function listSystemCrontabs(ctx: KernelContext): string[] {
@@ -130,7 +132,7 @@ async function installSystemCrontab(ctx: KernelContext, name: string, content: s
 
 async function removeSystemCrontab(ctx: KernelContext, name: string): Promise<boolean> {
   assertRoot(ctx, "remove system crontabs");
-  return removeCronFile(ctx, systemCronPath(name));
+  return await removeCronFile(ctx, systemCronPath(name));
 }
 
 async function replaceCronFile(
@@ -143,7 +145,7 @@ async function replaceCronFile(
   },
 ): Promise<void> {
   const store = ctx.schedules;
-  const now = Date.now();
+  assertCallerCapabilities(ctx, "sched.add", "sched.remove", ...(input.jobs.length > 0 ? ["shell.exec"] : []));
   for (const job of input.jobs) {
     const process = processIdentityForUser(ctx, job.user);
     const capabilities = ctx.caps.resolve(process.gids);
@@ -151,7 +153,15 @@ async function replaceCronFile(
       throw new Error(`Permission denied: ${job.user.username} cannot run shell.exec`);
     }
   }
+  if (input.jobs.length > 0) {
+    // The file is one decision: its jobs replace the previous ones together.
+    await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "sched.add", {
+      path: input.path,
+      jobs: effectiveCronLines(input.content),
+    });
+  }
 
+  const now = Date.now();
   await removeLinkedSchedules(ctx, input.path);
   store.upsertCronFile({
     path: input.path,
@@ -185,6 +195,7 @@ async function replaceCronFile(
 }
 
 async function removeCronFile(ctx: KernelContext, path: string): Promise<boolean> {
+  assertCallerCapabilities(ctx, "sched.remove");
   const store = ctx.schedules;
   const existing = store.getCronFile(path);
   const linked = store.cronFileScheduleIds(path);
@@ -207,7 +218,8 @@ async function removeLinkedSchedules(ctx: KernelContext, path: string): Promise<
 }
 
 function parseUserCrontab(ctx: KernelContext, content: string, user: PasswdEntry): CronJobSpec[] {
-  return parseCrontabLines(ctx, content, (line, lineNumber, timezone) => {
+  const defaultTimezone = ownerTimezone(ctx.config, scheduleOwnerUidForUserCrontab(ctx, user));
+  return parseCrontabLines(content, defaultTimezone, (line, lineNumber, timezone) => {
     const match = line.match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/);
     if (!match) {
       throw new Error(`invalid crontab line ${lineNumber}: expected five schedule fields and a command`);
@@ -223,7 +235,8 @@ function parseUserCrontab(ctx: KernelContext, content: string, user: PasswdEntry
 }
 
 function parseSystemCrontab(ctx: KernelContext, content: string): CronJobSpec[] {
-  return parseCrontabLines(ctx, content, (line, lineNumber, timezone) => {
+  const defaultTimezone = ctx.config.get("config/server/timezone") || "UTC";
+  return parseCrontabLines(content, defaultTimezone, (line, lineNumber, timezone) => {
     const match = line.match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/);
     if (!match) {
       throw new Error(`invalid crontab line ${lineNumber}: expected five schedule fields, user, and command`);
@@ -240,12 +253,12 @@ function parseSystemCrontab(ctx: KernelContext, content: string): CronJobSpec[] 
 }
 
 function parseCrontabLines(
-  ctx: KernelContext,
   content: string,
+  defaultTimezone: string,
   parseJob: (line: string, lineNumber: number, timezone: string) => CronJobSpec,
 ): CronJobSpec[] {
   const jobs: CronJobSpec[] = [];
-  let timezone = ctx.config.get("config/server/timezone") || "UTC";
+  let timezone = defaultTimezone;
   const lines = content.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
     const lineNumber = index + 1;
@@ -314,6 +327,14 @@ function validateTimezone(timezone: string, lineNumber: number): string {
   return timezone;
 }
 
+/** The lines the parser acts on, so a person approves what runs rather than what the comments say. */
+function effectiveCronLines(content: string): string {
+  return content.split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .join("\n");
+}
+
 function normalizeCronFileContent(content: string): string {
   const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   return normalized.length === 0 || normalized.endsWith("\n") ? normalized : `${normalized}\n`;
@@ -355,6 +376,15 @@ function assertCanManageUserCrontab(ctx: KernelContext, user: PasswdEntry): void
   if (actorUid === 0 || actorUid === user.uid) return;
   if (canOwnerDelegateRunAs(ctx.auth, resolveCallerOwnerUid(ctx), user)) return;
   throw new Error(`Permission denied: cannot access crontab for ${user.username}`);
+}
+
+function assertCallerCapabilities(ctx: KernelContext, ...capabilities: string[]): void {
+  const calls = requireActor(ctx).calls;
+  for (const capability of capabilities) {
+    if (!hasCapability(calls, capability)) {
+      throw new Error(`Permission denied: ${capability}`);
+    }
+  }
 }
 
 function assertRoot(ctx: KernelContext, action: string): void {

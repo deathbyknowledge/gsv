@@ -398,6 +398,48 @@ a re-entrant call into the peer Durable Object that is still reporting the
 event. A repeated provider event therefore reaches the account-local ledger
 instead of calling a raw platform reply helper.
 
+## Quoted replies
+
+When someone quotes a message on a messenger, the provider usually sends only the quoted
+message's id. The Kernel resolves that id so the model can see what was quoted.
+
+```text
+adapter.send result   messageIds ──┐
+adapter.inbound       messageId  ──┴─▶ adapter_message_refs (Kernel SQLite)
+                                       owner, adapter, account, surface, provider id
+                                       → conversation, message, sequence, part
+
+adapter.inbound       replyToId  ────▶ lookup ─▶ Conversation.readMessage ─▶ excerpt
+                                                                               │
+Process history       message.quote ◀─────────────────────────────────────────┘
+Model context         [Replying to Ship's earlier message:]
+                      > the excerpt
+
+                      the person's reply
+```
+
+The map holds references, never text. A row is written for each canonical inbound Message and
+for each provider message of a delivered canonical Message. A delivery that split into several
+provider messages records every id with its part number, so a person can quote any of them. Only
+canonical Messages are mapped: quoting an approval request, a command reply or a notice resolves
+to nothing.
+
+An ordinary inbound Message does no read and writes one row. Only a Message with `replyToId`
+performs a lookup, which reads one indexed row and then the Conversation, and gives up after two
+seconds. Any failure leaves the quote `unavailable`; it never delays admission past that limit or
+loses the Message. A lookup matches only the same owner, adapter, account and surface, and rechecks
+that the Conversation belongs to that owner. A provider id that is unknown here therefore looks the
+same as one recorded for someone else.
+
+Rows are kept for 90 days, and a Kernel keeps its newest 20,000 within that window. The Kernel
+prunes them while recording, at most hourly and in bounded batches. Quoted text older than that,
+or from before the map existed, is reported as unavailable.
+
+Process history stores the resolved `quote` on the incoming Message, capped at 1,000 characters.
+When the person quotes one part of a split Message, the excerpt comes from the matching proportional
+position in the text, which is approximate. Media is described by its type, filename and any
+transcription, never its bytes or path. The canonical Message keeps exactly what the person wrote.
+
 ## Identity linking
 
 External actors are not automatically local users.
@@ -553,6 +595,12 @@ Examples:
 Those quirks belong inside the adapter worker, not in the Kernel or process
 runtime.
 
+Kernel migration v086 adds `adapter_message_refs`. It is additive, and earlier Messages
+simply have no references. Because `adapter.send` results are strictly validated, a Gateway
+must accept `messageIds` before an adapter can report one. A deployment composition updates
+adapters before the Gateway, so a multi-part delivery in that window is reported as failed even
+though it was delivered. Release the Gateway change first when that window matters.
+
 ## Adding an adapter
 
 1. Implement `AdapterService` in a separate Worker and return a truthful,
@@ -563,7 +611,9 @@ runtime.
    ingress delivery id from the provider's complete event identity.
 4. Persist reconstructable ingress before the first Gateway call and retry it
    with the account's existing wake-up mechanism until a terminal disposition.
-5. Implement mention/reply activation for every supported non-DM surface.
+5. Implement mention/reply activation for every supported non-DM surface. Set
+   `replyToId` only when the person quoted a specific message, not for threading
+   or forwards, and return every provider message id from a split delivery.
 6. Implement `adapterFrame` by handling targeted `adapter.send` requests and
    returning their correlated responses.
 7. Render structured HIL from the request context. Native callbacks, when the

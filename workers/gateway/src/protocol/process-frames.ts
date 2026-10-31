@@ -7,6 +7,7 @@ import type {
   ProcMediaInput,
   ProcSendResult,
   ProcHistoryEvent,
+  ProcHistoryMessageQuote,
   ResourceBlock,
   ResponseErrEnvelope,
   TypedRequest,
@@ -153,6 +154,8 @@ export type ProcessAdapterDeliverArgs = {
     conversationId: string;
     messageId: string;
   };
+  /** Present only when the person quoted a message. */
+  quote?: ProcHistoryMessageQuote;
 };
 
 export type ProcessRunAttachArgs = {

@@ -27,7 +27,7 @@ import {
   type ProcIpcDeliverResult, type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
   type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type ProcRunToolStartedSignal,
   type InteractionOrigin, type JsonObject,
-  type ProcHistoryEvent, type ProcHistoryEventPayload, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
+  type ProcHistoryEvent, type ProcHistoryEventPayload, type ProcHistoryMessageQuote, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import { agentArchiveMediaPath } from "../../shared/process-media-path";
 import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../../shared/message-media-limits";
@@ -67,6 +67,7 @@ const retiredWatchedSignalEnvelopeSchema = z.object({ watched: z.literal(true) }
 type SendAdmissionInput = {
   args: Omit<ProcSendArgs, "media"> & {
     media?: Array<ResourceBlock | ProcMediaInput>;
+    quote?: ProcHistoryMessageQuote;
   };
   admittedRunId?: string;
   identity: Process["identity"];
@@ -296,6 +297,7 @@ async function admitInterruptingSend(
         queueKind: args.interaction ? "conversation.message" : "message",
         provenance: args.interaction,
         selectedTarget: args.selectedTarget,
+        quote: args.quote,
       });
       const nextRun: RunState = { runId };
       if (args.interaction) {
@@ -807,6 +809,7 @@ export class ProcessController {
   async handleProcSend(
     args: Omit<ProcSendArgs, "media"> & {
       media?: Array<ResourceBlock | ProcMediaInput>;
+      quote?: ProcHistoryMessageQuote;
     },
     admittedRunId?: string,
   ): Promise<ProcSendResult> {
@@ -1998,7 +2001,7 @@ export class ProcessController {
     const codeModeWaiter = this.host.codeModeResponses.get(frame.id);
     if (codeModeWaiter) {
       this.host.codeModeResponses.delete(frame.id);
-      clearTimeout(codeModeWaiter.timeoutId);
+      codeModeWaiter.deadline.clear();
       if (frame.ok) {
         this.host.tools.rememberShellSessionTargetFromResult(
           codeModeWaiter.call,

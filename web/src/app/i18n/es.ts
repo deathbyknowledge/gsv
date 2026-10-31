@@ -1357,6 +1357,7 @@ export const es = {
   "shell.help.startWriting": "Empezar a escribir; la tecla pulsada va al cuadro de texto",
   "shell.help.chatInput": "Chat · escritura",
   "shell.help.send": "Enviar el mensaje o ejecutar el comando",
+  "shell.help.newLine": "Nueva línea",
   "shell.help.returnToBrowse": "Volver a la navegación; antes cierra el selector de conexión",
   "shell.help.recall": "Recuperar lo último que escribiste si el cuadro de texto está vacío",
   "shell.help.placeSyntax": "@conexión",
@@ -1385,6 +1386,7 @@ export const es = {
 
   // Shell: key names in the keyboard help
   "shell.keys.enter": "Intro",
+  "shell.keys.newLine": "Mayús / Alt + Intro",
   "shell.keys.spaceOrEnter": "Espacio / Intro",
   "shell.keys.enterOrSpace": "Intro / Espacio",
   "shell.keys.save": "⌘ / Ctrl + Intro",
@@ -1481,7 +1483,7 @@ export const es = {
   "shell.pairing.cancelled": "Esta invitación se ha cancelado.",
   "shell.pairing.newInvitation": "nueva invitación",
   "shell.pairing.invitation": "Invitación para {name} · {id}. Caduca a las {time}.",
-  "shell.pairing.extensionSteps": "Descarga y descomprime la extensión. En {extensions}, activa el modo de desarrollador y carga su carpeta. Haz clic en el icono de Your Ship de la barra de herramientas, o búscalo en el botón Extensiones, y pega esta invitación en su panel.",
+  "shell.pairing.extensionSteps": "La extensión Your Ship aún no está en Chrome Web Store, así que la añades a Chrome en modo de desarrollador. Descárgala y descomprímela. Abre {extensions}, activa el Modo de desarrollador, elige Cargar descomprimida y selecciona la carpeta descomprimida. Haz clic en el icono de Your Ship de la barra de herramientas, o búscalo en el botón Extensiones, y pega esta invitación en su panel. Permite que tu Ship trabaje en este navegador con tu sesión iniciada. Puedes pausarla desde su panel cuando quieras.",
   "shell.pairing.downloadExtension": "descargar extensión",
   "shell.pairing.copyInvitation": "copiar invitación",
   "shell.pairing.openTerminal": "Abre {app} en el ordenador que quieras conectar.",
@@ -1515,7 +1517,6 @@ export const es = {
   "shell.prompt.commandPlace": "se ejecuta en {place}, en {dir}",
   "shell.prompt.place": "en {place}; pulsa para cambiarlo",
   "shell.prompt.placeOffline": "{place} está sin conexión; pulsa para cambiarlo",
-  "shell.code.copy": "copiar",
   "shell.code.copyTitle": "Copiar código",
   "shell.code.copyFailed": "no se ha podido copiar",
   "shell.code.copyManually": "Selecciona el código y cópialo manualmente",
@@ -1699,6 +1700,7 @@ export const es = {
   "chat.call.mailReply": "responder a un correo",
   "chat.call.mail": "enviar un correo",
   "chat.call.publish": "publicar en la red abierta",
+  "chat.call.schedule": "programar trabajo para más tarde",
 
   // Chat: approval requests
   "chat.hil.read": "leer {path}",

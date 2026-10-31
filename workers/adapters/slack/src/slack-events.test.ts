@@ -50,7 +50,6 @@ describe("Slack event normalization", () => {
           threadId: "1700000000.000100",
         },
         text: "help & explain",
-        replyToId: undefined,
         timestamp: 1_700_000_000_000,
         wasMentioned: true,
       },
@@ -78,6 +77,20 @@ describe("Slack event normalization", () => {
         text: "hello",
       },
     });
+  });
+
+  it("does not present a threaded message as a quote of itself", () => {
+    const threaded = normalizeSlackEvent(envelope({
+      type: "message",
+      channel_type: "im",
+      user: "UBOB0001",
+      channel: "DBOB0001",
+      text: "hello",
+      ts: "1700000001.000200",
+      thread_ts: "1700000000.000100",
+    }), BOT);
+    if (threaded.kind !== "accepted") throw new Error("expected an accepted event");
+    expect(threaded.inbound).not.toHaveProperty("replyToId");
   });
 
   it("ignores bot messages and message subtypes", () => {

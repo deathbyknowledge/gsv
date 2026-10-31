@@ -28,7 +28,7 @@ const INPUT = {
 
 describe("telemetry contract", () => {
   it("classifies custom inference transports without exporting their names", () => {
-    for (const name of ["workers-ai", "modal", "together", "gsv", "other"]) {
+    for (const name of ["workers-ai", "modal", "together", "prime-intellect", "gsv", "other"]) {
       assert.equal(inferenceProviderFromName(name), name);
     }
     assert.equal(inferenceProviderFromName(), "gsv");
@@ -261,6 +261,24 @@ describe("telemetry contract", () => {
         },
       }).success, false);
     }
+  });
+
+  it("accepts quote lookup outcomes without quoted content", () => {
+    const resolved = createTelemetryRecord({
+      installationId: "inst_telemetry",
+      component: "gateway",
+      event: {
+        stream: "operational",
+        name: "adapter.quote.resolved",
+        properties: { adapter: "whatsapp", surface: "dm", outcome: "unmapped", durationMs: 3 },
+      },
+    });
+
+    assert.equal(telemetryRecordSchema.safeParse(resolved).success, true);
+    assert.equal(telemetryRecordSchema.safeParse({
+      ...resolved,
+      event: { ...resolved.event, properties: { ...resolved.event.properties, text: "private quote" } },
+    }).success, false);
   });
 
   it("accepts terminal adapter route diagnostics without delivery content", () => {

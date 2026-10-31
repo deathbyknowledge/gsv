@@ -1,7 +1,7 @@
 import type {
   AssistantMessage, ImageContent, Message, TextContent, ThinkingContent, ToolCall, ToolResultMessage, UserMessage,
 } from "@humansandmachines/gsv/services/inference-context";
-import type { InteractionOrigin, ProcHistoryEvent, ProcHistoryRecordData } from "@humansandmachines/gsv/protocol";
+import type { InteractionOrigin, ProcHistoryEvent, ProcHistoryMessageQuote, ProcHistoryRecordData } from "@humansandmachines/gsv/protocol";
 import { tagAssistantContextIdentity } from "../context-message-metadata";
 import { type StoredProcessMedia } from "../media";
 import { buildFallbackMediaBlocks, describeStoredProcessMedia } from "./media-renderer";
@@ -68,7 +68,7 @@ export async function renderContextHistory(
     // Their reads consume the shared budget even when their content is not projected.
     const primary = group.records[0];
     const text = primary.kind === "message"
-      ? selectedMessageText(group.compatibility.text, primary.payload.selectedTarget)
+      ? inboundMessageText(group.compatibility.text, primary.payload)
       : primary.kind === "event"
         ? modelEventText(primary.payload)
         : group.compatibility.text;
@@ -142,7 +142,7 @@ export function renderModelHistoryGroup(
   switch (primary.kind) {
     case "message": {
       const media = group.compatibility.media;
-      const text = selectedMessageText(primary.payload.text, primary.payload.selectedTarget);
+      const text = inboundMessageText(primary.payload.text, primary.payload);
       return {
         role: "user",
         content: media.length === 0
@@ -354,8 +354,34 @@ export function orderMessagesForProvider(messages: Message[]): Message[] {
   return ordered;
 }
 
-function selectedMessageText(text: string, selectedTarget: string | undefined): string {
-  return selectedTarget === undefined ? text : `[Selected target: ${selectedTarget}]\n${text}`;
+function inboundMessageText(
+  text: string,
+  { selectedTarget, quote }: { selectedTarget?: string; quote?: ProcHistoryMessageQuote },
+): string {
+  const quoted = quote === undefined ? text : `${renderQuote(quote)}\n\n${text}`.trimEnd();
+  return selectedTarget === undefined ? quoted : `[Selected target: ${selectedTarget}]\n${quoted}`;
+}
+
+const QUOTE_AUTHORS = {
+  person: "their own earlier message",
+  ship: "Ship's earlier message",
+  agent: "an agent's earlier message",
+} as const;
+
+/** Every quoted line is marked, so nothing in it can pass for an annotation or for the reply itself. */
+function renderQuote(quote: ProcHistoryMessageQuote): string {
+  if (quote.state === "unavailable") {
+    return "[Replying to an earlier message you cannot see. Do not guess what it said; ask if it matters.]";
+  }
+  const whose = QUOTE_AUTHORS[quote.author];
+  const heading = quote.part
+    ? `[Replying to part ${quote.part.index + 1} of ${quote.part.count} of ${whose}, which the messenger split into separate messages:]`
+    : `[Replying to ${whose}:]`;
+  const media = (quote.media ?? []).map(({ type, filename, transcription }) => (
+    `[${type}${filename ? `: ${filename}` : ""}]${transcription ? ` ${transcription}` : ""}`
+  ));
+  const lines = [...(quote.text ? [quote.text] : []), ...media].join("\n").split(/\r\n|\r|\n/);
+  return [heading, ...lines.map((line) => (line ? `> ${line}` : ">"))].join("\n");
 }
 
 function formatContextOriginLines(

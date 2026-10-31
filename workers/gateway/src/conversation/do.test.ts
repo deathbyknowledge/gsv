@@ -193,6 +193,21 @@ describe("Conversation Durable Object", () => {
     }))).rejects.toThrow("idempotency key payload changed");
   }, 30_000);
 
+  it("reads one message by its reference from the hot set and from an archive segment", async () => {
+    const stub = conversation("read-message");
+    await stub.initialize({ ownerUid: 1000, kind: "ship" });
+    await runInDurableObject(stub, async (instance: Conversation) => {
+      for (let index = 1; index <= 1_001; index += 1) await instance.append(message(index));
+    });
+    await stub.compact();
+
+    await expect(stub.readMessage({ sequence: 1_000, messageId: "msg:1000" })).resolves.toMatchObject({ text: "message 1000" });
+    await expect(stub.readMessage({ sequence: 2, messageId: "msg:2" })).resolves.toMatchObject({ text: "message 2" });
+    await expect(stub.readMessage({ sequence: 2, messageId: "msg:3" })).resolves.toBeNull();
+    await expect(stub.readMessage({ sequence: 1_000, messageId: "msg:999" })).resolves.toBeNull();
+    await expect(stub.readMessage({ sequence: 9_999, messageId: "msg:9999" })).resolves.toBeNull();
+  });
+
   it("reads experimental archive text without exposing retired metadata or rewriting bytes", async () => {
     const stub = conversation("legacy-request-archive");
     await stub.initialize({ ownerUid: 1000, kind: "ship" });

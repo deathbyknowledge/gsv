@@ -6,6 +6,7 @@ import {
   prepareAdapterHilApproval,
   submitAdapterHilApproval,
   type AdapterHilResolution,
+  ADAPTER_HIL_ENDED_TEXT,
 } from "../../shared/src/hil-approval";
 import {
   createAdapterHilPresentation,
@@ -115,6 +116,6 @@ function resolutionStatus(resolution: AdapterHilResolution | undefined): string 
     case "approve": return "Allowed once.";
     case "approve_always": return "Allowed from now on. Change this in Settings → Permissions.";
     case "deny": return "Blocked.";
-    default: return "This approval is no longer pending.";
+    default: return ADAPTER_HIL_ENDED_TEXT;
   }
 }

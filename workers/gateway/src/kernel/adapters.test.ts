@@ -511,6 +511,7 @@ function makeContext(
     },
     conversations: makeConversationRegistry(),
     adapters: {
+      messageRefs: { record: vi.fn(), lookup: vi.fn(() => null) },
       status: {
         get: vi.fn(() => null),
         setOwner: vi.fn(),
@@ -1995,6 +1996,103 @@ describe("adapter lifecycle handlers", () => {
     // SAFETY: the filter above kept only records whose event name matched, so the event is present.
     expect((received[0] as any).event.properties).toEqual({ source: "adapter", platform: "telegram", hasText: true, hasMedia: false });
     expect(JSON.stringify(received[0])).not.toContain("remind");
+  });
+
+  describe("quoted replies", () => {
+    const WHATSAPP_DM = { kind: "dm" as const, id: "34600000000" };
+    const inbound = (message: { replyToId?: string; text?: string }) => ({
+      adapter: "whatsapp",
+      accountId: "managed",
+      message: {
+        messageId: "wamid.reply",
+        surface: WHATSAPP_DM,
+        actor: { id: "34600000000" },
+        text: "yes, that one",
+        wasMentioned: true,
+        ...message,
+      },
+    });
+    function quoteContext(readMessage = vi.fn(async () => ({
+      id: "msg:ship",
+      sequence: 4,
+      conversationId: "conv:ship",
+      author: { kind: "process", pid: "pid-1", uid: 1001 },
+      text: "Which one do you want?",
+    }))) {
+      const ctx = makeContext({}, { upsert: vi.fn() }, {
+        identityLinks: { get: vi.fn(() => ({ uid: 1000 })), resolveUid: vi.fn(() => 1000) },
+      });
+      const delivered: any[] = [];
+      sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
+        delivered.push(frame.args);
+        return { type: "res", id: frame.id, ok: true, data: { ok: true, status: "started", runId: frame.args.runId, queued: false } };
+      });
+      const conversation = getConversationByIdMock.getMockImplementation()!;
+      // SAFETY: the quote path adds only this method to the shared Conversation fixture.
+      getConversationByIdMock.mockImplementation((installationId: string, conversationId: string) => ({
+        ...conversation(installationId, conversationId),
+        readMessage,
+      }) as ReturnType<typeof sharedUtils.getConversationById>);
+      return { ctx, delivered, readMessage };
+    }
+
+    it("pays nothing on the read side for an ordinary message", async () => {
+      const { ctx, delivered, readMessage } = quoteContext();
+      await handleAdapterInbound(inbound({}), ctx);
+      expect(ctx.adapters.messageRefs.lookup).not.toHaveBeenCalled();
+      expect(readMessage).not.toHaveBeenCalled();
+      expect(delivered[0]).not.toHaveProperty("quote");
+    });
+
+    it("maps the inbound provider id to its canonical message", async () => {
+      const { ctx, delivered } = quoteContext();
+      await handleAdapterInbound(inbound({}), ctx);
+      expect(ctx.adapters.messageRefs.record).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ ownerUid: 1000, adapter: "whatsapp", accountId: "managed", surface: expect.objectContaining(WHATSAPP_DM) }),
+        expect.objectContaining({ conversationId: delivered[0].interaction.conversationId, messageId: delivered[0].interaction.messageId, sequence: expect.any(Number) }),
+        ["wamid.reply"],
+      );
+    });
+
+    it("resolves the quote for the model and leaves the canonical text alone", async () => {
+      const { ctx, delivered } = quoteContext();
+      vi.mocked(ctx.adapters.messageRefs.lookup).mockReturnValue({ conversationId: "conv:ship", messageId: "msg:ship", sequence: 4 });
+      // SAFETY: the resolver reads only these fields of the conversation record.
+      vi.mocked(ctx.conversations.get).mockImplementation((id: string) => ({ id, ownerUid: 1000, kind: "ship" }) as ReturnType<typeof ctx.conversations.get>);
+      const result = await handleAdapterInbound(inbound({ replyToId: "wamid.ship" }), ctx);
+      expect(result).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
+      expect(ctx.adapters.messageRefs.lookup).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ ownerUid: 1000, adapter: "whatsapp", accountId: "managed" }),
+        "wamid.ship",
+      );
+      expect(delivered[0].message).toBe("yes, that one");
+      expect(delivered[0].quote).toEqual({ state: "resolved", author: "ship", text: "Which one do you want?" });
+    });
+
+    it("tells the Process the quote is unavailable when the id is unknown", async () => {
+      const { ctx, delivered } = quoteContext();
+      const result = await handleAdapterInbound(inbound({ replyToId: "wamid.old" }), ctx);
+      expect(result).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
+      expect(delivered[0].quote).toEqual({ state: "unavailable" });
+    });
+
+    it("still delivers the message when the lookup fails", async () => {
+      const { ctx, delivered } = quoteContext(vi.fn(async () => { throw new Error("conversation unavailable"); }));
+      vi.mocked(ctx.adapters.messageRefs.lookup).mockReturnValue({ conversationId: "conv:ship", messageId: "msg:ship", sequence: 4 });
+      // SAFETY: the resolver reads only these fields of the conversation record.
+      vi.mocked(ctx.conversations.get).mockImplementation((id: string) => ({ id, ownerUid: 1000, kind: "ship" }) as ReturnType<typeof ctx.conversations.get>);
+      const result = await handleAdapterInbound(inbound({ replyToId: "wamid.ship" }), ctx);
+      expect(result).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
+      expect(delivered[0]).toMatchObject({ message: "yes, that one", quote: { state: "unavailable" } });
+    });
+
+    it("still delivers the message when mapping its provider id fails", async () => {
+      const { ctx, delivered } = quoteContext();
+      vi.mocked(ctx.adapters.messageRefs.record).mockImplementation(() => { throw new Error("sql"); });
+      const result = await handleAdapterInbound(inbound({}), ctx);
+      expect(result).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
+      expect(delivered).toHaveLength(1);
+    });
   });
 
   it("derives the same run id when an adapter retries the same provider message", async () => {
