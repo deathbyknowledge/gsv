@@ -118,6 +118,8 @@ export type AdapterSendResult =
       surfaceId: string;
       deliveryId: string;
       messageId?: string;
+      /** Every provider message of a delivery the messenger split, in sending order. */
+      messageIds?: string[];
       deliveryState?: "sent" | "deduplicated" | "ambiguous";
     }
   | {
@@ -139,6 +141,7 @@ export const adapterSendResultSchema = z.discriminatedUnion("ok", [
     surfaceId: z.string(),
     deliveryId: nonEmptyStringSchema,
     messageId: z.optional(z.string()),
+    messageIds: z.optional(z.array(z.string())),
     deliveryState: z.optional(z.enum(["sent", "deduplicated", "ambiguous"])),
   }),
   z.strictObject({
