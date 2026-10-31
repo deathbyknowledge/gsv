@@ -27,7 +27,7 @@ const INPUT = {
 
 describe("telemetry contract", () => {
   it("classifies custom inference transports without exporting their names", () => {
-    for (const name of ["workers-ai", "modal", "together", "gsv", "other"]) {
+    for (const name of ["workers-ai", "modal", "together", "prime-intellect", "gsv", "other"]) {
       assert.equal(inferenceProviderFromName(name), name);
     }
     assert.equal(inferenceProviderFromName(), "gsv");

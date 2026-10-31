@@ -219,7 +219,7 @@ const delegationFinishedSchema = z.strictObject({
   }),
 });
 
-export const inferenceProviderSchema = z.enum(["workers-ai", "modal", "together", "gsv", "other"]);
+export const inferenceProviderSchema = z.enum(["workers-ai", "modal", "together", "prime-intellect", "gsv", "other"]);
 
 const inferenceRequestFinishedSchema = z.strictObject({
   stream: z.literal("operational"),
