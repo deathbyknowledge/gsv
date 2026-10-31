@@ -1,4 +1,5 @@
 import { normalizeUsernamePolicy } from "./username-policy";
+import type { SignupAttribution } from "@humansandmachines/gsv/telemetry";
 import type {
   InstallationDirectoryResult,
   InstallationIdentity,
@@ -119,6 +120,8 @@ export class AccountStore {
     ownerSetup?: boolean;
     /** Trusted operator allocation only; public request bodies never supply this. */
     allowReservedHandle?: boolean;
+    /** Where the signup link was clicked, already classified; written with the reservation, never updated. */
+    attribution?: SignupAttribution;
   }): Promise<InstallationReservation> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
     const operationId = parseOpaqueId(input.operationId, "operationId");
@@ -181,9 +184,9 @@ export class AccountStore {
         this.db.prepare(
           `INSERT INTO provisioning_operations (
              operation_id, installation_id, principal_id, kind, state,
-             attempt, last_error, updated_at
-           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?)`,
-        ).bind(operationId, identity.installationId, principalId, now),
+             attempt, last_error, updated_at, attribution_json
+           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?, ?)`,
+        ).bind(operationId, identity.installationId, principalId, now, input.attribution ? JSON.stringify(input.attribution) : null),
       ]);
     } catch (error) {
       const replay = await this.getReservationByOperation(operationId);

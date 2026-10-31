@@ -22,6 +22,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import { principalOf, resolveCallerOwnerUid, type KernelContext } from "./context";
+import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 
 const MAX_TITLE_BYTES = 240;
 const MAX_TEXT_BYTES = 2_000;
@@ -159,6 +160,19 @@ export async function handleResponsibilityCreate(
     observedByShip: callerIsShip(ctx),
     now: Date.now(),
   });
+  if (outcome.created) {
+    // Only the ordinary create syscall reports here: Kernel-seeded records
+    // (welcome, release briefs, reviews, lifecycle checks) call the store directly.
+    emitTelemetry(ctx.env, {
+      installationId: ctx.installationId,
+      component: "gateway",
+      event: {
+        stream: "product",
+        name: "responsibility.created",
+        properties: { source: actor.kind === "process" ? "process" : "account", parent: parentId !== undefined },
+      },
+    });
+  }
   await ctx.reconcileResponsibilityWake(ownerUid);
   return {
     responsibility: outcome.record,

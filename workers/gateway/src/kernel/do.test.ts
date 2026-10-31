@@ -7,6 +7,8 @@ import * as utils from "../shared/utils";
 import * as personalController from "./personal-controller";
 import type { AdapterService } from "../adapter-interface";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { InitialOnboarding } from "./onboarding-responsibility";
+import { ResponsibilityStore } from "./responsibility-store";
 import { IdentityLinkStore } from "./identity-links";
 import { RunRouteStore } from "./run-routes";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
@@ -1492,6 +1494,7 @@ describe("Kernel canonical message commits", () => {
     };
     kernel.adapterDelivery.materializePersonalAdapterFallback = vi.fn(() => null);
     kernel.adapterDelivery.queueAdapterRouteDelivery = vi.fn(async () => undefined);
+    kernel.welcome = { markWelcomeDelivered: vi.fn(() => null) };
     return kernel;
   }
 
@@ -1554,6 +1557,65 @@ describe("Kernel canonical message commits", () => {
     });
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
     expect(kernel.runRoutes.deleteMessageRoute).toHaveBeenCalledWith("draft:run-1:send-1");
+  });
+
+  function captureTelemetry(kernel: ReturnType<typeof buildCommitKernel>) {
+    kernel.installationEnv = { GSV_TELEMETRY_ENABLED: "1" };
+    const emitted: unknown[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((record) => { emitted.push(record); });
+    return { emitted, restore: () => log.mockRestore() };
+  }
+
+  it("reports the reply timing a run attached, and drops a bad value without losing the commit", async () => {
+    const route = { kind: "connection", runId: "run-1", processId: "proc-1", uid: 1000, connectionId: "origin", clientPlatform: "phone" };
+    for (const [replyMs, expected] of [[1234, 1234], [undefined, undefined], [-1, undefined], [Number.NaN, undefined]] as const) {
+      const kernel = buildCommitKernel(route);
+      kernel.connections = new Map([["origin", { state: { step: "connected", peer: connectedPeer("human", "origin", 1000) }, send: vi.fn() }]]);
+      getConversationByIdMock.mockReset();
+      getConversationByIdMock.mockReturnValueOnce(conversationStub());
+      const telemetry = captureTelemetry(kernel);
+      const args: Parameters<typeof kernel.processOutput.commitProcessMessage>[1] = {
+        runId: "run-1", actionId: "send-1", conversationId: conversation.id, text: "hello",
+      };
+      if (replyMs !== undefined) args.replyMs = replyMs;
+      try {
+        await kernel.processOutput.commitProcessMessage("proc-1", args);
+      } finally {
+        telemetry.restore();
+      }
+      const committed = telemetry.emitted.filter((record: any) => record?.event?.name === "ship.message.committed");
+      expect(committed).toHaveLength(1);
+      // SAFETY: the filter above kept only records whose event name matched, so the event is present.
+      const properties = (committed[0] as any).event.properties;
+      expect(properties).toMatchObject({ delivery: "client", platform: "phone", hasMedia: false });
+      expect(properties.replyMs).toBe(expected);
+    }
+  });
+
+  it("reports the welcome once, from activation to the first Ship message", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const kernel = buildCommitKernel(null);
+      const responsibilities = new ResponsibilityStore(storage);
+      kernel.welcome = new InitialOnboarding(storage, responsibilities);
+      kernel.welcome.prepare(1000, 1_000);
+      kernel.welcome.activate(1000, 2_000);
+      getConversationByIdMock.mockReset();
+      getConversationByIdMock.mockReturnValue(conversationStub());
+      const telemetry = captureTelemetry(kernel);
+      try {
+        await kernel.processOutput.commitProcessMessage("proc-1", { runId: "run-1", actionId: "send-1", conversationId: conversation.id, text: "Hi, I'm Ship." });
+        await kernel.processOutput.commitProcessMessage("proc-1", { runId: "run-1", actionId: "send-2", conversationId: conversation.id, text: "Tell me about yourself." });
+      } finally {
+        telemetry.restore();
+      }
+      const delivered = telemetry.emitted.filter((record: any) => record?.event?.name === "onboarding.welcome.delivered");
+      expect(delivered).toHaveLength(1);
+      // SAFETY: the filter above kept only records whose event name matched, so the event is present.
+      const properties = (delivered[0] as any).event.properties;
+      expect(properties).toMatchObject({ delivery: "background", platform: "background" });
+      expect(properties.durationMs).toBeGreaterThanOrEqual(0);
+      expect(telemetry.emitted.filter((record: any) => record?.event?.name === "ship.message.committed")).toHaveLength(2);
+    });
   });
 
   it("keeps a silenced client route until the terminal run signal", async () => {

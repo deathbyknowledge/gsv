@@ -92,6 +92,6 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
   }
 
   private onboarding(): InstallationOnboardingStore {
-    return new InstallationOnboardingStore(this.env.INSTALLATIONS_DB, this.accounts(), this.env.GSV_OWNER_AUTH_SECRET);
+    return new InstallationOnboardingStore(this.env.INSTALLATIONS_DB, this.accounts(), this.env.GSV_OWNER_AUTH_SECRET, this.env);
   }
 }

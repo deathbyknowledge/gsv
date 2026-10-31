@@ -4,7 +4,15 @@ import welcomeBrief from "../prompts/onboarding/welcome.md";
 import type { ResponsibilityStore } from "./responsibility-store";
 import type { KernelContext } from "./context";
 
-type OnboardingState = { createdAtMs: number; details?: JsonObject; activatedRevision?: number };
+type OnboardingState = {
+  createdAtMs: number;
+  details?: JsonObject;
+  activatedRevision?: number;
+  /** When the welcome responsibility first opened for this owner. */
+  activatedAtMs?: number;
+  /** When the first Ship message after that activation was accepted. */
+  welcomedAtMs?: number;
+};
 
 export const INITIAL_ONBOARDING_DEDUPE_KEY = "onboarding.initial";
 
@@ -55,7 +63,12 @@ function isUntouchedSeed(
  * record and must not be onboarded again.
  */
 export class InitialOnboarding {
-  constructor(private readonly storage: DurableObjectStorage, private readonly responsibilities: ResponsibilityStore) {}
+  constructor(
+    private readonly storage: DurableObjectStorage,
+    private readonly responsibilities: ResponsibilityStore,
+    /** Runs once per owner, after the welcome responsibility has durably opened. */
+    private readonly onActivated?: (ownerUid: number) => void,
+  ) {}
 
   prepare(ownerUid: number, now = Date.now()): void {
     const key = `initial-onboarding:${ownerUid}`;
@@ -70,7 +83,8 @@ export class InitialOnboarding {
 
   /** Activate only an untouched welcome seed; retries must not reopen work Ship already handled. */
   activate(ownerUid: number, now = Date.now()): boolean {
-    return this.storage.transactionSync(() => {
+    let activated = false;
+    const result = this.storage.transactionSync(() => {
       const key = `initial-onboarding:${ownerUid}`;
       const pending = this.storage.kv.get<OnboardingState>(key);
       const record = this.responsibilities.getByDedupeKey(ownerUid, INITIAL_ONBOARDING_DEDUPE_KEY);
@@ -84,6 +98,11 @@ export class InitialOnboarding {
           ownerUid, id: record.id, patch: { state: "open", blocker: null },
           actor: ONBOARDING_SOURCE, observedByShip: false, now,
         });
+        // A welcome seeded before the ledger has no activation revision; keep that so retries behave as before.
+        if (pending?.activatedAtMs === undefined) {
+          this.storage.kv.put(key, { ...(pending ?? { createdAtMs: record.createdAtMs }), activatedAtMs: now });
+          activated = true;
+        }
         return true;
       }
       if (!pending?.details) return false;
@@ -92,9 +111,27 @@ export class InitialOnboarding {
         source: ONBOARDING_SOURCE, assignee: { kind: "ship" }, state: "open", priority: "high",
         dedupeKey: INITIAL_ONBOARDING_DEDUPE_KEY, actor: ONBOARDING_SOURCE, observedByShip: false, now,
       });
-      this.storage.kv.put(key, { createdAtMs: pending.createdAtMs, activatedRevision: created.record.revision });
+      this.storage.kv.put(key, {
+        createdAtMs: pending.createdAtMs, activatedRevision: created.record.revision, activatedAtMs: now,
+      });
+      activated = true;
       return true;
     });
+    if (activated) this.onActivated?.(ownerUid);
+    return result;
+  }
+
+  /**
+   * Record the first Ship message accepted after the welcome opened and return
+   * how long it took, once per owner. Later calls, and owners whose welcome
+   * predates this record, return null.
+   */
+  markWelcomeDelivered(ownerUid: number, now = Date.now()): number | null {
+    const key = `initial-onboarding:${ownerUid}`;
+    const state = this.storage.kv.get<OnboardingState>(key);
+    if (state?.activatedAtMs === undefined || state.welcomedAtMs !== undefined) return null;
+    this.storage.kv.put(key, { ...state, welcomedAtMs: now });
+    return Math.max(0, now - state.activatedAtMs);
   }
 }
 

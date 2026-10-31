@@ -100,6 +100,7 @@ export type QueuedMessage = {
   origin?: string | null;
   provenance?: string | null;
   record?: ProcHistoryRecordData;
+  createdAt: number;
 };
 
 /** Durable work admission that reuses existing history without adding model input. */
@@ -120,6 +121,8 @@ export type EnqueueMessageOptions = {
   provenance?: string;
   record?: ProcHistoryRecordData;
   selectedTarget?: string;
+  /** When the message reached the Process; defaults to now. */
+  createdAt?: number;
 };
 
 export type PendingHilRecord = {

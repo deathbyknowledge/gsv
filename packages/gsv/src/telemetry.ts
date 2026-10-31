@@ -309,6 +309,101 @@ const shipMessageCommittedSchema = z.strictObject({
     hasMedia: z.boolean(),
     // Optional only for compatibility with producers during rolling upgrades.
     platform: z.optional(shipPlatformSchema),
+    // Present only on the first message a run commits after the person's own
+    // message: the time from Process receipt to that commit.
+    replyMs: z.optional(nonNegativeIntegerSchema),
+  }),
+});
+
+// The person's own message to Ship, reported when the Conversation accepts
+// it. Text and media never leave the Kernel; only their presence does.
+const shipMessageReceivedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("ship.message.received"),
+  properties: z.strictObject({
+    source: z.enum(["client", "adapter"]),
+    platform: shipPlatformSchema,
+    hasText: z.boolean(),
+    hasMedia: z.boolean(),
+  }),
+});
+
+// Closed categories for a run that a person's conversation message started
+// and that ended without a normal completion. The cause stays in Process
+// history; the record carries the category only.
+export const conversationReplyFailureSchema = z.enum([
+  "generation",
+  "context",
+  "media",
+  "no_send",
+  "command",
+  "delivery",
+  "runtime",
+  "superseded",
+  "cancelled",
+  "killed",
+  "other",
+]);
+
+const conversationReplyFailedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("conversation.reply.failed"),
+  properties: z.strictObject({
+    outcome: z.enum(["error", "aborted"]),
+    failure: conversationReplyFailureSchema,
+    // Whether the run had already committed a message before it ended.
+    replied: z.boolean(),
+    durationMs: nonNegativeIntegerSchema,
+  }),
+});
+
+const onboardingWelcomeActivatedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("onboarding.welcome.activated"),
+  properties: z.strictObject({}),
+});
+
+// The first Ship message accepted after the welcome responsibility opened,
+// once per owner, with the time it took to arrive.
+const onboardingWelcomeDeliveredSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("onboarding.welcome.delivered"),
+  properties: z.strictObject({
+    durationMs: nonNegativeIntegerSchema,
+    delivery: z.enum(["client", "adapter", "background"]),
+    platform: shipPlatformSchema,
+  }),
+});
+
+// Where a signup came from, as closed classes of the website's Try Ship links,
+// never a visitor identity. The signup link carries free-form slugs; only these
+// allowlist values leave the classifier, and anything else becomes "other".
+export const attributionSlugSchema = z.string().check(z.regex(/^[a-z0-9-]{1,32}$/));
+export const attributionPlacementSchema = z.enum(["hero", "final-call", "example", "other"]);
+// Extend this list when the website adds an example; unknown ids classify as "other".
+export const attributionExampleSchema = z.enum([
+  "bill", "delivery", "dentist", "jessica", "kawah", "refund", "saturday", "steve", "tickets", "other",
+]);
+
+const installationAttributedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("installation.attributed"),
+  properties: z.strictObject({
+    origin: z.enum(["website", "direct"]),
+    placement: z.optional(attributionPlacementSchema),
+    example: z.optional(attributionExampleSchema),
+  }),
+});
+
+// A record entering the owner's responsibility ledger through the ordinary
+// create syscall: Ship or a helper committing to something (`process`) or the
+// person adding one (`account`). Kernel-seeded records never pass this path.
+const responsibilityCreatedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("responsibility.created"),
+  properties: z.strictObject({
+    source: z.enum(["process", "account"]),
+    parent: z.boolean(),
   }),
 });
 
@@ -473,7 +568,13 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   inferenceRequestFinishedSchema,
   inferenceProviderAttemptFailedSchema,
   installationActivatedSchema,
+  installationAttributedSchema,
   shipMessageCommittedSchema,
+  shipMessageReceivedSchema,
+  conversationReplyFailedSchema,
+  onboardingWelcomeActivatedSchema,
+  onboardingWelcomeDeliveredSchema,
+  responsibilityCreatedSchema,
   targetConnectedSchema,
   adapterConnectedSchema,
   integrationConnectedSchema,
@@ -504,7 +605,13 @@ export const telemetryEventComponents = {
   "inference.request.finished": ["inference"],
   "inference.provider_attempt.failed": ["inference"],
   "installation.activated": ["accounts"],
+  "installation.attributed": ["accounts"],
   "ship.message.committed": ["gateway"],
+  "ship.message.received": ["gateway"],
+  "conversation.reply.failed": ["gateway"],
+  "onboarding.welcome.activated": ["gateway"],
+  "onboarding.welcome.delivered": ["gateway"],
+  "responsibility.created": ["gateway"],
   "target.connected": ["gateway"],
   "adapter.connected": ["gateway"],
   "integration.connected": ["gateway"],
@@ -534,6 +641,35 @@ export type InferenceFailureStage = z.infer<
 export type IntegrationKind = z.infer<typeof integrationKindSchema>;
 export type IntegrationProvider = z.infer<typeof integrationProviderSchema>;
 export type ShipPlatform = z.infer<typeof shipPlatformSchema>;
+export type ConversationReplyFailure = z.infer<typeof conversationReplyFailureSchema>;
+export type AttributionPlacement = z.infer<typeof attributionPlacementSchema>;
+export type AttributionExample = z.infer<typeof attributionExampleSchema>;
+/** A signup's origin after classification: only allowlist values, stored and reported as such. */
+export type SignupAttribution = { placement: AttributionPlacement; example?: AttributionExample };
+
+/**
+ * Classify the slugs a Try Ship link carried into the closed attribution
+ * allowlists. The website names its hero and final-call sections and its
+ * example panels (`details-<id>`); anything else is "other", and the raw slugs
+ * never enter a record.
+ */
+export function signupAttributionFromSlugs(placement: string, example?: string): SignupAttribution {
+  const place = placement.trim().toLowerCase();
+  const classified: SignupAttribution = {
+    placement: place === "hero" || place === "hero-heading"
+      ? "hero"
+      : place === "final-call" || place === "early-access"
+        ? "final-call"
+        : place === "example" || place.startsWith("details-")
+          ? "example"
+          : "other",
+  };
+  if (example !== undefined) {
+    const parsed = attributionExampleSchema.safeParse(example.trim().toLowerCase());
+    classified.example = parsed.success ? parsed.data : "other";
+  }
+  return classified;
+}
 
 const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<
   readonly [Exclude<IntegrationProvider, "other">, ReadonlyArray<string>]

@@ -3,6 +3,7 @@ import { buildOperatorShipSnapshot } from "./operator-snapshot";
 import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
 import { InitialOnboarding } from "./onboarding-responsibility";
+import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import {
   cancelUnlockedBody,
 } from "./do-shared";
@@ -569,7 +570,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
     this.shipEvents = new ShipEventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
-    this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
+    this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities, () => {
+      emitTelemetry(this.bindings, {
+        installationId: this.installationId, component: "gateway",
+        event: { stream: "product", name: "onboarding.welcome.activated", properties: {} },
+      });
+    });
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);

@@ -12,6 +12,7 @@ import {
   shipPlatformFromAdapter,
   shipPlatformFromPeer,
   shipPlatformSchema,
+  signupAttributionFromSlugs,
   telemetryRecordSchema,
 } from "../dist/telemetry.js";
 
@@ -436,5 +437,76 @@ describe("ship.message.committed", () => {
       assert.equal(shipPlatformSchema.safeParse(value).success, true);
       assert.equal(value, "other");
     }
+  });
+});
+
+describe("onboarding funnel events", () => {
+  const record = (component, name, properties) => {
+    try {
+      return telemetryRecordSchema.safeParse(createTelemetryRecord(
+        { installationId: "inst_telemetry", component, event: { stream: "product", name, properties } },
+        1_789_000_000_000,
+        "11111111-1111-4111-8111-111111111111",
+      ));
+    } catch {
+      return { success: false };
+    }
+  };
+
+  it("keeps the reply timing optional on ship.message.committed and rejects bad values", () => {
+    assert.equal(record("gateway", "ship.message.committed", { delivery: "client", hasMedia: false, platform: "web" }).success, true);
+    assert.equal(record("gateway", "ship.message.committed", { delivery: "client", hasMedia: false, platform: "web", replyMs: 1234 }).success, true);
+    assert.equal(record("gateway", "ship.message.committed", { delivery: "client", hasMedia: false, platform: "web", replyMs: -1 }).success, false);
+    assert.equal(record("gateway", "ship.message.committed", { delivery: "client", hasMedia: false, platform: "web", replyMs: 1.5 }).success, false);
+  });
+
+  it("reports the person's message by presence only", () => {
+    assert.equal(record("gateway", "ship.message.received", { source: "client", platform: "phone", hasText: true, hasMedia: false }).success, true);
+    assert.equal(record("gateway", "ship.message.received", { source: "adapter", platform: "telegram", hasText: false, hasMedia: true }).success, true);
+    assert.equal(record("gateway", "ship.message.received", { source: "device", platform: "web", hasText: true, hasMedia: false }).success, false);
+    assert.equal(record("gateway", "ship.message.received", { source: "client", platform: "web", hasText: true, hasMedia: false, text: "hi" }).success, false);
+  });
+
+  it("classifies a failed reply without any cause text", () => {
+    for (const failure of ["generation", "context", "media", "no_send", "command", "delivery", "runtime", "superseded", "cancelled", "killed", "other"]) {
+      assert.equal(record("gateway", "conversation.reply.failed", { outcome: "error", failure, replied: false, durationMs: 10 }).success, true);
+    }
+    assert.equal(record("gateway", "conversation.reply.failed", { outcome: "error", failure: "timeout", replied: false, durationMs: 10 }).success, false);
+    assert.equal(record("gateway", "conversation.reply.failed", { outcome: "error", failure: "other", replied: false, durationMs: 10, error: "boom" }).success, false);
+  });
+
+  it("times the welcome from activation to delivery", () => {
+    assert.equal(record("gateway", "onboarding.welcome.activated", {}).success, true);
+    assert.equal(record("gateway", "onboarding.welcome.delivered", { durationMs: 54_000, delivery: "client", platform: "web" }).success, true);
+    assert.equal(record("gateway", "onboarding.welcome.delivered", { durationMs: 54_000, delivery: "client" }).success, false);
+  });
+
+  it("accepts only the closed placement and example classes for the signup origin", () => {
+    assert.equal(record("accounts", "installation.attributed", { origin: "direct" }).success, true);
+    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero", example: "tickets" }).success, true);
+    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "example", example: "other" }).success, true);
+    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero-heading" }).success, false);
+    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero", example: "plan-a-trip" }).success, false);
+    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero", visitorId: "abc" }).success, false);
+  });
+
+  it("classifies the website's link slugs into the allowlist and nothing else", () => {
+    assert.deepEqual(signupAttributionFromSlugs("hero-heading"), { placement: "hero" });
+    assert.deepEqual(signupAttributionFromSlugs("early-access"), { placement: "final-call" });
+    assert.deepEqual(signupAttributionFromSlugs("details-tickets", "tickets"), { placement: "example", example: "tickets" });
+    assert.deepEqual(signupAttributionFromSlugs("sidebar-promo", "plan-a-trip"), { placement: "other", example: "other" });
+    assert.deepEqual(signupAttributionFromSlugs(" HERO "), { placement: "hero" });
+  });
+
+  it("reports a created responsibility by who created it", () => {
+    assert.equal(record("gateway", "responsibility.created", { source: "process", parent: false }).success, true);
+    assert.equal(record("gateway", "responsibility.created", { source: "account", parent: true }).success, true);
+    assert.equal(record("gateway", "responsibility.created", { source: "system", parent: false }).success, false);
+  });
+
+  it("keeps each funnel event with its owning component", () => {
+    assert.equal(record("accounts", "ship.message.received", { source: "client", platform: "web", hasText: true, hasMedia: false }).success, false);
+    assert.equal(record("inference", "conversation.reply.failed", { outcome: "error", failure: "other", replied: false, durationMs: 1 }).success, false);
+    assert.equal(record("gateway", "installation.attributed", { origin: "direct" }).success, false);
   });
 });
