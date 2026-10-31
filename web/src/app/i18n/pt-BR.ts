@@ -1362,6 +1362,7 @@ export const ptBR = {
   "shell.help.startWriting": "Começar a escrever; a tecla digitada vai para a caixa de texto",
   "shell.help.chatInput": "Chat · digitação",
   "shell.help.send": "Enviar a mensagem ou executar o comando",
+  "shell.help.newLine": "Nova linha",
   "shell.help.returnToBrowse": "Voltar à navegação; antes fecha o seletor de conexão",
   "shell.help.recall": "Recuperar a última entrada quando a caixa de texto estiver vazia",
   "shell.help.placeSyntax": "@conexão",
@@ -1390,6 +1391,7 @@ export const ptBR = {
 
   // Shell: key names in the keyboard help
   "shell.keys.enter": "Enter",
+  "shell.keys.newLine": "Shift / Alt + Enter",
   "shell.keys.spaceOrEnter": "Espaço / Enter",
   "shell.keys.enterOrSpace": "Enter / Espaço",
   "shell.keys.save": "⌘ / Ctrl + Enter",
@@ -1486,7 +1488,7 @@ export const ptBR = {
   "shell.pairing.cancelled": "Este convite foi cancelado.",
   "shell.pairing.newInvitation": "novo convite",
   "shell.pairing.invitation": "Convite para {name} · {id}. Expira às {time}.",
-  "shell.pairing.extensionSteps": "Baixe e descompacte a extensão. Em {extensions}, ative o modo de desenvolvedor e carregue a pasta dela. Clique no ícone Your Ship na barra de ferramentas, ou encontre-o no botão Extensões, e cole este convite no painel dela.",
+  "shell.pairing.extensionSteps": "A extensão Your Ship ainda não está na Chrome Web Store, então você a adiciona ao Chrome no modo do desenvolvedor. Baixe e descompacte o arquivo. Abra {extensions}, ative o Modo do desenvolvedor, escolha Carregar sem compactação e selecione a pasta descompactada. Clique no ícone Your Ship na barra de ferramentas, ou encontre-o no botão Extensões, e cole este convite no painel dela. Ela permite que seu Ship trabalhe neste navegador, conectado como você. Você pode pausá-la no painel dela quando quiser.",
   "shell.pairing.downloadExtension": "baixar extensão",
   "shell.pairing.copyInvitation": "copiar convite",
   "shell.pairing.openTerminal": "Abra {app} no computador que você quer conectar.",
@@ -1520,7 +1522,6 @@ export const ptBR = {
   "shell.prompt.commandPlace": "é executado em {place}, em {dir}",
   "shell.prompt.place": "em {place}; pressione para mudar",
   "shell.prompt.placeOffline": "{place} está sem conexão; pressione para mudar",
-  "shell.code.copy": "copiar",
   "shell.code.copyTitle": "Copiar código",
   "shell.code.copyFailed": "não foi possível copiar",
   "shell.code.copyManually": "Selecione o código e copie manualmente",
@@ -1704,6 +1705,7 @@ export const ptBR = {
   "chat.call.mailReply": "responder a um e-mail",
   "chat.call.mail": "enviar um e-mail",
   "chat.call.publish": "publicar na rede aberta",
+  "chat.call.schedule": "agendar trabalho para mais tarde",
 
   // Chat: approval requests
   "chat.hil.read": "ler {path}",

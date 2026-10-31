@@ -52,6 +52,7 @@ import {
   type JsonObject,
   type JsonValue,
   type ProcContextState,
+  type DevicePairing,
   type ProcHilRequest,
   type ProcHistoryRecord,
   type ProcHistoryRecordData,
@@ -150,6 +151,8 @@ function at(daysAgo: number, hour: number, minute: number): number {
 const LINES: [who: "you" | "ship", createdAt: number, text: string][] = [
   ["you", at(1, 9, 12), "Can you pull the notes from yesterday's call with Mara and put the action items somewhere I'll find them?"],
   ["ship", at(1, 9, 13), "Done. Three action items are in your notes under Mara: the deck for Thursday, the intro to Lena, and the follow-up on pricing. I set a reminder for the deck on Wednesday evening."],
+  ["you", at(1, 12, 2), "Paste the paragraph I need to send Lena so I can copy it as is."],
+  ["ship", at(1, 12, 2), "Here it is, exactly as you drafted it:\n\n```\nHi Lena, thanks again for Tuesday. As discussed, I'll send the revised deck by Thursday and loop Mara in on the pricing thread so we can close the quote before the end of the week.\nBest, Alex\n```"],
   ["you", at(1, 18, 40), "What's still open from this week?"],
   ["ship", at(1, 18, 40), "Two things. The pricing follow-up with Mara, and the studio backup, which has failed since Monday because the drive is nearly full."],
   ["you", at(0, 8, 5), "Morning. Anything I should know before the standup?"],
@@ -165,6 +168,9 @@ const LONG_REPLY = [
   "The drive filled up because the build caches from the last three releases were never cleared; together they took about 140 GB. I removed the ones older than a week, which brought free space back to a third of the disk, and the overnight run completed in forty minutes.",
   "Two things would keep this from happening again. A weekly clean of caches older than fourteen days, which I can add as a routine, and a warning when free space drops under a tenth of the disk. Say the word and I will set both up.",
 ].join("\n\n");
+
+/** Invitations created from the connect panel; the mock never pairs them. */
+const pairings: DevicePairing[] = [];
 
 const targets: SysTargetSummary[] = [
   { targetId: "studio", ownerUid: OWNER.uid, ownerUsername: OWNER.username, label: "studio", description: "MacBook Pro", implements: ["fs.*", "shell.*"], platform: "darwin", version: "0.6.0", online: true, lastSeenAt: Date.now() },
@@ -1030,6 +1036,23 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
     case "sys.link.list": return respond(id, { links: [] });
+    case "sys.pair.create": {
+      const { id: pairingId, targetId, label } = z.object({ id: z.string(), targetId: z.string(), label: z.string() }).parse(args);
+      const existing = pairings.find((pairing) => pairing.id === pairingId);
+      if (existing) return respond(id, { pairing: existing });
+      const createdAt = Date.now();
+      const pairing: DevicePairing = { id: pairingId, username: OWNER.username, targetId, label, createdAt, expiresAt: createdAt + 15 * 60_000, state: "pending" };
+      pairings.push(pairing);
+      return respond(id, { pairing });
+    }
+    case "sys.pair.list": return respond(id, { pairings });
+    case "sys.pair.cancel": {
+      const { id: pairingId } = z.object({ id: z.string() }).parse(args);
+      const pairing = pairings.find((entry) => entry.id === pairingId);
+      if (!pairing) return refuse(id, 404, "Invitation not found");
+      pairing.state = "cancelled";
+      return respond(id, { pairing });
+    }
     case "r12y.list": {
       const { states, includeTerminal, offset = 0, limit = 100 } = responsibilityListArgs.parse(args);
       const records = responsibilities.filter((record) => states ? states.includes(record.state) : includeTerminal || !["resolved", "cancelled"].includes(record.state));

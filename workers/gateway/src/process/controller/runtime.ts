@@ -1992,7 +1992,7 @@ export class ProcessController {
     const codeModeWaiter = this.host.codeModeResponses.get(frame.id);
     if (codeModeWaiter) {
       this.host.codeModeResponses.delete(frame.id);
-      clearTimeout(codeModeWaiter.timeoutId);
+      codeModeWaiter.deadline.clear();
       if (frame.ok) {
         this.host.tools.rememberShellSessionTargetFromResult(
           codeModeWaiter.call,

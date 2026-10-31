@@ -43,7 +43,7 @@ describe("context epoch projection", () => {
 
     expect(projection).toEqual({
       version: 1,
-      runtime: { date: "2026-08-28", timezone: "Europe/Amsterdam" },
+      runtime: { date: "Friday, 2026-08-28", timezone: "Europe/Amsterdam" },
       targets: [
         { id: "node-a", implements: ["net.fetch"] },
         {
@@ -127,10 +127,25 @@ describe("context epoch projection", () => {
     const first = createContextProjection(input, new Date("2026-08-28T23:59:59Z"));
     const second = createContextProjection(input, new Date("2026-08-29T00:00:00Z"));
 
-    expect(first.runtime).toEqual({ date: "2026-08-28", timezone: "UTC" });
+    expect(first.runtime).toEqual({ date: "Friday, 2026-08-28", timezone: "UTC" });
     expect(contextProjectionsEqual(first, first)).toBe(true);
     expect(contextProjectionsEqual(first, second)).toBe(false);
     expect(contextProjectionFromManifest({ version: 1 })).toBeNull();
+  });
+
+  it("names the weekday of the date in the owner's timezone", () => {
+    const at = (timezone: string, now: string) => createContextProjection(
+      { mcpServers: [], system: { timezone }, skillIndexMode: "off" },
+      new Date(now),
+    ).runtime.date;
+
+    expect(at("UTC", "2026-10-30T12:00:00Z")).toBe("Friday, 2026-10-30");
+    // The same moment is a different day on either side of UTC.
+    expect(at("UTC", "2026-10-30T23:30:00Z")).toBe("Friday, 2026-10-30");
+    expect(at("Asia/Tokyo", "2026-10-30T23:30:00Z")).toBe("Saturday, 2026-10-31");
+    expect(at("UTC", "2026-10-31T02:00:00Z")).toBe("Saturday, 2026-10-31");
+    expect(at("America/Los_Angeles", "2026-10-31T02:00:00Z")).toBe("Friday, 2026-10-30");
+    expect(at("not/a-timezone", "2026-10-30T12:00:00Z")).toBe("Friday, 2026-10-30");
   });
 
   it("retains the last observed skills when catalog refresh is unavailable", () => {
@@ -177,7 +192,7 @@ describe("context epoch projection", () => {
     }, new Date("2026-08-29T12:00:00Z"), initial);
     expect(otherChanges.targets).toEqual(initial.targets);
     expect(otherChanges.mcpServers).toEqual(["Calendar"]);
-    expect(otherChanges.runtime.date).toBe("2026-08-29");
+    expect(otherChanges.runtime.date).toBe("Saturday, 2026-08-29");
   });
 
   it("starts an unavailable target catalog without inventing a prior target", () => {

@@ -97,6 +97,7 @@ export function buildCodeModeCommand(
         mcpToolBindings: await loadMcpToolBindings(requestTool, bashCtx.signal),
         signal: bashCtx.signal,
       };
+      if (kernelCtx.toolOwner) executionOptions.approvalDeadlines = kernelCtx.executionDeadlines;
       if (mailDeliveryBase) executionOptions.mailDeliveryBase = mailDeliveryBase;
       const result = await executeCodeMode(kernelCtx.env, code, requestTool, executionOptions);
       return formatCodeModeCommandResult(result, options.json);
