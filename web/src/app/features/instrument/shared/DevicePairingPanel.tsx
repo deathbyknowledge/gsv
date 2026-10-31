@@ -1,8 +1,8 @@
 import { useEffect } from "preact/hooks";
 import { useViewActive } from "../../../services/navigation/ViewActivity";
 import { encodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
-import { LoadingState } from "../../../components/ui/Spinner";
 import { Select } from "../../../components/ui/Select";
+import { LoadingState } from "../../../components/ui/Spinner";
 import { TextInput } from "../../../components/ui/TextInput";
 import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
 import { parseDeviceId } from "../../../domain/deviceId";
@@ -86,9 +86,9 @@ export function DevicePairingPanel({ targets, allowed = true, ready = true, init
       </> : <>
         <p class="note">{t("shell.pairing.openTerminal", { app: draft.platform === "windows" ? "PowerShell" : "Terminal" })}</p>
         <p class="note">{t("shell.pairing.installStep")}</p>
-        <SetupCommand text={buildMachineInstallCommand(draft.platform, release)} label={t("shell.pairing.copyInstall")} />
+        <SetupCommand text={buildMachineInstallCommand(draft.platform, release)} label={t("shell.pairing.copyInstall")} language={draft.platform === "windows" ? "powershell" : "sh"} />
         <p class="note">{t("shell.pairing.connectStep")}</p>
-        <SetupCommand text={`${draft.platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`} label={t("shell.pairing.copyConnect")} />
+        <SetupCommand text={`${draft.platform === "windows" ? "gsv.exe" : "gsv"} pair ${code}`} label={t("shell.pairing.copyConnect")} language={draft.platform === "windows" ? "powershell" : "sh"} />
       </>}
       <p class="note">{t("shell.pairing.closeHint")}</p>
     </>}

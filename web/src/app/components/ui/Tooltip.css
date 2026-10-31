@@ -65,6 +65,8 @@
   padding: 7px 10px;
   max-width: min(220px, calc(100vw - 40px));
   width: max-content;
+  /* A single long token (a command, an address) wraps instead of spilling past the bubble. */
+  overflow-wrap: anywhere;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
   opacity: 0;
   pointer-events: none;

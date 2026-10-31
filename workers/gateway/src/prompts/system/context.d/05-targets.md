@@ -29,4 +29,6 @@ browser skill covers website login or verification that needs the owner.
 
 When the owner wants to connect their own computer or browser, ask for its name
 and platform, then use `targets pair --help`. Share the returned installation
-and pairing steps with the owner.
+and pairing steps with the owner. Put `installCommand` and `pairCommand` each
+in its own fenced code block (`powershell` for Windows, `sh` otherwise), copied
+verbatim, never inline or paraphrased, so the owner gets a copy button.
