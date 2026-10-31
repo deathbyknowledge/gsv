@@ -2,7 +2,7 @@ import type { ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import type { Ref } from "preact";
 import { InfoTip } from "../../../components/ui/InfoTip";
 import { Hint } from "../../../components/ui/Tooltip";
-import { humanToolCapabilityLabel } from "../../../components/ui/agentToolApprovalOptions";
+import { ruleCapabilityLabel } from "../../../components/ui/agentToolApprovalOptions";
 import { rich, useT, type TextKey } from "../../../i18n/locale";
 import { useMediaObjectUrl } from "../../../services/chat/hooks/useChatMediaSource";
 import { usePublishedFile } from "../../../services/chat/hooks/useChatProcesses";
@@ -91,7 +91,7 @@ export function ApprovalCard({ request, who, place, label, disabled = false, sho
           {shortcuts ? <kbd>n</kbd> : null} {t("shell.approval.deny")}
         </button>
         {!["*", "any", "device", "devices/*", "targets/*"].includes(request.target) ? (
-          <Hint text={t("shell.approval.alwaysAllowHint", { capability: humanToolCapabilityLabel(request.syscall), place })}>
+          <Hint text={t("shell.approval.alwaysAllowHint", { capability: ruleCapabilityLabel(request.syscall), place })}>
             <button type="button" class="remember" disabled={disabled} onClick={() => { if (!disabled) onDecide("approve", true); }}>{t("shell.approval.alwaysAllow")}</button>
           </Hint>
         ) : null}
