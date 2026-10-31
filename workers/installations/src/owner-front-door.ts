@@ -25,8 +25,10 @@ export async function handleInstallationOwnerRequest(request: Request, env: Inst
     (email) => signupFlow?.allowsEmail(email) ?? true);
   if (path.startsWith("/owner/api/")) {
     if (!emailEnabled || !signupFlow) return unavailable();
+    const origin = new URL(request.url).origin;
+    const apiOrigin = origin === env.GSV_OWNER_SIGNUP_ORIGIN ? origin : env.GSV_ADMIN_ORIGIN;
     return new InstallationOwnerApi(authentication(),
-      new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId), signupFlow, env.OWNER_EMAIL!, { from: env.GSV_OWNER_EMAIL_FROM!, replyTo: env.GSV_OWNER_EMAIL_REPLY_TO }, env.GSV_ADMIN_ORIGIN, env.GSV_BASE_DOMAIN).handle(request);
+      new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId), signupFlow, env.OWNER_EMAIL!, { from: env.GSV_OWNER_EMAIL_FROM!, replyTo: env.GSV_OWNER_EMAIL_REPLY_TO }, apiOrigin, env.GSV_BASE_DOMAIN).handle(request);
   }
   if (!env.ACCOUNTS_GATEWAY_RECOVERY) return unavailable();
   const owners = new InstallationOwnerStore(env.INSTALLATIONS_DB, registryPrincipalId);

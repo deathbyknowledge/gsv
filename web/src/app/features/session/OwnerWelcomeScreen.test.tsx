@@ -168,7 +168,7 @@ describe("owner welcome", () => {
       expect(submit().props["aria-label"]).toBe("Continue");
       await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("SpaceCowboy"); });
       expect(fieldOf(tree, "Handle")!.props.value).toBe("spacecowboy");
-      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "success", message: "Available" }));
+      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "success", message: "Your address spacecowboy.example.com is available! :)" }));
       await act(() => { fieldOf(tree, "Email")!.props.onChange?.("Owner@Example.com"); });
       expect(checkboxOf(tree).props).toMatchObject({ required: true, checked: false });
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
@@ -192,6 +192,27 @@ describe("owner welcome", () => {
       expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname).filter((path) => !path.endsWith("/handle"))).toEqual([
         "/owner/api/code", "/owner/api/verify", "/owner/api/session", "/owner/api/spaces",
       ]);
+    } finally { await root.unmount(); }
+  });
+
+  it.each([false, true])("shows the same unavailable message for taken and blocked handles (blocked: %s)", async (blocked) => {
+    const store = memory();
+    const fetcher = vi.fn(async () => blocked
+      ? Response.json({ error: "This username is unavailable. Choose another.", code: "handle_unavailable" }, { status: 400 })
+      : Response.json({ available: false }));
+    const client = new OwnerWelcome(store.snapshot(), store, ORIGIN, fetcher);
+    const root = createTestRoot("Unavailable username");
+    let tree: ComponentChildren;
+    function Harness() {
+      tree = OwnerWelcomeScreen({ ready: true, resume: false, initialStep: "claim", spaceDomain: "ship.space", load: async () => client, onConnect: vi.fn() });
+      return null;
+    }
+    try {
+      await root.render(<Harness />);
+      await vi.waitFor(() => expect(fieldOf(tree, "Handle")?.props.disabled).toBe(false));
+      await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("example"); });
+      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "error", message: "Your address example.ship.space is unavailable. :(" }));
+      expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!.props.disabled).toBe(true);
     } finally { await root.unmount(); }
   });
 
@@ -282,15 +303,15 @@ describe("owner welcome", () => {
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.status).toBe("success"));
       await agree(tree);
       await act(() => formOf(tree).props.onSubmit(new Event("submit")));
-      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "error", message: failure.error }));
+      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "error", message: "Your address taken.example.com is unavailable. :(" }));
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)); });
-      expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "error", message: failure.error });
+      expect(fieldOf(tree, "Handle")!.props).toMatchObject({ status: "error", message: "Your address taken.example.com is unavailable. :(" });
       expect(store.snapshot().value!.operationId).toBe("op_taken");
       expect(onConnect).not.toHaveBeenCalled();
       expect(collectNodes(tree).find((node) => node.props["aria-label"] === "Continue")!.props.disabled).toBe(true);
       await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("taken-again"); });
       await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.status).toBe("success"));
-      expect(fieldOf(tree, "Handle")!.props.message).toBe("Available");
+      expect(fieldOf(tree, "Handle")!.props.message).toBe("Your address taken-again.example.com is available! :)");
     } finally { await root.unmount(); }
   });
 
@@ -444,7 +465,7 @@ describe("owner welcome", () => {
 
       // The exception belongs to this operation and handle, not to another handle the owner types.
       await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("another-taken-handle"); });
-      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.message).toBe("Unavailable"));
+      await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.message).toBe("Your address another-taken-handle.example.com is unavailable. :("));
       expect(submit().props.disabled).toBe(true);
       await act(() => { fieldOf(tree, "Handle")!.props.onChange?.("my-space"); });
       await vi.waitFor(() => expect(rechecks).toBeGreaterThan(2));
@@ -455,7 +476,7 @@ describe("owner welcome", () => {
       expect(allocations).toEqual(Array(2).fill(JSON.stringify({ operationId, handle: "my-space" })));
       expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/session"))).toHaveLength(1);
       if (conflict) {
-        await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.message).toBe("handle is unavailable"));
+        await vi.waitFor(() => expect(fieldOf(tree, "Handle")!.props.message).toBe("Your address my-space.example.com is unavailable. :("));
         expect(submit().props.disabled).toBe(true);
         expect(onConnect).not.toHaveBeenCalled();
       } else {

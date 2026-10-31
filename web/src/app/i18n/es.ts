@@ -1209,6 +1209,8 @@ export const es = {
   "session.welcome.invitationPrompt": "Inicia sesión o crea tu Ship para conectar.",
   "session.welcome.handle": "Nombre de usuario",
   "session.welcome.handlePlaceholder": "tu-nombre",
+  "session.welcome.addressAvailable": "¡Tu dirección {address} está disponible! :)",
+  "session.welcome.addressUnavailable": "Tu dirección {address} no está disponible. :(",
   "session.welcome.available": "Disponible",
   "session.welcome.taken": "No disponible",
   "session.welcome.email": "Correo electrónico",

@@ -1208,6 +1208,8 @@ export const en = {
   "session.welcome.invitationPrompt": "Sign in or create your Ship to connect.",
   "session.welcome.handle": "Handle",
   "session.welcome.handlePlaceholder": "your-name",
+  "session.welcome.addressAvailable": "Your address {address} is available! :)",
+  "session.welcome.addressUnavailable": "Your address {address} is unavailable. :(",
   "session.welcome.available": "Available",
   "session.welcome.taken": "Unavailable",
   "session.welcome.email": "Email",

@@ -1214,6 +1214,8 @@ export const ptBR = {
   "session.welcome.invitationPrompt": "Entre ou crie seu Ship para se conectar.",
   "session.welcome.handle": "Nome de usuário",
   "session.welcome.handlePlaceholder": "seu-nome",
+  "session.welcome.addressAvailable": "Seu endereço {address} está disponível! :)",
+  "session.welcome.addressUnavailable": "Seu endereço {address} está indisponível. :(",
   "session.welcome.available": "Disponível",
   "session.welcome.taken": "Indisponível",
   "session.welcome.email": "E-mail",
