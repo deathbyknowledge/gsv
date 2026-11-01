@@ -144,6 +144,20 @@ describe("notice rules", () => {
     });
   });
 
+  it("signals its owner's clients on every set and reset, whoever made it", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const changed = vi.fn();
+      const sources = new ResponsibilitySourcePolicyStore(storage.sql);
+      const rules = new NoticeRuleStore(storage, sources, changed);
+      const notices = new OwnerNoticeStore(storage);
+      handleNotifyRuleSet({ kind: "contact.message", notify: "none" }, context(rules, notices, "ship"));
+      expect(changed).toHaveBeenCalledTimes(1);
+      handleNotifyRuleReset({ kind: "contact.message" }, context(rules, notices));
+      expect(changed).toHaveBeenCalledTimes(2);
+      expect(changed).toHaveBeenCalledWith(OWNER);
+    });
+  });
+
   it("refuses an unknown kind or delivery, an empty change, and a process that is not the owner's Ship", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { rules, notices } = stores(storage);

@@ -573,7 +573,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
     this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
-    this.noticeRules = new NoticeRuleStore(ctx.storage, this.responsibilitySources);
+    this.noticeRules = new NoticeRuleStore(ctx.storage, this.responsibilitySources, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "notify.rule.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);

@@ -48,7 +48,7 @@ type NoticeRuleRow = {
 /** Each owner's changes to what happens for each kind. Waking stays with the kind's responsibility source. */
 export class NoticeRuleStore {
   private readonly sql: SqlStorage;
-  constructor(storage: DurableObjectStorage, private readonly sources: ResponsibilitySourcePolicyStore) { this.sql = storage.sql; }
+  constructor(storage: DurableObjectStorage, private readonly sources: ResponsibilitySourcePolicyStore, private readonly onChange?: (ownerUid: number) => void) { this.sql = storage.sql; }
 
   /** Where the owner's notices of `kind` go now. */
   notifies(ownerUid: number, kind: NoticeKind): NoticeDelivery {
@@ -87,12 +87,14 @@ export class NoticeRuleStore {
       ownerUid, kind, change.notify ?? current.notify, ship === "wake" ? null : ship, changedBy, now,
     );
     if (isSourceKind(kind)) this.sources.set(ownerUid, kind, ship === "wake", now);
+    this.onChange?.(ownerUid);
     return this.rule(ownerUid, kind);
   }
 
   reset(ownerUid: number, kind: NoticeKind): NoticeRule {
     this.sql.exec("DELETE FROM notice_rules WHERE owner_uid = ? AND kind = ?", ownerUid, kind);
     if (isSourceKind(kind)) this.sources.set(ownerUid, kind, true);
+    this.onChange?.(ownerUid);
     return this.rule(ownerUid, kind);
   }
 
