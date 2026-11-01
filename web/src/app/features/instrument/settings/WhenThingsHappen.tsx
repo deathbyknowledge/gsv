@@ -1,4 +1,5 @@
-import type { NoticeDelivery, NoticeKind, NoticeRule, ResponsibilityConfigurableSourcePolicyId, ResponsibilitySourcePolicy } from "@humansandmachines/gsv/protocol";
+import type { NoticeKind, NoticeRule, NotifyRuleSetArgs, ShipOutcome } from "@humansandmachines/gsv/protocol";
+import { Fragment } from "preact";
 import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -10,19 +11,23 @@ import { SettingsError } from "./settingsShared";
 import { useT, type TextKey } from "../../../i18n/locale";
 import { PageHeading } from "../../../components/ui/PageHeading";
 
-const NOTICES = [
+const HAPPENINGS = [
   { kind: "contact.request", label: "settings.happenings.request" },
   { kind: "contact.message", label: "settings.happenings.message" },
   { kind: "contact.invite.accepted", label: "settings.happenings.inviteAccepted" },
+  { kind: "mail.received", label: "settings.happenings.mail" },
+  { kind: "machine.added", label: "settings.happenings.machineAdded" },
+  { kind: "adapter.connected", label: "settings.happenings.adapterConnected" },
+  { kind: "adapter.auth_required", label: "settings.happenings.adapterAuth" },
 ] as const satisfies ReadonlyArray<{ kind: NoticeKind; label: TextKey }>;
 
-const SHIP_SOURCES = [
-  { id: "mail.received", label: "settings.happenings.mail" },
-  { id: "machine.added", label: "settings.happenings.machineAdded" },
-  { id: "adapter.connected", label: "settings.happenings.adapterConnected" },
-  { id: "adapter.auth_required", label: "settings.happenings.adapterAuth" },
-  { id: "memory.review", label: "settings.happenings.memoryReview" },
-] as const satisfies ReadonlyArray<{ id: ResponsibilityConfigurableSourcePolicyId; label: TextKey }>;
+const SHIP_LABELS = {
+  none: "settings.happenings.shipOff",
+  context: "settings.happenings.shipSees",
+  wake: "settings.happenings.shipActs",
+} as const satisfies Record<ShipOutcome, TextKey>;
+
+const MEMORY_REVIEW = "memory.review";
 
 export function WhenThingsHappen({ account }: { account: ConsoleAccount }) {
   const t = useT();
@@ -30,7 +35,7 @@ export function WhenThingsHappen({ account }: { account: ConsoleAccount }) {
   const cache = useQueryClient();
   const canReadSources = canConfigure(account, "r12y.source.list");
   const canChangeSources = canConfigure(account, "r12y.source.update");
-  // Notice rules belong to a person, so root administration has none.
+  // Rules belong to a person, so root administration has none.
   const hasRules = account.uid >= 1000 && canConfigure(account, "notify.rule.list");
   const canChangeRules = hasRules && canConfigure(account, "notify.rule.set");
   const sources = useQuery({ queryKey: INSTRUMENT_SOURCES_KEY, queryFn: () => client.r12y.source.list({}), enabled: connected && canReadSources });
@@ -40,47 +45,60 @@ export function WhenThingsHappen({ account }: { account: ConsoleAccount }) {
     enabled: connected && hasRules,
   });
   const updateSource = useMutation({
-    mutationFn: ({ id, enabled }: { id: ResponsibilityConfigurableSourcePolicyId; enabled: boolean }) => client.r12y.source.update({ id, enabled }),
+    mutationFn: (enabled: boolean) => client.r12y.source.update({ id: MEMORY_REVIEW, enabled }),
     onSuccess: () => cache.invalidateQueries({ queryKey: INSTRUMENT_SOURCES_KEY }),
   });
   const updateRule = useMutation({
-    mutationFn: async ({ kind, notify }: { kind: NoticeKind; notify: NoticeDelivery }) =>
-      (await client.call("notify.rule.set", { kind, notify })).rule,
-    onSuccess: (rule) => cache.setQueryData<NoticeRule[]>(
-      INSTRUMENT_NOTICE_RULES_KEY,
-      (current) => current?.map((entry) => entry.kind === rule.kind ? rule : entry),
-    ),
+    mutationFn: async (change: NotifyRuleSetArgs) => (await client.call("notify.rule.set", change)).rule,
+    onSuccess: (rule) => {
+      cache.setQueryData<NoticeRule[]>(
+        INSTRUMENT_NOTICE_RULES_KEY,
+        (current) => current?.map((entry) => entry.kind === rule.kind ? rule : entry),
+      );
+      void cache.invalidateQueries({ queryKey: INSTRUMENT_SOURCES_KEY });
+    },
   });
   if (!canReadSources && !hasRules) return <p class="settings-muted">{t("settings.happenings.noAccess")}</p>;
   const busy = !connected || updateSource.isPending || updateRule.isPending;
   const loading = connected && ((canReadSources && sources.isPending) || (hasRules && rules.isPending));
+  const memory = sources.data?.sources.find((entry) => entry.id === MEMORY_REVIEW);
   return <section class="settings-standing" aria-label={t("settings.happenings.title")}>
     <PageHeading title={t("settings.happenings.title")} description={t("settings.happenings.intro")} />
     {loading && <LoadingState>{t("common.loading")}</LoadingState>}
     <SettingsError error={sources.error ?? rules.error ?? updateSource.error ?? updateRule.error} />
     {!loading && <>
-      {rules.data && <>
-        <h2>{t("settings.happenings.tellMe")}</h2>
-        {NOTICES.map(({ kind, label }) => {
+      {rules.data && <div class="settings-happenings">
+        <span class="settings-happenings-head">{t("settings.happenings.event")}</span>
+        <span class="settings-happenings-head">{t("settings.happenings.tellMe")}</span>
+        <span class="settings-happenings-head">{t("settings.happenings.ship")}</span>
+        {HAPPENINGS.map(({ kind, label }) => {
           const rule = rules.data.find((entry) => entry.kind === kind);
-          return rule && <div class="settings-happening" key={kind}>
-            <label class="settings-check"><input type="checkbox" checked={rule.notify === "messenger"} disabled={busy || !canChangeRules}
-              onChange={(event) => updateRule.mutate({ kind, notify: event.currentTarget.checked ? "messenger" : "none" })} />{t(label)}</label>
+          if (!rule) return null;
+          const name = t(label);
+          return <Fragment key={kind}>
+            <span>{name}</span>
+            <input class="settings-happenings-tell" type="checkbox" aria-label={`${t("settings.happenings.tellMe")}: ${name}`} checked={rule.notify === "messenger"} disabled={busy || !canChangeRules}
+              onChange={(event) => updateRule.mutate({ kind, notify: event.currentTarget.checked ? "messenger" : "none" })} />
+            <select aria-label={`${t("settings.happenings.ship")}: ${name}`} value={rule.ship} disabled={busy || !canChangeRules}
+              onChange={(event) => updateRule.mutate({ kind, ship: shipChoice(rule, event.currentTarget.value) })}>
+              {rule.shipChoices.map((choice) => <option key={choice} value={choice}>{t(SHIP_LABELS[choice])}</option>)}
+            </select>
+            {rule.notify === "none" && rule.ship === "none" && <small>{t("settings.happenings.nobody")}</small>}
             {rule.changedBy === "ship" && <small>{t("settings.happenings.changedByShip")}</small>}
-          </div>;
+          </Fragment>;
         })}
-      </>}
-      {sources.data && <>
-        <h2>{t("settings.happenings.shipHandles")}</h2>
-        {SHIP_SOURCES.map(({ id, label }) => {
-          const source = sources.data.sources.find((entry) => entry.id === id);
-          return source && <div class="settings-happening" key={id}>
-            <label class="settings-check"><input type="checkbox" checked={source.enabled} disabled={busy || !canChangeSources}
-              onChange={() => updateSource.mutate({ id, enabled: !source.enabled })} />{t(label)}</label>
-          </div>;
-        })}
-        <p class="settings-muted">{t("settings.happenings.alwaysOn")}</p>
-      </>}
+      </div>}
+      {memory && <div class="settings-happening">
+        <label class="settings-check"><input type="checkbox" checked={memory.enabled} disabled={busy || !canChangeSources}
+          onChange={() => updateSource.mutate(!memory.enabled)} />{t("settings.happenings.memoryReview")}</label>
+      </div>}
+      {sources.data && <p class="settings-muted">{t("settings.happenings.alwaysOn")}</p>}
     </>}
   </section>;
+}
+
+function shipChoice(rule: NoticeRule, value: string): ShipOutcome {
+  const choice = rule.shipChoices.find((entry) => entry === value);
+  if (!choice) throw new Error(`Unknown Ship choice: ${value}`);
+  return choice;
 }

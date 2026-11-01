@@ -575,6 +575,7 @@ function makeContext(
     responsibilitySources: {
       isEnabled: vi.fn(() => false),
     },
+    noticeRules: { wantsNotice: vi.fn(() => false) },
     reconcileResponsibilityWake: vi.fn(async () => undefined),
     welcome: { activate: vi.fn(() => false) },
     shipReplies: { reserveOrder: vi.fn(() => 1), recordAdapter: vi.fn() },

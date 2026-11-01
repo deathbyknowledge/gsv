@@ -17,9 +17,10 @@ saves retain drafts and refresh server state so partially saved changes are not
 blindly rewritten. Save, discard and dirty status remain visible while scrolling.
 Leaving unsaved preferences prompts before navigation, including browser history;
 accepted navigation preserves the draft. Other settings retain their own save flows.
-When things happen has two lists that save at once: Tell me sets notice rules, and
-Ship handles sets configurable responsibility sources. A line below names what is
-always on. Logs explains
+When things happen is one list of events that saves at once: each row has Tell me
+and a Ship choice of Off, Sees it or Acts, offering only what its rule allows, and warns
+when nobody will hear about it. Memory review is a separate switch, and a line below
+names what is always on. Logs explains
 its action history above the entries. Messengers lists WhatsApp first and labels
 Slack and Discord Coming soon; their connect and reconnect actions are disabled while existing links remain inspectable and removable.
 Account explains manual early-access deletion and links to hello@humansandmachin.es.

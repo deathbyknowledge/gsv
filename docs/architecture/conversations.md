@@ -132,6 +132,13 @@ event, which Process records for the next generation without starting a run, so 
 answer a reply to it. The owner sees the same event in their Ship conversation as a card built from its fields
 (who wrote, which messenger, the start of the message) with a link to the contact or request in People.
 
+Rules (`notify.rule.*`) choose, per kind, whether the messenger is told and what Ship does. Received
+mail, new computers and messenger changes use the same notices when a rule asks. Mail notices carry a
+count only, and a messenger that needs signing in can't carry the notice about itself. With `context`,
+an event the person turned off or wasn't sent still reaches Ship as a model-only `owner.notified`, without a
+card or a run; a contact's event instead stays out of Ship while its owner simply wasn't reachable or was already
+active, as their words should reach Ship unsent only by choice. `wake` stays with each kind's responsibility source, and contact kinds never allow it.
+
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more
 work, or remain silent.

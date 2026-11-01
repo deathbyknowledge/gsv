@@ -206,8 +206,11 @@ matters. GSV doesn't send these notices while you are active in a browser or on
 Desktop, because People shows the change there.
 
 To choose which of these reach you, open Settings → When things happen and use
-the Tell me column. Turning one off also holds back any still waiting. Ship can
-change them when you ask it to, and Settings says when it did.
+the Tell me column. Turning one off also holds back any still waiting. The Ship
+column chooses whether your Ship sees each one. It can't act on a contact's
+message by itself: to have it reply, hand that contact to it. Ship can change
+these when you ask it to. Settings says when it did, and your messenger tells you
+if it turned off a notice or set itself to act.
 
 Ship knows about each notice it sent, so you can reply to it in the same chat,
 for example "tell her Friday works". A message request stays yours to read and

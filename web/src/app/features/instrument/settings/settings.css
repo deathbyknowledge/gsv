@@ -103,8 +103,13 @@
 .settings-messenger-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
 .settings-messenger-heading h2 { margin: 0; }
 .settings-standing h2 { margin-top: 2.5rem; }
-.settings-happening { margin-top: .75rem; }
-.settings-happening small { display: block; margin: .25rem 0 0 1.625rem; color: var(--text-dim); }
+.settings-happenings { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: .75rem 1.5rem; align-items: center; margin: 1.5rem 0 0; }
+.settings-happenings-head { color: var(--text-dim); font-size: .75rem; }
+.settings-happenings small { grid-column: 1 / -1; margin-top: -.5rem; color: var(--text-dim); }
+.settings-happenings select { font: inherit; color: inherit; background: transparent; border: 1px solid var(--border); padding: .25rem .375rem; }
+.settings-happenings-tell { justify-self: center; }
+.settings-happening { margin-top: 1.5rem; }
+@media (max-width: 480px) { .settings-happenings { gap: .75rem 1rem; } }
 .settings-standing p.settings-muted { margin-top: 2rem; }
 .settings-coming-soon { display: inline-block; margin-left: .75rem; padding: .15rem .4rem; border: 1px solid var(--border); font-size: .65rem; font-weight: 400; vertical-align: middle; white-space: nowrap; }
 .settings-messenger-links { margin: 0; }

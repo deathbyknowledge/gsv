@@ -14,7 +14,8 @@ const MAX_RETRY_DELAY_MS = 5 * 60_000;
 
 /**
  * Sends each owner's notices to their private messenger, unless a client of theirs is active
- * and already shows the change, then records each sent notice for Ship without waking it.
+ * and already shows the change. Records each one for Ship without waking it, as its rule says,
+ * including whether the person was told.
  */
 export class OwnerNoticeRuntime {
   constructor(readonly host: Kernel) {}
@@ -49,9 +50,20 @@ export class OwnerNoticeRuntime {
   private async deliver(notice: OwnerNotice, task: { id: string }): Promise<boolean> {
     const ctx = this.host.buildKernelContext({ callerOwnerUid: notice.ownerUid });
     const current = this.admit(notice, ctx);
-    const preferred = this.host.adapters.privateDestinations.get(notice.ownerUid);
-    if (!current || !preferred || this.host.shipReplies.activeConnection(notice.ownerUid, this.host.connections)) {
+    if (!current) {
       this.host.ownerNotices.dismissed(notice, Date.now());
+      return true;
+    }
+    const preferred = this.host.adapters.privateDestinations.get(notice.ownerUid);
+    const silenced = notice.topic !== "notice.rule.changed" && ctx.noticeRules.notifies(notice.ownerUid, notice.topic) === "none";
+    // A messenger that needs signing in can't carry the notice saying so.
+    const brokenCarrier = notice.topic === "adapter.auth_required" && preferred?.destination.adapter === notice.subject.adapter
+      && preferred?.destination.accountId === notice.subject.accountId;
+    if (silenced || brokenCarrier || !preferred || this.host.shipReplies.activeConnection(notice.ownerUid, this.host.connections)) {
+      const finish = () => this.host.ownerNotices.dismissed(notice, Date.now());
+      // Someone's words reach Ship unsent only when its owner chose that, not because they happened to be online.
+      if (notice.topic.startsWith("contact.") && !silenced) finish();
+      else await this.recordForShip(current, Date.now(), finish);
       return true;
     }
     const { destination } = preferred;
@@ -75,7 +87,7 @@ export class OwnerNoticeRuntime {
     if (!result.ok) {
       if (result.retryable !== true) {
         console.warn(`[Kernel] Owner notice ${notice.key} was not delivered:`, result.error);
-        this.host.ownerNotices.dismissed(notice, now);
+        await this.recordForShip(current, now, () => this.host.ownerNotices.dismissed(notice, now));
         return true;
       }
       const retryAt = now + Math.min(MAX_RETRY_DELAY_MS, 1_000 * (2 ** Math.min(8, notice.attemptCount + 1)));
@@ -83,32 +95,52 @@ export class OwnerNoticeRuntime {
       await this.schedule(notice.ownerUid, retryAt, task.id);
       return false;
     }
+    await this.recordForShip(current, now, () => this.host.ownerNotices.sent(notice, now), destination.adapter);
+    return true;
+  }
+
+  /** Finish the round and, unless its rule says Ship doesn't see this kind, record it for Ship in one transaction. */
+  private async recordForShip(notice: OwnerNotice, now: number, finish: () => void, adapter?: string): Promise<void> {
+    const { topic } = notice;
+    const ctx = this.host.buildKernelContext({ callerOwnerUid: notice.ownerUid });
+    // Ship made a rule change itself, so it has nothing to learn from the notice about it.
+    const ship = topic === "notice.rule.changed" ? "none" : ctx.noticeRules.ship(notice.ownerUid, topic);
+    if (topic === "notice.rule.changed" || (adapter ? ship === "none" : ship !== "context")) {
+      finish();
+      return;
+    }
+    const noticeId = `${notice.key}:${notice.createdAtMs}:${notice.round}`;
+    const link = ownerNoticeLink(notice);
     const event: OwnerNotifiedShipEvent = {
       type: "owner.notified",
       payload: {
         noticeId,
-        topic: current.topic,
-        adapter: destination.adapter,
-        ...ownerNoticeParts(current),
-        contactId: current.subject.contactId,
-        ...(current.subject.conversationId ? { conversationId: current.subject.conversationId } : undefined),
-        ...(current.topic === "contact.message" ? { messages: current.pendingCount } : undefined),
-        sentAtMs: now,
+        topic,
+        ...(adapter ? { adapter, sentAtMs: now } : undefined),
+        ...ownerNoticeParts(notice),
+        ...(notice.subject.contactId ? { contactId: notice.subject.contactId } : undefined),
+        ...(notice.subject.conversationId ? { conversationId: notice.subject.conversationId } : undefined),
+        ...(topic === "contact.message" || topic === "mail.received" ? { messages: notice.pendingCount } : undefined),
       },
-      link,
+      ...(link ? { link } : undefined),
     };
     this.host.ctx.storage.transactionSync(() => {
-      this.host.ownerNotices.sent(notice, now);
+      finish();
       this.host.shipEvents.enqueue(notice.ownerUid, `owner.notified:${noticeId}`, event, now);
     });
     await this.host.shipEventRuntime.queue(notice.ownerUid);
-    return true;
   }
 
-  /** The notice as it stands now, or null once its owner turned its kind off or its subject was read, decided, muted or ended. */
+  /** The notice as it stands now, or null once its subject was read, decided, muted, fixed or ended. */
   private admit(notice: OwnerNotice, ctx: KernelContext): OwnerNotice | null {
-    if (ctx.noticeRules.notifies(notice.ownerUid, notice.topic) === "none") return null;
     const { subject } = notice;
+    if (notice.topic === "notice.rule.changed" || notice.topic === "mail.received" || notice.topic === "machine.added"
+      || notice.topic === "adapter.connected") return notice;
+    if (notice.topic === "adapter.auth_required") {
+      const status = subject.adapter && subject.accountId ? ctx.adapters.status.get(subject.adapter, subject.accountId) : null;
+      return status && !status.authenticated ? notice : null;
+    }
+    if (!subject.contactId) return null;
     if (notice.topic === "contact.request") {
       const approach = subject.approachId ? ctx.approaches.get(subject.approachId) : null;
       if (!approach || approach.ownerUid !== notice.ownerUid || approach.summary.direction !== "incoming"

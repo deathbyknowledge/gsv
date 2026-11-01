@@ -176,6 +176,13 @@ export async function completeManagedInboundMail(
 
   const mailbox = ctx.mailboxes.getMailbox(summarized.mailboxId);
   if (!mailbox) throw new Error("Mail message belongs to an unknown mailbox");
+  if (!ctx.auth.isAccountDisabled(mailbox.ownerUid) && ctx.noticeRules.wantsNotice(mailbox.ownerUid, "mail.received")) {
+    ctx.ownerNotices.noteMail(mailbox.ownerUid, mailbox.mailboxId, {
+      from: summarized.displayFrom ?? summarized.envelopeFrom,
+      preview: completion.summary.summary,
+    }, summarized.receivedAt, Date.now());
+    ctx.defer(ctx.queueOwnerNotices(mailbox.ownerUid));
+  }
   if (ctx.auth.isAccountDisabled(mailbox.ownerUid)
     || !ctx.responsibilitySources.isEnabled(mailbox.ownerUid, "mail.received")) {
     ctx.mailboxes.markEventDelivered(summarized.messageId);

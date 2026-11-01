@@ -382,10 +382,12 @@ const responsibilitySources: ResponsibilitySourcePolicy[] = [
   { id: "adapter.connected", name: "Connected adapters", description: "", control: "configurable", enabled: true, defaultEnabled: true },
   { id: "adapter.auth_required", name: "Adapter authentication", description: "", control: "configurable", enabled: true, defaultEnabled: true },
 ];
+const mockRule = (kind: NoticeRule["kind"], contact: boolean): NoticeRule => contact
+  ? { kind, notify: "messenger", ship: "context", defaultNotify: "messenger", defaultShip: "context", shipChoices: ["none", "context"] }
+  : { kind, notify: "none", ship: "wake", defaultNotify: "none", defaultShip: "wake", shipChoices: ["none", "context", "wake"] };
 let noticeRules: NoticeRule[] = [
-  { kind: "contact.request", notify: "messenger", defaultNotify: "messenger" },
-  { kind: "contact.message", notify: "none", defaultNotify: "messenger", changedBy: "ship", updatedAtMs: Date.now() },
-  { kind: "contact.invite.accepted", notify: "messenger", defaultNotify: "messenger" },
+  mockRule("contact.request", true), mockRule("contact.message", true), mockRule("contact.invite.accepted", true),
+  mockRule("mail.received", false), mockRule("machine.added", false), mockRule("adapter.connected", false), mockRule("adapter.auth_required", false),
 ];
 const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
 const fresh = freshRequested();
@@ -890,9 +892,11 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "account.list": return respond(id, { accounts });
     case "notify.rule.list": return respond(id, { rules: noticeRules });
     case "notify.rule.set": {
-      const { kind, notify } = z.object({ kind: z.enum(["contact.request", "contact.message", "contact.invite.accepted"]), notify: z.enum(["none", "messenger"]) }).parse(args);
-      const rule: NoticeRule = { kind, notify, defaultNotify: "messenger", changedBy: "person", updatedAtMs: Date.now() };
-      noticeRules = noticeRules.map((entry) => entry.kind === kind ? rule : entry);
+      const change = z.object({ kind: z.string(), notify: z.enum(["none", "messenger"]).optional(), ship: z.enum(["none", "context", "wake"]).optional() }).parse(args);
+      const current = noticeRules.find((entry) => entry.kind === change.kind);
+      if (!current) throw new Error(`Unknown kind: ${change.kind}`);
+      const rule: NoticeRule = { ...current, notify: change.notify ?? current.notify, ship: change.ship ?? current.ship, changedBy: "person", updatedAtMs: Date.now() };
+      noticeRules = noticeRules.map((entry) => entry === current ? rule : entry);
       return respond(id, { rule });
     }
     case "sys.target.list": return respond(id, { targets });
