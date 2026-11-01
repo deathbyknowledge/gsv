@@ -408,6 +408,7 @@ const SYSCALL_NAMES = [
   "account.create",
   "account.list",
   "account.owner.link",
+  "account.recovery.options",
   "account.recovery.redeem",
   "account.recovery.code.start",
   "account.recovery.code.redeem",

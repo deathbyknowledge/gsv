@@ -61,6 +61,7 @@ import { DevicePairingStore } from "./device-pairings";
 import { MemberRecoveryStore } from "./member-recovery";
 import { AccountRecoveryStore } from "./account-recovery";
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
+import type { ArgsOf, ResultOf } from "@humansandmachines/gsv/protocol";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
 import { TargetRegistry } from "./target-registry";
@@ -849,11 +850,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return { authorized: true };
   }
 
-  async redeemAccountRecovery(input: { id: string; secret: string; proof: string; password: string }): Promise<{ username: "root" }> {
+  async redeemAccountRecovery(input: ArgsOf<"account.recovery.redeem">): Promise<ResultOf<"account.recovery.redeem">> {
     this.retirement.assertActive();
-    const result = await this.accountRecovery.redeem(input);
-    this.connectionRuntime.invalidateAccountConnections(0);
-    return result;
+    const { username, uid, administratorChanged } = await this.accountRecovery.redeem(input);
+    this.connectionRuntime.invalidateAccountConnections(uid);
+    if (administratorChanged) this.connectionRuntime.invalidateAccountConnections(0);
+    return { username };
   }
 
   async onRequest(request: Request): Promise<Response> {

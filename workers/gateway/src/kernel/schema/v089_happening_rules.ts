@@ -4,8 +4,8 @@ import type { SqlMigration } from "../../schema/runner";
  * Rules also say what Ship does about a kind, and notices cover more than contacts.
  * Waking stays with each kind's responsibility source, so `ship` holds only the rest.
  */
-export const KERNEL_V088_HAPPENING_RULES: SqlMigration = {
-  id: 88,
+export const KERNEL_V089_HAPPENING_RULES: SqlMigration = {
+  id: 89,
   name: "happening_rules",
   statements: [
     "ALTER TABLE notice_rules ADD COLUMN ship TEXT CHECK (ship IS NULL OR ship IN ('none', 'context'))",

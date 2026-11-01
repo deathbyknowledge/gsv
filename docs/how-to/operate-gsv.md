@@ -181,8 +181,8 @@ person's email and opens **My Ships**. Signing in there does not create a
 Ship or grant operator administration. To add an operator-created Ship to that
 list, sign in as **root**, open **Settings → sign-in → Account recovery**, and
 choose **set up recovery**. This binds current root authorization to the verified
-email. The owner can then see the Ship in **My Ships** and start administrator
-recovery there if needed.
+email. The owner can then see the Ship in **My Ships** and use **Forgot your
+password?** on the Ship or there to set a new personal or administrator password.
 
 The sending address must be enabled with the provider and its DNS records
 verified before codes can be delivered. The public deployment creates and
@@ -195,9 +195,9 @@ verification mail is independent of a Ship's messaging adapters.
 A reset gives the same person a fresh Ship under the same handle, and it can't
 be undone. If the person only lost access, don't reset: recovery keeps their
 Ship, contacts and DID. They sign in to **My Ships** at `<admin-origin>/owner/login`
-with the owner email that the Ship's page shows, and choose **Recover your
-Ship** to reset the administrator password. A Ship whose owner isn't linked
-can't be recovered this way.
+with the owner email that the Ship's page shows, and choose **Forgot your
+password?** to set a new password, or start from the same link on their Ship's
+sign-in page. A Ship whose owner isn't linked can't be recovered this way.
 
 The **Reset** panel on the Ship's administration page says this first, then
 what a reset does before you confirm:

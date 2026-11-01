@@ -87,10 +87,14 @@ space: the operator still issues setup invitations, and root links ownership
 from the space's Settings. My spaces does not sign the owner into local Kernel
 accounts or grant access to `/admin`.
 
-`/owner/recover` asks for the space handle and its owner's email. It requires a
-new code bound to this recovery attempt, even if the owner is already signed
-in. After verification, Accounts issues the existing single-use root reset
-claim; the Kernel replaces root's password and revokes root's old credentials.
+`/owner/recover` asks for the space handle and its owner's email; a Ship's
+**Forgot your password?** page links to it with the handle filled in. It requires
+a new code bound to this recovery attempt, even if the owner is already signed
+in. Its answers don't say whether an email owns a handle. After verification,
+Accounts issues a single-use reset claim and returns the person to the Ship, where
+the Kernel replaces the personal password (or root's, if they choose that) and
+revokes that account's old credentials. Operator-created Ships need an owner link
+first; without one, the person uses a messenger or the administrator.
 Mail delivery runs in Accounts, independently of the space being recovered.
 
 Codes expire after ten minutes and lock after five failed guesses. Resending
