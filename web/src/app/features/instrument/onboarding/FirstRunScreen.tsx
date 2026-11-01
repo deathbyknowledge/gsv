@@ -134,6 +134,7 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
           <p class="first-run-text">{t("onboarding.surface.desktopText")}</p>
           <div class="first-run-actions">
             <span class="first-run-actions-spacer" />
+            {/* the choice is the desktop app; the browser is only where the first run happens to finish */}
             <Button variant="secondary" label={t("onboarding.surface.continueHere")} disabled={busy} onClick={() => { void onComplete("desktop"); }} />
             <Button variant="primary" href={LATEST_RELEASE_PAGE_URL} label={t("onboarding.surface.download")} />
           </div>

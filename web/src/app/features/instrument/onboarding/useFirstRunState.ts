@@ -3,7 +3,12 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 
 /** The per-account flag the Kernel watches: a human writing "1" here activates Ship's initial onboarding. */
 export const FIRST_RUN_SEEN = "ui/welcome_card_seen";
-/** Where the person said they want to message Ship, recorded next to the flag. */
+/**
+ * Where the person said they want to message Ship, recorded next to the flag. It is the stated
+ * preference, not the client that finished the first run: choosing the desktop app and continuing
+ * in the browser meanwhile records "desktop". Web and desktop route alike; only a messenger choice
+ * moves Ship's greeting.
+ */
 export const PREFERRED_SURFACE = "ui/preferred_surface";
 
 export type PreferredSurface = "web" | "desktop" | "whatsapp" | "telegram";
