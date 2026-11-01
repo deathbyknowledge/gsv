@@ -40,8 +40,11 @@ async function mount(account = OWNER) {
   let tree: ComponentChildren;
   function Harness() { tree = WhenThingsHappen({ account }); return null; }
   await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
-  // SAFETY: every input this section renders is a checkbox.
-  const box = (name: string) => collectNodes(tree).find((node) => node.type === "input" && node.props["aria-label"] === name) as Box | undefined;
+  const box = (name: string) => {
+    const label = collectNodes(tree).find((node) => node.type === "label" && collectText(node).includes(name));
+    // SAFETY: every input this section renders is a checkbox.
+    return label && collectNodes(label).find((node) => node.type === "input") as Box | undefined;
+  };
   // SAFETY: the section renders one SettingsError once it is past its access check.
   const error = () => (collectNodes(tree).find((node) => node.type === SettingsError) as VNode<{ error: Error | null }>).props.error;
   // SAFETY: the change handlers read only currentTarget.checked.
@@ -58,37 +61,34 @@ function gateway(overrides: Record<string, () => object> = {}) {
   });
 }
 
-it("joins notice rules and sources by event, and keeps upkeep and duties out of the table", async () => {
+it("lists only settings that work, and keeps always-on duties out of the checkboxes", async () => {
   gateway();
   const screen = await mount();
   try {
-    await vi.waitFor(() => expect(screen.box("Mail arrives: Ship handles it")).toBeDefined());
-    expect(screen.box("Someone asks to message you: Tell me")?.props.checked).toBe(true);
-    expect(screen.box("A contact messages you: Tell me")?.props.checked).toBe(false);
-    expect(screen.box("Mail arrives: Tell me")).toBeUndefined();
-    expect(screen.box("Someone asks to message you: Ship handles it")).toBeUndefined();
+    await vi.waitFor(() => expect(screen.box("Mail arrives")).toBeDefined());
+    expect(screen.box("Someone asks to message you")?.props.checked).toBe(true);
+    expect(screen.box("A contact messages you")?.props.checked).toBe(false);
+    expect(screen.box("A conversation is ready to review for memory")?.props.checked).toBe(false);
     const text = screen.text();
     expect(text).toContain("Your Ship changed this.");
-    expect(text).toContain("you decide");
-    expect(text).toContain("set per person");
-    expect(text).toContain("Review conversations for memory");
+    expect(text).not.toContain("later");
     expect(text).not.toContain("Conversation replies");
     expect(text).toContain("Always on: replying to you, delegated work and your routines.");
   } finally { await screen.close(); }
 });
 
-it("saves each column through its own call", async () => {
+it("saves each list through its own call", async () => {
   const request = gateway({
     "notify.rule.set": () => ({ rule: { ...RULES[0]!, notify: "none", changedBy: "person", updatedAtMs: 2 } }),
     "r12y.source.update": () => ({ source: SOURCES[1]! }),
   });
   const screen = await mount();
   try {
-    await vi.waitFor(() => expect(screen.box("Mail arrives: Ship handles it")).toBeDefined());
-    await screen.toggle(screen.box("Someone asks to message you: Tell me")!, false);
-    await vi.waitFor(() => expect(screen.box("Someone asks to message you: Tell me")?.props.checked).toBe(false));
-    await vi.waitFor(() => expect(screen.box("Mail arrives: Ship handles it")?.props.disabled).toBe(false));
-    await screen.toggle(screen.box("Mail arrives: Ship handles it")!, false);
+    await vi.waitFor(() => expect(screen.box("Mail arrives")).toBeDefined());
+    await screen.toggle(screen.box("Someone asks to message you")!, false);
+    await vi.waitFor(() => expect(screen.box("Someone asks to message you")?.props.checked).toBe(false));
+    await vi.waitFor(() => expect(screen.box("Mail arrives")?.props.disabled).toBe(false));
+    await screen.toggle(screen.box("Mail arrives")!, false);
     const writes = request.mock.calls.filter(([call]) => call === "notify.rule.set" || call === "r12y.source.update").map(([call, args]) => [call, args]);
     expect(writes).toEqual([
       ["notify.rule.set", { kind: "contact.request", notify: "none" }],
@@ -101,10 +101,10 @@ it("keeps the saved choice and shows the error when a change fails", async () =>
   gateway({ "notify.rule.set": () => { throw new Error("Could not save"); } });
   const screen = await mount();
   try {
-    await vi.waitFor(() => expect(screen.box("Someone asks to message you: Tell me")).toBeDefined());
-    await screen.toggle(screen.box("Someone asks to message you: Tell me")!, false);
+    await vi.waitFor(() => expect(screen.box("Someone asks to message you")).toBeDefined());
+    await screen.toggle(screen.box("Someone asks to message you")!, false);
     await vi.waitFor(() => expect(screen.error()?.message).toBe("Could not save"));
-    expect(screen.box("Someone asks to message you: Tell me")?.props.checked).toBe(true);
+    expect(screen.box("Someone asks to message you")?.props.checked).toBe(true);
   } finally { await screen.close(); }
 });
 
@@ -112,8 +112,8 @@ it("doesn't ask for notice rules on root, which has none", async () => {
   const request = gateway();
   const screen = await mount({ ...OWNER, uid: 0, username: "root" });
   try {
-    await vi.waitFor(() => expect(screen.box("Mail arrives: Ship handles it")).toBeDefined());
+    await vi.waitFor(() => expect(screen.box("Mail arrives")).toBeDefined());
     expect(request.mock.calls.some(([call]) => call === "notify.rule.list")).toBe(false);
-    expect(screen.box("Someone asks to message you: Tell me")).toBeUndefined();
+    expect(screen.box("Someone asks to message you")).toBeUndefined();
   } finally { await screen.close(); }
 });

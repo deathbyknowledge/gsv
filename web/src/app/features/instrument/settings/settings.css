@@ -102,14 +102,9 @@
 .settings-messenger { padding-bottom: 1rem; }
 .settings-messenger-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
 .settings-messenger-heading h2 { margin: 0; }
-.settings-happenings { width: 100%; border-collapse: collapse; }
-.settings-happenings th, .settings-happenings td { padding: .875rem 1rem .875rem 0; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; font-weight: normal; }
-.settings-happenings thead th { font-size: .75rem; color: var(--text-dim); }
-.settings-happenings thead th:first-child { visibility: hidden; }
-.settings-happenings td { width: 8.5rem; font-size: .8125rem; }
-.settings-happenings input { width: 1rem; height: 1rem; margin: 0; accent-color: var(--accent); }
-.settings-happenings small { display: block; margin-top: .25rem; color: var(--text-dim); }
 .settings-standing h2 { margin-top: 2.5rem; }
+.settings-happening { margin-top: .75rem; }
+.settings-happening small { display: block; margin: .25rem 0 0 1.625rem; color: var(--text-dim); }
 .settings-standing p.settings-muted { margin-top: 2rem; }
 .settings-coming-soon { display: inline-block; margin-left: .75rem; padding: .15rem .4rem; border: 1px solid var(--border); font-size: .65rem; font-weight: 400; vertical-align: middle; white-space: nowrap; }
 .settings-messenger-links { margin: 0; }

@@ -10,18 +10,19 @@ import { SettingsError } from "./settingsShared";
 import { useT, type TextKey } from "../../../i18n/locale";
 import { PageHeading } from "../../../components/ui/PageHeading";
 
-/** One thing that can happen. `notice` is its notice rule; `source` is the responsibility source that has Ship act on it. */
-type Happening = { label: TextKey; notice?: NoticeKind; source?: ResponsibilitySourcePolicy["id"]; shipNote?: TextKey };
+const NOTICES = [
+  { kind: "contact.request", label: "settings.happenings.request" },
+  { kind: "contact.message", label: "settings.happenings.message" },
+  { kind: "contact.invite.accepted", label: "settings.happenings.inviteAccepted" },
+] as const satisfies ReadonlyArray<{ kind: NoticeKind; label: TextKey }>;
 
-const HAPPENINGS: readonly Happening[] = [
-  { label: "settings.happenings.request", notice: "contact.request", shipNote: "settings.happenings.youDecide" },
-  { label: "settings.happenings.message", notice: "contact.message", shipNote: "settings.happenings.perPerson" },
-  { label: "settings.happenings.inviteAccepted", notice: "contact.invite.accepted" },
-  { label: "settings.happenings.mail", source: "mail.received" },
-  { label: "settings.happenings.machineAdded", source: "machine.added" },
-  { label: "settings.happenings.adapterConnected", source: "adapter.connected" },
-  { label: "settings.happenings.adapterAuth", source: "adapter.auth_required" },
-];
+const SHIP_SOURCES = [
+  { id: "mail.received", label: "settings.happenings.mail" },
+  { id: "machine.added", label: "settings.happenings.machineAdded" },
+  { id: "adapter.connected", label: "settings.happenings.adapterConnected" },
+  { id: "adapter.auth_required", label: "settings.happenings.adapterAuth" },
+  { id: "memory.review", label: "settings.happenings.memoryReview" },
+] as const satisfies ReadonlyArray<{ id: ResponsibilityConfigurableSourcePolicyId; label: TextKey }>;
 
 export function WhenThingsHappen({ account }: { account: ConsoleAccount }) {
   const t = useT();
@@ -52,44 +53,34 @@ export function WhenThingsHappen({ account }: { account: ConsoleAccount }) {
   });
   if (!canReadSources && !hasRules) return <p class="settings-muted">{t("settings.happenings.noAccess")}</p>;
   const busy = !connected || updateSource.isPending || updateRule.isPending;
-  const sourceById = new Map(sources.data?.sources.map((source) => [source.id, source]));
-  const shown = new Set(HAPPENINGS.map((happening) => happening.source));
-  const upkeep = sources.data?.sources.filter((source) => source.control === "configurable" && !shown.has(source.id)) ?? [];
   const loading = connected && ((canReadSources && sources.isPending) || (hasRules && rules.isPending));
   return <section class="settings-standing" aria-label={t("settings.happenings.title")}>
     <PageHeading title={t("settings.happenings.title")} description={t("settings.happenings.intro")} />
     {loading && <LoadingState>{t("common.loading")}</LoadingState>}
     <SettingsError error={sources.error ?? rules.error ?? updateSource.error ?? updateRule.error} />
     {!loading && <>
-      <table class="settings-happenings">
-        <thead><tr>
-          <th scope="col">{t("settings.happenings.title")}</th>
-          <th scope="col">{t("settings.happenings.tellMe")}</th>
-          <th scope="col">{t("settings.happenings.shipHandles")}</th>
-        </tr></thead>
-        <tbody>{HAPPENINGS.map((happening) => {
-          const label = t(happening.label);
-          const rule = rules.data?.find((entry) => entry.kind === happening.notice);
-          const source = happening.source ? sourceById.get(happening.source) : undefined;
-          return <tr key={happening.label}>
-            <th scope="row">{label}{rule?.changedBy === "ship" && <small>{t("settings.happenings.changedByShip")}</small>}</th>
-            <td>{rule
-              ? <input type="checkbox" aria-label={`${label}: ${t("settings.happenings.tellMe")}`} checked={rule.notify === "messenger"} disabled={busy || !canChangeRules}
-                  onChange={(event) => updateRule.mutate({ kind: rule.kind, notify: event.currentTarget.checked ? "messenger" : "none" })} />
-              : <span class="settings-muted">{happening.notice ? "–" : t("settings.happenings.later")}</span>}</td>
-            <td>{source
-              ? <input type="checkbox" aria-label={`${label}: ${t("settings.happenings.shipHandles")}`} checked={source.enabled} disabled={busy || !canChangeSources || source.control === "required"}
-                  onChange={() => { if (source.control === "configurable") updateSource.mutate({ id: source.id, enabled: !source.enabled }); }} />
-              : <span class="settings-muted">{happening.shipNote ? t(happening.shipNote) : "–"}</span>}</td>
-          </tr>;
-        })}</tbody>
-      </table>
-      {upkeep.length > 0 && <>
-        <h2>{t("settings.happenings.upkeep")}</h2>
-        {upkeep.map((source) => <label class="settings-check" key={source.id}><input type="checkbox" checked={source.enabled} disabled={busy || !canChangeSources}
-            onChange={() => { if (source.control === "configurable") updateSource.mutate({ id: source.id, enabled: !source.enabled }); }} />{source.id === "memory.review" ? t("settings.happenings.memoryReview") : source.name}</label>)}
+      {rules.data && <>
+        <h2>{t("settings.happenings.tellMe")}</h2>
+        {NOTICES.map(({ kind, label }) => {
+          const rule = rules.data.find((entry) => entry.kind === kind);
+          return rule && <div class="settings-happening" key={kind}>
+            <label class="settings-check"><input type="checkbox" checked={rule.notify === "messenger"} disabled={busy || !canChangeRules}
+              onChange={(event) => updateRule.mutate({ kind, notify: event.currentTarget.checked ? "messenger" : "none" })} />{t(label)}</label>
+            {rule.changedBy === "ship" && <small>{t("settings.happenings.changedByShip")}</small>}
+          </div>;
+        })}
       </>}
-      <p class="settings-muted">{t("settings.happenings.alwaysOn")}</p>
+      {sources.data && <>
+        <h2>{t("settings.happenings.shipHandles")}</h2>
+        {SHIP_SOURCES.map(({ id, label }) => {
+          const source = sources.data.sources.find((entry) => entry.id === id);
+          return source && <div class="settings-happening" key={id}>
+            <label class="settings-check"><input type="checkbox" checked={source.enabled} disabled={busy || !canChangeSources}
+              onChange={() => updateSource.mutate({ id, enabled: !source.enabled })} />{t(label)}</label>
+          </div>;
+        })}
+        <p class="settings-muted">{t("settings.happenings.alwaysOn")}</p>
+      </>}
     </>}
   </section>;
 }

@@ -182,11 +182,8 @@ export const en = {
   // Settings: standing responsibilities
   "settings.happenings.title": "When things happen",
   "settings.happenings.intro": "Choose what you hear about and what your Ship takes care of.",
-  "settings.happenings.tellMe": "Tell me",
-  "settings.happenings.shipHandles": "Ship handles it",
-  "settings.happenings.later": "later",
-  "settings.happenings.youDecide": "you decide",
-  "settings.happenings.perPerson": "set per person",
+  "settings.happenings.tellMe": "Tell me when",
+  "settings.happenings.shipHandles": "Ship takes care of it when",
   "settings.happenings.request": "Someone asks to message you",
   "settings.happenings.message": "A contact messages you",
   "settings.happenings.inviteAccepted": "Someone accepts your invitation",
@@ -195,8 +192,7 @@ export const en = {
   "settings.happenings.adapterConnected": "A messenger connects",
   "settings.happenings.adapterAuth": "A messenger needs signing in again",
   "settings.happenings.changedByShip": "Your Ship changed this.",
-  "settings.happenings.upkeep": "Ship's own upkeep",
-  "settings.happenings.memoryReview": "Review conversations for memory",
+  "settings.happenings.memoryReview": "A conversation is ready to review for memory",
   "settings.happenings.alwaysOn": "Always on: replying to you, delegated work and your routines.",
   "settings.happenings.noAccess": "Your account cannot read these settings.",
 

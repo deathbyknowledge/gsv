@@ -183,11 +183,8 @@ export const es = {
   // Settings: standing responsibilities
   "settings.happenings.title": "Cuando pasan cosas",
   "settings.happenings.intro": "Elige de qué te enteras tú y de qué se encarga tu Ship.",
-  "settings.happenings.tellMe": "Avisarme",
-  "settings.happenings.shipHandles": "Lo gestiona Ship",
-  "settings.happenings.later": "más adelante",
-  "settings.happenings.youDecide": "decides tú",
-  "settings.happenings.perPerson": "por persona",
+  "settings.happenings.tellMe": "Avísame cuando",
+  "settings.happenings.shipHandles": "Ship se encarga cuando",
   "settings.happenings.request": "Alguien te pide escribirte",
   "settings.happenings.message": "Te escribe un contacto",
   "settings.happenings.inviteAccepted": "Alguien acepta tu invitación",
@@ -196,8 +193,7 @@ export const es = {
   "settings.happenings.adapterConnected": "Se conecta una app de mensajería",
   "settings.happenings.adapterAuth": "Una app de mensajería necesita volver a iniciar sesión",
   "settings.happenings.changedByShip": "Lo ha cambiado tu Ship.",
-  "settings.happenings.upkeep": "Tareas propias de Ship",
-  "settings.happenings.memoryReview": "Revisar conversaciones para la memoria",
+  "settings.happenings.memoryReview": "Una conversación está lista para revisarla para la memoria",
   "settings.happenings.alwaysOn": "Siempre activo: responderte, el trabajo delegado y tus rutinas.",
   "settings.happenings.noAccess": "Tu cuenta no puede leer estos ajustes.",
 

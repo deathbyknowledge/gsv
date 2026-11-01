@@ -188,11 +188,8 @@ export const ptBR = {
   // Settings: standing responsibilities
   "settings.happenings.title": "Quando as coisas acontecem",
   "settings.happenings.intro": "Escolha do que você fica sabendo e do que o seu Ship cuida.",
-  "settings.happenings.tellMe": "Me avisar",
-  "settings.happenings.shipHandles": "O Ship cuida disso",
-  "settings.happenings.later": "depois",
-  "settings.happenings.youDecide": "você decide",
-  "settings.happenings.perPerson": "por pessoa",
+  "settings.happenings.tellMe": "Me avise quando",
+  "settings.happenings.shipHandles": "O Ship cuida disso quando",
   "settings.happenings.request": "Alguém pede para falar com você",
   "settings.happenings.message": "Um contato envia uma mensagem",
   "settings.happenings.inviteAccepted": "Alguém aceita o seu convite",
@@ -201,8 +198,7 @@ export const ptBR = {
   "settings.happenings.adapterConnected": "Um app de mensagem se conecta",
   "settings.happenings.adapterAuth": "Um app de mensagem precisa de novo login",
   "settings.happenings.changedByShip": "O seu Ship mudou isto.",
-  "settings.happenings.upkeep": "Manutenção do próprio Ship",
-  "settings.happenings.memoryReview": "Revisar conversas para a memória",
+  "settings.happenings.memoryReview": "Uma conversa está pronta para ser revisada para a memória",
   "settings.happenings.alwaysOn": "Sempre ativo: responder a você, trabalho delegado e suas rotinas.",
   "settings.happenings.noAccess": "Sua conta não pode ler estes ajustes.",
 
