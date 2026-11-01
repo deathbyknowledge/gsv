@@ -1,9 +1,10 @@
 import * as oauth from "oauth4webapi";
 import type { InstallationRecoveryGatewayService } from "@humansandmachines/gsv/services/ownership";
-import { hasExpectedOrigin, noStoreFormHeaders, noStoreHeaders, readRequestBody } from "./http";
+import { hasExpectedOrigin, noStoreHeaders, readRequestBody } from "./http";
 import { escapeHtml } from "./admin/page";
 import { InstallationOwnerStore, type OwnerAttempt } from "./owner-store";
 import { OwnerIdentityProvider } from "./owner-identity";
+import { ownerPage, randomOwnerPageSecret } from "./owner-page";
 import { sha256Hex } from "./tokens";
 
 /** Small public identity front door; all authority comes from verified attempts and Kernel receipts. */
@@ -14,21 +15,22 @@ export class InstallationOwnerHttp {
   async handle(request: Request): Promise<Response | null> {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/owner/")) return null;
-    if (url.origin !== this.origin) return page("Not found", 404);
+    if (url.origin !== this.origin) return notFound();
     const path = url.pathname.startsWith(`${this.prefix}/`) ? `/owner/${url.pathname.slice(this.prefix.length + 1)}` : url.pathname;
     try {
       if (request.method === "GET" && path === "/owner/recover") {
-        return page(`<h1>Forgot your password?</h1><p>Sign in with your identity provider, then set a new password on your Ship.</p>
-          <form method="post" action="${this.prefix}/recover"><label>Your Ship’s handle <input name="handle" value="${escapeHtml(url.searchParams.get("handle") ?? "")}" required maxlength="63" autocomplete="off"></label><button>Verify owner</button></form>`, 200, noStoreFormHeaders());
+        return ownerPage(`<h1>Forgot your password?</h1><p>Sign in with your identity provider, then set a new password on your Ship.</p>
+          <form method="post" action="${this.prefix}/recover"><label>Your Ship’s handle<input name="handle" value="${escapeHtml(url.searchParams.get("handle") ?? "")}" required maxlength="63" autocapitalize="none" autocomplete="off" spellcheck="false"></label><button>Continue</button></form>`);
       }
       if (request.method === "GET" && path === "/owner/link") {
-        return page(`<h1>Account recovery</h1><p>Verify it’s you so you can get back in if you lose your password.</p>
-          <form method="post" action="${this.prefix}/link"><input type="hidden" name="id"><input type="hidden" name="secret"><button>Verify owner</button></form>
-          <script>const p=new URLSearchParams(location.hash.slice(1));history.replaceState(null,"",location.pathname);document.querySelector('[name="id"]').value=p.get("id")||"";document.querySelector('[name="secret"]').value=p.get("secret")||"";</script>`, 200, noStoreFormHeaders());
+        const nonce = randomOwnerPageSecret();
+        return ownerPage(`<h1>Account recovery</h1><p>Confirm it’s you so you can get back in if you lose your password.</p>
+          <form method="post" action="${this.prefix}/link"><input type="hidden" name="id"><input type="hidden" name="secret"><button>Continue</button></form>
+          <script nonce="${nonce}">const p=new URLSearchParams(location.hash.slice(1));history.replaceState(null,"",location.pathname);document.querySelector('[name="id"]').value=p.get("id")||"";document.querySelector('[name="secret"]').value=p.get("secret")||"";</script>`, { nonce });
       }
       if (request.method === "POST" && (path === "/owner/link" || path === "/owner/recover")) {
-        if (!hasExpectedOrigin(request, this.origin)) return page("Request origin is not allowed", 403);
-        if (request.headers.get("content-type")?.split(";", 1)[0] !== "application/x-www-form-urlencoded") return page("Form is required", 400);
+        if (!hasExpectedOrigin(request, this.origin)) return ownerPage(PROBLEM, { status: 403 });
+        if (request.headers.get("content-type")?.split(";", 1)[0] !== "application/x-www-form-urlencoded") return ownerPage(PROBLEM, { status: 400 });
         const form = new URLSearchParams(new TextDecoder().decode(await readRequestBody(request, 4096)));
         const id = path === "/owner/link" ? form.get("id") ?? "" : crypto.randomUUID();
         if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("Invalid attempt");
@@ -56,10 +58,10 @@ export class InstallationOwnerHttp {
         if (attempt.state !== "verified" && attempt.state !== "complete") throw new Error("Authentication attempt is unavailable");
         return await this.finish(attempt, secret);
       }
-      return page("Not found", 404);
+      return notFound();
     } catch {
       // Provider exceptions may carry authorization codes or token bodies. Never render or log them.
-      return page(`<h1>Owner verification could not complete</h1><p>The attempt may have expired or this account may not own this Ship. Start again from your Ship settings or <a href="/owner/recover">reset your password</a>.</p>`, 400);
+      return ownerPage(`<h1>We couldn’t confirm it’s you</h1><p>The attempt may have expired, or this account may not belong to this Ship. <a href="${this.prefix}/recover">Start again</a>.</p>`, { status: 400, noReferrer: true });
     }
   }
 
@@ -83,8 +85,5 @@ function cookieName(id: string): string { return `__Host-gsv-owner-${id}`; }
 function readCookie(request: Request, name: string): string | undefined {
   return request.headers.get("cookie")?.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
 }
-function page(content: string, status = 200, headers = noStoreHeaders()): Response {
-  headers.set("content-type", "text/html; charset=utf-8");
-  return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml("Ship · account recovery")}</title><main>${content}</main></html>`,
-    { status, headers });
-}
+const PROBLEM = "<h1>That didn’t work</h1><p>Open this page again and retry.</p>";
+function notFound(): Response { return ownerPage("<h1>Page not found</h1>", { status: 404 }); }

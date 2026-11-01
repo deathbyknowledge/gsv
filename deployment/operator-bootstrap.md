@@ -81,11 +81,20 @@ its recipient completes verification. Cloudflare Email Sending may incur
 usage charges under the operator's account.
 
 Visit the Accounts origin, or `/owner/login`, to receive a six-digit sign-in
-code. `/owner/spaces` lists only the signed-in owner's active or restricted
-spaces. A new owner initially sees an empty list. This page does not create a
-space: the operator still issues setup invitations, and root links ownership
-from the space's Settings. My spaces does not sign the owner into local Kernel
-accounts or grant access to `/admin`.
+code. Someone with exactly one active space goes straight to its canonical
+origin, chosen only from their own directory rows, where its normal sign-in
+appears. Otherwise `/owner/spaces` (**My Ships**) lists only the signed-in
+owner's active or restricted spaces; a new owner initially sees an empty list.
+Signing in here does not create a space: the operator still issues setup
+invitations (or open registration does), and root links ownership from the
+space's Settings. It does not sign the owner into local Kernel accounts or grant
+access to `/admin`.
+
+These pages render on the server from one shell (`owner-page.ts`) that uses the
+signup app's tokens. It loads only same-origin fonts from the signup assets, falls
+back to system fonts where signup is not served, follows the device's light or
+dark preference, and keeps the nonce-only content security policy. They are
+English; the signup app and the Ship are translated.
 
 `/owner/recover` asks for the space handle and its owner's email; a Ship's
 **Forgot your password?** page links to it with the handle filled in. It requires

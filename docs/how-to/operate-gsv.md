@@ -177,7 +177,8 @@ Desktop. Registration needs no invite code. One verified email can create one
 Ship, and an interrupted activation resumes with the same email.
 
 With native owner email enabled, `<admin-origin>/owner/login` verifies the
-person's email and opens **My Ships**. Signing in there does not create a
+person's email, then goes straight to their Ship if they have exactly one that is
+active, where its own sign-in appears, or opens **My Ships** otherwise. Signing in there does not create a
 Ship or grant operator administration. To add an operator-created Ship to that
 list, sign in as **root**, open **Settings → sign-in → Account recovery**, and
 choose **set up recovery**. This binds current root authorization to the verified
