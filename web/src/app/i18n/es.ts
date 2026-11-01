@@ -1456,6 +1456,7 @@ export const es = {
   "onboarding.surface.telegramSub": "Escribe a Ship desde Telegram",
   "onboarding.surface.connectedSub": "Conectado",
   "onboarding.surface.loading": "Comprobando qué apps de mensajes están disponibles…",
+  "onboarding.surface.loadFailed": "No se pudo comprobar qué apps de mensajes están disponibles. Puedes seguir y conectar una más tarde en Ajustes → Mensajería.",
   "onboarding.surface.desktopText": "Descarga la app, inicia sesión con el nombre y la contraseña que acabas de elegir, y Ship estará ahí. La web sigue disponible también.",
   "onboarding.surface.back": "ATRÁS",
   "onboarding.surface.download": "DESCARGAR LA APP DE ESCRITORIO",

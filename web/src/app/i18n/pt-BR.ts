@@ -1461,6 +1461,7 @@ export const ptBR = {
   "onboarding.surface.telegramSub": "Fale com o Ship pelo Telegram",
   "onboarding.surface.connectedSub": "Conectado",
   "onboarding.surface.loading": "Verificando quais apps de mensagem estão disponíveis…",
+  "onboarding.surface.loadFailed": "Não foi possível verificar quais apps de mensagem estão disponíveis. Você pode continuar e conectar um depois em Configurações → Apps de mensagem.",
   "onboarding.surface.desktopText": "Baixe o app, entre com o nome de usuário e a senha que você acabou de escolher, e o Ship estará lá. A web continua disponível também.",
   "onboarding.surface.back": "VOLTAR",
   "onboarding.surface.download": "BAIXAR O APP PARA COMPUTADOR",

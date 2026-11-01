@@ -94,6 +94,23 @@ describe("first-run screen", () => {
     expect(onComplete).not.toHaveBeenCalled();
   });
 
+  it("says when the messenger inventory could not be loaded and offers a retry, instead of an empty inventory", async () => {
+    let listFails = true;
+    const base = request.getMockImplementation()!;
+    request.mockImplementation(async (call, args) => {
+      if (call === "adapter.list" && listFails) throw new Error("adapters unavailable");
+      return base(call, args);
+    });
+    await mount();
+    await vi.waitFor(() => expect(alert()?.props.text).toContain("Couldn't check which messengers are available."));
+    expect(sections()).toEqual(["Desktop app"]);
+    expect(continueHere()?.props.disabled).toBe(false);
+    listFails = false;
+    await click(button("try again"));
+    await vi.waitFor(() => expect(sections()).toEqual(["WhatsApp", "Telegram", "Desktop app"]));
+    expect(alert()).toBeUndefined();
+  });
+
   it("continues here at once", async () => {
     await mount();
     await click(continueHere());

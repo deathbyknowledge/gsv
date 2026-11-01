@@ -1455,6 +1455,7 @@ export const en = {
   "onboarding.surface.telegramSub": "Message Ship from Telegram",
   "onboarding.surface.connectedSub": "Connected",
   "onboarding.surface.loading": "Checking which messengers are available…",
+  "onboarding.surface.loadFailed": "Couldn't check which messengers are available. You can still continue and connect one later in Settings → Messengers.",
   "onboarding.surface.desktopText": "Download the app, sign in with the handle and password you just chose, and Ship is there. The web stays available too.",
   "onboarding.surface.back": "BACK",
   "onboarding.surface.download": "DOWNLOAD THE DESKTOP APP",

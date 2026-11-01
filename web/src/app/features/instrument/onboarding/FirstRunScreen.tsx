@@ -62,7 +62,9 @@ export function Section({ name, icon, info, action, onAction, disabled, blurb, c
  * The last onboarding step, standing in front of the chat: where does this person want to message Ship?
  * The screen has its own star field, whatever the chat's stars preference. Each choice is a section
  * like Settings › Messengers, without the "nothing connected" line: this is a first run. A messenger pairs right here, through the same flow Settings uses (which names the countries
- * WhatsApp cannot reach), so Ship's greeting lands there; "continue here" completes at once.
+ * WhatsApp cannot reach), so Ship's greeting lands there; "continue here" completes at once. When the
+ * messenger inventory cannot be loaded the screen says so and offers a retry, rather than passing the
+ * failure off as a deployment without messengers; continuing here stays possible, since Settings can connect one later.
  */
 export function FirstRunScreen({ ownerUid, completing, completeError, onComplete }: Props) {
   const t = useT();
@@ -96,6 +98,9 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
       <p class="first-run-lead">{t("onboarding.surface.lead", { address: new URL(gatewayHttpOrigin()).host })}</p>
       {completeError && <Alert variant="error" text={t("shell.firstRun.failed")} />}
       {connections.isPending && connected && <LoadingState variant="panel">{t("onboarding.surface.loading")}</LoadingState>}
+      {connections.isError && <Alert variant="error" text={t("onboarding.surface.loadFailed")}>
+        <Button variant="secondary" label={t("common.tryAgain")} disabled={!connected || connections.isFetching} onClick={() => { void connections.refetch(); }} />
+      </Alert>}
 
       {offered.map(({ id, name, sub }) => {
         const link = linkFor(id);
