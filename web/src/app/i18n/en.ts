@@ -1169,7 +1169,7 @@ export const en = {
 
   // Session: root recovery
   "session.ownerRecovery.title": "SET A NEW PASSWORD",
-  "session.ownerRecovery.intro": "This signs you out everywhere and disconnects your messengers; you can connect them again after signing in. Your data and running work stay as they are, and your administrator password doesn’t change.",
+  "session.ownerRecovery.intro": "This signs you out everywhere and disconnects your messengers; you can connect them again after signing in. Your data and running work stay as they are, and if your administrator password is still the one from signup, it changes too.",
   "session.ownerRecovery.reset": "SET PASSWORD",
   "session.ownerRecovery.done": "Your password has changed. Sign in with the new password.",
   "session.ownerRecovery.unavailable": "This link has expired or was already used. Start again from “Forgot your password?” on your Ship.",

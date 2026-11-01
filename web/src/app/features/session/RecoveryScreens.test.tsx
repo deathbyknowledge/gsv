@@ -83,7 +83,7 @@ describe("setting a new password from the emailed link", () => {
     expect(browser.location.hash).toBe("");
     expect(screen.text).toMatch(/signs you out/i);
     expect(screen.text).toMatch(/messenger/i);
-    expect(screen.text).toMatch(/administrator password doesn.t change/i);
+    expect(screen.text).toMatch(/administrator password is still the one from signup, it changes too/i);
     expect(accountToggle(screen.tree)).toBeDefined();
   });
 

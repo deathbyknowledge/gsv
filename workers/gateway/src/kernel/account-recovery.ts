@@ -18,7 +18,7 @@ function requireRootHuman(ctx: KernelContext): number {
 
 type RecoveryClaim = { id: string; secret_hash: string; credential_epoch: number; personal_uid: number | null; personal_credential_epoch: number | null; expires_at: number; redeemed_at: number | null; redemption_hash: string | null };
 type RecoveryAccount = NonNullable<ArgsOf<"account.recovery.redeem">["account"]>;
-type RedeemedRecovery = { username: string; uid: number };
+type RedeemedRecovery = { username: string; uid: number; administratorChanged?: true };
 
 /** The verified owner holds a valid claim, but this Ship has no personal account that may be reset. */
 export class PersonalAccountUnavailableError extends Error {
@@ -107,9 +107,10 @@ export class AccountRecoveryStore {
         return this.redeemed(account === "personal" ? claim.personal_uid : 0);
       }
       if (claim.expires_at <= Date.now()) throw new Error("Recovery claim expired");
-      const uid = account === "personal" ? this.replacePersonal(claim, passwordHash) : this.replaceRoot(claim, passwordHash);
+      const personal = account === "personal" ? this.replacePersonal(claim, passwordHash) : null;
+      const uid = personal ? personal.uid : this.replaceRoot(claim, passwordHash);
       this.storage.sql.exec("UPDATE account_recovery_claims SET redeemed_at = ?, redemption_hash = ? WHERE id = ?", Date.now(), redemptionHash, input.id);
-      return this.redeemed(uid);
+      return { ...this.redeemed(uid), ...(personal?.administratorChanged ? { administratorChanged: true as const } : undefined) };
     });
   }
 
@@ -124,12 +125,11 @@ export class AccountRecoveryStore {
     return 0;
   }
 
-  private replacePersonal(claim: RecoveryClaim, passwordHash: string): number {
+  private replacePersonal(claim: RecoveryClaim, passwordHash: string) {
     const uid = claim.personal_uid;
     if (uid === null || this.auth.getHumanAccount()?.uid !== uid) throw new PersonalAccountUnavailableError();
     if (claim.personal_credential_epoch !== this.auth.credentialEpoch(uid)) throw new Error("Recovery claim was superseded");
-    this.auth.replaceHumanPassword(uid, passwordHash, "owner email recovery");
-    return uid;
+    return { uid, administratorChanged: this.auth.replacePersonalPassword(uid, passwordHash, "owner email recovery") };
   }
 
   private redeemed(uid: number | null): RedeemedRecovery {

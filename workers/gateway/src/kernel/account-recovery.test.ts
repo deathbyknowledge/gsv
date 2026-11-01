@@ -147,6 +147,20 @@ describe("owner email resets the personal password", () => {
     });
   });
 
+  it("changes the administrator too while it still has the personal password signup gave both, so the old one opens nothing", async () => {
+    await fixture(async (recovery, auth) => {
+      const shared = await hashPassword("human-password");
+      auth.setShadow(makeShadowEntry("human", shared));
+      auth.setShadow(makeShadowEntry("root", shared));
+      const rootToken = await auth.issueToken({ uid: 0, kind: "human" });
+      const redemption = personal((await grant(recovery)).request);
+      expect(await recovery.redeem(redemption)).toEqual({ username: "human", uid: 1000, administratorChanged: true });
+      expect(await auth.authenticate("root", "human-password")).toMatchObject({ ok: false });
+      expect(await auth.authenticate("root", redemption.password)).toMatchObject({ ok: true });
+      expect(await auth.authenticateToken("root", rootToken.token)).toMatchObject({ ok: false });
+    });
+  });
+
   it("spends one claim on one account: another proof, password or account cannot reuse it", async () => {
     await fixture(async (recovery, auth) => {
       const redemption = personal((await grant(recovery)).request);

@@ -1170,7 +1170,7 @@ export const es = {
 
   // Session: root recovery
   "session.ownerRecovery.title": "CREA UNA CONTRASEÑA NUEVA",
-  "session.ownerRecovery.intro": "Esto cerrará tu sesión en todas partes y desconectará tus mensajerías; podrás conectarlas de nuevo al iniciar sesión. Tus datos y el trabajo en curso no cambian, y tu contraseña de administrador tampoco.",
+  "session.ownerRecovery.intro": "Esto cerrará tu sesión en todas partes y desconectará tus mensajerías; podrás conectarlas de nuevo al iniciar sesión. Tus datos y el trabajo en curso no cambian. Si tu contraseña de administrador sigue siendo la del registro, también cambiará.",
   "session.ownerRecovery.reset": "GUARDAR CONTRASEÑA",
   "session.ownerRecovery.done": "Tu contraseña ha cambiado. Inicia sesión con la nueva.",
   "session.ownerRecovery.unavailable": "Este enlace ha caducado o ya se ha usado. Vuelve a empezar desde «¿Has olvidado tu contraseña?» en tu Ship.",

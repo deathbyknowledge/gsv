@@ -118,6 +118,20 @@ export class AuthStore {
     this.sql.exec("UPDATE identity_links SET revoked_at = COALESCE(revoked_at, ?) WHERE uid = ?", Date.now(), uid);
   }
 
+  /**
+   * Signup gives root the personal password, so resetting one that root still shares changes root
+   * too: the old password must open nothing afterwards. Returns whether root changed.
+   */
+  replacePersonalPassword(uid: number, passwordHash: string, reason: string): boolean {
+    const user = this.getPasswdByUid(uid);
+    const previous = user && this.getShadowByUsername(user.username);
+    const root = this.getShadowByUsername("root");
+    const shared = Boolean(previous && root && root.hash === previous.hash && !this.isAccountDisabled(0));
+    this.replaceHumanPassword(uid, passwordHash, reason);
+    if (shared) this.replaceHumanPassword(0, passwordHash, reason);
+    return shared;
+  }
+
   getPersonalAgentUid(ownerUid: number): number | null {
     const rows = this.sql.exec<{ agent_uid: number }>(
       "SELECT agent_uid FROM personal_agents WHERE owner_uid = ?",

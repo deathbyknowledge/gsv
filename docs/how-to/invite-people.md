@@ -37,7 +37,9 @@ Personal sign-in**, or ask whoever runs your Ship.
 
 A reset revokes your sessions and messenger connections; sign in again and
 reconnect those messengers. Your data, account identity and running work remain.
-It doesn't change the administrator password.
+If your administrator password is still the one you chose at signup, it changes to
+the new password too, so the old one stops working everywhere. An administrator
+password you set separately stays as it is.
 
 The administrator sign-in has broader permissions. Ordinary sign-in to your
 account does not grant administrator access. The emailed link can reset the

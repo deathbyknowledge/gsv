@@ -1175,7 +1175,7 @@ export const ptBR = {
 
   // Session: root recovery
   "session.ownerRecovery.title": "CRIE UMA NOVA SENHA",
-  "session.ownerRecovery.intro": "Isso encerra sua sessão em todos os lugares e desconecta seus mensageiros; você pode conectá-los de novo depois de entrar. Seus dados e o trabalho em andamento continuam como estão, e sua senha de administrador não muda.",
+  "session.ownerRecovery.intro": "Isso encerra sua sessão em todos os lugares e desconecta seus mensageiros; você pode conectá-los de novo depois de entrar. Seus dados e o trabalho em andamento continuam como estão. Se sua senha de administrador ainda for a do cadastro, ela também muda.",
   "session.ownerRecovery.reset": "SALVAR SENHA",
   "session.ownerRecovery.done": "Sua senha foi alterada. Entre com a nova senha.",
   "session.ownerRecovery.unavailable": "Este link expirou ou já foi usado. Comece de novo em “Esqueceu sua senha?” no seu Ship.",

@@ -849,8 +849,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
   async redeemAccountRecovery(input: ArgsOf<"account.recovery.redeem">): Promise<ResultOf<"account.recovery.redeem">> {
     this.retirement.assertActive();
-    const { username, uid } = await this.accountRecovery.redeem(input);
+    const { username, uid, administratorChanged } = await this.accountRecovery.redeem(input);
     this.connectionRuntime.invalidateAccountConnections(uid);
+    if (administratorChanged) this.connectionRuntime.invalidateAccountConnections(0);
     return { username };
   }
 
