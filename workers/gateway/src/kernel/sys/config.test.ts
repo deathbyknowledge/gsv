@@ -6,6 +6,7 @@ import { ResponsibilityStore } from "../responsibility-store";
 import { InitialOnboarding, INITIAL_ONBOARDING_DEDUPE_KEY } from "../onboarding-responsibility";
 import { IdentityLinkStore } from "../identity-links";
 import { PrivateAdapterDestinationStore } from "../private-adapter-destinations";
+import { ShipReplies } from "../ship-replies";
 import { handleSysConfigGet, handleSysConfigSet } from "./config";
 
 type EntryMap = Record<string, string>;
@@ -134,13 +135,17 @@ describe("sys.config.get", () => {
       const privateDestinations = new PrivateAdapterDestinationStore(sql);
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       ctx.adapters = { identityLinks, privateDestinations } as KernelContext["adapters"];
+      ctx.shipReplies = new ShipReplies(storage);
       identityLinks.link("telegram", "managed", "12345", 1000, 1000, { managed: true, surfaceKind: "dm", surfaceId: "12345" });
       expect(privateDestinations.get(1000)).toBeNull();
+      // a client the person wrote from moments ago would otherwise hold Ship's replies
+      ctx.shipReplies.recordClient(1000, "web-client");
 
       await handleSysConfigSet({ key: "users/1000/ui/welcome_card_seen", value: "1" }, ctx);
       expect(privateDestinations.get(1000)?.destination ?? null).toEqual(routed
         ? { kind: "adapter", adapter: "telegram", accountId: "managed", actorId: "12345", surface: { kind: "dm", id: "12345" } }
         : null);
+      expect(storage.kv.get<{ connectionId: string | null }>("ship-reply:1000")?.connectionId).toBe(routed ? null : "web-client");
     });
   });
 

@@ -193,4 +193,7 @@ function routeFirstRunToChosenMessenger(ctx: KernelContext, uid: number): void {
   ctx.adapters.privateDestinations.recordActivity(uid, {
     kind: "adapter", adapter: link.adapter, accountId: link.accountId, actorId: link.actorId, surface,
   }, `first-run:${uid}`, Date.now());
+  // The choice counts as a message from that messenger: a client the person wrote from meanwhile
+  // no longer holds Ship's replies, so the greeting lands where they asked for it.
+  ctx.shipReplies.recordAdapter(uid);
 }

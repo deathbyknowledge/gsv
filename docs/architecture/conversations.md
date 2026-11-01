@@ -94,7 +94,8 @@ The Kernel owns the conversation directory and membership:
   The current personal Process is replaceable; the Ship conversation is not. Finishing the
   first-run surface choice creates an open onboarding responsibility through the ordinary
   wake path; when the choice names a messenger whose link the person made there, that
-  messenger's DM becomes Ship's private destination, so the welcome lands on it. Pairing
+  messenger's DM becomes Ship's private destination and reply preference, as a message
+  from it would, so the welcome lands on it even if a client wrote moments earlier. Pairing
   alone decides nothing; choosing Web or Desktop leaves routing to the open client. Ship sends a welcome in the owner's preferred language, initially detected from
   the browser. The welcome is a canonical Message shared across clients. A user can
   write first, including on a surface that never wrote the flag: onboarding becomes
