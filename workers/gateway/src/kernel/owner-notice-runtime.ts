@@ -62,10 +62,7 @@ export class OwnerNoticeRuntime {
     // Ship changing a rule is told even to someone who is online: they may be looking elsewhere.
     const leftToClient = notice.topic !== "notice.rule.changed" && this.host.shipReplies.activeConnection(notice.ownerUid, this.host.connections);
     if (silenced || brokenCarrier || !preferred || leftToClient) {
-      const finish = () => this.host.ownerNotices.dismissed(notice, Date.now());
-      // Someone's words reach Ship unsent only when its owner chose that, not because they happened to be online.
-      if (notice.topic.startsWith("contact.") && !silenced) finish();
-      else await this.recordForShip(current, Date.now(), finish);
+      await this.finishUnsent(notice, current, silenced);
       return true;
     }
     const { destination } = preferred;
@@ -89,7 +86,7 @@ export class OwnerNoticeRuntime {
     if (!result.ok) {
       if (result.retryable !== true) {
         console.warn(`[Kernel] Owner notice ${notice.key} was not delivered:`, result.error);
-        await this.recordForShip(current, now, () => this.host.ownerNotices.dismissed(notice, now));
+        await this.finishUnsent(notice, current, false);
         return true;
       }
       const retryAt = now + Math.min(MAX_RETRY_DELAY_MS, 1_000 * (2 ** Math.min(8, notice.attemptCount + 1)));
@@ -99,6 +96,13 @@ export class OwnerNoticeRuntime {
     }
     await this.recordForShip(current, now, () => this.host.ownerNotices.sent(notice, now), destination.adapter);
     return true;
+  }
+
+  private async finishUnsent(notice: OwnerNotice, current: OwnerNotice, silenced: boolean): Promise<void> {
+    const finish = () => this.host.ownerNotices.dismissed(notice, Date.now());
+    // Someone's words reach Ship unsent only when its owner chose that, not because they couldn't be reached.
+    if (notice.topic.startsWith("contact.") && !silenced) finish();
+    else await this.recordForShip(current, Date.now(), finish);
   }
 
   /** Finish the round and, unless its rule says Ship doesn't see this kind, record it for Ship in one transaction. */

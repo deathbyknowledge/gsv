@@ -211,6 +211,19 @@ describe("owner notice delivery", () => {
     });
   });
 
+  it("keeps a contact's words out of Ship when their notice couldn't be delivered", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices, shipEvents } = fixture(storage);
+      const send = sent();
+      send.mockResolvedValueOnce({ ok: false, error: "Destination is no longer linked", retryable: false });
+      notices.noteContactMessage(OWNER, adaSubject("hi"), 1, Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:refused" });
+      expect(send).toHaveBeenCalledOnce();
+      expect(notices.next(OWNER)).toBeNull();
+      expect(shipEvents.next(OWNER)).toBeNull();
+    });
+  });
+
   it("never reuses a delivery identity after a contact's notice row is forgotten", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, notices, state } = fixture(storage);
