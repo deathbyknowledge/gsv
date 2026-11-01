@@ -11,6 +11,7 @@ import { SettingsError } from "./settingsShared";
 import { WhenThingsHappen } from "./WhenThingsHappen";
 
 type Control = VNode<JSX.InputHTMLAttributes<HTMLInputElement>>;
+type Choice = VNode<JSX.ButtonHTMLAttributes<HTMLButtonElement>>;
 
 const OWNER: ConsoleAccount = { uid: 1000, username: "owner", displayName: "Owner", gecos: "", relation: "self", runnable: false, capabilities: ["notify.rule.*", "r12y.source.*"] };
 const CONTACT = { defaultNotify: "messenger", defaultShip: "context", shipChoices: ["none", "context"] } as const;
@@ -43,8 +44,12 @@ async function mount(account = OWNER) {
   function Harness() { tree = WhenThingsHappen({ account }); return null; }
   await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
   const control = (name: string) => {
-    // SAFETY: this section labels every input and select by its aria-label or enclosing label.
-    return collectNodes(tree).find((node) => (node.type === "input" || node.type === "select") && node.props["aria-label"] === name) as Control | undefined;
+    // SAFETY: this section labels each Tell me input by its aria-label.
+    return collectNodes(tree).find((node) => node.type === "input" && node.props["aria-label"] === name) as Control | undefined;
+  };
+  const choice = (name: string) => {
+    // SAFETY: this section labels each Ship choice button by its aria-label.
+    return collectNodes(tree).find((node) => node.type === "button" && node.props["aria-label"] === name) as Choice | undefined;
   };
   const memory = () => {
     const label = collectNodes(tree).find((node) => node.type === "label");
@@ -53,9 +58,11 @@ async function mount(account = OWNER) {
   };
   // SAFETY: the section renders one SettingsError once it is past its access check.
   const error = () => (collectNodes(tree).find((node) => node.type === SettingsError) as VNode<{ error: Error | null }>).props.error;
-  // SAFETY: the change handlers read only currentTarget.checked or currentTarget.value.
-  const change = (target: Control, currentTarget: { checked?: boolean; value?: string }) => act(() => target.props.onChange?.({ currentTarget } as JSX.TargetedEvent<HTMLInputElement>));
-  return { control, memory, error, change, text: () => collectText(tree), async close() { await root.unmount(); cache.clear(); } };
+  // SAFETY: the change handlers read only currentTarget.checked.
+  const change = (target: Control, currentTarget: { checked: boolean }) => act(() => target.props.onChange?.({ currentTarget } as JSX.TargetedEvent<HTMLInputElement>));
+  // SAFETY: the Ship choice handler ignores its event.
+  const pick = (target: Choice) => act(() => target.props.onClick?.({} as JSX.TargetedMouseEvent<HTMLButtonElement>));
+  return { control, choice, pick, memory, error, change, text: () => collectText(tree), async close() { await root.unmount(); cache.clear(); } };
 }
 
 function gateway(overrides: Record<string, () => object> = {}) {
@@ -74,7 +81,9 @@ it("gives every event the same two choices, offering only what its rule allows",
     await vi.waitFor(() => expect(screen.control("Tell me: Mail arrives")).toBeDefined());
     expect(screen.control("Tell me: Someone asks to message you")?.props.checked).toBe(true);
     expect(screen.control("Tell me: A contact messages you")?.props.checked).toBe(false);
-    expect(screen.control("Ship: Mail arrives")?.props.value).toBe("wake");
+    expect(screen.choice("Ship: Mail arrives: Acts")?.props["aria-checked"]).toBe(true);
+    expect(screen.choice("Ship: Mail arrives: Sees it")?.props["aria-checked"]).toBe(false);
+    expect(screen.choice("Ship: Someone asks to message you: Acts")).toBeUndefined();
     expect(screen.memory()?.props.checked).toBe(false);
     const text = screen.text();
     expect(text).toContain("Off");
@@ -90,7 +99,7 @@ it("warns only on the row nobody hears about", async () => {
   gateway();
   const screen = await mount();
   try {
-    await vi.waitFor(() => expect(screen.control("Ship: A new computer connects")).toBeDefined());
+    await vi.waitFor(() => expect(screen.choice("Ship: A new computer connects: Off")).toBeDefined());
     expect(screen.text().match(/Nobody will hear about this\./g)).toHaveLength(1);
   } finally { await screen.close(); }
 });
@@ -101,9 +110,9 @@ it("saves each choice as a change to that event's rule", async () => {
   });
   const screen = await mount();
   try {
-    await vi.waitFor(() => expect(screen.control("Ship: Mail arrives")).toBeDefined());
-    await screen.change(screen.control("Ship: Mail arrives")!, { value: "context" });
-    await vi.waitFor(() => expect(screen.control("Ship: Mail arrives")?.props.value).toBe("context"));
+    await vi.waitFor(() => expect(screen.choice("Ship: Mail arrives: Sees it")).toBeDefined());
+    await screen.pick(screen.choice("Ship: Mail arrives: Sees it")!);
+    await vi.waitFor(() => expect(screen.choice("Ship: Mail arrives: Sees it")?.props["aria-checked"]).toBe(true));
     await vi.waitFor(() => expect(screen.control("Tell me: Mail arrives")?.props.disabled).toBe(false));
     await screen.change(screen.control("Tell me: Mail arrives")!, { checked: true });
     const writes = request.mock.calls.filter(([call]) => call === "notify.rule.set").map(([, args]) => args);
