@@ -30,7 +30,7 @@
  *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
  *   anything else is committed as your message and answered briefly a second later
  */
-import type { NoticeRule } from "@humansandmachines/gsv/protocol";
+import type { NoticeRule, ResponsibilitySourcePolicy } from "@humansandmachines/gsv/protocol";
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import type { ProfileState } from "@humansandmachines/gsv/protocol";
 import { contactSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
@@ -179,7 +179,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["notify.rule.*", "sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["notify.rule.*", "r12y.source.update", "sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -372,6 +372,16 @@ type World = {
   context: ProcContextState | null; contextRevision: number;
   run: OpenRun | null; connections: number; sockets: Set<MockSocket>;
 };
+const responsibilitySources: ResponsibilitySourcePolicy[] = [
+  { id: "interaction.response", name: "Conversation replies", description: "", control: "required", enabled: true, defaultEnabled: true },
+  { id: "process.delegation", name: "Delegated work", description: "", control: "required", enabled: true, defaultEnabled: true },
+  { id: "schedule.due", name: "Scheduled responsibilities", description: "", control: "required", enabled: true, defaultEnabled: true },
+  { id: "memory.review", name: "Personal memory", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "mail.received", name: "Incoming mail", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "machine.added", name: "New machines", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "adapter.connected", name: "Connected adapters", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "adapter.auth_required", name: "Adapter authentication", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+];
 let noticeRules: NoticeRule[] = [
   { kind: "contact.request", notify: "messenger", defaultNotify: "messenger" },
   { kind: "contact.message", notify: "none", defaultNotify: "messenger", changedBy: "ship", updatedAtMs: Date.now() },
@@ -1071,7 +1081,14 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       const records = responsibilities.filter((record) => states ? states.includes(record.state) : includeTerminal || !["resolved", "cancelled"].includes(record.state));
       return respond(id, { responsibilities: records.slice(offset, offset + limit), count: records.length, revision: 1 });
     }
-    case "r12y.source.list": return respond(id, { sources: [] });
+    case "r12y.source.list": return respond(id, { sources: responsibilitySources });
+    case "r12y.source.update": {
+      const update = z.object({ id: z.string(), enabled: z.boolean() }).parse(args);
+      const source = responsibilitySources.find((entry) => entry.id === update.id);
+      if (!source || source.control !== "configurable") return refuse(id, 403, "This responsibility is always on");
+      source.enabled = update.enabled;
+      return respond(id, { source });
+    }
     case "r12y.get": {
       const { id: recordId } = z.object({ id: z.string() }).parse(args);
       const responsibility = responsibilities.find((record) => record.id === recordId);

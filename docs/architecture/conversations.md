@@ -415,7 +415,7 @@ the contextual panel, with one level of tabs: **ongoing**, **routines** and **hi
 The `+` menu contains attachments and requests, without a second plans entry.
 Responsibilities retain hierarchy and show blockers before ordinary follow-ups.
 Rows use a short state label; the full blocker is readable prose in the inspector.
-Standing policies are configured in **Settings → Standing responsibilities**. Details allow inspection, cancellation and asking Ship about the exact
+Standing policies are configured in **Settings → When things happen**. Details allow inspection, cancellation and asking Ship about the exact
 record. Routines show their cadence and state, with pause/enable and edit controls;
 creating one stages a request to Ship. These panels use the existing authorized
 syscalls and signal-driven caches. Closing them preserves drafts and pauses hidden

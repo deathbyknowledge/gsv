@@ -85,7 +85,7 @@ The web app has five views:
 - **Work** lists your connections, then Ship and its helpers, with files opened from a connection.
 - **Memory** shows your personal knowledge pages.
 - **People** holds conversations, message requests and private contacts across Ships, plus your public profile.
-- **Settings** holds **Preferences**, **Standing responsibilities**, **Permissions**, **Instructions**, **Messengers**, **MCP servers**, **Logs** for actions and their outcomes, and **Account**. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
+- **Settings** holds **Preferences**, **When things happen**, **Permissions**, **Instructions**, **Messengers**, **MCP servers**, **Logs** for actions and their outcomes, and **Account**. The **Sign-in** section appears only for the administrator, for personal password resets and administrator recovery.
 
 On phones, tap **menu** in the header to switch views. A dot on the menu button
 marks unread People activity. Choosing a view
@@ -99,7 +99,7 @@ People messages. Tap **N ongoing** (or **plans** when none are active) to open
 **ongoing**, **routines** or **history**.
 Each responsibility shows a short status and its next check; tap it to read the
 full waiting explanation, inspect details or ask Ship about it. Your draft stays
-intact while you look. Event-driven policies live in **Settings → Standing responsibilities**.
+intact while you look. Event-driven policies live in **Settings → When things happen**.
 
 The message input uses a thin purple caret to show where you are typing.
 
