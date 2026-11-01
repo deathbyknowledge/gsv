@@ -568,7 +568,8 @@ to be sent, so turning a kind off also holds back notices already waiting.
 `wake` for the four non-contact kinds is the same setting as their configurable
 responsibility source, so `r12y source enable|disable` and these rules can't disagree.
 When Ship itself turns off `notify` or sets `wake`, the owner's messenger is told,
-whatever their rules say.
+whatever their rules say and even while a client is active. An owner with no
+messenger sees the change marked on that rule in Settings.
 
 ## Web search: `web.search`
 

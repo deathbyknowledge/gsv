@@ -1,7 +1,7 @@
 import { QueryClient, QueryObserver } from "@tanstack/preact-query";
 import { describe, expect, it, vi } from "vitest";
 import { syncWorkSignal } from "./workSync";
-import { INSTRUMENT_RESPONSIBILITIES_KEY, INSTRUMENT_ROUTINES_KEY, INSTRUMENT_SOURCES_KEY } from "./queryKeys";
+import { INSTRUMENT_NOTICE_RULES_KEY, INSTRUMENT_RESPONSIBILITIES_KEY, INSTRUMENT_ROUTINES_KEY, INSTRUMENT_SOURCES_KEY } from "./queryKeys";
 
 describe("work notifications", () => {
   it.each([
@@ -9,6 +9,7 @@ describe("work notifications", () => {
     ["r12y.changed", [...INSTRUMENT_RESPONSIBILITIES_KEY, "count"]],
     ["sched.changed", INSTRUMENT_ROUTINES_KEY],
     ["r12y.source.changed", INSTRUMENT_SOURCES_KEY],
+    ["r12y.source.changed", INSTRUMENT_NOTICE_RULES_KEY],
   ] as const)("retires an older in-flight snapshot on %s and defers closed readers", async (signal, key) => {
     const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     let resolve!: (value: string[]) => void;
