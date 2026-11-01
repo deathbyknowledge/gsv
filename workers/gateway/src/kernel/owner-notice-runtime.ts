@@ -74,8 +74,8 @@ export class OwnerNoticeRuntime {
     const brokenCarrier = notice.topic === "adapter.auth_required" && preferred?.destination.adapter === notice.subject.adapter
       && preferred?.destination.accountId === notice.subject.accountId;
     // Ship changing a rule is told even to someone who is online: they may be looking elsewhere.
-    // No client shows a source's events as they arrive, so they aren't left to one either.
-    const leftToClient = notice.topic !== "notice.rule.changed" && !isSourceNotice(notice) && this.host.shipReplies.activeConnection(notice.ownerUid, this.host.connections);
+    // A source going quiet is rare and easy to miss on a card, so it's told the same way.
+    const leftToClient = notice.topic !== "notice.rule.changed" && notice.topic !== "event.silent" && this.host.shipReplies.activeConnection(notice.ownerUid, this.host.connections);
     if (silenced || brokenCarrier || !preferred || leftToClient) {
       await this.finishUnsent(notice, current, silenced);
       return true;
@@ -115,29 +115,39 @@ export class OwnerNoticeRuntime {
 
   private async finishUnsent(notice: OwnerNotice, current: OwnerNotice, silenced: boolean): Promise<void> {
     const finish = () => this.host.ownerNotices.dismissed(notice, Date.now());
+    // Nothing else shows a source's events, so one they weren't sent appears as a card in their conversation.
+    if (isSourceNotice(notice) && !silenced) {
+      await this.recordForShip(current, Date.now(), finish, undefined, true);
+      return;
+    }
     // Someone's words reach Ship unsent only when its owner chose that, not because they couldn't be reached.
     if (notice.topic.startsWith("contact.") && !silenced) finish();
     else await this.recordForShip(current, Date.now(), finish);
   }
 
   /** Finish the round and, unless its rule says Ship doesn't see this kind, record it for Ship in one transaction. */
-  private async recordForShip(notice: OwnerNotice, now: number, finish: () => void, adapter?: string): Promise<void> {
+  private async recordForShip(notice: OwnerNotice, now: number, finish: () => void, adapter?: string, shownInClient = false): Promise<void> {
     const { topic } = notice;
     const ctx = this.host.buildKernelContext({ callerOwnerUid: notice.ownerUid });
     // Ship made a rule change itself, so it has nothing to learn from the notice about it.
     const { ship } = noticeOutcome(notice, ctx);
-    if (topic === "notice.rule.changed" || (adapter ? ship === "none" : ship !== "context")) {
+    const shipSees = topic !== "notice.rule.changed" && (adapter ? ship !== "none" : ship === "context");
+    if (!shipSees && !shownInClient) {
       finish();
       return;
     }
     const noticeId = `${notice.key}:${notice.createdAtMs}:${notice.round}`;
     const link = ownerNoticeLink(notice);
+    if (topic === "notice.rule.changed") throw new Error("Ship's own rule changes are never recorded for it");
     const event: OwnerNotifiedShipEvent = {
       type: "owner.notified",
+      ...(shownInClient ? { audience: shipSees ? "both" as const : "person" as const } : undefined),
       payload: {
         noticeId,
         topic,
-        ...(adapter ? { adapter, sentAtMs: now } : undefined),
+        ...(shownInClient ? { shownInClient } : undefined),
+        ...(adapter ? { adapter } : undefined),
+        ...(adapter || shownInClient ? { sentAtMs: now } : undefined),
         ...ownerNoticeParts(notice),
         ...(notice.subject.contactId ? { contactId: notice.subject.contactId } : undefined),
         ...(notice.subject.conversationId ? { conversationId: notice.subject.conversationId } : undefined),

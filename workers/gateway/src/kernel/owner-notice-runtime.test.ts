@@ -27,18 +27,53 @@ describe("event source notices", () => {
     webhook: "none" as const, secret: null, expectEveryMs: null,
   });
 
-  it("tells the person even while a client is active, since no client shows events as they arrive, and keeps Ship out by default", async () => {
+  it("shows an active person the event in their client instead of their messenger, and keeps it from a Ship left out", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, notices, shipEvents, state, eventSources } = fixture(storage);
-      state.activeClient = true;
+      state.activeClient = "connection-1";
       const send = sent();
       const { source_id: sourceId } = eventSources.add(OWNER, source(), "person", Date.now());
       notices.noteEvent(OWNER, sourceId, { from: "Backups", preview: "Nightly\nbackup failed", sourceId }, Date.now());
 
       await runtime.onOwnerNotices(OWNER, { id: "task:one" });
 
-      expect(send).toHaveBeenCalledExactlyOnceWith(WHATSAPP, OWNER, expect.objectContaining({ text: "🔔 Backups: Nightly backup failed" }), expect.anything());
-      expect(shipEvents.next(OWNER)).toBeNull();
+      expect(send).not.toHaveBeenCalled();
+      expect(shipEvents.next(OWNER)?.event).toMatchObject({
+        audience: "person",
+        payload: { topic: "event.received", from: "Backups", preview: "Nightly backup failed", shownInClient: true },
+      });
+    });
+  });
+
+  it("lets Ship see the same card when its source says so, and shows it to someone with no messenger", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices, shipEvents, state, eventSources } = fixture(storage);
+      state.destination = null;
+      const send = sent();
+      const { source_id: sourceId } = eventSources.add(OWNER, source({ ship: "context" }), "person", Date.now());
+      notices.noteEvent(OWNER, sourceId, { from: "Backups", preview: "x", sourceId }, Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:one" });
+      expect(send).not.toHaveBeenCalled();
+      expect(shipEvents.next(OWNER)?.event).toMatchObject({ audience: "both", payload: { shownInClient: true } });
+    });
+  });
+
+  it("still sends a quiet source's notice to the messenger while a client is active, and shows nothing when Tell me is off", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices, shipEvents, state, eventSources } = fixture(storage);
+      state.activeClient = "connection-1";
+      const send = sent();
+      const { source_id: sourceId } = eventSources.add(OWNER, source(), "person", Date.now());
+      notices.noteOnce(OWNER, `event.silent:${sourceId}:1`, "event.silent", { from: "Backups", sourceId }, Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:one" });
+      expect(send).toHaveBeenCalledTimes(1);
+
+      const quiet = eventSources.add(OWNER, { ...source({ notify: "none", ship: "context" }), name: "quiet", label: "Quiet" }, "person", Date.now());
+      notices.noteEvent(OWNER, quiet.source_id, { from: "Quiet", preview: "x", sourceId: quiet.source_id }, Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:two" });
+      const recorded = shipEvents.next(OWNER)?.event;
+      expect(recorded).toMatchObject({ payload: { from: "Quiet" } });
+      expect(recorded).not.toMatchObject({ payload: { shownInClient: true } });
     });
   });
 

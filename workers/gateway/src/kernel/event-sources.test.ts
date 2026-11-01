@@ -53,7 +53,7 @@ function context(k: ReturnType<typeof kernel>, caller: Caller = "client"): Kerne
     responsibilities: { create: k.create },
     reconcileResponsibilityWake: k.wake,
     queueOwnerNotices: vi.fn(async () => undefined),
-    queueEventSilence: vi.fn(async () => undefined),
+    queueEventUpkeep: vi.fn(async () => undefined),
     defer: vi.fn(),
   };
   // SAFETY: the fixture provides the Kernel context fields the event handlers use.
@@ -189,6 +189,58 @@ describe("event sources", () => {
     });
   });
 
+  it("applies an approval to the source as it is by then, keeping what the owner changed while it waited", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      await handleEventSourceAdd({ name: "feed" }, context(k));
+      const ship = Object.assign(context(k, "ship"), { installationId: "inst", toolOwner: { runId: "run", requestId: "req" } });
+      const approved = { type: "res", id: "x", ok: true, data: { approved: true } } as const;
+
+      await handleEventSourceUpdate({ name: "feed", ship: "wake" }, ship, vi.fn<typeof sendFrameToProcess>(async () => {
+        await handleEventSourceUpdate({ name: "feed", enabled: false, label: "Renamed" }, context(k));
+        return approved;
+      }));
+      expect(k.eventSources.row(OWNER, "feed")).toMatchObject({ ship: "wake", enabled: 0, label: "Renamed" });
+
+      await handleEventSourceUpdate({ name: "feed", ship: "none" }, context(k));
+      await expect(handleEventSourceUpdate({ name: "feed", ship: "wake" }, ship, vi.fn<typeof sendFrameToProcess>(async () => {
+        handleEventSourceRemove({ name: "feed" }, context(k));
+        return approved;
+      }))).rejects.toThrow("no source");
+    });
+  });
+
+  it("spends from the current allowance, however old the caller's copy of the source is", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      await handleEventSourceAdd({ name: "feed" }, context(k));
+      const row = k.eventSources.row(OWNER, "feed");
+      if (!row) throw new Error("source was not added");
+      const now = Date.now();
+      const admitted = Array.from({ length: 200 }, () => k.eventSources.admit({ ...row }, now)).filter(Boolean);
+      expect(admitted).toHaveLength(120);
+    });
+  });
+
+  it("forgets bodies and ids on time, even from a source that never sends again", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      await handleEventSourceAdd({ name: "feed" }, context(k));
+      const start = Date.now();
+      handleEventEmit({ source: "feed", events: [{ id: "a", title: "A", body: "private" }] }, context(k));
+      const day = 24 * 60 * 60_000;
+      expect(k.eventSources.nextUpkeepAt()).toBeLessThanOrEqual(start + 30 * day + 1_000);
+
+      k.eventSources.prune(start + 31 * day);
+      expect(handleEventList({ source: "feed" }, context(k)).events[0]).toMatchObject({ eventId: "a" });
+      expect(handleEventList({ source: "feed" }, context(k)).events[0]?.body).toBeUndefined();
+
+      k.eventSources.prune(start + 181 * day);
+      expect(handleEventList({ source: "feed" }, context(k)).events).toEqual([]);
+      expect(k.eventSources.nextUpkeepAt()).toBeNull();
+    });
+  });
+
   it("removes a source and everything that arrived from it", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const k = kernel(storage);
@@ -210,7 +262,7 @@ describe("event sources", () => {
       expect(noteSilentSources(k.eventSources, k.ownerNotices, auth, later)).toEqual(new Set([OWNER]));
       expect(k.ownerNotices.next(OWNER)).toMatchObject({ topic: "event.silent", subject: { from: "backup" } });
       expect(noteSilentSources(k.eventSources, k.ownerNotices, auth, later + 120_000)).toEqual(new Set());
-      expect(k.eventSources.nextSilenceAt()).toBeNull();
+      expect(k.eventSources.silent(later + 240_000)).toEqual([]);
     });
   });
 });

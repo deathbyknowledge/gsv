@@ -103,9 +103,9 @@ function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { f
 }) {
   const { payload } = event;
   const link = event.link ? eventLink(event.link) : null;
-  // A record without a messenger went only to Ship, so it has no card for the person.
-  if (!payload.adapter || payload.sentAtMs === undefined) return null;
-  const messenger = adapterDisplayName(payload.adapter);
+  // A record the person wasn't told about went only to Ship, so it has no card for them.
+  if (payload.sentAtMs === undefined) return null;
+  const messenger = payload.adapter ? adapterDisplayName(payload.adapter) : null;
   const count = payload.messages !== undefined && payload.messages > 1 ? t("chat.notice.messages", { count: String(payload.messages) }) : null;
   const content = <>
     <div class="notice-head">
@@ -133,13 +133,13 @@ function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { f
       </div>
       <div class="notice-card">
         {link ? <AppLink class="notice-open" href={link.href}>{content}<span class="notice-go">{t(link.label)}</span></AppLink> : <div class="notice-open">{content}</div>}
-        <span class="notice-carrier">
+        {messenger ? <span class="notice-carrier">
           <Hint text={messenger} position="left">
             <span class="notice-carrier-mark" tabIndex={0} role="img" aria-label={t("chat.notice.sentOn", { channel: messenger })}>
               <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M2 8 14 2l-3 12-3-5-6-1Zm6 1 6-7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
             </span>
           </Hint>
-        </span>
+        </span> : null}
       </div>
     </div>
   );

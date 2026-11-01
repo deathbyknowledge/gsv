@@ -59,6 +59,7 @@ export const KERNEL_V090_EVENT_SOURCES: SqlMigration = {
     `,
     "CREATE INDEX event_log_owner_received ON event_log (owner_uid, received_at)",
     "CREATE INDEX event_log_source_received ON event_log (source_id, received_at)",
+    "CREATE INDEX event_log_received ON event_log (received_at)",
     ASK_BEFORE_SHIP_ACTS,
   ],
 };

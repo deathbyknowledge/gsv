@@ -271,7 +271,7 @@ type KernelTask =
     }
   | { callback: "onShipEvents"; payload: number }
   | { callback: "onOwnerNotices"; payload: number }
-  | { callback: "onEventSilence"; payload: null }
+  | { callback: "onEventUpkeep"; payload: null }
   | { callback: "onLedgerRotate"; payload: string }
   | { callback: "onBrowserHandoffs"; payload: null };
 
@@ -350,7 +350,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   }),
   z.object({ callback: z.literal("onShipEvents"), payload: z.number().int().nonnegative() }),
   z.object({ callback: z.literal("onOwnerNotices"), payload: z.number().int().nonnegative() }),
-  z.object({ callback: z.literal("onEventSilence"), payload: z.null() }),
+  z.object({ callback: z.literal("onEventUpkeep"), payload: z.null() }),
   z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
   z.object({ callback: z.literal("onBrowserHandoffs"), payload: z.null() }),
 ]);
@@ -776,28 +776,29 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return receiveWebhook(sourceId, token, new Headers(headers), body, this.buildKernelContext({ callerOwnerUid: row.owner_uid }));
   }
 
-  /** One pending task, moved earlier when a source would go quiet sooner. */
-  private async queueEventSilence(excludeTaskId?: string): Promise<void> {
-    const next = this.eventSources.nextSilenceAt();
+  /** One pending task, moved earlier when a source would go quiet or a body expire sooner. */
+  private async queueEventUpkeep(excludeTaskId?: string): Promise<void> {
+    const next = this.eventSources.nextUpkeepAt();
     if (next === null) return;
     const due = Math.max(Date.now(), next);
     const options: DurableTaskOptions = { idempotent: true };
     if (excludeTaskId) options.excludeTaskId = excludeTaskId;
-    const existing = await this.schedule(new Date(due), "onEventSilence", null, options);
+    const existing = await this.schedule(new Date(due), "onEventUpkeep", null, options);
     if (existing.time * 1_000 <= due + 1_000) return;
     await this.cancelSchedule(existing.id);
-    await this.schedule(new Date(due), "onEventSilence", null, options);
+    await this.schedule(new Date(due), "onEventUpkeep", null, options);
   }
 
-  private async onEventSilence(taskId: string): Promise<void> {
+  private async onEventUpkeep(taskId: string): Promise<void> {
     const gate = await this.onboarding.managedWorkGate();
     if (!gate.allowed) {
-      await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onEventSilence", null, { idempotent: true, excludeTaskId: taskId });
+      await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onEventUpkeep", null, { idempotent: true, excludeTaskId: taskId });
       return;
     }
+    this.eventSources.prune(Date.now());
     const owners = noteSilentSources(this.eventSources, this.ownerNotices, this.auth, Date.now());
     for (const ownerUid of owners) await this.ownerNoticeRuntime.queue(ownerUid);
-    await this.queueEventSilence(taskId);
+    await this.queueEventUpkeep(taskId);
   }
 
   async instancesChanged(ownerUid: number): Promise<void> {
@@ -1068,8 +1069,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       case "onOwnerNotices":
         await this.ownerNoticeRuntime.onOwnerNotices(task.payload, task);
         return;
-      case "onEventSilence":
-        await this.onEventSilence(task.id);
+      case "onEventUpkeep":
+        await this.onEventUpkeep(task.id);
         return;
       case "onBrowserHandoffs":
         await this.browserHandoffs.run(task.id);
@@ -1751,7 +1752,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       reconcileResponsibilityWake: this.responsibilityRuntime.reconcileResponsibilityWake.bind(this.responsibilityRuntime),
       queueShipEvents: this.shipEventRuntime.queue.bind(this.shipEventRuntime),
       queueOwnerNotices: this.ownerNoticeRuntime.queue.bind(this.ownerNoticeRuntime),
-      queueEventSilence: () => this.queueEventSilence(),
+      queueEventUpkeep: () => this.queueEventUpkeep(),
       trackBrowserHandoff: this.browserHandoffs.track.bind(this.browserHandoffs),
       scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);

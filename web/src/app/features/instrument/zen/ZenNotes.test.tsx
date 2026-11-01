@@ -29,6 +29,17 @@ describe("owner notices", () => {
     moment, clock: { today: 1, timeZone: "UTC" }, open: false, focus: false, index: 0, phase: "settled", onToggle: () => {},
   }));
 
+  it("shows a source's event sent to no messenger as a card with no carrier mark", async () => {
+    const tree = await card(notice({ topic: "event.received", adapter: undefined, shownInClient: true, from: "Backups", preview: "Nightly backup failed", contactId: undefined }, { kind: "contact", contactId: "contact:ada" }));
+    const text = collectText(tree);
+    for (const part of ["Backups", "Nightly backup failed"]) expect(text).toContain(part);
+    expect(collectNodes(tree).some((node) => node.props?.class === "notice-carrier-mark")).toBe(false);
+  });
+
+  it("shows nothing for a record only Ship was told about", async () => {
+    expect(collectText(await card(notice({ topic: "event.received", adapter: undefined, sentAtMs: undefined, from: "Backups" }, { kind: "contact", contactId: "contact:ada" })))).toBe("");
+  });
+
   it("shows who wrote, where the owner heard, and what they said, without folding it away", async () => {
     const tree = await card(notice({ handle: "ada.ship.space", preview: "are we still on for tomorrow?", messages: 1 }, { kind: "contact", contactId: "contact:ada" }));
     const text = collectText(tree);

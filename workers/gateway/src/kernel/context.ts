@@ -137,7 +137,7 @@ export type KernelContext = {
   queueShipEvents: (ownerUid: number) => Promise<void>;
   /** Send the owner's pending notices after the producer's transaction commits. */
   queueOwnerNotices: (ownerUid: number) => Promise<void>;
-  queueEventSilence: () => Promise<void>;
+  queueEventUpkeep: () => Promise<void>;
   trackBrowserHandoff: (ownerUid: number, handoff: BrowserHandoff) => Promise<void>;
   scheduleManagedOutboundEnqueue: (
     outboundId: string,

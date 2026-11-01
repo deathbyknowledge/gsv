@@ -168,15 +168,16 @@ export class EventSourceStore {
   }
 
   /** Spend one token, refilled over time. A source can't be made to flood its owner, or a Kernel. */
-  admit(row: SourceRow, now: number): boolean {
-    const tokens = Math.min(BUCKET_BURST, row.bucket_tokens + (now - row.bucket_at) * BUCKET_PER_MS);
+  admit({ source_id: sourceId, owner_uid: ownerUid }: SourceRow, now: number): boolean {
+    // Read here, not from the caller's copy: a delivery may have waited on its signature check.
+    const current = this.byId(sourceId);
+    if (!current) return false;
+    const tokens = Math.min(BUCKET_BURST, current.bucket_tokens + Math.max(0, now - current.bucket_at) * BUCKET_PER_MS);
     const recent = this.sql.exec<{ count: number }>(
-      "SELECT count(*) AS count FROM event_log WHERE owner_uid = ? AND received_at > ?", row.owner_uid, now - 60_000,
+      "SELECT count(*) AS count FROM event_log WHERE owner_uid = ? AND received_at > ?", ownerUid, now - 60_000,
     ).one().count;
     if (tokens < 1 || recent >= OWNER_EVENTS_PER_MINUTE) return false;
-    row.bucket_tokens = tokens - 1;
-    row.bucket_at = now;
-    this.sql.exec("UPDATE event_sources SET bucket_tokens = ?, bucket_at = ? WHERE source_id = ?", row.bucket_tokens, now, row.source_id);
+    this.sql.exec("UPDATE event_sources SET bucket_tokens = ?, bucket_at = ? WHERE source_id = ?", tokens - 1, now, sourceId);
     return true;
   }
 
@@ -195,8 +196,6 @@ export class EventSourceStore {
     this.sql.exec(
       "UPDATE event_sources SET last_event_at = ?, silence_noted_at = NULL WHERE source_id = ?", now, row.source_id,
     );
-    this.sql.exec("UPDATE event_log SET body = NULL WHERE source_id = ? AND received_at < ? AND body IS NOT NULL", row.source_id, now - BODY_RETENTION_MS);
-    this.sql.exec("DELETE FROM event_log WHERE source_id = ? AND received_at < ?", row.source_id, now - ID_RETENTION_MS);
     return true;
   }
 
@@ -227,11 +226,21 @@ export class EventSourceStore {
     this.sql.exec("UPDATE event_sources SET silence_noted_at = ? WHERE source_id = ?", now, row.source_id);
   }
 
-  /** When the next enabled source would go silent, if any would. */
-  nextSilenceAt(): number | null {
+  /** Forget what has been kept long enough, whether or not its source still sends. */
+  prune(now: number): void {
+    this.sql.exec("UPDATE event_log SET body = NULL WHERE received_at <= ? AND body IS NOT NULL", now - BODY_RETENTION_MS);
+    this.sql.exec("DELETE FROM event_log WHERE received_at <= ?", now - ID_RETENTION_MS);
+  }
+
+  /** When the next source would go silent or the next body or id is due to be forgotten. */
+  nextUpkeepAt(): number | null {
     return this.sql.exec<{ due: number | null }>(
-      `SELECT MIN(COALESCE(last_event_at, created_at) + expect_every_ms) AS due FROM event_sources
-       WHERE enabled = 1 AND expect_every_ms IS NOT NULL AND silence_noted_at IS NULL`,
+      `SELECT MIN(due) AS due FROM (
+         SELECT COALESCE(last_event_at, created_at) + expect_every_ms AS due FROM event_sources
+           WHERE enabled = 1 AND expect_every_ms IS NOT NULL AND silence_noted_at IS NULL
+         UNION ALL SELECT MIN(received_at) + ? FROM event_log WHERE body IS NOT NULL
+         UNION ALL SELECT MIN(received_at) + ? FROM event_log
+       )`, BODY_RETENTION_MS, ID_RETENTION_MS,
     ).one().due;
   }
 }
@@ -288,7 +297,7 @@ function ingest(ctx: KernelContext, row: SourceRow, input: EventInput, emittedBy
       console.warn("[Kernel] Failed to schedule event responsibility:", error);
     }));
   }
-  if (row.expect_every_ms !== null) ctx.defer(ctx.queueEventSilence());
+  ctx.defer(ctx.queueEventUpkeep());
   return true;
 }
 
@@ -395,7 +404,7 @@ export async function handleEventSourceAdd(args: EventSourceAddArgs, ctx: Kernel
     expectEveryMs: input.expectEveryMs ?? null,
   }, changedBy, now);
   if (changedBy === "ship") tellOwnerOfShipChange(ctx, null, row, now);
-  if (row.expect_every_ms !== null) ctx.defer(ctx.queueEventSilence());
+  if (row.expect_every_ms !== null) ctx.defer(ctx.queueEventUpkeep());
   const url = webhookUrl(ctx, row, secret);
   return {
     source: publicSource(row),
@@ -411,10 +420,12 @@ export async function handleEventSourceUpdate(args: EventSourceUpdateArgs, ctx: 
   const previous = requireSource(ctx, ownerUid, input.name, "event.source.update");
   requireShipChoice(previous.webhook, input.ship, "event.source.update");
   if (input.ship === "wake" && previous.ship !== "wake") await askBeforeShipActs(ctx, changedBy, input.name, send);
+  // The owner may have changed it while that approval waited.
+  const current = requireSource(ctx, ownerUid, input.name, "event.source.update");
   const now = Date.now();
-  const row = ctx.eventSources.update(previous, input, changedBy, now);
-  if (changedBy === "ship") tellOwnerOfShipChange(ctx, previous, row, now);
-  ctx.defer(ctx.queueEventSilence());
+  const row = ctx.eventSources.update(current, input, changedBy, now);
+  if (changedBy === "ship") tellOwnerOfShipChange(ctx, current, row, now);
+  ctx.defer(ctx.queueEventUpkeep());
   return { source: publicSource(row) };
 }
 
