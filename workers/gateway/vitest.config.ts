@@ -18,6 +18,8 @@ export default defineConfig({
     __PRINT_FULL_PROMPT__: JSON.stringify(env.PRINT_FULL_PROMPT === "1"),
   },
   test: {
+    // Each isolated file reloads the whole Worker, which is most of this suite's time.
+    isolate: false,
     setupFiles: ["./src/test-fixtures/setup.ts"],
     // Integration tests own a standalone Wrangler harness process.
     exclude: [
