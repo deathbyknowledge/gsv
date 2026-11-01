@@ -76,6 +76,8 @@ type LogRow = {
   received_at: number;
 };
 
+const issuesOwnSecret = (webhook: EventSourceWebhook) => webhook === "stripe";
+
 const shipChoices = (webhook: EventSourceWebhook): ShipOutcome[] =>
   webhook === "url" ? ["none", "context"] : ["none", "context", "wake"];
 
@@ -176,6 +178,10 @@ export class EventSourceStore {
     row.bucket_at = now;
     this.sql.exec("UPDATE event_sources SET bucket_tokens = ?, bucket_at = ? WHERE source_id = ?", row.bucket_tokens, now, row.source_id);
     return true;
+  }
+
+  seen(row: SourceRow, eventId: string): boolean {
+    return this.sql.exec("SELECT 1 FROM event_log WHERE source_id = ? AND event_id = ?", row.source_id, eventId).toArray().length > 0;
   }
 
   /** False when the sender already delivered this id. */
@@ -321,6 +327,7 @@ const updateSchema = z.strictObject({
   expectEveryMs: z.optional(z.nullable(expectSchema)),
 });
 const namedSchema = z.strictObject({ name: nameSchema });
+const rotateSchema = z.strictObject({ name: nameSchema, secret: z.optional(z.string().check(z.minLength(8), z.maxLength(512))) });
 const eventSchema = z.strictObject({
   id: z.optional(z.string().check(z.minLength(1), z.maxLength(200))),
   title: z.string().check(z.minLength(1), z.maxLength(MAX_TITLE)),
@@ -392,7 +399,8 @@ export async function handleEventSourceAdd(args: EventSourceAddArgs, ctx: Kernel
   const url = webhookUrl(ctx, row, secret);
   return {
     source: publicSource(row),
-    ...(secret && webhook !== "url" ? { secret } : undefined),
+    // Stripe makes its own secret once it has this address, so one made here would only mislead.
+    ...(secret && webhook !== "url" && !issuesOwnSecret(webhook) ? { secret } : undefined),
     ...(url ? { webhookUrl: url } : undefined),
   };
 }
@@ -411,15 +419,17 @@ export async function handleEventSourceUpdate(args: EventSourceUpdateArgs, ctx: 
 }
 
 export async function handleEventSourceRotate(args: EventSourceRotateArgs, ctx: KernelContext): Promise<EventSourceSecretResult> {
-  const { name } = parseArgs(namedSchema, args, "event.source.rotate");
+  const { name, secret: issued } = parseArgs(rotateSchema, args, "event.source.rotate");
   const row = requireSource(ctx, changer(ctx).ownerUid, name, "event.source.rotate");
-  const secret = newWebhookSecret(row.webhook);
+  if (issued && row.webhook === "url") throw new Error(`event.source.rotate: "${name}" makes its own address`);
+  if (!issued && issuesOwnSecret(row.webhook)) throw new Error(`event.source.rotate: "${name}" takes the secret Stripe gives you`);
+  const secret = issued ?? newWebhookSecret(row.webhook);
   if (!secret) throw new Error(`event.source.rotate: "${name}" has no webhook`);
   ctx.eventSources.rotate(row, row.webhook === "url" ? await sha256(secret) : secret, Date.now());
   const url = webhookUrl(ctx, row, secret);
   return {
     source: publicSource(row),
-    ...(row.webhook === "url" ? undefined : { secret }),
+    ...(row.webhook === "url" || issued ? undefined : { secret }),
     ...(url ? { webhookUrl: url } : undefined),
   };
 }
@@ -441,6 +451,11 @@ export function handleEventEmit(args: EventEmitArgs, ctx: KernelContext): EventE
   let accepted = 0;
   let duplicates = 0;
   for (const event of events) {
+    // A repeat costs nothing, so a poller re-reading old items still has room for new ones.
+    if (event.id && ctx.eventSources.seen(row, event.id)) {
+      duplicates += 1;
+      continue;
+    }
     if (!ctx.eventSources.admit(row, now)) throw new Error(`event.emit: "${source}" is sending too fast; ${accepted} accepted`);
     if (ingest(ctx, row, event, emittedBy, now)) accepted += 1;
     else duplicates += 1;
@@ -479,9 +494,10 @@ export async function receiveWebhook(
     }
   }
   if (!verified) return { status: row.webhook === "url" ? 404 : 401 };
+  const event = webhookEvent(row.webhook, row.label, body, headers);
+  if (event.id && ctx.eventSources.seen(row, event.id)) return { status: 200 };
   // Only after proof, so a stranger's guesses can't spend the real sender's allowance.
   if (!ctx.eventSources.admit(row, now)) return { status: 429, retryAfter: 60 };
-  const event = webhookEvent(row.webhook, row.label, body, headers);
   const bounded: EventInput = {
     ...event,
     title: Array.from(event.title).slice(0, MAX_TITLE).join(""),

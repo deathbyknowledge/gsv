@@ -92,7 +92,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "event sources [--json]",
     "event source add NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake] [--webhook none|standard|github|stripe|url] [--expect-every DURATION]",
     "event source update NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake] [--pause|--resume] [--expect-every DURATION|never]",
-    "event source rotate NAME",
+    "event source rotate NAME [--stdin]",
     "event source remove NAME",
     "event emit SOURCE --title TEXT [--id ID] [--preview TEXT] [--body TEXT]",
     "event emit SOURCE --stdin",

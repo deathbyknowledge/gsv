@@ -220,6 +220,8 @@ export const es = {
   "settings.happenings.sources.shownOnce": "Cópialo ahora. No se volverá a mostrar.",
   "settings.happenings.sources.address": "Dirección",
   "settings.happenings.sources.secret": "Secreto de firma",
+  "settings.happenings.sources.issued": "Secreto de firma que te dio el remitente",
+  "settings.happenings.sources.saveIssued": "Guardar secreto",
   "settings.happenings.noAccess": "Tu cuenta no puede leer estos ajustes.",
 
   // Settings: permissions

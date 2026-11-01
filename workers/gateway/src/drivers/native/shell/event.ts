@@ -23,7 +23,7 @@ const USAGE = `Usage:
                         [--webhook none|standard|github|stripe|url] [--expect-every DURATION]
   event source update NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake]
                         [--pause|--resume] [--expect-every DURATION|never]
-  event source rotate NAME
+  event source rotate NAME [--stdin]     With --stdin, read a secret the sender issued, as Stripe does
   event source remove NAME
   event emit SOURCE --title TEXT [--id ID] [--preview TEXT] [--body TEXT]
   event emit SOURCE --stdin      One JSON object per line: {"id","title","preview","body"}
@@ -101,7 +101,7 @@ async function runEventCommand(args: string[], shell: CommandContext, ctx: Kerne
       return result(`${["NAME\tSTATE\tTELL\tSHIP\tWEBHOOK\tLABEL", ...sources.map(sourceLine)].join("\n")}\n`);
     }
     case "source":
-      return runSourceCommand(rest, ctx);
+      return runSourceCommand(rest, shell, ctx);
     case "emit": {
       requireCommandCapability(ctx, "event.emit");
       const { options, words } = parseOptions(rest, ["--stdin"]);
@@ -135,9 +135,9 @@ async function runEventCommand(args: string[], shell: CommandContext, ctx: Kerne
   }
 }
 
-async function runSourceCommand(args: string[], ctx: KernelContext): Promise<ExecResult> {
+async function runSourceCommand(args: string[], shell: CommandContext, ctx: KernelContext): Promise<ExecResult> {
   const [action, ...rest] = args;
-  const { options, words } = parseOptions(rest, ["--pause", "--resume"]);
+  const { options, words } = parseOptions(rest, ["--pause", "--resume", "--stdin"]);
   const [name] = words;
   if (!name || words.length > 1) throw new Error(`source ${action ?? ""} requires a NAME`);
   // SAFETY: the handlers validate these against their closed sets.
@@ -169,7 +169,9 @@ async function runSourceCommand(args: string[], ctx: KernelContext): Promise<Exe
     }
     case "rotate": {
       requireCommandCapability(ctx, "event.source.rotate");
-      return result(secretLines(await handleEventSourceRotate({ name }, ctx)));
+      const secret = options.has("--stdin") ? decodeShellStdin(shell.stdin).trim() : undefined;
+      const rotated = await handleEventSourceRotate({ name, ...(secret ? { secret } : undefined) }, ctx);
+      return result(secret ? `Saved the secret for ${name}.\n` : secretLines(rotated));
     }
     case "remove": {
       requireCommandCapability(ctx, "event.source.remove");

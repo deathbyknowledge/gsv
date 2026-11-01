@@ -128,6 +128,20 @@ describe("event sources", () => {
     });
   });
 
+  it("doesn't charge a poller for items it has already sent, so new ones still get through", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      await handleEventSourceAdd({ name: "feed" }, context(k));
+      const ctx = context(k);
+      const old = Array.from({ length: 100 }, (_, index) => ({ id: `old-${index}`, title: "old" }));
+      handleEventEmit({ source: "feed", events: old }, ctx);
+      for (let round = 0; round < 3; round += 1) {
+        expect(handleEventEmit({ source: "feed", events: old }, ctx)).toEqual({ accepted: 0, duplicates: 100 });
+      }
+      expect(handleEventEmit({ source: "feed", events: [{ id: "new", title: "new" }] }, ctx)).toEqual({ accepted: 1, duplicates: 0 });
+    });
+  });
+
   it("only lets a person or their Ship manage sources", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const k = kernel(storage);
@@ -250,6 +264,40 @@ describe("event webhooks", () => {
       const plain = await handleEventSourceAdd({ name: "plain" }, context(k));
       expect((await receiveWebhook(plain.source.sourceId, null, new Headers(), body, ctx)).status).toBe(404);
       await expect(handleEventSourceRotate({ name: "plain" }, context(k))).rejects.toThrow("no webhook");
+    });
+  });
+
+  it("takes the signing secret a sender issues, such as Stripe's, and keeps its own out of the answer", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      const added = await handleEventSourceAdd({ name: "pay", webhook: "stripe" }, context(k));
+      expect(added.secret).toBeUndefined();
+      expect(added.webhookUrl).toContain(added.source.sourceId);
+
+      const issued = "whsec_issued_by_stripe";
+      const rotated = await handleEventSourceRotate({ name: "pay", secret: issued }, context(k));
+      expect(rotated.secret).toBeUndefined();
+      const payload = new TextEncoder().encode(JSON.stringify({ id: "evt_1", type: "invoice.paid" }));
+      const timestamp = Math.floor(Date.now() / 1000);
+      const message = new Uint8Array([...new TextEncoder().encode(`${timestamp}.`), ...payload]);
+      const headers = new Headers({ "stripe-signature": `t=${timestamp},v1=${await sign(issued, message)}` });
+      expect((await receiveWebhook(added.source.sourceId, null, headers, payload, context(k, "schedule"))).status).toBe(200);
+      expect(handleEventList({ source: "pay" }, context(k)).events[0]).toMatchObject({ eventId: "evt_1", title: "invoice.paid" });
+
+      const form = await handleEventSourceAdd({ name: "form", webhook: "url" }, context(k));
+      await expect(handleEventSourceRotate({ name: form.source.name, secret: "chosen-secret" }, context(k))).rejects.toThrow("makes its own address");
+    });
+  });
+
+  it("doesn't charge a verified sender's retries against its allowance", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      const { source, secret } = await handleEventSourceAdd({ name: "gh", webhook: "github" }, context(k));
+      const ctx = context(k, "schedule");
+      const headers = new Headers({ "x-hub-signature-256": `sha256=${await sign(secret ?? "", body)}`, "x-github-delivery": "same" });
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        expect((await receiveWebhook(source.sourceId, null, headers, body, ctx)).status).toBe(200);
+      }
     });
   });
 

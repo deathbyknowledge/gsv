@@ -66,7 +66,8 @@ export type EventSourceUpdateArgs = {
 };
 export type EventSourceUpdateResult = { source: EventSource };
 
-export type EventSourceRotateArgs = { name: string };
+/** With `secret`, use one the sender issued, as Stripe does, instead of making a new one. */
+export type EventSourceRotateArgs = { name: string; secret?: string };
 
 export type EventSourceRemoveArgs = { name: string };
 export type EventSourceRemoveResult = { removed: boolean };

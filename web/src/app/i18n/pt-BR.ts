@@ -225,6 +225,8 @@ export const ptBR = {
   "settings.happenings.sources.shownOnce": "Copie agora. Não será mostrado novamente.",
   "settings.happenings.sources.address": "Endereço",
   "settings.happenings.sources.secret": "Segredo de assinatura",
+  "settings.happenings.sources.issued": "Segredo de assinatura fornecido pelo remetente",
+  "settings.happenings.sources.saveIssued": "Salvar segredo",
   "settings.happenings.noAccess": "Sua conta não pode ler estes ajustes.",
 
   // Settings: permissions

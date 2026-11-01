@@ -219,6 +219,8 @@ export const en = {
   "settings.happenings.sources.shownOnce": "Copy this now. It won't be shown again.",
   "settings.happenings.sources.address": "Address",
   "settings.happenings.sources.secret": "Signing secret",
+  "settings.happenings.sources.issued": "Signing secret the sender gave you",
+  "settings.happenings.sources.saveIssued": "Save secret",
   "settings.happenings.noAccess": "Your account cannot read these settings.",
 
   // Settings: permissions

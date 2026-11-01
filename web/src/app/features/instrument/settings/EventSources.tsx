@@ -1,4 +1,4 @@
-import type { EventSource, EventSourceAddArgs, EventSourceSecretResult, EventSourceUpdateArgs, EventSourceWebhook, ShipOutcome } from "@humansandmachines/gsv/protocol";
+import type { EventSource, EventSourceAddArgs, EventSourceRotateArgs, EventSourceSecretResult, EventSourceUpdateArgs, EventSourceWebhook, ShipOutcome } from "@humansandmachines/gsv/protocol";
 import { Fragment } from "preact";
 import type { ComponentType } from "preact";
 import { useState } from "preact/hooks";
@@ -36,8 +36,8 @@ export function useEventSources(enabled: boolean) {
     onSuccess: (result) => { setRevealed(result); return refresh(); },
   });
   const rotate = useMutation({
-    mutationFn: (name: string) => client.call("event.source.rotate", { name }),
-    onSuccess: (result) => { setRevealed(result); return refresh(); },
+    mutationFn: (input: EventSourceRotateArgs) => client.call("event.source.rotate", input),
+    onSuccess: (result, input) => { if (!input.secret) setRevealed(result); return refresh(); },
   });
   const remove = useMutation({
     mutationFn: (name: string) => client.call("event.source.remove", { name }),
@@ -82,6 +82,7 @@ export function EventSourceRows({ events, shipOutcomes, RowIcon, disabled }: {
 export function YourSources({ events, disabled }: { events: Events; disabled: boolean }) {
   const t = useT();
   const [name, setName] = useState("");
+  const [issued, setIssued] = useState("");
   const [webhook, setWebhook] = useState<EventSourceWebhook>("none");
   const off = disabled || events.pending;
   const { revealed } = events;
@@ -98,8 +99,15 @@ export function YourSources({ events, disabled }: { events: Events; disabled: bo
       <button class="settings-text-action" type="button" disabled={off} onClick={() => events.update.mutate({ name: source.name, enabled: !source.enabled })}>
         {t(source.enabled ? "settings.happenings.sources.pause" : "settings.happenings.sources.resume")}
       </button>
-      {source.webhook !== "none" && <button class="settings-text-action" type="button" disabled={off} onClick={() => events.rotate.mutate(source.name)}>{t("settings.happenings.sources.rotate")}</button>}
+      {source.webhook !== "none" && source.webhook !== "stripe" && <button class="settings-text-action" type="button" disabled={off} onClick={() => events.rotate.mutate({ name: source.name })}>{t("settings.happenings.sources.rotate")}</button>}
       <button class="settings-text-action" type="button" disabled={off} onClick={() => events.remove.mutate(source.name)}>{t("settings.happenings.sources.remove")}</button>
+      {(source.webhook === "stripe" || source.webhook === "standard") && <form class="settings-event-add" onSubmit={(event) => {
+        event.preventDefault();
+        events.rotate.mutate({ name: source.name, secret: issued.trim() }, { onSuccess: () => setIssued("") });
+      }}>
+        <TextInput label={t("settings.happenings.sources.issued")} type="password" value={issued} disabled={off} inputProps={{ name: "event-source-secret", autoComplete: "off" }} onChange={setIssued} />
+        <div class="settings-actions"><button class="ibtn" type="submit" disabled={off || issued.trim().length < 8}>{t("settings.happenings.sources.saveIssued")}</button></div>
+      </form>}
     </div>)}
     <form class="settings-event-add" onSubmit={(event) => {
       event.preventDefault();

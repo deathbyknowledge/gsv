@@ -550,7 +550,7 @@ interface EventSyscalls {
       enabled?: boolean; expectEveryMs?: number | null };
     result: { source: EventSource };
   };
-  "event.source.rotate": { args: { name: string }; result: { source: EventSource; secret?: string; webhookUrl?: string } };
+  "event.source.rotate": { args: { name: string; secret?: string }; result: { source: EventSource; secret?: string; webhookUrl?: string } };
   "event.source.remove": { args: { name: string }; result: { removed: boolean } };
   "event.emit": { args: { source: string; events: EventInput[] }; result: { accepted: number; duplicates: number } };
   "event.list": { args: { source?: string; limit?: number }; result: { events: EventRecord[] } };
@@ -563,7 +563,7 @@ Ship out, and it has no public address unless `webhook` asks for one. Ship setti
 `wake` needs approval (`event.source.update`), and Ship turning off telling or starting
 to act tells its owner.
 
-An `id` already seen for a source is a duplicate and does nothing, for 180 days. Bodies are
+An `id` already seen for a source is a duplicate and does nothing, for 180 days, and doesn't count against the source's rate limit. Bodies are
 kept for 30 days. Each source accepts 60 events a minute with bursts of 120, and each
 owner 600 a minute. With `expectEveryMs`, the owner is told once when that long passes
 without an event.
@@ -573,7 +573,9 @@ never wakes Ship.
 
 A source with a webhook takes a `POST` at `/hooks/<sourceId>`, with a body of up to 256 KiB.
 `standard`, `github` and `stripe` verify the sender's signature; a rotated secret keeps
-working for 24 hours. `url` is for senders that can't sign: the address `/hooks/<sourceId>/<token>`
+working for 24 hours. Stripe issues its own secret once it has the address, so a `stripe` source
+returns no secret and takes Stripe's through `event.source.rotate`'s `secret`, which `standard`
+also accepts. `url` is for senders that can't sign: the address `/hooks/<sourceId>/<token>`
 is the only proof, only its hash is stored, and such a source can't be set to `wake`.
 Request logs on the way may record that address, so treat it as a low-trust channel. A secret
 or secret address is returned once.
