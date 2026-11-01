@@ -176,16 +176,20 @@ export async function completeManagedInboundMail(
 
   const mailbox = ctx.mailboxes.getMailbox(summarized.mailboxId);
   if (!mailbox) throw new Error("Mail message belongs to an unknown mailbox");
-  if (!ctx.auth.isAccountDisabled(mailbox.ownerUid) && ctx.noticeRules.wantsNotice(mailbox.ownerUid, "mail.received")) {
-    ctx.ownerNotices.noteMail(mailbox.ownerUid, mailbox.mailboxId, {
-      from: summarized.displayFrom ?? summarized.envelopeFrom,
-      preview: completion.summary.summary,
-    }, summarized.receivedAt, Date.now());
-    ctx.defer(ctx.queueOwnerNotices(mailbox.ownerUid));
-  }
+  // Noted last, beside the delivery checkpoint, so a retried completion can't count this email twice.
+  const noteAndMarkDelivered = () => {
+    if (!ctx.auth.isAccountDisabled(mailbox.ownerUid) && ctx.noticeRules.wantsNotice(mailbox.ownerUid, "mail.received")) {
+      ctx.ownerNotices.noteMail(mailbox.ownerUid, mailbox.mailboxId, {
+        from: summarized.displayFrom ?? summarized.envelopeFrom,
+        preview: completion.summary.summary,
+      }, Date.now());
+      ctx.defer(ctx.queueOwnerNotices(mailbox.ownerUid));
+    }
+    ctx.mailboxes.markEventDelivered(summarized.messageId);
+  };
   if (ctx.auth.isAccountDisabled(mailbox.ownerUid)
     || !ctx.responsibilitySources.isEnabled(mailbox.ownerUid, "mail.received")) {
-    ctx.mailboxes.markEventDelivered(summarized.messageId);
+    noteAndMarkDelivered();
     return;
   }
   const details: JsonObject = {
@@ -217,7 +221,7 @@ export async function completeManagedInboundMail(
     observedByShip: false,
     now: Date.now(),
   });
-  ctx.mailboxes.markEventDelivered(summarized.messageId);
+  noteAndMarkDelivered();
   ctx.defer(ctx.reconcileResponsibilityWake(mailbox.ownerUid).catch((error) => {
     console.warn("[Kernel] Failed to schedule received-mail responsibility:", error);
   }));

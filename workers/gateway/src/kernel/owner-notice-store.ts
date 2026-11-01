@@ -80,11 +80,12 @@ export class OwnerNoticeStore {
   }
 
   /** Count one received email, the same way; `sequence` only has to increase within the mailbox. */
-  noteMail(ownerUid: number, mailboxId: string, subject: OwnerNoticeSubject, sequence: number, now: number): void {
-    this.noteCounted(ownerUid, `mail.received:${mailboxId}`, "mail.received", subject, sequence, now);
+  /** Mail completes out of order, so its caller's delivery checkpoint is what keeps it from counting twice. */
+  noteMail(ownerUid: number, mailboxId: string, subject: OwnerNoticeSubject, now: number): void {
+    this.noteCounted(ownerUid, `mail.received:${mailboxId}`, "mail.received", subject, null, now);
   }
 
-  private noteCounted(ownerUid: number, key: string, topic: OwnerNoticeTopic, subject: OwnerNoticeSubject, sequence: number, now: number): void {
+  private noteCounted(ownerUid: number, key: string, topic: OwnerNoticeTopic, subject: OwnerNoticeSubject, sequence: number | null, now: number): void {
     const row = this.sql.exec<{ state: string; counted_sequence: number | null; sent_at: number | null }>(
       "SELECT state, counted_sequence, sent_at FROM owner_notices WHERE notice_key = ?", key,
     ).toArray()[0];
@@ -97,7 +98,7 @@ export class OwnerNoticeStore {
       );
       return;
     }
-    if (row.counted_sequence !== null && sequence <= row.counted_sequence) return;
+    if (sequence !== null && row.counted_sequence !== null && sequence <= row.counted_sequence) return;
     if (row.state === "pending") {
       this.sql.exec(
         `UPDATE owner_notices SET subject_json = ?, pending_count = pending_count + 1, counted_sequence = ?, updated_at = ?
