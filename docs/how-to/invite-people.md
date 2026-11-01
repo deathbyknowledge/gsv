@@ -24,12 +24,23 @@ credentials and connections.
 
 ## Recover personal access
 
-**Forgot password?** sends a code through an eligible messenger you previously
-connected. If you have no eligible messenger, choose the small **admin** link in the sign-in footer and sign in
-as the administrator, then open **Settings → Sign-in → Personal sign-in** to reset your
-password. Reset revokes your sessions and messenger connections; sign in again and
-reconnect those messengers. Your data, account identity and running work remain.
+Choose **Forgot your password?** on your Ship's sign-in page, then **Email me a
+code**. You confirm your Ship's handle and the email you signed up with, enter the
+code we send to it, and come back to your Ship to set a new password. Then sign in
+as usual. The page only ever says a code was sent "if this is the email for this
+Ship", so it never tells anyone which address owns a Ship.
 
-The administrator sign-in has broader permissions. Ordinary
-sign-in to your account does not grant administrator access. Verified-owner recovery for the administrator is
-separate from personal recovery; see the [security model](/architecture/security-model).
+If you connected a messenger, you can ask for a code there instead on the same
+page. If your Ship has no email recovery (some Ships set up by an operator don't),
+use a messenger, sign in as the administrator and open **Settings → Sign-in →
+Personal sign-in**, or ask whoever runs your Ship.
+
+A reset revokes your sessions and messenger connections; sign in again and
+reconnect those messengers. Your data, account identity and running work remain.
+It doesn't change the administrator password.
+
+The administrator sign-in has broader permissions. Ordinary sign-in to your
+account does not grant administrator access. The emailed link can reset the
+administrator password instead if that is what you lost: choose **Reset the
+administrator password instead** on the page where you set a new password. See the
+[security model](/architecture/security-model).
