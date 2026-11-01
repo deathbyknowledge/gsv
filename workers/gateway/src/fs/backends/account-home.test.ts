@@ -252,7 +252,10 @@ describe("AccountHomeMountBackend delegated routing", () => {
       backend,
     );
 
-    await expect(env.STORAGE.list({ prefix: "home/" }))
+    await expect(env.STORAGE.list({ prefix: "home/alice" }))
+      .resolves
+      .toMatchObject({ objects: [] });
+    await expect(env.STORAGE.list({ prefix: "home/wiki-builder" }))
       .resolves
       .toMatchObject({ objects: [] });
     await expect(fs.statExtended("/home")).resolves.toMatchObject({
