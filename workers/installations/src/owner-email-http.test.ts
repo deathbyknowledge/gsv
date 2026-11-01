@@ -49,7 +49,7 @@ async function fixture() {
   const gateway = { authorizeRootRecovery: vi.fn(async () => ({ authorized: true as const })),
     confirmOwnerLinkAuthorization: vi.fn(async () => ({ authorized: true as const })) };
   const makeHttp = () => new InstallationOwnerEmailHttp(auth, owners, mail,
-    { from: "login@ship.space", replyTo: "hello@humansandmachin.es" }, gateway, ORIGIN, false, floor);
+    { from: "login@ship.space", replyTo: "hello@humansandmachin.es" }, gateway, ORIGIN, { signup: true, recoveryFloorMs: floor });
   let floor = 0;
   let http = makeHttp();
   const request = async (path: string, cookies: Cookies, form?: Form, origin: string | null = ORIGIN, acceptCookies = true): Promise<Response> => {
@@ -133,7 +133,7 @@ describe("native owner email HTTP", () => {
     const page = await f.request("/owner/spaces", cookies);
     expect(page.status).toBe(200);
     expect(page.headers.get("referrer-policy")).toBe("same-origin");
-    expect(await page.text()).toContain("No Ships linked yet");
+    expect(await page.text()).toContain("No Ships for this email yet");
     const copiedSession = new Map(cookies);
     expect((await f.request("/owner/logout", cookies, {})).status).toBe(303);
     expect(cookies.has(SESSION)).toBe(false);
@@ -317,6 +317,126 @@ describe("native owner email HTTP", () => {
     expect(body).toContain('value="my-ship"');
     expect(body).toMatch(/set a new password/i);
     expect(body).not.toMatch(/administrator/i);
+  });
+
+  describe("customer sign-in", () => {
+    const signIn = async (f: Awaited<ReturnType<typeof fixture>>, cookies: Cookies, email: string, path = "/owner/verify") => {
+      f.advance();
+      const form = await f.start(cookies, "login", email);
+      await f.request("/owner/login", cookies, form);
+      return f.request(path, cookies, { ...form, code: f.code() });
+    };
+
+    it("takes someone with one reachable Ship straight to it, from owned data only", async () => {
+      const f = await fixture();
+      const cookies: Cookies = new Map();
+      const space = await f.reserve("single");
+      await f.link(cookies, f.email, space.installationId);
+      const response = await signIn(f, cookies, f.email, "/owner/verify?next=https%3A%2F%2Fevil.example&canonicalOrigin=https%3A%2F%2Fevil.example");
+      expect(response.status).toBe(303);
+      expect(response.headers.get("location")).toBe(new URL("/", space.canonicalOrigin).href);
+      expect(cookies.has(SESSION)).toBe(true);
+      expect(f.gateway.authorizeRootRecovery).not.toHaveBeenCalled();
+    });
+
+    it("lists Ships when there are several, or none is reachable, or there are none", async () => {
+      const f = await fixture();
+      const cookies: Cookies = new Map();
+      const first = await f.reserve("first");
+      const second = await f.reserve("second");
+      await f.link(cookies, f.email, first.installationId);
+      f.advance();
+      await f.link(cookies, f.email, second.installationId);
+      expect((await signIn(f, cookies, f.email)).headers.get("location")).toBe("/owner/spaces");
+      await env.INSTALLATIONS_DB.prepare("UPDATE installations SET state = 'restricted' WHERE id = ?").bind(second.installationId).run();
+      expect((await signIn(f, cookies, f.email)).headers.get("location")).toBe(new URL("/", first.canonicalOrigin).href);
+      await env.INSTALLATIONS_DB.prepare("UPDATE installations SET state = 'restricted' WHERE id = ?").bind(first.installationId).run();
+      expect((await signIn(f, cookies, f.email)).headers.get("location")).toBe("/owner/spaces");
+      const stranger: Cookies = new Map();
+      expect((await signIn(f, stranger, f.otherEmail)).headers.get("location")).toBe("/owner/spaces");
+      const empty = await (await f.request("/owner/spaces", stranger)).text();
+      expect(empty).toMatch(/no ships/i);
+      expect(empty).toContain('href="/owner/signup/"');
+    });
+
+    it("creates no Ship and grants no Ship access", async () => {
+      const f = await fixture();
+      const count = () => env.INSTALLATIONS_DB.prepare("SELECT COUNT(*) AS n FROM installations").first<number>("n");
+      const before = await count();
+      const cookies: Cookies = new Map();
+      await signIn(f, cookies, f.email);
+      expect(await count()).toBe(before);
+      expect(f.gateway.authorizeRootRecovery).not.toHaveBeenCalled();
+      expect(f.gateway.confirmOwnerLinkAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("offers a clear way to the forgotten password from sign-in", async () => {
+      const f = await fixture();
+      const body = await (await f.request("/owner/login", new Map())).text();
+      expect(body).toContain('href="/owner/recover"');
+      expect(body).toMatch(/Forgot your password\?/);
+      expect(body).toMatch(/sign in with your password/i);
+    });
+
+    it("trims and lowercases a typed handle", async () => {
+      const f = await fixture();
+      const cookies: Cookies = new Map();
+      const space = await f.reserve("typed");
+      await f.link(cookies, f.email, space.installationId);
+      f.advance();
+      const fresh: Cookies = new Map();
+      const form = await f.start(fresh, "recover", f.email, { handle: ` ${space.handle.toUpperCase()} ` });
+      const sent = f.send.mock.calls.length;
+      await f.request("/owner/recover", fresh, form);
+      expect(f.send).toHaveBeenCalledTimes(sent + 1);
+    });
+  });
+
+  describe("every page", () => {
+    const pages = async () => {
+      const f = await fixture();
+      const cookies: Cookies = new Map();
+      const space = await f.reserve("pages");
+      await f.link(cookies, f.email, space.installationId);
+      f.advance();
+      const responses: [string, Response][] = [];
+      for (const path of ["/owner/login", "/owner/recover", "/owner/link", "/owner/spaces", "/owner/nope"]) responses.push([path, await f.request(path, cookies)]);
+      const code = await f.start(cookies, "login", f.email);
+      responses.push(["code", await f.request("/owner/login", cookies, code)]);
+      responses.push(["expired", await f.request("/owner/verify", new Map(), { ...code, code: "000000" })]);
+      responses.push(["origin", await f.request("/owner/login", cookies, code, "https://evil.example")]);
+      return responses;
+    };
+
+    it("keeps the strict policy and loads nothing from anywhere else", async () => {
+      for (const [path, response] of await pages()) {
+        const policy = response.headers.get("content-security-policy") ?? "";
+        const nonce = policy.match(/script-src 'nonce-([a-f0-9]{64})'/)?.[1];
+        expect(nonce, path).toBeDefined();
+        expect(policy, path).toContain(`style-src 'nonce-${nonce}'`);
+        expect(policy, path).toContain("default-src 'none'");
+        expect(policy, path).toContain("font-src 'self'");
+        expect(policy, path).toContain("base-uri 'none'");
+        expect(policy, path).toContain("frame-ancestors 'none'");
+        expect(response.headers.get("cache-control"), path).toBe("no-store");
+        const body = await response.text();
+        expect(body, path).toContain(`<style nonce="${nonce}">`);
+        expect(body, path).not.toMatch(/ src="https?:|<link[^>]+href="https?:/);
+        expect(body, path).not.toMatch(/url\(["']?https?:/);
+        expect(body, path).not.toMatch(/ style="/);
+      }
+    });
+
+    it("speaks plainly, in both themes and at phone width", async () => {
+      for (const [path, response] of await pages()) {
+        const body = await response.text();
+        const words = body.replace(/<style[\s\S]*?<\/style>/, "").replace(/<script[\s\S]*?<\/script>/g, "").replace(/<[^>]+>/g, " ");
+        expect(words, path).not.toMatch(/operator|principal|installation/i);
+        expect(body, path).toContain("prefers-color-scheme: light");
+        expect(body, path).toContain('name="viewport" content="width=device-width, initial-scale=1"');
+        expect(body, path).toContain("overflow-wrap");
+      }
+    });
   });
 
   it("rejects wrong origins, browsers and purposes without issuing a session", async () => {
