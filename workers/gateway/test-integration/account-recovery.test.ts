@@ -45,4 +45,35 @@ describe("clean-space owner root recovery", () => {
     await expect(retained.connect()).resolves.toMatchObject({ peer: { principal: { account: { uid: 1000 } } } });
     await expect(oneShot.requestOnce(url, "account.recovery.redeem", { ...redemption, proof: crypto.randomUUID() + crypto.randomUUID() })).rejects.toMatchObject({ code: 400 });
   });
+
+  it("lets a verified owner email set the personal password without administrator access", async () => {
+    const oneShot = new GSVClient();
+    // The Ship set up above now has known credentials; reuse it for the personal path.
+    const human = new GSVClient({ url, username: "person", password: "human-password", peer: { id: "personal-recovery-human" } });
+    clients.push(human);
+    await human.connect();
+    const oldToken = await human.sys.token.create({ kind: "human", label: "old personal token" });
+    const secret = crypto.randomUUID() + crypto.randomUUID();
+    const secretHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret))), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const attemptId = crypto.randomUUID();
+    const storage = await harness.getWorker("gsv").getDurableObjectStorage("KERNEL", { name: "inst_integration_default" });
+    await storage.exec(`INSERT INTO account_recovery_claims (id, purpose, secret_hash, credential_epoch, personal_uid, personal_credential_epoch, expires_at)
+      VALUES (?, 'root-password-reset', ?, 1, 1000, 0, ?)`, attemptId, secretHash, Date.now() + 300_000);
+    const redemption = { id: attemptId, secret, proof: crypto.randomUUID() + crypto.randomUUID(), password: "recovered-personal-password", account: "personal" as const };
+    expect(await oneShot.requestOnce(url, "account.recovery.redeem", redemption)).toEqual({ username: "person" });
+    await expect(human.account.list({})).rejects.toThrow();
+    const old = new GSVClient({ url, username: "person", password: "human-password", peer: { id: "old-personal-password" } });
+    const oldTokenClient = new GSVClient({ url, username: "person", token: oldToken.token.token, peer: { id: "old-personal-token" } });
+    clients.push(old, oldTokenClient);
+    await expect(old.connect()).rejects.toMatchObject({ code: 401 });
+    await expect(oldTokenClient.connect()).rejects.toMatchObject({ code: 401 });
+    // Signs in with no administrator step.
+    const recovered = new GSVClient({ url, password: redemption.password, peer: { id: "recovered-personal" } });
+    clients.push(recovered);
+    await expect(recovered.connect()).resolves.toMatchObject({ peer: { principal: { account: { uid: 1000 } } } });
+    await harness.getWorker("gsv").evictDurableObject("KERNEL", { name: "inst_integration_default", webSockets: "hibernate" });
+    expect(await oneShot.requestOnce(url, "account.recovery.redeem", redemption)).toEqual({ username: "person" });
+    await expect(oneShot.requestOnce(url, "account.recovery.redeem", { ...redemption, proof: crypto.randomUUID() + crypto.randomUUID() })).rejects.toMatchObject({ code: 400 });
+    await expect(oneShot.requestOnce(url, "account.recovery.options", {})).resolves.toEqual({ emailUrl: "https://accounts.example/owner/recover?handle=default" });
+  });
 });

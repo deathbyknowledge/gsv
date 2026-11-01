@@ -110,8 +110,8 @@ export type AdapterInboundMessage = {
   actor?: AdapterActor;
   text: string;
   media?: AdapterMedia[];
+  /** The provider id of the message this one quotes. The Kernel resolves what it means. */
   replyToId?: string;
-  replyToText?: string;
   timestamp?: number;
   wasMentioned?: boolean;
 };
@@ -123,7 +123,6 @@ export const adapterInboundMessageSchema = z.strictObject({
   text: z.string(),
   media: z.optional(z.array(adapterMediaSchema)),
   replyToId: z.optional(z.string()),
-  replyToText: z.optional(z.string()),
   timestamp: z.optional(z.number()),
   wasMentioned: z.optional(z.boolean()),
 });
@@ -439,6 +438,7 @@ export const adapterProviderSendResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(true),
     messageId: z.optional(z.string()),
+    messageIds: z.optional(z.array(z.string())),
     deduplicated: z.optional(z.boolean()),
   }),
   z.strictObject({
@@ -451,7 +451,14 @@ export const adapterProviderSendResultSchema = z.discriminatedUnion("ok", [
 ]);
 
 export type AdapterProviderSendResult =
-  | { ok: true; messageId?: string; deduplicated?: boolean }
+  | {
+      ok: true;
+      /** The id that represents the delivery: its first message, or the one carrying its buttons. */
+      messageId?: string;
+      /** Every provider message of a delivery the messenger split, in sending order. */
+      messageIds?: string[];
+      deduplicated?: boolean;
+    }
   | {
       ok: false;
       error: string;

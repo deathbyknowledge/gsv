@@ -53,12 +53,6 @@
 .settings-save-bar .settings-actions { justify-content: flex-end; }
 .settings-save-bar [role="status"] { margin-right: auto; }
 .settings-save-bar .settings-error { margin-bottom: 0; font-size: .875rem; }
-.settings-standing .settings-check { margin: 0; max-width: none; gap: 1rem; align-items: flex-start !important; cursor: pointer; }
-.settings-standing .settings-check input { margin-top: .2rem; }
-.settings-standing .settings-check > span { display: grid; gap: .4rem; }
-.settings-standing .settings-check strong { color: var(--text); line-height: 1.5; }
-.settings-standing .settings-check small { max-width: 65ch; font: .9375rem/1.6 var(--gsv-font-prose); }
-.settings-standing .settings-list > li { padding-block: 1.5rem; }
 .settings-list { padding: 0; list-style: none; }
 .settings-list > li { display: flex; flex-direction: column; gap: .7rem; border-top: 1px solid var(--border); padding: 1.25rem 0; font-size: .8rem; overflow-wrap: anywhere; }
 .settings-list strong { font-weight: 500; }
@@ -107,6 +101,23 @@
 .settings-messenger-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
 .settings-messenger-heading h2 { margin: 0; }
 .settings-messenger-name { display: inline-flex; align-items: center; gap: .5rem; }
+.settings-standing h2 { margin-top: 2.5rem; }
+.settings-happenings { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: .75rem 1.5rem; align-items: center; margin: 1.5rem 0 0; }
+.settings-happenings-head { color: var(--text-dim); font-size: .75rem; }
+.settings-happenings small { grid-column: 1 / -1; margin-top: -.5rem; color: var(--text-dim); }
+.settings-happenings-name { display: flex; align-items: center; gap: .625rem; min-width: 0; }
+.settings-happenings-name svg, .settings-happenings-legend svg { flex-shrink: 0; color: var(--faint); }
+.settings-happenings-tell { justify-self: center; width: 1rem; height: 1rem; margin: 0; accent-color: var(--accent); }
+.settings-happenings-ship { display: grid; grid-template-columns: repeat(3, 2rem); border: 1px solid var(--border); }
+.settings-happenings-ship button { display: grid; place-items: center; height: 2rem; padding: 0; color: var(--faint); background: transparent; border: 0; cursor: pointer; }
+.settings-happenings-ship button:hover:not(:disabled) { color: var(--text-hi); }
+.settings-happenings-ship button[aria-checked="true"] { color: var(--accent); background: var(--accent-dim, color-mix(in srgb, var(--accent) 14%, transparent)); }
+.settings-happenings-ship button:disabled { cursor: default; }
+.settings-happenings-legend { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; margin: 1rem 0 0; color: var(--text-dim); font-size: .75rem; }
+.settings-happenings-legend span { display: inline-flex; align-items: center; gap: .375rem; }
+.settings-happening { margin-top: 1.5rem; }
+@media (max-width: 480px) { .settings-happenings { gap: .75rem 1rem; } }
+.settings-standing p.settings-muted { margin-top: 2rem; }
 .settings-messenger-links { margin: 0; }
 .settings-list > li.settings-messenger-state { flex-direction: row; align-items: center; gap: 0; }
 .settings-messenger-status { display: inline-flex; align-items: center; gap: .5rem; letter-spacing: .12em; color: var(--text-dim); }

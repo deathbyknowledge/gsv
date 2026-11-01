@@ -256,6 +256,14 @@ import type {
   AtprotoWriteResult,
 } from "./atproto";
 import type {
+  NotifyRuleListArgs,
+  NotifyRuleListResult,
+  NotifyRuleResetArgs,
+  NotifyRuleResetResult,
+  NotifyRuleSetArgs,
+  NotifyRuleSetResult,
+} from "./notify";
+import type {
   MailListArgs,
   MailListResult,
   MailReadArgs,
@@ -360,6 +368,10 @@ export type SyscallDomains = {
   "mail.list": { args: MailListArgs; result: MailListResult };
   "mail.search": { args: MailSearchArgs; result: MailSearchResult };
   "mail.read": { args: MailReadArgs; result: MailReadResult };
+
+  "notify.rule.list": { args: NotifyRuleListArgs; result: NotifyRuleListResult };
+  "notify.rule.set": { args: NotifyRuleSetArgs; result: NotifyRuleSetResult };
+  "notify.rule.reset": { args: NotifyRuleResetArgs; result: NotifyRuleResetResult };
 
   "conversation.ship": { args: ConversationShipArgs; result: ConversationShipResult };
   "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };
@@ -502,7 +514,8 @@ export type SyscallDomains = {
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };
   "account.owner.link": { args: { id: string; secret: string }; result: { url: string; expiresAt: number } };
-  "account.recovery.redeem": { args: { id: string; secret: string; proof: string; password: string }; result: { username: "root" } };
+  "account.recovery.options": { args: Record<string, never>; result: { emailUrl?: string } };
+  "account.recovery.redeem": { args: { id: string; secret: string; proof: string; password: string; account?: "personal" | "administrator" }; result: { username: string } };
   "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
   "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
   "account.password.set": { args: { uid?: number; password: string }; result: { updated: true } };

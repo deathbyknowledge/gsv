@@ -8,7 +8,7 @@ import { useNativeInput } from "../../../services/platform/PlatformProvider";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleAccounts } from "../../../services/system/consoleService";
 import { SettingsError } from "./settingsShared";
-import { StandingResponsibilities } from "./StandingResponsibilities";
+import { WhenThingsHappen } from "./WhenThingsHappen";
 import { Preferences } from "./Preferences";
 import { Permissions } from "./Permissions";
 import { Instructions } from "./Instructions";
@@ -33,7 +33,7 @@ const SECTION_LABELS = {
   preferences: "settings.section.preferences",
   account: "settings.account.title",
   voice: "settings.section.voice",
-  standing: "settings.section.standing",
+  standing: "settings.happenings.title",
   permissions: "settings.section.permissions",
   instructions: "settings.section.instructions",
   messengers: "settings.section.messengers",
@@ -87,7 +87,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
         </>}
         {account && <div key={account.uid}>
           <div hidden={section !== "preferences"}><Preferences account={account} active={active && section === "preferences"} onDirty={preferencesDirty} /></div>
-          <RetainedView active={active && section === "standing"}><StandingResponsibilities account={account} /></RetainedView>
+          <RetainedView active={active && section === "standing"}><WhenThingsHappen account={account} /></RetainedView>
           <div hidden={section !== "permissions"}><Permissions account={account} active={active && section === "permissions"} onDirty={permissionsDirty} /></div>
           <div hidden={section !== "instructions"}><Instructions account={account} active={active && section === "instructions"} onDirty={instructionsDirty} /></div>
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={active && section === "messengers"} /></div>

@@ -528,6 +528,49 @@ only.
 than 100,000 characters comes back cut short, with `truncated` set; the whole
 message stays readable at `textPath`.
 
+## Notification settings: `notify.rule.list`, `notify.rule.set`, `notify.rule.reset`
+
+Each person decides, for each kind of thing that happens, whether their messenger
+hears about it and what their Ship does. The signed-in person or their Ship may
+call these, under the `notify.rule.*` capability; any other process is refused.
+
+```ts
+type NoticeKind =
+  | "contact.request" | "contact.message" | "contact.invite.accepted"
+  | "mail.received" | "machine.added" | "adapter.connected" | "adapter.auth_required";
+type NoticeDelivery = "none" | "messenger";
+type ShipOutcome = "none" | "context" | "wake"; // context records it without starting a run
+type NoticeRule = {
+  kind: NoticeKind;
+  notify: NoticeDelivery;
+  ship: ShipOutcome;
+  defaultNotify: NoticeDelivery;
+  defaultShip: ShipOutcome;
+  shipChoices: ShipOutcome[]; // contact kinds never allow wake
+  changedBy?: "person" | "ship"; // absent while the kind is at its default
+  updatedAtMs?: number;
+};
+
+type NotifySyscalls = {
+  "notify.rule.list": { args: {}; result: { rules: NoticeRule[] } };
+  "notify.rule.set": { args: { kind: NoticeKind; notify?: NoticeDelivery; ship?: ShipOutcome }; result: { rule: NoticeRule } };
+  "notify.rule.reset": { args: { kind: NoticeKind }; result: { rule: NoticeRule } };
+};
+```
+
+`notify.rule.list` returns every kind, including those still at their default.
+Contact kinds default to `messenger` and `context`; the others default to `none`
+and `wake`. `notify.rule.set` changes only what it names and refuses an outcome the
+kind's `shipChoices` doesn't include. A notice change applies when a notice is about
+to be sent, so turning a kind off also holds back notices already waiting.
+`notify.rule.reset` returns a kind to its default.
+
+`wake` for the four non-contact kinds is the same setting as their configurable
+responsibility source, so `r12y source enable|disable` and these rules can't disagree.
+When Ship itself turns off `notify` or sets `wake`, the owner's messenger is told,
+whatever their rules say and even while a client is active. An owner with no
+messenger sees the change marked on that rule in Settings.
+
 ## Web search: `web.search`
 
 Indexed web search uses the targetable `web.search` syscall, exposed as the
@@ -2191,9 +2234,10 @@ type SystemSyscalls = {
     args: { id: string; secret: string };
     result: { url: string; expiresAt: number };
   };
+  "account.recovery.options": { args: Record<string, never>; result: { emailUrl?: string } };
   "account.recovery.redeem": {
-    args: { id: string; secret: string; proof: string; password: string };
-    result: { username: "root" };
+    args: { id: string; secret: string; proof: string; password: string; account?: "personal" | "administrator" };
+    result: { username: string };
   };
   "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
   "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
@@ -2216,12 +2260,20 @@ Existing account UIDs, homes and credentials are preserved.
 immutable installation identity to Accounts. The browser then verifies the
 external owner through the configured identity provider. `account.recovery.redeem`
 is available before connection authentication, behind the ordinary installation
-work gate. Accounts authorizes only a short-lived root-reset claim through its
-deployment-granted recovery binding; redemption atomically consumes the claim,
-updates root's password, and revokes earlier root credentials and sessions.
-The receiving browser persists its random proof before redemption. Identical
-retries recover the receipt without rewriting the password; another proof or
-password cannot reuse a consumed claim. Secrets are excluded from the ledger.
+work gate. Accounts authorizes only a short-lived claim for the verified owner
+through its deployment-granted recovery binding; redemption atomically consumes
+the claim, updates the password of the chosen `account`, and revokes that account's
+earlier credentials and sessions. `account` is `personal` or `administrator`;
+omitting it means `administrator`. A personal account that is locked, disabled or
+absent answers with `details.recovery: "personal-unavailable"` and leaves the claim
+usable. The receiving browser persists its random proof before redemption.
+Identical retries recover the receipt without rewriting the password; another
+proof, password or account cannot reuse a consumed claim. Secrets are excluded from
+the ledger.
+
+`account.recovery.options` is available before connection authentication and
+returns the operator's owner recovery page for this Ship, when one is configured.
+The link is navigation only and says nothing about who owns the Ship.
 
 Member recovery is available before authentication through `account.recovery.code.start`
 and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte proof
@@ -2463,7 +2515,7 @@ type AdapterSyscalls = {
   };
 
   "adapter.inbound": {
-    args: { adapter: string; accountId: string; deliveryId: string; message: { messageId: string; surface: AdapterSurface; actor?: { id: string; name?: string; handle?: string }; text: string; media?: AdapterMedia[]; replyToId?: string; replyToText?: string; timestamp?: number; wasMentioned?: boolean } };
+    args: { adapter: string; accountId: string; deliveryId: string; message: { messageId: string; surface: AdapterSurface; actor?: { id: string; name?: string; handle?: string }; text: string; media?: AdapterMedia[]; replyToId?: string; timestamp?: number; wasMentioned?: boolean } };
     result: { ok: boolean; delivered?: { uid: number; pid: string; runId: string; queued: boolean }; reply?: { deliveryId: string; text: string; replyToId?: string }; challenge?: { deliveryId: string; code: string; prompt: string; expiresAt: number }; replayed?: "in_progress" | "completed"; droppedReason?: string; error?: string };
   };
 
@@ -2475,7 +2527,7 @@ type AdapterSyscalls = {
   "adapter.send": {
     args: { adapter: string; accountId: string; deliveryId?: string; surface: AdapterSurface; text: string; action?: { kind: "open"; label: string; url: string }; replyToId?: string; media?: AdapterMedia[]; also?: boolean };
     result:
-      | { ok: true; adapter: string; accountId: string; surfaceId: string; deliveryId: string; messageId?: string; deliveryState?: "sent" | "deduplicated" | "ambiguous" }
+      | { ok: true; adapter: string; accountId: string; surfaceId: string; deliveryId: string; messageId?: string; messageIds?: string[]; deliveryState?: "sent" | "deduplicated" | "ambiguous" }
       | { ok: false; error: string; deliveryId?: string; retryable?: boolean };
   };
 
@@ -2509,8 +2561,12 @@ action and direct the user to Chat. Opaque request identities are never rendered
 or parsed from free-form adapter messages. A native callback invokes ordinary
 `proc.hil` with the exact `requestId` through a Kernel-derived linked-human peer;
 actor, surface, route generation, provider-message correlation, human capability,
-and pending state are all rechecked. `replyToId` remains provider threading
-metadata and is not authorization.
+and pending state are all rechecked. `replyToId` is the provider id of a message
+the person quoted. It is not authorization: the Kernel resolves it only within the
+same owner, adapter account and surface, as described in
+[quoted replies](/architecture/adapter-model#quoted-replies). An adapter sets it only
+for a real quote. `messageId` is the first provider message of a delivery; a delivery
+split into several provider messages also reports all of them in `messageIds`.
 
 Routed adapter notifications and final replies are retained as Kernel-scheduled
 work under the stable delivery id. The exact adapter receives one correlated

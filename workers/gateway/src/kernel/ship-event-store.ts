@@ -9,7 +9,7 @@ import type { ProcessContactMessageRuntimeEvent } from "../protocol/process-fram
 export type OwnerNotifiedShipEvent = {
   type: "owner.notified";
   payload: ProcHistoryEventPayload<"owner.notified">;
-  link: ProcHistoryEventLink;
+  link?: ProcHistoryEventLink;
 };
 
 /** An event addressed to an owner's Ship rather than to one of its replaceable pids. */
@@ -51,7 +51,7 @@ const shipEventSchema: z.ZodType<ShipEvent> = z.union([
     payload: z.custom<ProcHistoryEventPayload<"owner.notified">>(
       (value) => procHistoryEventPayloadSchemas["owner.notified"].safeParse(value).success,
     ),
-    link: z.custom<ProcHistoryEventLink>((value) => procHistoryEventLinkSchema.safeParse(value).success),
+    link: z.custom<ProcHistoryEventLink>((value) => procHistoryEventLinkSchema.safeParse(value).success).optional(),
   }),
 ]);
 

@@ -14,6 +14,7 @@ import {
   armSchedule,
   normalizeScheduleExpression,
 } from "./scheduler";
+import { ownerTimezone } from "./timezone";
 
 const USER_CRON_PREFIX = "/var/spool/cron/";
 const SYSTEM_CRON_PREFIX = "/etc/cron.d/";
@@ -217,7 +218,8 @@ async function removeLinkedSchedules(ctx: KernelContext, path: string): Promise<
 }
 
 function parseUserCrontab(ctx: KernelContext, content: string, user: PasswdEntry): CronJobSpec[] {
-  return parseCrontabLines(ctx, content, (line, lineNumber, timezone) => {
+  const defaultTimezone = ownerTimezone(ctx.config, scheduleOwnerUidForUserCrontab(ctx, user));
+  return parseCrontabLines(content, defaultTimezone, (line, lineNumber, timezone) => {
     const match = line.match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/);
     if (!match) {
       throw new Error(`invalid crontab line ${lineNumber}: expected five schedule fields and a command`);
@@ -233,7 +235,8 @@ function parseUserCrontab(ctx: KernelContext, content: string, user: PasswdEntry
 }
 
 function parseSystemCrontab(ctx: KernelContext, content: string): CronJobSpec[] {
-  return parseCrontabLines(ctx, content, (line, lineNumber, timezone) => {
+  const defaultTimezone = ctx.config.get("config/server/timezone") || "UTC";
+  return parseCrontabLines(content, defaultTimezone, (line, lineNumber, timezone) => {
     const match = line.match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/);
     if (!match) {
       throw new Error(`invalid crontab line ${lineNumber}: expected five schedule fields, user, and command`);
@@ -250,12 +253,12 @@ function parseSystemCrontab(ctx: KernelContext, content: string): CronJobSpec[] 
 }
 
 function parseCrontabLines(
-  ctx: KernelContext,
   content: string,
+  defaultTimezone: string,
   parseJob: (line: string, lineNumber: number, timezone: string) => CronJobSpec,
 ): CronJobSpec[] {
   const jobs: CronJobSpec[] = [];
-  let timezone = ctx.config.get("config/server/timezone") || "UTC";
+  let timezone = defaultTimezone;
   const lines = content.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
     const lineNumber = index + 1;

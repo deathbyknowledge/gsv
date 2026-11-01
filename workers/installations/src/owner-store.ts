@@ -19,6 +19,9 @@ export type OwnerAttempt = {
   expires_at: number;
 };
 
+/** The expected answer when a handle has no linked owner or an attempt no longer applies. */
+export class OwnerAttemptUnavailableError extends Error {}
+
 /** Accounts owns external identity and ownership. This store never reads or writes Kernel credentials. */
 export class InstallationOwnerStore {
   constructor(private readonly db: D1Database, private readonly registryPrincipalId: string) {}
@@ -46,7 +49,7 @@ export class InstallationOwnerStore {
     const attempt = await this.get(id);
     const valid = await this.db.prepare(`SELECT 1 FROM installations WHERE id = ? AND handle = ? AND state = 'active'
       AND owner_principal_id = ?`).bind(attempt?.installation_id ?? "", handle, attempt?.expected_owner_id ?? "").first();
-    if (!attempt || attempt.purpose !== "recover" || attempt.expires_at <= now || !valid) throw new Error("Owner recovery is unavailable");
+    if (!attempt || attempt.purpose !== "recover" || attempt.expires_at <= now || !valid) throw new OwnerAttemptUnavailableError("Owner recovery is unavailable");
     return attempt;
   }
 
@@ -102,7 +105,7 @@ export class InstallationOwnerStore {
     if (!attempt || attempt.browser_secret_hash !== input.browserSecretHash || attempt.expires_at <= now
       || attempt.state !== "authenticating" || attempt.code_verifier !== null || attempt.nonce !== null
       || (attempt.purpose === "link" && attempt.link_secret_hash !== input.linkSecretHash)) {
-      throw new Error("Owner authentication attempt is unavailable");
+      throw new OwnerAttemptUnavailableError("Owner authentication attempt is unavailable");
     }
     return attempt;
   }

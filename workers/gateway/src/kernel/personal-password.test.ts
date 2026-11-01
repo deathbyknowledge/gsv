@@ -29,7 +29,7 @@ async function fixture(work: (recovery: AccountRecoveryStore, ctx: KernelContext
       connection: null, peer: testPeer({ account: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, calls: ["*"] }),
       invalidateAccountConnections: vi.fn(), broadcastToUserUid: vi.fn(),
       defer: (promise: Promise<unknown>) => { void promise.catch(() => undefined); },
-      responsibilitySources: { isEnabled: () => false }, responsibilities: { listActiveByDedupeKeyPrefix: () => [] },
+      responsibilitySources: { isEnabled: () => false }, noticeRules: { wantsNotice: () => false }, responsibilities: { listActiveByDedupeKeyPrefix: () => [] },
       adapters: { identityLinks: new IdentityLinkStore(sql), status: new AdapterStatusStore(sql), surfaceRoutes: { get: () => null } },
     } as KernelContext;
     await work(recovery, ctx, sql);
