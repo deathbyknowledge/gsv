@@ -61,6 +61,20 @@ describe("owner notice delivery", () => {
     });
   });
 
+  it("tells the person on their messenger that Ship changed a rule even while a client is active", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices, shipEvents, state } = fixture(storage);
+      const send = sent();
+      state.activeClient = "connection:web";
+      notices.noteOnce(OWNER, "notice.rule.changed:contact.message:stopped-telling:1", "notice.rule.changed",
+        { from: "contact.message", ruleChange: "stopped-telling" }, Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:one" });
+      expect(send).toHaveBeenCalledOnce();
+      expect(notices.next(OWNER)).toBeNull();
+      expect(shipEvents.next(OWNER)).toBeNull();
+    });
+  });
+
   it("shows Ship a contact's message without telling the person when they turned the notice off", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, notices, shipEvents, rules } = fixture(storage);
