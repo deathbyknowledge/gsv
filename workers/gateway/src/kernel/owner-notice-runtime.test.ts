@@ -6,6 +6,7 @@ import * as adapterSend from "./adapter-send";
 import type { Kernel } from "./do";
 import { OwnerNoticeRuntime } from "./owner-notice-runtime";
 import { OWNER_NOTICE_COLLAPSE_MS, OwnerNoticeStore } from "./owner-notice-store";
+import { NoticeRuleStore } from "./notice-rules";
 import { ShipEventStore } from "./ship-event-store";
 
 const OWNER = 1000;
@@ -183,6 +184,19 @@ describe("owner notice delivery", () => {
     });
   });
 
+  it("sends nothing for a kind its owner turned off, and records nothing for Ship", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices, shipEvents, rules } = fixture(storage);
+      const send = sent();
+      notices.noteContactMessage(OWNER, adaSubject("hi"), 1, Date.now());
+      rules.set(OWNER, "contact.message", "none", "person", Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:one" });
+      expect(send).not.toHaveBeenCalled();
+      expect(notices.next(OWNER)).toBeNull();
+      expect(shipEvents.next(OWNER)).toBeNull();
+    });
+  });
+
   it("sends nothing to an owner without a messenger", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, notices, state } = fixture(storage);
@@ -239,10 +253,12 @@ function initialState(): State {
 function fixture(storage: DurableObjectStorage) {
   const notices = new OwnerNoticeStore(storage);
   const shipEvents = new ShipEventStore(storage);
+  const rules = new NoticeRuleStore(storage);
   const state = initialState();
   const schedule = vi.fn(async (when: Date, _callback: string, _ownerUid: number, _options: DurableTaskOptions) =>
     ({ id: `task:${when.getTime()}`, time: Math.floor(when.getTime() / 1_000) }));
   const ctx = {
+    noticeRules: rules,
     federation: { get: (id: string) => id === state.contact.id ? state.contact : null },
     approaches: { get: (id: string) => id === state.approach.summary.id ? state.approach : null },
     conversations: { inboxEntry: (_uid: number, id: string) => id === "conv:ada" ? { unread: state.unread } : null },
@@ -266,5 +282,5 @@ function fixture(storage: DurableObjectStorage) {
   };
   // SAFETY: OwnerNoticeRuntime reaches only these Kernel members.
   const runtime = new OwnerNoticeRuntime(host as Kernel);
-  return { runtime, notices, shipEvents, host, state, schedule };
+  return { runtime, notices, shipEvents, host, state, schedule, rules };
 }

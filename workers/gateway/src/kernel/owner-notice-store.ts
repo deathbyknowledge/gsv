@@ -1,9 +1,8 @@
 import { z } from "zod";
+import type { NoticeKind } from "@humansandmachines/gsv/protocol";
 
 /** New contact messages collapse into one notice per contact within this window. */
 export const OWNER_NOTICE_COLLAPSE_MS = 10 * 60_000;
-
-export type OwnerNoticeTopic = "contact.message" | "contact.request" | "contact.invite.accepted";
 
 /** What a notice is about. The Kernel rechecks it before sending; contact names and text are untrusted. */
 export type OwnerNoticeSubject = {
@@ -19,7 +18,7 @@ export type OwnerNoticeSubject = {
 export type OwnerNotice = {
   key: string;
   ownerUid: number;
-  topic: OwnerNoticeTopic;
+  topic: NoticeKind;
   subject: OwnerNoticeSubject;
   pendingCount: number;
   round: number;
@@ -32,7 +31,7 @@ export type OwnerNotice = {
 type OwnerNoticeRow = {
   notice_key: string;
   owner_uid: number;
-  topic: OwnerNoticeTopic;
+  topic: NoticeKind;
   subject_json: string;
   pending_count: number;
   round: number;
@@ -96,7 +95,7 @@ export class OwnerNoticeStore {
   }
 
   /** Queue a notice that is sent at most once for its key. */
-  noteOnce(ownerUid: number, key: string, topic: OwnerNoticeTopic, subject: OwnerNoticeSubject, now: number): void {
+  noteOnce(ownerUid: number, key: string, topic: NoticeKind, subject: OwnerNoticeSubject, now: number): void {
     this.sql.exec(
       `INSERT OR IGNORE INTO owner_notices (notice_key, owner_uid, topic, subject_json, pending_count,
         state, next_attempt_at, created_at, updated_at)

@@ -19,6 +19,7 @@ import { KERNEL_V082_OWNER_NOTICES } from "./v082_owner_notices";
 import { KERNEL_V083_MAIL_SEARCH } from "./v083_mail_search";
 import { KERNEL_V084_DROP_LINK_CHALLENGES } from "./v084_drop_link_challenges";
 import { KERNEL_V086_ADAPTER_MESSAGE_REFS } from "./v086_adapter_message_refs";
+import { KERNEL_V087_NOTICE_RULES } from "./v087_notice_rules";
 import { KERNEL_V088_PERSONAL_RECOVERY_CLAIMS } from "./v088_personal_recovery_claims";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
@@ -223,6 +224,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V083_MAIL_SEARCH,
   KERNEL_V084_DROP_LINK_CHALLENGES,
   KERNEL_V086_ADAPTER_MESSAGE_REFS,
+  KERNEL_V087_NOTICE_RULES,
   KERNEL_V088_PERSONAL_RECOVERY_CLAIMS,
 ];
 

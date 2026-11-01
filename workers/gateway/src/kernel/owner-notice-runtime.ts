@@ -105,8 +105,9 @@ export class OwnerNoticeRuntime {
     return true;
   }
 
-  /** The notice as it stands now, or null once its subject was read, decided, muted or ended. */
+  /** The notice as it stands now, or null once its owner turned its kind off or its subject was read, decided, muted or ended. */
   private admit(notice: OwnerNotice, ctx: KernelContext): OwnerNotice | null {
+    if (ctx.noticeRules.notifies(notice.ownerUid, notice.topic) === "none") return null;
     const { subject } = notice;
     if (notice.topic === "contact.request") {
       const approach = subject.approachId ? ctx.approaches.get(subject.approachId) : null;

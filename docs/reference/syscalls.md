@@ -528,6 +528,36 @@ only.
 than 100,000 characters comes back cut short, with `truncated` set; the whole
 message stays readable at `textPath`.
 
+## Notification settings: `notify.rule.list`, `notify.rule.set`, `notify.rule.reset`
+
+Each person decides, kind by kind, whether a notice reaches their messenger.
+The signed-in person or their Ship may call these, under the `notify.rule.*`
+capability; any other process is refused.
+
+```ts
+type NoticeKind = "contact.request" | "contact.message" | "contact.invite.accepted";
+type NoticeDelivery = "none" | "messenger";
+type NoticeRule = {
+  kind: NoticeKind;
+  notify: NoticeDelivery;
+  defaultNotify: NoticeDelivery;
+  changedBy?: "person" | "ship"; // absent while the kind is at its default
+  updatedAtMs?: number;
+};
+
+type NotifySyscalls = {
+  "notify.rule.list": { args: {}; result: { rules: NoticeRule[] } };
+  "notify.rule.set": { args: { kind: NoticeKind; notify: NoticeDelivery }; result: { rule: NoticeRule } };
+  "notify.rule.reset": { args: { kind: NoticeKind }; result: { rule: NoticeRule } };
+};
+```
+
+`notify.rule.list` returns every kind, including those still at their default.
+A change applies when a notice is about to be sent, so turning a kind off also
+holds back notices of that kind already waiting. A kind set to `none` sends
+nothing and tells Ship nothing. `notify.rule.reset` returns a kind to its
+default.
+
 ## Web search: `web.search`
 
 Indexed web search uses the targetable `web.search` syscall, exposed as the
