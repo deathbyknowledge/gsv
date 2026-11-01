@@ -126,9 +126,11 @@ describe("sys.config.get", () => {
     ["whatsapp", false],
     ["web", false],
     ["desktop", false],
-  ])("routes Ship to the messenger the first run chose (%s → routed: %s), never on pairing alone", async (chosen, routed) => {
+  ])("routes Ship where the first run chose (%s → messenger: %s), never on pairing alone", async (chosen, routed) => {
     await runWithRealKernelSql(async (sql, storage) => {
       const ctx = makeContext(1000, { "users/1000/ui/preferred_surface": chosen });
+      // SAFETY: only the finishing connection's id is read.
+      ctx.connection = { id: "finishing-client" } as KernelContext["connection"];
       ctx.responsibilities = new ResponsibilityStore(storage);
       ctx.welcome = new InitialOnboarding(storage, ctx.responsibilities);
       const identityLinks = new IdentityLinkStore(sql);
@@ -138,14 +140,15 @@ describe("sys.config.get", () => {
       ctx.shipReplies = new ShipReplies(storage);
       identityLinks.link("telegram", "managed", "12345", 1000, 1000, { managed: true, surfaceKind: "dm", surfaceId: "12345" });
       expect(privateDestinations.get(1000)).toBeNull();
-      // a client the person wrote from moments ago would otherwise hold Ship's replies
-      ctx.shipReplies.recordClient(1000, "web-client");
+      // another client the person wrote from moments ago would otherwise hold Ship's replies
+      ctx.shipReplies.recordClient(1000, "earlier-client");
 
       await handleSysConfigSet({ key: "users/1000/ui/welcome_card_seen", value: "1" }, ctx);
       expect(privateDestinations.get(1000)?.destination ?? null).toEqual(routed
         ? { kind: "adapter", adapter: "telegram", accountId: "managed", actorId: "12345", surface: { kind: "dm", id: "12345" } }
         : null);
-      expect(storage.kv.get<{ connectionId: string | null }>("ship-reply:1000")?.connectionId).toBe(routed ? null : "web-client");
+      // a messenger choice hands replies to it; web and desktop select the client that finished
+      expect(storage.kv.get<{ connectionId: string | null }>("ship-reply:1000")?.connectionId).toBe(routed ? null : "finishing-client");
     });
   });
 

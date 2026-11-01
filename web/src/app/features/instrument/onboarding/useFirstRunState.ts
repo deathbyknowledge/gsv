@@ -6,8 +6,8 @@ export const FIRST_RUN_SEEN = "ui/welcome_card_seen";
 /**
  * Where the person said they want to message Ship, recorded next to the flag. It is the stated
  * preference, not the client that finished the first run: choosing the desktop app and continuing
- * in the browser meanwhile records "desktop". Web and desktop route alike; only a messenger choice
- * moves Ship's greeting.
+ * in the browser meanwhile records "desktop". Web and desktop select the client that finished the
+ * first run for Ship's replies; a messenger choice moves them there.
  */
 export const PREFERRED_SURFACE = "ui/preferred_surface";
 
