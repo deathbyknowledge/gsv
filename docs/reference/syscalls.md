@@ -2221,9 +2221,10 @@ type SystemSyscalls = {
     args: { id: string; secret: string };
     result: { url: string; expiresAt: number };
   };
+  "account.recovery.options": { args: Record<string, never>; result: { emailUrl?: string } };
   "account.recovery.redeem": {
-    args: { id: string; secret: string; proof: string; password: string };
-    result: { username: "root" };
+    args: { id: string; secret: string; proof: string; password: string; account?: "personal" | "administrator" };
+    result: { username: string };
   };
   "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
   "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
@@ -2246,12 +2247,20 @@ Existing account UIDs, homes and credentials are preserved.
 immutable installation identity to Accounts. The browser then verifies the
 external owner through the configured identity provider. `account.recovery.redeem`
 is available before connection authentication, behind the ordinary installation
-work gate. Accounts authorizes only a short-lived root-reset claim through its
-deployment-granted recovery binding; redemption atomically consumes the claim,
-updates root's password, and revokes earlier root credentials and sessions.
-The receiving browser persists its random proof before redemption. Identical
-retries recover the receipt without rewriting the password; another proof or
-password cannot reuse a consumed claim. Secrets are excluded from the ledger.
+work gate. Accounts authorizes only a short-lived claim for the verified owner
+through its deployment-granted recovery binding; redemption atomically consumes
+the claim, updates the password of the chosen `account`, and revokes that account's
+earlier credentials and sessions. `account` is `personal` or `administrator`;
+omitting it means `administrator`. A personal account that is locked, disabled or
+absent answers with `details.recovery: "personal-unavailable"` and leaves the claim
+usable. The receiving browser persists its random proof before redemption.
+Identical retries recover the receipt without rewriting the password; another
+proof, password or account cannot reuse a consumed claim. Secrets are excluded from
+the ledger.
+
+`account.recovery.options` is available before connection authentication and
+returns the operator's owner recovery page for this Ship, when one is configured.
+The link is navigation only and says nothing about who owns the Ship.
 
 Member recovery is available before authentication through `account.recovery.code.start`
 and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte proof

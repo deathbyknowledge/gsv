@@ -771,6 +771,7 @@ async function dispatchKernel(
       case "account.recovery.code.start":
       case "account.recovery.code.redeem":
       case "account.recovery.redeem":
+      case "account.recovery.options":
         return errFrame(frame.id, 400, "Account recovery requires the connection enrollment path");
       case "account.password.set":
         data = await ctx.accountRecovery.resetPersonalPassword(frame.args, ctx);

@@ -87,7 +87,7 @@ export function LoginScreen({
                   type="submit"
                 />
               </div>
-              {!administrator && <AppLink href="/recover-member" class="gsv-auth-link gsv-login-recovery-link">{t("session.login.forgotPassword")}</AppLink>}
+              <AppLink href="/recover-member" class="gsv-auth-link gsv-login-recovery-link">{t(administrator ? "session.login.forgotAdminPassword" : "session.login.forgotPassword")}</AppLink>
               </form>
             )}
           </div>

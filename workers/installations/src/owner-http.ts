@@ -18,11 +18,11 @@ export class InstallationOwnerHttp {
     const path = url.pathname.startsWith(`${this.prefix}/`) ? `/owner/${url.pathname.slice(this.prefix.length + 1)}` : url.pathname;
     try {
       if (request.method === "GET" && path === "/owner/recover") {
-        return page(`<h1>Recover your Ship</h1><p>Sign in as the verified owner to reset your Ship’s administrator password.</p>
-          <form method="post" action="${this.prefix}/recover"><label>Handle <input name="handle" required maxlength="63" autocomplete="off"></label><button>Verify owner</button></form>`, 200, noStoreFormHeaders());
+        return page(`<h1>Forgot your password?</h1><p>Sign in with your identity provider, then set a new password on your Ship.</p>
+          <form method="post" action="${this.prefix}/recover"><label>Your Ship’s handle <input name="handle" value="${escapeHtml(url.searchParams.get("handle") ?? "")}" required maxlength="63" autocomplete="off"></label><button>Verify owner</button></form>`, 200, noStoreFormHeaders());
       }
       if (request.method === "GET" && path === "/owner/link") {
-        return page(`<h1>Account recovery</h1><p>Verify it’s you to recover administrator access if you lose it.</p>
+        return page(`<h1>Account recovery</h1><p>Verify it’s you so you can get back in if you lose your password.</p>
           <form method="post" action="${this.prefix}/link"><input type="hidden" name="id"><input type="hidden" name="secret"><button>Verify owner</button></form>
           <script>const p=new URLSearchParams(location.hash.slice(1));history.replaceState(null,"",location.pathname);document.querySelector('[name="id"]').value=p.get("id")||"";document.querySelector('[name="secret"]').value=p.get("secret")||"";</script>`, 200, noStoreFormHeaders());
       }
@@ -59,7 +59,7 @@ export class InstallationOwnerHttp {
       return page("Not found", 404);
     } catch {
       // Provider exceptions may carry authorization codes or token bodies. Never render or log them.
-      return page(`<h1>Owner verification could not complete</h1><p>The attempt may have expired or this account may not own this Ship. Start again from your Ship settings or <a href="/owner/recover">recover your Ship</a>.</p>`, 400);
+      return page(`<h1>Owner verification could not complete</h1><p>The attempt may have expired or this account may not own this Ship. Start again from your Ship settings or <a href="/owner/recover">reset your password</a>.</p>`, 400);
     }
   }
 

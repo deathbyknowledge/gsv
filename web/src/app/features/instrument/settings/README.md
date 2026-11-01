@@ -76,7 +76,7 @@ The compact approval editor supports tool/target/action rules, with arrow button
 
 Settings includes a quiet sign-out action beside the current username. Unsaved work across all retained web app views requires confirmation before signing out; the shared session service clears the stored credential, revokes the current UI token and returns to login.
 
-The administrator's Sign-in section holds personal password reset and verified-owner linking.
+The administrator's Sign-in section holds personal password reset and verified-owner linking. A person who forgot their password doesn't need it once an owner is linked: sign-in's **Forgot your password?** emails the verified owner a code and sets the personal password directly.
 A reset selects the sole personal account and explains credential and messenger
 revocation. The password field is cleared when the section is hidden. Ordinary
 sign-in asks only for a password; the explicit **admin** toggle (Administrator sign-in) selects the administrator account (`root`).
