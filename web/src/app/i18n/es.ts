@@ -263,6 +263,13 @@ export const es = {
   // Settings: messengers
   "settings.messengers.comingSoon": "Próximamente",
   "settings.messengers.title": "Mensajería",
+  "settings.notices.title": "Qué te llega a tu app de mensajería",
+  "settings.notices.intro": "Te llegan a tu app de mensajería cuando no estás en la aplicación. Si desactivas uno, tampoco se enviarán los que estén pendientes.",
+  "settings.notices.loading": "Cargando…",
+  "settings.notices.kind.request": "Alguien te pide escribirte",
+  "settings.notices.kind.message": "Un mensaje de uno de tus contactos",
+  "settings.notices.kind.inviteAccepted": "Alguien acepta tu invitación",
+  "settings.notices.changedByShip": "Lo ha cambiado tu Ship.",
   "settings.messengers.intro": "Habla con tu Ship desde tu app de mensajería favorita.",
   "settings.messengers.telegram": "Habla con tu Ship desde Telegram.",
   "settings.messengers.slack": "Habla con tu Ship desde tu espacio de trabajo de Slack.",

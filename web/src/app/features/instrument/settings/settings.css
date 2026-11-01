@@ -108,6 +108,8 @@
 .settings-messenger { padding-bottom: 1rem; }
 .settings-messenger-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2.5rem; }
 .settings-messenger-heading h2 { margin: 0; }
+.settings-notice-rule { margin-top: .75rem; }
+.settings-notice-rule small { display: block; margin: .25rem 0 0 1.625rem; color: var(--text-dim); }
 .settings-coming-soon { display: inline-block; margin-left: .75rem; padding: .15rem .4rem; border: 1px solid var(--border); font-size: .65rem; font-weight: 400; vertical-align: middle; white-space: nowrap; }
 .settings-messenger-links { margin: 0; }
 .settings-messenger-status { display: inline-flex; align-items: center; gap: .5rem; font-size: .75rem; }

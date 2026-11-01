@@ -205,6 +205,10 @@ yet. Messages that Ship handles reach Ship, not a notice; Ship tells you what
 matters. GSV doesn't send these notices while you are active in a browser or on
 Desktop, because People shows the change there.
 
+To choose which of these reach you, open Settings → Messengers → What reaches
+your messenger. Turning one off also holds back any still waiting. Ship can
+change them when you ask it to, and Settings says when it did.
+
 Ship knows about each notice it sent, so you can reply to it in the same chat,
 for example "tell her Friday works". A message request stays yours to read and
 decide in People.

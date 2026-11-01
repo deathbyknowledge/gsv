@@ -8,6 +8,7 @@ import type { ConsoleIdentityLink } from "../../../domain/system/consoleModels";
 import { INSTRUMENT_MESSENGERS_KEY } from "../wire/queryKeys";
 import { refreshMessengerConnections } from "../wire/messengerSync";
 import { MessengerPairing } from "./Telegram";
+import { NoticeRules } from "./NoticeRules";
 import type { ManagedMessengerId } from "./messengers/ManagedTelegramOnboardingFlow";
 import { loadMessengerConnections, messengerConnectionStatus, type MessengerConnectionStatus } from "./messengerConnectionsService";
 import { canConfigure } from "./settingsModel";
@@ -99,5 +100,6 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         </fieldset>}
       </section>;
     })}
+    {account.uid >= 1000 && canConfigure(account, "notify.rule.set") && <NoticeRules active={active} />}
   </section>;
 }

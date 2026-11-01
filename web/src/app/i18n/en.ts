@@ -262,6 +262,13 @@ export const en = {
   // Settings: messengers
   "settings.messengers.comingSoon": "Coming soon",
   "settings.messengers.title": "Messengers",
+  "settings.notices.title": "What reaches your messenger",
+  "settings.notices.intro": "These reach your messenger while you are away from the app. Turning one off also holds back any still waiting.",
+  "settings.notices.loading": "Loading…",
+  "settings.notices.kind.request": "Someone asks to message you",
+  "settings.notices.kind.message": "A message from one of your contacts",
+  "settings.notices.kind.inviteAccepted": "Someone accepts your invitation",
+  "settings.notices.changedByShip": "Your Ship changed this.",
   "settings.messengers.intro": "Talk to your Ship from your favorite messenger app.",
   "settings.messengers.telegram": "Talk to your Ship from Telegram.",
   "settings.messengers.slack": "Talk to your Ship from your Slack workspace.",

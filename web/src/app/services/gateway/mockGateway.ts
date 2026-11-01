@@ -30,6 +30,7 @@
  *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
  *   anything else is committed as your message and answered briefly a second later
  */
+import type { NoticeRule } from "@humansandmachines/gsv/protocol";
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import type { ProfileState } from "@humansandmachines/gsv/protocol";
 import { contactSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
@@ -178,7 +179,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["notify.rule.*", "sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -371,6 +372,11 @@ type World = {
   context: ProcContextState | null; contextRevision: number;
   run: OpenRun | null; connections: number; sockets: Set<MockSocket>;
 };
+let noticeRules: NoticeRule[] = [
+  { kind: "contact.request", notify: "messenger", defaultNotify: "messenger" },
+  { kind: "contact.message", notify: "none", defaultNotify: "messenger", changedBy: "ship", updatedAtMs: Date.now() },
+  { kind: "contact.invite.accepted", notify: "messenger", defaultNotify: "messenger" },
+];
 const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
 const fresh = freshRequested();
 let streamSeq = 0;
@@ -872,6 +878,13 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { ok: true });
     }
     case "account.list": return respond(id, { accounts });
+    case "notify.rule.list": return respond(id, { rules: noticeRules });
+    case "notify.rule.set": {
+      const { kind, notify } = z.object({ kind: z.enum(["contact.request", "contact.message", "contact.invite.accepted"]), notify: z.enum(["none", "messenger"]) }).parse(args);
+      const rule: NoticeRule = { kind, notify, defaultNotify: "messenger", changedBy: "person", updatedAtMs: Date.now() };
+      noticeRules = noticeRules.map((entry) => entry.kind === kind ? rule : entry);
+      return respond(id, { rule });
+    }
     case "sys.target.list": return respond(id, { targets });
     case "sys.ledger.list": return respond(id, { lines: [...world.ledger].reverse(), nextCursor: null });
     case "proc.list": return respond(id, { processes: processes() });

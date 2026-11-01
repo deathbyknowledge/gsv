@@ -268,6 +268,13 @@ export const ptBR = {
   // Settings: messengers
   "settings.messengers.comingSoon": "Em breve",
   "settings.messengers.title": "Apps de mensagem",
+  "settings.notices.title": "O que chega ao seu app de mensagem",
+  "settings.notices.intro": "Estes avisos chegam ao seu app de mensagem quando você não está no aplicativo. Ao desativar um, os que ainda estão pendentes também não são enviados.",
+  "settings.notices.loading": "Carregando…",
+  "settings.notices.kind.request": "Alguém pede para falar com você",
+  "settings.notices.kind.message": "Uma mensagem de um dos seus contatos",
+  "settings.notices.kind.inviteAccepted": "Alguém aceita o seu convite",
+  "settings.notices.changedByShip": "O seu Ship mudou isto.",
   "settings.messengers.intro": "Fale com o seu Ship pelo seu app de mensagem favorito.",
   "settings.messengers.telegram": "Converse com seu Ship pelo Telegram.",
   "settings.messengers.slack": "Converse com seu Ship pelo seu espaço de trabalho do Slack.",
