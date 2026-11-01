@@ -152,7 +152,7 @@ import {
 } from "./outbound-mail";
 import { approvalTargetIdentity, getVisibleTarget, resolveVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
-import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerTargetOf, outcomeOfResponse, errorOfResponse, usageOfResponse, type JsonLike } from "./ledger";
+import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerArgsOf, ledgerTargetOf, outcomeOfResponse, errorOfResponse, usageOfResponse, type JsonLike } from "./ledger";
 import { LedgerFeed } from "./ledger-feed";
 
 const LEDGER_ROTATION_TASK = "rotate";
@@ -1945,16 +1945,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const principal = principalOf(ctx);
       if (!principal) return;
       const ownerUid = resolveCallerOwnerUid(ctx);
-      // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
-      // Enrollment authorization stays out of the ledger even when a caller lacks its grant.
-      const args = (frame.call === "account.owner.link" || frame.call === "account.recovery.redeem"
-        || frame.call === "account.recovery.code.start" || frame.call === "account.recovery.code.redeem"
-        ? { id: frame.args.id }
-        : frame.call === "account.password.set" ? { uid: frame.args.uid }
-        : frame.call === "sys.pair.create"
-        ? { id: frame.args.id, targetId: frame.args.targetId, label: frame.args.label }
-        : frame.call === "sys.pair.redeem" ? { id: frame.args.id }
-        : frame.args) as JsonLike;
+      const args = ledgerArgsOf(frame);
       const seq = this.ledger.append({
         requestId: frame.id,
         timestamp: Date.now(),
