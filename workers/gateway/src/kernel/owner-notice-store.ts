@@ -1,24 +1,34 @@
 import { z } from "zod";
 import type { NoticeKind } from "@humansandmachines/gsv/protocol";
 
-/** New contact messages collapse into one notice per contact within this window. */
+/** What a notice can be about: a rule's kind, or Ship having changed a rule, which no rule can silence. */
+export type OwnerNoticeTopic = NoticeKind | "notice.rule.changed";
+
+/** Repeats of these collapse into one notice per key within a window, rather than each being told once. */
+const collapses = (topic: OwnerNoticeTopic) => topic === "contact.message" || topic === "mail.received";
+
+/** New contact messages and mail collapse into one notice per key within this window. */
 export const OWNER_NOTICE_COLLAPSE_MS = 10 * 60_000;
 
-/** What a notice is about. The Kernel rechecks it before sending; contact names and text are untrusted. */
+/** What a notice is about. The Kernel rechecks it before sending; names and text from outside are untrusted. */
 export type OwnerNoticeSubject = {
-  contactId: string;
+  contactId?: string;
   contactGeneration?: string;
   conversationId?: string;
   approachId?: string;
   from: string;
   handle?: string;
   preview?: string;
+  /** The messenger account a messenger notice is about, which can't itself carry a notice it needs fixed. */
+  adapter?: string;
+  accountId?: string;
+  ruleChange?: "stopped-telling" | "started-acting";
 };
 
 export type OwnerNotice = {
   key: string;
   ownerUid: number;
-  topic: NoticeKind;
+  topic: OwnerNoticeTopic;
   subject: OwnerNoticeSubject;
   pendingCount: number;
   round: number;
@@ -31,7 +41,7 @@ export type OwnerNotice = {
 type OwnerNoticeRow = {
   notice_key: string;
   owner_uid: number;
-  topic: NoticeKind;
+  topic: OwnerNoticeTopic;
   subject_json: string;
   pending_count: number;
   round: number;
@@ -41,13 +51,16 @@ type OwnerNoticeRow = {
 };
 
 const subjectSchema = z.object({
-  contactId: z.string(),
+  contactId: z.string().optional(),
   contactGeneration: z.string().optional(),
   conversationId: z.string().optional(),
   approachId: z.string().optional(),
   from: z.string(),
   handle: z.string().optional(),
   preview: z.string().optional(),
+  adapter: z.string().optional(),
+  accountId: z.string().optional(),
+  ruleChange: z.enum(["stopped-telling", "started-acting"]).optional(),
 });
 
 /**
@@ -62,8 +75,17 @@ export class OwnerNoticeStore {
    * Count one contact message. A message after a sent notice waits out the collapse window,
    * then goes out as one notice covering every message since.
    */
-  noteContactMessage(ownerUid: number, subject: OwnerNoticeSubject, sequence: number, now: number): void {
-    const key = `contact.message:${subject.contactId}`;
+  noteContactMessage(ownerUid: number, subject: OwnerNoticeSubject & { contactId: string }, sequence: number, now: number): void {
+    this.noteCounted(ownerUid, `contact.message:${subject.contactId}`, "contact.message", subject, sequence, now);
+  }
+
+  /** Count one received email, the same way; `sequence` only has to increase within the mailbox. */
+  /** Mail completes out of order, so its caller's delivery checkpoint is what keeps it from counting twice. */
+  noteMail(ownerUid: number, mailboxId: string, subject: OwnerNoticeSubject, now: number): void {
+    this.noteCounted(ownerUid, `mail.received:${mailboxId}`, "mail.received", subject, null, now);
+  }
+
+  private noteCounted(ownerUid: number, key: string, topic: OwnerNoticeTopic, subject: OwnerNoticeSubject, sequence: number | null, now: number): void {
     const row = this.sql.exec<{ state: string; counted_sequence: number | null; sent_at: number | null }>(
       "SELECT state, counted_sequence, sent_at FROM owner_notices WHERE notice_key = ?", key,
     ).toArray()[0];
@@ -71,12 +93,12 @@ export class OwnerNoticeStore {
       this.sql.exec(
         `INSERT INTO owner_notices (notice_key, owner_uid, topic, subject_json, pending_count, counted_sequence,
           state, next_attempt_at, created_at, updated_at)
-         VALUES (?, ?, 'contact.message', ?, 1, ?, 'pending', ?, ?, ?)`,
-        key, ownerUid, JSON.stringify(subject), sequence, now, now, now,
+         VALUES (?, ?, ?, ?, 1, ?, 'pending', ?, ?, ?)`,
+        key, ownerUid, topic, JSON.stringify(subject), sequence, now, now, now,
       );
       return;
     }
-    if (row.counted_sequence !== null && sequence <= row.counted_sequence) return;
+    if (sequence !== null && row.counted_sequence !== null && sequence <= row.counted_sequence) return;
     if (row.state === "pending") {
       this.sql.exec(
         `UPDATE owner_notices SET subject_json = ?, pending_count = pending_count + 1, counted_sequence = ?, updated_at = ?
@@ -95,7 +117,7 @@ export class OwnerNoticeStore {
   }
 
   /** Queue a notice that is sent at most once for its key. */
-  noteOnce(ownerUid: number, key: string, topic: NoticeKind, subject: OwnerNoticeSubject, now: number): void {
+  noteOnce(ownerUid: number, key: string, topic: OwnerNoticeTopic, subject: OwnerNoticeSubject, now: number): void {
     this.sql.exec(
       `INSERT OR IGNORE INTO owner_notices (notice_key, owner_uid, topic, subject_json, pending_count,
         state, next_attempt_at, created_at, updated_at)
@@ -127,11 +149,11 @@ export class OwnerNoticeStore {
   }
 
   /**
-   * Record a sent round. Contact messages keep their row through the collapse window;
+   * Record a sent round. Collapsing topics keep their row through the collapse window;
    * a notice sent once is finished.
    */
   sent(notice: OwnerNotice, now: number): void {
-    if (notice.topic !== "contact.message") {
+    if (!collapses(notice.topic)) {
       this.sql.exec("UPDATE owner_notices SET state = 'sent', sent_at = ?, updated_at = ? WHERE notice_key = ? AND round = ?",
         now, now, notice.key, notice.round);
       return;
@@ -154,7 +176,7 @@ export class OwnerNoticeStore {
    * owner had no messenger. A later contact message starts a fresh notice right away.
    */
   dismissed(notice: OwnerNotice, now: number): void {
-    if (notice.topic !== "contact.message") {
+    if (!collapses(notice.topic)) {
       this.sql.exec("UPDATE owner_notices SET state = 'sent', updated_at = ? WHERE notice_key = ? AND round = ?",
         now, notice.key, notice.round);
       return;
@@ -170,10 +192,10 @@ export class OwnerNoticeStore {
     );
   }
 
-  /** Forget contact rows whose collapse window has passed. Keys sent once stay as their receipt. */
+  /** Forget collapsing rows whose collapse window has passed. Keys sent once stay as their receipt. */
   prune(now: number): void {
     this.sql.exec(
-      "DELETE FROM owner_notices WHERE topic = 'contact.message' AND state = 'sent' AND sent_at < ?",
+      "DELETE FROM owner_notices WHERE topic IN ('contact.message', 'mail.received') AND state = 'sent' AND sent_at < ?",
       now - OWNER_NOTICE_COLLAPSE_MS,
     );
   }

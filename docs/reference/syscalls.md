@@ -530,33 +530,46 @@ message stays readable at `textPath`.
 
 ## Notification settings: `notify.rule.list`, `notify.rule.set`, `notify.rule.reset`
 
-Each person decides, kind by kind, whether a notice reaches their messenger.
-The signed-in person or their Ship may call these, under the `notify.rule.*`
-capability; any other process is refused.
+Each person decides, for each kind of thing that happens, whether their messenger
+hears about it and what their Ship does. The signed-in person or their Ship may
+call these, under the `notify.rule.*` capability; any other process is refused.
 
 ```ts
-type NoticeKind = "contact.request" | "contact.message" | "contact.invite.accepted";
+type NoticeKind =
+  | "contact.request" | "contact.message" | "contact.invite.accepted"
+  | "mail.received" | "machine.added" | "adapter.connected" | "adapter.auth_required";
 type NoticeDelivery = "none" | "messenger";
+type ShipOutcome = "none" | "context" | "wake"; // context records it without starting a run
 type NoticeRule = {
   kind: NoticeKind;
   notify: NoticeDelivery;
+  ship: ShipOutcome;
   defaultNotify: NoticeDelivery;
+  defaultShip: ShipOutcome;
+  shipChoices: ShipOutcome[]; // contact kinds never allow wake
   changedBy?: "person" | "ship"; // absent while the kind is at its default
   updatedAtMs?: number;
 };
 
 type NotifySyscalls = {
   "notify.rule.list": { args: {}; result: { rules: NoticeRule[] } };
-  "notify.rule.set": { args: { kind: NoticeKind; notify: NoticeDelivery }; result: { rule: NoticeRule } };
+  "notify.rule.set": { args: { kind: NoticeKind; notify?: NoticeDelivery; ship?: ShipOutcome }; result: { rule: NoticeRule } };
   "notify.rule.reset": { args: { kind: NoticeKind }; result: { rule: NoticeRule } };
 };
 ```
 
 `notify.rule.list` returns every kind, including those still at their default.
-A change applies when a notice is about to be sent, so turning a kind off also
-holds back notices of that kind already waiting. A kind set to `none` sends
-nothing and tells Ship nothing. `notify.rule.reset` returns a kind to its
-default.
+Contact kinds default to `messenger` and `context`; the others default to `none`
+and `wake`. `notify.rule.set` changes only what it names and refuses an outcome the
+kind's `shipChoices` doesn't include. A notice change applies when a notice is about
+to be sent, so turning a kind off also holds back notices already waiting.
+`notify.rule.reset` returns a kind to its default.
+
+`wake` for the four non-contact kinds is the same setting as their configurable
+responsibility source, so `r12y source enable|disable` and these rules can't disagree.
+When Ship itself turns off `notify` or sets `wake`, the owner's messenger is told,
+whatever their rules say and even while a client is active. An owner with no
+messenger sees the change marked on that rule in Settings.
 
 ## Web search: `web.search`
 
