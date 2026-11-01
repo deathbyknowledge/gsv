@@ -203,6 +203,7 @@ import { ResponsibilityRuntime } from "./responsibility-runtime";
 import { OwnerNoticeRuntime } from "./owner-notice-runtime";
 import { OwnerNoticeStore } from "./owner-notice-store";
 import { NoticeRuleStore } from "./notice-rules";
+import { EventSourceStore, noteSilentSources, receiveWebhook } from "./event-sources";
 import { ShipEventRuntime } from "./ship-event-runtime";
 import { ShipEventStore } from "./ship-event-store";
 import { FederationRuntime } from "./federation-runtime";
@@ -270,6 +271,7 @@ type KernelTask =
     }
   | { callback: "onShipEvents"; payload: number }
   | { callback: "onOwnerNotices"; payload: number }
+  | { callback: "onEventSilence"; payload: null }
   | { callback: "onLedgerRotate"; payload: string }
   | { callback: "onBrowserHandoffs"; payload: null };
 
@@ -348,6 +350,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   }),
   z.object({ callback: z.literal("onShipEvents"), payload: z.number().int().nonnegative() }),
   z.object({ callback: z.literal("onOwnerNotices"), payload: z.number().int().nonnegative() }),
+  z.object({ callback: z.literal("onEventSilence"), payload: z.null() }),
   z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
   z.object({ callback: z.literal("onBrowserHandoffs"), payload: z.null() }),
 ]);
@@ -466,6 +469,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly shipEvents: ShipEventStore;
   readonly ownerNotices: OwnerNoticeStore;
   readonly noticeRules: NoticeRuleStore;
+  readonly eventSources: EventSourceStore;
   readonly welcome: InitialOnboarding;
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
@@ -575,6 +579,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.noticeRules = new NoticeRuleStore(ctx.storage, this.responsibilitySources, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "notify.rule.changed"));
+    this.eventSources = new EventSourceStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "event.source.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);
@@ -754,6 +759,45 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
   async getInstallationIdentity(): Promise<InstallationIdentity | null> {
     return this.installationIdentity ?? null;
+  }
+
+  /** A delivery to a source's public address. A restricted Ship asks the sender to come back later. */
+  async receiveEventWebhook(
+    sourceId: string,
+    token: string | null,
+    headers: [string, string][],
+    body: Uint8Array,
+  ): Promise<{ status: number; retryAfter?: number }> {
+    this.retirement.assertActive();
+    const row = this.eventSources.byId(sourceId);
+    if (!row || this.auth.isAccountDisabled(row.owner_uid)) return { status: 404 };
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) return { status: 503, retryAfter: 60 };
+    return receiveWebhook(sourceId, token, new Headers(headers), body, this.buildKernelContext({ callerOwnerUid: row.owner_uid }));
+  }
+
+  /** One pending task, moved earlier when a source would go quiet sooner. */
+  private async queueEventSilence(excludeTaskId?: string): Promise<void> {
+    const next = this.eventSources.nextSilenceAt();
+    if (next === null) return;
+    const due = Math.max(Date.now(), next);
+    const options: DurableTaskOptions = { idempotent: true };
+    if (excludeTaskId) options.excludeTaskId = excludeTaskId;
+    const existing = await this.schedule(new Date(due), "onEventSilence", null, options);
+    if (existing.time * 1_000 <= due + 1_000) return;
+    await this.cancelSchedule(existing.id);
+    await this.schedule(new Date(due), "onEventSilence", null, options);
+  }
+
+  private async onEventSilence(taskId: string): Promise<void> {
+    const gate = await this.onboarding.managedWorkGate();
+    if (!gate.allowed) {
+      await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onEventSilence", null, { idempotent: true, excludeTaskId: taskId });
+      return;
+    }
+    const owners = noteSilentSources(this.eventSources, this.ownerNotices, this.auth, Date.now());
+    for (const ownerUid of owners) await this.ownerNoticeRuntime.queue(ownerUid);
+    await this.queueEventSilence(taskId);
   }
 
   async instancesChanged(ownerUid: number): Promise<void> {
@@ -1023,6 +1067,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
         return;
       case "onOwnerNotices":
         await this.ownerNoticeRuntime.onOwnerNotices(task.payload, task);
+        return;
+      case "onEventSilence":
+        await this.onEventSilence(task.id);
         return;
       case "onBrowserHandoffs":
         await this.browserHandoffs.run(task.id);
@@ -1675,6 +1722,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       shipEvents: this.shipEvents,
       ownerNotices: this.ownerNotices,
       noticeRules: this.noticeRules,
+      eventSources: this.eventSources,
       welcome: this.welcome,
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,
@@ -1703,6 +1751,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       reconcileResponsibilityWake: this.responsibilityRuntime.reconcileResponsibilityWake.bind(this.responsibilityRuntime),
       queueShipEvents: this.shipEventRuntime.queue.bind(this.shipEventRuntime),
       queueOwnerNotices: this.ownerNoticeRuntime.queue.bind(this.ownerNoticeRuntime),
+      queueEventSilence: () => this.queueEventSilence(),
       trackBrowserHandoff: this.browserHandoffs.track.bind(this.browserHandoffs),
       scheduleManagedOutboundEnqueue: async (outboundId, dueAtMs) => {
         await this.scheduleManagedOutboundEnqueue(outboundId, dueAtMs);

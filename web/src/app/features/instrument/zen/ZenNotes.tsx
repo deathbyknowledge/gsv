@@ -94,7 +94,8 @@ const NOTICE_BODY = {
   "machine.added": "chat.notice.machine",
   "adapter.connected": "chat.notice.adapterConnected",
   "adapter.auth_required": "chat.notice.adapterAuth",
-} as const satisfies Record<Exclude<OwnerNotified["payload"]["topic"], "contact.message">, TextKey>;
+  "event.silent": "chat.notice.eventSilent",
+} as const satisfies Record<Exclude<OwnerNotified["payload"]["topic"], "contact.message" | "event.received">, TextKey>;
 
 /** A notice GSV sent the person, shown whole and opened as a whole: who wrote, what they said, and which messenger carried it. */
 function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { focus, index, phase, clock }: {
@@ -111,7 +112,7 @@ function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { f
       <span class="notice-from">{payload.from}</span>
       {payload.handle ? <span class="notice-handle">{`@${payload.handle}`}</span> : null}
     </div>
-    {payload.topic === "contact.message" ? (
+    {payload.topic === "contact.message" || payload.topic === "event.received" ? (
       <p class="notice-body">
         {count ? <span class="notice-count">{count}</span> : null}
         {payload.preview ? <q>{payload.preview}</q> : <span class="notice-quiet">{t("chat.notice.attachment")}</span>}

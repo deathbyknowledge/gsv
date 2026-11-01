@@ -18,6 +18,7 @@ Talk
 Look after things
   work               What your Ship and its helpers are doing
   routines           Things your Ship does on a schedule
+  event              Tell your Ship something happened, from a script
   memory             Your wiki, and the notes your Ship always reads
   activity           What ran, where, and how it went
 
@@ -139,6 +140,12 @@ pub(crate) enum Commands {
 
         #[command(subcommand)]
         action: Option<WorkAction>,
+    },
+
+    /// Tell your Ship something happened, from a script on any computer
+    Event {
+        #[command(subcommand)]
+        action: EventAction,
     },
 
     /// Things your Ship does on a schedule
@@ -626,6 +633,51 @@ pub(crate) struct Cadence {
     /// Once, at this time: "tomorrow 09:00", "today 18:30" or "2026-10-29 18:00"
     #[arg(long, value_name = "WHEN")]
     pub(crate) at: Option<String>,
+}
+
+#[derive(Subcommand, Clone)]
+pub(crate) enum EventAction {
+    /// List where your events come from
+    Sources,
+    /// Add a source; it tells you and leaves your Ship out until you change it in Settings
+    Add {
+        /// What commands call it, such as "backups"
+        name: String,
+        /// The name you see
+        #[arg(long)]
+        label: Option<String>,
+        /// Give it a public address: standard, github, stripe or url
+        #[arg(long, default_value = "none")]
+        webhook: String,
+    },
+    /// Record an event
+    Emit {
+        /// The source's name
+        source: String,
+        /// What happened, on one line
+        #[arg(long)]
+        title: Option<String>,
+        /// A stable id; repeating one is ignored
+        #[arg(long)]
+        id: Option<String>,
+        /// A short summary
+        #[arg(long)]
+        preview: Option<String>,
+        /// The whole thing
+        #[arg(long)]
+        body: Option<String>,
+        /// Read one JSON object per line from standard input
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Show what arrived
+    List {
+        /// Only this source
+        source: Option<String>,
+        /// How many to show
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
 }
 
 #[derive(Subcommand, Clone)]

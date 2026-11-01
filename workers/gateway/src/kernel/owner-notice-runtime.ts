@@ -1,4 +1,4 @@
-import { contactDisplayName } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName, type NoticeDelivery, type ShipOutcome } from "@humansandmachines/gsv/protocol";
 import type { DurableTaskOptions } from "../shared/durable-tasks";
 import { stableOpaqueId } from "../shared/stable-id";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
@@ -11,6 +11,20 @@ import { messengerNoticeAction, noticeLanguage, ownerNoticeLink, ownerNoticePart
 import type { OwnerNotifiedShipEvent } from "./ship-event-store";
 
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
+
+const isSourceNotice = (notice: OwnerNotice): boolean => notice.topic === "event.received" || notice.topic === "event.silent";
+
+const outcome = (notify: NoticeDelivery, ship: ShipOutcome) => ({ notify, ship });
+
+/** What the notice's rule or source says to do with it. Ship changing a rule is always told, and Ship already knows. */
+function noticeOutcome(notice: OwnerNotice, ctx: KernelContext) {
+  if (notice.topic === "notice.rule.changed") return outcome("messenger", "none");
+  if (notice.topic !== "event.received" && notice.topic !== "event.silent") {
+    return outcome(ctx.noticeRules.notifies(notice.ownerUid, notice.topic), ctx.noticeRules.ship(notice.ownerUid, notice.topic));
+  }
+  const source = notice.subject.sourceId ? ctx.eventSources.byId(notice.subject.sourceId) : null;
+  return outcome(source?.notify ?? "none", source?.ship ?? "none");
+}
 
 /**
  * Sends each owner's notices to their private messenger, unless a client of theirs is active
@@ -55,12 +69,13 @@ export class OwnerNoticeRuntime {
       return true;
     }
     const preferred = this.host.adapters.privateDestinations.get(notice.ownerUid);
-    const silenced = notice.topic !== "notice.rule.changed" && ctx.noticeRules.notifies(notice.ownerUid, notice.topic) === "none";
+    const silenced = noticeOutcome(notice, ctx).notify === "none";
     // A messenger that needs signing in can't carry the notice saying so.
     const brokenCarrier = notice.topic === "adapter.auth_required" && preferred?.destination.adapter === notice.subject.adapter
       && preferred?.destination.accountId === notice.subject.accountId;
     // Ship changing a rule is told even to someone who is online: they may be looking elsewhere.
-    const leftToClient = notice.topic !== "notice.rule.changed" && this.host.shipReplies.activeConnection(notice.ownerUid, this.host.connections);
+    // No client shows a source's events as they arrive, so they aren't left to one either.
+    const leftToClient = notice.topic !== "notice.rule.changed" && !isSourceNotice(notice) && this.host.shipReplies.activeConnection(notice.ownerUid, this.host.connections);
     if (silenced || brokenCarrier || !preferred || leftToClient) {
       await this.finishUnsent(notice, current, silenced);
       return true;
@@ -110,7 +125,7 @@ export class OwnerNoticeRuntime {
     const { topic } = notice;
     const ctx = this.host.buildKernelContext({ callerOwnerUid: notice.ownerUid });
     // Ship made a rule change itself, so it has nothing to learn from the notice about it.
-    const ship = topic === "notice.rule.changed" ? "none" : ctx.noticeRules.ship(notice.ownerUid, topic);
+    const { ship } = noticeOutcome(notice, ctx);
     if (topic === "notice.rule.changed" || (adapter ? ship === "none" : ship !== "context")) {
       finish();
       return;
@@ -126,7 +141,7 @@ export class OwnerNoticeRuntime {
         ...ownerNoticeParts(notice),
         ...(notice.subject.contactId ? { contactId: notice.subject.contactId } : undefined),
         ...(notice.subject.conversationId ? { conversationId: notice.subject.conversationId } : undefined),
-        ...(topic === "contact.message" || topic === "mail.received" ? { messages: notice.pendingCount } : undefined),
+        ...(topic === "contact.message" || topic === "mail.received" || topic === "event.received" ? { messages: notice.pendingCount } : undefined),
       },
       ...(link ? { link } : undefined),
     };
@@ -140,6 +155,10 @@ export class OwnerNoticeRuntime {
   /** The notice as it stands now, or null once its subject was read, decided, muted, fixed or ended. */
   private admit(notice: OwnerNotice, ctx: KernelContext): OwnerNotice | null {
     const { subject } = notice;
+    if (isSourceNotice(notice)) {
+      const source = subject.sourceId ? ctx.eventSources.byId(subject.sourceId) : null;
+      return source?.enabled === 1 && source.owner_uid === notice.ownerUid ? { ...notice, subject: { ...subject, from: source.label } } : null;
+    }
     if (notice.topic === "notice.rule.changed" || notice.topic === "mail.received" || notice.topic === "machine.added"
       || notice.topic === "adapter.connected") return notice;
     if (notice.topic === "adapter.auth_required") {

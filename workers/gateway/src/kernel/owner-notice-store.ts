@@ -1,11 +1,11 @@
 import { z } from "zod";
 import type { NoticeKind } from "@humansandmachines/gsv/protocol";
 
-/** What a notice can be about: a rule's kind, or Ship having changed a rule, which no rule can silence. */
-export type OwnerNoticeTopic = NoticeKind | "notice.rule.changed";
+/** What a notice can be about: a rule's kind, Ship having changed a rule, which no rule can silence, or an owner's own source, which decides for itself. */
+export type OwnerNoticeTopic = NoticeKind | "notice.rule.changed" | "event.received" | "event.silent";
 
 /** Repeats of these collapse into one notice per key within a window, rather than each being told once. */
-const collapses = (topic: OwnerNoticeTopic) => topic === "contact.message" || topic === "mail.received";
+const collapses = (topic: OwnerNoticeTopic) => topic === "contact.message" || topic === "mail.received" || topic === "event.received";
 
 /** New contact messages and mail collapse into one notice per key within this window. */
 export const OWNER_NOTICE_COLLAPSE_MS = 10 * 60_000;
@@ -23,6 +23,8 @@ export type OwnerNoticeSubject = {
   adapter?: string;
   accountId?: string;
   ruleChange?: "stopped-telling" | "started-acting";
+  /** The owner's event source this is about; `from` is then its label rather than a kind. */
+  sourceId?: string;
 };
 
 export type OwnerNotice = {
@@ -61,6 +63,7 @@ const subjectSchema = z.object({
   adapter: z.string().optional(),
   accountId: z.string().optional(),
   ruleChange: z.enum(["stopped-telling", "started-acting"]).optional(),
+  sourceId: z.string().optional(),
 });
 
 /**
@@ -83,6 +86,11 @@ export class OwnerNoticeStore {
   /** Mail completes out of order, so its caller's delivery checkpoint is what keeps it from counting twice. */
   noteMail(ownerUid: number, mailboxId: string, subject: OwnerNoticeSubject, now: number): void {
     this.noteCounted(ownerUid, `mail.received:${mailboxId}`, "mail.received", subject, null, now);
+  }
+
+  /** Count one event from a source, the same way; its caller's log is what keeps an id from counting twice. */
+  noteEvent(ownerUid: number, sourceId: string, subject: OwnerNoticeSubject, now: number): void {
+    this.noteCounted(ownerUid, `event.received:${sourceId}`, "event.received", subject, null, now);
   }
 
   private noteCounted(ownerUid: number, key: string, topic: OwnerNoticeTopic, subject: OwnerNoticeSubject, sequence: number | null, now: number): void {
@@ -195,7 +203,7 @@ export class OwnerNoticeStore {
   /** Forget collapsing rows whose collapse window has passed. Keys sent once stay as their receipt. */
   prune(now: number): void {
     this.sql.exec(
-      "DELETE FROM owner_notices WHERE topic IN ('contact.message', 'mail.received') AND state = 'sent' AND sent_at < ?",
+      "DELETE FROM owner_notices WHERE topic IN ('contact.message', 'mail.received', 'event.received') AND state = 'sent' AND sent_at < ?",
       now - OWNER_NOTICE_COLLAPSE_MS,
     );
   }

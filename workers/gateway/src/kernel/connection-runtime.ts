@@ -346,7 +346,8 @@ disconnectTargetConnections(targetId: string, reason: string): void {
       : signal === "r12y.changed" ? "r12y.list"
       : signal === "r12y.source.changed" ? "r12y.source.list"
       : signal === "sched.changed" ? "sched.list"
-      : signal === "notify.rule.changed" ? "notify.rule.list" : null;
+      : signal === "notify.rule.changed" ? "notify.rule.list"
+      : signal === "event.source.changed" ? "event.source.list" : null;
     const interruptedReason = contactRead ? "Contact feed interrupted"
       : signal === "proc.changed" || signal === "process.exit" ? "Process feed interrupted"
       : "User feed interrupted";

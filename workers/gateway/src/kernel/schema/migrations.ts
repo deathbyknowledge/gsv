@@ -22,6 +22,7 @@ import { KERNEL_V086_ADAPTER_MESSAGE_REFS } from "./v086_adapter_message_refs";
 import { KERNEL_V087_NOTICE_RULES } from "./v087_notice_rules";
 import { KERNEL_V088_PERSONAL_RECOVERY_CLAIMS } from "./v088_personal_recovery_claims";
 import { KERNEL_V089_HAPPENING_RULES } from "./v089_happening_rules";
+import { KERNEL_V090_EVENT_SOURCES } from "./v090_event_sources";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -228,6 +229,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V087_NOTICE_RULES,
   KERNEL_V088_PERSONAL_RECOVERY_CLAIMS,
   KERNEL_V089_HAPPENING_RULES,
+  KERNEL_V090_EVENT_SOURCES,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

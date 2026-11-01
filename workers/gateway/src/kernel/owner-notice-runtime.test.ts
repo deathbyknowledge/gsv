@@ -5,6 +5,7 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import * as adapterSend from "./adapter-send";
 import type { Kernel } from "./do";
 import { OwnerNoticeRuntime } from "./owner-notice-runtime";
+import { EventSourceStore } from "./event-sources";
 import { OWNER_NOTICE_COLLAPSE_MS, OwnerNoticeStore } from "./owner-notice-store";
 import { NoticeRuleStore } from "./notice-rules";
 import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
@@ -18,6 +19,69 @@ const WHATSAPP: AdapterMessageDestination = {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe("event source notices", () => {
+  const source = (overrides: { notify?: "none" | "messenger"; ship?: "none" | "context" | "wake" } = {}) => ({
+    name: "backups", label: "Backups", notify: overrides.notify ?? "messenger", ship: overrides.ship ?? "none",
+    webhook: "none" as const, secret: null, expectEveryMs: null,
+  });
+
+  it("tells the person even while a client is active, since no client shows events as they arrive, and keeps Ship out by default", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices, shipEvents, state, eventSources } = fixture(storage);
+      state.activeClient = true;
+      const send = sent();
+      const { source_id: sourceId } = eventSources.add(OWNER, source(), "person", Date.now());
+      notices.noteEvent(OWNER, sourceId, { from: "Backups", preview: "Nightly\nbackup failed", sourceId }, Date.now());
+
+      await runtime.onOwnerNotices(OWNER, { id: "task:one" });
+
+      expect(send).toHaveBeenCalledExactlyOnceWith(WHATSAPP, OWNER, expect.objectContaining({ text: "🔔 Backups: Nightly backup failed" }), expect.anything());
+      expect(shipEvents.next(OWNER)).toBeNull();
+    });
+  });
+
+  it("shows Ship the title when its source says so, and collapses repeats into a count", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices, shipEvents, eventSources } = fixture(storage);
+      const send = sent();
+      const { source_id: sourceId } = eventSources.add(OWNER, source({ ship: "context" }), "person", Date.now());
+      for (const preview of ["One", "Two"]) notices.noteEvent(OWNER, sourceId, { from: "Backups", preview, sourceId }, Date.now());
+
+      await runtime.onOwnerNotices(OWNER, { id: "task:one" });
+
+      expect(send.mock.calls[0]?.[2]).toMatchObject({ text: "🔔 Backups: 2 new. Latest: Two" });
+      expect(shipEvents.next(OWNER)?.event.payload).toMatchObject({ topic: "event.received", from: "Backups", preview: "Two", messages: 2, adapter: "whatsapp" });
+    });
+  });
+
+  it("drops a notice for a source that was paused or removed before it went out, and says a quiet source's name", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices, eventSources } = fixture(storage);
+      const send = sent();
+      const row = eventSources.add(OWNER, source(), "person", Date.now());
+      notices.noteEvent(OWNER, row.source_id, { from: "Backups", preview: "x", sourceId: row.source_id }, Date.now());
+      eventSources.update(row, { name: row.name, enabled: false }, "person", Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:one" });
+      expect(send).not.toHaveBeenCalled();
+
+      eventSources.update(row, { name: row.name, enabled: true }, "person", Date.now());
+      notices.noteOnce(OWNER, `event.silent:${row.source_id}:1`, "event.silent", { from: "Backups", sourceId: row.source_id }, Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:two" });
+      expect(send.mock.calls[0]?.[2]).toMatchObject({ text: "🔕 Backups has gone quiet: nothing arrived when it should have." });
+    });
+  });
+
+  it("names the source when Ship changes one, rather than a kind", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices } = fixture(storage);
+      const send = sent();
+      notices.noteOnce(OWNER, "notice.rule.changed:x", "notice.rule.changed", { from: "Backups", ruleChange: "started-acting", sourceId: "src_x" }, Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:one" });
+      expect(send.mock.calls[0]?.[2]).toMatchObject({ text: "🔧 Your Ship set itself to act on: Backups. You can change this in Settings." });
+    });
+  });
 });
 
 describe("owner notice delivery", () => {
@@ -379,8 +443,10 @@ function fixture(storage: DurableObjectStorage) {
   const state = initialState();
   const schedule = vi.fn(async (when: Date, _callback: string, _ownerUid: number, _options: DurableTaskOptions) =>
     ({ id: `task:${when.getTime()}`, time: Math.floor(when.getTime() / 1_000) }));
+  const eventSources = new EventSourceStore(storage);
   const ctx = {
     noticeRules: rules,
+    eventSources,
     federation: { get: (id: string) => id === state.contact.id ? state.contact : null },
     approaches: { get: (id: string) => id === state.approach.summary.id ? state.approach : null },
     conversations: { inboxEntry: (_uid: number, id: string) => id === "conv:ada" ? { unread: state.unread } : null },
@@ -407,5 +473,5 @@ function fixture(storage: DurableObjectStorage) {
   };
   // SAFETY: OwnerNoticeRuntime reaches only these Kernel members.
   const runtime = new OwnerNoticeRuntime(host as Kernel);
-  return { runtime, notices, shipEvents, host, state, schedule, rules };
+  return { runtime, notices, shipEvents, host, state, schedule, rules, eventSources };
 }
