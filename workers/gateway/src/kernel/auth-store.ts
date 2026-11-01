@@ -88,6 +88,12 @@ type TokenAuthOptions = {
   peerId?: string;
 };
 
+/** This Ship's accounts break the one-person invariant. */
+export class MultiplePersonalAccountsError extends Error {
+  override name = "MultiplePersonalAccountsError";
+  constructor() { super("A Ship supports one personal account"); }
+}
+
 export class AuthStore {
   constructor(private readonly sql: SqlStorage, private readonly attempts?: PasswordAttempts) {}
 
@@ -216,7 +222,7 @@ export class AuthStore {
       const shadow = this.getShadowByUsername(entry.username);
       return entry.uid >= 1000 && shadow && !isLocked(shadow) && !this.isAccountDisabled(entry.uid);
     });
-    if (humans.length > 1) throw new Error("A Ship supports one personal account");
+    if (humans.length > 1) throw new MultiplePersonalAccountsError();
     return humans[0] ?? null;
   }
 
@@ -226,7 +232,7 @@ export class AuthStore {
       const credential = credentials.get(entry.username);
       return entry.uid >= 1000 && credential && !isLocked(credential) && !this.isAccountDisabled(entry.uid);
     });
-    if (humans.length > 1) throw new Error("A Ship supports one personal account");
+    if (humans.length > 1) throw new MultiplePersonalAccountsError();
   }
 
   addUser(entry: PasswdEntry): void {
@@ -289,7 +295,10 @@ export class AuthStore {
   }
 
   setShadow(entry: ShadowEntry): void {
-    this.assertSingleHuman(this.getPasswdEntries(), [...this.getShadowEntries().filter((current) => current.username !== entry.username), entry]);
+    // Root is not a personal account, and recovering it is how a Ship that broke this rule gets repaired.
+    if (entry.username !== "root") {
+      this.assertSingleHuman(this.getPasswdEntries(), [...this.getShadowEntries().filter((current) => current.username !== entry.username), entry]);
+    }
     this.sql.exec(
       `INSERT OR REPLACE INTO shadow
         (username, hash, lastchanged, min, max, warn, inactive, expire, reserved)

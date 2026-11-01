@@ -1,7 +1,8 @@
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
 import type { ArgsOf, ResultOf } from "@humansandmachines/gsv/protocol";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { hashPassword, hashToken } from "../auth/shadow";
-import type { AuthStore } from "./auth-store";
+import { MultiplePersonalAccountsError, type AuthStore } from "./auth-store";
 import { principalOf, type KernelContext } from "./context";
 import { z } from "zod";
 
@@ -116,7 +117,13 @@ export class AccountRecoveryStore {
 
   /** A Ship whose accounts break the one-person invariant must still reach administrator recovery. */
   private personalAccountForClaim(): ReturnType<AuthStore["getHumanAccount"]> {
-    try { return this.auth.getHumanAccount(); } catch { return null; }
+    try {
+      return this.auth.getHumanAccount();
+    } catch (error) {
+      if (!(error instanceof MultiplePersonalAccountsError)) throw error;
+      console.error("[Kernel] Personal recovery unavailable:", exceptionDiagnostics(error));
+      return null;
+    }
   }
 
   private replaceRoot(claim: RecoveryClaim, passwordHash: string): number {

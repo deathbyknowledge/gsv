@@ -214,6 +214,33 @@ describe("owner email resets the personal password", () => {
     });
   });
 
+  it("still reaches the administrator on a Ship with two personal accounts, and records why personal recovery is unavailable", async () => {
+    await fixture(async (recovery, auth, sql) => {
+      auth.addUser({ uid: 1001, gid: 1001, username: "second", home: "/home/second", gecos: "", shell: "/bin/init" });
+      // Written around AuthStore, which refuses to create this state.
+      const second = makeShadowEntry("second", await hashPassword("second-password"));
+      sql.exec("INSERT INTO shadow (username, hash, lastchanged) VALUES (?, ?, ?)", second.username, second.hash, second.lastchanged);
+      const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const { request } = await grant(recovery);
+        expect(logged).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(logged.mock.calls[0])).toContain("MultiplePersonalAccountsError");
+        await expect(recovery.redeem({ ...request, account: "personal" })).rejects.toBeInstanceOf(PersonalAccountUnavailableError);
+        expect(await recovery.redeem(request)).toEqual({ username: "root", uid: 0 });
+      } finally {
+        logged.mockRestore();
+      }
+    });
+  });
+
+  it("refuses to authorize when the personal account can't be read, instead of issuing an administrator-only claim", async () => {
+    await fixture(async (recovery, auth, sql) => {
+      vi.spyOn(auth, "getHumanAccount").mockImplementationOnce(() => { throw new Error("storage read failed"); });
+      await expect(grant(recovery)).rejects.toThrow("storage read failed");
+      expect(sql.exec("SELECT id FROM account_recovery_claims").toArray()).toEqual([]);
+    });
+  });
+
   it("omitting the account stays an administrator reset for pages opened before this release", async () => {
     await fixture(async (recovery, auth) => {
       const { request } = await grant(recovery);
