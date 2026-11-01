@@ -126,6 +126,24 @@ describe("notice rules", () => {
     });
   });
 
+  it("tells the person when a reset by Ship starts it acting or stops telling them, but not for the person's own reset", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { rules, notices } = stores(storage);
+      const changes = () => storage.sql.exec<{ subject_json: string }>("SELECT subject_json FROM owner_notices WHERE topic = 'notice.rule.changed'")
+        .toArray().map(({ subject_json }) => JSON.parse(subject_json));
+      handleNotifyRuleSet({ kind: "mail.received", notify: "messenger", ship: "none" }, context(rules, notices));
+      handleNotifyRuleReset({ kind: "mail.received" }, context(rules, notices));
+      expect(changes()).toEqual([]);
+
+      handleNotifyRuleSet({ kind: "mail.received", notify: "messenger", ship: "none" }, context(rules, notices));
+      handleNotifyRuleReset({ kind: "mail.received" }, context(rules, notices, "ship"));
+      expect(changes().map(({ from, ruleChange }) => [from, ruleChange]).sort()).toEqual([
+        ["mail.received", "started-acting"],
+        ["mail.received", "stopped-telling"],
+      ]);
+    });
+  });
+
   it("refuses an unknown kind or delivery, an empty change, and a process that is not the owner's Ship", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { rules, notices } = stores(storage);

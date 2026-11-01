@@ -128,25 +128,41 @@ export function handleNotifyRuleSet(args: NotifyRuleSetArgs, ctx: KernelContext)
   if (notify === undefined && ship === undefined) throw new Error("notify.rule.set: choose notify or ship");
   const { ownerUid, changedBy } = caller(ctx);
   const now = Date.now();
-  const previous = ctx.noticeRules.list(ownerUid).find((rule) => rule.kind === kind);
+  const previous = currentRule(ctx, ownerUid, kind);
   const rule = ctx.noticeRules.set(ownerUid, kind, {
     ...(notify === undefined ? undefined : { notify }),
     ...(ship === undefined ? undefined : { ship }),
   }, changedBy, now);
-  // Ship can't quietly take its owner out of the loop or give itself a reason to run.
-  const stoppedTelling = previous?.notify !== "none" && rule.notify === "none";
-  const startedActing = previous?.ship !== "wake" && rule.ship === "wake";
-  if (changedBy === "ship" && (stoppedTelling || startedActing)) {
-    ctx.ownerNotices.noteOnce(ownerUid, `notice.rule.changed:${kind}:${now}`, "notice.rule.changed",
-      { from: kind, ruleChange: stoppedTelling ? "stopped-telling" : "started-acting" }, now);
-    ctx.defer(ctx.queueOwnerNotices(ownerUid));
-  }
+  if (changedBy === "ship") tellOwnerOfShipChange(ctx, ownerUid, previous, rule, now);
   return { rule };
 }
 
 export function handleNotifyRuleReset(args: NotifyRuleResetArgs, ctx: KernelContext): NotifyRuleResetResult {
   const { kind } = parseArgs(resetArgsSchema, args, "notify.rule.reset");
-  return { rule: ctx.noticeRules.reset(caller(ctx).ownerUid, kind) };
+  const { ownerUid, changedBy } = caller(ctx);
+  const previous = currentRule(ctx, ownerUid, kind);
+  const rule = ctx.noticeRules.reset(ownerUid, kind);
+  if (changedBy === "ship") tellOwnerOfShipChange(ctx, ownerUid, previous, rule, Date.now());
+  return { rule };
+}
+
+function currentRule(ctx: KernelContext, ownerUid: number, kind: NoticeKind): NoticeRule {
+  const rule = ctx.noticeRules.list(ownerUid).find((candidate) => candidate.kind === kind);
+  if (!rule) throw new Error(`Notice kind has no rule: ${kind}`);
+  return rule;
+}
+
+/** Ship can't quietly take its owner out of the loop or give itself a reason to run. */
+function tellOwnerOfShipChange(ctx: KernelContext, ownerUid: number, previous: NoticeRule, rule: NoticeRule, now: number): void {
+  const changes = [
+    ...(previous.notify !== "none" && rule.notify === "none" ? ["stopped-telling" as const] : []),
+    ...(previous.ship !== "wake" && rule.ship === "wake" ? ["started-acting" as const] : []),
+  ];
+  for (const ruleChange of changes) {
+    ctx.ownerNotices.noteOnce(ownerUid, `notice.rule.changed:${rule.kind}:${ruleChange}:${now}`, "notice.rule.changed",
+      { from: rule.kind, ruleChange }, now);
+  }
+  if (changes.length > 0) ctx.defer(ctx.queueOwnerNotices(ownerUid));
 }
 
 function parseArgs<T>(schema: z.ZodMiniType<T>, value: T, call: string): T {
