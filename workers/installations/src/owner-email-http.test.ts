@@ -49,7 +49,8 @@ async function fixture() {
   const gateway = { authorizeRootRecovery: vi.fn(async () => ({ authorized: true as const })),
     confirmOwnerLinkAuthorization: vi.fn(async () => ({ authorized: true as const })) };
   const makeHttp = () => new InstallationOwnerEmailHttp(auth, owners, mail,
-    { from: "login@ship.space", replyTo: "hello@humansandmachin.es" }, gateway, ORIGIN);
+    { from: "login@ship.space", replyTo: "hello@humansandmachin.es" }, gateway, ORIGIN, false, floor);
+  let floor = 0;
   let http = makeHttp();
   const request = async (path: string, cookies: Cookies, form?: Form, origin: string | null = ORIGIN, acceptCookies = true): Promise<Response> => {
     const headers = new Headers({ cookie: cookieHeader(cookies), "cf-connecting-ip": `fixture-${suffix}` });
@@ -96,7 +97,8 @@ async function fixture() {
     expect((await request("/owner/verify", cookies, verification)).status).toBe(303);
     return verification;
   };
-  return { accounts, owners, auth, gateway, delivered, send, request, start, code, reserve, rootProof, link,
+  const withFloor = (ms: number) => { floor = ms; http = makeHttp(); return request; };
+  return { accounts, owners, auth, gateway, delivered, send, request, start, code, reserve, rootProof, link, http: withFloor,
     registry, email: `${suffix}@example.com`, otherEmail: `${suffix}-other@example.com`,
     advance: () => { now += OWNER_CODE_RESEND_MS; }, restart: () => { http = makeHttp(); } };
 }
@@ -164,7 +166,7 @@ describe("native owner email HTTP", () => {
     f.advance();
     const wrongOwner = await f.start(bob, "recover", f.otherEmail, { handle: first.handle });
     const count = f.send.mock.calls.length;
-    expect((await f.request("/owner/recover", bob, wrongOwner)).status).toBeGreaterThanOrEqual(400);
+    expect((await f.request("/owner/recover", bob, wrongOwner)).status).toBe(200);
     expect(f.send).toHaveBeenCalledTimes(count);
     expect(f.gateway.authorizeRootRecovery).not.toHaveBeenCalled();
   });
@@ -222,6 +224,99 @@ describe("native owner email HTTP", () => {
       attemptId: recovery.ownerAttemptId, purpose: "root-password-reset", secretHash: await sha256Hex(fragment.get("secret")!), expiresAt: expect.any(Number) });
     f.restart();
     expect((await f.request("/owner/verify", cookies, verified)).headers.get("location")).toBe(target.href);
+  });
+
+  describe("password recovery does not reveal who owns a Ship", () => {
+    /** Everything a stranger sees, minus the fields they typed and generated. */
+    const visible = async (response: Response, form: Form) => ({
+      status: response.status,
+      body: (await response.text()).replace(/nonce[-=]"?[a-f0-9]{64}"?/g, "nonce")
+        .replaceAll(form.challengeId, "challenge").replaceAll(form.email, "email"),
+    });
+
+    it("answers the owner, a stranger and an unknown handle identically, and mails only the owner", async () => {
+      const f = await fixture();
+      const owner: Cookies = new Map();
+      const space = await f.reserve("uniform");
+      await f.link(owner, f.email, space.installationId);
+      f.advance();
+      const sent = f.send.mock.calls.length;
+      const ownerForm = await f.start(new Map(), "recover", f.email, { handle: space.handle });
+      const send = async (form: Form, path = "/owner/recover") => {
+        const cookies: Cookies = new Map();
+        const started = await f.start(cookies, "recover", form.email, { handle: form.handle });
+        return visible(await f.request(path, cookies, started), started);
+      };
+      const stranger = await send({ email: f.otherEmail, handle: space.handle });
+      expect(f.send).toHaveBeenCalledTimes(sent);
+      const unknown = await send({ email: f.otherEmail, handle: "no-such-ship" });
+      expect(f.send).toHaveBeenCalledTimes(sent);
+      const real = await send(ownerForm);
+      expect(f.send).toHaveBeenCalledTimes(sent + 1);
+      expect(real).toEqual(stranger);
+      expect(real).toEqual(unknown);
+      expect(real.status).toBe(200);
+      // The per-address cooldown must not become an oracle either.
+      expect(await send(ownerForm)).toEqual(stranger);
+      expect(f.send).toHaveBeenCalledTimes(sent + 1);
+      expect(f.delivered.at(-1)?.to).toBe(f.email);
+    });
+
+    it("rejects a guessed code the same way whoever typed the email", async () => {
+      const f = await fixture();
+      const owner: Cookies = new Map();
+      const space = await f.reserve("guess");
+      await f.link(owner, f.email, space.installationId);
+      f.advance();
+      const guess = async (email: string, handle: string) => {
+        const cookies: Cookies = new Map();
+        const started = await f.start(cookies, "recover", email, { handle });
+        await f.request("/owner/recover", cookies, started);
+        return visible(await f.request("/owner/verify", cookies, { ...started, code: "000000" }), started);
+      };
+      const real = await guess(f.email, space.handle);
+      expect(real.status).toBe(400);
+      expect(await guess(f.otherEmail, space.handle)).toEqual(real);
+      expect(await guess(f.otherEmail, "no-such-ship")).toEqual(real);
+      expect(f.gateway.authorizeRootRecovery).not.toHaveBeenCalled();
+    });
+
+    it("still counts a resend for the owner against the same limits, without saying so", async () => {
+      const f = await fixture();
+      const owner: Cookies = new Map();
+      const space = await f.reserve("resend");
+      await f.link(owner, f.email, space.installationId);
+      f.advance();
+      const cookies: Cookies = new Map();
+      const form = await f.start(cookies, "recover", f.email, { handle: space.handle });
+      await f.request("/owner/recover", cookies, form);
+      const sent = f.send.mock.calls.length;
+      expect((await f.request("/owner/resend", cookies, form)).status).toBe(200);
+      expect(f.send).toHaveBeenCalledTimes(sent);
+      f.advance();
+      expect((await f.request("/owner/resend", cookies, form)).status).toBe(200);
+      expect(f.send).toHaveBeenCalledTimes(sent + 1);
+    });
+
+    it("does not make the owner wait less than a stranger", async () => {
+      const f = await fixture();
+      const http = f.http(40);
+      const started = performance.now();
+      const cookies: Cookies = new Map();
+      const form = await f.start(cookies, "recover", f.otherEmail, { handle: "no-such-ship" });
+      const before = performance.now();
+      await http("/owner/recover", cookies, form);
+      expect(performance.now() - before).toBeGreaterThanOrEqual(35);
+      expect(before).toBeGreaterThanOrEqual(started);
+    });
+  });
+
+  it("speaks of your password, not an administrator, when recovery starts", async () => {
+    const f = await fixture();
+    const body = await (await f.request("/owner/recover?handle=my-ship", new Map())).text();
+    expect(body).toContain('value="my-ship"');
+    expect(body).toMatch(/set a new password/i);
+    expect(body).not.toMatch(/administrator/i);
   });
 
   it("rejects wrong origins, browsers and purposes without issuing a session", async () => {

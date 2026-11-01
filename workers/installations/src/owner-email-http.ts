@@ -1,8 +1,9 @@
 import type { InstallationRecoveryGatewayService } from "@humansandmachines/gsv/services/ownership";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { escapeHtml as html } from "./admin/page";
 import { hasExpectedOrigin, noStoreFormHeaders, noStoreHeaders, readRequestBody } from "./http";
 import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } from "./owner-auth-store";
-import { InstallationOwnerStore } from "./owner-store";
+import { InstallationOwnerStore, OwnerAttemptUnavailableError } from "./owner-store";
 import { sha256Hex } from "./tokens";
 import { sendOwnerVerification } from "./owner-verification";
 import type { OwnerEmailSender } from "./owner-verification-email";
@@ -11,13 +12,15 @@ type Purpose = "login" | "link" | "recover";
 type ChallengeForm = { challengeId: string; purpose: Purpose; ownerAttemptId?: string; email: string };
 const SESSION_COOKIE = "__Host-gsv-owner-session";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** Longer than a normal send, so mailing the real owner takes no longer to answer than mailing nobody. */
+const RECOVERY_RESPONSE_FLOOR_MS = 1500;
 
 /** Accounts authenticates owners independently of any space or its messaging configuration. */
 export class InstallationOwnerEmailHttp {
   constructor(private readonly auth: InstallationOwnerAuthStore, private readonly owners: InstallationOwnerStore,
     private readonly mail: SendEmail, private readonly sender: OwnerEmailSender,
     private readonly gateway: InstallationRecoveryGatewayService, private readonly origin: string,
-    private readonly existingIdentityProvider = false) {}
+    private readonly existingIdentityProvider = false, private readonly recoveryFloorMs = RECOVERY_RESPONSE_FLOOR_MS) {}
 
   async handle(request: Request): Promise<Response | null> {
     const url = new URL(request.url);
@@ -43,20 +46,18 @@ export class InstallationOwnerEmailHttp {
       const sessionSecret = cookie(request, pendingCookie(challenge.challengeId));
       if (!browserSecret || !sessionSecret) return expired();
       if (url.pathname === "/owner/verify") return this.verify(challenge, form.get("code") ?? "", browserSecret, sessionSecret);
-      if (["/owner/login", "/owner/link", "/owner/recover"].includes(url.pathname)) {
-        if (url.pathname !== `/owner/${challenge.purpose}`) return page("Invalid verification purpose", 400);
-        if (challenge.purpose !== "login") {
-          if (!challenge.ownerAttemptId) return expired();
-          if (challenge.purpose === "recover") {
-            if (challenge.ownerAttemptId !== challenge.challengeId) return expired();
-            await this.owners.beginRecovery(form.get("handle") ?? "", challenge.ownerAttemptId);
-          }
-          await this.owners.startEmailAuthentication(challenge.ownerAttemptId, {
-            browserSecretHash: await sha256Hex(browserSecret), linkSecretHash: await sha256Hex(form.get("secret") ?? ""),
-          });
-        }
-      } else if (url.pathname !== "/owner/resend") return page("Not found", 404);
-      return await this.sendCode(challenge, browserSecret, request.headers.get("cf-connecting-ip") ?? "local", url.pathname === "/owner/resend");
+      if (!["/owner/login", "/owner/link", "/owner/recover", "/owner/resend"].includes(url.pathname)) return page("Not found", 404);
+      const resend = url.pathname === "/owner/resend";
+      if (!resend && url.pathname !== `/owner/${challenge.purpose}`) return page("Invalid verification purpose", 400);
+      const ip = request.headers.get("cf-connecting-ip") ?? "local";
+      if (challenge.purpose === "recover") return await this.sendRecoveryCode(challenge, form.get("handle") ?? "", browserSecret, ip, resend);
+      if (!resend && challenge.purpose === "link") {
+        if (!challenge.ownerAttemptId) return expired();
+        await this.owners.startEmailAuthentication(challenge.ownerAttemptId, {
+          browserSecretHash: await sha256Hex(browserSecret), linkSecretHash: await sha256Hex(form.get("secret") ?? ""),
+        });
+      }
+      return await this.sendCode(challenge, browserSecret, ip, resend);
     } catch {
       return page(`<h1>Verification unavailable</h1><p>This attempt may have expired or may not belong to this browser or owner. Start again from your Ship settings or <a href="/owner/login">sign in</a>.</p>`, 400);
     }
@@ -66,21 +67,42 @@ export class InstallationOwnerEmailHttp {
     const purpose: Purpose = url.pathname === "/owner/link" ? "link" : url.pathname === "/owner/recover" ? "recover" : "login";
     const challengeId = crypto.randomUUID();
     const browserSecret = randomSecret();
-    const title = purpose === "link" ? "Account recovery" : purpose === "recover" ? "Recover your Ship" : "Sign in";
-    const explanation = purpose === "link" ? "Verify an email address to recover administrator access if you lose it."
-      : purpose === "recover" ? "Verify your email to reset the administrator password."
+    const title = purpose === "link" ? "Account recovery" : purpose === "recover" ? "Forgot your password?" : "Sign in";
+    const explanation = purpose === "link" ? "Verify an email address so you can get back in if you lose your password."
+      : purpose === "recover" ? "Enter your Ship’s handle and the email you signed up with. We’ll send a code, then you’ll set a new password on your Ship."
       : "Enter your email to receive a sign-in code and see your Ships.";
     const nonce = randomSecret();
     return page(`<h1>${title}</h1><p>${explanation}</p><form method="post" action="/owner/${purpose}">
       ${hidden("challengeId", challengeId)}${hidden("purpose", purpose)}
-      ${purpose === "recover" ? `${hidden("ownerAttemptId", challengeId)}<label>Handle<input name="handle" value="${html(url.searchParams.get("handle") ?? "")}" required maxlength="63" autocomplete="off"></label>` : ""}
+      ${purpose === "recover" ? `${hidden("ownerAttemptId", challengeId)}<label>Your Ship’s handle<input name="handle" value="${html(url.searchParams.get("handle") ?? "")}" required maxlength="63" autocomplete="off"></label>` : ""}
       ${purpose === "link" ? `${hidden("ownerAttemptId", "")}${hidden("secret", "")}` : ""}
       <label>Email<input name="email" type="email" required maxlength="254" autocomplete="email" autofocus></label>
       <button>Send code</button></form>
-      <nav><a href="/owner/spaces">My Ships</a>${purpose !== "recover" ? '<a href="/owner/recover">Recover your Ship</a>' : ""}
-      ${this.existingIdentityProvider && purpose !== "login" ? `<a id="existing-identity" href="/owner/identity/${purpose}">Use existing identity provider</a>` : ""}</nav>
+      <nav><a href="/owner/spaces">My Ships</a>${purpose !== "recover" ? '<a href="/owner/recover">Forgot your password?</a>' : ""}
+      ${this.existingIdentityProvider && purpose !== "login" ? `<a id="existing-identity" href="/owner/identity/${purpose}${purpose === "recover" && url.searchParams.has("handle") ? `?handle=${encodeURIComponent(url.searchParams.get("handle") ?? "")}` : ""}">Use existing identity provider</a>` : ""}</nav>
       ${purpose === "link" ? `<script nonce="${nonce}">const p=new URLSearchParams(location.hash.slice(1));history.replaceState(null,"",location.pathname);document.querySelector('[name="ownerAttemptId"]').value=p.get("id")||"";document.querySelector('[name="secret"]').value=p.get("secret")||"";const identity=document.getElementById("existing-identity");if(identity)identity.hash=p.toString();</script>` : ""}`,
     200, [setCookie(browserCookie(challengeId), browserSecret, 600), setCookie(pendingCookie(challengeId), randomSecret(), 600)], nonce);
+  }
+
+  /**
+   * The same answer whether or not this email owns this handle, and whatever limit or delivery
+   * problem applied: only the owner's inbox learns that the attempt was real.
+   */
+  private async sendRecoveryCode(challenge: ChallengeForm, handle: string, browserSecret: string, ip: string, resend: boolean): Promise<Response> {
+    const answer = new Promise((resolve) => setTimeout(resolve, this.recoveryFloorMs));
+    try {
+      if (!resend) {
+        if (challenge.ownerAttemptId !== challenge.challengeId) throw new OwnerAttemptUnavailableError("Recovery attempt mismatch");
+        await this.owners.beginRecovery(handle, challenge.challengeId);
+        await this.owners.startEmailAuthentication(challenge.challengeId, { browserSecretHash: await sha256Hex(browserSecret) });
+      }
+      const issued = await sendOwnerVerification(this.auth, this.mail, this.sender, { ...challenge, browserSecret, ip, resend });
+      if (issued.deliveryStatus === "failed") console.warn("[Owner] Recovery code delivery failed");
+    } catch (error) {
+      if (!(error instanceof OwnerAuthError) && !(error instanceof OwnerAttemptUnavailableError)) console.warn("[Owner] Recovery request failed:", exceptionDiagnostics(error));
+    }
+    await answer;
+    return recoveryCodePage(challenge, "If this is the email for this Ship, we’ve sent it a six-digit code. It can take a minute to arrive and expires after ten minutes.");
   }
 
   private async sendCode(challenge: ChallengeForm, browserSecret: string, ip: string, resend: boolean): Promise<Response> {
@@ -117,6 +139,10 @@ export class InstallationOwnerEmailHttp {
       }
       return redirect(location.href, [sessionCookie]);
     } catch (error) {
+      if (challenge.purpose === "recover") {
+        if (!(error instanceof OwnerAuthError)) console.warn("[Owner] Recovery verification failed:", exceptionDiagnostics(error));
+        return recoveryCodePage(challenge, "That code didn’t work. Check it and try again, or start again for a new code.", 400);
+      }
       return codePage(challenge, authErrorMessage(error instanceof OwnerAuthError ? error.code : "unavailable"), 400);
     }
   }
@@ -129,9 +155,9 @@ export class InstallationOwnerEmailHttp {
     return page(`<h1>My Ships</h1><p>${html(session.email)}</p>
       ${spaces.length ? `<ul class="spaces">${spaces.map(space => `<li><div>${space.state === "active"
         ? `<a href="${html(space.canonicalOrigin)}">${html(space.handle)}</a>` : html(space.handle)}<small>${html(space.state)}</small></div>
-        ${space.state === "active" ? `<a class="secondary" href="/owner/recover?handle=${encodeURIComponent(space.handle)}">Recover your Ship</a>` : ""}</li>`).join("")}</ul>`
+        ${space.state === "active" ? `<a class="secondary" href="/owner/recover?handle=${encodeURIComponent(space.handle)}">Forgot your password?</a>` : ""}</li>`).join("")}</ul>`
         : "<p>No Ships linked yet. Open your Ship and verify your email in Settings → sign-in → Account recovery.</p>"}
-      <nav><a href="/owner/recover">Recover your Ship</a><form method="post" action="/owner/logout"><button class="text">Sign out</button></form></nav>`);
+      <nav><a href="/owner/recover">Forgot your password?</a><form method="post" action="/owner/logout"><button class="text">Sign out</button></form></nav>`);
   }
 }
 
@@ -154,12 +180,15 @@ function authErrorMessage(code: OwnerAuthErrorCode): string {
     default: return "Verification could not complete. Retry, or start again if this attempt has expired.";
   }
 }
-function codePage(challenge: ChallengeForm, message: string, status = 200): Response {
+function recoveryCodePage(challenge: ChallengeForm, message: string, status = 200): Response {
+  return codePage(challenge, message, status, `<p>Nothing arrived? Check your spam folder and that you typed the address you signed up with. If email recovery isn’t set up for this Ship, use a messenger code on your Ship or ask whoever runs it.</p>`);
+}
+function codePage(challenge: ChallengeForm, message: string, status = 200, help = ""): Response {
   const fields = hidden("challengeId", challenge.challengeId) + hidden("purpose", challenge.purpose)
     + hidden("email", challenge.email) + (challenge.ownerAttemptId ? hidden("ownerAttemptId", challenge.ownerAttemptId) : "");
   return page(`<h1>Check your email</h1><p role="status">${html(message)}</p><p>${html(challenge.email)}</p>
     <form method="post" action="/owner/verify">${fields}<label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required autofocus></label><button>Verify code</button></form>
-    <nav><form method="post" action="/owner/resend">${fields}<button class="text">Send again</button></form><a href="/owner/login">Start again</a></nav>`, status);
+    ${help}<nav><form method="post" action="/owner/resend">${fields}<button class="text">Send again</button></form><a href="/owner/login">Start again</a></nav>`, status);
 }
 function expired(): Response { return page('<h1>Verification expired</h1><p>Start again in this browser from <a href="/owner/login">sign-in</a> or your Ship settings.</p>', 400); }
 function hidden(name: string, value: string): string { return `<input type="hidden" name="${name}" value="${html(value)}">`; }

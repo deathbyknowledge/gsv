@@ -1,3 +1,4 @@
+import { ownerRecoveryOptions, PersonalAccountUnavailableError } from "./account-recovery";
 import { hasCapability } from "./capabilities";
 import {
   z,
@@ -277,9 +278,15 @@ async handleReq(
         try {
           const data = await this.host.redeemAccountRecovery(frame.args);
           this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
-        } catch {
-          this.sendError(connection, frame.id, 400, "Root recovery failed. Check the link and password, or start a new recovery attempt.");
+        } catch (error) {
+          this.sendError(connection, frame.id, 400, "Password recovery failed. Check the link and password, or start a new recovery attempt.",
+            error instanceof PersonalAccountUnavailableError ? { recovery: "personal-unavailable" } : undefined);
         }
+        return;
+      }
+
+      if (frame.call === "account.recovery.options") {
+        this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data: ownerRecoveryOptions(this.host.buildContext(connection)) });
         return;
       }
 
@@ -291,7 +298,7 @@ async handleReq(
             : await ctx.memberRecovery.redeem(frame.args, ctx);
           this.sendWebSocketFrame(connection, { type: "res", id: frame.id, ok: true, data });
         } catch {
-          this.sendError(connection, frame.id, 400, "Member recovery failed. Check the code and password, or request a new code.");
+          this.sendError(connection, frame.id, 400, "Recovery failed. Check the code and password, or request a new code.");
         }
         return;
       }

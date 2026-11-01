@@ -156,6 +156,7 @@ const labels = {
   "account.create": "fleet.ledger.accountCreate",
   "account.list": "fleet.ledger.accountList",
   "account.owner.link": "fleet.ledger.accountOwnerLink",
+  "account.recovery.options": "fleet.ledger.accountRecoveryOptions",
   "account.recovery.redeem": "fleet.ledger.accountRecoveryRedeem",
   "account.recovery.code.start": "fleet.ledger.accountRecoveryCodeStart",
   "account.recovery.code.redeem": "fleet.ledger.accountRecoveryCodeRedeem",
