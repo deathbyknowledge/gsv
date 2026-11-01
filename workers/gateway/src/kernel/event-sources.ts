@@ -422,6 +422,7 @@ export async function handleEventSourceUpdate(args: EventSourceUpdateArgs, ctx: 
   if (input.ship === "wake" && previous.ship !== "wake") await askBeforeShipActs(ctx, changedBy, input.name, send);
   // The owner may have changed it while that approval waited.
   const current = requireSource(ctx, ownerUid, input.name, "event.source.update");
+  if (current.source_id !== previous.source_id) throw new Error(`event.source.update: "${input.name}" changed while waiting for approval`);
   const now = Date.now();
   const row = ctx.eventSources.update(current, input, changedBy, now);
   if (changedBy === "ship") tellOwnerOfShipChange(ctx, current, row, now);

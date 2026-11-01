@@ -210,6 +210,20 @@ describe("event sources", () => {
     });
   });
 
+  it("won't apply an approval to a different source that took the same name while it waited", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      await handleEventSourceAdd({ name: "feed" }, context(k));
+      const ship = Object.assign(context(k, "ship"), { installationId: "inst", toolOwner: { runId: "run", requestId: "req" } });
+      await expect(handleEventSourceUpdate({ name: "feed", ship: "wake" }, ship, vi.fn<typeof sendFrameToProcess>(async () => {
+        handleEventSourceRemove({ name: "feed" }, context(k));
+        await handleEventSourceAdd({ name: "feed", webhook: "url" }, context(k));
+        return { type: "res", id: "x", ok: true, data: { approved: true } };
+      }))).rejects.toThrow("changed while");
+      expect(k.eventSources.row(OWNER, "feed")?.ship).toBe("none");
+    });
+  });
+
   it("spends from the current allowance, however old the caller's copy of the source is", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const k = kernel(storage);

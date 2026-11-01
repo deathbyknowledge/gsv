@@ -106,7 +106,7 @@ function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { f
   // A record the person wasn't told about went only to Ship, so it has no card for them.
   if (payload.sentAtMs === undefined) return null;
   const messenger = payload.adapter ? adapterDisplayName(payload.adapter) : null;
-  const count = payload.messages !== undefined && payload.messages > 1 ? t("chat.notice.messages", { count: String(payload.messages) }) : null;
+  const count = payload.messages !== undefined && payload.messages > 1 ? t(payload.topic === "event.received" ? "chat.notice.events" : "chat.notice.messages", { count: String(payload.messages) }) : null;
   const content = <>
     <div class="notice-head">
       <span class="notice-from">{payload.from}</span>

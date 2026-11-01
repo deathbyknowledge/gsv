@@ -1834,6 +1834,7 @@ export const en = {
   "chat.event.ownerNotified": "Notified you on {channel} about {from}",
   "chat.notice.sentOn": "Sent to you on {channel}",
   "chat.notice.messages": "{count} messages · newest",
+  "chat.notice.events": "{count} events · newest",
   "chat.notice.attachment": "Sent an attachment",
   "chat.notice.request": "Wants to message you.",
   "chat.notice.accepted": "Accepted your invitation.",

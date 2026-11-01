@@ -33,6 +33,7 @@ describe("owner notices", () => {
     const tree = await card(notice({ topic: "event.received", adapter: undefined, shownInClient: true, from: "Backups", preview: "Nightly backup failed", contactId: undefined }, { kind: "contact", contactId: "contact:ada" }));
     const text = collectText(tree);
     for (const part of ["Backups", "Nightly backup failed"]) expect(text).toContain(part);
+    expect(collectText(await card(notice({ topic: "event.received", messages: 3, preview: "x" }, { kind: "contact", contactId: "contact:ada" })))).toContain("3 events");
     expect(collectNodes(tree).some((node) => node.props?.class === "notice-carrier-mark")).toBe(false);
   });
 
