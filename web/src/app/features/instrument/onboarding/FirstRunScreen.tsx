@@ -142,7 +142,8 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
       </Section>}
 
       <div class="first-run-continue">
-        <button type="button" class="first-run-text-action" disabled={busy} onClick={() => { void onComplete("web"); }}>{t("onboarding.surface.web")}</button>
+        {/* "here" is the client the first run is finishing in */}
+        <button type="button" class="first-run-text-action" disabled={busy} onClick={() => { void onComplete(inDesktopApp ? "desktop" : "web"); }}>{t("onboarding.surface.web")}</button>
         <p class="first-run-continue-note">{t("onboarding.surface.webSub")}</p>
       </div>
     </div></div>

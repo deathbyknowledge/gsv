@@ -111,6 +111,14 @@ describe("first-run screen", () => {
     expect(alert()).toBeUndefined();
   });
 
+  it("inside the desktop app, hides the desktop section and records desktop for continuing here", async () => {
+    vi.stubGlobal("window", { __TAURI__: {}, location: { search: "", origin: "https://jessica.ship.space" }, navigator: { userAgent: "Mozilla/5.0 (Macintosh)", platform: "MacIntel", maxTouchPoints: 0 } });
+    await mount();
+    await vi.waitFor(() => expect(sections()).toEqual(["WhatsApp", "Telegram"]));
+    await click(continueHere());
+    expect(onComplete).toHaveBeenCalledWith("desktop");
+  });
+
   it("continues here at once", async () => {
     await mount();
     await click(continueHere());
