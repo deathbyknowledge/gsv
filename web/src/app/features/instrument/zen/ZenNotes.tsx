@@ -87,12 +87,23 @@ export function NoteMoment({
 
 type OwnerNotified = Extract<ProcHistoryEvent, { kind: "owner.notified" }>;
 
+const NOTICE_BODY = {
+  "contact.request": "chat.notice.request",
+  "contact.invite.accepted": "chat.notice.accepted",
+  "mail.received": "chat.notice.mail",
+  "machine.added": "chat.notice.machine",
+  "adapter.connected": "chat.notice.adapterConnected",
+  "adapter.auth_required": "chat.notice.adapterAuth",
+} as const satisfies Record<Exclude<OwnerNotified["payload"]["topic"], "contact.message">, TextKey>;
+
 /** A notice GSV sent the person, shown whole and opened as a whole: who wrote, what they said, and which messenger carried it. */
 function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { focus, index, phase, clock }: {
   focus: boolean; index: number; phase: "pending" | "materialising" | "settled"; clock?: MomentClock;
 }) {
   const { payload } = event;
   const link = event.link ? eventLink(event.link) : null;
+  // A record without a messenger went only to Ship, so it has no card for the person.
+  if (!payload.adapter || payload.sentAtMs === undefined) return null;
   const messenger = adapterDisplayName(payload.adapter);
   const count = payload.messages !== undefined && payload.messages > 1 ? t("chat.notice.messages", { count: String(payload.messages) }) : null;
   const content = <>
@@ -106,7 +117,7 @@ function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { f
         {payload.preview ? <q>{payload.preview}</q> : <span class="notice-quiet">{t("chat.notice.attachment")}</span>}
       </p>
     ) : (
-      <p class="notice-body">{t(payload.topic === "contact.request" ? "chat.notice.request" : "chat.notice.accepted")}</p>
+      <p class="notice-body">{t(NOTICE_BODY[payload.topic])}</p>
     )}
   </>;
   return (

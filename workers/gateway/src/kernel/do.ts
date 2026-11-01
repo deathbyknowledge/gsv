@@ -61,6 +61,7 @@ import { DevicePairingStore } from "./device-pairings";
 import { MemberRecoveryStore } from "./member-recovery";
 import { AccountRecoveryStore } from "./account-recovery";
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
+import type { ArgsOf, ResultOf } from "@humansandmachines/gsv/protocol";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
 import { TargetRegistry } from "./target-registry";
@@ -201,6 +202,7 @@ import type {
 import { ResponsibilityRuntime } from "./responsibility-runtime";
 import { OwnerNoticeRuntime } from "./owner-notice-runtime";
 import { OwnerNoticeStore } from "./owner-notice-store";
+import { NoticeRuleStore } from "./notice-rules";
 import { ShipEventRuntime } from "./ship-event-runtime";
 import { ShipEventStore } from "./ship-event-store";
 import { FederationRuntime } from "./federation-runtime";
@@ -463,6 +465,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly responsibilities: ResponsibilityStore;
   readonly shipEvents: ShipEventStore;
   readonly ownerNotices: OwnerNoticeStore;
+  readonly noticeRules: NoticeRuleStore;
   readonly welcome: InitialOnboarding;
   readonly responsibilitySources: ResponsibilitySourcePolicyStore;
   readonly federation: FederationStore;
@@ -571,6 +574,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
     this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
+    this.noticeRules = new NoticeRuleStore(ctx.storage, this.responsibilitySources, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "notify.rule.changed"));
     this.federation = new FederationStore(ctx.storage);
     this.profiles = new ProfileStore(ctx.storage);
     this.approaches = new ApproachStore(ctx.storage);
@@ -846,11 +850,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return { authorized: true };
   }
 
-  async redeemAccountRecovery(input: { id: string; secret: string; proof: string; password: string }): Promise<{ username: "root" }> {
+  async redeemAccountRecovery(input: ArgsOf<"account.recovery.redeem">): Promise<ResultOf<"account.recovery.redeem">> {
     this.retirement.assertActive();
-    const result = await this.accountRecovery.redeem(input);
-    this.connectionRuntime.invalidateAccountConnections(0);
-    return result;
+    const { username, uid, administratorChanged } = await this.accountRecovery.redeem(input);
+    this.connectionRuntime.invalidateAccountConnections(uid);
+    if (administratorChanged) this.connectionRuntime.invalidateAccountConnections(0);
+    return { username };
   }
 
   async onRequest(request: Request): Promise<Response> {
@@ -1669,6 +1674,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       responsibilities: this.responsibilities,
       shipEvents: this.shipEvents,
       ownerNotices: this.ownerNotices,
+      noticeRules: this.noticeRules,
       welcome: this.welcome,
       responsibilitySources: this.responsibilitySources,
       federation: this.federation,

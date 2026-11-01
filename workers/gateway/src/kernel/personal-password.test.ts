@@ -7,7 +7,6 @@ import { CapabilityStore } from "./capabilities";
 import type { KernelContext } from "./context";
 import { AccountRecoveryStore } from "./account-recovery";
 import { IdentityLinkStore } from "./identity-links";
-import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
 import { assertAdapterMessageDestinationAccess } from "./adapter-destinations";
 import { AdapterStatusStore } from "./adapter-status";
 import { handleAdapterPairConfirm, handleAdapterPairDisconnect } from "./adapter-pairing";
@@ -30,8 +29,8 @@ async function fixture(work: (recovery: AccountRecoveryStore, ctx: KernelContext
       connection: null, peer: testPeer({ account: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, calls: ["*"] }),
       invalidateAccountConnections: vi.fn(), broadcastToUserUid: vi.fn(),
       defer: (promise: Promise<unknown>) => { void promise.catch(() => undefined); },
-      responsibilitySources: { isEnabled: () => false }, responsibilities: { listActiveByDedupeKeyPrefix: () => [] },
-      adapters: { identityLinks: new IdentityLinkStore(sql), status: new AdapterStatusStore(sql), surfaceRoutes: { get: () => null }, privateDestinations: new PrivateAdapterDestinationStore(sql) },
+      responsibilitySources: { isEnabled: () => false }, noticeRules: { wantsNotice: () => false }, responsibilities: { listActiveByDedupeKeyPrefix: () => [] },
+      adapters: { identityLinks: new IdentityLinkStore(sql), status: new AdapterStatusStore(sql), surfaceRoutes: { get: () => null } },
     } as KernelContext;
     await work(recovery, ctx, sql);
   });
