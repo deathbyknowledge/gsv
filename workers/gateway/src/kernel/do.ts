@@ -152,7 +152,7 @@ import {
 } from "./outbound-mail";
 import { approvalTargetIdentity, getVisibleTarget, resolveVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
-import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerArgsOf, ledgerTargetOf, outcomeOfResponse, errorOfResponse, usageOfResponse, type JsonLike } from "./ledger";
+import { LEDGER_PRUNE_PER_ALARM, LEDGER_WINDOW_ROWS, LedgerStore, argsText, ledgerArgsOf, ledgerTargetOf, outcomeOfResponse, errorOfResponse, usageOfResponse } from "./ledger";
 import { LedgerFeed } from "./ledger-feed";
 
 const LEDGER_ROTATION_TASK = "rotate";
