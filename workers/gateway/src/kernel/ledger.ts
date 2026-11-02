@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
-import type { SysLedgerLine, SysLedgerListArgs, SysLedgerListResult, SysLedgerOutcome } from "@humansandmachines/gsv/protocol";
+import type { EventSourceAddArgs, SysLedgerLine, SysLedgerListArgs, SysLedgerListResult, SysLedgerOutcome } from "@humansandmachines/gsv/protocol";
 
 /**
  * The ledger is the Kernel's record of what ran: one line per dispatched
@@ -168,6 +168,11 @@ export function capField(value: string, limit: number): string {
  * cut and the cut marked; `JSON.parse` failing on a line is how a reader
  * knows it was cut.
  */
+/** A source's arguments without the signing secret its sender issued. */
+function withoutSecret({ secret: _secret, ...rest }: EventSourceAddArgs): Omit<EventSourceAddArgs, "secret"> {
+  return rest;
+}
+
 /** What the ledger keeps of a call's arguments; authorization and other people's words stay out. */
 export function ledgerArgsOf(frame: RequestFrame): JsonLike {
   // SAFETY: request args are the wire JSON the frame decoder accepted; the ledger keeps them as text.
@@ -180,6 +185,7 @@ export function ledgerArgsOf(frame: RequestFrame): JsonLike {
     ? { id: frame.args.id, targetId: frame.args.targetId, label: frame.args.label }
     : frame.call === "sys.pair.redeem" ? { id: frame.args.id }
     : frame.call === "event.source.rotate" ? { name: frame.args.name }
+    : frame.call === "event.source.add" ? withoutSecret(frame.args)
     : frame.call === "event.emit" ? { source: frame.args.source }
     : frame.args) as JsonLike;
 }

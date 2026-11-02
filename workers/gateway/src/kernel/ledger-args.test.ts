@@ -6,6 +6,12 @@ describe("what the ledger keeps of a call", () => {
     expect(ledgerArgsOf({ type: "req", id: "r", call: "event.source.rotate", args: { name: "pay", secret: "whsec_private" } })).toEqual({ name: "pay" });
   });
 
+  it("keeps a signing secret given when adding a source out, and the rest of the source's arguments", () => {
+    expect(ledgerArgsOf({ type: "req", id: "r", call: "event.source.add", args: {
+      name: "pay", webhook: "hmac", hmac: { header: "stripe-signature", encoding: "hex" }, secret: "whsec_private",
+    } })).toEqual({ name: "pay", webhook: "hmac", hmac: { header: "stripe-signature", encoding: "hex" } });
+  });
+
   it("keeps an event's words out, since they are someone else's", () => {
     expect(ledgerArgsOf({ type: "req", id: "r", call: "event.emit", args: { source: "feed", events: [{ title: "private", body: "private" }] } })).toEqual({ source: "feed" });
   });
