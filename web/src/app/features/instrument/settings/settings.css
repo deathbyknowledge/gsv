@@ -175,3 +175,5 @@
 .settings-account-grants ul { list-style: none; padding: 0; }
 .settings-account-grants li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; padding-block: .6rem; border-bottom: 1px solid var(--border); }
 .settings-account-grants code { color: var(--faint); overflow-wrap: anywhere; }
+.settings-happenings-source { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.settings-happenings-source:hover { color: var(--accent); }

@@ -9,6 +9,8 @@ import type { ProcessContactMessageRuntimeEvent } from "../protocol/process-fram
 export type OwnerNotifiedShipEvent = {
   type: "owner.notified";
   payload: ProcHistoryEventPayload<"owner.notified">;
+  /** Set for a card in the person's conversation; otherwise it follows whether a messenger carried the notice. */
+  audience?: "person" | "both";
   link?: ProcHistoryEventLink;
 };
 
@@ -48,6 +50,7 @@ const shipEventSchema: z.ZodType<ShipEvent> = z.union([
   contactMessageEventSchema,
   z.object({
     type: z.literal("owner.notified"),
+    audience: z.enum(["person", "both"]).optional(),
     payload: z.custom<ProcHistoryEventPayload<"owner.notified">>(
       (value) => procHistoryEventPayloadSchemas["owner.notified"].safeParse(value).success,
     ),

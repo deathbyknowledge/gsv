@@ -13,7 +13,8 @@ const contextError = [
   /exceeded model token limit|too large for model with \d+ maximum context length/i,
   /prompt has [\d,]+ tokens?, but the configured context size is [\d,]+ tokens?/i,
   /range of input length should be|context[_ ]length[_ ]exceeded|too many tokens|token limit exceeded/i,
-  /^413\s*(?:status code)?\s*\(no body\)/i,
+  // A 413 means the request was too big, whatever else the provider's body says.
+  /^(?:[\w -]+ API error \(413\):|413(?:\s|:|$))/i,
 ];
 
 export function isContextOverflow(message: AssistantMessage, contextWindow?: number): boolean {

@@ -224,8 +224,9 @@ export const procHistoryEventPayloadSchemas = {
   }),
   "owner.notified": z.strictObject({
     noticeId: z.string(),
-    topic: z.enum(["contact.message", "contact.request", "contact.invite.accepted", "mail.received", "machine.added", "adapter.connected", "adapter.auth_required"]),
+    topic: z.enum(["contact.message", "contact.request", "contact.invite.accepted", "mail.received", "machine.added", "adapter.connected", "adapter.auth_required", "event.received", "event.silent"]),
     adapter: z.optional(z.string()),
+    shownInClient: z.optional(z.boolean()),
     from: z.string(),
     handle: z.optional(z.string()),
     preview: z.optional(z.string()),
@@ -347,12 +348,14 @@ export type ProcHistoryEventPayloadMap = {
     version?: string;
     observedAt: number;
   };
-  /** Something that happened to the owner, recorded for Ship; `adapter` and `sentAtMs` are set when their messenger was told. */
+  /** Something that happened to the owner, recorded for Ship; `sentAtMs` is set when they were told, with `adapter` when by their messenger. */
   "owner.notified": {
     noticeId: string;
-    topic: "contact.message" | "contact.request" | "contact.invite.accepted" | "mail.received" | "machine.added" | "adapter.connected" | "adapter.auth_required";
+    topic: "contact.message" | "contact.request" | "contact.invite.accepted" | "mail.received" | "machine.added" | "adapter.connected" | "adapter.auth_required" | "event.received" | "event.silent";
     /** The adapter that carried the notice, such as whatsapp; each reader names it with adapterDisplayName. */
     adapter?: string;
+    /** The person sees this as a card in their conversation, because no messenger carried it. */
+    shownInClient?: boolean;
     /** The contact's local alias or display name, on one line. */
     from: string;
     /** The contact's handle, when the notice names one. */
