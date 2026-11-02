@@ -5,9 +5,19 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { z } from "zod";
 
 const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const manifestPayload = z.strictObject({
+  version: z.literal(1), importId: z.uuid(), database: z.string().min(1).max(128), remote: z.boolean(),
+  cutoff: z.number().int().nonnegative(),
+  recipients: z.array(z.strictObject({ id: z.string().min(1).max(256),
+    email: z.email().max(254).refine((email) => email === email.trim().toLowerCase()),
+    verifiedAt: z.number().int().nonnegative(),
+  })).max(5000),
+});
+const manifestSchema = manifestPayload.extend({ digest: z.string().regex(/^[a-f0-9]{64}$/) });
 
 export function recipientQuery(cutoff) {
   if (!Number.isSafeInteger(cutoff) || cutoff < 0 || cutoff > Date.now()) throw new Error("Cutoff must be a past timestamp");
@@ -19,23 +29,17 @@ export function recipientQuery(cutoff) {
 }
 
 export function createManifest(database, remote, cutoff, recipients) {
-  const payload = { version: 1, importId: randomUUID(), database, remote, cutoff, recipients };
+  const payload = manifestPayload.parse({ version: 1, importId: randomUUID(), database, remote, cutoff, recipients });
   return { ...payload, digest: digest(payload) };
 }
 
 export function importSql(manifest, now = Date.now()) {
-  const { digest: checksum, ...payload } = manifest;
+  const { digest: checksum, ...payload } = manifestSchema.parse(manifest);
   if (checksum !== digest(payload)) throw new Error("Manifest changed; create and review a new preview");
-  if (payload.version !== 1 || typeof payload.database !== "string" || !payload.database || payload.database.length > 128
-    || typeof payload.remote !== "boolean" || !/^[a-f0-9-]{36}$/.test(payload.importId)) throw new Error("Invalid manifest");
   recipientQuery(payload.cutoff);
-  if (!Array.isArray(payload.recipients) || payload.recipients.length > 5000) throw new Error("Import supports at most 5000 recipients");
   const seen = new Set();
   return payload.recipients.map((row) => {
-    if (typeof row.id !== "string" || !row.id || row.id.length > 256 || typeof row.email !== "string"
-      || row.email.length > 254 || row.email !== row.email.trim().toLowerCase() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email)
-      || !Number.isSafeInteger(row.verifiedAt) || row.verifiedAt < 0 || row.verifiedAt > payload.cutoff
-      || seen.has(row.email)) throw new Error("Invalid or duplicate recipient");
+    if (row.verifiedAt > payload.cutoff || seen.has(row.email)) throw new Error("Invalid or duplicate recipient");
     seen.add(row.email);
     const requestId = `${payload.importId}:${digest(row.email)}`;
     return `INSERT INTO product_email_signups

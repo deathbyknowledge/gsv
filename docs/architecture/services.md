@@ -66,10 +66,9 @@ Operators explicitly preview and apply historical imports; schema migrations
 never select recipients or enqueue subscriptions.
 
 The service owns provider credentials, subscription status, suppression and
-provider-specific tag policy. H&M's implementation lives in
-`gsv-managed-services/accounts/src/product-email.ts` and preserves Buttondown
-unsubscribe and suppression states while appending the `user` tag to existing
-subscribers. Public Accounts does not call Buttondown or require its key.
+provider-specific tag policy. An operator may inject its implementation locally
+in the Accounts composition or supply a service binding. Public Accounts does
+not call a particular email provider or require its credentials.
 
 ## Entitlements
 

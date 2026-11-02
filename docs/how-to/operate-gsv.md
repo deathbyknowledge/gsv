@@ -414,11 +414,11 @@ unavailable. Inspect `product_email_signups.due_at`, `attempts` and `last_error`
 for failures. Retries reuse one request ID; completed requests are not replayed.
 The temporary signup IP is cleared after delivery.
 
-H&M's Buttondown implementation lives in `gsv-managed-services`. Its composition
-accepts `productEmails`, binds the managed Accounts-only `BUTTONDOWN_API_KEY`,
-and enables `GSV_PRODUCT_EMAIL_ENABLED`. It appends the `user` tag to existing
-subscribers without replacing other tags or changing subscription status.
-Pending, unsubscribed, blocked and other suppressed addresses remain untouched.
+The operator's implementation owns provider credentials, tags, subscription
+status and suppression. It should preserve existing tags and unsubscribe choices.
+The managed Buttondown implementation enables delivery separately and appends
+the `user` tag to existing subscribers. Pending, unsubscribed, blocked and other
+suppressed addresses remain untouched.
 
 ### Import earlier marketing signups
 
@@ -463,6 +463,6 @@ timestamp and wording. Migration 0036 holds unconfirmed automatic backfill rows
 from earlier PR previews until an operator explicitly imports them; it never
 replays completed deliveries.
 
-Keep managed delivery disabled while upgrading and importing. Then enable it,
-and verify one new opted-in signup and one imported owner in Buttondown before
+Keep delivery disabled while upgrading and importing. Then enable it,
+and verify one new opted-in signup and one imported owner with the provider before
 considering rollout complete.
