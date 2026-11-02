@@ -355,6 +355,36 @@ describe("event webhooks", () => {
     });
   });
 
+  it("tells open pages once for each delivery that brought something new", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const onChange = vi.fn();
+      const k = { ...kernel(storage), eventSources: new EventSourceStore(storage, onChange) };
+      const { source } = await handleEventSourceAdd({ name: "feed" }, context(k));
+      const gh = await handleEventSourceAdd({ name: "gh", webhook: "github" }, context(k));
+      onChange.mockClear();
+
+      const events = [{ id: "1", title: "a" }, { id: "2", title: "b" }, { id: "3", title: "c" }];
+      handleEventEmit({ source: source.name, events }, context(k));
+      expect(onChange).toHaveBeenCalledTimes(1);
+      handleEventEmit({ source: source.name, events }, context(k));
+      expect(onChange).toHaveBeenCalledTimes(1);
+
+      const batch = (from: number) => Array.from({ length: 100 }, (_, index) => ({ id: `flood-${from + index}`, title: "x" }));
+      handleEventEmit({ source: source.name, events: batch(0) }, context(k));
+      onChange.mockClear();
+      // Some of this batch got in before the allowance ran out, and pages should still see those.
+      expect(() => handleEventEmit({ source: source.name, events: batch(100) }, context(k))).toThrow("too fast");
+      expect(onChange).toHaveBeenCalledTimes(1);
+
+      onChange.mockClear();
+      const headers = new Headers({ "x-hub-signature-256": `sha256=${await sign(gh.secret ?? "", body)}`, "x-github-delivery": "once" });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        expect((await receiveWebhook(gh.source.sourceId, null, headers, body, context(k, "schedule"))).status).toBe(200);
+      }
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("doesn't charge a verified sender's retries against its allowance", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const k = kernel(storage);

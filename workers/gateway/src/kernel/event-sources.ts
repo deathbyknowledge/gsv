@@ -199,6 +199,11 @@ export class EventSourceStore {
     return true;
   }
 
+  /** Open pages refresh once per delivery, however many events it brought. */
+  arrived(ownerUid: number): void {
+    this.onChange?.(ownerUid);
+  }
+
   events(ownerUid: number, sourceId: string | null, limit: number): EventRecord[] {
     const rows = sourceId
       ? this.sql.exec<LogRow>("SELECT * FROM event_log WHERE source_id = ? ORDER BY received_at DESC LIMIT ?", sourceId, limit)
@@ -462,15 +467,19 @@ export function handleEventEmit(args: EventEmitArgs, ctx: KernelContext): EventE
   const now = Date.now();
   let accepted = 0;
   let duplicates = 0;
-  for (const event of events) {
-    // A repeat costs nothing, so a poller re-reading old items still has room for new ones.
-    if (event.id && ctx.eventSources.seen(row, event.id)) {
-      duplicates += 1;
-      continue;
+  try {
+    for (const event of events) {
+      // A repeat costs nothing, so a poller re-reading old items still has room for new ones.
+      if (event.id && ctx.eventSources.seen(row, event.id)) {
+        duplicates += 1;
+        continue;
+      }
+      if (!ctx.eventSources.admit(row, now)) throw new Error(`event.emit: "${source}" is sending too fast; ${accepted} accepted`);
+      if (ingest(ctx, row, event, emittedBy, now)) accepted += 1;
+      else duplicates += 1;
     }
-    if (!ctx.eventSources.admit(row, now)) throw new Error(`event.emit: "${source}" is sending too fast; ${accepted} accepted`);
-    if (ingest(ctx, row, event, emittedBy, now)) accepted += 1;
-    else duplicates += 1;
+  } finally {
+    if (accepted > 0) ctx.eventSources.arrived(row.owner_uid);
   }
   return { accepted, duplicates };
 }
@@ -516,6 +525,6 @@ export async function receiveWebhook(
     ...(event.preview ? { preview: Array.from(event.preview).slice(0, MAX_PREVIEW).join("") } : undefined),
     ...(event.body !== undefined && event.body.length > MAX_BODY ? { body: undefined } : undefined),
   };
-  ingest(ctx, row, bounded, "webhook", now);
+  if (ingest(ctx, row, bounded, "webhook", now)) ctx.eventSources.arrived(row.owner_uid);
   return { status: 200 };
 }
