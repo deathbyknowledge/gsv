@@ -1,4 +1,5 @@
 node_modules/
+product-email-import*.json
 .dev.vars
 target/
 !extension/src/target/

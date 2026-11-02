@@ -53,7 +53,7 @@ configure:
 
 ```sh
 GSV_OWNER_EMAIL_FROM=login@ship.space
-GSV_OWNER_EMAIL_REPLY_TO=hello@humansandmachin.es
+GSV_OWNER_EMAIL_REPLY_TO=support@humansandmachin.es
 ```
 
 The sender domain must be enabled for Cloudflare Email Sending in the deployment
@@ -177,12 +177,13 @@ Desktop. Registration needs no invite code. One verified email can create one
 Ship, and an interrupted activation resumes with the same email.
 
 With native owner email enabled, `<admin-origin>/owner/login` verifies the
-person's email and opens **My Ships**. Signing in there does not create a
+person's email, then goes straight to their Ship if they have exactly one that is
+active, where its own sign-in appears, or opens **My Ships** otherwise. Signing in there does not create a
 Ship or grant operator administration. To add an operator-created Ship to that
 list, sign in as **root**, open **Settings → sign-in → Account recovery**, and
 choose **set up recovery**. This binds current root authorization to the verified
-email. The owner can then see the Ship in **My Ships** and start administrator
-recovery there if needed.
+email. The owner can then see the Ship in **My Ships** and use **Forgot your
+password?** on the Ship or there to set a new personal or administrator password.
 
 The sending address must be enabled with the provider and its DNS records
 verified before codes can be delivered. The public deployment creates and
@@ -195,9 +196,9 @@ verification mail is independent of a Ship's messaging adapters.
 A reset gives the same person a fresh Ship under the same handle, and it can't
 be undone. If the person only lost access, don't reset: recovery keeps their
 Ship, contacts and DID. They sign in to **My Ships** at `<admin-origin>/owner/login`
-with the owner email that the Ship's page shows, and choose **Recover your
-Ship** to reset the administrator password. A Ship whose owner isn't linked
-can't be recovered this way.
+with the owner email that the Ship's page shows, and choose **Forgot your
+password?** to set a new password, or start from the same link on their Ship's
+sign-in page. A Ship whose owner isn't linked can't be recovered this way.
 
 The **Reset** panel on the Ship's administration page says this first, then
 what a reset does before you confirm:
@@ -405,39 +406,63 @@ The box starts unchecked and is separate from the required account agreement.
 For new signups, Accounts queues explicit choices made when creating a Ship with a verified
 email. Sign-in and email verification alone never subscribe anyone.
 
-To deliver these requests, apply `0034_product_email_signup.sql` and
-`0035_product_email_users.sql`, bind an
-Accounts-only `BUTTONDOWN_API_KEY`, and set `GSV_PRODUCT_EMAIL_ENABLED=true`.
-The Accounts scheduled handler calls `runProductEmailJobs`; commercial
-compositions import it from the installations package's `product-email` export.
-Requests wait durably while sending is disabled or Buttondown is unavailable.
-Inspect `product_email_signups.due_at`, `attempts` and `last_error` for failures.
-Retries reuse one request ID, and completed requests are not replayed.
+To deliver these requests, apply migrations 0034 through 0036 and supply an
+optional `ProductEmailService` as `PRODUCT_EMAIL`. The Accounts scheduled handler
+calls `runProductEmailJobs`; operator compositions may pass a local implementation
+of the same contract. Requests wait durably while the service is absent or
+unavailable. Inspect `product_email_signups.due_at`, `attempts` and `last_error`
+for failures. Retries reuse one request ID; completed requests are not replayed.
+The temporary signup IP is cleared after delivery.
 
-Buttondown owns subscriptions and the unsubscribe link in each product email.
-Checked signups receive the `user` tag. New subscribers receive
-that tag; existing subscribed addresses have it appended without replacing tags
-such as `early-access` or changing their subscription state. Pending, unsubscribed,
-blocked and other suppressed addresses remain untouched. Signup requests store the choice's wording version, locale, timestamp
-and verified address; the temporary signup IP is cleared after delivery.
-The adapter uses Buttondown's [subscriber API](https://docs.buttondown.com/api-subscribers-create),
-[tag append behavior](https://docs.buttondown.com/tags)
-and [idempotency keys](https://docs.buttondown.com/api-idempotency-keys).
+H&M's Buttondown implementation lives in `gsv-managed-services`. Its composition
+accepts `productEmails`, binds the managed Accounts-only `BUTTONDOWN_API_KEY`,
+and enables `GSV_PRODUCT_EMAIL_ENABLED`. It appends the `user` tag to existing
+subscribers without replacing other tags or changing subscription status.
+Pending, unsubscribed, blocked and other suppressed addresses remain untouched.
 
+### Import earlier marketing signups
 
-Migration `0035_product_email_users.sql` also queues a one-time backfill of
-existing verified, active owners with at least one active Ship. It excludes
-unverified or disabled owners, incomplete signups and retired Ships. Multiple
-Ships for one email produce one request. Backfill records use source
-`ship-existing-user-backfill`, wording version `operator-backfill-2026-10-30`
-and locale `und`; these identify an operator backfill, not a recorded checkbox
-choice. Existing signup records retain their original evidence. Previously
-completed requests are checked again for the `user` tag with new idempotency
-keys, preserving any existing `newsletter` or `early-access` tags.
+An operator may fulfil earlier opt-ins when the delivery backend did not exist.
+Use a fixed cutoff covering that cohort and confirm the prior opt-ins when
+applying. This is separate from deployment and never runs during a migration.
+The preview selects verified active owners and active Ships created by the
+cutoff, once per address. Apply rechecks that ownership, address, verification
+and Ship eligibility still hold, and imports only the reviewed recipients.
+Future signups continue to require the checkbox.
 
-Keep delivery disabled while applying the migrations and deploying the updated
-Accounts worker, then enable it. The existing cron drains the backfill in batches
-of 30, using the same retries and Buttondown suppression checks as new signups.
-The migration takes a snapshot; users created afterward still need the checkbox.
-Verify one new opted-in signup and one backfilled owner in Buttondown before
+From the runtime checkout, using the Accounts Wrangler configuration and exact
+database name for the intended environment:
+
+```bash
+node scripts/product-email-backfill.mjs preview \
+  --database ACCOUNTS_DATABASE --config PATH_TO_ACCOUNTS_CONFIG \
+  --cutoff 2026-11-02T00:00:00Z --out /tmp/product-email-import.json --remote
+```
+
+Review the recipients in the private JSON manifest and its cutoff, database and
+remote mode. Then apply that same manifest:
+
+```bash
+node scripts/product-email-backfill.mjs apply \
+  --database ACCOUNTS_DATABASE --config PATH_TO_ACCOUNTS_CONFIG \
+  --manifest /tmp/product-email-import.json --confirm-existing-opt-ins --remote
+```
+
+The example cutoff must be replaced with the cohort boundary the operator has
+confirmed. Omit `--remote` for a local database. Preview writes no database
+state. The manifest is created with private file permissions; do not commit it.
+A changed manifest requires a fresh preview. Imports can be retried after an
+interruption: stable request IDs and the address key prevent duplicate requests,
+and completed deliveries and existing checkbox evidence remain unchanged.
+
+Imported rows carry source `ship-existing-user-backfill`, the import ID and
+`consent_basis=operator-confirmed-existing-opt-ins`. Their original consent time,
+wording and locale are unknown; `requested_at` records the queue insertion time,
+not the historical opt-in. New checkbox choices retain their actual recorded
+timestamp and wording. Migration 0036 holds unconfirmed automatic backfill rows
+from earlier PR previews until an operator explicitly imports them; it never
+replays completed deliveries.
+
+Keep managed delivery disabled while upgrading and importing. Then enable it,
+and verify one new opted-in signup and one imported owner in Buttondown before
 considering rollout complete.

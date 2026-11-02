@@ -112,8 +112,11 @@ export class KernelMountBackend implements MountBackend {
     const p = normalizePath(path);
     if (p === "/dev/null") return;
     if (isCronWritablePath(p)) {
+      const appended = fileContentText(content);
+      // A shell opens `>>` targets with an empty append; the jobs have not changed.
+      if (!appended) return;
       const existing = await this.readVirtual(p) ?? "";
-      await this.writeCronFile(p, existing + fileContentText(content));
+      await this.writeCronFile(p, existing + appended);
       return;
     }
     if (p.startsWith("/dev/") || p.startsWith("/proc/") || p.startsWith("/sys/") || isVarViewPath(p) || isEtcCronPath(p)) {
@@ -753,11 +756,11 @@ export class KernelMountBackend implements MountBackend {
     if (!this.kernel?.cron) return false;
     if (path.startsWith("/var/spool/cron/")) {
       const username = decodePathSegment(path.slice("/var/spool/cron/".length));
-      return username ? this.kernel.cron.removeUserCrontab(username) : false;
+      return username ? await this.kernel.cron.removeUserCrontab(username) : false;
     }
     if (path.startsWith("/etc/cron.d/")) {
       const name = decodePathSegment(path.slice("/etc/cron.d/".length));
-      return name ? this.kernel.cron.removeSystemCrontab(name) : false;
+      return name ? await this.kernel.cron.removeSystemCrontab(name) : false;
     }
     return false;
   }

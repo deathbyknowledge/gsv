@@ -10,17 +10,26 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 4px 14px 0;
+  padding: 0 14px;
   font: 400 11px/1.5 var(--gsv-font-mono);
   color: var(--text-dim);
 }
-.markdown-code-header button {
-  min-width: 44px;
-  padding: 5px 0;
-  text-align: right;
-  color: var(--label);
+.markdown-code-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: -12px;
 }
-.markdown-code-header button:hover { color: var(--accent); }
+.markdown-code-status { color: var(--label); }
+.markdown-code-status:empty { display: none; }
+.markdown-code-copy { display: inline-flex; }
+/* A 36px control (18px glyph) with a 44px hit area for touch. */
+.markdown-code-copy .gsv-ibtn-floating { position: relative; }
+.markdown-code-copy .gsv-ibtn-floating::after { content: ""; position: absolute; inset: -4px; }
+.markdown-code-copy .gsv-ibtn-floating { color: var(--label); }
+.markdown-code-copy .gsv-ibtn-floating:hover,
+.markdown-code-copy .gsv-ibtn-floating.is-copied { color: var(--accent); }
+.markdown-code-copy .gsv-ibtn-floating.is-failed { color: var(--error); }
 .markdown-code-block pre {
   margin: 0;
   padding: 8px 14px 14px;
@@ -33,6 +42,9 @@
   color: var(--text-hi);
 }
 .markdown-code-block.is-plain-text pre { white-space: pre-wrap; text-wrap: wrap; overflow-wrap: anywhere; }
+@container instrument (max-width: 720px) {
+  .markdown-code-block pre { white-space: pre-wrap; text-wrap: wrap; overflow-wrap: anywhere; }
+}
 .markdown-code-block pre:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .markdown-code-block pre > code {
   font: inherit;

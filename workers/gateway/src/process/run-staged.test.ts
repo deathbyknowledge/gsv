@@ -41,7 +41,7 @@ function nested(process: Process, runId: string, ownerDispatchId: string, ...req
   for (const id of requestIds) {
     process.codeModeResponses.set(id, {
       runId, ownerDispatchId, call: "shell.exec", args: {},
-      resolve: () => {}, reject: () => {}, timeoutId: setTimeout(() => {}, 0),
+      resolve: () => {}, reject: () => {}, deadline: { clear() {} },
     });
   }
 }

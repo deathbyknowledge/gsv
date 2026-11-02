@@ -12,14 +12,15 @@ canonical message records the relevant PID and run ID, but killing that Process 
 conversation. Users can inspect the referenced Process while it exists or read its archive later.
 
 Web and Desktop render Ship's Markdown code blocks at a readable monospace size with a copy action.
-Long lines scroll inside the block. Copy preserves indentation and internal line breaks without
-adding the renderer's final newline to the clipboard.
+Blocks without a language tag, and `text` blocks, wrap at every width; tagged code wraps when the Instrument column is narrow and scrolls inside the block on wide ones. Copy preserves
+indentation and internal line breaks without adding the renderer's final newline to the clipboard.
 Chat renders human messages as plain text with clickable web URLs. External web links in human
 messages and Ship's Markdown replies open in a new tab.
 Human messages align right, with the timestamp before the sender's name, and balance line
 lengths to avoid a short final line. Ship's messages align left.
 The Chat transcript scrolls vertically. Long words, URLs and compaction notes wrap within the
-reading column; wide tables and code blocks scroll horizontally within their own bounds.
+reading column; wide tables scroll horizontally within their own bounds, as do code blocks on
+wide viewports.
 Ship replies use ordinary line wrapping rather than paragraph balancing, filling each line
 with the words that fit. Explicit line breaks in a message remain intact.
 
@@ -55,6 +56,8 @@ On phones, both the prompt and its attachment, connection and recording controls
 area as the browser toolbar or keyboard opens and closes. The star field keeps its full height.
 Installed PWAs fill the screen, including the home-indicator area. The bottom safe-area inset
 is padding inside each surface; it does not shorten the page or its star field.
+In the composer, Enter sends; Shift+Enter or Alt+Enter inserts a new line, and Ctrl+Enter or Cmd+Enter
+still sends. Contact replies and contact requests use the same keys, and Help lists them.
 The keyboard's return key requests a Send action. iOS owns the field-navigation and Done bar above its keyboard;
 the web app cannot hide that bar through a supported browser API.
 Clicking or tapping a message selects it without scrolling. Scrolling selects the message nearest
@@ -128,6 +131,15 @@ text from a stranger never leaves People. Each sent notice queues an `owner.noti
 event, which Process records for the next generation without starting a run, so Ship can
 answer a reply to it. The owner sees the same event in their Ship conversation as a card built from its fields
 (who wrote, which messenger, the start of the message) with a link to the contact or request in People.
+
+Rules (`notify.rule.*`) choose, per kind, whether the messenger is told and what Ship does. Received
+mail, new computers and messenger changes use the same notices when a rule asks. Mail notices carry a
+count only, and a messenger that needs signing in can't carry the notice about itself. With `context`,
+an event the person turned off or wasn't sent still reaches Ship as a model-only `owner.notified`, without a
+card or a run; a contact's event instead stays out of Ship while its owner simply wasn't reachable or was already
+active, as their words should reach Ship unsent only by choice. `wake` stays with each kind's responsibility source, and contact kinds never allow it.
+
+An owner's custom event sources (`event.source.*`) take a row in the same list and enter through one path, `event.emit`, however an event arrives: a script, a routine, `gsv event` or a webhook. Each source holds its own choices instead of a rule. A source's words are always untrusted. Its events follow the same rule as other notices, except that one left to an active client, or with no messenger to carry it, appears as a person-only card in the conversation, because nothing else in a client shows it. A source going quiet still goes to the messenger while a client is active. An event from a running process never wakes Ship, which keeps a source from looping on itself.
 
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more
@@ -333,7 +345,8 @@ Chat opens conversation search through **Help → Keyboard shortcuts → Search 
 `/` in browse mode and `Ctrl/Cmd+F` in Chat remain available. The unmodified `w` key opens Work outside text fields; `f` is available for ordinary typing. People uses the same search
 dialog and syscall for the selected contact conversation. Selecting a result shows the
 original message and surrounding messages in the dialog, preserving the conversation position and
-any draft when the dialog closes.
+any draft when the dialog closes. The matched message starts open and in view; other very long
+messages fold behind **read more**, as they do in Chat.
 
 `conversation.search` searches canonical message text using the Conversation DO's SQLite FTS5 index.
 Words are literal prefixes, combined with AND; punctuation is not a query language. Results contain
@@ -379,6 +392,10 @@ read the user's conversations. Processes cannot append user messages or recursiv
 Adapter ingress and Process message commits use private Kernel-owned paths after
 the Kernel has resolved owner, route, Process, and conversation identity.
 
+A quoted reply on a messenger does not change the canonical Message. The Kernel reads the quoted
+Message for Process context under the [quoted reply](/architecture/adapter-model#quoted-replies)
+scope, and the conversation stores only the text the person wrote.
+
 Conversation IDs are opaque. Installation identity remains the outer physical boundary for the
 Kernel, Conversation Durable Object names, and R2 keys.
 
@@ -407,7 +424,7 @@ the contextual panel, with one level of tabs: **ongoing**, **routines** and **hi
 The `+` menu contains attachments and requests, without a second plans entry.
 Responsibilities retain hierarchy and show blockers before ordinary follow-ups.
 Rows use a short state label; the full blocker is readable prose in the inspector.
-Standing policies are configured in **Settings → Standing responsibilities**. Details allow inspection, cancellation and asking Ship about the exact
+Standing policies are configured in **Settings → When things happen**. Details allow inspection, cancellation and asking Ship about the exact
 record. Routines show their cadence and state, with pause/enable and edit controls;
 creating one stages a request to Ship. These panels use the existing authorized
 syscalls and signal-driven caches. Closing them preserves drafts and pauses hidden

@@ -91,15 +91,14 @@ describe("desktop owner API", () => {
     const session = await (await f.request("/session", f.sessionSecret)).json<{ spaces: unknown[]; setups: unknown[] }>();
     expect(session.spaces).toHaveLength(1);
     expect(session.setups).toHaveLength(0);
-    const provider = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(null, { status: 404 }))
-      .mockResolvedValueOnce(Response.json({ type: "regular" }, { status: 201 }));
-    const config = { GSV_PRODUCT_EMAIL_ENABLED: "true", BUTTONDOWN_API_KEY: "test-key" };
-    await runProductEmailJobs(env.INSTALLATIONS_DB, config, provider);
-    await runProductEmailJobs(env.INSTALLATIONS_DB, config, provider);
-    expect(provider).toHaveBeenCalledTimes(optedIn ? 2 : 0);
+    const subscribe = vi.fn().mockResolvedValue(undefined);
+    const config = { PRODUCT_EMAIL: { subscribe } };
+    await runProductEmailJobs(env.INSTALLATIONS_DB, config);
+    await runProductEmailJobs(env.INSTALLATIONS_DB, config);
+    expect(subscribe).toHaveBeenCalledTimes(optedIn ? 1 : 0);
     if (optedIn) {
       expect(await marketing()).toMatchObject({ email: f.challenge.email, completed_at: expect.any(Number), attempts: 1, ip: null });
-      expect(JSON.parse(String(provider.mock.calls[1][1]?.body))).toMatchObject({ email_address: f.challenge.email, type: "regular", tags: ["user"] });
+      expect(subscribe.mock.calls[0][0]).toMatchObject({ emailAddress: f.challenge.email, source: "ship-signup", consentBasis: "signup-checkbox" });
     } else expect(await marketing()).toBeNull();
     expect((await f.request("/logout", f.sessionSecret, {})).status).toBe(200);
     expect((await f.request("/session", f.sessionSecret)).status).toBe(401);

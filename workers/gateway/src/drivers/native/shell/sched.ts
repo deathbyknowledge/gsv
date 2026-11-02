@@ -9,9 +9,10 @@ import {
   handleSchedulerUpdate,
 } from "../../../kernel/scheduler";
 import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
-import type { SchedulerAddArgs, ScheduleTarget } from "@humansandmachines/gsv/protocol";
+import type { ScheduleExpressionInput, SchedulerAddArgs, ScheduleRecord, ScheduleTarget } from "@humansandmachines/gsv/protocol";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
 import { resolveVisibleAdapterMessageDestination } from "../../../kernel/adapter-destinations";
+import { formatLocalTime, isLocalTime, ownerTimezone } from "../../../kernel/timezone";
 import * as z from "zod/mini";
 
 const ISO_TIMESTAMP_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -39,6 +40,7 @@ const scheduleTargetSchema = z.union([
 ]);
 const scheduleExpressionSchema = z.union([
   z.strictObject({ kind: z.literal("at"), atMs: z.number() }),
+  z.strictObject({ kind: z.literal("at"), localTime: z.string(), timezone: z.optional(z.string()) }),
   z.strictObject({ kind: z.literal("after"), afterMs: z.number() }),
   z.strictObject({ kind: z.literal("every"), everyMs: z.number(), anchorMs: z.optional(z.number()) }),
   z.strictObject({ kind: z.literal("cron"), expr: z.string(), timezone: z.string() }),
@@ -82,7 +84,7 @@ async function runSchedCommand(args: string[], ctx: KernelContext): Promise<Exec
         lines.push([
           schedule.id,
           schedule.enabled ? "yes" : "no",
-          schedule.state.nextRunAtMs === null ? "-" : new Date(schedule.state.nextRunAtMs).toISOString(),
+          formatNextRun(schedule, ctx),
           schedule.state.lastStatus ?? "-",
           formatScheduleListText(schedule.state.lastError),
           formatScheduleSource(schedule.description),
@@ -97,7 +99,7 @@ async function runSchedCommand(args: string[], ctx: KernelContext): Promise<Exec
       const parsed = await parseSchedAddCommand(rest, ctx);
       const result = await handleSchedulerAdd(parsed, ctx);
       return {
-        stdout: `schedule_id=${result.schedule.id} next=${result.schedule.state.nextRunAtMs === null ? "-" : new Date(result.schedule.state.nextRunAtMs).toISOString()}\n`,
+        stdout: `schedule_id=${result.schedule.id} next=${formatNextRun(result.schedule, ctx, requestedTimezone(parsed.expression))}\n`,
         stderr: "",
         exitCode: 0,
       };
@@ -153,7 +155,7 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
   let name: string | undefined;
   let message: string | undefined;
   let timezone: string | undefined;
-  const expressions: SchedulerAddArgs["expression"][] = [];
+  const expressions: ScheduleExpressionInput[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
@@ -222,8 +224,12 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
     if (current === "--at") {
       index += 1;
       const value = requireShellOptionValue(args[index], current);
+      if (isLocalTime(value)) {
+        expressions.push({ kind: "at", localTime: value });
+        continue;
+      }
       if (!ISO_TIMESTAMP_WITH_ZONE.test(value)) {
-        throw new Error(`--at requires an ISO timestamp with Z or a UTC offset: ${value}`);
+        throw new Error(`--at requires a local time such as 2026-10-26T10:00, or an ISO timestamp with Z or a UTC offset: ${value}`);
       }
       const atMs = Date.parse(value);
       if (!Number.isFinite(atMs)) {
@@ -254,10 +260,13 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
     throw new Error("sched add requires exactly one of --every, --cron, --after, or --at");
   }
   const expression = expressions[0];
-  if (timezone !== undefined && expression.kind !== "cron") {
-    throw new Error("--timezone is only valid with --cron");
-  }
-  if (expression.kind === "cron" && timezone !== undefined) {
+  if (timezone !== undefined) {
+    if (expression.kind === "at" && "atMs" in expression) {
+      throw new Error("--timezone cannot be combined with an --at that has Z or a UTC offset; use a local time such as 2026-10-26T10:00");
+    }
+    if (expression.kind !== "cron" && expression.kind !== "at") {
+      throw new Error("--timezone is only valid with --cron or a local --at");
+    }
     expression.timezone = timezone;
   }
   if (name === undefined) {
@@ -325,6 +334,26 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
   };
 }
 
+function requestedTimezone(expression: ScheduleExpressionInput): string | undefined {
+  return expression.kind === "at" && "localTime" in expression ? expression.timezone : undefined;
+}
+
+/** A schedule's next run on the clock it was asked for, so a wrong hour is visible to the reader. */
+function formatNextRun(schedule: ScheduleRecord, ctx: KernelContext, requested?: string): string {
+  if (schedule.state.nextRunAtMs === null) {
+    return "-";
+  }
+  const timezone = schedule.expression.kind === "cron"
+    ? schedule.expression.timezone
+    : requested?.trim() || ownerTimezone(ctx.config, resolveCallerOwnerUid(ctx));
+  try {
+    return formatLocalTime(schedule.state.nextRunAtMs, timezone);
+  } catch {
+    // config/server/timezone is not validated on write, and this schedule is already committed.
+    return new Date(schedule.state.nextRunAtMs).toISOString();
+  }
+}
+
 function requireSchedId(value: string | undefined): string {
   if (!value || value.trim().length === 0 || value.startsWith("--")) {
     throw new Error("missing schedule id");
@@ -367,9 +396,9 @@ function schedUsage(): string {
   return [
     "Usage:",
     "  sched list [--all]",
-    "  sched add --ship --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
-    "  sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
-    "  sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
+    "  sched add --ship --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at TIME [--timezone ZONE]) --message MESSAGE",
+    "  sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at TIME [--timezone ZONE]) --message MESSAGE",
+    "  sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at TIME [--timezone ZONE]) --message MESSAGE",
     "  sched add --json JSON",
     "  sched enable <id>",
     "  sched disable <id>",
@@ -379,7 +408,9 @@ function schedUsage(): string {
     "Use --ship to create a responsibility for your personal intelligence on every firing.",
     "Use --here to wake this non-Ship process, or its caller during delegated work.",
     "Use --to for a direct scheduled message to an authorized adapter destination.",
-    "--at requires a future ISO timestamp with Z or an explicit numeric UTC offset.",
+    "--at takes a future local time such as 2026-10-26T10:00, read in --timezone or your own timezone,",
+    "or an ISO timestamp with Z or a UTC offset (which --timezone cannot accompany).",
+    "next= shows the local time, offset and zone: check the hour is the one you meant.",
     "Use crontab -l, crontab FILE, crontab -r, or /var/spool/cron/<user>",
     "for scheduled shell commands. --json exposes the low-level schedule contract.",
     "--all includes disabled schedules, not other users' schedules.",

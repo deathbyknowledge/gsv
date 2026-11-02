@@ -27,6 +27,8 @@ import {
   buildCustomCommands,
   type NativeShellCommandOptions,
 } from "./shell/commands";
+import { ExecutionDeadlines } from "../../shared/execution-deadline";
+import { TOOL_DISPATCH_TIMEOUT_MS } from "../../process/internal/lifecycle";
 
 export const NATIVE_SHELL_NETWORK_CONFIG = {
   dangerouslyAllowFullInternetAccess: true,
@@ -82,8 +84,9 @@ export async function handleShellExec(
     ? AbortSignal.any([controller.signal, ctx.requestSignal])
     : controller.signal;
   const commandFence = new NativeCommandFence();
+  const executionDeadlines = ctx.executionDeadlines ?? new ExecutionDeadlines();
   const bash = createBash(
-    { ...ctx, requestSignal: signal },
+    { ...ctx, requestSignal: signal, executionDeadlines },
     identity,
     cwd,
     timeout,
@@ -92,9 +95,9 @@ export async function handleShellExec(
   );
 
   try {
-    const timer = setTimeout(() => {
+    const deadline = executionDeadlines.start(timeout, () => {
       controller.abort(new Error(`Command timed out after ${timeout}ms`));
-    }, timeout);
+    });
 
     let result: BashExecResult;
     try {
@@ -103,7 +106,7 @@ export async function handleShellExec(
         signal,
       });
     } finally {
-      clearTimeout(timer);
+      deadline.clear();
       await commandFence.waitForCompletion();
     }
 
@@ -208,7 +211,9 @@ function createBash(
       // The returned stdout/stderr are truncated to config/shell/max_output_bytes
       // separately. Pipe traffic inside one invocation, including bytes that
       // only ever flow into files, is bounded by NATIVE_SHELL_DATA_BYTES below.
-      maxExecutionTimeMs: timeoutMs + JUST_BASH_EXECUTION_BACKSTOP_GRACE_MS,
+      // A person's approval time does not count against the command, and just-bash's own
+      // clock cannot pause, so under an agent's tool it only backstops the deadline above.
+      maxExecutionTimeMs: timeoutMs + JUST_BASH_EXECUTION_BACKSTOP_GRACE_MS + (ctx.toolOwner ? TOOL_DISPATCH_TIMEOUT_MS : 0),
       maxExtensionCleanupTimeMs: JUST_BASH_EXTENSION_CLEANUP_TIME_MS,
       // One builtin runs synchronously over its whole input, so data size bounds both the
       // Kernel's memory and how long a command can hold its CPU.

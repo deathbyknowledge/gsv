@@ -7,6 +7,7 @@ import type { InitialOnboarding } from "./onboarding-responsibility";
  * sys.setup.assist handlers. Authenticated dispatch guarantees it is present.
  */
 
+import type { ExecutionDeadlines } from "../shared/execution-deadline";
 import type { ManualUpdater } from "./sys/manual";
 import type { ModelMetadataResolver } from "../inference/model-metadata";
 import type { LedgerStore } from "./ledger";
@@ -40,6 +41,8 @@ import type { ScheduleStore } from "./scheduler";
 import type { MailboxStore } from "./mailbox-store";
 import type { ResponsibilityStore } from "./responsibility-store";
 import type { OwnerNoticeStore } from "./owner-notice-store";
+import type { NoticeRuleStore } from "./notice-rules";
+import type { EventSourceStore } from "./event-sources";
 import type { ShipEventStore } from "./ship-event-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import type { FederationStore } from "./federation-store";
@@ -86,6 +89,8 @@ export type KernelContext = {
   responsibilities: ResponsibilityStore;
   shipEvents: ShipEventStore;
   ownerNotices: OwnerNoticeStore;
+  noticeRules: NoticeRuleStore;
+  eventSources: EventSourceStore;
   welcome: InitialOnboarding;
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;
@@ -103,6 +108,8 @@ export type KernelContext = {
   processId?: string;
   processRunId?: string;
   toolOwner?: ProcessToolOwner;
+  /** Deadlines of this tool execution, held while the Process asks a person to approve a nested operation. */
+  executionDeadlines?: ExecutionDeadlines;
   /** Constrain dispatch to the target scope used for Process approval. */
   approvedTarget?: ProcessApprovalTarget;
   requestId?: string;
@@ -130,6 +137,7 @@ export type KernelContext = {
   queueShipEvents: (ownerUid: number) => Promise<void>;
   /** Send the owner's pending notices after the producer's transaction commits. */
   queueOwnerNotices: (ownerUid: number) => Promise<void>;
+  queueEventUpkeep: () => Promise<void>;
   trackBrowserHandoff: (ownerUid: number, handoff: BrowserHandoff) => Promise<void>;
   scheduleManagedOutboundEnqueue: (
     outboundId: string,
