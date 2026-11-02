@@ -1,5 +1,29 @@
 import type { SqlMigration } from "../../schema/runner";
 
+const RULE_TARGET = "json_extract(rule.value, '$.target')";
+const LEGACY_WHEN_TARGET = "json_extract(rule.value, '$.when.target')";
+
+function anyTarget(value: string): string {
+  return `(coalesce(trim(${value}), '') IN ('', '*') OR lower(trim(${value})) = 'any')`;
+}
+
+function gsvTarget(value: string): string {
+  return `(trim(${value}) = 'gsv' OR lower(trim(${value})) IN ('gateway', 'local'))`;
+}
+
+/** Whether a stored rule applies to `gsv`, read as `parseRule` reads it; it drops an unreadable target or action. */
+const RULE_COVERS_GSV = `
+  CASE
+    WHEN json_extract(rule.value, '$.action') NOT IN ('auto', 'ask', 'deny')
+      OR json_type(rule.value, '$.action') <> 'text' THEN 0
+    WHEN json_type(rule.value, '$.target') = 'object' THEN 0
+    WHEN json_type(rule.value, '$.target') <> 'text' THEN 0
+    WHEN NOT ${anyTarget(RULE_TARGET)} THEN ${gsvTarget(RULE_TARGET)}
+    WHEN json_type(rule.value, '$.when.target') = 'text' AND NOT ${anyTarget(LEGACY_WHEN_TARGET)}
+      THEN ${gsvTarget(LEGACY_WHEN_TARGET)}
+    ELSE 1
+  END`;
+
 /** A saved policy gains the rule the default has: Ship asks before it starts acting on a source. */
 const ASK_BEFORE_SHIP_ACTS = `
   UPDATE config_kv
@@ -9,8 +33,10 @@ const ASK_BEFORE_SHIP_ACTS = `
     AND json_type(value, '$.rules') = 'array'
     AND NOT EXISTS (
       SELECT 1 FROM json_each(config_kv.value, '$.rules') AS rule
-      WHERE json_type(rule.value, '$.match') = 'text'
+      WHERE rule.type = 'object'
+        AND json_type(rule.value, '$.match') = 'text'
         AND trim(json_extract(rule.value, '$.match')) IN ('event.source.update', 'event.source.*', 'event.*')
+        AND ${RULE_COVERS_GSV}
     )
 `;
 

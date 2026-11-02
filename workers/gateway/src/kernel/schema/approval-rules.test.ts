@@ -72,6 +72,11 @@ describe("approval rules replacing code defaults", () => {
         "users/1000/ai/tools/approval": JSON.stringify({ default: "auto", rules: [] }),
         "users/1001/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "event.*", action: "auto" }] }),
         "users/1002/ai/tools/approval": "not json",
+        // Read the way the runtime reads them: entries and rules it drops decide nothing.
+        "users/1003/ai/tools/approval": JSON.stringify({ default: "auto", rules: ["junk", 5, null, ["x"]] }),
+        "users/1004/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "event.*" }] }),
+        "users/1005/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "event.*", target: "laptop", action: "auto" }] }),
+        "users/1006/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "event.source.*", target: "gsv", action: "auto" }] }),
       };
       for (const [key, value] of Object.entries(saved)) sql.exec("INSERT INTO config_kv (key, value) VALUES (?, ?)", key, value);
 
@@ -82,6 +87,10 @@ describe("approval rules replacing code defaults", () => {
       expect(decide("users/1000/ai/tools/approval")).toBe("ask");
       expect(decide("users/1001/ai/tools/approval")).toBe("auto");
       expect(stored["users/1002/ai/tools/approval"]).toBe("not json");
+      expect(decide("users/1003/ai/tools/approval")).toBe("ask");
+      expect(decide("users/1004/ai/tools/approval")).toBe("ask");
+      expect(decide("users/1005/ai/tools/approval")).toBe("ask");
+      expect(decide("users/1006/ai/tools/approval")).toBe("auto");
     });
   });
 });
