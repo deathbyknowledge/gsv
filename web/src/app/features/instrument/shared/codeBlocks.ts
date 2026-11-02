@@ -3,8 +3,13 @@ import { t } from "../../../i18n/locale";
 import { CodeCopyAction } from "./codeCopy";
 import "./codeBlocks.css";
 
-/** Add local controls after Markdown has been sanitized; copying never executes the code. */
-export function enhanceCodeBlocks(container: HTMLElement): void {
+/**
+ * Add local controls after Markdown has been sanitized; copying never executes the code. The copy controls are
+ * Preact roots of their own, so the returned disposer unmounts them: call it before the container's Markdown is
+ * replaced or discarded, or their locale subscriptions keep the orphaned controls and their code alive.
+ */
+export function enhanceCodeBlocks(container: HTMLElement): () => void {
+  const roots: HTMLElement[] = [];
   for (const code of container.querySelectorAll<HTMLElement>("pre > code")) {
     const pre = code.parentElement!;
     if (pre.parentElement?.classList.contains("markdown-code-block")) continue;
@@ -20,10 +25,14 @@ export function enhanceCodeBlocks(container: HTMLElement): void {
     actions.className = "markdown-code-actions";
     // Omit Marked's added final newline while preserving the code's internal whitespace.
     render(h(CodeCopyAction, { read: () => (code.textContent ?? "").replace(/\n$/, "") }), actions);
+    roots.push(actions);
     header.append(language, actions);
     pre.before(block);
     pre.tabIndex = 0;
     pre.setAttribute("aria-label", t("shell.code.label"));
     block.append(header, pre);
   }
+  return () => {
+    for (const root of roots) render(null, root);
+  };
 }
