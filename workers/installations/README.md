@@ -92,16 +92,24 @@ Accounts confirms that the original root authorization remains valid. The same
 principal may link several spaces; email matching never merges distinct subjects.
 
 `/owner/recover` freshly authenticates the current verified owner of a space.
-Accounts grants an exact, expiring root-reset claim and redirects the browser
-to that space's `/recover` page. Kernel redemption changes only root's password
-and revokes earlier root tokens, sessions, pending device invitations and root
-adapter links. An identical receiver-bound retry returns the existing receipt
-without overwriting later changes or disconnecting newly authenticated sessions.
-Existing ordinary human credentials and data remain unchanged. Kernel Settings
-owns people, human invitations, member password resets, and removal.
+Accounts grants an exact, expiring reset claim and redirects the browser to that
+space's `/recover` page, where its receiver spends the claim on one account: the
+personal password by default, or root's. Kernel redemption changes only that
+account's password and revokes its earlier tokens, sessions, pending device
+invitations and adapter links. It refuses a personal account that is locked or
+disabled, and either account's credentials having changed since the claim. An
+identical receiver-bound retry returns the existing receipt without overwriting
+later changes or disconnecting newly authenticated sessions. The other account's
+credentials remain unchanged. Kernel Settings owns people, human invitations,
+member password resets, and removal.
 
-Members can recover at `/recover-member` using a private messenger link they
-previously confirmed while signed in. The Kernel sends a five-minute code through
+The page never says whether an email owns a handle: the send, resend and verify
+answers are the same for the owner, a stranger and an unknown handle, and sends
+still consume the limits below. Mail goes only to the owner.
+
+`/recover-member` is the Ship's **Forgot your password?** page. It links to
+`/owner/recover` with the handle filled in, and a person can instead use a private
+messenger link they previously confirmed while signed in. The Kernel sends a five-minute code through
 the exact linked adapter route without waking a model. The browser stores a
 random proof before requesting the code; only that browser can redeem it. A
 successful reset revokes that member's previous credentials and messenger links.

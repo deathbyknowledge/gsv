@@ -1,0 +1,6 @@
+/* Status dots are squares with a soft glow. The glow's blur radius is
+   --gsv-dot-glow, shared by StatusDot, the ListRow dot and the Tag dot, and
+   zeroed on the light themes, which have no neon. */
+:is(.instrument.is-light, .gsv-auth-theme.is-light) {
+  --gsv-dot-glow: 0px;
+}

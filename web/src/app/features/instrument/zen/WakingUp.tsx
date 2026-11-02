@@ -1,7 +1,7 @@
 import { useT } from "../../../i18n/locale";
 
 /**
- * What a new owner reads while their Ship has not said anything yet: from dismissing the welcome card,
+ * What a new owner reads while their Ship has not said anything yet: from their first sign-in,
  * through the first run's thinking, until the first message lands. The dots walk and the line breathes
  * so the wait does not look frozen; both hold still under reduced motion.
  */

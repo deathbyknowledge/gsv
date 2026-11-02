@@ -88,6 +88,16 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   ], ["atproto.write"]),
   mcp: command("Discover and call connected MCP integrations.", "Use an external connected service or search its available integration tools.", ["integration", "service", "connector", "api", "tools", "mcp"]),
   proc: command("Inspect, delegate to, message, and control GSV agent processes.", "Create a subagent, delegate a task, contact another agent, or inspect agent history and lifecycle.", ["agent", "subagent", "delegate", "process", "message", "history"]),
+  event: command("Record events from the owner's own sources and choose what each one does.", "Turn something a script, routine or outside service noticed into a notice for the owner or work for Ship, or create and manage where those events come from.", ["event", "webhook", "source", "alert", "monitor", "poll", "notify", "ingest"], [], [
+    "event sources [--json]",
+    "event source add NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake] [--webhook none|url|standard|hmac] [--expect-every DURATION] [--sender-secret] [--stdin] [--header NAME --encoding hex|base64 [--prefix TEXT] [--timestamp-key KEY --signature-key KEY] [--id-header NAME] [--type-header NAME]]",
+    "event source update NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake] [--pause|--resume] [--expect-every DURATION|never]",
+    "event source rotate NAME [--stdin]",
+    "event source remove NAME",
+    "event emit SOURCE --title TEXT [--id ID] [--preview TEXT] [--body TEXT]",
+    "event emit SOURCE --stdin",
+    "event list [SOURCE] [--limit N] [--json]",
+  ], ["event.emit"]),
   r12y: command("Inspect and maintain durable unresolved responsibilities.", "Record work that must survive the current run, delegate it, defer it to a known wake condition, or close it with a durable outcome.", ["responsibility", "promise", "work", "task", "delegate", "waiting", "deadline", "outcome"], [], [
     "r12y list [--all] [--json]",
     "r12y show ID",

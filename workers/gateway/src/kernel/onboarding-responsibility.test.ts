@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import welcomeBrief from "../prompts/onboarding/welcome.md";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
-import { InitialOnboarding, INITIAL_ONBOARDING_DEDUPE_KEY } from "./onboarding-responsibility";
+import { InitialOnboarding, INITIAL_ONBOARDING_DEDUPE_KEY, withInitialOnboarding } from "./onboarding-responsibility";
 import { ResponsibilityStore } from "./responsibility-store";
 
 describe("initial onboarding responsibility", () => {
@@ -113,4 +113,23 @@ describe("initial onboarding responsibility", () => {
     });
   });
 
+  it("opens the welcome before admitting a first message that arrives before sign-in did, and wakes after it", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const responsibilities = new ResponsibilityStore(storage);
+      const welcome = new InitialOnboarding(storage, responsibilities);
+      welcome.prepare(1000, 1_000);
+      const order: string[] = [];
+      const deferred: Promise<unknown>[] = [];
+      const ctx = {
+        welcome,
+        reconcileResponsibilityWake: vi.fn(async () => { order.push("wake"); }),
+        defer: (promise: Promise<unknown>) => { deferred.push(promise); },
+      };
+      await withInitialOnboarding(1000, ctx, async () => {
+        order.push(`deliver:${responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY)?.state}`);
+      });
+      await Promise.all(deferred);
+      expect(order).toEqual(["deliver:open", "wake"]);
+    });
+  });
 });

@@ -515,3 +515,13 @@
 .fleet-work-interval { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .fleet-work-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 16px; margin-top: 18px; }
 .fleet-line-error .line-detail { max-height: 280px; overflow: auto; }
+
+.fleet-source-secret { margin: 14px 0; padding: 12px; border: 1px solid var(--accent); border-radius: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.fleet-source-secret p { margin: 0 0 6px; }
+.fleet-source-form { display: grid; gap: 10px; margin-top: 14px; }
+.fleet-source-heading { margin: 22px 0 6px; font-size: 12px; font-weight: 500; color: var(--label); }
+.fleet-source-events { margin: 0; padding: 0; list-style: none; }
+.fleet-source-events li { display: flex; flex-direction: column; gap: 5px; padding: 12px 0; border-top: 1px solid var(--rule-inner); min-width: 0; }
+.fleet-source-preview { color: var(--text-dim); font-size: 12px; overflow-wrap: anywhere; }
+.fleet-source-events details { font-size: 12px; }
+.fleet-source-events pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }

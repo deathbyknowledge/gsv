@@ -224,15 +224,16 @@ export const procHistoryEventPayloadSchemas = {
   }),
   "owner.notified": z.strictObject({
     noticeId: z.string(),
-    topic: z.enum(["contact.message", "contact.request", "contact.invite.accepted"]),
-    adapter: z.string(),
+    topic: z.enum(["contact.message", "contact.request", "contact.invite.accepted", "mail.received", "machine.added", "adapter.connected", "adapter.auth_required", "event.received", "event.silent"]),
+    adapter: z.optional(z.string()),
+    shownInClient: z.optional(z.boolean()),
     from: z.string(),
     handle: z.optional(z.string()),
     preview: z.optional(z.string()),
     contactId: z.optional(z.string()),
     conversationId: z.optional(z.string()),
     messages: z.optional(nonNegativeIntegerSchema),
-    sentAtMs: z.number(),
+    sentAtMs: z.optional(z.number()),
   }),
 } satisfies { [K in keyof ProcHistoryEventPayloadMap]: z.ZodMiniType<ProcHistoryEventPayloadMap[K]> };
 
@@ -347,12 +348,14 @@ export type ProcHistoryEventPayloadMap = {
     version?: string;
     observedAt: number;
   };
-  /** A notice the Kernel sent to the owner's messenger, recorded so Ship understands a reply to it. */
+  /** Something that happened to the owner, recorded for Ship; `sentAtMs` is set when they were told, with `adapter` when by their messenger. */
   "owner.notified": {
     noticeId: string;
-    topic: "contact.message" | "contact.request" | "contact.invite.accepted";
+    topic: "contact.message" | "contact.request" | "contact.invite.accepted" | "mail.received" | "machine.added" | "adapter.connected" | "adapter.auth_required" | "event.received" | "event.silent";
     /** The adapter that carried the notice, such as whatsapp; each reader names it with adapterDisplayName. */
-    adapter: string;
+    adapter?: string;
+    /** The person sees this as a card in their conversation, because no messenger carried it. */
+    shownInClient?: boolean;
     /** The contact's local alias or display name, on one line. */
     from: string;
     /** The contact's handle, when the notice names one. */
@@ -363,7 +366,7 @@ export type ProcHistoryEventPayloadMap = {
     conversationId?: string;
     /** How many contact messages the notice covered. */
     messages?: number;
-    sentAtMs: number;
+    sentAtMs?: number;
   };
 };
 

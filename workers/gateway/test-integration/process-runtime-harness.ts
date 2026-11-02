@@ -32,6 +32,8 @@ export type ProcessRuntimeHarness = {
   spawn(label: string, args?: Omit<ProcSpawnArgs, "label">): Promise<Extract<ProcSpawnResult, { ok: true }>>;
   configureAi(pid: string, contextWindowTokens?: number): Promise<void>;
   connectMachine(peerId: string): Promise<GSVClient>;
+  /** Waits out the fresh owner's welcome, leaving it resolved and Ship idle. */
+  settleWelcome(): Promise<void>;
   waitFor(
     predicate: () => boolean | Promise<boolean>,
     description: string,
@@ -173,6 +175,7 @@ export async function startProcessRuntimeHarness(options: {
       });
       if (!result.ok) throw new Error(result.error);
     },
+    settleWelcome: () => settleWelcome(connectedClient),
     waitFor,
     close: async () => {
       stopSignals();
@@ -184,6 +187,27 @@ export async function startProcessRuntimeHarness(options: {
       await Promise.all([ai.close(), connectedHarness.close()]);
     },
   };
+}
+
+/**
+ * A fresh owner's sign-in starts their welcome, which the deployment's default model answers. A test that
+ * needs a quiet Ship waits for that here, ending where an established owner is: greeted, the welcome
+ * resolved, and Ship idle.
+ */
+async function settleWelcome(client: GSVClient): Promise<void> {
+  const welcome = async () => (await client.r12y.list({})).responsibilities
+    .find(({ details }) => details?.responsibilityType === "onboarding.initial");
+  const { conversation } = await client.conversation.ship({});
+  await waitFor(async () => (await client.conversation.history({ conversationId: conversation.id })).messages
+    .some(({ author }) => author.kind === "process"), "Ship's welcome");
+  const record = await welcome();
+  if (!record) throw new Error("Sign-in did not start the welcome");
+  await client.r12y.update({ id: record.id, patch: { state: "resolved" } });
+  const ship = (await client.proc.list({})).processes.find(({ personal }) => personal);
+  await waitFor(async () => {
+    const history = ship ? await client.proc.history({ pid: ship.pid }) : undefined;
+    return history?.ok === true && history.activeRunId === null;
+  }, "Ship to finish its welcome");
 }
 
 async function waitFor(

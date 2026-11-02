@@ -9,8 +9,7 @@ function CompactFlowShell({ flow, current, onStep }: ConnectFlowShellProps): Com
   const index = Math.max(0, Math.min(current, lastIndex));
   const step = flow.steps[index];
   return (
-    <div class="settings-telegram-flow">
-      <div class="settings-telegram-step">{step.meta} · {step.title}</div>
+    <div class="settings-telegram-flow gsv-cf-step">
       {step.render({
         onBack: () => onStep(Math.max(0, index - 1)),
         onNext: () => onStep(Math.min(lastIndex, index + 1)),
@@ -32,8 +31,9 @@ const compactTelegramDependencies: ManagedTelegramDependencies = {
   useConfirmConsoleAdapterPairing: () => useConfirmConsoleAdapterPairing(),
 };
 
-export function MessengerPairing({ adapter, onClose, onConnected }: {
+export function MessengerPairing({ adapter, disabled, onClose, onConnected }: {
   adapter: ManagedMessengerId;
+  disabled: boolean;
   onClose: () => void;
   onConnected: () => void;
 }) {
@@ -44,5 +44,5 @@ export function MessengerPairing({ adapter, onClose, onConnected }: {
       : adapter === "whatsapp"
         ? ManagedWhatsAppOnboardingFlow
         : SharedDiscordOnboardingFlow;
-  return <Flow dependencies={compactTelegramDependencies} onBack={onClose} onConnected={onConnected} />;
+  return <Flow dependencies={compactTelegramDependencies} disabled={disabled} onBack={onClose} onConnected={onConnected} />;
 }

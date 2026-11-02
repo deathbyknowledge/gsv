@@ -57,6 +57,7 @@ import { matchPublicProfilePath, servePublicProfileRequest } from "./public-prof
 import { limitShipCalls } from "./ship-call-limit";
 import type { GatewayEnv } from "./runtime-env";
 import { DEPLOYMENT_PRESENTATION_PATH, deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
+import { matchHookPath, receiveHook } from "./event-hooks";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -80,6 +81,7 @@ export default {
     // Ship-to-Ship calls reach only an existing Ship; they never provision one.
     const federationPath = isShipXrpcPath(url.pathname);
     const profilePath = matchPublicProfilePath(url.pathname);
+    const hookPath = matchHookPath(request);
     const browserAssetRequest = (
       request.method === "GET" || request.method === "HEAD"
     )
@@ -137,7 +139,7 @@ export default {
       return servePublicAssetRequest(request, fs, publicAssetMatch);
     }
     // A flood of calls to a Ship stops here, before it reaches the Kernel.
-    const shipCallsLimited = federationPath && await limitShipCalls(request, env.SHIP_CALLS, route.identity.installationId);
+    const shipCallsLimited = (federationPath || hookPath) && await limitShipCalls(request, env.SHIP_CALLS, route.identity.installationId);
     if (shipCallsLimited) return shipCallsLimited;
     const kernelDO = await getKernelByInstallationId(
       env.KERNEL,
@@ -153,6 +155,8 @@ export default {
       console.error("[Gateway] Kernel installation identity check failed");
       return new Response("Installation unavailable", { status: 503 });
     }
+
+    if (hookPath) return receiveHook(request, hookPath, kernelDO);
 
     if (profilePath) {
       const { primaryDomain } = deploymentPresentation(env.GSV_PUBLIC_CONFIG);

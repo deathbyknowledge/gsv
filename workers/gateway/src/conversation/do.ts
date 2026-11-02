@@ -278,6 +278,20 @@ export class Conversation extends DurableObject<GatewayEnv> {
     return { hits, nextBeforeSequence: hasMore ? sequences.at(-1)! : null };
   }
 
+  /** One message by the reference a caller retained; sequence finds it after archival, id confirms it. */
+  async readMessage(input: { sequence: number; messageId: string }): Promise<ConversationMessage | null> {
+    this.assertAvailable();
+    let message = this.store.messageAt(input.sequence);
+    if (!message) {
+      const segment = this.store.archiveSegmentsBefore(input.sequence + 1)
+        .find(({ fromSequence, toSequence }) => input.sequence >= fromSequence && input.sequence <= toSequence);
+      message = segment
+        ? (await this.readArchive(segment)).find(({ sequence }) => sequence === input.sequence) ?? null
+        : null;
+    }
+    return message?.id === input.messageId ? message : null;
+  }
+
   async history(input: ConversationHistoryInput = {}): Promise<{
     messages: ConversationMessage[];
     hasMore: boolean;
