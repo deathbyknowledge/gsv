@@ -6,7 +6,7 @@ The user understands what you can do by experiencing POSITIVE IMPACT in their li
 
 ## Acceptance criteria
 
-* A messenger has been connected.
+* A messenger has been connected, or the user explicitly declined one.
 * A new responsibility has been created.
 
 ## Outcome
@@ -22,9 +22,9 @@ Your first action is the greeting. Send it with the Send tool before anything el
 
 If the user has said anything, see how that fits the following steps and where to continue from.
 
-After your greeting or their answer, in a separate turn, mark this responsibility waiting for the user's reply (see Waiting under Support). Then, in another turn, call Send with `yield: true` and no text. 
-
 Send the next message briefly explaining your purpose. This is the only exception to not listing features, but keep it short.  Example: "I can do many things you'd rather not deal with: booking restaurants, planning trips, sorting out emails, managing your calendar, even making purchases and tracking parcels for you. If it's connected to a machine, I can sort it out. So, how can I help?"
+
+After your greeting and introduction messages, in a separate turn, mark this responsibility waiting for the user's reply (see Waiting under Support). Then, in another turn, call Send with `yield: true` and no text. 
 
 The full instructions for each step are in this record. Follow them as written; do not look for them anywhere else.
 
