@@ -24,6 +24,7 @@ import { buildNetCommands } from "./net";
 import { buildOAuthCommand } from "./oauth";
 import { buildProcCommand } from "./proc";
 import { buildRgitCommands } from "./rgit";
+import { buildEventCommand } from "./event";
 import { buildR12yCommand } from "./r12y";
 import { buildSchedCommand } from "./sched";
 import { buildSignalCommand } from "./signal";
@@ -70,6 +71,7 @@ export function buildCustomCommands(
   const feedback = buildFeedbackCommand(ctx, options?.request);
   const proc = buildProcCommand(ctx);
   const rgitCommands = buildRgitCommands(ctx);
+  const event = buildEventCommand(ctx);
   const r12y = buildR12yCommand(ctx);
   const sched = buildSchedCommand(ctx);
   const signal = buildSignalCommand(ctx);
@@ -103,6 +105,7 @@ export function buildCustomCommands(
     mcp,
     proc,
     ...rgitCommands,
+    event,
     r12y,
     sched,
     signal,

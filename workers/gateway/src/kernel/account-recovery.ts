@@ -1,6 +1,8 @@
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
+import type { ArgsOf, ResultOf } from "@humansandmachines/gsv/protocol";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { hashPassword, hashToken } from "../auth/shadow";
-import type { AuthStore } from "./auth-store";
+import { MultiplePersonalAccountsError, type AuthStore } from "./auth-store";
 import { principalOf, type KernelContext } from "./context";
 import { z } from "zod";
 
@@ -15,9 +17,28 @@ function requireRootHuman(ctx: KernelContext): number {
   return epoch;
 }
 
-type RecoveryClaim = { id: string; secret_hash: string; credential_epoch: number; expires_at: number; redeemed_at: number | null; redemption_hash: string | null };
+type RecoveryClaim = { id: string; secret_hash: string; credential_epoch: number; personal_uid: number | null; personal_credential_epoch: number | null; expires_at: number; redeemed_at: number | null; redemption_hash: string | null };
+type RecoveryAccount = NonNullable<ArgsOf<"account.recovery.redeem">["account"]>;
+type RedeemedRecovery = { username: string; uid: number; administratorChanged?: true };
 
-/** Kernel alone owns credential changes. Accounts can grant only a bounded root-reset claim. */
+/** The verified owner holds a valid claim, but this Ship has no personal account that may be reset. */
+export class PersonalAccountUnavailableError extends Error {
+  constructor() { super("Personal account is unavailable"); }
+}
+
+/** Public navigation to the operator's owner page. It carries no authority and proves nothing about ownership. */
+export function ownerRecoveryOptions(ctx: { env: { GSV_OWNER_SIGNUP_URL?: string }; installationIdentity?: { handle?: string } | null }): ResultOf<"account.recovery.options"> {
+  const handle = ctx.installationIdentity?.handle;
+  if (!ctx.env.GSV_OWNER_SIGNUP_URL || !handle) return {};
+  const url = new URL("/owner/recover", ctx.env.GSV_OWNER_SIGNUP_URL);
+  url.searchParams.set("handle", handle);
+  return { emailUrl: url.href };
+}
+
+/**
+ * Kernel alone owns credential changes. Accounts grants one bounded claim for the verified
+ * owner, who can reach both accounts of a one-person Ship: its receiver spends it on either.
+ */
 export class AccountRecoveryStore {
   constructor(private readonly storage: DurableObjectStorage, private readonly auth: AuthStore, private readonly installationId: string) {}
 
@@ -51,6 +72,7 @@ export class AccountRecoveryStore {
     if (!row || row.expires_at <= Date.now() || row.credential_epoch !== this.auth.credentialEpoch(0) || this.auth.isAccountDisabled(0)) throw new Error("Root authorization expired or was revoked");
   }
 
+  /** A claim records the current generation of both accounts, so either choice can be fenced at redemption. */
   authorize(input: AuthorizeRootRecoveryInput): void {
     if (input.installationId !== this.installationId || input.purpose !== "root-password-reset"
       || !/^[a-f0-9-]{36}$/.test(input.attemptId) || !/^[a-f0-9]{64}$/.test(input.secretHash)
@@ -62,29 +84,65 @@ export class AccountRecoveryStore {
         if (existing.secret_hash !== input.secretHash || existing.expires_at !== input.expiresAt) throw new Error("Root recovery attempt already exists");
         return;
       }
-      this.storage.sql.exec(`INSERT INTO account_recovery_claims (id, purpose, secret_hash, credential_epoch, expires_at)
-        VALUES (?, 'root-password-reset', ?, ?, ?)`, input.attemptId, input.secretHash, this.auth.credentialEpoch(0), input.expiresAt);
+      const human = this.personalAccountForClaim();
+      this.storage.sql.exec(`INSERT INTO account_recovery_claims (id, purpose, secret_hash, credential_epoch, personal_uid, personal_credential_epoch, expires_at)
+        VALUES (?, 'root-password-reset', ?, ?, ?, ?, ?)`, input.attemptId, input.secretHash, this.auth.credentialEpoch(0),
+      human?.uid ?? null, human ? this.auth.credentialEpoch(human.uid) : null, input.expiresAt);
     });
   }
 
-  async redeem(input: { id: string; secret: string; proof: string; password: string }): Promise<{ username: "root" }> {
-    if (!/^[a-f0-9-]{36}$/.test(input.id) || input.secret.length < 32 || input.secret.length > 256
-      || input.proof.length < 32 || input.proof.length > 256 || input.password.length < 8 || input.password.length > 1024) throw new Error("Invalid root recovery request");
+  async redeem(input: { id: string; secret: string; proof: string; password: string; account?: RecoveryAccount }): Promise<RedeemedRecovery> {
+    const account = input.account ?? "administrator";
+    if (!/^[a-f0-9-]{36}$/.test(input.id) || input.secret.length < 32 || input.secret.length > 256 || (account !== "personal" && account !== "administrator")
+      || input.proof.length < 32 || input.proof.length > 256 || input.password.length < 8 || input.password.length > 1024) throw new Error("Invalid recovery request");
     const [secretHash, redemptionHash, passwordHash] = await Promise.all([
-      sha256(input.secret), hashToken(JSON.stringify([input.proof, input.password])), hashPassword(input.password),
+      sha256(input.secret),
+      hashToken(JSON.stringify(account === "personal" ? [input.proof, input.password, account] : [input.proof, input.password])),
+      hashPassword(input.password),
     ]);
     return this.storage.transactionSync(() => {
       const claim = this.claim(input.id);
-      if (!claim || claim.secret_hash !== secretHash) throw new Error("Root recovery claim is unavailable");
+      if (!claim || claim.secret_hash !== secretHash) throw new Error("Recovery claim is unavailable");
       if (claim.redeemed_at !== null) {
-        if (claim.redemption_hash !== redemptionHash) throw new Error("Root recovery claim was already used");
-        return { username: "root" };
+        if (claim.redemption_hash !== redemptionHash) throw new Error("Recovery claim was already used");
+        return this.redeemed(account === "personal" ? claim.personal_uid : 0);
       }
-      if (claim.expires_at <= Date.now() || claim.credential_epoch !== this.auth.credentialEpoch(0)) throw new Error("Root recovery claim expired or was superseded");
-      this.auth.replaceHumanPassword(0, passwordHash, "owner recovery");
+      if (claim.expires_at <= Date.now()) throw new Error("Recovery claim expired");
+      const personal = account === "personal" ? this.replacePersonal(claim, passwordHash) : null;
+      const uid = personal ? personal.uid : this.replaceRoot(claim, passwordHash);
       this.storage.sql.exec("UPDATE account_recovery_claims SET redeemed_at = ?, redemption_hash = ? WHERE id = ?", Date.now(), redemptionHash, input.id);
-      return { username: "root" };
+      return { ...this.redeemed(uid), ...(personal?.administratorChanged ? { administratorChanged: true as const } : undefined) };
     });
+  }
+
+  /** A Ship whose accounts break the one-person invariant must still reach administrator recovery. */
+  private personalAccountForClaim(): ReturnType<AuthStore["getHumanAccount"]> {
+    try {
+      return this.auth.getHumanAccount();
+    } catch (error) {
+      if (!(error instanceof MultiplePersonalAccountsError)) throw error;
+      console.error("[Kernel] Personal recovery unavailable:", exceptionDiagnostics(error));
+      return null;
+    }
+  }
+
+  private replaceRoot(claim: RecoveryClaim, passwordHash: string): number {
+    if (claim.credential_epoch !== this.auth.credentialEpoch(0)) throw new Error("Recovery claim was superseded");
+    this.auth.replaceHumanPassword(0, passwordHash, "owner recovery");
+    return 0;
+  }
+
+  private replacePersonal(claim: RecoveryClaim, passwordHash: string) {
+    const uid = claim.personal_uid;
+    if (uid === null || this.auth.getHumanAccount()?.uid !== uid) throw new PersonalAccountUnavailableError();
+    if (claim.personal_credential_epoch !== this.auth.credentialEpoch(uid)) throw new Error("Recovery claim was superseded");
+    return { uid, administratorChanged: this.auth.replacePersonalPassword(uid, passwordHash, "owner email recovery") };
+  }
+
+  private redeemed(uid: number | null): RedeemedRecovery {
+    const user = uid === null ? null : this.auth.getPasswdByUid(uid);
+    if (!user) throw new Error("Recovered account is unavailable");
+    return { username: user.username, uid: user.uid };
   }
 
   private claim(id: string): RecoveryClaim | undefined {

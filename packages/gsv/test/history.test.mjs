@@ -372,3 +372,25 @@ test("record identity retains ordering within an original provider message", () 
   }
   assert.equal(procHistoryRecordSchema.safeParse({ ...record, source: "inferred" }).success, false);
 });
+
+test("an incoming message retains a resolved or unavailable quote beside its own text", () => {
+  const message = (quote) => ({
+    kind: "message",
+    payload: {
+      direction: "in",
+      text: "yes, that one",
+      quote,
+      media: [],
+      origin: {},
+    },
+  });
+  for (const quote of [
+    { state: "unavailable" },
+    { state: "resolved", author: "ship", text: "Option A?", part: { index: 2, count: 5 } },
+    { state: "resolved", author: "person", text: "", media: [{ type: "image", filename: "photo.jpg" }] },
+  ]) {
+    assert.deepEqual(procHistoryRecordDataSchema.parse(message(quote)).payload.quote, quote);
+  }
+  assert.equal(procHistoryRecordDataSchema.safeParse(message({ state: "resolved", author: "contact", text: "x" })).success, false);
+  assert.equal(procHistoryRecordDataSchema.safeParse(message({ state: "unavailable", text: "x" })).success, false);
+});

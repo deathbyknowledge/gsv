@@ -9,6 +9,7 @@ export interface InstallationOwnershipService {
   beginInstallationOwnerLink(input: BeginInstallationOwnerLinkInput): Promise<{ url: string; expiresAt: number }>;
 }
 
+/** The verified owner's one-time password reset. The `root-password-reset` wire name predates one-person Ships: the Kernel lets its receiver spend the claim on either account. */
 export type AuthorizeRootRecoveryInput = {
   installationId: string;
   attemptId: string;

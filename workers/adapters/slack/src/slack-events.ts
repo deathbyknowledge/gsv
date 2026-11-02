@@ -52,7 +52,6 @@ export type SlackInbound = {
   actorId: string;
   surface: AdapterSurface;
   text: string;
-  replyToId?: string;
   timestamp?: number;
   wasMentioned: true;
   media?: SlackInboundMediaSource[];
@@ -161,7 +160,6 @@ export function normalizeSlackEvent<T>(
       actorId,
       surface,
       text,
-      replyToId: event.thread_ts ? messageId : undefined,
       timestamp,
       wasMentioned: true,
       ...(extractedMedia.media.length > 0 ? { media: extractedMedia.media } : undefined),

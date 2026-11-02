@@ -94,6 +94,7 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
             <h4>{t("shell.help.chatInput")}</h4>
             <dl>
               <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.send")}</dd>
+              <dt>{t("shell.keys.newLine")}</dt><dd>{t("shell.help.newLine")}</dd>
               <dt>Esc</dt><dd>{t("shell.help.returnToBrowse")}</dd>
               <dt>↑</dt><dd>{t("shell.help.recall")}</dd>
               <dt>{t("shell.help.placeSyntax")}</dt><dd>{t("shell.help.chooseTarget")}</dd>
@@ -131,6 +132,7 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
             <h4>{t("shell.help.contactMessages")}</h4>
             <dl>
               <dt>{t("shell.keys.enter")}</dt><dd>{t("shell.help.sendMessage")}</dd>
+              <dt>{t("shell.keys.newLine")}</dt><dd>{t("shell.help.newLine")}</dd>
             </dl>
           </>}
           {distance === "settings" && <>
@@ -165,7 +167,7 @@ export function HelpContent({ distance, connected, onClose, onSearch, onFeedback
       <h3>{t("shell.help.supportTitle")}</h3>
       {onFeedback && <button type="button" class="instrument-help-feedback" aria-haspopup="dialog" onClick={onFeedback}>{t("shell.help.feedback")}</button>}
       <a href={memoryLinkHref(HELP_MANUAL_PAGE)} onClick={navigate}>{t("shell.help.manual")}</a>
-      <a href="mailto:hello@humansandmachin.es">{t("shell.help.support")}</a>
+      <a href="mailto:support@humansandmachin.es">{t("shell.help.support")}</a>
       <a href="https://discord.gg/hy9ExJJFvn" target="_blank" rel="noopener noreferrer">{t("shell.help.discord")}</a>
     </footer>
     </>}

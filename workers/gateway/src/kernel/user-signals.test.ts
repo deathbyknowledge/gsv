@@ -42,6 +42,8 @@ describe("user-facing signal policy", () => {
       "r12y.changed",
       "r12y.source.changed",
       "sched.changed",
+      "notify.rule.changed",
+      "event.source.changed",
       "contact.invite.changed",
       "contact.request.changed",
     ]));
