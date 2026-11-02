@@ -69,6 +69,20 @@ describe("member recovery through a confirmed messenger", () => {
     });
   });
 
+  it("changes the administrator too, and ends its sessions, while it still shares the signup password", async () => {
+    await fixture(async (store, ctx, _sql, deliveries) => {
+      const shared = await hashPassword("old-password");
+      ctx.auth.setShadow(makeShadowEntry("member", shared));
+      ctx.auth.setShadow(makeShadowEntry("root", shared));
+      const request = attempt();
+      await store.start(request, ctx);
+      await store.redeem(redeemArgs(request, deliveries), ctx);
+      expect(await ctx.auth.authenticate("root", "old-password")).toMatchObject({ ok: false });
+      expect(await ctx.auth.authenticate("root", "new-password")).toMatchObject({ ok: true });
+      expect(ctx.invalidateAccountConnections).toHaveBeenCalledWith(0);
+    });
+  });
+
   it("keeps unknown, root, disabled and unconfirmed accounts indistinguishable and rate limits deliveries", async () => {
     await fixture(async (store, ctx, sql, deliveries) => {
       ctx.auth.addUser({ username: "agent", uid: 1001, gid: 1001, gecos: "", home: "/home/agent", shell: "/bin/gsv" });

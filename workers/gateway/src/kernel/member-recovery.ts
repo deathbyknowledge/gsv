@@ -74,6 +74,7 @@ export class MemberRecoveryStore {
     if (!claim) throw new Error("Recovery code is unavailable, expired or incorrect");
     if (claim.redeemed_at !== null) return this.result(claim.uid);
     const passwordHash = await hashPassword(args.password);
+    let administratorChanged = false;
     const result = this.storage.transactionSync(() => {
       const current = this.claim(args.id)!;
       if (current.redeemed_at !== null) {
@@ -81,11 +82,12 @@ export class MemberRecoveryStore {
         return this.result(current.uid);
       }
       if (!this.current(current, ctx) || current.failed_attempts >= 5) throw new Error("Recovery authorization expired or was revoked");
-      this.auth.replaceHumanPassword(current.uid, passwordHash, "messenger recovery");
+      administratorChanged = this.auth.replacePersonalPassword(current.uid, passwordHash, "messenger recovery");
       this.storage.sql.exec("UPDATE member_recovery_claims SET redeemed_at = ?, redemption_hash = ? WHERE id = ?", Date.now(), redemptionHash, current.id);
       return this.result(current.uid);
     });
     ctx.invalidateAccountConnections(claim.uid);
+    if (administratorChanged) ctx.invalidateAccountConnections(0);
     return result;
   }
 

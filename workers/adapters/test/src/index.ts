@@ -429,7 +429,6 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService
       media?: AdapterMedia[];
       body?: BinaryBody;
       replyToId?: string;
-      replyToText?: string;
       wasMentioned?: boolean;
     },
   ): Promise<{ ok: boolean; messageId: string; error?: string }> {
@@ -450,7 +449,6 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterService
       text,
       media: options?.media,
       replyToId: options?.replyToId,
-      replyToText: options?.replyToText,
       timestamp: Date.now(),
       wasMentioned: surface.kind === "dm" ? true : options?.wasMentioned === true,
     };

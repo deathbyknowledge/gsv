@@ -294,7 +294,7 @@ and each enabled Ship schedule must produce its due responsibility. These rows a
 Kernel-defined runtime guarantees rather than user-configurable automation.
 
 Configurable sources are Kernel-defined producers with per-owner enablement
-policies. Incoming mail, federation ingress, new contacts, new machines,
+policies, and the `wake` outcome of the matching notice rules. Incoming mail, federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss are enabled by default.
 Disabling a source does not discard its underlying state: the owning subsystem
 still records the event, but no responsibility is created and Ship is not woken

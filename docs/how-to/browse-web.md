@@ -21,7 +21,7 @@ in its existing tabs and signed-in sessions, or when a site needs a feature
 available only in your own browser.
 
 1. In Ship, open **Work** (called Fleet in older versions), click **connect** beside Connections (Places in older versions), and choose **Browser.** Give it a name or leave the default.
-2. Download the extension, **Your Ship**, and load it at `chrome://extensions` with developer mode on.
+2. Download the extension, **Your Ship**, and unzip it. It isn't in the Chrome Web Store yet, so you add it to Chrome in developer mode: open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and pick the unzipped folder.
 3. Click its toolbar icon, a pale block on a dark square, paste the invitation from Ship, and choose **connect this browser**.
 4. The panel says **Ready** once it's connected. Chrome shows a banner in a tab while your Ship works there; that's normal.
 

@@ -72,6 +72,23 @@ describe("HIL request wording", () => {
     expect(describeCall({ ...shell, syscall: "sys.mcp.call", toolName: "Search" }, "my mac")).toBe("use Search on my mac");
   });
 
+  it("shows a crontab's file and jobs, and a plain sentence when the model wrote none", () => {
+    const crontab = {
+      ...BASE_REQUEST,
+      toolName: "sched.add",
+      syscall: "sched.add",
+      target: "gsv",
+      args: { path: "/var/spool/cron/sam", jobs: "0 9 * * * proc list\n30 18 * * 1-5 cat notes.txt" },
+    };
+    expect(hilRequestLine(crontab)).toEqual({
+      lead: "none",
+      text: "/var/spool/cron/sam\n0 9 * * * proc list\n30 18 * * 1-5 cat notes.txt",
+    });
+    expect(hilRequestSentence(crontab, "Home")).toBe("Schedule work to run later");
+    expect(hilRequestLine({ ...crontab, args: { name: "digest", target: { kind: "command.exec" } } }))
+      .toEqual({ lead: "place", text: "add" });
+  });
+
   it("folds the request as a terminal line, a plain verb, or the tool's name, never the syscall id", () => {
     expect(hilRequestLine(shell)).toEqual({ lead: "prompt", text: "pgrep -fl Granola" });
     expect(hilDetailLabel(shell)).toBe("show the command");

@@ -2460,3 +2460,147 @@ describe("routine preferences and notifications", () => {
     });
   });
 });
+
+describe("one-shot local times", () => {
+  const MADRID = "Europe/Madrid";
+
+  function madridOwnerContext(): KernelContext {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    return {
+      peer: testPeer({ kind: "human", account: USER_IDENTITY, calls: ["*"] }),
+      config: { get: vi.fn((key: string) => key === "users/1000/locale/timezone" ? MADRID : null) },
+      procs: { get: vi.fn() },
+    } as KernelContext;
+  }
+
+  /** The wall clock a person in `timezone` reads when the schedule fires. */
+  function wallClock(atMs: number, timezone = MADRID): string {
+    return new Intl.DateTimeFormat("sv-SE", {
+      timeZone: timezone,
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(new Date(atMs)).replace(" ", "T");
+  }
+
+  function resolve(localTime: string, timezone?: string): number {
+    const expression = normalizeScheduleExpression({ kind: "at", localTime, timezone }, madridOwnerContext());
+    expect(Object.keys(expression).sort()).toEqual(["atMs", "kind"]);
+    if (expression.kind !== "at") throw new Error("expected an at expression");
+    return expression.atMs;
+  }
+
+  it.each([
+    ["the day before the October change", "2026-10-24T10:00", "2026-10-24T08:00:00.000Z"],
+    ["the day after the October change", "2026-10-26T10:00", "2026-10-26T09:00:00.000Z"],
+    ["the day before the March change", "2027-03-27T10:00", "2027-03-27T09:00:00.000Z"],
+    ["the day after the March change", "2027-03-29T10:00", "2027-03-29T08:00:00.000Z"],
+  ])("fires at the promised local hour on %s", (_label, localTime, utc) => {
+    const atMs = resolve(localTime);
+    expect(wallClock(atMs)).toBe(localTime);
+    expect(new Date(atMs).toISOString()).toBe(utc);
+  });
+
+  it.each([
+    ["2027-03-28T01:59", "2027-03-28T01:59", "2027-03-28T00:59:00.000Z"],
+    ["2027-03-28T02:00", "2027-03-28T03:00", "2027-03-28T01:00:00.000Z"],
+    ["2027-03-28T02:30", "2027-03-28T03:00", "2027-03-28T01:00:00.000Z"],
+    ["2027-03-28T02:59:30", "2027-03-28T03:00", "2027-03-28T01:00:00.000Z"],
+    ["2027-03-28T03:00", "2027-03-28T03:00", "2027-03-28T01:00:00.000Z"],
+  ])("moves %s out of the March gap to the first valid minute", (localTime, local, utc) => {
+    const atMs = resolve(localTime);
+    expect(wallClock(atMs)).toBe(local);
+    expect(new Date(atMs).toISOString()).toBe(utc);
+  });
+
+  it.each([
+    ["2026-10-25T01:59", "2026-10-24T23:59:00.000Z"],
+    ["2026-10-25T02:00", "2026-10-25T00:00:00.000Z"],
+    ["2026-10-25T02:30", "2026-10-25T00:30:00.000Z"],
+    ["2026-10-25T02:59", "2026-10-25T00:59:00.000Z"],
+    ["2026-10-25T03:00", "2026-10-25T02:00:00.000Z"],
+  ])("takes the first occurrence of %s in the October repeat", (localTime, utc) => {
+    const atMs = resolve(localTime);
+    expect(wallClock(atMs)).toBe(localTime);
+    expect(new Date(atMs).toISOString()).toBe(utc);
+  });
+
+  it("handles a gap shorter than an hour", () => {
+    const atMs = resolve("2026-10-04T02:15", "Australia/Lord_Howe");
+    expect(wallClock(atMs, "Australia/Lord_Howe")).toBe("2026-10-04T02:30");
+  });
+
+  it("uses an explicit timezone instead of the owner's", () => {
+    const atMs = resolve("2026-10-26T10:00", "America/New_York");
+    expect(wallClock(atMs, "America/New_York")).toBe("2026-10-26T10:00");
+    expect(new Date(atMs).toISOString()).toBe("2026-10-26T14:00:00.000Z");
+  });
+
+  it("rejects an invalid timezone", () => {
+    expect(() => resolve("2026-10-26T10:00", "No/Such_Zone"))
+      .toThrow("timezone must be a valid IANA timezone");
+  });
+
+  it.each([
+    "",
+    "tomorrow 10:00",
+    "2026-10-26",
+    "2026-10-26 10:00",
+    "2026-10-26T10:00Z",
+    "2026-10-26T10:00+01:00",
+    "2026-13-01T10:00",
+    "2026-02-30T10:00",
+    "2026-10-26T24:00",
+    "2026-10-26T10:60",
+    "2026-10-26T10:00:60",
+  ])("rejects the invalid local time %j", (localTime) => {
+    expect(() => resolve(localTime)).toThrow("local time");
+  });
+
+  function addContext() {
+    const create = vi.fn((input) => ({
+      ...makeScheduleRecord({ expression: input.expression }),
+      state: { ...makeScheduleRecord().state, nextRunAtMs: computeNextRunAt(input.expression, input.now) },
+    }));
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      ...madridOwnerContext(),
+      schedules: { create, setWakeScheduleId: vi.fn() },
+      scheduleScheduleWake: vi.fn(async () => "wake-local"),
+    } as KernelContext;
+    return { create, ctx };
+  }
+
+  it("stores a local time as the existing resolved instant", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-20T12:00:00Z"));
+    try {
+      const { create, ctx } = addContext();
+      const { schedule } = await handleSchedulerAdd({
+        name: "reminder",
+        expression: { kind: "at", localTime: "2026-10-26T10:00" },
+        target: { kind: "responsibility", message: "Remind me." },
+      }, ctx);
+
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "at", atMs: Date.parse("2026-10-26T09:00:00Z") },
+      }));
+      expect(wallClock(schedule.state.nextRunAtMs!)).toBe("2026-10-26T10:00");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("rejects a local time already in the past", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-26T09:30:00Z"));
+    try {
+      const { create, ctx } = addContext();
+      await expect(handleSchedulerAdd({
+        name: "reminder",
+        expression: { kind: "at", localTime: "2026-10-26T10:00" },
+        target: { kind: "responsibility", message: "Remind me." },
+      }, ctx)).rejects.toThrow("must be in the future");
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});

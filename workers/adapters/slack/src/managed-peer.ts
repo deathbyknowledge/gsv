@@ -828,7 +828,6 @@ export class ManagedSlackPeer extends DurableObject<ManagedSlackPeerEnv> {
           },
           text: appendSlackMediaNotice(inbound.text, skipped),
           media: transfer.media.length > 0 ? transfer.media : undefined,
-          replyToId: inbound.replyToId,
           timestamp: inbound.timestamp,
           wasMentioned: true,
         },

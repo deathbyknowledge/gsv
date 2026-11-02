@@ -17,7 +17,7 @@ type TelegramApiMessage = {
       inline_keyboard?: Array<Array<{ text?: string; callback_data?: string; url?: string }>>;
     };
   };
-  result: { ok?: boolean; message_id?: number } | boolean;
+  result: { ok?: boolean; message_id?: number } | Array<{ message_id: number }> | boolean;
 };
 
 type TelegramUpdateContent = { text?: string; voice?: { file_id: string; file_size: number; duration: number; mime_type: string } };
@@ -548,6 +548,24 @@ describe("managed Telegram clean-instance flow", () => {
       (message) => message.method === "sendAudio",
     )).toHaveLength(sentAudioCount);
 
+    // An album is one Telegram call but several messages, and each can be quoted on its own.
+    const albumResult = await peer.sendMessage("installation_test", {
+      deliveryId: "outbound-album-1",
+      surface: { kind: "dm", id: "12345" },
+      actorId: "12345",
+      routeGeneration: relinked.route.generation,
+      text: "two photos",
+      media: [
+        { type: "image", mimeType: "image/png", url: "https://example.test/one.png" },
+        { type: "image", mimeType: "image/png", url: "https://example.test/two.png" },
+      ],
+    });
+    const album = (await telegramMessages()).findLast((message) => message.method === "sendMediaGroup");
+    if (!Array.isArray(album?.result)) throw new Error("Expected the album to report its messages");
+    const albumIds = album.result.map((item) => String(item.message_id));
+    expect(albumIds).toHaveLength(2);
+    expect(albumResult).toMatchObject({ ok: true, messageId: albumIds[0], messageIds: albumIds });
+
     // Each prose paragraph is a message. An oversized paragraph is split,
     // only the first message quotes the inbound, and the bot types between messages.
     const isText = (message: TelegramApiMessage): boolean =>
@@ -563,6 +581,16 @@ describe("managed Telegram clean-instance flow", () => {
       replyToId: "5",
     })).resolves.toMatchObject({ ok: true, messageId: expect.any(String) });
     const paragraphRecords = (await telegramMessages()).slice(recordsBeforeParagraphs);
+    // Every message of the split delivery is reported, in order, so a quote of any of them can resolve.
+    const paragraphIds = paragraphRecords.filter(isText).map((message) => String(message.result.message_id));
+    await expect(peer.sendMessage("installation_test", {
+      deliveryId: "outbound-paragraphs-1",
+      surface: { kind: "dm", id: "12345" },
+      actorId: "12345",
+      routeGeneration: relinked.route.generation,
+      text: `Hi Hank!\n\nHere is the report.\n\n${longParagraph}\n\nAnything else?`,
+      replyToId: "5",
+    })).resolves.toMatchObject({ ok: true, deduplicated: true, messageId: paragraphIds[0], messageIds: paragraphIds });
     expect(paragraphRecords.map((record) => record.method)).toEqual([
       "sendRichMessage", "sendChatAction", "sendRichMessage", "sendChatAction", "sendRichMessage",
       "sendChatAction", "sendRichMessage", "sendChatAction", "sendRichMessage",

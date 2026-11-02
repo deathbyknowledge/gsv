@@ -65,10 +65,42 @@ export type ProcHistoryMessageOrigin = {
   provenance?: JsonObject;
 };
 
+/**
+ * What a messenger message quotes, for the model. The canonical Conversation message and the
+ * history `text` keep only what the person wrote; each renderer decides how to show this.
+ */
+export const procHistoryMessageQuoteSchema: z.ZodMiniType<ProcHistoryMessageQuote> = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("resolved"),
+    author: z.enum(["person", "ship", "agent"]),
+    text: z.string(),
+    media: z.optional(z.array(z.strictObject({
+      type: z.enum(["image", "audio", "video", "document"]),
+      filename: z.optional(z.string()),
+      transcription: z.optional(z.string()),
+    }))),
+    part: z.optional(z.strictObject({ index: z.number(), count: z.number() })),
+  }),
+  z.strictObject({ state: z.literal("unavailable") }),
+]);
+export type ProcHistoryMessageQuote =
+  | {
+      state: "resolved";
+      author: "person" | "ship" | "agent";
+      /** Capped, and marked with an ellipsis where it was cut. Empty for a media-only message. */
+      text: string;
+      media?: Array<{ type: "image" | "audio" | "video" | "document"; filename?: string; transcription?: string }>;
+      /** Which provider message was quoted, when the messenger split the canonical message. */
+      part?: { index: number; count: number };
+    }
+  /** The person quoted a message this Process cannot see: too old, too new to the map, or elsewhere. */
+  | { state: "unavailable" };
+
 export const procHistoryMessagePayloadSchema: z.ZodMiniType<ProcHistoryMessagePayload> = z.strictObject({
   direction: z.enum(["in", "out"]),
   text: z.string(),
   selectedTarget: z.optional(z.string()),
+  quote: z.optional(procHistoryMessageQuoteSchema),
   media: z.array(procHistoryMediaSchema),
   origin: procHistoryMessageOriginSchema,
   conversationId: z.optional(z.string()),
@@ -79,6 +111,7 @@ export type ProcHistoryMessagePayload = {
   direction: "in" | "out";
   text: string;
   selectedTarget?: string;
+  quote?: ProcHistoryMessageQuote;
   media: ProcHistoryMedia[];
   origin: ProcHistoryMessageOrigin;
   conversationId?: string;
