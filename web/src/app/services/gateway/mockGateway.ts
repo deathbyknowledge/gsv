@@ -30,7 +30,7 @@
  *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
  *   anything else is committed as your message and answered briefly a second later
  */
-import type { EventRecord, EventSource } from "@humansandmachines/gsv/protocol";
+import type { EventRecord, EventSource, EventSourceAddArgs } from "@humansandmachines/gsv/protocol";
 import type { NoticeRule, ResponsibilitySourcePolicy } from "@humansandmachines/gsv/protocol";
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import type { ProfileState } from "@humansandmachines/gsv/protocol";
@@ -142,7 +142,7 @@ const STORED_CONFIG = new Map([
 ]);
 const mockEventSources: EventSource[] = [
   { sourceId: "src_backups", name: "backups", label: "Backups", notify: "messenger", ship: "none", shipChoices: ["none", "context", "wake"], webhook: "none", enabled: true, lastEventAtMs: Date.now() - 2 * 3_600_000, expectEveryMs: 86_400_000, createdBy: "ship", updatedAtMs: Date.now() },
-  { sourceId: "src_github", name: "github", label: "GitHub", notify: "none", ship: "wake", shipChoices: ["none", "context", "wake"], webhook: "github", enabled: true, lastEventAtMs: Date.now() - 40 * 60_000, createdBy: "person", updatedAtMs: Date.now() },
+  { sourceId: "src_github", name: "github", label: "GitHub", notify: "none", ship: "wake", shipChoices: ["none", "context", "wake"], webhook: "hmac", hmac: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=", idHeader: "x-github-delivery", typeHeader: "x-github-event" }, enabled: true, lastEventAtMs: Date.now() - 40 * 60_000, createdBy: "person", updatedAtMs: Date.now() },
 ];
 
 const MOCK_EVENTS: EventRecord[] = [
@@ -912,16 +912,25 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "event.source.add": {
       // SAFETY: the Settings page in this tab sends these shapes.
-      const input = args as { name: string; webhook?: "none" | "github" | "stripe" | "standard" | "url" };
+      const input = args as EventSourceAddArgs;
       const webhook = input.webhook ?? "none";
-      const source = { sourceId: `src_${input.name}`, name: input.name, label: input.name, notify: "messenger" as const, ship: "none" as const, shipChoices: webhook === "url" ? ["none" as const, "context" as const] : ["none" as const, "context" as const, "wake" as const], webhook, enabled: true, createdBy: "person" as const, updatedAtMs: Date.now() };
+      const senderSecret = input.senderSecret === true || input.secret !== undefined;
+      const source: EventSource = {
+        sourceId: `src_${input.name}`, name: input.name, label: input.name, notify: "messenger", ship: "none",
+        shipChoices: webhook === "url" ? ["none", "context"] : ["none", "context", "wake"], webhook,
+        ...(input.hmac ? { hmac: input.hmac } : undefined),
+        ...(senderSecret ? { senderSecret: true } : undefined),
+        ...(senderSecret && !input.secret ? { awaitingSecret: true } : undefined),
+        enabled: true, createdBy: "person", updatedAtMs: Date.now(),
+      };
       mockEventSources.push(source);
-      return respond(id, { source, ...(webhook === "none" ? undefined : { webhookUrl: `https://esteve.ship.space/hooks/src_${input.name}`, secret: "mock-secret" }) });
+      return respond(id, { source, ...(webhook === "none" ? undefined : { webhookUrl: `https://esteve.ship.space/hooks/src_${input.name}` }), ...(webhook === "none" || webhook === "url" || senderSecret ? undefined : { secret: "mock-secret" }) });
     }
     case "event.source.rotate": {
       // SAFETY: the Work page in this tab sends these shapes.
       const input = args as { name: string; secret?: string };
       const source = mockEventSources.find((entry) => entry.name === input.name);
+      if (source && input.secret) delete source.awaitingSecret;
       return respond(id, { source, ...(input.secret ? undefined : { secret: "mock-secret-2" }) });
     }
     case "event.list": {

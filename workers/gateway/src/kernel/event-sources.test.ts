@@ -1,4 +1,6 @@
+import { Bash } from "just-bash";
 import { describe, expect, it, vi } from "vitest";
+import { buildEventCommand } from "../drivers/native/shell/event";
 import { testPeer } from "../test-support/peers";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import type { sendFrameToProcess } from "../shared/utils";
@@ -287,13 +289,19 @@ async function sign(secret: string, body: Uint8Array): Promise<string> {
   return Array.from(signature, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+const BODY_SIGNED = {
+  webhook: "hmac",
+  hmac: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=", idHeader: "x-github-delivery", typeHeader: "x-github-event" },
+} as const;
+const TIMESTAMP_SIGNED = { webhook: "hmac", hmac: { header: "stripe-signature", encoding: "hex", pairs: { timestamp: "t", signature: "v1" } } } as const;
+
 describe("event webhooks", () => {
   const body = new TextEncoder().encode(JSON.stringify({ action: "opened" }));
 
   it("accepts a signed delivery, refuses a wrong signature, and doesn't let a stranger spend the sender's allowance", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const k = kernel(storage);
-      const { source, secret, webhookUrl } = await handleEventSourceAdd({ name: "gh", webhook: "github", ship: "wake" }, context(k));
+      const { source, secret, webhookUrl } = await handleEventSourceAdd({ name: "gh", ...BODY_SIGNED, ship: "wake" }, context(k));
       expect(secret).toBeTruthy();
       expect(webhookUrl).toBe(`https://ada.example/hooks/${source.sourceId}`);
       const ctx = context(k, "schedule");
@@ -318,7 +326,7 @@ describe("event webhooks", () => {
   it("keeps a rotated secret working for the overlap, and a source with no webhook has no address", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const k = kernel(storage);
-      const { source, secret } = await handleEventSourceAdd({ name: "gh", webhook: "github" }, context(k));
+      const { source, secret } = await handleEventSourceAdd({ name: "gh", ...BODY_SIGNED }, context(k));
       const rotated = await handleEventSourceRotate({ name: "gh" }, context(k));
       expect(rotated.secret).not.toBe(secret);
       const ctx = context(k, "schedule");
@@ -333,20 +341,27 @@ describe("event webhooks", () => {
     });
   });
 
-  it("takes the signing secret a sender issues, such as Stripe's, and keeps its own out of the answer", async () => {
+  it("waits for the secret a sender issues, refusing deliveries until it has one, and checks a timestamped signature", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const k = kernel(storage);
-      const added = await handleEventSourceAdd({ name: "pay", webhook: "stripe" }, context(k));
+      const added = await handleEventSourceAdd({ name: "pay", ...TIMESTAMP_SIGNED, senderSecret: true }, context(k));
       expect(added.secret).toBeUndefined();
       expect(added.webhookUrl).toContain(added.source.sourceId);
+      expect(added.source).toMatchObject({ senderSecret: true, awaitingSecret: true });
+      await expect(handleEventSourceRotate({ name: "pay" }, context(k))).rejects.toThrow("takes the secret its sender gives you");
 
-      const issued = "whsec_issued_by_stripe";
-      const rotated = await handleEventSourceRotate({ name: "pay", secret: issued }, context(k));
-      expect(rotated.secret).toBeUndefined();
+      const issued = "whsec_issued_by_the_sender";
       const payload = new TextEncoder().encode(JSON.stringify({ id: "evt_1", type: "invoice.paid" }));
       const timestamp = Math.floor(Date.now() / 1000);
       const message = new Uint8Array([...new TextEncoder().encode(`${timestamp}.`), ...payload]);
       const headers = new Headers({ "stripe-signature": `t=${timestamp},v1=${await sign(issued, message)}` });
+      expect((await receiveWebhook(added.source.sourceId, null, headers, payload, context(k, "schedule"))).status).toBe(401);
+
+      const rotated = await handleEventSourceRotate({ name: "pay", secret: issued }, context(k));
+      expect(rotated.secret).toBeUndefined();
+      expect(rotated.source.awaitingSecret).toBeUndefined();
+      const stale = new Headers({ "stripe-signature": `t=${timestamp - 3600},v1=${await sign(issued, new Uint8Array([...new TextEncoder().encode(`${timestamp - 3600}.`), ...payload]))}` });
+      expect((await receiveWebhook(added.source.sourceId, null, stale, payload, context(k, "schedule"))).status).toBe(401);
       expect((await receiveWebhook(added.source.sourceId, null, headers, payload, context(k, "schedule"))).status).toBe(200);
       expect(handleEventList({ source: "pay" }, context(k)).events[0]).toMatchObject({ eventId: "evt_1", title: "invoice.paid" });
 
@@ -355,12 +370,41 @@ describe("event webhooks", () => {
     });
   });
 
+  it("checks a base64 signature with no prefix, takes a sender's secret up front, and titles a delivery by its type header", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      const issued = "shared-by-the-sender";
+      const { source, secret } = await handleEventSourceAdd({
+        name: "shop", webhook: "hmac", secret: issued,
+        hmac: { header: "X-Shop-Hmac-Sha256", encoding: "base64", typeHeader: "X-Shop-Topic" },
+      }, context(k));
+      expect(secret).toBeUndefined();
+      expect(source.hmac).toEqual({ header: "x-shop-hmac-sha256", encoding: "base64", typeHeader: "x-shop-topic" });
+      const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(issued), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+      const mac = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.sign("HMAC", key, body))));
+      const ctx = context(k, "schedule");
+      expect((await receiveWebhook(source.sourceId, null, new Headers({ "x-shop-hmac-sha256": mac.toLowerCase() }), body, ctx)).status).toBe(401);
+      expect((await receiveWebhook(source.sourceId, null, new Headers({ "x-shop-hmac-sha256": mac, "x-shop-topic": "orders/create" }), body, ctx)).status).toBe(200);
+      expect(handleEventList({ source: "shop" }, context(k)).events[0]?.title).toBe("orders/create opened");
+    });
+  });
+
+  it("needs a signature scheme for, and only for, an hmac webhook", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      await expect(handleEventSourceAdd({ name: "a", webhook: "hmac" }, context(k))).rejects.toThrow("hmac describes");
+      await expect(handleEventSourceAdd({ name: "b", webhook: "standard", hmac: BODY_SIGNED.hmac }, context(k))).rejects.toThrow("hmac describes");
+      await expect(handleEventSourceAdd({ name: "c", webhook: "url", senderSecret: true }, context(k))).rejects.toThrow("no signing secret");
+      await expect(handleEventSourceAdd({ name: "d", ...BODY_SIGNED, hmac: { ...BODY_SIGNED.hmac, header: "bad header" } }, context(k))).rejects.toThrow("header name");
+    });
+  });
+
   it("tells open pages once for each delivery that brought something new", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const onChange = vi.fn();
       const k = { ...kernel(storage), eventSources: new EventSourceStore(storage, onChange) };
       const { source } = await handleEventSourceAdd({ name: "feed" }, context(k));
-      const gh = await handleEventSourceAdd({ name: "gh", webhook: "github" }, context(k));
+      const gh = await handleEventSourceAdd({ name: "gh", ...BODY_SIGNED }, context(k));
       onChange.mockClear();
 
       const events = [{ id: "1", title: "a" }, { id: "2", title: "b" }, { id: "3", title: "c" }];
@@ -388,7 +432,7 @@ describe("event webhooks", () => {
   it("follows what the owner chose while a delivery was being verified", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const k = kernel(storage);
-      const { source, secret } = await handleEventSourceAdd({ name: "gh", webhook: "github", ship: "wake" }, context(k));
+      const { source, secret } = await handleEventSourceAdd({ name: "gh", ...BODY_SIGNED, ship: "wake" }, context(k));
       const ctx = context(k, "schedule");
       const delivery = async (id: string) => new Headers({ "x-hub-signature-256": `sha256=${await sign(secret ?? "", body)}`, "x-github-delivery": id });
 
@@ -412,7 +456,7 @@ describe("event webhooks", () => {
   it("doesn't charge a verified sender's retries against its allowance", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const k = kernel(storage);
-      const { source, secret } = await handleEventSourceAdd({ name: "gh", webhook: "github" }, context(k));
+      const { source, secret } = await handleEventSourceAdd({ name: "gh", ...BODY_SIGNED }, context(k));
       const ctx = context(k, "schedule");
       const headers = new Headers({ "x-hub-signature-256": `sha256=${await sign(secret ?? "", body)}`, "x-github-delivery": "same" });
       for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -433,6 +477,34 @@ describe("event webhooks", () => {
       expect((await receiveWebhook(source.sourceId, null, new Headers(), body, ctx)).status).toBe(404);
       expect((await receiveWebhook(source.sourceId, token, new Headers(), body, ctx)).status).toBe(200);
       expect(k.create).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("event sources from the native shell", () => {
+  it("describes an hmac signature with flags and takes a sender's secret on stdin", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      const ctx = context(k);
+      const shell = new Bash({ customCommands: [buildEventCommand(ctx)], files: { "/tmp/secret.txt": "issued-by-the-sender" } });
+      const signed = await shell.exec("event source add pay --webhook hmac --header Stripe-Signature --encoding hex --timestamp-key t --signature-key v1 --sender-secret");
+      expect(signed.exitCode).toBe(0);
+      expect(signed.stdout).not.toContain("Signing secret");
+      expect((await shell.exec("event sources")).stdout).toContain("pay\tneeds-secret\tmessenger\tnone\thmac");
+      expect((await shell.exec("event source rotate pay --stdin < /tmp/secret.txt")).stdout).toBe("Saved the secret for pay.\n");
+      expect(k.eventSources.list(OWNER)[0]).toMatchObject({
+        hmac: { header: "stripe-signature", encoding: "hex", pairs: { timestamp: "t", signature: "v1" } },
+        senderSecret: true,
+      });
+
+      const shop = await shell.exec("event source add shop --webhook hmac --header X-Shop-Hmac --encoding base64 --stdin < /tmp/secret.txt");
+      expect(shop.exitCode).toBe(0);
+      expect(k.eventSources.row(OWNER, "shop")?.secret).toBe("issued-by-the-sender");
+
+      const halfPairs = await shell.exec("event source add half --webhook hmac --header X-Sig --encoding hex --timestamp-key t");
+      expect(halfPairs.stderr).toContain("go together");
+      const noScheme = await shell.exec("event source add bare --webhook hmac");
+      expect(noScheme.stderr).toContain("hmac describes");
     });
   });
 });

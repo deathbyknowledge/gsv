@@ -90,7 +90,7 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
   proc: command("Inspect, delegate to, message, and control GSV agent processes.", "Create a subagent, delegate a task, contact another agent, or inspect agent history and lifecycle.", ["agent", "subagent", "delegate", "process", "message", "history"]),
   event: command("Record events from the owner's own sources and choose what each one does.", "Turn something a script, routine or outside service noticed into a notice for the owner or work for Ship, or create and manage where those events come from.", ["event", "webhook", "source", "alert", "monitor", "poll", "notify", "ingest"], [], [
     "event sources [--json]",
-    "event source add NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake] [--webhook none|standard|github|stripe|url] [--expect-every DURATION]",
+    "event source add NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake] [--webhook none|url|standard|hmac] [--expect-every DURATION] [--sender-secret] [--stdin] [--header NAME --encoding hex|base64 [--prefix TEXT] [--timestamp-key KEY --signature-key KEY] [--id-header NAME] [--type-header NAME]]",
     "event source update NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake] [--pause|--resume] [--expect-every DURATION|never]",
     "event source rotate NAME [--stdin]",
     "event source remove NAME",

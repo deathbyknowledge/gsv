@@ -1,6 +1,6 @@
 import { defineCommand } from "just-bash";
 import type { CommandContext, ExecResult } from "just-bash";
-import type { EventInput, EventSource, EventSourceSecretResult, EventSourceWebhook, NoticeDelivery, ShipOutcome } from "@humansandmachines/gsv/protocol";
+import type { EventInput, EventSource, EventSourceSecretResult, EventSourceWebhook, NoticeDelivery, ShipOutcome, WebhookHmac } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
 import type { KernelContext } from "../../../kernel/context";
 import {
@@ -20,16 +20,24 @@ const MAX_EVENTS_PER_CALL = 100;
 const USAGE = `Usage:
   event sources [--json]
   event source add NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake]
-                        [--webhook none|standard|github|stripe|url] [--expect-every DURATION]
+                        [--webhook none|url|standard|hmac] [--expect-every DURATION]
+                        [--sender-secret] [--stdin]
+                        hmac: --header NAME --encoding hex|base64 [--prefix TEXT]
+                              [--timestamp-key KEY --signature-key KEY] [--id-header NAME] [--type-header NAME]
   event source update NAME [--label TEXT] [--notify none|messenger] [--ship none|context|wake]
                         [--pause|--resume] [--expect-every DURATION|never]
-  event source rotate NAME [--stdin]     With --stdin, read a secret the sender issued, as Stripe does
+  event source rotate NAME [--stdin]     With --stdin, read a secret the sender issued
   event source remove NAME
   event emit SOURCE --title TEXT [--id ID] [--preview TEXT] [--body TEXT]
   event emit SOURCE --stdin      One JSON object per line: {"id","title","preview","body"}
   event list [SOURCE] [--limit N] [--json]
 
 An id you repeat is ignored, so a script can re-read the same items without remembering them.
+
+A webhook names how its sender proves itself: a secret address (url), the Standard Webhooks
+signature (standard), or an HMAC-SHA256 in a header (hmac). An hmac signature covers the body;
+with --timestamp-key and --signature-key the header holds KEY=VALUE pairs and it covers
+TIMESTAMP.BODY. --sender-secret waits for a secret the sender issues; --stdin gives it now.
 `;
 
 const stdinEvent = z.strictObject({
@@ -76,7 +84,33 @@ function secretLines({ secret, webhookUrl }: EventSourceSecretResult): string {
 }
 
 function sourceLine(source: EventSource): string {
-  return [source.name, source.enabled ? "on" : "paused", source.notify, source.ship, source.webhook, source.label].join("\t");
+  const state = !source.enabled ? "paused" : source.awaitingSecret ? "needs-secret" : "on";
+  return [source.name, state, source.notify, source.ship, source.webhook, source.label].join("\t");
+}
+
+const HMAC_OPTIONS = ["--header", "--encoding", "--prefix", "--timestamp-key", "--signature-key", "--id-header", "--type-header"];
+
+/** The signature an hmac source's flags describe; the handler checks it, and that only an hmac source has one. */
+function hmacOptions(options: Map<string, string>): { hmac: WebhookHmac } | null {
+  if (!HMAC_OPTIONS.some((option) => options.has(option))) return null;
+  const timestamp = options.get("--timestamp-key");
+  const signature = options.get("--signature-key");
+  if ((timestamp === undefined) !== (signature === undefined)) throw new Error("--timestamp-key and --signature-key go together");
+  const optional = (option: string, key: keyof WebhookHmac) => {
+    const value = options.get(option);
+    return value === undefined ? undefined : { [key]: value };
+  };
+  return {
+    hmac: {
+      header: options.get("--header") ?? "",
+      // SAFETY: the handler validates this against its closed set.
+      encoding: (options.get("--encoding") ?? "") as WebhookHmac["encoding"],
+      ...optional("--prefix", "prefix"),
+      ...(timestamp !== undefined && signature !== undefined ? { pairs: { timestamp, signature } } : undefined),
+      ...optional("--id-header", "idHeader"),
+      ...optional("--type-header", "typeHeader"),
+    },
+  };
 }
 
 function readStdinEvents(shell: CommandContext): EventInput[] {
@@ -101,7 +135,7 @@ async function runEventCommand(args: string[], shell: CommandContext, ctx: Kerne
       return result(`${["NAME\tSTATE\tTELL\tSHIP\tWEBHOOK\tLABEL", ...sources.map(sourceLine)].join("\n")}\n`);
     }
     case "source":
-      return runSourceCommand(rest, shell, ctx);
+      return await runSourceCommand(rest, shell, ctx);
     case "emit": {
       requireCommandCapability(ctx, "event.emit");
       const { options, words } = parseOptions(rest, ["--stdin"]);
@@ -137,7 +171,7 @@ async function runEventCommand(args: string[], shell: CommandContext, ctx: Kerne
 
 async function runSourceCommand(args: string[], shell: CommandContext, ctx: KernelContext): Promise<ExecResult> {
   const [action, ...rest] = args;
-  const { options, words } = parseOptions(rest, ["--pause", "--resume", "--stdin"]);
+  const { options, words } = parseOptions(rest, ["--pause", "--resume", "--stdin", "--sender-secret"]);
   const [name] = words;
   if (!name || words.length > 1) throw new Error(`source ${action ?? ""} requires a NAME`);
   // SAFETY: the handlers validate these against their closed sets.
@@ -150,10 +184,14 @@ async function runSourceCommand(args: string[], shell: CommandContext, ctx: Kern
   switch (action) {
     case "add": {
       requireCommandCapability(ctx, "event.source.add");
+      const secret = options.has("--stdin") ? decodeShellStdin(shell.stdin).trim() : undefined;
       const added = await handleEventSourceAdd({
         ...shared,
         // SAFETY: the handler validates this against its closed set.
         ...(options.has("--webhook") ? { webhook: options.get("--webhook") as EventSourceWebhook } : undefined),
+        ...(hmacOptions(options) ?? undefined),
+        ...(options.has("--sender-secret") ? { senderSecret: true } : undefined),
+        ...(secret ? { secret } : undefined),
         ...(expect ? { expectEveryMs: parseDurationMs(expect) } : undefined),
       }, ctx);
       return result(`Added ${added.source.name}.\n${secretLines(added)}`);

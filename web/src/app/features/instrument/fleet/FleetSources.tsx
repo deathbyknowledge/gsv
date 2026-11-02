@@ -1,5 +1,6 @@
-import type { EventRecord, EventSource, EventSourceWebhook } from "@humansandmachines/gsv/protocol";
+import type { EventRecord, EventSource, EventSourceAddArgs, EventSourceWebhook, WebhookHmac } from "@humansandmachines/gsv/protocol";
 import { useState } from "preact/hooks";
+import { Checkbox } from "../../../components/ui/Checkbox";
 import { Select } from "../../../components/ui/Select";
 import { LoadingState } from "../../../components/ui/Spinner";
 import { TextInput } from "../../../components/ui/TextInput";
@@ -10,14 +11,14 @@ import type { FleetRow } from "../Instrument";
 import type { EventSources } from "../shared/useEventSources";
 import { INSTRUMENT_EVENT_SOURCES_KEY } from "../wire/queryKeys";
 import { relativeTime, sourceRow } from "./fleetModel";
+import { senderOf, WEBHOOK_SENDERS } from "./webhookSenders";
 
 const RECENT_EVENTS = 20;
 
 const DELIVERIES = [
   { webhook: "none", label: "fleet.sources.deliveryNone" },
-  { webhook: "github", label: "fleet.sources.deliveryGithub" },
-  { webhook: "stripe", label: "fleet.sources.deliveryStripe" },
   { webhook: "standard", label: "fleet.sources.deliveryStandard" },
+  { webhook: "hmac", label: "fleet.sources.deliveryHmac" },
   { webhook: "url", label: "fleet.sources.deliveryUrl" },
 ] as const satisfies ReadonlyArray<{ webhook: EventSourceWebhook; label: TextKey }>;
 
@@ -28,8 +29,16 @@ const SENDERS = {
   webhook: "fleet.sources.sender.webhook",
 } satisfies Record<EventRecord["emittedBy"], TextKey>;
 
-function deliveryLabel(webhook: EventSourceWebhook): TextKey {
-  return DELIVERIES.find((delivery) => delivery.webhook === webhook)?.label ?? "fleet.sources.deliveryNone";
+/** How a source's events arrive, naming the sender when its scheme is one of the presets. */
+function deliveryText(source: EventSource, t: ReturnType<typeof useT>): string {
+  const sender = senderOf(source);
+  if (sender) return t("fleet.sources.deliverySender", { name: sender.name });
+  return t(DELIVERIES.find((delivery) => delivery.webhook === source.webhook)?.label ?? "fleet.sources.deliveryNone");
+}
+
+function stateText(source: EventSource): TextKey {
+  if (!source.enabled) return "fleet.sources.pausedState";
+  return source.awaitingSecret ? "fleet.sources.awaitingState" : "fleet.sources.on";
 }
 
 export function SourcesSection({ events, canChange, now, onSelect, onCreate }: {
@@ -51,8 +60,8 @@ export function SourcesSection({ events, canChange, now, onSelect, onCreate }: {
         <thead><tr><th>{t("fleet.sources.source")}</th><th>{t("fleet.sources.delivery")}</th><th>{t("fleet.field.state")}</th><th>{t("fleet.sources.lastEventHead")}</th></tr></thead>
         <tbody>{events.sources.map((source) => <tr key={source.sourceId} data-row={sourceRow(source.name)} tabIndex={0} onClick={() => onSelect(sourceRow(source.name))}>
           <td><span class={`dot ${source.enabled ? "is-on" : "is-idle"}`} aria-hidden="true" />{source.label}</td>
-          <td class="dim">{t(deliveryLabel(source.webhook))}</td>
-          <td class="dim">{t(source.enabled ? "fleet.sources.on" : "fleet.sources.pausedState")}</td>
+          <td class="dim">{deliveryText(source, t)}</td>
+          <td class="dim">{t(stateText(source))}</td>
           <td class="dim">{source.lastEventAtMs ? relativeTime(source.lastEventAtMs, now) : t("fleet.time.never")}</td>
         </tr>)}</tbody>
       </table>
@@ -89,7 +98,8 @@ export function SourceInspector({ source, events, canChange, canRead, now, onCho
     </div>}
     {events.error && <p class="error" role="alert">{events.error.message}</p>}
     <dl class="fleet-work-details">
-      <div><dt>{t("fleet.sources.delivery")}</dt><dd>{t(deliveryLabel(source.webhook))}</dd></div>
+      <div><dt>{t("fleet.sources.delivery")}</dt><dd>{deliveryText(source, t)}</dd></div>
+      {source.hmac && !senderOf(source) && <div><dt>{t("fleet.sources.signatureHeader")}</dt><dd><code>{source.hmac.header}</code></dd></div>}
       {source.webhook === "none" && <div><dt>{t("fleet.sources.sendOne")}</dt><dd><code>gsv event emit {source.name} --title "…"</code></dd></div>}
     </dl>
     <div class="fleet-work-actions">
@@ -97,12 +107,13 @@ export function SourceInspector({ source, events, canChange, canRead, now, onCho
       <button type="button" class="fleet-text-action" disabled={off} onClick={() => events.update.mutate({ name: source.name, enabled: !source.enabled })}>
         {t(source.enabled ? "fleet.sources.pause" : "fleet.sources.resume")}
       </button>
-      {source.webhook !== "none" && source.webhook !== "stripe" && <button type="button" class="fleet-text-action" disabled={off} onClick={() => events.rotate.mutate({ name: source.name })}>{t("fleet.sources.rotate")}</button>}
+      {source.webhook !== "none" && !source.senderSecret && <button type="button" class="fleet-text-action" disabled={off} onClick={() => events.rotate.mutate({ name: source.name })}>{t("fleet.sources.rotate")}</button>}
       <button type="button" class="fleet-text-action" disabled={off} onClick={() => {
         if (window.confirm(t("fleet.sources.confirmRemove", { name: source.label }))) events.remove.mutate(source.name, { onSuccess: onRemoved });
       }}>{t("fleet.sources.remove")}</button>
     </div>
-    {(source.webhook === "stripe" || source.webhook === "standard") && <form class="fleet-source-form" onSubmit={(event) => {
+    {source.awaitingSecret && <p class="note">{t("fleet.sources.awaitingSecret")}</p>}
+    {(source.webhook === "standard" || source.webhook === "hmac") && <form class="fleet-source-form" onSubmit={(event) => {
       event.preventDefault();
       events.rotate.mutate({ name: source.name, secret: issued.trim() }, { onSuccess: () => setIssued("") });
     }}>
@@ -122,24 +133,84 @@ export function SourceInspector({ source, events, canChange, canRead, now, onCho
   </div>;
 }
 
+type Choice = EventSourceWebhook | (typeof WEBHOOK_SENDERS)[number]["id"];
+
+/** The fields of a signature that isn't one of the presets. */
+function SignatureFields({ hmac, disabled, onChange }: { hmac: WebhookHmac; disabled: boolean; onChange: (hmac: WebhookHmac) => void }) {
+  const t = useT();
+  const optional = (value: string) => value.trim() || undefined;
+  const [timestamp, setTimestamp] = useState(hmac.pairs?.timestamp ?? "");
+  const [signature, setSignature] = useState(hmac.pairs?.signature ?? "");
+  const setPairs = (nextTimestamp: string, nextSignature: string) => {
+    setTimestamp(nextTimestamp);
+    setSignature(nextSignature);
+    const { pairs: _pairs, ...rest } = hmac;
+    onChange(nextTimestamp.trim() || nextSignature.trim()
+      ? { ...rest, pairs: { timestamp: nextTimestamp.trim(), signature: nextSignature.trim() } }
+      : rest);
+  };
+  const set = (key: "prefix" | "idHeader" | "typeHeader", value: string) => {
+    const { [key]: _old, ...rest } = hmac;
+    const next = optional(value);
+    onChange(next === undefined ? rest : { ...rest, [key]: next });
+  };
+  return <>
+    <p class="note">{t("fleet.sources.hmacIntro")}</p>
+    <TextInput label={t("fleet.sources.signatureHeader")} value={hmac.header} placeholder="x-signature" disabled={disabled}
+      inputProps={{ name: "event-source-header", maxLength: 64 }} onChange={(header) => onChange({ ...hmac, header: header.trim() })} />
+    <Select block label={t("fleet.sources.encoding")} disabled={disabled} selected={hmac.encoding}
+      onSelect={(value) => onChange({ ...hmac, encoding: value === "base64" ? "base64" : "hex" })}
+      options={[{ label: "hex", value: "hex" }, { label: "base64", value: "base64" }]} />
+    <TextInput label={t("fleet.sources.prefix")} value={hmac.prefix ?? ""} placeholder="sha256=" disabled={disabled}
+      inputProps={{ name: "event-source-prefix", maxLength: 32 }} onChange={(value) => set("prefix", value)} />
+    <TextInput label={t("fleet.sources.timestampKey")} value={timestamp} placeholder="t" disabled={disabled}
+      inputProps={{ name: "event-source-timestamp-key", maxLength: 16 }} onChange={(value) => setPairs(value, signature)} />
+    <TextInput label={t("fleet.sources.signatureKey")} value={signature} placeholder="v1" disabled={disabled}
+      inputProps={{ name: "event-source-signature-key", maxLength: 16 }} onChange={(value) => setPairs(timestamp, value)} />
+    <TextInput label={t("fleet.sources.idHeader")} value={hmac.idHeader ?? ""} placeholder="x-delivery-id" disabled={disabled}
+      inputProps={{ name: "event-source-id-header", maxLength: 64 }} onChange={(value) => set("idHeader", value)} />
+    <TextInput label={t("fleet.sources.typeHeader")} value={hmac.typeHeader ?? ""} placeholder="x-event-type" disabled={disabled}
+      inputProps={{ name: "event-source-type-header", maxLength: 64 }} onChange={(value) => set("typeHeader", value)} />
+  </>;
+}
+
+function addArgs(name: string, choice: Choice, hmac: WebhookHmac, senderSecret: boolean): EventSourceAddArgs {
+  const sender = WEBHOOK_SENDERS.find((preset) => preset.id === choice);
+  if (sender) return { name, webhook: "hmac", hmac: sender.hmac, ...(sender.senderSecret ? { senderSecret: true } : undefined) };
+  if (choice === "hmac") return { name, webhook: "hmac", hmac, ...(senderSecret ? { senderSecret: true } : undefined) };
+  if (choice === "standard") return { name, webhook: "standard", ...(senderSecret ? { senderSecret: true } : undefined) };
+  return { name, webhook: choice === "url" ? "url" : "none" };
+}
+
 export function NewSource({ events, disabled, onAdded }: { events: EventSources; disabled: boolean; onAdded: (name: string) => void }) {
   const t = useT();
   const [name, setName] = useState("");
-  const [webhook, setWebhook] = useState<EventSourceWebhook>("none");
+  const [choice, setChoice] = useState<Choice>("none");
+  const [hmac, setHmac] = useState<WebhookHmac>({ header: "", encoding: "hex" });
+  const [senderSecret, setSenderSecret] = useState(false);
   const off = disabled || events.pending;
+  const option = (label: string, value: Choice) => ({ label, value });
+  const options = [
+    option(t("fleet.sources.deliveryNone"), "none"),
+    ...WEBHOOK_SENDERS.map((sender) => option(t("fleet.sources.deliverySender", { name: sender.name }), sender.id)),
+    ...DELIVERIES.filter((delivery) => delivery.webhook !== "none").map((delivery) => option(t(delivery.label), delivery.webhook)),
+  ];
+  const incomplete = choice === "hmac" && (!hmac.header || (hmac.pairs !== undefined && (!hmac.pairs.timestamp || !hmac.pairs.signature)));
   return <form class="fleet-source-form" onSubmit={(event) => {
     event.preventDefault();
     const chosen = name.trim();
-    events.add.mutate({ name: chosen, webhook }, { onSuccess: () => onAdded(chosen) });
+    events.add.mutate(addArgs(chosen, choice, hmac, senderSecret), { onSuccess: () => onAdded(chosen) });
   }}>
     <p class="note">{t("fleet.sources.intro")}</p>
     {events.add.error && <p class="error" role="alert">{events.add.error.message}</p>}
     <TextInput label={t("fleet.sources.name")} value={name} placeholder={t("fleet.sources.namePlaceholder")} disabled={off}
       inputProps={{ name: "event-source-name", maxLength: 63 }} onChange={setName} />
-    <Select block label={t("fleet.sources.delivery")} disabled={off} selected={webhook} onSelect={(value) => {
-      const chosen = DELIVERIES.find((delivery) => delivery.webhook === value);
-      if (chosen) setWebhook(chosen.webhook);
-    }} options={DELIVERIES.map((delivery) => ({ label: t(delivery.label), value: delivery.webhook }))} />
-    <div class="fleet-work-actions"><button class="ibtn" type="submit" disabled={off || !name.trim()}>{t("fleet.sources.add")}</button></div>
+    <Select block label={t("fleet.sources.delivery")} disabled={off} selected={choice} onSelect={(value) => {
+      const chosen = options.find((entry) => entry.value === value);
+      if (chosen) setChoice(chosen.value);
+    }} options={options} />
+    {choice === "hmac" && <SignatureFields hmac={hmac} disabled={off} onChange={setHmac} />}
+    {(choice === "hmac" || choice === "standard") && <Checkbox label={t("fleet.sources.senderSecret")} checked={senderSecret} disabled={off} onChange={setSenderSecret} />}
+    <div class="fleet-work-actions"><button class="ibtn" type="submit" disabled={off || !name.trim() || incomplete}>{t("fleet.sources.add")}</button></div>
   </form>;
 }

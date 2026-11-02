@@ -7,13 +7,20 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
 import { useEventSources } from "../shared/useEventSources";
-import { SourceInspector, SourcesSection } from "./FleetSources";
+import { NewSource, SourceInspector, SourcesSection } from "./FleetSources";
 
 const BACKUPS: EventSource = {
   sourceId: "src_backups", name: "backups", label: "Backups", notify: "messenger", ship: "none", shipChoices: ["none", "context", "wake"],
   webhook: "none", enabled: true, createdBy: "person", updatedAtMs: 1,
 };
-const GITHUB: EventSource = { ...BACKUPS, sourceId: "src_github", name: "github", label: "GitHub", webhook: "github", lastEventAtMs: 1_000 };
+const GITHUB: EventSource = {
+  ...BACKUPS, sourceId: "src_github", name: "github", label: "GitHub", lastEventAtMs: 1_000, webhook: "hmac",
+  hmac: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=", idHeader: "x-github-delivery", typeHeader: "x-github-event" },
+};
+const SHOP: EventSource = {
+  ...BACKUPS, sourceId: "src_shop", name: "shop", label: "Shop", webhook: "hmac", senderSecret: true, awaitingSecret: true,
+  hmac: { header: "x-shop-signature", encoding: "base64" },
+};
 
 beforeEach(() => {
   vi.stubGlobal("document", {});
@@ -31,6 +38,7 @@ function gateway(sources: EventSource[]) {
     if (call === "event.list") return { data: { events: [{ sourceId: "src_github", eventId: "1", title: "Deploy failed", preview: "On main", body: "The whole log", emittedBy: "webhook", receivedAtMs: 1_000 }] } };
     if (call === "event.source.rotate") return { data: { source: GITHUB, secret: "fresh-secret", webhookUrl: "https://ship.example/hooks/github" } };
     if (call === "event.source.remove") return { data: { removed: true } };
+    if (call === "event.source.add") return { data: { source: SHOP, webhookUrl: "https://ship.example/hooks/src_shop" } };
     throw new Error(`Unexpected request: ${call} ${JSON.stringify(args)}`);
   });
 }
@@ -48,7 +56,23 @@ async function mount(view: (events: ReturnType<typeof useEventSources>) => Compo
     // SAFETY: the same handlers ignore their event.
     return { found, press: () => act(() => found?.props.onClick?.({} as JSX.TargetedMouseEvent<HTMLButtonElement>)) };
   };
-  return { button, events: () => {
+  /** A field's handlers, found by its label; each runs as a user's change would. */
+  const field = (label: string) => {
+    // SAFETY: the form's fields are TextInput and Select, whose handlers take a string.
+    const found = collectNodes(tree).find((node) => node.props && (node.props as { label?: unknown }).label === label) as VNode<{ onChange?: (value: string) => void; onSelect?: (value: string) => void }> | undefined;
+    if (!found) throw new Error(`no field labelled ${label}`);
+    return {
+      onChange: (value: string) => act(() => found.props.onChange?.(value)),
+      onSelect: (value: string) => act(() => found.props.onSelect?.(value)),
+    };
+  };
+  const submit = () => {
+    // SAFETY: the form's submit handler only calls preventDefault on its event.
+    const form = collectNodes(tree).find((node) => node.type === "form") as VNode<JSX.HTMLAttributes<HTMLFormElement>> | undefined;
+    // SAFETY: as above.
+    return act(() => form?.props.onSubmit?.({ preventDefault: () => {} } as JSX.TargetedSubmitEvent<HTMLFormElement>));
+  };
+  return { button, field, submit, events: () => {
     if (!current) throw new Error("not rendered");
     return current;
   }, text: () => collectText(tree), async close() { await root.unmount(); cache.clear(); } };
@@ -109,5 +133,34 @@ it("deletes only after asking, then leaves the details", async () => {
     await screen.button("Delete").press();
     await vi.waitFor(() => expect(onRemoved).toHaveBeenCalled());
     expect(request).toHaveBeenCalledWith("event.source.remove", { name: "github" });
+  } finally { await screen.close(); }
+});
+
+it("names a sender only when a source's signature is that sender's, and shows one waiting for its sender's secret", async () => {
+  gateway([GITHUB, SHOP]);
+  const list = await mount((events) => SourcesSection({ events, canChange: true, now: 2_000, onSelect: () => {}, onCreate: () => {} }));
+  try {
+    await vi.waitFor(() => expect(list.text()).toContain("GitHub webhook"));
+    expect(list.text()).toContain("Other signed webhook (HMAC)");
+    expect(list.text()).toContain("needs its secret");
+  } finally { await list.close(); }
+  const details = await mount((events) => inspector(events, SHOP));
+  try {
+    await vi.waitFor(() => expect(details.text()).toContain("every delivery is refused"));
+    expect(details.text()).toContain("x-shop-signature");
+    expect(details.button("New secret").found).toBeUndefined();
+  } finally { await details.close(); }
+});
+
+it("adds a preset as the scheme its sender signs with", async () => {
+  const request = gateway([]);
+  const screen = await mount((events) => NewSource({ events, disabled: false, onAdded: () => {} }));
+  try {
+    await screen.field("Name").onChange("pay");
+    await screen.field("How they arrive").onSelect("stripe");
+    await screen.submit();
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("event.source.add", {
+      name: "pay", webhook: "hmac", hmac: { header: "stripe-signature", encoding: "hex", pairs: { timestamp: "t", signature: "v1" } }, senderSecret: true,
+    }));
   } finally { await screen.close(); }
 });

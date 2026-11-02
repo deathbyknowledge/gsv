@@ -17,6 +17,7 @@ import type {
   EventSourceWebhook,
   JsonObject,
   ShipOutcome,
+  WebhookHmac,
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
 import { sha256 } from "./account-recovery";
@@ -51,6 +52,8 @@ type SourceRow = {
   notify: "none" | "messenger";
   ship: ShipOutcome;
   webhook: EventSourceWebhook;
+  hmac_json: string | null;
+  sender_secret: number;
   secret: string | null;
   previous_secret: string | null;
   previous_secret_until: number | null;
@@ -76,12 +79,15 @@ type LogRow = {
   received_at: number;
 };
 
-const issuesOwnSecret = (webhook: EventSourceWebhook) => webhook === "stripe";
-
 const shipChoices = (webhook: EventSourceWebhook): ShipOutcome[] =>
   webhook === "url" ? ["none", "context"] : ["none", "context", "wake"];
 
+function hmacOf(row: SourceRow): WebhookHmac | null {
+  return row.hmac_json === null ? null : hmacSchema.parse(JSON.parse(row.hmac_json));
+}
+
 function publicSource(row: SourceRow): EventSource {
+  const hmac = hmacOf(row);
   return {
     sourceId: row.source_id,
     name: row.name,
@@ -90,6 +96,9 @@ function publicSource(row: SourceRow): EventSource {
     ship: row.ship,
     shipChoices: shipChoices(row.webhook),
     webhook: row.webhook,
+    ...(hmac ? { hmac } : undefined),
+    ...(row.sender_secret === 1 ? { senderSecret: true } : undefined),
+    ...(row.sender_secret === 1 && row.secret === null ? { awaitingSecret: true } : undefined),
     enabled: row.enabled === 1,
     ...(row.expect_every_ms === null ? undefined : { expectEveryMs: row.expect_every_ms }),
     ...(row.last_event_at === null ? undefined : { lastEventAtMs: row.last_event_at }),
@@ -119,17 +128,21 @@ export class EventSourceStore {
 
   add(
     ownerUid: number,
-    input: { name: string; label: string; notify: "none" | "messenger"; ship: ShipOutcome; webhook: EventSourceWebhook; secret: string | null; expectEveryMs: number | null },
+    input: {
+      name: string; label: string; notify: "none" | "messenger"; ship: ShipOutcome; webhook: EventSourceWebhook;
+      hmac: WebhookHmac | null; senderSecret: boolean; secret: string | null; expectEveryMs: number | null;
+    },
     createdBy: "person" | "ship",
     now: number,
   ): SourceRow {
     if (this.row(ownerUid, input.name)) throw new Error(`event.source.add: "${input.name}" already exists`);
     const sourceId = `src_${Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
     this.sql.exec(
-      `INSERT INTO event_sources (source_id, owner_uid, name, label, notify, ship, webhook, secret, expect_every_ms,
-        bucket_tokens, bucket_at, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      sourceId, ownerUid, input.name, input.label, input.notify, input.ship, input.webhook, input.secret, input.expectEveryMs,
+      `INSERT INTO event_sources (source_id, owner_uid, name, label, notify, ship, webhook, hmac_json, sender_secret, secret,
+        expect_every_ms, bucket_tokens, bucket_at, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sourceId, ownerUid, input.name, input.label, input.notify, input.ship, input.webhook,
+      input.hmac ? JSON.stringify(input.hmac) : null, input.senderSecret ? 1 : 0, input.secret, input.expectEveryMs,
       BUCKET_BURST, now, createdBy, now, now,
     );
     this.onChange?.(ownerUid);
@@ -324,12 +337,26 @@ const labelSchema = z.string().check(z.minLength(1), z.maxLength(80));
 const deliverySchema = z.enum(["none", "messenger"]);
 const shipSchema = z.enum(["none", "context", "wake"]);
 const expectSchema = z.number().check(z.int(), z.gte(MIN_EXPECT_MS));
+const secretSchema = z.string().check(z.minLength(8), z.maxLength(512));
+const headerSchema = z.pipe(z.string().check(z.regex(/^[A-Za-z0-9-]{1,64}$/, "use a header name")), z.transform((name) => name.toLowerCase()));
+const pairKeySchema = z.string().check(z.regex(/^[A-Za-z0-9_-]{1,16}$/, "use letters, digits, - or _"));
+const hmacSchema = z.strictObject({
+  header: headerSchema,
+  encoding: z.enum(["hex", "base64"]),
+  prefix: z.optional(z.string().check(z.regex(/^[\x21-\x7e]{1,32}$/, "use up to 32 visible characters"))),
+  pairs: z.optional(z.strictObject({ timestamp: pairKeySchema, signature: pairKeySchema })),
+  idHeader: z.optional(headerSchema),
+  typeHeader: z.optional(headerSchema),
+});
 const addSchema = z.strictObject({
   name: nameSchema,
   label: z.optional(labelSchema),
   notify: z.optional(deliverySchema),
   ship: z.optional(shipSchema),
-  webhook: z.optional(z.enum(["none", "standard", "github", "stripe", "url"])),
+  webhook: z.optional(z.enum(["none", "url", "standard", "hmac"])),
+  hmac: z.optional(hmacSchema),
+  senderSecret: z.optional(z.boolean()),
+  secret: z.optional(secretSchema),
   expectEveryMs: z.optional(expectSchema),
 });
 const updateSchema = z.strictObject({
@@ -341,7 +368,7 @@ const updateSchema = z.strictObject({
   expectEveryMs: z.optional(z.nullable(expectSchema)),
 });
 const namedSchema = z.strictObject({ name: nameSchema });
-const rotateSchema = z.strictObject({ name: nameSchema, secret: z.optional(z.string().check(z.minLength(8), z.maxLength(512))) });
+const rotateSchema = z.strictObject({ name: nameSchema, secret: z.optional(secretSchema) });
 const eventSchema = z.strictObject({
   id: z.optional(z.string().check(z.minLength(1), z.maxLength(200))),
   title: z.string().check(z.minLength(1), z.maxLength(MAX_TITLE)),
@@ -394,9 +421,13 @@ export async function handleEventSourceAdd(args: EventSourceAddArgs, ctx: Kernel
   const { ownerUid, changedBy } = changer(ctx);
   const webhook = input.webhook ?? "none";
   const ship = input.ship ?? "none";
+  if ((webhook === "hmac") !== (input.hmac !== undefined)) throw new Error("event.source.add: hmac describes an hmac webhook's signature, and one needs it");
+  const senderSecret = input.senderSecret === true || input.secret !== undefined;
+  if (senderSecret && webhook !== "standard" && webhook !== "hmac") throw new Error(`event.source.add: a ${webhook} source has no signing secret`);
+  if (input.senderSecret === false && input.secret !== undefined) throw new Error("event.source.add: a secret given here is the sender's");
   requireShipChoice(webhook, ship, "event.source.add");
   if (ship === "wake") await askBeforeShipActs(ctx, changedBy, input.name, send);
-  const secret = newWebhookSecret(webhook);
+  const secret = senderSecret ? input.secret ?? null : newWebhookSecret(webhook);
   const now = Date.now();
   const row = ctx.eventSources.add(ownerUid, {
     name: input.name,
@@ -404,6 +435,8 @@ export async function handleEventSourceAdd(args: EventSourceAddArgs, ctx: Kernel
     notify: input.notify ?? "messenger",
     ship,
     webhook,
+    hmac: input.hmac ?? null,
+    senderSecret,
     // A url source's address is its secret, so only its hash stays here.
     secret: secret && webhook === "url" ? await sha256(secret) : secret,
     expectEveryMs: input.expectEveryMs ?? null,
@@ -413,8 +446,8 @@ export async function handleEventSourceAdd(args: EventSourceAddArgs, ctx: Kernel
   const url = webhookUrl(ctx, row, secret);
   return {
     source: publicSource(row),
-    // Stripe makes its own secret once it has this address, so one made here would only mislead.
-    ...(secret && webhook !== "url" && !issuesOwnSecret(webhook) ? { secret } : undefined),
+    // The sender already has a secret it issued.
+    ...(secret && webhook !== "url" && !senderSecret ? { secret } : undefined),
     ...(url ? { webhookUrl: url } : undefined),
   };
 }
@@ -439,13 +472,13 @@ export async function handleEventSourceRotate(args: EventSourceRotateArgs, ctx: 
   const { name, secret: issued } = parseArgs(rotateSchema, args, "event.source.rotate");
   const row = requireSource(ctx, changer(ctx).ownerUid, name, "event.source.rotate");
   if (issued && row.webhook === "url") throw new Error(`event.source.rotate: "${name}" makes its own address`);
-  if (!issued && issuesOwnSecret(row.webhook)) throw new Error(`event.source.rotate: "${name}" takes the secret Stripe gives you`);
+  if (!issued && row.sender_secret === 1) throw new Error(`event.source.rotate: "${name}" takes the secret its sender gives you`);
   const secret = issued ?? newWebhookSecret(row.webhook);
   if (!secret) throw new Error(`event.source.rotate: "${name}" has no webhook`);
   ctx.eventSources.rotate(row, row.webhook === "url" ? await sha256(secret) : secret, Date.now());
   const url = webhookUrl(ctx, row, secret);
   return {
-    source: publicSource(row),
+    source: publicSource(requireSource(ctx, row.owner_uid, name, "event.source.rotate")),
     ...(row.webhook === "url" || issued ? undefined : { secret }),
     ...(url ? { webhookUrl: url } : undefined),
   };
@@ -511,14 +544,14 @@ export async function receiveWebhook(
     verified = hash !== null && secrets.includes(hash);
   } else {
     for (const secret of secrets) {
-      if (await verifyWebhook(row.webhook, secret, body, headers, now)) verified = true;
+      if (await verifyWebhook(row.webhook, hmacOf(row), secret, body, headers, now)) verified = true;
     }
   }
   if (!verified) return { status: row.webhook === "url" ? 404 : 401 };
   // The owner may have paused, changed or deleted the source while the signature was checked.
   const current = ctx.eventSources.byId(sourceId);
   if (!current || current.enabled !== 1) return { status: 404 };
-  const event = webhookEvent(row.webhook, current.label, body, headers);
+  const event = webhookEvent(row.webhook, hmacOf(row), current.label, body, headers);
   if (event.id && ctx.eventSources.seen(current, event.id)) return { status: 200 };
   // Only after proof, so a stranger's guesses can't spend the real sender's allowance.
   if (!ctx.eventSources.admit(current, now)) return { status: 429, retryAfter: 60 };

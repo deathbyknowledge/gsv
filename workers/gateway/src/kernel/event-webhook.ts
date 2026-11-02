@@ -1,4 +1,4 @@
-import type { EventInput, EventSourceWebhook } from "@humansandmachines/gsv/protocol";
+import type { EventInput, EventSourceWebhook, WebhookHmac } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
 
 export const MAX_WEBHOOK_BYTES = 256 * 1024;
@@ -46,23 +46,34 @@ async function verifyStandard(secret: string, body: Uint8Array, headers: Headers
   return signatures.split(" ").some((signature) => same(signature, expected));
 }
 
-async function verifyGitHub(secret: string, body: Uint8Array, headers: Headers): Promise<boolean> {
-  const signature = headers.get("x-hub-signature-256");
-  if (!signature) return false;
-  return same(signature, `sha256=${toHex(await hmacSha256(encoder.encode(secret), body))}`);
-}
+const parsePairs = (value: string) => value.split(",").map((part) => {
+  const separator = part.indexOf("=");
+  return separator < 0 ? [part.trim(), ""] : [part.slice(0, separator).trim(), part.slice(separator + 1).trim()];
+});
 
-async function verifyStripe(secret: string, body: Uint8Array, headers: Headers, nowMs: number): Promise<boolean> {
-  const parts = (headers.get("stripe-signature") ?? "").split(",").map((part) => part.split("=", 2));
-  const timestamp = parts.find(([name]) => name === "t")?.[1] ?? null;
-  if (!freshTimestamp(timestamp, nowMs)) return false;
-  const expected = toHex(await hmacSha256(encoder.encode(secret), joined(`${timestamp}.`, body)));
-  return parts.some(([name, value]) => name === "v1" && value !== undefined && same(value, expected));
+async function verifyHmac(scheme: WebhookHmac, secret: string, body: Uint8Array, headers: Headers, nowMs: number): Promise<boolean> {
+  const header = headers.get(scheme.header);
+  if (!header) return false;
+  let signed = body;
+  let candidates = [header.trim()];
+  if (scheme.pairs) {
+    const pairs = parsePairs(header);
+    const timestamp = pairs.find(([key]) => key === scheme.pairs?.timestamp)?.[1] ?? null;
+    if (!freshTimestamp(timestamp, nowMs)) return false;
+    signed = joined(`${timestamp}.`, body);
+    candidates = pairs.filter(([key]) => key === scheme.pairs?.signature).map(([, value]) => value);
+  }
+  const mac = await hmacSha256(encoder.encode(secret), signed);
+  // Hex is the same number in either case; base64 isn't.
+  const expected = `${scheme.prefix ?? ""}${scheme.encoding === "hex" ? toHex(mac) : toBase64(mac)}`;
+  const normal = (value: string) => scheme.encoding === "hex" ? value.toLowerCase() : value;
+  return candidates.some((candidate) => same(normal(candidate), normal(expected)));
 }
 
 /** Whether `body` was sent by whoever holds `secret`. A url source already proved it with its address. */
 export async function verifyWebhook(
   webhook: Exclude<EventSourceWebhook, "none" | "url">,
+  scheme: WebhookHmac | null,
   secret: string,
   body: Uint8Array,
   headers: Headers,
@@ -70,8 +81,8 @@ export async function verifyWebhook(
 ): Promise<boolean> {
   try {
     if (webhook === "standard") return await verifyStandard(secret, body, headers, nowMs);
-    if (webhook === "github") return await verifyGitHub(secret, body, headers);
-    return await verifyStripe(secret, body, headers, nowMs);
+    if (!scheme) throw new Error("An hmac source has no signature scheme");
+    return await verifyHmac(scheme, secret, body, headers, nowMs);
   } catch (error) {
     // A malformed signature from a stranger is a failed check, not a Kernel fault.
     if (error instanceof DOMException) return false;
@@ -105,17 +116,17 @@ function readFields(raw: string) {
 /** What a delivery says about itself, read only from fields the sender can't use to change its route. */
 export function webhookEvent(
   webhook: Exclude<EventSourceWebhook, "none">,
+  scheme: WebhookHmac | null,
   label: string,
   body: Uint8Array,
   headers: Headers,
 ): EventInput {
   const raw = new TextDecoder().decode(body);
   const parsed = readFields(raw);
-  const stable = webhook === "github" ? headers.get("x-github-delivery")
-    : webhook === "stripe" ? text(parsed.id)
-    : headers.get("webhook-id") ?? text(parsed.id);
-  const title = webhook === "github" ? `${headers.get("x-github-event") ?? "event"}${text(parsed.action) ? ` ${text(parsed.action)}` : ""}`
-    : webhook === "stripe" ? text(parsed.type)
+  const header = (name: string | undefined) => name ? text(headers.get(name) ?? undefined) : undefined;
+  const stable = header(scheme?.idHeader) ?? (webhook === "standard" ? header("webhook-id") : undefined) ?? text(parsed.id);
+  const kind = header(scheme?.typeHeader);
+  const title = kind ? `${kind}${text(parsed.action) ? ` ${text(parsed.action)}` : ""}`
     : text(parsed.title) ?? text(parsed.subject) ?? text(parsed.type) ?? text(parsed.event);
   const preview = text(parsed.preview) ?? text(parsed.summary) ?? text(parsed.message) ?? text(parsed.text);
   return {
@@ -129,6 +140,6 @@ export function webhookEvent(
 export function newWebhookSecret(webhook: EventSourceWebhook): string | null {
   if (webhook === "none") return null;
   const bytes = crypto.getRandomValues(new Uint8Array(32));
-  // Standard Webhooks keys are base64. GitHub and Stripe take the string as it stands.
+  // Standard Webhooks keys are base64; an HMAC sender takes the string as it stands.
   return webhook === "standard" ? `whsec_${toBase64(bytes)}` : toHex(bytes);
 }

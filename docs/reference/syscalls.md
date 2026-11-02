@@ -537,12 +537,19 @@ the event.
 
 ```ts
 type EventInput = { id?: string; title: string; preview?: string; body?: string };
+type EventSourceWebhook = "none" | "url" | "standard" | "hmac";
+type WebhookHmac = {
+  header: string; encoding: "hex" | "base64"; prefix?: string;
+  pairs?: { timestamp: string; signature: string };
+  idHeader?: string; typeHeader?: string;
+};
 
 interface EventSyscalls {
   "event.source.list": { args: {}; result: { sources: EventSource[] } };
   "event.source.add": {
     args: { name: string; label?: string; notify?: NoticeDelivery; ship?: ShipOutcome;
-      webhook?: "none" | "standard" | "github" | "stripe" | "url"; expectEveryMs?: number };
+      webhook?: EventSourceWebhook; hmac?: WebhookHmac; senderSecret?: boolean; secret?: string;
+      expectEveryMs?: number };
     result: { source: EventSource; secret?: string; webhookUrl?: string };
   };
   "event.source.update": {
@@ -575,10 +582,23 @@ An event's words are untrusted wherever they end up. An event from a running pro
 never wakes Ship.
 
 A source with a webhook takes a `POST` at `/hooks/<sourceId>`, with a body of up to 256 KiB.
-`standard`, `github` and `stripe` verify the sender's signature; a rotated secret keeps
-working for 24 hours. Stripe issues its own secret once it has the address, so a `stripe` source
-returns no secret and takes Stripe's through `event.source.rotate`'s `secret`, which `standard`
-also accepts. `url` is for senders that can't sign: the address `/hooks/<sourceId>/<token>`
+A webhook names how a delivery proves its sender, never who the sender is. `standard` checks
+the [Standard Webhooks](https://www.standardwebhooks.com/) signature. `hmac` checks an
+HMAC-SHA256 with the source's secret, in `hmac.header`, encoded as `hmac.encoding` after an
+optional `hmac.prefix`. It covers the body, or, with `hmac.pairs`, the header holds
+comma-separated `KEY=VALUE` pairs with a Unix timestamp under `pairs.timestamp`, within five
+minutes, and signatures under `pairs.signature`, each covering `TIMESTAMP.BODY`. One scheme
+covers many senders: GitHub, Shopify and Linear sign the body; Stripe uses the pairs. Clients
+offer such senders as presets that fill in `hmac`.
+
+An event's id comes from `hmac.idHeader`, Standard Webhooks' `webhook-id`, or the body's `id`.
+Its title is `hmac.typeHeader` with the body's `action`, or else the body's `title`, `subject`,
+`type` or `event`.
+
+A rotated secret keeps working for 24 hours. With `senderSecret`, the sender issues the secret:
+`secret` gives it when adding, or `event.source.rotate`'s `secret` gives it later, and until
+then the source shows `awaitingSecret` and refuses every delivery. A sender-issued secret is
+never returned. `url` is for senders that can't sign: the address `/hooks/<sourceId>/<token>`
 is the only proof, only its hash is stored, and such a source can't be set to `wake`.
 Request logs on the way may record that address, so treat it as a low-trust channel. A secret
 or secret address is returned once.
