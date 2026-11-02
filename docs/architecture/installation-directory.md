@@ -49,9 +49,8 @@ operator admin has its Takedowns panel and Reports queue.
 
 To tell Kernels of changes of state, that Worker binds the Gateway's
 `GatewayAdmissionEntrypoint` as `ADMISSION_GATEWAY` with the
-`installation-admission` authority, applies migrations
-`0036_installation_state_notices` and `0037_installation_state_followers`,
-gives `installationStateNotices(db, env)` to `InstallationAdminService` and the
+`installation-admission` authority, applies migration
+`0034_installation_state_notices`, gives `installationStateNotices(db, env)` to `InstallationAdminService` and the
 deletion environment, runs
 `InstallationStateNotices.resumePending()` on its cron, and asks
 `AccountStore.resolveInstallation` for `stateRevision` only while the binding is
