@@ -60,6 +60,22 @@ describe("managed mail MIME parsing", () => {
     });
   });
 
+  it("keeps a body's line breaks and tabs while dropping other control characters", async () => {
+    const plain = await parseMail(encoder.encode([
+      "From: Mike <mike@example.com>",
+      "To: Hank <hank@gsv.space>",
+      "Subject: Lines",
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      "First line.",
+      "",
+      "Item\tPrice\u0007",
+      "Last line.",
+      "",
+    ].join("\r\n")), input());
+    expect(plain.metadata.text).toBe("First line.\n\nItem\tPrice\nLast line.\n");
+  });
+
   it("rejects MIME headers beyond the parser budget", async () => {
     const raw = encoder.encode(
       `X-Oversized: ${"x".repeat(300 * 1024)}\r\n\r\nbody`,

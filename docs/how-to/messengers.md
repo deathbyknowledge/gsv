@@ -13,7 +13,13 @@ You do not need to create a bot or paste its token into your Ship.
 When Ship needs your approval, the messenger shows what it wants to do. A
 request to publish on the [open network](/architecture/open-network) always
 names the handle and full address it publishes as, such as
-`@alice (alice.ship.space)`, whatever else Ship wrote.
+`@alice (alice.ship.space)`, whatever else Ship wrote. A request to install a
+crontab likewise shows the file and its jobs.
+
+A request raised while Ship is already running a command waits up to 9 minutes
+for your answer. If you answer a request that has ended, whether it timed out,
+was interrupted by a new message or was answered elsewhere, the messenger says
+your answer wasn't used; ask Ship to try again if it still needs doing.
 
 ## Ask Ship to connect
 
@@ -34,6 +40,17 @@ WhatsApp appears first, followed by Telegram. Slack and Discord carry a small
 even when the deployment enables pairing. Existing links can still be inspected
 or disconnected. The Slack and Discord instructions below describe the adapter
 flows used through Ship; they are not currently available in Settings.
+
+## Quote a message
+
+Reply to a message by quoting it, and Ship sees what you quoted and who wrote it, so "yes, that
+one" is enough. This works in Telegram, Discord and WhatsApp, for your own messages and Ship's.
+Slack has no quote action: replying in a thread continues that thread instead.
+
+Long quotes are shortened. For a photo or file, Ship sees what it was, not the file again. Ship
+can't see quotes of messages more than 90 days old, sent before this feature, or sent elsewhere, and
+it can't see quotes of approval requests or notices. In those cases it knows that you quoted something
+it can't see, and it asks rather than guesses.
 
 ## Telegram
 

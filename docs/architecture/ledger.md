@@ -49,10 +49,15 @@ cancellation, or a refused registration otherwise. A routed call whose device
 or origin disconnects mid-flight, or whose device answers something the Kernel
 cannot decode, closes as `failed`; a call refused because its request was
 already cancelled closes as `cancelled`. Every exit from the dispatch closes
-its line. The dispatch path only inserts and, every hundredth line, counts
-the window to pull the housekeeping task nearer when it is over its bound;
-nothing else runs inline. The daily task itself is armed whenever the Kernel
-starts, and a run that cannot re-arm throws so the task scheduler retries it.
+its line. The dispatch path only inserts, arms the housekeeping task when
+none is pending, and, every hundredth line, counts the window to pull the
+task nearer when it is over its bound; nothing else runs inline. The daily
+task is pending only while the ledger holds a line, in the window or in a
+segment: a Kernel start arms it unless both are empty, each run re-arms it,
+and a run that leaves nothing behind lets it lapse until the next line is
+written, so an idle installation stops waking for it once its last line
+passes retention. A run that cannot re-arm throws so the task scheduler
+retries it.
 
 The window is bounded to 5,000 lines. Age alone never rotates: a quiet
 installation keeps every line in SQL and never writes a segment, so segments
@@ -61,11 +66,11 @@ daily task does the housekeeping that age does call for: a line still open
 after 24 hours closes as `cancelled` in place, and a line older than the
 retention period is deleted from the window, the same 90 days a segment
 gets, before anything rotates, so no segment ever carries an expired line.
-Exactly one rotation task is pending at any time, keyed
+At most one rotation task is pending, keyed
 by its callback and payload: a row-bound crossing moves the pending task
 nearer, never adds to it, and the task re-arms itself once when it runs,
 daily, or a minute later while the window is still over its bound, as after a
-failed write. The running task
+failed write, unless the run left the ledger empty. The running task
 still has its row while it runs, so the re-arm names it and replaces it rather
 than mistaking it for a pending one.
 
@@ -146,12 +151,15 @@ notification. No recurring timer or history query drives this feed.
 
 Open **Settings → Logs** to inspect the complete list and an individual
 action's arguments, outcome and failure details. Rows for Ship and for
-helpers open Work's inspector. Work retains its compact activity summaries.
+helpers open Work's inspector. Work retains its compact activity summaries;
+each recent call there reads as Ship's recorded purpose, or the action when
+the line has none, followed by the argument that matters.
 The Logs introduction explains that entries show what Ship did, when it happened,
 and whether it succeeded, with details available by selecting an entry.
 On phones, each Logs entry stacks its action, outcome, connection and time without horizontal
-scrolling. Tap the entry for its arguments, purpose and process; **raw** switches the action
-label to the syscall name.
+scrolling. Tap the entry for its purpose, arguments and process: the purpose heads the entry
+with the action beneath it, and a CodeMode script appears only under request details, never
+as the plain detail. **raw** switches the action label to the syscall name.
 
 The shared Instrument cache merges by sequence, patches existing rows in place, and preserves page
 cursors. New rows are ordered against the last ordinary snapshot, so delayed

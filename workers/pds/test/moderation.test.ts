@@ -1,4 +1,4 @@
-import { createExecutionContext, listDurableObjectIds } from "cloudflare:test";
+import { createExecutionContext, listDurableObjectIds, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { CID } from "@atproto/lex-data";
 import { verifyProofs, verifyRepoCar } from "@atproto/repo";
@@ -185,7 +185,7 @@ describe("suspending an installation's account", () => {
     // Asking again changes nothing.
     await moderation().reconcileAccountStatus(installationId);
     await deliver(ship.repo);
-    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did }))).toEqual({ did, active: false, status: "suspended" });
+    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did }))).toEqual({ did, active: false, status: "suspended", rev });
     expect(await listed(did)).toMatchObject({ did, active: false, status: "suspended" });
     expect(await errorOf(serve("com.atproto.repo.describeRepo", { repo: did }))).toBe("RepoSuspended");
     await vi.waitFor(() => expect(framesFor(live, did)).toMatchObject([{ type: "#account", body: { active: false, status: "suspended" } }]));
@@ -236,7 +236,8 @@ describe("suspending an installation's account", () => {
     const repo = env.REPOS.getByName(ship.installationId);
     await deliver(repo);
     expect(await listed(did)).toMatchObject({ did, active: false, status: "suspended" });
-    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did }))).toEqual({ did, active: false, status: "suspended" });
+    expect(await read(repoStatus, serve("com.atproto.sync.getRepoStatus", { did })))
+      .toEqual({ did, active: false, status: "suspended", rev: expect.any(String) });
 
     accounts.setState(ship.installationId, "active");
     await moderation().reconcileAccountStatus(ship.installationId);
@@ -277,6 +278,37 @@ describe("suspending an installation's account", () => {
     let answers = 0;
     vi.spyOn(accounts, "resolveInstallation").mockImplementation(async () => ({ ...known, state: answers++ % 2 ? "active" : "restricted" }));
     expect(await rejection(moderation().reconcileAccountStatus(installationId))).toContain("kept changing");
+  });
+});
+
+describe("retiring an installation's account", () => {
+  it("reads as deleted from its own repository once Accounts retires the installation, leaving relays to hear of it from the deletion", async () => {
+    const ship = await publishedShip();
+    const { did, installationId } = ship;
+    const live = await subscribe(env.FIREHOSE.getByName(FIREHOSE_NAME));
+    accounts.setState(installationId, "retained");
+    await moderation().reconcileAccountStatus(installationId);
+    // Asking again changes nothing.
+    await moderation().reconcileAccountStatus(installationId);
+    await deliver(ship.repo);
+
+    expect(await read(repoStatus, direct(ship.repo, "com.atproto.sync.getRepoStatus", { did }))).toEqual({ did, active: false, status: "deleted" });
+    const reads: Array<[string, Record<string, string>]> = [
+      ["com.atproto.repo.describeRepo", { repo: did }],
+      ["com.atproto.repo.getRecord", { repo: ship.handle, collection: NOTE, rkey: "first" }],
+      ["com.atproto.sync.getRepo", { did }],
+      ["com.atproto.sync.getBlob", { did, cid: ship.blobCid }],
+    ];
+    for (const [method, params] of reads) expect(await errorOf(direct(ship.repo, method, params))).toBe("RepoNotFound");
+    expect(await listed(did)).toMatchObject({ did, active: true });
+    expect(framesFor(live, did)).toEqual([]);
+  });
+
+  it("leaves an installation's object empty when Accounts retires it before it publishes", async () => {
+    const { installationId } = accounts.add("retained");
+    await moderation().reconcileAccountStatus(installationId);
+    expect(await runInDurableObject(env.REPOS.getByName(installationId), async (_instance, state) => [...(await state.storage.list()).keys()]))
+      .toEqual([]);
   });
 });
 
@@ -424,6 +456,11 @@ function publisher(): PdsPublisherEntrypoint {
 function serve(method: string, params: Record<string, string>): Promise<Response> {
   const request = new Request<unknown, IncomingRequestCfProperties>(`https://pds.test/xrpc/${method}?${new URLSearchParams(params)}`);
   return worker.fetch(request, deployedEnv());
+}
+
+/** Sends a public XRPC query straight to the object holding a repository, as the host's front door forwards it. */
+function direct(repo: DurableObjectStub<HostedRepo>, method: string, params: Record<string, string>): Promise<Response> {
+  return repo.fetch(`https://pds.test/xrpc/${method}?${new URLSearchParams(params)}`);
 }
 
 /** The host's listRepos entry for a DID. */

@@ -10,6 +10,7 @@ import { AccountsDeletionRuntime } from "./deletion-runtime";
 import { InstallationDeletionHttp } from "./deletion-http";
 import type { InstallationDeletionManifest, InstallationDeletionInventoryResolver } from "./deletion-inventory";
 import type { InstallationDeletionDiscoveryService, InstallationDeletionInventoryImport } from "@humansandmachines/gsv/services/lifecycle-discovery";
+import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 
 class ExternalOwner implements InstallationDeletionService {
   fail = false;
@@ -236,6 +237,33 @@ describe("Accounts deletion runtime", () => {
     expect((await post({ operationId: state.operationId, confirmHandle: state.old.handle, reason: "owner asked" }))?.status).toBe(200);
     expect(audited).toEqual([{ name: "ship.deletion.retire", installationId: state.old.installationId, reason: "owner asked" }]);
     expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "retained" });
+  });
+
+  it("has the PDS follow once a Ship is retired, and again whenever the retirement is repeated", async () => {
+    const state = await fixture();
+    const followed: Array<{ installationId: string; state: string | null }> = [];
+    const pds = {
+      getRepository: vi.fn(async () => null),
+      updateSubjectStatus: vi.fn(async () => { throw new Error("No takedown is expected"); }),
+      getSubjectStatus: vi.fn(async () => null),
+      locateRepository: vi.fn(async () => null),
+      reconcileAccountStatus: vi.fn(async (installationId: string) => {
+        followed.push({ installationId, state: (await state.accounts.resolveInstallation(installationId)).found
+          ? (await state.db.prepare("SELECT state FROM installations WHERE id = ?").bind(installationId).first<{ state: string }>())?.state ?? null : null });
+      }),
+    } satisfies PdsModerationService;
+    const runtime = new AccountsDeletionRuntime(state.db, state.owners, state.resolver, 20, Date.now, {}, undefined, pds);
+    const input = { operationId: state.operationId, confirmHandle: state.old.handle };
+
+    pds.reconcileAccountStatus.mockRejectedValueOnce(new Error("PDS unavailable"));
+    await expect(runtime.retire(state.old.installationId, input)).rejects.toThrow("The Ship is retired, but its open-network host could not be told.");
+    expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "retained" });
+    await runtime.retire(state.old.installationId, input);
+    await runtime.retire(state.old.installationId, input);
+    expect(followed).toEqual([
+      { installationId: state.old.installationId, state: "retained" },
+      { installationId: state.old.installationId, state: "retained" },
+    ]);
   });
 
   it("erases the reports a deleted Ship's person filed, a hundred at a time, and keeps another Ship's", async () => {

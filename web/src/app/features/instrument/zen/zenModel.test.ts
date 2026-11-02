@@ -961,6 +961,14 @@ describe("momentsFromConversation", () => {
     expect(done.timeline?.[0]).toMatchObject({ kind: "call", call: { description: "check free disk space", summary: "df -h", finished: true } });
   });
 
+  it("says Ship worked on this when the work named no place", () => {
+    const [base] = momentsFromConversation([sent("reply", 60)], [], null);
+    const untargeted = (live: boolean): Moment => ({ ...base, timeline: undefined,
+      activities: [{ key: "process", target: null, calls: [], live, you: false, startedAt: 10, endedAt: live ? null : 20 }] });
+    expect(summaryText(untargeted(true))).toBe("working on this");
+    expect(summaryText(untargeted(false))).toBe("worked on this");
+  });
+
   it.each([undefined, " \n "])("describes a legacy call with purpose %j without using the raw command as prose", (toolPurpose) => {
     const [moment] = momentsFromConversation([], [shell("disk", "df -h", 10, 20, { toolPurpose })], null);
     expect(moment.timeline?.[0]).toMatchObject({ kind: "call", call: { description: "run a command", summary: "df -h" } });

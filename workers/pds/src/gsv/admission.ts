@@ -1,21 +1,11 @@
 import type { InstallationDirectoryService, InstallationState } from "@humansandmachines/gsv/services/directory";
 import type { HostedRepo } from "../host/repo";
 import { XrpcError, type Admission } from "../host/xrpc";
-import { LEXICON_REPOSITORY } from "./lexicons";
 
 /** States in which Accounts is retiring an installation and its data. */
 const RETIRED: ReadonlySet<InstallationState> = new Set(["retained", "deleting", "deleted"]);
 /** How many changes an installation's account follows in one call before it leaves the rest to a later one. */
 const FOLLOW_ATTEMPTS = 3;
-
-/**
- * Whether the deployment serves a repository's public reads, by the name of
- * the object that holds it. The lexicon account belongs to the deployment
- * rather than an installation, so Accounts isn't asked about it.
- */
-export async function admitRepository(directory: InstallationDirectoryService, name: string): Promise<Admission> {
-  return name === LEXICON_REPOSITORY ? "active" : admitInstallation(directory, name);
-}
 
 /**
  * Whether Accounts admits public reads of an installation's repository, by the
@@ -47,7 +37,8 @@ export async function followAdmission(
 ): Promise<void> {
   let admission = await admitInstallation(directory, installationId);
   for (let attempt = 0; attempt < FOLLOW_ATTEMPTS; attempt++) {
-    if (admission === "deleted") return;
+    // A retired installation's account reads as deleted from then on.
+    if (admission === "deleted") return await repo.close();
     await repo.setSuspended(admission !== "active");
     const current = await admitInstallation(directory, installationId);
     if (current === admission) return;

@@ -24,10 +24,12 @@ import type { KernelConnection, KernelConnectionState } from "./connection";
 import type { ShellSessionStore } from "./shell-sessions";
 import type { ShellExecResult } from "@humansandmachines/gsv/protocol";
 import { jsonObjectSchema } from "@humansandmachines/gsv/protocol";
+import { ExecutionDeadlines, type ExecutionDeadline } from "../shared/execution-deadline";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 import { dispatchGsvTarget } from "../drivers/native/target";
 import type { FsDeviceTransport } from "../drivers/native/fs";
 import { WEB_SEARCH_TIMEOUT_MS, webSearchArgsSchema } from "@humansandmachines/gsv/services/web-search";
+import { z } from "zod";
 import {
   handleAiContext,
   handleAiConfig,
@@ -163,6 +165,16 @@ import { requestAdapterTarget } from "./adapter-targets";
 import { handleMailSend } from "./outbound-mail";
 import { handleMailList, handleMailRead, handleMailSearch } from "./inbound-mail-read";
 import { handleMailStatus } from "./outbound-status";
+import { handleNotifyRuleList, handleNotifyRuleReset, handleNotifyRuleSet } from "./notice-rules";
+import {
+  handleEventEmit,
+  handleEventList,
+  handleEventSourceAdd,
+  handleEventSourceList,
+  handleEventSourceRemove,
+  handleEventSourceRotate,
+  handleEventSourceUpdate,
+} from "./event-sources";
 import {
   handleConversationForProcess,
   handleConversationHistory,
@@ -230,6 +242,8 @@ const DEFAULT_TARGET_TTL_MS = 60_000;
 // The process watchdog is ten minutes; routing must not preempt it.
 const DEFAULT_SHELL_TARGET_TTL_MS = 11 * 60_000;
 const SHELL_TIMEOUT_GRACE_MS = 10_000;
+const NEW_SHELL_INPUT_SCHEMA = z.string();
+const SESSION_SHELL_INPUT_SCHEMA = NEW_SHELL_INPUT_SCHEMA.nullish();
 
 export async function dispatch(
   frame: RequestFrame,
@@ -261,6 +275,23 @@ export async function dispatch(
     ? frame.args.sessionId?.trim() ?? ""
     : "";
   const startSession = frame.call === "shell.exec" && frame.args.start === true;
+
+  if (frame.call === "shell.exec") {
+    // Models and peers can send anything, so every target gets this check here.
+    // Only continuing a session may omit input: a machine treats that as a poll.
+    const inputSchema = sessionId && !startSession ? SESSION_SHELL_INPUT_SCHEMA : NEW_SHELL_INPUT_SCHEMA;
+    if (!inputSchema.safeParse(frame.args.input).success) {
+      return {
+        handled: true,
+        response: {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { status: "failed", output: "", error: 'shell.exec requires "input", the command to run' },
+        },
+      };
+    }
+  }
 
   if (startSession && (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId) || !target || target === GSV_TARGET_ID)) {
     return { handled: true, response: rejectBeforeDispatch(frame, 400, "Starting a named shell session requires a fresh UUID and a remote target") };
@@ -331,9 +362,10 @@ async function dispatchLocal(
   if (ctx.approvedTarget) {
     return rejectBeforeDispatch(frame, 403, "Approval target changed before dispatch; retry the operation");
   }
-  const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx) };
+  const executionDeadlines = ctx.executionDeadlines ?? new ExecutionDeadlines();
+  const nativeContext = { ...ctx, toolOwner: nestedToolOwner(ctx), executionDeadlines };
   const requestTarget: NetFetchDeviceTransport["requestTarget"] = async (targetId, call, args, options) => {
-    const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body);
+    const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body, executionDeadlines);
     const body = deadline ? deadline.body : options?.body;
     const signal = withDeadline(options?.signal ?? nativeContext.requestSignal, deadline);
     try {
@@ -354,7 +386,7 @@ async function dispatchLocal(
   };
   const fsTransport: FsDeviceTransport = {
     requestTarget: async (targetId, call, args, options) => {
-      const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body);
+      const deadline = options?.ttlMs === undefined ? null : answerDeadline(options.ttlMs, options.body, executionDeadlines);
       // SAFETY: Native filesystem operations construct the matching syscall arguments;
       // dispatch owns grants, target resolution, approval, cancellation and body cleanup.
       const request = {
@@ -451,6 +483,38 @@ async function dispatchKernel(
         break;
       case "mail.read":
         data = await handleMailRead(frame.args, ctx);
+        break;
+
+      case "notify.rule.list":
+        data = handleNotifyRuleList(ctx);
+        break;
+      case "notify.rule.set":
+        data = handleNotifyRuleSet(frame.args, ctx);
+        break;
+      case "notify.rule.reset":
+        data = handleNotifyRuleReset(frame.args, ctx);
+        break;
+
+      case "event.source.list":
+        data = handleEventSourceList(ctx);
+        break;
+      case "event.source.add":
+        data = await handleEventSourceAdd(frame.args, ctx);
+        break;
+      case "event.source.update":
+        data = await handleEventSourceUpdate(frame.args, ctx);
+        break;
+      case "event.source.rotate":
+        data = await handleEventSourceRotate(frame.args, ctx);
+        break;
+      case "event.source.remove":
+        data = handleEventSourceRemove(frame.args, ctx);
+        break;
+      case "event.emit":
+        data = handleEventEmit(frame.args, ctx);
+        break;
+      case "event.list":
+        data = handleEventList(frame.args, ctx);
         break;
 
       case "conversation.ship":
@@ -738,6 +802,7 @@ async function dispatchKernel(
       case "account.recovery.code.start":
       case "account.recovery.code.redeem":
       case "account.recovery.redeem":
+      case "account.recovery.options":
         return errFrame(frame.id, 400, "Account recovery requires the connection enrollment path");
       case "account.password.set":
         data = await ctx.accountRecovery.resetPersonalPassword(frame.args, ctx);
@@ -1092,13 +1157,13 @@ type AnswerDeadline = { signal: AbortSignal; body: FrameBody | undefined; clear(
  * last byte has been read, so an upload's length never counts against it;
  * the body's idle timeout guards the upload itself.
  */
-function answerDeadline(ttlMs: number, body: FrameBody | undefined): AnswerDeadline {
+function answerDeadline(ttlMs: number, body: FrameBody | undefined, deadlines: ExecutionDeadlines): AnswerDeadline {
   const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let deadline: ExecutionDeadline | undefined;
   const arm = () => {
-    timer = setTimeout(
-      () => controller.abort(new DOMException("The operation timed out.", "TimeoutError")),
+    deadline = deadlines.start(
       ttlMs,
+      () => controller.abort(new DOMException("The operation timed out.", "TimeoutError")),
     );
   };
   if (!body) {
@@ -1107,7 +1172,7 @@ function answerDeadline(ttlMs: number, body: FrameBody | undefined): AnswerDeadl
   return {
     signal: controller.signal,
     body: body && { ...body, stream: body.stream.pipeThrough(new TransformStream({ flush: arm })) },
-    clear: () => clearTimeout(timer),
+    clear: () => deadline?.clear(),
   };
 }
 

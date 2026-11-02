@@ -132,6 +132,7 @@
 .gsv-auth-link:hover { color: var(--accent-bright); text-decoration: underline; }
 .gsv-auth-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
 .gsv-login-recovery-link { align-self: flex-end; }
+.gsv-recovery-account { padding: 0; border: 0; background: none; cursor: pointer; text-align: left; }
 .gsv-recovery-body {
   display: flex;
   flex-direction: column;

@@ -1,4 +1,4 @@
-import { contactDisplayName } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName, type NoticeDelivery, type ShipOutcome } from "@humansandmachines/gsv/protocol";
 import type { DurableTaskOptions } from "../shared/durable-tasks";
 import { stableOpaqueId } from "../shared/stable-id";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
@@ -12,9 +12,24 @@ import type { OwnerNotifiedShipEvent } from "./ship-event-store";
 
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
 
+const isSourceNotice = (notice: OwnerNotice): boolean => notice.topic === "event.received" || notice.topic === "event.silent";
+
+const outcome = (notify: NoticeDelivery, ship: ShipOutcome) => ({ notify, ship });
+
+/** What the notice's rule or source says to do with it. Ship changing a rule is always told, and Ship already knows. */
+function noticeOutcome(notice: OwnerNotice, ctx: KernelContext) {
+  if (notice.topic === "notice.rule.changed") return outcome("messenger", "none");
+  if (notice.topic !== "event.received" && notice.topic !== "event.silent") {
+    return outcome(ctx.noticeRules.notifies(notice.ownerUid, notice.topic), ctx.noticeRules.ship(notice.ownerUid, notice.topic));
+  }
+  const source = notice.subject.sourceId ? ctx.eventSources.byId(notice.subject.sourceId) : null;
+  return outcome(source?.notify ?? "none", source?.ship ?? "none");
+}
+
 /**
  * Sends each owner's notices to their private messenger, unless a client of theirs is active
- * and already shows the change, then records each sent notice for Ship without waking it.
+ * and already shows the change. Records each one for Ship without waking it, as its rule says,
+ * including whether the person was told.
  */
 export class OwnerNoticeRuntime {
   constructor(readonly host: Kernel) {}
@@ -49,9 +64,20 @@ export class OwnerNoticeRuntime {
   private async deliver(notice: OwnerNotice, task: { id: string }): Promise<boolean> {
     const ctx = this.host.buildKernelContext({ callerOwnerUid: notice.ownerUid });
     const current = this.admit(notice, ctx);
-    const preferred = this.host.adapters.privateDestinations.get(notice.ownerUid);
-    if (!current || !preferred || this.host.shipReplies.activeConnection(notice.ownerUid, this.host.connections)) {
+    if (!current) {
       this.host.ownerNotices.dismissed(notice, Date.now());
+      return true;
+    }
+    const preferred = this.host.adapters.privateDestinations.get(notice.ownerUid);
+    const silenced = noticeOutcome(notice, ctx).notify === "none";
+    // A messenger that needs signing in can't carry the notice saying so.
+    const brokenCarrier = notice.topic === "adapter.auth_required" && preferred?.destination.adapter === notice.subject.adapter
+      && preferred?.destination.accountId === notice.subject.accountId;
+    // Ship changing a rule is told even to someone who is online: they may be looking elsewhere.
+    // A source going quiet is rare and easy to miss on a card, so it's told the same way.
+    const leftToClient = notice.topic !== "notice.rule.changed" && notice.topic !== "event.silent" && this.host.shipReplies.activeConnection(notice.ownerUid, this.host.connections);
+    if (silenced || brokenCarrier || !preferred || leftToClient) {
+      await this.finishUnsent(notice, current, silenced);
       return true;
     }
     const { destination } = preferred;
@@ -75,7 +101,7 @@ export class OwnerNoticeRuntime {
     if (!result.ok) {
       if (result.retryable !== true) {
         console.warn(`[Kernel] Owner notice ${notice.key} was not delivered:`, result.error);
-        this.host.ownerNotices.dismissed(notice, now);
+        await this.finishUnsent(notice, current, false);
         return true;
       }
       const retryAt = now + Math.min(MAX_RETRY_DELAY_MS, 1_000 * (2 ** Math.min(8, notice.attemptCount + 1)));
@@ -83,31 +109,76 @@ export class OwnerNoticeRuntime {
       await this.schedule(notice.ownerUid, retryAt, task.id);
       return false;
     }
-    const event: OwnerNotifiedShipEvent = {
-      type: "owner.notified",
-      payload: {
-        noticeId,
-        topic: current.topic,
-        adapter: destination.adapter,
-        ...ownerNoticeParts(current),
-        contactId: current.subject.contactId,
-        ...(current.subject.conversationId ? { conversationId: current.subject.conversationId } : undefined),
-        ...(current.topic === "contact.message" ? { messages: current.pendingCount } : undefined),
-        sentAtMs: now,
-      },
-      link,
-    };
-    this.host.ctx.storage.transactionSync(() => {
-      this.host.ownerNotices.sent(notice, now);
-      this.host.shipEvents.enqueue(notice.ownerUid, `owner.notified:${noticeId}`, event, now);
-    });
-    await this.host.shipEventRuntime.queue(notice.ownerUid);
+    await this.recordForShip(current, now, () => this.host.ownerNotices.sent(notice, now), destination.adapter);
     return true;
   }
 
-  /** The notice as it stands now, or null once its subject was read, decided, muted or ended. */
+  private async finishUnsent(notice: OwnerNotice, current: OwnerNotice, silenced: boolean): Promise<void> {
+    const finish = () => this.host.ownerNotices.dismissed(notice, Date.now());
+    // Nothing else shows a source's events, so one they weren't sent appears as a card in their conversation.
+    if (isSourceNotice(notice) && !silenced) {
+      await this.recordForShip(current, Date.now(), finish, undefined, true);
+      return;
+    }
+    // Someone's words reach Ship unsent only when its owner chose that, not because they couldn't be reached.
+    if (notice.topic.startsWith("contact.") && !silenced) finish();
+    else await this.recordForShip(current, Date.now(), finish);
+  }
+
+  /** Finish the round and, unless its rule says Ship doesn't see this kind, record it for Ship in one transaction. */
+  private async recordForShip(notice: OwnerNotice, now: number, finish: () => void, adapter?: string, shownInClient = false): Promise<void> {
+    const { topic } = notice;
+    const ctx = this.host.buildKernelContext({ callerOwnerUid: notice.ownerUid });
+    // Ship made a rule change itself, so it has nothing to learn from the notice about it.
+    const { ship } = noticeOutcome(notice, ctx);
+    const shipSees = topic !== "notice.rule.changed" && (adapter ? ship !== "none" : ship === "context");
+    if (!shipSees && !shownInClient) {
+      finish();
+      return;
+    }
+    const noticeId = `${notice.key}:${notice.createdAtMs}:${notice.round}`;
+    const link = ownerNoticeLink(notice);
+    if (topic === "notice.rule.changed") throw new Error("Ship's own rule changes are never recorded for it");
+    const event: OwnerNotifiedShipEvent = {
+      type: "owner.notified",
+      ...(shownInClient ? { audience: shipSees ? "both" as const : "person" as const } : undefined),
+      payload: {
+        noticeId,
+        topic,
+        ...(shownInClient ? { shownInClient } : undefined),
+        ...(adapter ? { adapter } : undefined),
+        ...(adapter || shownInClient ? { sentAtMs: now } : undefined),
+        ...ownerNoticeParts(notice),
+        ...(notice.subject.contactId ? { contactId: notice.subject.contactId } : undefined),
+        ...(notice.subject.conversationId ? { conversationId: notice.subject.conversationId } : undefined),
+        ...(topic === "contact.message" || topic === "mail.received" || topic === "event.received" ? { messages: notice.pendingCount } : undefined),
+      },
+      ...(link ? { link } : undefined),
+    };
+    this.host.ctx.storage.transactionSync(() => {
+      finish();
+      this.host.shipEvents.enqueue(notice.ownerUid, `owner.notified:${noticeId}`, event, now);
+    });
+    await this.host.shipEventRuntime.queue(notice.ownerUid);
+  }
+
+  /** The notice as it stands now, or null once its subject was read, decided, muted, fixed or ended. */
   private admit(notice: OwnerNotice, ctx: KernelContext): OwnerNotice | null {
     const { subject } = notice;
+    if (isSourceNotice(notice)) {
+      const source = subject.sourceId ? ctx.eventSources.byId(subject.sourceId) : null;
+      if (source?.enabled !== 1 || source.owner_uid !== notice.ownerUid) return null;
+      // A quiet spell is noted with its notice; once an event or a change ends it, that notice is stale.
+      if (notice.topic === "event.silent" && (source.expect_every_ms === null || source.silence_noted_at !== notice.createdAtMs)) return null;
+      return { ...notice, subject: { ...subject, from: source.label } };
+    }
+    if (notice.topic === "notice.rule.changed" || notice.topic === "mail.received" || notice.topic === "machine.added"
+      || notice.topic === "adapter.connected") return notice;
+    if (notice.topic === "adapter.auth_required") {
+      const status = subject.adapter && subject.accountId ? ctx.adapters.status.get(subject.adapter, subject.accountId) : null;
+      return status && !status.authenticated ? notice : null;
+    }
+    if (!subject.contactId) return null;
     if (notice.topic === "contact.request") {
       const approach = subject.approachId ? ctx.approaches.get(subject.approachId) : null;
       if (!approach || approach.ownerUid !== notice.ownerUid || approach.summary.direction !== "incoming"

@@ -132,6 +132,41 @@ describe("suspending a Ship on the open network", () => {
   });
 });
 
+describe("retiring a Ship on the open network", () => {
+  const NOT_TOLD_RETIRED = "The Ship is retired, but its open-network host could not be told.";
+
+  it("has the PDS follow once a reset retires the Ship, and again whenever the reset is repeated", async () => {
+    const { pds, followed } = moderationPds();
+    const ships = stack(pds);
+    const installationId = await activeShip(ships, "resetting");
+    const input = { operationId: `operation_${crypto.randomUUID()}`, confirmHandle: "resetting" };
+
+    const reset = await ships.service.resetInstallation(installationId, input);
+    expect(reset.reset?.previousInstallationId).toBe(installationId);
+    expect(followed).toEqual([{ installationId, state: "retained" }]);
+    await ships.service.resetInstallation(installationId, input);
+    expect(followed).toEqual([{ installationId, state: "retained" }, { installationId, state: "retained" }]);
+  });
+
+  it("keeps a reset the PDS can't follow, says so, and tells the PDS when the reset is repeated", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { pds, followed } = moderationPds();
+    const ships = stack(pds);
+    const installationId = await activeShip(ships, "resetfollow");
+    const input = { operationId: `operation_${crypto.randomUUID()}`, confirmHandle: "resetfollow", reason: "owner asked" };
+    const path = `/admin/api/installations/${installationId}/reset`;
+    pds.reconcileAccountStatus.mockRejectedValueOnce(new Error("PDS unavailable"));
+
+    const failed = await ships.http.handle(api(path, input));
+    expect(failed?.status).toBe(503);
+    expect(await failed!.json()).toEqual({ error: NOT_TOLD_RETIRED });
+    expect((await ships.service.getInstallation(installationId))?.state).toBe("retained");
+    const repeated = await ships.http.handle(api(path, input));
+    expect(repeated?.status).toBe(201);
+    expect(followed).toEqual([{ installationId, state: "retained" }]);
+  });
+});
+
 /** The page's Try again form, as a browser submits it. */
 function tryAgain(page: string): { method: string; action: string; values: Record<string, string> } | undefined {
   const form = page.split("<form").slice(1).map((chunk) => chunk.slice(0, chunk.indexOf("</form>"))).find((chunk) => chunk.includes(">Try again<"));

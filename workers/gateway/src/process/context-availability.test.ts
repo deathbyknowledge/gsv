@@ -104,4 +104,79 @@ describe("Process target availability", () => {
       }
     });
   });
+
+  it("reports a date stored before the weekday once, in place", async () => {
+    const pid = "date-availability-weekday";
+    const stub = await initProcess(pid, ROOT_IDENTITY, { register: false });
+    await runInProcess(stub, async (process) => {
+      process.kernel.kernelRpc = vi.fn(async (call: string) => {
+        const result = responsibilityKernelResult(call);
+        if (result) return result;
+        throw new Error(`unexpected Kernel call: ${call}`);
+      });
+      const changed = vi.spyOn(process.signals, "changed").mockResolvedValue(undefined);
+      const systemContextFiles = [{ name: "00-runtime.md", text: "Date: {{current.date}}" }];
+      const config = {
+        ...terminalTestConfig(pid),
+        generationTimeoutMs: 30_000,
+        capabilities: ["*"],
+        systemContextFiles,
+        skillIndexMode: "off" as const,
+      };
+      const snapshot: AiContextResult = {
+        targets: [],
+        mcpServers: [],
+        systemContextFiles,
+        system: { timezone: "UTC" },
+        skillIndexMode: "off",
+        skillIndex: [],
+        mailbox: null,
+      };
+      const state: RunTickContextState = {
+        run: {
+          runId: "date-weekday",
+          config,
+          devices: [],
+          mcpServers: [],
+          tools: [],
+          approvalPolicy: { default: "auto", rules: [] },
+        },
+        activeConfig: config,
+        tools: [],
+        workTools: [],
+        context: { systemPrompt: "", messages: [] },
+        contextState: null,
+        autoCompactionPressure: null,
+      };
+      process.runs.active = state.run;
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-30T12:00:00Z") });
+      const refresh = vi.spyOn(process.settings, "resolveAiContext").mockResolvedValue(snapshot);
+
+      try {
+        const projection = createContextProjection(snapshot);
+        const initial = await process.history.ensureContextEpoch(state.run.runId, state.run, config, snapshot, {
+          ...projection,
+          runtime: { ...projection.runtime, date: "2026-10-30" },
+        });
+
+        await process.run.refreshRunTickContextEpoch(state.run.runId, state);
+        await process.run.refreshRunTickContextEpoch(state.run.runId, state);
+
+        const messages = process.store.messages.getMessages();
+        expect(messages).toHaveLength(1);
+        expect(messages[0].content).toContain("Runtime:\n- Current date: Friday, 2026-10-30\n");
+        expect(messages[0].content).not.toContain("Accessible targets:");
+        const live = process.store.epochs.getLiveContextEpoch();
+        expect(live.id).toBe(initial.id);
+        expect(live.systemPrompt).toBe(initial.systemPrompt);
+        expect(live.systemPrompt).toContain("Date: 2026-10-30");
+        expect(live.observedProjection.runtime.date).toBe("Friday, 2026-10-30");
+        expect(process.store.epochs.listContextEpochs()).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+        refresh.mockRestore();
+        changed.mockRestore();
+      }
+    });
+  });
 });

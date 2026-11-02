@@ -8,6 +8,7 @@ import type { AccountsDeletionRuntime } from "./deletion-runtime";
 import { AdminForbiddenError, type InstallationAdminAccess } from "./admin/access";
 import type { AdminAuditRecorder } from "./admin/insight";
 import { readConfirmedAction, UnconfirmedActionError } from "./admin/api";
+import { OpenNetworkFollowError } from "./admin/service";
 import { hasExpectedOrigin, noStoreHeaders, readJsonObject, readRequestBody, requireString, type JsonObject, type JsonValue } from "./http";
 
 /** What retiring a Ship, the first step of deleting it, does to its person; a refused retirement says it. */
@@ -108,6 +109,7 @@ function deletionFailure(error: Error): Response {
     return json({ error: "request deletion payload is invalid" }, 400);
   }
   if (error instanceof UnconfirmedActionError) return json({ error: error.message, consequences: [...RETIRE_CONSEQUENCES] }, 400);
+  if (error instanceof OpenNetworkFollowError) return json({ error: error.message }, 503);
   const message = error.message;
   if (["installation", "operationId ", "handle ", "request ", "JSON ", "inventorySha256 "].some((prefix) => message.startsWith(prefix))) {
     return json({ error: message }, message.includes("missing-inventory") ? 409 : 400);

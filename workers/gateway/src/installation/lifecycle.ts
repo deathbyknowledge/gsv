@@ -71,10 +71,12 @@ const UNAVAILABLE: ManagedInstallationWorkGate = {
   code: 503,
   message: "Managed installation is unavailable",
 };
+/** What a request hears when Accounts cannot answer for its Ship in time. */
+export const SHIP_UNREACHABLE_MESSAGE = "Ship is briefly unreachable; try again in a moment";
 const UNREACHABLE: ManagedInstallationWorkGate = {
   allowed: false,
   code: 503,
-  message: "Ship is briefly unreachable; try again in a moment",
+  message: SHIP_UNREACHABLE_MESSAGE,
 };
 
 /**

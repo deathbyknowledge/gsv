@@ -3,6 +3,8 @@ import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
+import { testPeer } from "../test-support/peers";
+import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import {
@@ -670,6 +672,16 @@ describe("rotation scheduling", () => {
     return [...sql.exec<{ id: string; time: number }>("SELECT id, time FROM cf_agents_schedules WHERE callback = 'onLedgerRotate' ORDER BY time")];
   }
 
+  /** One call through the Kernel's dispatch from a peer with no grant: it is refused, and its line is written all the same. */
+  function refusedCall(kernel: Kernel, id: string) {
+    const account = { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam", cwd: "/home/sam" };
+    // SAFETY: a call the grant refuses is recorded and refused from the peer alone; the other fields it reads are optional.
+    return kernel.requestDispatchedFrame(
+      { type: "req", id, call: "fs.read", args: { path: "~/notes.txt" } },
+      { peer: testPeer({ account }) } as KernelContext,
+    );
+  }
+
   it("keeps exactly one pending task and moves it nearer, never adds to it", async () => {
     const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
     await runInDurableObject(stub, async (kernel: Kernel, state) => {
@@ -691,6 +703,8 @@ describe("rotation scheduling", () => {
     const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
     await runInDurableObject(stub, async (kernel: Kernel, state) => {
       const nowSeconds = Math.floor(Date.now() / 1_000);
+      kernel.ledger.append(entry({ requestId: "r0", timestamp: Date.now() - 1_000 }));
+      kernel.ledger.complete("r0", { outcome: "ok" });
       await kernel.ensureLedgerRotation(0);
       expect(pendingRotations(state.storage.sql)).toHaveLength(1);
       await kernel.alarm();
@@ -699,7 +713,7 @@ describe("rotation scheduling", () => {
       expect(daily[0].time).toBeGreaterThan(nowSeconds + 60 * 60);
 
       // a window over its bound while storage refuses writes: the retry is armed, not the daily run
-      for (let i = 0; i <= LEDGER_WINDOW_ROWS; i += 1) {
+      for (let i = 1; i <= LEDGER_WINDOW_ROWS; i += 1) {
         kernel.ledger.append(entry({ requestId: `r${i}`, timestamp: Date.now() - 1_000 }));
         kernel.ledger.complete(`r${i}`, { outcome: "ok" });
       }
@@ -721,13 +735,18 @@ describe("rotation scheduling", () => {
     });
   });
 
-  it("keeps a daily task from the moment the Kernel starts, and pulls it nearer once the window is over its bound", async () => {
+  it("arms no task for an empty ledger, the daily one with its first line, and pulls it nearer once the window is over its bound", async () => {
     const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
     await runInDurableObject(stub, async (kernel: Kernel, state) => {
       const nowSeconds = Math.floor(Date.now() / 1_000);
+      expect(pendingRotations(state.storage.sql)).toEqual([]);
+      expect(await refusedCall(kernel, "first")).toMatchObject({ ok: false, error: { code: 403 } });
+      expect(kernel.ledger.windowCount()).toBe(1);
       const daily = pendingRotations(state.storage.sql);
       expect(daily).toHaveLength(1);
       expect(daily[0].time).toBeGreaterThan(nowSeconds + 60 * 60);
+      await refusedCall(kernel, "second");
+      expect(pendingRotations(state.storage.sql)).toEqual(daily);
       await kernel.armLedgerRotation(100);
       expect(pendingRotations(state.storage.sql)).toEqual(daily);
       for (let i = 0; i <= LEDGER_WINDOW_ROWS; i += 1) kernel.ledger.append(entry({ requestId: `r${i}` }));
@@ -758,7 +777,7 @@ describe("rotation scheduling", () => {
     });
   });
 
-  it("comes back in a minute while expired segments remain, and daily once drained", async () => {
+  it("comes back in a minute while expired segments remain, and daily once drained while a segment is kept", async () => {
     const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
     await runInDurableObject(stub, async (kernel: Kernel, state) => {
       const memory = new MemoryBucket();
@@ -770,13 +789,17 @@ describe("rotation scheduling", () => {
         kernel.ledger.complete(`old-${segment}`, { outcome: "ok" }, now);
         expect((await kernel.ledger.rotateOnce(now)).rotated).toBe(true);
       }
+      kernel.ledger.append(entry({ requestId: "recent", timestamp: now - 1_000 }));
+      kernel.ledger.complete("recent", { outcome: "ok" }, now);
+      expect((await kernel.ledger.rotateOnce(now)).rotated).toBe(true);
       await kernel.onLedgerRotate("test");
-      expect(kernel.ledger.segments()).toHaveLength(1);
+      expect(kernel.ledger.segments()).toHaveLength(2);
       const soon = pendingRotations(state.storage.sql);
       expect(soon).toHaveLength(1);
       expect(soon[0].time).toBeLessThanOrEqual(nowSeconds + 120);
       await kernel.onLedgerRotate("test", soon[0].id);
-      expect(kernel.ledger.segments()).toHaveLength(0);
+      expect(kernel.ledger.segments()).toHaveLength(1);
+      expect(kernel.ledger.windowCount()).toBe(0);
       const daily = pendingRotations(state.storage.sql);
       expect(daily).toHaveLength(1);
       expect(daily[0].time).toBeGreaterThan(nowSeconds + 60 * 60);
@@ -809,9 +832,28 @@ describe("rotation scheduling", () => {
     });
   });
 
+  it("stops once housekeeping leaves nothing behind, and the next line arms it again", async () => {
+    const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
+    await runInDurableObject(stub, async (kernel: Kernel, state) => {
+      const now = Date.now();
+      kernel.ledger.append(entry({ requestId: "ancient", timestamp: now - LEDGER_RETENTION_MS - 10_000 }));
+      kernel.ledger.complete("ancient", { outcome: "ok" }, now);
+      await kernel.ensureLedgerRotation(0);
+      await kernel.alarm();
+      expect(kernel.ledger.windowCount()).toBe(0);
+      expect(kernel.ledger.segments()).toEqual([]);
+      expect(pendingRotations(state.storage.sql)).toEqual([]);
+      await refusedCall(kernel, "next");
+      const daily = pendingRotations(state.storage.sql);
+      expect(daily).toHaveLength(1);
+      expect(daily[0].time).toBeGreaterThan(Math.floor(now / 1_000) + 60 * 60);
+    });
+  });
+
   it("re-arms exactly once when it runs", async () => {
     const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
     await runInDurableObject(stub, async (kernel: Kernel, state) => {
+      kernel.ledger.append(entry({ requestId: "kept", timestamp: Date.now() }));
       await kernel.onLedgerRotate("test");
       expect(pendingRotations(state.storage.sql)).toHaveLength(1);
       await kernel.onLedgerRotate("test");

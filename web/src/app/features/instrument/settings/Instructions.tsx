@@ -10,6 +10,7 @@ import { canConfigure, newInstructionName, SETTINGS_INSTRUCTIONS_KEY } from "./s
 import { createInstruction, deleteInstruction, listInstructions, readInstruction, saveInstruction } from "./settingsService";
 import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./settingsShared";
 import { useT } from "../../../i18n/locale";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 type InstructionDraft = { original: string; content: string };
 
@@ -91,13 +92,9 @@ export function Instructions({ account, active, onDirty }: SettingsSectionProps)
   const canCreate = editable && files.isSuccess && newName !== null && nameError === null;
   const currentError = save.variables?.name === name ? save.error : null;
   return <section aria-labelledby="settings-instructions-title">
-    <div class="settings-instruction-heading">
-      <h1 id="settings-instructions-title">{t("settings.instructions.title")}</h1>
-      {!newDraft && canRead && canWrite && <button class="settings-text-action" type="button" disabled={!connected || !files.isSuccess || pending} onClick={() => {
-        setNewDraft({ name: "", content: "" }); setConfirmDelete(false); setDeleted(null); setSaved(null); create.reset();
-      }}>{t("settings.instructions.new")}</button>}
-    </div>
-    <p class="settings-intro">{t("settings.instructions.intro")}</p>
+    <PageHeading id="settings-instructions-title" title={t("settings.instructions.title")} description={t("settings.instructions.intro")} actions={!newDraft && canRead && canWrite && <button class="settings-text-action" type="button" disabled={!connected || !files.isSuccess || pending} onClick={() => {
+      setNewDraft({ name: "", content: "" }); setConfirmDelete(false); setDeleted(null); setSaved(null); create.reset();
+    }}>{t("settings.instructions.new")}</button>} />
     {!canRead && <p class="settings-muted">{t("settings.instructions.noRead")}</p>}
     {canRead && !canWrite && <p class="settings-muted">{t("settings.instructions.readOnly")}</p>}
     <SettingsError error={files.error} />

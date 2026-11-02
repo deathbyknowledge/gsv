@@ -241,8 +241,9 @@ function sanitizeHeaderText(value: string | undefined): string | undefined {
   return value?.replace(/\p{Cc}/gu, " ");
 }
 
+/** A body keeps its line breaks and tabs; other control characters go. */
 function sanitizeBodyText(value: string | undefined): string | undefined {
-  return value?.replace(/\p{Cc}/gu, "");
+  return value?.replace(/\r\n?/g, "\n").replace(/[^\P{Cc}\n\t]/gu, "");
 }
 
 function optionalAddress(value: string | undefined): string | undefined {
