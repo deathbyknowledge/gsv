@@ -19,7 +19,7 @@ import { routedFetchOptionsSchema } from "./internal/schemas";
 import type { Process } from "./do";
 import type { ProcessApprovalTarget, ProcessApprovalTargetRef, ProcessMemoryReview } from "../protocol/process-frames";
 import { raceWithAbort } from "../shared/abort";
-import { UNREACHABLE, type ManagedInstallationWorkGate } from "../installation/lifecycle";
+import { UNREACHABLE, type KernelWorkGate } from "../installation/lifecycle";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 
 export class ProcessKernelClient {
@@ -31,7 +31,7 @@ export class ProcessKernelClient {
   }
 
   /** The Kernel answers from its record of the installation; a failed call fails closed. */
-  async installationWorkGate(): Promise<ManagedInstallationWorkGate> {
+  async installationWorkGate(): Promise<KernelWorkGate> {
     try {
       const kernel = await getKernelPtr(this.host.installationId);
       return await kernel.installationWorkGate();

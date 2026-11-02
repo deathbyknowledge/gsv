@@ -3,7 +3,7 @@ import type {
   InstallationDirectoryService,
 } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MANAGED_INSTALLATION_STATE_KEY, RecordedInstallationGate, managedInstallationWorkGate, setupFeatures } from "./lifecycle";
+import { MANAGED_INSTALLATION_STATE_KEY, ManagedInstallationGate, RecordedInstallationGate, managedInstallationWorkGate, setupFeatures } from "./lifecycle";
 
 function directory(
   result: InstallationDirectoryResult,
@@ -230,6 +230,22 @@ describe("managed installation gate", () => {
     const checked = gate.check();
     await vi.advanceTimersByTimeAsync(2_001);
     await expect(checked).resolves.toEqual(unreachable);
+  });
+
+  it("never lets a Process remember its Kernel's answer for longer than the Kernel remembers it", async () => {
+    vi.useFakeTimers();
+    let answer: InstallationDirectoryResult = active;
+    const { service, gate: kernel } = gateWith(async () => answer);
+    const process = new ManagedInstallationGate(() => kernel.processCheck());
+    await expect(kernel.check()).resolves.toEqual({ allowed: true });
+    vi.advanceTimersByTime(59_000);
+    await expect(process.check()).resolves.toMatchObject({ allowed: true });
+    expect(service.resolveInstallation).toHaveBeenCalledTimes(1);
+
+    answer = { ...active, state: "restricted" };
+    vi.advanceTimersByTime(2_000);
+    await expect(process.check()).resolves.toMatchObject({ allowed: false, code: 423 });
+    expect(service.resolveInstallation).toHaveBeenCalledTimes(2);
   });
 
   it("keeps no record of an answer without a revision", async () => {

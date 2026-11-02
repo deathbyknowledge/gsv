@@ -322,12 +322,12 @@ describe("Kernel service peer identity", () => {
 describe("Kernel installation gate for Processes", () => {
   it("answers from its own record and refuses for a retired installation without asking further", async () => {
     const kernel = bareKernel();
-    const managedWorkGate = vi.fn(async () => ({ allowed: true }));
-    kernel.onboarding = { managedWorkGate };
-    await expect(kernel.installationWorkGate()).resolves.toEqual({ allowed: true });
+    const processWorkGate = vi.fn(async () => ({ allowed: true, until: 60_000 }));
+    kernel.onboarding = { processWorkGate };
+    await expect(kernel.installationWorkGate()).resolves.toEqual({ allowed: true, until: 60_000 });
     kernel.retirement = { assertActive: vi.fn(), state: { phase: "quiescing" } };
     await expect(kernel.installationWorkGate()).resolves.toEqual({ allowed: false, code: 503, message: "Managed installation is unavailable" });
-    expect(managedWorkGate).toHaveBeenCalledOnce();
+    expect(processWorkGate).toHaveBeenCalledOnce();
   });
 });
 

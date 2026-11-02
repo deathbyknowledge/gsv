@@ -130,7 +130,7 @@ import { ProfileStore, type ProfileAvatarFile } from "./profile-store";
 import { ApproachStore } from "./approach-store";
 import { followHostTakedowns, publicProfileAvatar, publicProfileProjection, type PublicProfileProjection } from "./profiles";
 import { processApproachMaintenance } from "./approaches/runtime";
-import { MANAGED_LIFECYCLE_RECHECK_MS, UNAVAILABLE, type ManagedInstallationWorkGate } from "../installation/lifecycle";
+import { MANAGED_LIFECYCLE_RECHECK_MS, UNAVAILABLE, type KernelWorkGate } from "../installation/lifecycle";
 import { DidDocumentStore } from "./ships/did-directory";
 import { ShipCallNonces } from "./ships/auth";
 import { ShipIdentity } from "./ships/identity";
@@ -756,8 +756,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
   }
 
   /** What a Process may admit, from the Kernel's record rather than another Accounts lookup. */
-  async installationWorkGate(): Promise<ManagedInstallationWorkGate> {
-    return this.retirement.state ? UNAVAILABLE : await this.onboarding.managedWorkGate();
+  async installationWorkGate(): Promise<KernelWorkGate> {
+    return this.retirement.state ? UNAVAILABLE : await this.onboarding.processWorkGate();
   }
 
   async eraseInstallation(input: InstallationDeletionRequest) {

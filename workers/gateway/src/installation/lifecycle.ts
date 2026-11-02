@@ -16,6 +16,9 @@ export type ManagedInstallationWorkGate =
   | { allowed: true }
   | { allowed: false; code: 423 | 503; message: string; details?: SetupRecoveryDetails };
 
+/** A Kernel's answer to one of its Processes: an allowed answer it remembered from Accounts stands only until `until`. */
+export type KernelWorkGate = ManagedInstallationWorkGate & { until?: number };
+
 type ResolvedManagedInstallation = Extract<
   InstallationDirectoryResult,
   { found: true }
@@ -90,15 +93,15 @@ export const UNREACHABLE: ManagedInstallationWorkGate = {
  * or a failed lookup is never remembered, so an outage fails closed.
  */
 export class ManagedInstallationGate {
-  private confirmedAt?: number;
+  private confirmedUntil?: number;
   private lookup?: Promise<ManagedInstallationWorkGate>;
 
-  /** `ask` answers for the installation without throwing; a failure is a refusal. */
-  constructor(private readonly ask: () => Promise<ManagedInstallationWorkGate>) {}
+  /** `ask` answers for the installation without throwing; a failure is a refusal. An answer's `until` shortens the minute. */
+  constructor(private readonly ask: () => Promise<KernelWorkGate>) {}
 
   /** `fresh` asks again even after a recent confirmation, for calls that grant new authority. */
   async check(options: { fresh?: boolean } = {}): Promise<ManagedInstallationWorkGate> {
-    if (!options.fresh && this.confirmedAt !== undefined && Date.now() - this.confirmedAt < ACTIVE_CONFIRMATION_MS) {
+    if (!options.fresh && this.confirmedUntil !== undefined && Date.now() < this.confirmedUntil) {
       return { allowed: true };
     }
     if (options.fresh) return await this.refresh();
@@ -106,15 +109,24 @@ export class ManagedInstallationGate {
     return await this.lookup;
   }
 
+  /** When the last confirmation stops standing, if one does. */
+  get standsUntil(): number | undefined {
+    return this.confirmedUntil;
+  }
+
   /** Forgets the last confirmation, so the next check asks again. */
   invalidate(): void {
-    this.confirmedAt = undefined;
+    this.confirmedUntil = undefined;
   }
 
   private async refresh(): Promise<ManagedInstallationWorkGate> {
     const gate = await this.ask();
-    this.confirmedAt = gate.allowed ? Date.now() : undefined;
-    return gate;
+    if (!gate.allowed) {
+      this.confirmedUntil = undefined;
+      return gate;
+    }
+    this.confirmedUntil = Math.min(Date.now() + ACTIVE_CONFIRMATION_MS, gate.until ?? Infinity);
+    return { allowed: true };
   }
 }
 
@@ -154,9 +166,14 @@ export class RecordedInstallationGate {
   /** `fresh` asks Accounts even with a record, for calls that grant new authority. */
   async check(options: { fresh?: boolean } = {}): Promise<ManagedInstallationWorkGate> {
     const recorded = options.fresh ? undefined : this.recorded();
-    return recorded && Date.now() - recorded.recordedAt < RECORD_TTL_MS
+    return recorded && this.recordStands()
       ? workGate(this.bindings, recorded)
       : await this.gate.check(options);
+  }
+
+  private recordStands(): boolean {
+    const recorded = this.recorded();
+    return recorded !== undefined && Date.now() - recorded.recordedAt < RECORD_TTL_MS;
   }
 
   /** Keeps a directory answer newer than the record, and returns the revision the Kernel then holds. */
@@ -176,6 +193,16 @@ export class RecordedInstallationGate {
       this.kv.put(MANAGED_INSTALLATION_STATE_KEY, { state: installation.state, revision, recordedAt: Date.now() });
     }
     return revision;
+  }
+
+  /**
+   * What a Process hears when it asks its Kernel. A record follows every change, so an answer from it carries no
+   * expiry; an answer the gate remembers from Accounts carries the gate's, so the two minutes never stack.
+   */
+  async processCheck(): Promise<KernelWorkGate> {
+    const gate = await this.check();
+    const until = this.recordStands() ? undefined : this.gate.standsUntil;
+    return gate.allowed && until !== undefined ? { allowed: true, until } : gate;
   }
 
   /** Forgets the gate's last confirmation; a record stands until Accounts reports a newer one or it is a day old. */

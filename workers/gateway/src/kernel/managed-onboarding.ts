@@ -21,6 +21,7 @@ import {
 } from "./sys/setup-assist";
 import {
   RecordedInstallationGate,
+  type KernelWorkGate,
   resolveManagedInstallationById,
   setupRecoveryDetails,
 } from "../installation/lifecycle";
@@ -327,6 +328,12 @@ managedOnboardingService(): GatewayEnv["INSTALLATION_DIRECTORY"] | null {
   async managedWorkGate(options: { fresh?: boolean } = {}) {
     this.host.retirement.assertActive();
     return await this.workGate().check(options);
+  }
+
+  /** The gate a Process asks, which carries how long a remembered answer stands. */
+  async processWorkGate(): Promise<KernelWorkGate> {
+    this.host.retirement.assertActive();
+    return await this.workGate().processCheck();
   }
 
   /** A lifecycle change from Accounts must apply before the next admission. */
