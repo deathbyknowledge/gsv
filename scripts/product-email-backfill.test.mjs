@@ -21,7 +21,7 @@ function ship(db, id, principal, state = "active", created = 1) {
 }
 function preview(db) { return createManifest("test-database", false, 100, db.prepare(recipientQuery(100)).all()); }
 
-it("migrations do not enroll existing owners or replay completed signup deliveries", () => {
+it("holds automatic backfills and replay requests from the immutable earlier migration", () => {
   const db = database("0035");
   try {
     owner(db, "existing"); ship(db, "existing", "existing");
@@ -30,12 +30,21 @@ it("migrations do not enroll existing owners or replay completed signup deliveri
       VALUES ('existing@example.com','existing','request','actual-wording','es',12,1,15,2,20)`);
     db.exec(source("0035_product_email_users.sql"));
     db.exec(source("0036_product_email_consent.sql"));
-    assert.deepEqual({ ...db.prepare("SELECT * FROM product_email_signups").get() }, {
-      email: "existing@example.com", principal_id: "existing", request_id: "request", wording_version: "actual-wording", locale: "es",
-      requested_at: 12, verified_at: 1, ip: null, due_at: 15, attempts: 2, completed_at: 20, last_error: null,
-      source: "ship-signup", consented_at: 12, consent_basis: "signup-checkbox", import_id: null,
-    });
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM product_email_signups").get().n, 1);
+    const existing = db.prepare("SELECT * FROM product_email_signups WHERE principal_id='existing'").get();
+    assert.equal(existing.wording_version, 'actual-wording');
+    assert.equal(existing.requested_at, 12);
+    assert.equal(existing.consented_at, 12);
+    assert.equal(existing.consent_basis, 'unconfirmed-legacy-replay');
+    assert.equal(db.prepare("SELECT consent_basis FROM product_email_signups WHERE principal_id='other'").get().consent_basis, 'unconfirmed-legacy-backfill');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM product_email_signups WHERE consent_basis IN ('signup-checkbox','operator-confirmed-existing-opt-ins')").get().n, 0);
+    const manifest = preview(db);
+    db.exec(importSql(manifest, 200));
+    const approved = db.prepare("SELECT * FROM product_email_signups WHERE principal_id='existing'").get();
+    assert.equal(approved.consent_basis, 'signup-checkbox');
+    assert.equal(approved.wording_version, 'actual-wording');
+    assert.equal(approved.locale, 'es');
+    assert.equal(approved.consented_at, 12);
+    assert.equal(approved.import_id, manifest.importId);
   } finally { db.close(); }
 });
 

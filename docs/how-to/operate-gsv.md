@@ -424,7 +424,7 @@ suppressed addresses remain untouched.
 
 An operator may fulfil earlier opt-ins when the delivery backend did not exist.
 Use a fixed cutoff covering that cohort and confirm the prior opt-ins when
-applying. This is separate from deployment and never runs during a migration.
+applying. Approval is separate from deployment and never runs during a migration.
 The preview selects verified active owners and active Ships created by the
 cutoff, once per address. Apply rechecks that ownership, address, verification
 and Ship eligibility still hold, and imports only the reviewed recipients.
@@ -459,9 +459,14 @@ Imported rows carry source `ship-existing-user-backfill`, the import ID and
 `consent_basis=operator-confirmed-existing-opt-ins`. Their original consent time,
 wording and locale are unknown; `requested_at` records the queue insertion time,
 not the historical opt-in. New checkbox choices retain their actual recorded
-timestamp and wording. Migration 0036 holds unconfirmed automatic backfill rows
-from earlier PR previews until an operator explicitly imports them; it never
-replays completed deliveries.
+timestamp and wording. Approving a held signup replay preserves its real checkbox
+evidence and request ID, while recording the approving import ID.
+
+Migration 0035 already ran on earlier deployments and remains unchanged. Its
+historical automatic-backfill and replay rows are held by forward migration 0036
+until an operator explicitly imports them. The earlier migration erased the old
+completion flags on replayed requests, so 0036 holds those requests rather than
+guessing their old state. The current import never resets a completed delivery.
 
 Keep delivery disabled while upgrading and importing. Then enable it,
 and verify one new opted-in signup and one imported owner with the provider before

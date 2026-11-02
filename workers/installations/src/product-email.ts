@@ -24,7 +24,7 @@ export async function queueProductEmail(db: D1Database, owner: PrincipalRecord, 
       requested_at=excluded.requested_at,verified_at=excluded.verified_at,ip=excluded.ip,due_at=excluded.due_at,
       consented_at=excluded.consented_at,consent_basis='signup-checkbox',source='ship-signup',import_id=NULL,attempts=0,last_error=NULL
     WHERE product_email_signups.principal_id=excluded.principal_id AND product_email_signups.completed_at IS NULL
-      AND product_email_signups.consent_basis='unconfirmed-legacy-backfill'`)
+      AND product_email_signups.consent_basis IN ('unconfirmed-legacy-backfill','unconfirmed-legacy-replay')`)
     .bind(owner.email.trim().toLowerCase(), owner.id, crypto.randomUUID(), choice.wordingVersion, choice.locale, now, owner.emailVerifiedAt, ip ?? null, now, now).run();
 }
 

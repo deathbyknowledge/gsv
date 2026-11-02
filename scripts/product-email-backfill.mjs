@@ -49,11 +49,18 @@ export function importSql(manifest, now = Date.now()) {
       FROM principals p WHERE p.id=${quote(row.id)} AND p.primary_email_normalized=${quote(row.email)}
         AND p.email_verified_at=${row.verifiedAt} AND p.state='active' AND p.created_at<=${payload.cutoff}
         AND EXISTS (SELECT 1 FROM installations i WHERE i.owner_principal_id=p.id AND i.state='active' AND i.created_at<=${payload.cutoff})
-      ON CONFLICT(email) DO UPDATE SET request_id=excluded.request_id,wording_version=excluded.wording_version,
-        locale=excluded.locale,requested_at=excluded.requested_at,verified_at=excluded.verified_at,due_at=excluded.due_at,
-        consented_at=NULL,consent_basis=excluded.consent_basis,import_id=excluded.import_id,attempts=0,last_error=NULL
+      ON CONFLICT(email) DO UPDATE SET
+        request_id=CASE WHEN consent_basis='unconfirmed-legacy-replay' THEN product_email_signups.request_id ELSE excluded.request_id END,
+        wording_version=CASE WHEN consent_basis='unconfirmed-legacy-replay' THEN product_email_signups.wording_version ELSE excluded.wording_version END,
+        locale=CASE WHEN consent_basis='unconfirmed-legacy-replay' THEN product_email_signups.locale ELSE excluded.locale END,
+        requested_at=CASE WHEN consent_basis='unconfirmed-legacy-replay' THEN product_email_signups.requested_at ELSE excluded.requested_at END,
+        verified_at=CASE WHEN consent_basis='unconfirmed-legacy-replay' THEN product_email_signups.verified_at ELSE excluded.verified_at END,
+        consented_at=CASE WHEN consent_basis='unconfirmed-legacy-replay' THEN product_email_signups.consented_at ELSE NULL END,
+        consent_basis=CASE WHEN consent_basis='unconfirmed-legacy-replay' THEN 'signup-checkbox' ELSE excluded.consent_basis END,
+        due_at=excluded.due_at,import_id=excluded.import_id,attempts=0,last_error=NULL
       WHERE product_email_signups.principal_id=excluded.principal_id
-        AND product_email_signups.consent_basis='unconfirmed-legacy-backfill' AND product_email_signups.completed_at IS NULL;`;
+        AND product_email_signups.consent_basis IN ('unconfirmed-legacy-backfill','unconfirmed-legacy-replay')
+        AND product_email_signups.completed_at IS NULL;`;
   }).join("\n");
 }
 

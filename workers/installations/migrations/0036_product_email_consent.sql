@@ -8,3 +8,8 @@ UPDATE product_email_signups SET consented_at = requested_at WHERE source = 'shi
 -- operator import before delivery; completed deliveries are never replayed.
 UPDATE product_email_signups SET consent_basis = 'unconfirmed-legacy-backfill'
 WHERE source = 'ship-existing-user-backfill';
+
+-- 0035 also reset earlier signup deliveries. Their old completion state cannot
+-- be recovered, so require operator approval before those requests run again.
+UPDATE product_email_signups SET consent_basis = 'unconfirmed-legacy-replay'
+WHERE source = 'ship-signup' AND request_id LIKE '%:user' AND completed_at IS NULL;
