@@ -8,7 +8,7 @@ import "./WelcomeIllustration.css";
 
 export function WelcomeIllustration({ kind }: { kind: "create" | "open" }) {
   const t = useT();
-  const { theme } = useColorTheme("dark");
+  const { theme } = useColorTheme("light");
   const spiral = useMemo(createSpiralScene, []);
   if (kind === "open") return <AuthShip theme={theme} compact />;
   return <span class="welcome-illustration" aria-hidden="true">

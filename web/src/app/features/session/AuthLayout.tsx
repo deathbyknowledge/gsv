@@ -16,23 +16,28 @@ import "./AuthLayout.css";
 const SharedAuthScene = createContext(false);
 
 /** Keep one animation alive while local sign-in, recovery, and setup panels change. */
-export function AuthScene({ children, setup = false, layout = "ship" }: {
+export function AuthScene({ children, setup = false, layout = "ship", homeHref, headerActions }: {
   children: ComponentChildren;
   setup?: boolean;
   layout?: "ship" | "welcome";
+  homeHref?: string;
+  headerActions?: ComponentChildren;
 }) {
   const t = useT();
-  const { theme, toggleTheme } = useColorTheme("dark");
+  const { theme, toggleTheme } = useColorTheme("light");
   const viewportRef = useInstrumentViewport();
   return (
     <div ref={viewportRef} class={`instrument gsv-auth-surface gsv-auth-scene${layout === "welcome" ? " gsv-auth-scene-welcome" : ""}${theme === "light" ? " is-light" : ""}${setup ? " gsv-auth-surface-setup" : " gsv-auth-surface-login"}`}>
       <InstrumentBackdrop />
       <div class="instrument-viewport">
         <header class="instrument-top gsv-auth-header">
-          <div class="gsv-auth-identity"><Wordmark /><PlatformIdentity /></div>
-          <button type="button" onClick={toggleTheme} aria-label={t(theme === "light" ? "session.scene.toDark" : "session.scene.toLight")}>
-            {t(theme === "light" ? "settings.appearance.dark" : "settings.appearance.light")}
-          </button>
+          <div class="gsv-auth-identity">{homeHref ? <a href={homeHref} class="gsv-auth-home"><Wordmark /></a> : <Wordmark />}<PlatformIdentity /></div>
+          <div class="gsv-auth-header-actions">
+            {headerActions}
+            <button type="button" onClick={toggleTheme} aria-label={t(theme === "light" ? "session.scene.toDark" : "session.scene.toLight")}>
+              {t(theme === "light" ? "settings.appearance.dark" : "settings.appearance.light")}
+            </button>
+          </div>
         </header>
         <div class="gsv-auth-composition">
           {layout === "ship" && <AuthShip theme={theme} />}
@@ -63,7 +68,7 @@ export interface AuthLayoutProps {
  *  (.gsv-auth-theme), the chosen background behind, and a right-aligned content
  *  slot for the panel. Used by Login and the Setup/Register wizard. */
 export function AuthLayout({ background = "galaxy", visible = true, surfaceClass, children }: AuthLayoutProps) {
-  const { theme } = useColorTheme("dark");
+  const { theme } = useColorTheme("light");
   const sharedScene = useContext(SharedAuthScene);
   return (
     <div class={`${sharedScene ? "gsv-auth-surface gsv-auth-surface-shared" : "gsv-auth-theme gsv-auth-surface"}${theme === "light" ? " is-light" : ""}${surfaceClass ? ` ${surfaceClass}` : ""}`} hidden={!visible}>

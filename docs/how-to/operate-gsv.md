@@ -148,6 +148,14 @@ without it, and introduces every Ship to it again once it's named anew. That
 run happens only while the deployment names another relay or a lexicon
 account.
 
+## Signup navigation
+
+The web signup header links to the configured primary domain. The handle/email
+form has no Back button; other public signup steps link Back to that homepage.
+**Already have a Ship?** in the center of the signup top bar links to
+`/owner/signup/?view=welcome`, which offers both creating a Ship and opening
+an existing one by email or space address.
+
 ## Give someone a Ship {#give-someone-a-space}
 
 Operator administration and owner sign-in have separate jobs. In `operator`
