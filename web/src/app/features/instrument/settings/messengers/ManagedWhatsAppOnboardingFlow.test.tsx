@@ -78,6 +78,7 @@ async function click(label: string): Promise<void> {
 
 beforeEach(async () => {
   vi.stubGlobal("document", {});
+  vi.stubGlobal("navigator", { languages: ["pt-BR", "id"] });
   mocks.confirm.mockReset();
   mocks.currentFlow = null;
   mocks.currentStep = -1;
@@ -150,22 +151,33 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(nodeWithLabel(nodes(), "CONNECT").props.disabled).toBe(true);
   });
 
-  it("warns about the countries the adapter reports the operator's number cannot reach", async () => {
+  it("warns about the blocked countries this device's languages place it in", async () => {
     const warning = () => nodes().find((node) => node.props.text?.includes("cannot connect"));
+    const remount = async (languages: string[], codes: string[]) => {
+      await root?.unmount();
+      vi.stubGlobal("navigator", { languages });
+      mocks.unreachableCallingCodes = codes;
+      root = createTestRoot("Managed WhatsApp onboarding harness");
+      await root.render(
+        <ManagedWhatsAppOnboardingFlow
+          onBack={() => undefined}
+          onConnected={mocks.onConnected}
+          dependencies={dependencies}
+        />,
+      );
+    };
     expect(warning()?.props.text).toContain("Brazil (+55) and Indonesia (+62)");
 
-    await root?.unmount();
-    mocks.unreachableCallingCodes = ["62"];
-    root = createTestRoot("Managed WhatsApp onboarding harness");
-    await root.render(
-      <ManagedWhatsAppOnboardingFlow
-        onBack={() => undefined}
-        onConnected={mocks.onConnected}
-        dependencies={dependencies}
-      />,
-    );
+    await remount(["pt-BR", "id"], ["62"]);
     expect(warning()?.props.text).toContain("WhatsApp numbers in Indonesia (+62) cannot connect");
     expect(warning()?.props.text).not.toContain("Brazil");
+
+    await remount(["en-GB", "pt-BR"], ["55", "62"]);
+    expect(warning()?.props.text).toContain("WhatsApp numbers in Brazil (+55) cannot connect");
+    expect(warning()?.props.text).not.toContain("Indonesia");
+
+    await remount(["en-US", "es-ES", "not a tag"], ["55", "62"]);
+    expect(warning()).toBeUndefined();
   });
 
   it("reveals the profile name and masked number before linking, then opens the account detail", async () => {

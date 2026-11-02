@@ -65,7 +65,7 @@ once; the Desktop app choice links to the release download and continues in the 
 pairs inline through the Settings pairing flow, and finishing from its section records it as the
 choice, which the Kernel routes the greeting to. Messenger
 sections appear only when the deployment offers that adapter, with no "nothing connected" line;
-the embedded WhatsApp flow names the countries the Ship number cannot reach, and a (?) note says
+the embedded WhatsApp flow names the countries the Ship number cannot reach when the device's languages point there, and a (?) note says
 Ship only sees the messages sent to it. "continue here" is a text action at the end, with its note as a small label. Finishing writes the
 choice and the per-user first-run flag, so the screen follows the account across web and Desktop
 and never shows again; inside Desktop the Desktop section is hidden.

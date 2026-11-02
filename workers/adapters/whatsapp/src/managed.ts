@@ -37,7 +37,7 @@ import {
   normalizedManagedWhatsAppDisplayNumber,
   validManagedWhatsAppDisplayNumber,
   type ManagedWhatsAppConfigEnv,
-    managedWhatsAppUnreachableCallingCodes,
+  managedWhatsAppUnreachableCallingCodes,
 } from "./managed-config";
 import { handleManagedWhatsAppRequest } from "./managed-http";
 import { MANAGED_WHATSAPP_ACCOUNT_ID } from "./managed-peer-state";

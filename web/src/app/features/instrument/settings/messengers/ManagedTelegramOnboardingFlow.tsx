@@ -98,6 +98,25 @@ export function ManagedWhatsAppOnboardingFlow({ onBack, onConnected, disabled, d
   return <ManagedMessengerOnboardingFlow adapterId="whatsapp" onBack={onBack} onConnected={onConnected} disabled={disabled} dependencies={dependencies} />;
 }
 
+/** The countries Meta blocks across, by calling code, as the region a language tag names. */
+const WHATSAPP_CALLING_CODE_REGIONS = new Map([["55", "BR"], ["62", "ID"]]);
+
+/**
+ * The unreachable codes this device's languages place it in, such as pt-BR or Indonesian, so the warning reaches
+ * only the people it concerns. A bare tag names its likeliest region: pt is Brazil, id is Indonesia.
+ */
+export function whatsAppReachForDevice(codes: readonly string[], languages: readonly string[]): string[] {
+  const regions = new Set(languages.flatMap((tag) => {
+    try {
+      const region = new Intl.Locale(tag).maximize().region;
+      return region ? [region] : [];
+    } catch {
+      return [];
+    }
+  }));
+  return codes.filter((code) => regions.has(WHATSAPP_CALLING_CODE_REGIONS.get(code) ?? ""));
+}
+
 /** Names the countries the operator's WhatsApp number cannot reach, as the adapter reports them. */
 export function whatsAppCountryList(codes: readonly string[], t: Translate): string {
   const sorted = [...codes].sort();
@@ -146,7 +165,7 @@ function ManagedMessengerOnboardingFlow({
   const platform = isSlack ? "Slack" : isDiscord ? "Discord" : isWhatsApp ? "WhatsApp" : "Telegram";
   const botUsername = info.data?.botUsername?.replace(/^@/, "") ?? "";
   const chatNumber = isWhatsApp ? whatsAppNumberFromChatUrl(info.data?.installUrl) : "";
-  const unreachable = isWhatsApp ? info.data?.unreachableCallingCodes ?? [] : [];
+  const unreachable = isWhatsApp ? whatsAppReachForDevice(info.data?.unreachableCallingCodes ?? [], navigator.languages) : [];
   const launchUrl = installsApp || isWhatsApp
     ? info.data?.installUrl ?? adapterDocUrl(adapterId)
     : botUsername ? `https://t.me/${botUsername}` : "https://telegram.org/";
