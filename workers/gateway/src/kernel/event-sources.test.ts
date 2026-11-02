@@ -385,6 +385,30 @@ describe("event webhooks", () => {
     });
   });
 
+  it("follows what the owner chose while a delivery was being verified", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      const { source, secret } = await handleEventSourceAdd({ name: "gh", webhook: "github", ship: "wake" }, context(k));
+      const ctx = context(k, "schedule");
+      const delivery = async (id: string) => new Headers({ "x-hub-signature-256": `sha256=${await sign(secret ?? "", body)}`, "x-github-delivery": id });
+
+      const quieted = receiveWebhook(source.sourceId, null, await delivery("quieted"), body, ctx);
+      await handleEventSourceUpdate({ name: "gh", ship: "none" }, context(k));
+      expect((await quieted).status).toBe(200);
+      expect(k.create).not.toHaveBeenCalled();
+
+      const paused = receiveWebhook(source.sourceId, null, await delivery("paused"), body, ctx);
+      await handleEventSourceUpdate({ name: "gh", enabled: false }, context(k));
+      expect((await paused).status).toBe(404);
+      expect(handleEventList({ source: "gh" }, context(k)).events.map((event) => event.eventId)).toEqual(["quieted"]);
+
+      await handleEventSourceUpdate({ name: "gh", enabled: true }, context(k));
+      const removed = receiveWebhook(source.sourceId, null, await delivery("removed"), body, ctx);
+      await handleEventSourceRemove({ name: "gh" }, context(k));
+      expect((await removed).status).toBe(404);
+    });
+  });
+
   it("doesn't charge a verified sender's retries against its allowance", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const k = kernel(storage);

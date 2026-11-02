@@ -515,16 +515,19 @@ export async function receiveWebhook(
     }
   }
   if (!verified) return { status: row.webhook === "url" ? 404 : 401 };
-  const event = webhookEvent(row.webhook, row.label, body, headers);
-  if (event.id && ctx.eventSources.seen(row, event.id)) return { status: 200 };
+  // The owner may have paused, changed or deleted the source while the signature was checked.
+  const current = ctx.eventSources.byId(sourceId);
+  if (!current || current.enabled !== 1) return { status: 404 };
+  const event = webhookEvent(row.webhook, current.label, body, headers);
+  if (event.id && ctx.eventSources.seen(current, event.id)) return { status: 200 };
   // Only after proof, so a stranger's guesses can't spend the real sender's allowance.
-  if (!ctx.eventSources.admit(row, now)) return { status: 429, retryAfter: 60 };
+  if (!ctx.eventSources.admit(current, now)) return { status: 429, retryAfter: 60 };
   const bounded: EventInput = {
     ...event,
     title: Array.from(event.title).slice(0, MAX_TITLE).join(""),
     ...(event.preview ? { preview: Array.from(event.preview).slice(0, MAX_PREVIEW).join("") } : undefined),
     ...(event.body !== undefined && event.body.length > MAX_BODY ? { body: undefined } : undefined),
   };
-  if (ingest(ctx, row, bounded, "webhook", now)) ctx.eventSources.arrived(row.owner_uid);
+  if (ingest(ctx, current, bounded, "webhook", now)) ctx.eventSources.arrived(current.owner_uid);
   return { status: 200 };
 }
