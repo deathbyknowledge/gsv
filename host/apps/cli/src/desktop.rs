@@ -24,7 +24,7 @@ const DESKTOP_CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
 const DESKTOP_IO_TIMEOUT: Duration = Duration::from_secs(3);
 const DESKTOP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(12);
 
-pub(crate) async fn run_desktop(action: Option<DesktopAction>) -> Result<(), DynError> {
+pub(crate) async fn run_desktop(action: Option<DesktopAction>, json: bool) -> Result<(), DynError> {
     let endpoint = DesktopControlEndpoint::current_user()?;
     let client = DesktopControlClient::new(
         endpoint,
@@ -36,7 +36,7 @@ pub(crate) async fn run_desktop(action: Option<DesktopAction>) -> Result<(), Dyn
 
     match action {
         None => activate_or_launch(&client).await,
-        Some(DesktopAction::Status { json }) => {
+        Some(DesktopAction::Status) => {
             let status = client.status().await.map_err(not_running_error)?;
             print_status(&status, json)?;
             Ok(())

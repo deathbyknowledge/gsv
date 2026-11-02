@@ -79,6 +79,21 @@ accepts `active`, or `provisioning` when explicitly resolving a setup route.
 Unknown hosts must not allocate Kernel state. Directory failures must fail
 closed rather than falling back to a different installation.
 
+Each gateway isolate remembers an `active` route for a minute per hostname,
+for public reads only: the web app's files, public files, profile pages,
+`/.well-known/atproto-did` and the OAuth client metadata. Concurrent public
+reads of a hostname share one lookup. Connections, git, Ship-to-Ship calls and
+sign-in callbacks ask Accounts every time, and so does any hostname Accounts
+does not route, routes to a Ship that is not active, or cannot answer for, so
+a random hostname still allocates nothing. Any answer replaces a remembered
+route, and a Kernel that refuses a request's identity makes the gateway ask
+again. A suspension or reset therefore reaches public reads within a minute,
+while the Kernel's own gate and retirement still refuse its work. A lookup
+that fails or takes longer than five seconds answers `503` "Ship is briefly
+unreachable" with `Retry-After: 5`: Accounts answers in milliseconds, and
+within a few seconds in its slowest minutes, so a lookup still waiting by
+then has stalled.
+
 The [lifecycle gate](https://github.com/deathbyknowledge/gsv/blob/main/workers/gateway/src/installation/lifecycle.ts)
 also applies to work entering through existing WebSockets, adapters,
 inference, Process ticks, and schedules. Suspending an installation does not
@@ -101,7 +116,8 @@ closed as below. A Process asks
 its Kernel rather than Accounts, and remembers an `active` answer for one minute.
 
 The same notice tells the deployment's PDS, when Accounts binds it as
-`PDS_MODERATION`, so its account for the Ship follows the state; see [the open
+`PDS_MODERATION`, so its account for the Ship follows the state: relays hear of a
+suspension, and a retired Ship's repository stops being served; see [the open
 network](open-network.md). Each follower is tracked on its own, so neither
 waits on the other. A notice that can't be delivered stays pending for that
 follower. Accounts' cron retries each follower's pending notices every minute,
@@ -267,10 +283,17 @@ and provider logs require operator-specific retention or deletion evidence;
 routing retirement alone proves neither. See the
 [operator cleanup guide](../how-to/operate-gsv.md#connect-services-and-verify-cleanup).
 
-Root recovery authenticates the current verified owner and requires fresh
+Owner recovery authenticates the current verified owner and requires fresh
 verification bound to the exact recovery attempt. An ordinary owner session is
-insufficient. Accounts authorizes the operation; the Kernel changes local root
-credentials. Verification mail is independent of the space being recovered.
+insufficient. Accounts authorizes the operation; the Kernel changes the local
+credentials. A Ship has one person, so the owner can already reach both of its
+accounts, and the single claim's receiver spends it on the personal password or
+root's. Verification mail is independent of the space being recovered.
+
+The Ship's sign-in page finds the owner page through `account.recovery.options`,
+built from `GSV_OWNER_SIGNUP_URL`'s origin and the Ship's own handle. Like the
+setup link, it carries no authority. The owner page gives the same answer whether
+or not an email owns a handle, including when a send limit applied.
 
 ## Schema
 

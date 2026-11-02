@@ -33,8 +33,9 @@ describe("approval rules replacing code defaults", () => {
       };
       for (const [key, value] of Object.entries(saved)) sql.exec("INSERT INTO config_kv (key, value) VALUES (?, ?)", key, value);
 
-      runKernelSqlMigrations(storage);
-      runKernelSqlMigrations(storage);
+      const throughThese = KERNEL_MIGRATIONS.filter((migration) => migration.id < 90);
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, throughThese);
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, throughThese);
 
       const stored = Object.fromEntries(sql.exec<{ key: string; value: string }>("SELECT key, value FROM config_kv").toArray()
         .map(({ key, value }) => [key, value]));
@@ -60,6 +61,36 @@ describe("approval rules replacing code defaults", () => {
       expect(decide("users/1009/ai/tools/approval", "sched.add")).toBe("ask");
       expect(decide("users/1010/ai/tools/approval", "mail.send")).toBe("ask");
       expect(stored["users/1006/ai/models"]).toBe(saved["users/1006/ai/models"]);
+    });
+  });
+
+  it("makes saved policies ask before Ship acts on a source, unless they already decide it", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      await storage.deleteAll();
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 90));
+      const saved = {
+        "users/1000/ai/tools/approval": JSON.stringify({ default: "auto", rules: [] }),
+        "users/1001/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "event.*", action: "auto" }] }),
+        "users/1002/ai/tools/approval": "not json",
+        // Read the way the runtime reads them: entries and rules it drops decide nothing.
+        "users/1003/ai/tools/approval": JSON.stringify({ default: "auto", rules: ["junk", 5, null, ["x"]] }),
+        "users/1004/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "event.*" }] }),
+        "users/1005/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "event.*", target: "laptop", action: "auto" }] }),
+        "users/1006/ai/tools/approval": JSON.stringify({ default: "auto", rules: [{ match: "event.source.*", target: "gsv", action: "auto" }] }),
+      };
+      for (const [key, value] of Object.entries(saved)) sql.exec("INSERT INTO config_kv (key, value) VALUES (?, ?)", key, value);
+
+      runKernelSqlMigrations(storage);
+
+      const stored = Object.fromEntries(sql.exec<{ key: string; value: string }>("SELECT key, value FROM config_kv").toArray().map(({ key, value }) => [key, value]));
+      const decide = (key: string) => resolveToolApproval(parseToolApprovalPolicy(stored[key]), "event.source.update").action;
+      expect(decide("users/1000/ai/tools/approval")).toBe("ask");
+      expect(decide("users/1001/ai/tools/approval")).toBe("auto");
+      expect(stored["users/1002/ai/tools/approval"]).toBe("not json");
+      expect(decide("users/1003/ai/tools/approval")).toBe("ask");
+      expect(decide("users/1004/ai/tools/approval")).toBe("ask");
+      expect(decide("users/1005/ai/tools/approval")).toBe("ask");
+      expect(decide("users/1006/ai/tools/approval")).toBe("auto");
     });
   });
 });

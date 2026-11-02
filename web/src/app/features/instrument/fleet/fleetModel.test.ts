@@ -18,6 +18,7 @@ import {
   shortPid,
   humanCall,
   ledgerFromSysLines,
+  sysLedgerListResultSchema,
   visibleProcesses,
   fleetReferenceRow,
   isApprovalReference,
@@ -195,6 +196,26 @@ describe("ledger", () => {
     expect(describeToolCall("shell.exec", { input: "ls -la", target: "laptop" })).toBe("ls -la");
     expect(describeToolCall("fs.read", { path: "~/Downloads" })).toBe("~/Downloads");
     expect(describeToolCall("ai.text.generate", { prompt: "x" })).toBe("");
+  });
+
+  it("keeps a CodeMode script out of the plain detail", () => {
+    const code = "const notes = await fs.read(\"/home/e/notes.md\");\nreturn notes.content;";
+    expect(describeToolCall("codemode.exec", { code })).toBe("");
+    const [line] = ledgerFromSysLines([sysLine({ call: "codemode.exec", target: "gsv", args: JSON.stringify({ code }) })]);
+    expect(line).toMatchObject({ detail: "", args: JSON.stringify({ code }) });
+  });
+
+  it("carries Ship's purpose for a call, and none when the Kernel recorded none", () => {
+    const [withPurpose, blank, older] = ledgerFromSysLines([
+      sysLine({ seq: 3, purpose: "check how full the studio drive is" }),
+      sysLine({ seq: 2, purpose: "  " }),
+      sysLine({ seq: 1, purpose: null }),
+    ]);
+    expect(withPurpose.purpose).toBe("check how full the studio drive is");
+    expect(blank.purpose).toBeNull();
+    expect(older.purpose).toBeNull();
+    expect(sysLedgerListResultSchema.parse({ lines: [sysLine({ purpose: "read your notes" })], nextCursor: null }).lines[0].purpose).toBe("read your notes");
+    expect(ledgerFromSysLines([sysLine({})])[0].purpose).toBeNull();
   });
 
   it("merges newest first and caps", () => {

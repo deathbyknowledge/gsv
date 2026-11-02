@@ -130,12 +130,8 @@ import type {
   SysTargetListResult,
   SysTargetUpdateArgs,
   SysTargetUpdateResult,
-  SysLinkArgs,
-  SysLinkConsumeArgs,
-  SysLinkConsumeResult,
   SysLinkListArgs,
   SysLinkListResult,
-  SysLinkResult,
   SysMcpAddArgs,
   SysMcpAddResult,
   SysMcpCallArgs,
@@ -166,8 +162,6 @@ import type {
   SysTokenListResult,
   SysTokenRevokeArgs,
   SysTokenRevokeResult,
-  SysUnlinkArgs,
-  SysUnlinkResult,
 } from "./system";
 import type {
   SchedulerAddArgs,
@@ -261,6 +255,29 @@ import type {
   AtprotoWriteArgs,
   AtprotoWriteResult,
 } from "./atproto";
+import type {
+  EventEmitArgs,
+  EventEmitResult,
+  EventListArgs,
+  EventListResult,
+  EventSourceAddArgs,
+  EventSourceListArgs,
+  EventSourceListResult,
+  EventSourceRemoveArgs,
+  EventSourceRemoveResult,
+  EventSourceRotateArgs,
+  EventSourceSecretResult,
+  EventSourceUpdateArgs,
+  EventSourceUpdateResult,
+} from "./event";
+import type {
+  NotifyRuleListArgs,
+  NotifyRuleListResult,
+  NotifyRuleResetArgs,
+  NotifyRuleResetResult,
+  NotifyRuleSetArgs,
+  NotifyRuleSetResult,
+} from "./notify";
 import type {
   MailListArgs,
   MailListResult,
@@ -366,6 +383,17 @@ export type SyscallDomains = {
   "mail.list": { args: MailListArgs; result: MailListResult };
   "mail.search": { args: MailSearchArgs; result: MailSearchResult };
   "mail.read": { args: MailReadArgs; result: MailReadResult };
+
+  "notify.rule.list": { args: NotifyRuleListArgs; result: NotifyRuleListResult };
+  "notify.rule.set": { args: NotifyRuleSetArgs; result: NotifyRuleSetResult };
+  "notify.rule.reset": { args: NotifyRuleResetArgs; result: NotifyRuleResetResult };
+  "event.source.list": { args: EventSourceListArgs; result: EventSourceListResult };
+  "event.source.add": { args: EventSourceAddArgs; result: EventSourceSecretResult };
+  "event.source.update": { args: EventSourceUpdateArgs; result: EventSourceUpdateResult };
+  "event.source.rotate": { args: EventSourceRotateArgs; result: EventSourceSecretResult };
+  "event.source.remove": { args: EventSourceRemoveArgs; result: EventSourceRemoveResult };
+  "event.emit": { args: EventEmitArgs; result: EventEmitResult };
+  "event.list": { args: EventListArgs; result: EventListResult };
 
   "conversation.ship": { args: ConversationShipArgs; result: ConversationShipResult };
   "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };
@@ -503,15 +531,13 @@ export type SyscallDomains = {
   "sys.pair.list": { args: SysPairListArgs; result: SysPairListResult };
   "sys.pair.cancel": { args: SysPairCancelArgs; result: SysPairCancelResult };
   "sys.pair.redeem": { args: SysPairRedeemArgs; result: SysPairRedeemResult };
-  "sys.link": { args: SysLinkArgs; result: SysLinkResult };
-  "sys.unlink": { args: SysUnlinkArgs; result: SysUnlinkResult };
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
-  "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };
   "account.owner.link": { args: { id: string; secret: string }; result: { url: string; expiresAt: number } };
-  "account.recovery.redeem": { args: { id: string; secret: string; proof: string; password: string }; result: { username: "root" } };
+  "account.recovery.options": { args: Record<string, never>; result: { emailUrl?: string } };
+  "account.recovery.redeem": { args: { id: string; secret: string; proof: string; password: string; account?: "personal" | "administrator" }; result: { username: string } };
   "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
   "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
   "account.password.set": { args: { uid?: number; password: string }; result: { updated: true } };

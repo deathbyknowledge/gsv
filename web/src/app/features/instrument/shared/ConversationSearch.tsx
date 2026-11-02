@@ -104,7 +104,7 @@ export const ConversationSearch = memo(function ConversationSearch({ conversatio
   </dialog>;
 });
 
-function ConversationExcerpt({ conversationId, hit, date }: {
+export function ConversationExcerpt({ conversationId, hit, date }: {
   conversationId: string;
   hit: ConversationSearchHit;
   date: Intl.DateTimeFormat;
@@ -128,9 +128,13 @@ function ConversationExcerpt({ conversationId, hit, date }: {
   useLayoutEffect(() => {
     const element = body.current;
     if (!element || !history.data) return;
-    const selected = Array.from(element.querySelectorAll<HTMLElement>("[data-message-id]")).find((node) => node.dataset.messageId === hit.id);
-    if (selected) selected.scrollIntoView({ block: "center" });
-    else element.scrollTop = page?.beforeSequence !== undefined ? element.scrollHeight : 0;
+    // Messages measure and fold after this commit, which moves everything below them.
+    const frame = requestAnimationFrame(() => {
+      const selected = Array.from(element.querySelectorAll<HTMLElement>("[data-message-id]")).find((node) => node.dataset.messageId === hit.id);
+      if (selected) selected.scrollIntoView({ block: selected.offsetHeight > element.clientHeight ? "start" : "center" });
+      else element.scrollTop = page?.beforeSequence !== undefined ? element.scrollHeight : 0;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [history.data, hit.id, page]);
   const messages = history.data?.messages ?? [];
   return <>
@@ -140,7 +144,7 @@ function ConversationExcerpt({ conversationId, hit, date }: {
       {messages.map((message) => <article key={message.id} data-message-id={message.id} class={message.id === hit.id ? "is-match" : ""}>
         <div class="zen-search-byline"><span>{message.author.kind === "user" ? t("shell.search.you") : message.author.kind === "contact" ? message.author.displayName : "Ship"}</span>
           <time dateTime={new Date(message.createdAt).toISOString()}>{date.format(message.createdAt)}</time></div>
-        <ZenText text={message.text} markdown={message.author.kind !== "user"} progress={null} tick={0} />
+        <ZenText text={message.text} markdown={message.author.kind !== "user"} progress={null} tick={0} opened={message.id === hit.id} />
         {message.media?.map((media, index) => <ZenMedia key={index} media={media} processId={message.processId ?? ""} />)}
       </article>)}
     </div>

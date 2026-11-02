@@ -267,6 +267,7 @@ describe("Kernel personal controller connect lifecycle", () => {
         isAccountDisabled: vi.fn(() => false),
       },
       responsibilitySources: { isEnabled: vi.fn(() => true) },
+      noticeRules: { wantsNotice: vi.fn(() => false) },
       responsibilities: { create },
       reconcileResponsibilityWake: vi.fn(async () => undefined),
       defer: vi.fn((promise: Promise<unknown>) => {

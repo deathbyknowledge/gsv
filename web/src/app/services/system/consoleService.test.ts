@@ -3,13 +3,11 @@ import type { GSVClient } from "@humansandmachines/gsv/client";
 import {
   checkConsoleOpenAiCodexOAuth,
   connectConsoleAdapter,
-  consumeIdentityLinkCode,
   createConsoleAgent,
   loadConsoleIdentityLinks,
   loadConsoleAdapterAccounts,
   loadConsoleAdapters,
   pollConsoleOpenAiCodexOAuth,
-  removeIdentityLink,
   runConsoleProcessAction,
   saveConsoleConfig,
   saveConsoleConfigEntries,
@@ -230,51 +228,6 @@ describe("console agent service", () => {
       },
     ]);
     expect(call).toHaveBeenCalledWith("sys.link.list", {});
-  });
-
-  it("redeems identity link codes", async () => {
-    const call = vi.fn(async () => ({
-      linked: true,
-      link: {
-        adapter: "discord",
-        accountId: "main",
-        actorId: "external-user",
-        uid: 42,
-        createdAt: 100,
-      },
-    }));
-
-    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
-
-    await expect(consumeIdentityLinkCode({ call } as any, { code: " abc123 " })).resolves.toEqual({
-      linked: true,
-      link: {
-        adapter: "discord",
-        accountId: "main",
-        actorId: "external-user",
-        uid: 42,
-        createdAt: 100,
-        linkedByUid: null,
-      },
-    });
-    expect(call).toHaveBeenCalledWith("sys.link.consume", { code: "abc123" });
-  });
-
-  it("removes identity links", async () => {
-    const call = vi.fn(async () => ({ removed: true }));
-
-    // SAFETY: Test fixture data is constructed with the asserted shape for this focused case.
-
-    await expect(removeIdentityLink({ call } as any, {
-      adapter: " Discord ",
-      accountId: " main ",
-      actorId: " actor-1 ",
-    })).resolves.toEqual({ removed: true });
-    expect(call).toHaveBeenCalledWith("sys.unlink", {
-      adapter: "discord",
-      accountId: "main",
-      actorId: "actor-1",
-    });
   });
 
   it("falls back to known adapter status calls when discovery is unavailable", async () => {

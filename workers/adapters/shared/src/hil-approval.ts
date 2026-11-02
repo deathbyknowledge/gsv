@@ -77,6 +77,9 @@ type AdapterHilJsonRow = {
   record_json: string;
 };
 
+/** The request may have timed out, been interrupted or been answered elsewhere; only this tap's effect is known. */
+export const ADAPTER_HIL_ENDED_TEXT = "This request has ended, so your answer wasn't used. If it still needs doing, ask your Ship to try again.";
+
 const APPROVAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const APPROVAL_PROCESSING_LEASE_MS = 60_000;
 

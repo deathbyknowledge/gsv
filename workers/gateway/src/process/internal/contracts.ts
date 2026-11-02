@@ -1,5 +1,6 @@
 /** Internal Process contracts primitives. */
 
+import type { ExecutionDeadline } from "../../shared/execution-deadline";
 import type {
   AiConfigResult, ConversationMessage, JsonObject, ProcArchiveEntry, ProcContextState, ProcMediaInput, ProcToolResultOutcome,
 } from "@humansandmachines/gsv/protocol";
@@ -172,7 +173,7 @@ export type CodeModeResponseWaiter = {
   args: JsonObject;
   resolve: (frame: ResponseFrame) => void;
   reject: (error: Error) => void;
-  timeoutId: ReturnType<typeof setTimeout>;
+  deadline: ExecutionDeadline;
 };
 
 export type CodeModeApprovalWaiter = {

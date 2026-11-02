@@ -335,11 +335,7 @@ describe("gateway runtime integration", () => {
 
   it("selects Ship replies only on messages and falls back to the linked messenger after disconnect", async () => {
     const first = await setupClient();
-    const challenge = inboundResult(await sendServiceFrame(harness, inboundFrame({
-      id: "reply-link", deliveryId: "reply-link", messageId: "reply-link", text: "connect",
-    })));
-    if (!challenge.challenge) throw new Error("Missing link challenge");
-    await first.sys.link.consume({ code: challenge.challenge.code });
+    await linkTestActor(harness);
     const { conversation } = await first.conversation.ship({});
     if (!conversation.handlerPid) throw new Error("Missing Ship");
     const pid = conversation.handlerPid;
@@ -416,11 +412,7 @@ describe("gateway runtime integration", () => {
 
   it("preserves a scheduled process's explicit messenger destination when correcting a send", async () => {
     const client = await setupClient();
-    const challenge = inboundResult(await sendServiceFrame(harness, inboundFrame({
-      id: "reminder-link", deliveryId: "reminder-link", messageId: "reminder-link", text: "connect",
-    })));
-    if (!challenge.challenge) throw new Error("Missing link challenge");
-    await client.sys.link.consume({ code: challenge.challenge.code });
+    await linkTestActor(harness);
     expect(await client.adapter.connect({ adapter: "discord", accountId: ACCOUNT_ID })).toMatchObject({
       ok: true, connected: true, authenticated: true,
     });
@@ -490,44 +482,24 @@ describe("gateway runtime integration", () => {
 
   it("routes reciprocal adapter ingress, durable commands, and automatic replies", async () => {
     const client = await setupClient();
-    const beforeChallenge = await processHistoryCounts(client);
-    const challengeFrame = inboundFrame({
-      id: "challenge",
-      deliveryId: "challenge-delivery",
-      messageId: "challenge-message",
+    const beforeUnlinked = await processHistoryCounts(client);
+    const unlinkedFrame = inboundFrame({
+      id: "unlinked",
+      deliveryId: "unlinked-delivery",
+      messageId: "unlinked-message",
       text: "hello from an unlinked actor",
     });
-    const challengeResponse = await sendServiceFrame(harness, challengeFrame);
-    const challenge = inboundResult(challengeResponse);
-    expect(challenge).toMatchObject({
-      ok: true,
-      challenge: {
-        deliveryId: expect.stringMatching(/^adapter-ingress:[0-9a-f]{64}:challenge$/),
-        code: expect.stringMatching(/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/),
-        expiresAt: expect.any(Number),
-      },
-    });
-    if (!challenge.challenge) throw new Error("adapter ingress returned no link challenge");
-    expect(challenge.challenge.prompt).toContain(challenge.challenge.code);
-    expect(challenge.challenge.expiresAt).toBeGreaterThan(Date.now());
+    const unlinked = inboundResult(await sendServiceFrame(harness, unlinkedFrame));
+    expect(unlinked).toEqual({ ok: true, droppedReason: "pairing_required" });
 
-    const challengeReplay = inboundResult(await sendServiceFrame(harness, {
-      ...challengeFrame,
-      id: "challenge-replay",
+    const unlinkedReplay = inboundResult(await sendServiceFrame(harness, {
+      ...unlinkedFrame,
+      id: "unlinked-replay",
     }));
-    expect(challengeReplay).toEqual({ ...challenge, replayed: "completed" });
-    expect(await processHistoryCounts(client)).toEqual(beforeChallenge);
+    expect(unlinkedReplay).toEqual({ ...unlinked, replayed: "completed" });
+    expect(await processHistoryCounts(client)).toEqual(beforeUnlinked);
 
-    const consumed = await client.sys.link.consume({ code: challenge.challenge.code.toLowerCase() });
-    expect(consumed).toMatchObject({
-      linked: true,
-      link: {
-        adapter: "discord",
-        accountId: ACCOUNT_ID,
-        actorId: ACTOR_ID,
-        uid: 1000,
-      },
-    });
+    await linkTestActor(harness);
     expect((await client.sys.link.list()).links).toContainEqual(expect.objectContaining({
       adapter: "discord",
       accountId: ACCOUNT_ID,
@@ -1003,6 +975,17 @@ function inboundFrame(options: {
 }
 
 type ServiceFrameResponse = ReturnType<typeof wireFrameSchemas.response.parse>;
+
+/** Links the test actor as the owner, as messenger pairing would. */
+async function linkTestActor(harness: TestHarness): Promise<void> {
+  const storage = await harness.getWorker("gsv").getDurableObjectStorage("KERNEL", { name: INTEGRATION_INSTALLATION_ID });
+  await storage.exec(
+    `INSERT INTO identity_links (adapter, account_id, actor_id, uid, created_at, linked_by_uid, metadata_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    "discord", ACCOUNT_ID, ACTOR_ID, 1000, Date.now(), 1000,
+    JSON.stringify({ surfaceKind: SURFACE.kind, surfaceId: SURFACE.id }),
+  );
+}
 
 async function sendServiceFrame(
   harness: TestHarness,

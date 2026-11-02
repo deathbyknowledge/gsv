@@ -148,6 +148,8 @@ describe("ConnectionRuntime contact notifications", () => {
     ["r12y.changed", "r12y.list"],
     ["r12y.source.changed", "r12y.source.list"],
     ["sched.changed", "sched.list"],
+    ["notify.rule.changed", "notify.rule.list"],
+    ["event.source.changed", "event.source.list"],
     ["contact.invite.changed", "contact.invite.list"],
     ["contact.request.changed", "contact.request.list"],
   ])("gates %s on its owner, human session, signal and read capability", (signal, call) => {

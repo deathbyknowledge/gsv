@@ -38,7 +38,9 @@ import {
 } from "./public-assets";
 import { isWebSocketRequest } from "./shared/utils";
 import {
+  forgetInstallationRoute,
   getKernelByInstallationId,
+  InstallationRouteUnavailable,
   resolveInstallationRoute,
 } from "./installation/routing";
 import {
@@ -55,6 +57,7 @@ import { matchPublicProfilePath, servePublicProfileRequest } from "./public-prof
 import { limitShipCalls } from "./ship-call-limit";
 import type { GatewayEnv } from "./runtime-env";
 import { DEPLOYMENT_PRESENTATION_PATH, deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
+import { matchHookPath, receiveHook } from "./event-hooks";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -79,6 +82,7 @@ export default {
     // Ship-to-Ship calls reach only an existing Ship; they never provision one.
     const federationPath = isShipXrpcPath(url.pathname);
     const profilePath = matchPublicProfilePath(url.pathname);
+    const hookPath = matchHookPath(request);
     const browserAssetRequest = (
       request.method === "GET" || request.method === "HEAD"
     )
@@ -91,9 +95,22 @@ export default {
       && !federationPath
       && !profilePath;
 
-    const route = await resolveInstallationRoute(request, {
-      allowProvisioning: websocketRequest || browserAssetRequest,
-    });
+    // A public read may take a route Accounts gave in the last minute; a connection, git, a Ship's call or a sign-in callback asks again.
+    const publicRead = (request.method === "GET" || request.method === "HEAD")
+      && !websocketRequest
+      && !gitMatch
+      && !federationPath
+      && url.pathname !== "/oauth/callback";
+    let route;
+    try {
+      route = await resolveInstallationRoute(request, {
+        allowProvisioning: websocketRequest || browserAssetRequest,
+        cached: publicRead,
+      });
+    } catch (error) {
+      if (!(error instanceof InstallationRouteUnavailable)) throw error;
+      return new Response(error.message, { status: 503, headers: { "retry-after": "5", "cache-control": "no-store" } });
+    }
     if (!route) {
       return new Response("Not Found", { status: 404 });
     }
@@ -123,7 +140,7 @@ export default {
       return servePublicAssetRequest(request, fs, publicAssetMatch);
     }
     // A flood of calls to a Ship stops here, before it reaches the Kernel.
-    const shipCallsLimited = federationPath && await limitShipCalls(request, env.SHIP_CALLS, route.identity.installationId);
+    const shipCallsLimited = (federationPath || hookPath) && await limitShipCalls(request, env.SHIP_CALLS, route.identity.installationId);
     if (shipCallsLimited) return shipCallsLimited;
     const kernelDO = await getKernelByInstallationId(
       env.KERNEL,
@@ -134,9 +151,13 @@ export default {
       // look into this method
       await kernelDO.ensureInstallationIdentity(route.identity);
     } catch {
+      // A retired or replaced Kernel refuses here; the next request asks Accounts for the hostname again.
+      forgetInstallationRoute(request);
       console.error("[Gateway] Kernel installation identity check failed");
       return new Response("Installation unavailable", { status: 503 });
     }
+
+    if (hookPath) return receiveHook(request, hookPath, kernelDO);
 
     if (profilePath) {
       const { primaryDomain } = deploymentPresentation(env.GSV_PUBLIC_CONFIG);

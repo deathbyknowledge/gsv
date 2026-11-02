@@ -122,3 +122,33 @@ describe("suspending a Ship on the open network", () => {
   });
 });
 
+describe("retiring a Ship on the open network", () => {
+  it("has the PDS follow once a reset retires the Ship, and only once when the reset is repeated", async () => {
+    const { pds, followed } = moderationPds();
+    const ships = stack(pds);
+    const installationId = await activeShip(ships, "resetting");
+    const input = { operationId: `operation_${crypto.randomUUID()}`, confirmHandle: "resetting" };
+
+    const reset = await ships.service.resetInstallation(installationId, input);
+    expect(reset.reset?.previousInstallationId).toBe(installationId);
+    expect(followed).toEqual([{ installationId, state: "retained" }]);
+    await ships.service.resetInstallation(installationId, input);
+    expect(followed).toEqual([{ installationId, state: "retained" }]);
+  });
+
+  it("keeps a reset the PDS can't follow, answers as done, and the cron tells the PDS", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { pds, followed } = moderationPds();
+    const ships = stack(pds);
+    const installationId = await activeShip(ships, "resetfollow");
+    const input = { operationId: `operation_${crypto.randomUUID()}`, confirmHandle: "resetfollow", reason: "owner asked" };
+    pds.reconcileAccountStatus.mockRejectedValueOnce(new Error("PDS unavailable"));
+
+    const reset = await ships.http.handle(api(`/admin/api/installations/${installationId}/reset`, input));
+    expect(reset?.status).toBe(201);
+    expect((await ships.service.getInstallation(installationId))?.state).toBe("retained");
+    expect(followed).toEqual([]);
+    await cron(pds);
+    expect(followed.filter((entry) => entry.installationId === installationId)).toEqual([{ installationId, state: "retained" }]);
+  });
+});

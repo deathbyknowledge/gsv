@@ -25,6 +25,7 @@ uuid = { version = "1", features = ["v4"] }
 url = "2"
 hostname = "0.4.2"
 chrono = "0.4"
+jiff = "0.2"
 dirs = "5"
 toml = "0.8"
 qrcode = "0.14"

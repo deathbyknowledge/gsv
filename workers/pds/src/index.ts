@@ -1,4 +1,3 @@
-import { admitRepository } from "./gsv/admission";
 import type { PdsEnv } from "./gsv/env";
 import { republishLexicons } from "./gsv/lexicons";
 import { handleOperator, OPERATOR_PATH } from "./gsv/operator";
@@ -14,7 +13,7 @@ export { HostedRepo } from "./host/repo";
 export default {
   fetch: (request, env) => new URL(request.url).pathname === OPERATOR_PATH
     ? handleOperator(request, env)
-    : handleXrpc(request, env, (name) => admitRepository(env.INSTALLATION_DIRECTORY, name)),
+    : handleXrpc(request, env),
   // A deploy's lexicons take over once the operator has published.
   // Relays hear of the host's new events. Each job runs whatever the other does, and a failure fails the run.
   scheduled: async (_controller, env) => {

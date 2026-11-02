@@ -6,10 +6,12 @@ import type { InstallationDeletionReceipt, InstallationDeletionRequest, Installa
 import { RequestReports } from "./request-reports";
 import { AccountStore } from "./store";
 import { InstallationResetCoordinator } from "./reset-preparation";
+import { InstallationStateNotices } from "./state-notices";
 import { AccountsDeletionRuntime } from "./deletion-runtime";
 import { InstallationDeletionHttp } from "./deletion-http";
 import type { InstallationDeletionManifest, InstallationDeletionInventoryResolver } from "./deletion-inventory";
 import type { InstallationDeletionDiscoveryService, InstallationDeletionInventoryImport } from "@humansandmachines/gsv/services/lifecycle-discovery";
+import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 
 class ExternalOwner implements InstallationDeletionService {
   fail = false;
@@ -236,6 +238,36 @@ describe("Accounts deletion runtime", () => {
     expect((await post({ operationId: state.operationId, confirmHandle: state.old.handle, reason: "owner asked" }))?.status).toBe(200);
     expect(audited).toEqual([{ name: "ship.deletion.retire", installationId: state.old.installationId, reason: "owner asked" }]);
     expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "retained" });
+  });
+
+  it("tells the PDS once a Ship is retired, and the cron tells it when it can't be told at once", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const state = await fixture();
+    const followed: Array<{ installationId: string; state: string | null }> = [];
+    const pds = {
+      getRepository: vi.fn(async () => null),
+      updateSubjectStatus: vi.fn(async () => { throw new Error("No takedown is expected"); }),
+      getSubjectStatus: vi.fn(async () => null),
+      locateRepository: vi.fn(async () => null),
+      reconcileAccountStatus: vi.fn(async (installationId: string) => {
+        followed.push({ installationId, state: (await state.db.prepare("SELECT state FROM installations WHERE id = ?")
+          .bind(installationId).first<{ state: string }>())?.state ?? null });
+      }),
+    } satisfies PdsModerationService;
+    const notices = new InstallationStateNotices(state.db, { pds });
+    const runtime = new AccountsDeletionRuntime(state.db, state.owners, state.resolver, 20, Date.now, {}, undefined, notices);
+    const input = { operationId: state.operationId, confirmHandle: state.old.handle };
+    const ours = () => followed.filter((entry) => entry.installationId === state.old.installationId);
+
+    pds.reconcileAccountStatus.mockRejectedValueOnce(new Error("PDS unavailable"));
+    await runtime.retire(state.old.installationId, input);
+    expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "retained" });
+    expect(ours()).toEqual([]);
+    await notices.resumePending();
+    expect(ours()).toEqual([{ installationId: state.old.installationId, state: "retained" }]);
+    await runtime.retire(state.old.installationId, input);
+    await notices.resumePending();
+    expect(ours()).toEqual([{ installationId: state.old.installationId, state: "retained" }]);
   });
 
   it("erases the reports a deleted Ship's person filed, a hundred at a time, and keeps another Ship's", async () => {

@@ -103,6 +103,39 @@ describe("renderAdapterSend", () => {
     expect(hostile.action.endsWith("…")).toBe(true);
   });
 
+  it("shows a crontab's jobs whatever the model wrote about them", () => {
+    const request = {
+      pid: "proc-1",
+      requestId: "request-cron",
+      runId: "run-1",
+      callId: "call-cron",
+      toolName: "sched.add",
+      syscall: "sched.add",
+      target: "gsv",
+      args: { path: "/var/spool/cron/sam", jobs: "0 9 * * * proc list\n30 18 * * 1-5 cat notes.txt" },
+      purpose: "tidy up the morning routine",
+      createdAt: 1,
+    } as const;
+    const context = {
+      deliveryId: "run-1:hil:request-cron",
+      accountId: "account-1",
+      actorId: "actor-1",
+      surface: { kind: "dm" as const, id: "surface-1" },
+      processId: "proc-1",
+      runId: "run-1",
+      processMode: "ship" as const,
+      hil: request,
+    };
+    const shown = '"/var/spool/cron/sam" "0 9 * * * proc list 30 18 * * 1-5 cat notes.txt"';
+
+    expect(createAdapterHilPresentation(context, request).action)
+      .toBe(`Tidy up the morning routine.\n${shown}`);
+    expect(createAdapterHilPresentation(context, { ...request, purpose: undefined }).action)
+      .toBe(`Schedule work to run later.\n${shown}`);
+    expect(createAdapterHilPresentation(context, { ...request, args: { name: "digest" } }).action)
+      .toBe("Tidy up the morning routine.");
+  });
+
   it("summarizes email approvals without exposing message bodies", () => {
     const sendRequest = {
       pid: "proc-1",

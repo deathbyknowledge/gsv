@@ -42,6 +42,7 @@ import {
   type LedgerLine,
   type Place,
   shortPid,
+  sourceRow,
   fleetReferenceRow,
   isApprovalReference,
   isConnectReference,
@@ -52,7 +53,10 @@ import { CloudBrowserActions, StartCloudBrowser } from "../browser/CloudInstance
 import { useBrowserControl, useCloudInstances } from "../browser/BrowserControl";
 import { FleetApproval } from "./FleetApproval";
 import { NewProcess, ProcessAiControls } from "./ProcessControls";
+import { NewSource, SourceInspector, SourcesSection } from "./FleetSources";
+import { useEventSources } from "../shared/useEventSources";
 import { canConfigure } from "../settings/settingsModel";
+import { navigateApp } from "../../../services/navigation/appNavigation";
 import { useT } from "../../../i18n/locale";
 import "./fleet.css";
 
@@ -80,7 +84,7 @@ function useNow(active: boolean): number {
 }
 
 /** The Fleet distance: places, processes, the ledger, and files, with an inspector for the selected row. */
-const ROW_PREFIXES = ["target:", "proc:", "more:", "dir:", "file:"];
+const ROW_PREFIXES = ["target:", "proc:", "more:", "dir:", "file:", "source:"];
 function isFleetRow(value: string | undefined): value is FleetRow {
   return value !== undefined && ROW_PREFIXES.some((prefix) => value.startsWith(prefix));
 }
@@ -119,6 +123,10 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   });
   const viewer = accountsQuery.data?.find((account) => account.relation === "self");
   const work = useResponsibilities(viewer, { routines: false });
+  // Sources belong to a person, so root administration has none.
+  const hasSources = !!viewer && viewer.uid >= 1000 && canConfigure(viewer, "event.source.list");
+  const canChangeSources = connected && !!viewer && canConfigure(viewer, "event.source.update");
+  const events = useEventSources(hasSources);
 
   // The cloud home's name is interface text, so the list follows the language.
   const places = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data, t]);
@@ -139,6 +147,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const [selected, setSelected] = useState<FleetRow | null>(initialRow);
   const [inspectorOpen, setInspectorOpen] = useState(Boolean(initialRow || initialConnect));
   const [creatingProcess, setCreatingProcess] = useState(false);
+  const [creatingSource, setCreatingSource] = useState(false);
   const [connecting, setConnecting] = useState<"place" | null>(initialConnect);
   useLayoutEffect(() => {
     setSelected(initialRow);
@@ -146,6 +155,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
     setOpenFile(null);
     setExpandedFile(null);
     setCreatingProcess(false);
+    setCreatingSource(false);
     setConnecting(initialConnect);
     setInspectorOpen(Boolean(initialRow || initialConnect));
     if (initialRow) focusedRow.current = initialRow;
@@ -169,6 +179,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const missingRequestedRow = selected !== null && selected === initialRow && (
     (selected.startsWith("proc:") && !selectedProcess) || (selected.startsWith("target:") && !selectedPlace)
   );
+  const selectedSource = selected?.startsWith("source:") ? events.sources.find((source) => sourceRow(source.name) === selected) ?? null : null;
   const requestedProcess = selected?.startsWith("proc:") ?? false;
   const requestedQuery = selected?.startsWith("proc:") ? processesQuery : targetsQuery;
 
@@ -186,6 +197,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
     setFilesPlace(null);
     setOpenFile(null);
     setCreatingProcess(false);
+    setCreatingSource(false);
     setConnecting(null);
     setInspectorOpen(true);
   }, []);
@@ -193,6 +205,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
     setSelected(`file:${file.target}:${file.path}`);
     setOpenFile(file);
     setCreatingProcess(false);
+    setCreatingSource(false);
     setConnecting(null);
     setInspectorOpen(true);
   }, []);
@@ -255,6 +268,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
     setSelected(null);
     setOpenFile(null);
     setCreatingProcess(false);
+    setCreatingSource(false);
     setConnecting(to);
     setFilesPlace(null);
     setInspectorOpen(true);
@@ -271,6 +285,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const modelFor = (pid: string) => modelByPid.get(pid) ?? null;
   const closeInspector = () => {
     setInspectorOpen(false);
+    events.clearRevealed();
     requestAnimationFrame(() => {
       const manifest = manifestRef.current;
       if (!manifest || manifest.closest("[hidden]") || manifest.contains(document.activeElement)) return;
@@ -280,6 +295,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
     });
   };
   const inspectorTitle = connecting === "place" ? t("fleet.connect.title")
+    : creatingSource ? t("fleet.sources.newTitle") : selected?.startsWith("source:") ? t("fleet.sources.inspector")
     : creatingProcess ? t("fleet.newProcess.title") : openFile ? t("fleet.inspector.file") : filesPlace ? t("fleet.inspector.files", { place: filesPlace.label })
       : selected?.startsWith("proc:") ? t("fleet.field.process") : t("fleet.field.place");
 
@@ -409,11 +425,28 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
             </div>
           </section>
 
+          {hasSources && <SourcesSection events={events} canChange={canChangeSources} now={now} onSelect={selectRow} onCreate={() => {
+            setSelected(null);
+            setOpenFile(null);
+            setFilesPlace(null);
+            setCreatingProcess(false);
+            setConnecting(null);
+            setCreatingSource(true);
+            setInspectorOpen(true);
+          }} />}
+
         </div>
 
         <FleetDialog open={active && inspectorOpen && !expandedFile} title={inspectorTitle} onClose={closeInspector}>
           {connecting === "place" ? (
             <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError} onClose={closeInspector} onConnected={(id) => selectConnected(targetRow(id))} />
+          ) : creatingSource ? (
+            <NewSource events={events} disabled={!canChangeSources} onAdded={(name) => selectRow(sourceRow(name))} />
+          ) : selected?.startsWith("source:") ? (
+            selectedSource ? (
+              <SourceInspector key={selectedSource.sourceId} source={selectedSource} events={events} canChange={canChangeSources} canRead={!!viewer && canConfigure(viewer, "event.list")} now={now}
+                onChoices={() => navigateApp("/chat/settings?section=standing")} onRemoved={closeInspector} />
+            ) : events.loading ? <LoadingState>{t("common.loading")}</LoadingState> : <p class="note" role="status">{t("fleet.sources.gone")}</p>
           ) : creatingProcess ? (
             <NewProcess onCreated={(pid) => onZen(undefined, pid)} onCancel={() => { setCreatingProcess(false); closeInspector(); }} />
           ) : filesPlace || openFile ? (
@@ -607,8 +640,8 @@ export function ProcessInspector({ client, process, requestedApprovalId, model, 
           <div class="kicker">{t("fleet.process.recently")}</div>
           {lines.map((line) => (
             <div class="line" key={line.id}>
-              <span class="t">{relativeTime(line.timestamp, now)}</span> <span class="place">{placeLabelFor(line.place)}</span> {t(line.action.key, line.action.values)}
-              <span class="m"> · {line.detail}</span>
+              <span class="t">{relativeTime(line.timestamp, now)}</span> <span class="place">{placeLabelFor(line.place)}</span> {line.purpose ?? t(line.action.key, line.action.values)}
+              {line.detail && <span class="m"> · {line.detail}</span>}
             </div>
           ))}
         </div>

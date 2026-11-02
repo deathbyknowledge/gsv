@@ -528,6 +528,124 @@ only.
 than 100,000 characters comes back cut short, with `truncated` set; the whole
 message stays readable at `textPath`.
 
+## Custom events: `event.source.*`, `event.emit`, `event.list`
+
+A source is somewhere an owner's events come from. Each event takes one path, whichever
+way it arrived: the shell's `event emit`, `gsv event`, a routine, or a delivery to the
+source's public address. The Kernel records who sent it from the caller, never from
+the event.
+
+```ts
+type EventInput = { id?: string; title: string; preview?: string; body?: string };
+type EventSourceWebhook = "none" | "url" | "standard" | "hmac";
+type WebhookHmac = {
+  header: string; encoding: "hex" | "base64"; prefix?: string;
+  pairs?: { timestamp: string; signature: string };
+  idHeader?: string; typeHeader?: string;
+};
+
+interface EventSyscalls {
+  "event.source.list": { args: {}; result: { sources: EventSource[] } };
+  "event.source.add": {
+    args: { name: string; label?: string; notify?: NoticeDelivery; ship?: ShipOutcome;
+      webhook?: EventSourceWebhook; hmac?: WebhookHmac; senderSecret?: boolean; secret?: string;
+      expectEveryMs?: number };
+    result: { source: EventSource; secret?: string; webhookUrl?: string };
+  };
+  "event.source.update": {
+    args: { name: string; label?: string; notify?: NoticeDelivery; ship?: ShipOutcome;
+      enabled?: boolean; expectEveryMs?: number | null };
+    result: { source: EventSource };
+  };
+  "event.source.rotate": { args: { name: string; secret?: string }; result: { source: EventSource; secret?: string; webhookUrl?: string } };
+  "event.source.remove": { args: { name: string }; result: { removed: boolean } };
+  "event.emit": { args: { source: string; events: EventInput[] }; result: { accepted: number; duplicates: number } };
+  "event.list": { args: { source?: string; limit?: number }; result: { events: EventRecord[] } };
+}
+```
+
+Only a signed-in person or their Ship manages sources, under the `event.*` capability;
+any of the owner's processes and routines may emit. A new source tells its owner and leaves
+Ship out, and it has no public address unless `webhook` asks for one. Ship setting a source to
+`wake` needs approval (`event.source.update`), and Ship turning off telling or starting
+to act tells its owner.
+
+While the owner is active in a client, or has no messenger, an event appears as a card in their
+conversation rather than on the messenger, and stays out of model context unless the source's `ship` says otherwise. A source going quiet still goes to the messenger.
+
+An `id` already seen for a source is a duplicate and does nothing, for 180 days, and doesn't count against the source's rate limit. Bodies are
+kept for 30 days. Each source accepts 60 events a minute with bursts of 120, and each
+owner 600 a minute. With `expectEveryMs`, the owner is told once when that long passes
+without an event.
+
+An event's words are untrusted wherever they end up. An event from a running process
+never wakes Ship.
+
+A source with a webhook takes a `POST` at `/hooks/<sourceId>`, with a body of up to 256 KiB.
+A webhook names how a delivery proves its sender, never who the sender is. `standard` checks
+the [Standard Webhooks](https://www.standardwebhooks.com/) signature. `hmac` checks an
+HMAC-SHA256 with the source's secret, in `hmac.header`, encoded as `hmac.encoding` after an
+optional `hmac.prefix`. It covers the body, or, with `hmac.pairs`, the header holds
+comma-separated `KEY=VALUE` pairs with a Unix timestamp under `pairs.timestamp`, within five
+minutes, and signatures under `pairs.signature`, each covering `TIMESTAMP.BODY`. One scheme
+covers many senders: GitHub, Shopify and Linear sign the body; Stripe uses the pairs. Clients
+offer such senders as presets that fill in `hmac`.
+
+An event's id comes from `hmac.idHeader`, Standard Webhooks' `webhook-id`, or the body's `id`.
+Its title is `hmac.typeHeader` with the body's `action`, or else the body's `title`, `subject`,
+`type` or `event`.
+
+A rotated secret keeps working for 24 hours. With `senderSecret`, the sender issues the secret:
+`secret` gives it when adding, or `event.source.rotate`'s `secret` gives it later, and until
+then the source shows `awaitingSecret` and refuses every delivery. A sender-issued secret is
+never returned. `url` is for senders that can't sign: the address `/hooks/<sourceId>/<token>`
+is the only proof, only its hash is stored, and such a source can't be set to `wake`.
+Request logs on the way may record that address, so treat it as a low-trust channel. A secret
+or secret address is returned once.
+
+## Notification settings: `notify.rule.list`, `notify.rule.set`, `notify.rule.reset`
+
+Each person decides, for each kind of thing that happens, whether their messenger
+hears about it and what their Ship does. The signed-in person or their Ship may
+call these, under the `notify.rule.*` capability; any other process is refused.
+
+```ts
+type NoticeKind =
+  | "contact.request" | "contact.message" | "contact.invite.accepted"
+  | "mail.received" | "machine.added" | "adapter.connected" | "adapter.auth_required";
+type NoticeDelivery = "none" | "messenger";
+type ShipOutcome = "none" | "context" | "wake"; // context records it without starting a run
+type NoticeRule = {
+  kind: NoticeKind;
+  notify: NoticeDelivery;
+  ship: ShipOutcome;
+  defaultNotify: NoticeDelivery;
+  defaultShip: ShipOutcome;
+  shipChoices: ShipOutcome[]; // contact kinds never allow wake
+  changedBy?: "person" | "ship"; // absent while the kind is at its default
+  updatedAtMs?: number;
+};
+
+type NotifySyscalls = {
+  "notify.rule.list": { args: {}; result: { rules: NoticeRule[] } };
+  "notify.rule.set": { args: { kind: NoticeKind; notify?: NoticeDelivery; ship?: ShipOutcome }; result: { rule: NoticeRule } };
+  "notify.rule.reset": { args: { kind: NoticeKind }; result: { rule: NoticeRule } };
+};
+```
+
+`notify.rule.list` returns every kind, including those still at their default.
+Contact kinds default to `messenger` and `context`; the others default to `none`
+and `wake`. `notify.rule.set` changes only what it names and refuses an outcome the
+kind's `shipChoices` doesn't include. A notice change applies when a notice is about
+to be sent, so turning a kind off also holds back notices already waiting.
+`notify.rule.reset` returns a kind to its default.
+
+`wake` for the four non-contact kinds is the same setting as their configurable
+responsibility source, so `r12y source enable|disable` and these rules can't disagree.
+When Ship itself turns off `notify` or sets `wake`, the owner's messenger is told,
+whatever their rules say and even while a client is active. An owner with no
+messenger sees the change marked on that rule in Settings.
+
 ## Web search: `web.search`
 
 Indexed web search uses the targetable `web.search` syscall, exposed as the
@@ -1985,10 +2103,7 @@ Runtime behavior:
 | `sys.pair.list` | `handleSysPairList` | Lists the caller's recent invitations and their pending, paired, cancelled or expired state, without secrets. An invitation is paired only while the machine credential it issued is live; forgetting the machine makes it cancelled. |
 | `sys.pair.cancel` | `handleSysPairCancel` | Cancels an unused caller-owned invitation; an already-paired device and its credential remain intact. |
 | `sys.pair.redeem` | `handleSysPairRedeem` | Pre-connect enrollment. Consumes one invitation and atomically registers the receiving client's persisted random machine credential for the invitation's account and target. The same credential may recover an acknowledgement; another cannot reuse the invitation. |
-| `sys.link` | `handleSysLink` | User-role only. Links an adapter/account/actor to a uid. Adapter is lowercased; root may link to any uid, non-root only self. |
-| `sys.unlink` | `handleSysUnlink` | User-role only. Removes an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. |
 | `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
-| `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
 
 `sys.connect`, `sys.setup`, `sys.setup.assist`, and `sys.pair.redeem` are special-cased before normal auth/capability dispatch. Pairing redemption requires a valid human-issued invitation and retains the managed installation work gate. Other `sys.*` calls require a connected identity and are denied in setup mode.
 
@@ -2176,24 +2291,9 @@ type SystemSyscalls = {
     result: { revoked: boolean };
   };
 
-  "sys.link": {
-    args: { adapter: string; accountId: string; actorId: string; uid?: number };
-    result: { linked: boolean; link?: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number } };
-  };
-
-  "sys.unlink": {
-    args: { adapter: string; accountId: string; actorId: string };
-    result: { removed: boolean };
-  };
-
   "sys.link.list": {
     args: { uid?: number };
     result: { links: Array<{ adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number }> };
-  };
-
-  "sys.link.consume": {
-    args: { code: string };
-    result: { linked: boolean; link?: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number } };
   };
 
   "account.create": {
@@ -2209,9 +2309,10 @@ type SystemSyscalls = {
     args: { id: string; secret: string };
     result: { url: string; expiresAt: number };
   };
+  "account.recovery.options": { args: Record<string, never>; result: { emailUrl?: string } };
   "account.recovery.redeem": {
-    args: { id: string; secret: string; proof: string; password: string };
-    result: { username: "root" };
+    args: { id: string; secret: string; proof: string; password: string; account?: "personal" | "administrator" };
+    result: { username: string };
   };
   "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
   "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
@@ -2234,12 +2335,20 @@ Existing account UIDs, homes and credentials are preserved.
 immutable installation identity to Accounts. The browser then verifies the
 external owner through the configured identity provider. `account.recovery.redeem`
 is available before connection authentication, behind the ordinary installation
-work gate. Accounts authorizes only a short-lived root-reset claim through its
-deployment-granted recovery binding; redemption atomically consumes the claim,
-updates root's password, and revokes earlier root credentials and sessions.
-The receiving browser persists its random proof before redemption. Identical
-retries recover the receipt without rewriting the password; another proof or
-password cannot reuse a consumed claim. Secrets are excluded from the ledger.
+work gate. Accounts authorizes only a short-lived claim for the verified owner
+through its deployment-granted recovery binding; redemption atomically consumes
+the claim, updates the password of the chosen `account`, and revokes that account's
+earlier credentials and sessions. `account` is `personal` or `administrator`;
+omitting it means `administrator`. A personal account that is locked, disabled or
+absent answers with `details.recovery: "personal-unavailable"` and leaves the claim
+usable. The receiving browser persists its random proof before redemption.
+Identical retries recover the receipt without rewriting the password; another
+proof, password or account cannot reuse a consumed claim. Secrets are excluded from
+the ledger.
+
+`account.recovery.options` is available before connection authentication and
+returns the operator's owner recovery page for this Ship, when one is configured.
+The link is navigation only and says nothing about who owns the Ship.
 
 Member recovery is available before authentication through `account.recovery.code.start`
 and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte proof
@@ -2421,8 +2530,8 @@ Runtime behavior:
 | `adapter.pair.info` | `handleAdapterPairInfo` | Signed-in human or authorized owned process. Returns adapter-owned public setup information: official bot username, install link, optional instructions for obtaining a code, and the calling codes the provider keeps the account from messaging. |
 | `adapter.pair.inspect` | `handleAdapterPairInspect` | Signed-in human or authorized owned process. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
 | `adapter.pair.confirm` | `handleAdapterPairConfirm` | Signed-in human or authorized owned process. The Kernel derives the active human owner from the authenticated session or process registry and honors process tool policy. Binds the external identity to that owner and the current installation, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. The caller cannot choose the destination uid or installation. |
-| `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. Generic `sys.unlink` refuses managed links so the two sides cannot be orphaned. |
-| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
+| `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. |
+| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, drops an unlinked DM as `pairing_required` so the adapter answers with its own pairing reply, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
 | `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, an optional `action` to open (a label of at most 20 characters and an http or https URL, shown as a link button where the messenger supports one and as a line of text otherwise), media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. Failed and ambiguous results may include bounded, redacted `diagnostics` (exception name/message/stack/cause, provider status, error code/subcode and request ID). |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
@@ -2481,7 +2590,7 @@ type AdapterSyscalls = {
   };
 
   "adapter.inbound": {
-    args: { adapter: string; accountId: string; deliveryId: string; message: { messageId: string; surface: AdapterSurface; actor?: { id: string; name?: string; handle?: string }; text: string; media?: AdapterMedia[]; replyToId?: string; replyToText?: string; timestamp?: number; wasMentioned?: boolean } };
+    args: { adapter: string; accountId: string; deliveryId: string; message: { messageId: string; surface: AdapterSurface; actor?: { id: string; name?: string; handle?: string }; text: string; media?: AdapterMedia[]; replyToId?: string; timestamp?: number; wasMentioned?: boolean } };
     result: { ok: boolean; delivered?: { uid: number; pid: string; runId: string; queued: boolean }; reply?: { deliveryId: string; text: string; replyToId?: string }; challenge?: { deliveryId: string; code: string; prompt: string; expiresAt: number }; replayed?: "in_progress" | "completed"; droppedReason?: string; error?: string };
   };
 
@@ -2493,7 +2602,7 @@ type AdapterSyscalls = {
   "adapter.send": {
     args: { adapter: string; accountId: string; deliveryId?: string; surface: AdapterSurface; text: string; action?: { kind: "open"; label: string; url: string }; replyToId?: string; media?: AdapterMedia[]; also?: boolean };
     result:
-      | { ok: true; adapter: string; accountId: string; surfaceId: string; deliveryId: string; messageId?: string; deliveryState?: "sent" | "deduplicated" | "ambiguous" }
+      | { ok: true; adapter: string; accountId: string; surfaceId: string; deliveryId: string; messageId?: string; messageIds?: string[]; deliveryState?: "sent" | "deduplicated" | "ambiguous" }
       | { ok: false; error: string; deliveryId?: string; retryable?: boolean };
   };
 
@@ -2527,8 +2636,12 @@ action and direct the user to Chat. Opaque request identities are never rendered
 or parsed from free-form adapter messages. A native callback invokes ordinary
 `proc.hil` with the exact `requestId` through a Kernel-derived linked-human peer;
 actor, surface, route generation, provider-message correlation, human capability,
-and pending state are all rechecked. `replyToId` remains provider threading
-metadata and is not authorization.
+and pending state are all rechecked. `replyToId` is the provider id of a message
+the person quoted. It is not authorization: the Kernel resolves it only within the
+same owner, adapter account and surface, as described in
+[quoted replies](/architecture/adapter-model#quoted-replies). An adapter sets it only
+for a real quote. `messageId` is the first provider message of a delivery; a delivery
+split into several provider messages also reports all of them in `messageIds`.
 
 Routed adapter notifications and final replies are retained as Kernel-scheduled
 work under the stable delivery id. The exact adapter receives one correlated
@@ -2650,6 +2763,12 @@ shell commands. Cron files
 are desired state: installing or rewriting a crontab removes and recreates the
 linked `sched.*` records, so crontab-backed schedule ids are operational ids,
 not stable cron identifiers.
+Installing one takes `sched.add`, `sched.remove` and, when it has jobs,
+`shell.exec`, whichever way the file arrives; removing one takes `sched.remove`.
+An agent's install goes through the `sched.add` approval rule as one request for
+the whole file, and a refusal leaves the previous crontab in place. A shell `>`
+empties the file when it opens it, before the new contents arrive; `crontab FILE`
+replaces the file in one step.
 Cron commands have no process-backed caller, so `proc delegate` is not valid in
 a crontab. Use `sched.list` for status, last result, source, and control.
 
@@ -2680,6 +2799,14 @@ type ScheduleExpression =
   | { kind: "after"; afterMs: number }
   | { kind: "every"; everyMs: number; anchorMs?: number }
   | { kind: "cron"; expr: string; timezone: string };
+
+// sched.add and sched.update also accept a local one-shot. The Kernel resolves it
+// to { kind: "at"; atMs } with the offset in force on that date, using the owner's
+// timezone unless one is given. A time skipped by a clock change resolves to the
+// first valid minute after the gap; a time that happens twice, to its first occurrence.
+type ScheduleExpressionInput =
+  | ScheduleExpression
+  | { kind: "at"; localTime: string; timezone?: string }; // 2026-10-26T10:00[:00]
 
 type ScheduleTarget =
   | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
@@ -2717,12 +2844,12 @@ type SchedulerSyscalls = {
   };
 
   "sched.add": {
-    args: { name: string; description?: string; enabled?: boolean; expression: ScheduleExpression; target: ScheduleTarget };
+    args: { name: string; description?: string; enabled?: boolean; expression: ScheduleExpressionInput; target: ScheduleTarget };
     result: { schedule: ScheduleRecord };
   };
 
   "sched.update": {
-    args: { id: string; patch: { name?: string; description?: string | null; enabled?: boolean; expression?: ScheduleExpression; target?: ScheduleTarget } };
+    args: { id: string; patch: { name?: string; description?: string | null; enabled?: boolean; expression?: ScheduleExpressionInput; target?: ScheduleTarget } };
     result: { schedule: ScheduleRecord };
   };
 

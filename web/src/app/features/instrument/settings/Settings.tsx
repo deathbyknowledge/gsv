@@ -8,7 +8,7 @@ import { useNativeInput } from "../../../services/platform/PlatformProvider";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { loadConsoleAccounts } from "../../../services/system/consoleService";
 import { SettingsError } from "./settingsShared";
-import { StandingResponsibilities } from "./StandingResponsibilities";
+import { WhenThingsHappen } from "./WhenThingsHappen";
 import { Preferences } from "./Preferences";
 import { Permissions } from "./Permissions";
 import { Instructions } from "./Instructions";
@@ -19,11 +19,13 @@ import { Logs } from "./Logs";
 import { DesktopVoiceSettings } from "./DesktopVoiceSettings";
 import { rich, useT, type TextKey } from "../../../i18n/locale";
 import "./settings.css";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 export type SettingsProps = {
   onDirtyChange?: (dirty: boolean) => void;
   onSignOut?: () => void;
   onInspectProcess: (pid: string) => void;
+  onOpenSource: (name?: string) => void;
 };
 
 const SECTIONS = ["preferences", "voice", "standing", "permissions", "instructions", "messengers", "mcp", "logs", "account", "sign-in"] as const;
@@ -32,7 +34,7 @@ const SECTION_LABELS = {
   preferences: "settings.section.preferences",
   account: "settings.account.title",
   voice: "settings.section.voice",
-  standing: "settings.section.standing",
+  standing: "settings.happenings.title",
   permissions: "settings.section.permissions",
   instructions: "settings.section.instructions",
   messengers: "settings.section.messengers",
@@ -41,7 +43,7 @@ const SECTION_LABELS = {
   "sign-in": "settings.section.signIn",
 } satisfies Record<Section, TextKey>;
 
-export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: SettingsProps) {
+export function Settings({ onDirtyChange, onSignOut, onInspectProcess, onOpenSource }: SettingsProps) {
   const t = useT();
   const active = useViewActive();
   const desktop = useNativeInput() !== null;
@@ -86,19 +88,19 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
         </>}
         {account && <div key={account.uid}>
           <div hidden={section !== "preferences"}><Preferences account={account} active={active && section === "preferences"} onDirty={preferencesDirty} /></div>
-          <RetainedView active={active && section === "standing"}><StandingResponsibilities account={account} /></RetainedView>
+          <RetainedView active={active && section === "standing"}><WhenThingsHappen account={account} onOpenSource={onOpenSource} /></RetainedView>
           <div hidden={section !== "permissions"}><Permissions account={account} active={active && section === "permissions"} onDirty={permissionsDirty} /></div>
           <div hidden={section !== "instructions"}><Instructions account={account} active={active && section === "instructions"} onDirty={instructionsDirty} /></div>
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={active && section === "messengers"} /></div>
           <div hidden={section !== "mcp"}><Mcp account={account} active={active && section === "mcp"} onDirty={mcpDirty} /></div>
           <RetainedView active={active && section === "logs"}><Logs account={account} onProcess={onInspectProcess} /></RetainedView>
           <section hidden={section !== "account"} aria-labelledby="settings-account-title">
-            <h1 id="settings-account-title">{t("settings.account.title")}</h1>
+            <PageHeading id="settings-account-title" title={t("settings.account.title")} description={t("settings.account.intro")} />
             <h2>{t("settings.account.deleteTitle")}</h2>
-            <p class="settings-intro">{rich(t("settings.account.deleteRequest"), { email: <a href="mailto:hello@humansandmachin.es">hello@humansandmachin.es</a> })}</p>
+            <p class="settings-intro">{rich(t("settings.account.deleteRequest"), { email: <a href="mailto:privacy@humansandmachin.es">privacy@humansandmachin.es</a> })}</p>
             <p class="settings-muted">{t("settings.account.deleteExplanation")}</p>
           </section>
-          {account.uid === 0 && <div hidden={section !== "sign-in"}><h1>{t("settings.signIn.title")}</h1><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
+          {account.uid === 0 && <div hidden={section !== "sign-in"}><PageHeading title={t("settings.signIn.title")} description={t("settings.signIn.intro")} /><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}
         </div>}
       </div>
     </div>

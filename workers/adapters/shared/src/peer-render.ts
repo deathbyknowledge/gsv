@@ -114,9 +114,10 @@ function summarizeAdapterHilRequest(request: ProcHilRequest): string {
   if (purpose) {
     // Whatever the model wrote, a publish names the address the Kernel publishes under.
     const publisher = request.syscall === "atproto.write" ? publishingAs(request.args) : null;
-    return publisher
-      ? `${asSentence(purpose)}\nPublishes to the open network as ${publisher}.`
-      : asSentence(purpose);
+    if (publisher) return `${asSentence(purpose)}\nPublishes to the open network as ${publisher}.`;
+    // Nothing asks again when these run, so the jobs themselves stand beside the model's sentence.
+    const jobs = request.syscall === "sched.add" ? adapterHilRequestDetail(request) : null;
+    return jobs ? `${asSentence(purpose)}\n${jobs}` : asSentence(purpose);
   }
   const summary = asSentence(describeAdapterHilRequest(request));
   const detail = adapterHilRequestDetail(request);
@@ -134,6 +135,7 @@ function describeAdapterHilRequest(request: ProcHilRequest): string {
     case "fs.edit": return `edit a file ${place}`;
     case "fs.delete": return `delete a file ${place}`;
     case "net.fetch": return `fetch a web address ${place}`;
+    case "sched.add": return "schedule work to run later";
     case "mail.send": {
       const recipient = safeQuotedDetail(request.args.to);
       const subject = safeQuotedDetail(request.args.subject);
@@ -160,6 +162,12 @@ function adapterHilRequestDetail(request: ProcHilRequest): string | null {
     case "fs.edit":
     case "fs.delete": return safeQuotedDetail(request.args.path, 512);
     case "net.fetch": return safeQuotedDetail(request.args.url, 512);
+    case "sched.add": {
+      // The file names the account its jobs run as.
+      const jobs = safeQuotedDetail(request.args.jobs, 1_200);
+      const file = safeQuotedDetail(request.args.path, 256);
+      return jobs && file ? `${file} ${jobs}` : jobs;
+    }
     case "atproto.write": {
       const publication = publicationSchema.safeParse(request.args);
       return publication.success

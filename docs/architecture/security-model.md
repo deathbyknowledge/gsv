@@ -34,6 +34,16 @@ Root must be selected explicitly. Setup uses the trusted space handle for the
 internal account name, while upgrades preserve existing UIDs, names and homes.
 Contact invitations connect people across spaces and never grant local accounts.
 
+Forgot-password recovery by email follows the same one-person model. The space's
+verified owner can already reach root, and root can already reset the personal
+password, so a fresh code to that email may set either password directly without
+granting anything new. Each attempt is bound to one space and one browser, its
+one-time secret travels in the URL fragment and is hashed at rest, the receiver
+persists its proof before redeeming, and the claim expires and fails once the
+chosen account's credentials change. Accounts authorizes; only the Kernel changes
+credentials. An owner session alone is never enough. Resetting one account doesn't
+change the other, so root keeps its own password after a personal reset.
+
 `sys.connect` is the WebSocket login syscall. The request identifies the peer
 program and any syscalls it implements, but never claims an authority role. The
 Kernel derives a human, machine, or service principal from the credential:
@@ -228,8 +238,10 @@ require a service identity. External actors are not automatically users: an
 actor must be linked to a local uid before messages are delivered to that user's
 processes.
 
-For unlinked actors, direct messages receive a link challenge such as
-`gsv auth link CODE`. Non-DM messages from unlinked actors are dropped. Once
+Actors link through messenger pairing, which the adapter owns. When the Kernel
+has no link for a direct message, it answers `pairing_required` and the adapter
+replies with its own pairing instructions. Non-DM messages from unlinked actors
+are dropped. Once
 linked, a direct message is delivered to the user's personal controller unless
 that controller opened a direct line to an owned work process from the exact
 current DM run. A newer private message or selection fences a late route
@@ -269,7 +281,12 @@ the default interactive policy asks for approval on each call. The native
 the owning Process run's mail approval policy. The same ownership follows MCP
 calls, CodeMode, and file/network operations sent to another target. Approval
 is requested before dispatch; cancellation or a stale run prevents dispatch.
-Nested approvals expire with the enclosing execution or after 55 seconds.
+Nested approvals expire with the enclosing execution or after 9 minutes, just
+inside the 10-minute tool deadline, and the tool then reports that nobody
+answered rather than a refusal. Time spent waiting for a person does not count
+against a command, CodeMode, or nested-syscall limit. The waiter is held in
+memory, kept there by a repeating Process alarm. A restart or deploy loses it:
+the tool then fails with an interruption, not a refusal, and is not replayed.
 An interrupted command is never replayed when its approval is restored.
 
 Agent-created scheduled shell commands require approval by default when added
@@ -305,7 +322,7 @@ Security depends on operational discipline:
 
 - Use strong passwords and prefer scoped, expiring tokens for automation.
 - Bind device tokens to the expected device id.
-- Revoke unused tokens with `gsv auth token revoke`.
+- Forget unused computers with `gsv places forget`, which revokes their machine tokens, and revoke other unused tokens with `gsv auth token revoke`.
 - Run `gsvd` as an unprivileged OS user.
 - Link adapter actors intentionally and use HIL policies for destructive or
   remote work.

@@ -114,6 +114,14 @@ describe("a takedown by the Ship's open-network host", () => {
       const { PDS } = await runtime.harness.getWorker<{ PDS: FixturePds }>("gsv").getEnv();
       const repository = await PDS.getInstallation("inst_integration_default");
 
+      // The Gateway answers a handle for a minute from the DID it last served, so the account goes down before
+      // anything resolved the handle; once resolved, a takedown shows within that minute.
+      const account: PublicTakedown = { subject: { $type: "com.atproto.admin.defs#repoRef", did: identity.did }, ref: "audit_account", reason: "Spam", at: 2 };
+      await repository.setTakedowns([account]);
+      expect(await status("/profile")).toBe(404);
+      expect(await status("/.well-known/atproto-did")).toBe(404);
+      expect(await runtime.client.atproto.identity({})).toEqual({ identity: { ...identity, status: "takendown" }, takedowns: [account] });
+
       const record: PublicTakedown = {
         subject: { $type: "com.atproto.repo.strongRef", uri: `at://${identity.did}/space.ship.profile/self`, cid: "bafyrecord1" },
         ref: "audit_record", reason: "It impersonates another person", at: 1,
@@ -122,12 +130,6 @@ describe("a takedown by the Ship's open-network host", () => {
       expect(await status("/profile")).toBe(404);
       expect(await status("/.well-known/atproto-did")).toBe(200);
       expect(await runtime.client.atproto.identity({})).toEqual({ identity, takedowns: [record] });
-
-      const account: PublicTakedown = { subject: { $type: "com.atproto.admin.defs#repoRef", did: identity.did }, ref: "audit_account", reason: "Spam", at: 2 };
-      await repository.setTakedowns([account]);
-      expect(await status("/profile")).toBe(404);
-      expect(await status("/.well-known/atproto-did")).toBe(404);
-      expect(await runtime.client.atproto.identity({})).toEqual({ identity: { ...identity, status: "takendown" }, takedowns: [account] });
 
       await repository.setTakedowns([]);
       expect(await status("/profile")).toBe(200);

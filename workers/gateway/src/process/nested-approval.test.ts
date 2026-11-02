@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Process } from "./do";
 import type { ProcessToolAuthorizeArgs } from "../protocol/process-frames";
-import { DEFAULT_TOOL_APPROVAL_POLICY } from "./approval";
+import { DEFAULT_TOOL_APPROVAL_POLICY, resolveToolApproval } from "./approval";
 import {
   approvedRun, initProcess, offeredTools, ROOT_IDENTITY, runInProcess, terminalTestConfig,
 } from "./do-test-harness";
@@ -72,6 +72,36 @@ describe("approval beneath a native command", () => {
       expect(pending).toMatchObject({ ownerDispatchId: "shell", syscall: "web.search" });
       process.tools.resolveCodeModeApproval(pending.requestId, false);
       expect(await waiting).toBe(false);
+      process.runs.active = null;
+    });
+  });
+
+  it("asks about a crontab beneath the Write or Shell call that carries it, which do not ask themselves", async () => {
+    const crontab = { path: "/var/spool/cron/sam", jobs: "0 9 * * * proc list" };
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "fs.write", { path: crontab.path }).action).toBe("auto");
+    expect(resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, "shell.exec", { input: "crontab jobs.cron" }).action).toBe("auto");
+
+    const stub = await initProcess("nested-crontab-owner", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      prepareShell(process);
+      const run = process.runs.active!;
+      run.tools = offeredTools("Shell", "Write");
+      run.offeredToolNames = ["Shell", "Write"];
+      process.runs.active = run;
+      process.store.tools.register("write", "write-call", "run", "fs.write", { path: crontab.path, content: "" }, "Save the morning job");
+      process.store.tools.markDispatched("write");
+
+      const waiting = process.tools.authorizeNestedTool({ runId: "run", requestId: "write", syscall: "sched.add", args: crontab }, new AbortController().signal);
+      const pending = await pendingApproval(process);
+      expect(pending).toMatchObject({ ownerDispatchId: "write", syscall: "sched.add", args: crontab, purpose: "Save the morning job" });
+      process.tools.resolveCodeModeApproval(pending.requestId, false);
+      expect(await waiting).toBe(false);
+
+      const blocked = process.runs.active!;
+      blocked.approvalPolicy!.rules.unshift({ match: "sched.add", action: "deny" });
+      process.runs.active = blocked;
+      expect(await process.tools.authorizeNestedTool({ runId: "run", requestId: "shell", syscall: "sched.add", args: crontab }, new AbortController().signal)).toBe(false);
+      expect(process.store.tools.getPendingHil()).toBeNull();
       process.runs.active = null;
     });
   });

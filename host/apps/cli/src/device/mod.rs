@@ -1,14 +1,11 @@
-use std::io;
 use std::path::PathBuf;
 use std::process::Command;
 
 use daemon_protocol::{ClientOptions, DaemonControlClient, DaemonControlEndpoint, Diagnostics};
 use gsv::config::CliConfig;
 use gsv::device_service;
-use gsv::kernel_client::{cli_peer_identity, BinaryBodyLimits, GatewayAuth, KernelClient};
-use gsv::protocol::Frame;
+use gsv::kernel_client::GatewayAuth;
 use host_config::ConfigFile;
-use serde_json::json;
 
 use crate::cli::DaemonServiceAction;
 
@@ -259,6 +256,17 @@ fn daemon_control_client() -> Result<DaemonControlClient, Box<dyn std::error::Er
     ))
 }
 
+/// The running daemon's own report, or `None` when it doesn't answer quickly.
+pub(crate) async fn daemon_runtime_status() -> Option<daemon_protocol::DaemonStatus> {
+    let client = DaemonControlClient::new(
+        DaemonControlEndpoint::current_user().ok()?,
+        ClientOptions::default()
+            .with_connect_timeout(std::time::Duration::from_secs(2))
+            .with_io_timeout(std::time::Duration::from_secs(3)),
+    );
+    client.status().await.ok()
+}
+
 pub(crate) async fn show_daemon_live_status() -> Result<(), Box<dyn std::error::Error>> {
     let client = daemon_control_client()?;
     let status = match client.status().await {
@@ -319,76 +327,6 @@ fn print_diagnostics(diagnostics: &Diagnostics) {
     for notice in &diagnostics.notices {
         println!("- {:?} {}: {}", notice.level, notice.code, notice.message);
     }
-}
-
-pub(crate) async fn run_shell(
-    url: &str,
-    auth: GatewayAuth,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let username = auth.username.clone();
-    let client = KernelClient::connect_with_peer(
-        url,
-        cli_peer_identity(),
-        Vec::new(),
-        auth,
-        BinaryBodyLimits::default(),
-        |frame| {
-            if let Frame::Sig(signal) = frame {
-                eprintln!("[signal] {}: {:?}", signal.signal, signal.payload);
-            }
-        },
-    )
-    .await?;
-
-    println!(
-        "Connected to Ship OS as {}",
-        username.unwrap_or_else(|| "setup".to_string())
-    );
-    println!("Type commands to execute, or :quit to exit\n");
-    let stdin = io::stdin();
-    loop {
-        eprint!("gsv$ ");
-        {
-            use std::io::Write;
-            let _ = std::io::stderr().flush();
-        }
-
-        let mut line = String::new();
-        if stdin.read_line(&mut line)? == 0 {
-            break;
-        }
-        let input = line.trim();
-        if input.is_empty() {
-            continue;
-        }
-        if matches!(input, ":quit" | ":exit" | ":q") {
-            break;
-        }
-
-        let response = client
-            .connection()
-            .request("shell.exec", Some(json!({ "input": input })))
-            .await?;
-        if response.ok {
-            if let Some(data) = &response.data {
-                if let Some(stdout) = data.get("stdout").and_then(|value| value.as_str()) {
-                    print!("{stdout}");
-                }
-                if let Some(stderr) = data.get("stderr").and_then(|value| value.as_str()) {
-                    eprint!("{stderr}");
-                }
-                if let Some(exit_code) = data.get("exitCode").and_then(|value| value.as_i64()) {
-                    if exit_code != 0 {
-                        eprintln!("[exit {exit_code}]");
-                    }
-                }
-            }
-        } else if let Some(error) = response.error {
-            eprintln!("error [{}]: {}", error.code, error.message);
-        }
-    }
-    println!("bye");
-    Ok(())
 }
 
 #[cfg(test)]

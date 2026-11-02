@@ -600,49 +600,6 @@ export type SysTokenRevokeResult = {
   revoked: boolean;
 };
 
-export type SysLinkConsumeArgs = {
-  code: string;
-};
-
-export type SysLinkConsumeResult = {
-  linked: boolean;
-  link?: {
-    adapter: string;
-    accountId: string;
-    actorId: string;
-    uid: number;
-    createdAt: number;
-  };
-};
-
-export type SysLinkArgs = {
-  adapter: string;
-  accountId: string;
-  actorId: string;
-  uid?: number;
-};
-
-export type SysLinkResult = {
-  linked: boolean;
-  link?: {
-    adapter: string;
-    accountId: string;
-    actorId: string;
-    uid: number;
-    createdAt: number;
-  };
-};
-
-export type SysUnlinkArgs = {
-  adapter: string;
-  accountId: string;
-  actorId: string;
-};
-
-export type SysUnlinkResult = {
-  removed: boolean;
-};
-
 export type SysLinkListArgs = {
   uid?: number;
 };
