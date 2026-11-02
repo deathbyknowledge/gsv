@@ -58,12 +58,6 @@ actions and Help open in a vertical menu with touch-sized rows.
 Choosing a view, tapping outside or pressing Escape closes the menu.
 The menu button retains the unread People indicator while navigation is closed.
 
-On a personal human account's first sign-in, the chat wakes Ship as soon as it opens by saving a
-per-user UI config flag, so the first run follows the account across web and Desktop
-sessions. Nothing is shown for it; the chat reads "Ship is waking up" until the greeting lands.
-It never applies during activation or for the administrator. If the flag cannot be loaded or
-saved, a small notice over the chat offers Retry without requiring a new session.
-
 Chat, Work, Memory and Settings mount on their first visit and retain their local
 state until the signed-in session ends. Moving between them keeps drafts,
 attachments, open forms, selection and reading position without a discard
@@ -152,7 +146,7 @@ state, so a replaced Ship asks again while a reset keeps it. A hover/focus toolt
 explains that scope; it never changes another Process's policy or
 remembers a denial.
 
-Chat owns the conversation. A new owner's first chat open records the first-run flag and wakes Ship through its initial onboarding responsibility; a failed request leaves a Retry notice. Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
+Chat owns the conversation. The Kernel wakes Ship through its initial onboarding responsibility when a new owner first signs in; until Ship's first message lands, the empty chat reads "Ship is waking up". Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
 
 On a new owner's first visit, the empty Ship chat shows a centered,
 muted privacy message until either person starts the conversation. It never

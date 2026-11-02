@@ -1495,7 +1495,6 @@ export const ptBR = {
 
   // Shell: first run
   "shell.retryButton": "Tentar de novo",
-  "shell.firstRun.failed": "Não foi possível acordar o Ship.",
 
   // Shell: feedback
   "shell.feedback.trigger": "comentários",

@@ -153,12 +153,11 @@ describe("Kernel personal controller connect lifecycle", () => {
   });
 
   it.each([
-    { dismissed: false, handled: false, failWake: false },
-    { dismissed: true, handled: false, failWake: false },
-    { dismissed: true, handled: true, failWake: false },
-    { dismissed: true, handled: false, failWake: true },
-    { dismissed: true, handled: false, failWake: false, previousBrief: true },
-  ])("recovers pending onboarding without delaying sign-in: %j", async ({ dismissed, handled, failWake, previousBrief }) => {
+    { handled: false, failWake: false },
+    { handled: true, failWake: false },
+    { handled: false, failWake: true },
+    { handled: false, failWake: false, previousBrief: true },
+  ])("starts pending onboarding when the owner signs in, without delaying sign-in: %j", async ({ handled, failWake, previousBrief }) => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const responsibilities = new ResponsibilityStore(storage);
       const onboarding = new InitialOnboarding(storage, responsibilities);
@@ -173,7 +172,7 @@ describe("Kernel personal controller connect lifecycle", () => {
           blocker: "Waiting for the user's first message." },
         actor: { kind: "system", component: "onboarding" }, observedByShip: true, now: Date.now() });
       const beforeConnect = responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY);
-      const pending = dismissed && !handled && !previousBrief;
+      const pending = !handled && !previousBrief;
       const deferred: Promise<unknown>[] = [];
       let finishWake = () => {};
       const wake = new Promise<void>((resolve, reject) => {
@@ -185,7 +184,7 @@ describe("Kernel personal controller connect lifecycle", () => {
           credentialEpoch: () => 0, isAccountDisabled: () => false },
         conversations: { ensureShip: () => ({ id: "conv:ship", ownerUid: 1000, kind: "ship" }) },
         // The default profile was already applied; this test covers onboarding recovery only.
-        config: { get: vi.fn(() => dismissed ? "1" : null), getExplicit: () => "1" },
+        config: { get: vi.fn(() => null), getExplicit: () => "1" },
         env: {},
         responsibilities, welcome: onboarding, reconcileResponsibilityWake: vi.fn(() => wake),
         defer: (promise: Promise<unknown>) => deferred.push(promise),
@@ -200,7 +199,7 @@ describe("Kernel personal controller connect lifecycle", () => {
       try {
         await kernel.connectionRuntime.handleSysConnect(connection, connectFrame());
         expect(kernel.transport.sendOk).toHaveBeenCalledOnce();
-        expect(ctx.config.get).toHaveBeenCalledWith("users/1000/ui/welcome_card_seen");
+        expect(ctx.config.get).not.toHaveBeenCalledWith("users/1000/ui/welcome_card_seen");
         expect(responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY)?.state)
           .toBe(pending ? "open" : handled || previousBrief ? "waiting" : undefined);
         expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledTimes(pending ? 1 : 0);

@@ -79,56 +79,25 @@ function makeContext(uid: number, entries: EntryMap, ownerUid?: number): KernelC
 }
 
 describe("sys.config.get", () => {
-  it("keeps a dismissed UI card on the person's account", async () => {
+  it("keeps a UI setting on the person's account", async () => {
     const ctx = makeContext(1000, {});
-    const key = "users/1000/ui/welcome_card_seen";
+    const key = "users/1000/ui/theme";
     expect(handleSysConfigGet({ key }, ctx).entries).toEqual([]);
-    expect(await handleSysConfigSet({ key, value: "1" }, ctx)).toEqual({ ok: true });
-    expect(handleSysConfigGet({ key }, ctx).entries).toEqual([{ key, value: "1" }]);
-    await expect(handleSysConfigSet({ key: "users/1001/ui/welcome_card_seen", value: "1" }, ctx)).rejects.toThrow("another user's");
+    expect(await handleSysConfigSet({ key, value: "dark" }, ctx)).toEqual({ ok: true });
+    expect(handleSysConfigGet({ key }, ctx).entries).toEqual([{ key, value: "dark" }]);
+    await expect(handleSysConfigSet({ key: "users/1001/ui/theme", value: "dark" }, ctx)).rejects.toThrow("another user's");
   });
 
-  it("wakes onboarding on owner dismissal, with safe retries after a scheduling failure", async () => {
+  it("never starts onboarding from a config write, even the retired welcome card's flag", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const ctx = makeContext(1000, {});
       ctx.responsibilities = new ResponsibilityStore(storage);
       ctx.welcome = new InitialOnboarding(storage, ctx.responsibilities);
       ctx.welcome.prepare(1000);
-      const reconcile = vi.fn(async () => {}).mockRejectedValueOnce(new Error("wake unavailable"));
-      ctx.reconcileResponsibilityWake = reconcile;
-      const args = { key: "users/1000/ui/welcome_card_seen", value: "1" };
-      expect(ctx.responsibilities.nextWakeAt(1000, Date.now())).toBeNull();
-      await expect(handleSysConfigSet(args, ctx)).rejects.toThrow("wake unavailable");
-      expect(ctx.config.get(args.key)).toBe("1");
-      const seed = ctx.responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY)!;
-      expect(ctx.responsibilities.get(1000, seed.id)?.state).toBe("open");
-      const revision = ctx.responsibilities.revision(1000);
-      await handleSysConfigSet(args, ctx);
-      expect(ctx.responsibilities.revision(1000)).toBe(revision);
-      expect(reconcile).toHaveBeenCalledTimes(2);
-      expect(reconcile).toHaveBeenLastCalledWith(1000);
-
-      ctx.responsibilities.update({ ownerUid: 1000, id: seed.id,
-        patch: { state: "waiting", blocker: "Waiting for a reply", nextCheckAtMs: null },
-        actor: { kind: "process", processId: "ship" }, observedByShip: true, now: Date.now() });
-      await handleSysConfigSet(args, ctx);
-      expect(ctx.responsibilities.nextWakeAt(1000, Date.now())).toBeNull();
-      expect(ctx.responsibilities.get(1000, seed.id)?.blocker).toBe("Waiting for a reply");
-      expect(reconcile).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  it("does not treat other config writes or delegated writes as the owner's dismissal", async () => {
-    for (const [uid, ownerUid, key, value] of [
-      [1000, undefined, "users/1000/ui/welcome_card_seen", "0"],
-      [1000, undefined, "users/1000/ui/avatar", "1"],
-      [0, undefined, "users/1000/ui/welcome_card_seen", "1"],
-      [2000, 1000, "users/1000/ui/welcome_card_seen", "1"],
-    ] as const) {
-      const ctx = makeContext(uid, {}, ownerUid);
-      await handleSysConfigSet({ key, value }, ctx);
+      await handleSysConfigSet({ key: "users/1000/ui/welcome_card_seen", value: "1" }, ctx);
+      expect(ctx.responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY)).toBeNull();
       expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
-    }
+    });
   });
 
   it("lets humans change only their own timezone without system write access", async () => {

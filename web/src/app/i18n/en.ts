@@ -1489,7 +1489,6 @@ export const en = {
 
   // Shell: first run
   "shell.retryButton": "Retry",
-  "shell.firstRun.failed": "Couldn't wake Ship.",
 
   // Shell: feedback
   "shell.feedback.trigger": "feedback",

@@ -42,7 +42,7 @@ local credentials. A global owner session does not grant ordinary Kernel access.
   second installation.
 - Offer the existing computer enrollment flow after authentication. The user's
   first message remains their own; onboarding never inserts or sends prompt text.
-  Opening the chat for the first time wakes Ship to send its greeting in the
+  Signing in for the first time wakes Ship to send its greeting in the
   owner's preferred language. The greeting stays in the conversation across clients.
   A user can also write first; Ship responds to their message.
 

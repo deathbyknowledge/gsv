@@ -11,9 +11,9 @@ another username. Continue to review the early-access disclosure and confirm the
 age, Terms of Service and Privacy Policy
 agreement before creating your account. **Back** lets you revise your credentials.
 Creating your account signs you in and opens Chat, your conversation with your Ship.
-The first time you open the web app, Ship wakes and greets you in a language
-detected from your browser; the chat reads "Ship is waking up" until its first
-message lands. If Ship cannot be woken, choose **Retry**. You can write first,
+The first time you sign in, Ship wakes and greets you in a language detected
+from your browser; the chat reads "Ship is waking up" until its first message
+lands. You can write first,
 ask Ship to switch languages, or change **Settings → Preferences → Language**.
 The greeting stays in your conversation across devices.
 The **Feedback** button in the header is available when your operator offers

@@ -1490,7 +1490,6 @@ export const es = {
 
   // Shell: first run
   "shell.retryButton": "Reintentar",
-  "shell.firstRun.failed": "No se ha podido despertar a Ship.",
 
   // Shell: feedback
   "shell.feedback.trigger": "comentarios",
