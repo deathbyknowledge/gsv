@@ -2,7 +2,6 @@ import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { InfoTip } from "../../../components/ui/InfoTip";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Tag } from "../../../components/ui/Tag";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
@@ -86,7 +85,6 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         {available && !canPair && <p class="settings-muted">{t("settings.messengers.cannotLink", { name })}</p>}
         {links.length === 0 && available && !comingSoon && <ul class="settings-list settings-messenger-links"><li class="settings-messenger-state">
           <span class="settings-messenger-status gsv-sublabel">{t("settings.messengers.noLinks", { name })}</span>
-          {id === "whatsapp" && <InfoTip text={t("settings.messengers.whatsappRelink")} position="right" />}
         </li></ul>}
         <ul class="settings-list settings-messenger-links">{links.map((link) => {
           const status = messengerConnectionStatus(adapter, link.accountId);
