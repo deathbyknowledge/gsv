@@ -14,8 +14,8 @@ function gsvTarget(value: string): string {
 /** Whether a stored rule applies to `gsv`, read as `parseRule` reads it; it drops an unreadable target or action. */
 const RULE_COVERS_GSV = `
   CASE
-    WHEN json_extract(rule.value, '$.action') NOT IN ('auto', 'ask', 'deny')
-      OR json_type(rule.value, '$.action') <> 'text' THEN 0
+    WHEN json_type(rule.value, '$.action') IS NOT 'text'
+      OR json_extract(rule.value, '$.action') NOT IN ('auto', 'ask', 'deny') THEN 0
     WHEN json_type(rule.value, '$.target') = 'object' THEN 0
     WHEN json_type(rule.value, '$.target') <> 'text' THEN 0
     WHEN NOT ${anyTarget(RULE_TARGET)} THEN ${gsvTarget(RULE_TARGET)}
