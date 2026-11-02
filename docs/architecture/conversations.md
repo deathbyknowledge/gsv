@@ -139,6 +139,8 @@ an event the person turned off or wasn't sent still reaches Ship as a model-only
 card or a run; a contact's event instead stays out of Ship while its owner simply wasn't reachable or was already
 active, as their words should reach Ship unsent only by choice. `wake` stays with each kind's responsibility source, and contact kinds never allow it.
 
+An owner's custom event sources (`event.source.*`) take a row in the same list and enter through one path, `event.emit`, however an event arrives: a script, a routine, `gsv event` or a webhook. Each source holds its own choices instead of a rule. A source's words are always untrusted. Its events follow the same rule as other notices, except that one left to an active client, or with no messenger to carry it, appears as a person-only card in the conversation, because nothing else in a client shows it. A source going quiet still goes to the messenger while a client is active. An event from a running process never wakes Ship, which keeps a source from looping on itself.
+
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more
 work, or remain silent.

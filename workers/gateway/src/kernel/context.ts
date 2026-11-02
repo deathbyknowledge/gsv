@@ -42,6 +42,7 @@ import type { MailboxStore } from "./mailbox-store";
 import type { ResponsibilityStore } from "./responsibility-store";
 import type { OwnerNoticeStore } from "./owner-notice-store";
 import type { NoticeRuleStore } from "./notice-rules";
+import type { EventSourceStore } from "./event-sources";
 import type { ShipEventStore } from "./ship-event-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import type { FederationStore } from "./federation-store";
@@ -89,6 +90,7 @@ export type KernelContext = {
   shipEvents: ShipEventStore;
   ownerNotices: OwnerNoticeStore;
   noticeRules: NoticeRuleStore;
+  eventSources: EventSourceStore;
   welcome: InitialOnboarding;
   responsibilitySources: ResponsibilitySourcePolicyStore;
   federation: FederationStore;
@@ -135,6 +137,7 @@ export type KernelContext = {
   queueShipEvents: (ownerUid: number) => Promise<void>;
   /** Send the owner's pending notices after the producer's transaction commits. */
   queueOwnerNotices: (ownerUid: number) => Promise<void>;
+  queueEventUpkeep: () => Promise<void>;
   trackBrowserHandoff: (ownerUid: number, handoff: BrowserHandoff) => Promise<void>;
   scheduleManagedOutboundEnqueue: (
     outboundId: string,

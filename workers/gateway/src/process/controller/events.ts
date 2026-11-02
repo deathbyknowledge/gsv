@@ -22,10 +22,12 @@ export async function deliverProcessEvent(
   const event = procHistoryEventSchema.parse(args.event);
   if (event.kind === "owner.notified") {
     // The person sees a notice they were sent; one recorded only for Ship stays out of their chat.
-    const expected = event.payload.adapter ? "both" : "model";
-    if (event.severity !== "info" || event.audience !== expected) {
+    const expected = event.payload.shownInClient ? ["person", "both"] : [event.payload.adapter ? "both" : "model"];
+    if (event.severity !== "info" || !expected.includes(event.audience)) {
       throw new Error("Process event is not registered for this delivery path");
     }
+    // A card only for the person gives a run nothing to see.
+    if (event.audience === "person") return appendNotice(host, eventId, event);
     // A notice joins an active run like any runtime event; otherwise it waits, without
     // starting a run, for the owner's reply that needs it.
     if (host.runs.active) return admitRuntimeEvent(host, eventId, event);

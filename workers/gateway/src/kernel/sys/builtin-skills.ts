@@ -1,5 +1,6 @@
 import browserTargetSkill from "../../../../../skills/browser-target/SKILL.md";
 import contactsSkill from "../../../../../skills/contacts/SKILL.md";
+import eventSourcesSkill from "../../../../../skills/event-sources/SKILL.md";
 import gsvManualSkill from "../../../../../skills/gsv-manual/SKILL.md";
 import imageReadingSkill from "../../../../../skills/image-reading/SKILL.md";
 import memorySkill from "../../../../../skills/memory/SKILL.md";
@@ -13,6 +14,7 @@ export const SYSTEM_SKILLS_ROOT = "/sys/skills.d";
 const BUILTIN_SKILL_FILES = new Map<string, string>([
   ["browser-target/SKILL.md", browserTargetSkill],
   ["contacts/SKILL.md", contactsSkill],
+  ["event-sources/SKILL.md", eventSourcesSkill],
   ["gsv-manual/SKILL.md", gsvManualSkill],
   ["image-reading/SKILL.md", imageReadingSkill],
   ["memory/SKILL.md", memorySkill],

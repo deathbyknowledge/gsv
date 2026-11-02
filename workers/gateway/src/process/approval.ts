@@ -58,7 +58,7 @@ const approvalArgsSchema = z.object({ target: z.string().optional(), sessionId: 
  * schedule only when it runs a command, a message request only when it is new.
  * A direct call still honours Block, but leaves asking to that check.
  */
-export const KERNEL_AUTHORIZED_SYSCALLS: ReadonlySet<string> = new Set(["sched.add", "sched.update", "approach.create"]);
+export const KERNEL_AUTHORIZED_SYSCALLS: ReadonlySet<string> = new Set(["sched.add", "sched.update", "approach.create", "event.source.update"]);
 
 export function parseToolApprovalPolicy(raw: string | null | undefined): ToolApprovalPolicy {
   return readToolApprovalPolicy(raw) ?? DEFAULT_TOOL_APPROVAL_POLICY;

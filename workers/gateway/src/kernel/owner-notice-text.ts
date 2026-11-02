@@ -16,6 +16,9 @@ type NoticeWords = {
   machine: (name: string) => string;
   adapterConnected: (name: string) => string;
   adapterAuth: (name: string) => string;
+  event: (source: string, title: string) => string;
+  events: (source: string, count: number, title: string) => string;
+  eventSilent: (source: string) => string;
   stoppedTelling: (what: string) => string;
   startedActing: (what: string) => string;
   /** Each kind's name, for telling the owner their Ship changed its rule. */
@@ -36,6 +39,9 @@ const WORDS = {
     machine: (name) => `💻 A new computer connected to your Ship: ${name}.`,
     adapterConnected: (name) => `🔌 ${name} is connected to your Ship.`,
     adapterAuth: (name) => `⚠️ ${name} needs signing in again.`,
+    event: (source, title) => `🔔 ${source}: ${title}`,
+    events: (source, count, title) => `🔔 ${source}: ${count} new. Latest: ${title}`,
+    eventSilent: (source) => `🔕 ${source} has gone quiet: nothing arrived when it should have.`,
     stoppedTelling: (what) => `🔧 Your Ship turned off telling you about: ${what}. You can change this in Settings.`,
     startedActing: (what) => `🔧 Your Ship set itself to act on: ${what}. You can change this in Settings.`,
     kinds: {
@@ -60,6 +66,9 @@ const WORDS = {
     machine: (name) => `💻 Se ha conectado un ordenador nuevo a tu Ship: ${name}.`,
     adapterConnected: (name) => `🔌 ${name} se ha conectado a tu Ship.`,
     adapterAuth: (name) => `⚠️ Tienes que volver a iniciar sesión en ${name}.`,
+    event: (source, title) => `🔔 ${source}: ${title}`,
+    events: (source, count, title) => `🔔 ${source}: ${count} nuevos. El último: ${title}`,
+    eventSilent: (source) => `🔕 ${source} se ha quedado en silencio: no ha llegado nada cuando debía.`,
     stoppedTelling: (what) => `🔧 Tu Ship ha dejado de avisarte sobre: ${what}. Puedes cambiarlo en Ajustes.`,
     startedActing: (what) => `🔧 Tu Ship se ha configurado para actuar sobre: ${what}. Puedes cambiarlo en Ajustes.`,
     kinds: {
@@ -84,6 +93,9 @@ const WORDS = {
     machine: (name) => `💻 Um novo computador se conectou ao seu Ship: ${name}.`,
     adapterConnected: (name) => `🔌 ${name} está conectado ao seu Ship.`,
     adapterAuth: (name) => `⚠️ Você precisa entrar novamente no ${name}.`,
+    event: (source, title) => `🔔 ${source}: ${title}`,
+    events: (source, count, title) => `🔔 ${source}: ${count} novos. O último: ${title}`,
+    eventSilent: (source) => `🔕 ${source} ficou em silêncio: nada chegou quando deveria.`,
     stoppedTelling: (what) => `🔧 Seu Ship parou de avisar você sobre: ${what}. Você pode mudar isso em Configurações.`,
     startedActing: (what) => `🔧 Seu Ship passou a agir sobre: ${what}. Você pode mudar isso em Configurações.`,
     kinds: {
@@ -114,7 +126,7 @@ export type OwnerNoticeParts = { from: string; handle?: string; preview?: string
 export function ownerNoticeParts(notice: OwnerNotice): OwnerNoticeParts {
   const { subject } = notice;
   const handle = subject.handle ? oneLine(subject.handle, NAME_CHARACTERS) : "";
-  const preview = notice.topic === "contact.message" || notice.topic === "mail.received"
+  const preview = notice.topic === "contact.message" || notice.topic === "mail.received" || notice.topic === "event.received"
     ? oneLine(subject.preview ?? "", PREVIEW_CHARACTERS) : "";
   return {
     from: oneLine(subject.from, NAME_CHARACTERS) || "?",
@@ -139,9 +151,12 @@ export function renderOwnerNotice(notice: OwnerNotice, language: NoticeLanguage)
     case "machine.added": return words.machine(parts.from);
     case "adapter.connected": return words.adapterConnected(adapterDisplayName(notice.subject.adapter ?? parts.from));
     case "adapter.auth_required": return words.adapterAuth(adapterDisplayName(notice.subject.adapter ?? parts.from));
+    case "event.received":
+      return notice.pendingCount > 1 ? words.events(parts.from, notice.pendingCount, preview) : words.event(parts.from, preview);
+    case "event.silent": return words.eventSilent(parts.from);
     case "notice.rule.changed": {
-      // SAFETY: the Kernel writes this subject from a validated rule kind, never from outside.
-      const what = words.kinds[notice.subject.from as NoticeKind];
+      // SAFETY: without a source, the Kernel writes this subject from a validated rule kind, never from outside.
+      const what = notice.subject.sourceId ? parts.from : words.kinds[notice.subject.from as NoticeKind];
       return notice.subject.ruleChange === "started-acting" ? words.startedActing(what) : words.stoppedTelling(what);
     }
   }

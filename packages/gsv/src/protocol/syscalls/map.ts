@@ -256,6 +256,21 @@ import type {
   AtprotoWriteResult,
 } from "./atproto";
 import type {
+  EventEmitArgs,
+  EventEmitResult,
+  EventListArgs,
+  EventListResult,
+  EventSourceAddArgs,
+  EventSourceListArgs,
+  EventSourceListResult,
+  EventSourceRemoveArgs,
+  EventSourceRemoveResult,
+  EventSourceRotateArgs,
+  EventSourceSecretResult,
+  EventSourceUpdateArgs,
+  EventSourceUpdateResult,
+} from "./event";
+import type {
   NotifyRuleListArgs,
   NotifyRuleListResult,
   NotifyRuleResetArgs,
@@ -372,6 +387,13 @@ export type SyscallDomains = {
   "notify.rule.list": { args: NotifyRuleListArgs; result: NotifyRuleListResult };
   "notify.rule.set": { args: NotifyRuleSetArgs; result: NotifyRuleSetResult };
   "notify.rule.reset": { args: NotifyRuleResetArgs; result: NotifyRuleResetResult };
+  "event.source.list": { args: EventSourceListArgs; result: EventSourceListResult };
+  "event.source.add": { args: EventSourceAddArgs; result: EventSourceSecretResult };
+  "event.source.update": { args: EventSourceUpdateArgs; result: EventSourceUpdateResult };
+  "event.source.rotate": { args: EventSourceRotateArgs; result: EventSourceSecretResult };
+  "event.source.remove": { args: EventSourceRemoveArgs; result: EventSourceRemoveResult };
+  "event.emit": { args: EventEmitArgs; result: EventEmitResult };
+  "event.list": { args: EventListArgs; result: EventListResult };
 
   "conversation.ship": { args: ConversationShipArgs; result: ConversationShipResult };
   "conversation.forProcess": { args: ConversationForProcessArgs; result: ConversationForProcessResult };

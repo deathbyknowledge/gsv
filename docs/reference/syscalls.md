@@ -528,6 +528,81 @@ only.
 than 100,000 characters comes back cut short, with `truncated` set; the whole
 message stays readable at `textPath`.
 
+## Custom events: `event.source.*`, `event.emit`, `event.list`
+
+A source is somewhere an owner's events come from. Each event takes one path, whichever
+way it arrived: the shell's `event emit`, `gsv event`, a routine, or a delivery to the
+source's public address. The Kernel records who sent it from the caller, never from
+the event.
+
+```ts
+type EventInput = { id?: string; title: string; preview?: string; body?: string };
+type EventSourceWebhook = "none" | "url" | "standard" | "hmac";
+type WebhookHmac = {
+  header: string; encoding: "hex" | "base64"; prefix?: string;
+  pairs?: { timestamp: string; signature: string };
+  idHeader?: string; typeHeader?: string;
+};
+
+interface EventSyscalls {
+  "event.source.list": { args: {}; result: { sources: EventSource[] } };
+  "event.source.add": {
+    args: { name: string; label?: string; notify?: NoticeDelivery; ship?: ShipOutcome;
+      webhook?: EventSourceWebhook; hmac?: WebhookHmac; senderSecret?: boolean; secret?: string;
+      expectEveryMs?: number };
+    result: { source: EventSource; secret?: string; webhookUrl?: string };
+  };
+  "event.source.update": {
+    args: { name: string; label?: string; notify?: NoticeDelivery; ship?: ShipOutcome;
+      enabled?: boolean; expectEveryMs?: number | null };
+    result: { source: EventSource };
+  };
+  "event.source.rotate": { args: { name: string; secret?: string }; result: { source: EventSource; secret?: string; webhookUrl?: string } };
+  "event.source.remove": { args: { name: string }; result: { removed: boolean } };
+  "event.emit": { args: { source: string; events: EventInput[] }; result: { accepted: number; duplicates: number } };
+  "event.list": { args: { source?: string; limit?: number }; result: { events: EventRecord[] } };
+}
+```
+
+Only a signed-in person or their Ship manages sources, under the `event.*` capability;
+any of the owner's processes and routines may emit. A new source tells its owner and leaves
+Ship out, and it has no public address unless `webhook` asks for one. Ship setting a source to
+`wake` needs approval (`event.source.update`), and Ship turning off telling or starting
+to act tells its owner.
+
+While the owner is active in a client, or has no messenger, an event appears as a card in their
+conversation rather than on the messenger, and stays out of model context unless the source's `ship` says otherwise. A source going quiet still goes to the messenger.
+
+An `id` already seen for a source is a duplicate and does nothing, for 180 days, and doesn't count against the source's rate limit. Bodies are
+kept for 30 days. Each source accepts 60 events a minute with bursts of 120, and each
+owner 600 a minute. With `expectEveryMs`, the owner is told once when that long passes
+without an event.
+
+An event's words are untrusted wherever they end up. An event from a running process
+never wakes Ship.
+
+A source with a webhook takes a `POST` at `/hooks/<sourceId>`, with a body of up to 256 KiB.
+A webhook names how a delivery proves its sender, never who the sender is. `standard` checks
+the [Standard Webhooks](https://www.standardwebhooks.com/) signature. `hmac` checks an
+HMAC-SHA256 with the source's secret, in `hmac.header`, encoded as `hmac.encoding` after an
+optional `hmac.prefix`. It covers the body, or, with `hmac.pairs`, the header holds
+comma-separated `KEY=VALUE` pairs with a Unix timestamp under `pairs.timestamp`, within five
+minutes, and signatures under `pairs.signature`, each covering `TIMESTAMP.BODY`. One scheme
+covers many senders: GitHub, Shopify and Linear sign the body; Stripe uses the pairs. Clients
+offer such senders as presets that fill in `hmac`.
+
+An event's id comes from `hmac.idHeader`, Standard Webhooks' `webhook-id`, or the body's `id`.
+Its title is `hmac.typeHeader` with the body's `action`, or else the body's `title`, `subject`,
+`type` or `event`.
+
+A rotated secret keeps working for 24 hours. With `senderSecret`, the sender issues the secret:
+`secret` gives it when adding, or `event.source.rotate`'s `secret` gives it later, and until
+then the source shows `awaitingSecret` and refuses every delivery. A sender-issued secret is
+never returned. `url` is for senders that can't sign: the address `/hooks/<sourceId>/<token>`
+is the only proof, only its hash is stored, and such a source can't be set to `wake`.
+Request logs on the way may record that address, so treat it as a low-trust channel. A secret
+or secret address is returned once.
+
 ## Notification settings: `notify.rule.list`, `notify.rule.set`, `notify.rule.reset`
 
 Each person decides, for each kind of thing that happens, whether their messenger

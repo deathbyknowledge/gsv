@@ -25,6 +25,7 @@ export type SettingsProps = {
   onDirtyChange?: (dirty: boolean) => void;
   onSignOut?: () => void;
   onInspectProcess: (pid: string) => void;
+  onOpenSource: (name?: string) => void;
 };
 
 const SECTIONS = ["preferences", "voice", "standing", "permissions", "instructions", "messengers", "mcp", "logs", "account", "sign-in"] as const;
@@ -42,7 +43,7 @@ const SECTION_LABELS = {
   "sign-in": "settings.section.signIn",
 } satisfies Record<Section, TextKey>;
 
-export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: SettingsProps) {
+export function Settings({ onDirtyChange, onSignOut, onInspectProcess, onOpenSource }: SettingsProps) {
   const t = useT();
   const active = useViewActive();
   const desktop = useNativeInput() !== null;
@@ -87,7 +88,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
         </>}
         {account && <div key={account.uid}>
           <div hidden={section !== "preferences"}><Preferences account={account} active={active && section === "preferences"} onDirty={preferencesDirty} /></div>
-          <RetainedView active={active && section === "standing"}><WhenThingsHappen account={account} /></RetainedView>
+          <RetainedView active={active && section === "standing"}><WhenThingsHappen account={account} onOpenSource={onOpenSource} /></RetainedView>
           <div hidden={section !== "permissions"}><Permissions account={account} active={active && section === "permissions"} onDirty={permissionsDirty} /></div>
           <div hidden={section !== "instructions"}><Instructions account={account} active={active && section === "instructions"} onDirty={instructionsDirty} /></div>
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={active && section === "messengers"} /></div>

@@ -43,7 +43,7 @@ import "./instrument.css";
 export type Distance = "zen" | "fleet" | "memory" | "settings" | "people";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `more:${string}` | `dir:${string}` | `file:${string}` | `source:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/chat",
@@ -366,7 +366,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           }} />
         </RetainedView>
         <RetainedView active={distance === "settings"}>
-          <Settings onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
+          <Settings onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onOpenSource={(name) => { move("fleet", name ? `source:${name}` : null); }} onSignOut={() => {
             if ((handsfreeDirty || settingsDirty || unsaved || fleetDirty || memoryDirty || peopleDirty) && !window.confirm(t("shell.confirm.signOut"))) return;
             void session.lock("session.status.signedOut");
           }} />
