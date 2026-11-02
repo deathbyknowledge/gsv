@@ -21,7 +21,7 @@ export type LinkPreviewCacheEntry = z.infer<typeof entrySchema>;
 export type LinkPreviewCacheStore = {
   get(key: string): Promise<LinkPreviewCacheEntry | undefined>;
   put(entry: LinkPreviewCacheEntry): Promise<void>;
-  /** Drops entries stored before `before`, then the oldest until at most `keep` remain. */
+  /** Drops entries stored before `before`, then the oldest until at most `keep` remain; each write runs it. */
   prune(before: number, keep: number): Promise<void>;
 };
 
@@ -33,19 +33,26 @@ export class LinkPreviewUnavailableError extends Error {}
  * again. Entries are validated as they come back, so a stored shape this version does not recognise is read afresh.
  */
 export class LinkPreviewCache {
-  private pruned = false;
+  private generation = 0;
 
   constructor(
     private readonly openStore: () => Promise<LinkPreviewCacheStore | null>,
     private readonly now: () => number = Date.now,
   ) {}
 
+  /** Reads already under way keep their result to themselves, so none writes back into a store just cleared. */
+  fence(): void {
+    this.generation += 1;
+  }
+
   async read<T>(key: string, schema: z.ZodType<T>, fetch: () => Promise<T>): Promise<T> {
+    const generation = this.generation;
     const store = await this.openStore().catch(() => null);
-    if (store && !this.pruned) {
-      this.pruned = true;
+    const keep = async (entry: LinkPreviewCacheEntry) => {
+      if (!store || generation !== this.generation) return;
+      await store.put(entry).catch(() => {});
       await store.prune(this.now() - LINK_PREVIEW_KEEP_MS, MAX_LINK_PREVIEW_ENTRIES).catch(() => {});
-    }
+    };
     const entry = await store?.get(key).catch(() => undefined);
     if (entry) {
       const age = this.now() - entry.storedAt;
@@ -57,10 +64,10 @@ export class LinkPreviewCache {
     try {
       value = await fetch();
     } catch (error) {
-      if (error instanceof LinkPreviewUnavailableError) await store?.put({ key, storedAt: this.now(), failed: true }).catch(() => {});
+      if (error instanceof LinkPreviewUnavailableError) await keep({ key, storedAt: this.now(), failed: true });
       throw error;
     }
-    await store?.put({ key, storedAt: this.now(), value }).catch(() => {});
+    await keep({ key, storedAt: this.now(), value });
     return value;
   }
 }
@@ -89,8 +96,9 @@ function openDatabase(): Promise<IDBDatabase> {
     };
     opening.onsuccess = () => {
       const db = opening.result;
-      // Signing out deletes the database; this tab lets go so the deletion is not blocked.
-      db.onversionchange = () => { db.close(); opened = null; };
+      // Signing out, in this tab or another, deletes the database; this tab lets go so the deletion is not
+      // blocked, and its reads under way do not write back what was cleared.
+      db.onversionchange = () => { linkPreviewCache.fence(); db.close(); opened = null; };
       db.onclose = () => { opened = null; };
       resolve(db);
     };
@@ -141,6 +149,7 @@ export const linkPreviewCache = new LinkPreviewCache(async () => (globalThis.ind
 /** Forgets every link this device read, so the next person at this browser does not see what the last one was sent. */
 export async function clearLinkPreviewCache(): Promise<void> {
   if (!globalThis.indexedDB) return;
+  linkPreviewCache.fence();
   const db = await opened?.catch(() => null);
   db?.close();
   opened = null;

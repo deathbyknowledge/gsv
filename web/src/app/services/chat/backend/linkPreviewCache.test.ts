@@ -66,21 +66,40 @@ describe("link preview cache", () => {
     await expect(cache.read("page:a", asString, async () => "new")).resolves.toBe("new");
   });
 
-  it("prunes once, dropping old entries and the oldest beyond the bound", async () => {
+  it("prunes after every write, dropping old entries and the oldest beyond the bound", async () => {
     const now = LINK_PREVIEW_KEEP_MS * 2;
     const { entries, store } = memoryStore();
     await store.put({ key: "page:stale", storedAt: now - LINK_PREVIEW_KEEP_MS - 1, value: "stale" });
-    for (let index = 0; index < MAX_LINK_PREVIEW_ENTRIES + 1; index += 1) {
+    for (let index = 0; index < MAX_LINK_PREVIEW_ENTRIES; index += 1) {
       await store.put({ key: `page:${index}`, storedAt: now - 1_000 + index, value: String(index) });
     }
     const cache = new LinkPreviewCache(async () => store, () => now);
 
     await cache.read("page:5", asString, async () => "unused");
-    await cache.read("page:6", asString, async () => "unused");
-    expect(store.prune).toHaveBeenCalledTimes(1);
+    expect(store.prune).not.toHaveBeenCalled();
+    await cache.read("page:new", asString, async () => "new");
     expect(entries.has("page:stale")).toBe(false);
     expect(entries.has("page:0")).toBe(false);
     expect(entries.size).toBe(MAX_LINK_PREVIEW_ENTRIES);
+    await cache.read("page:newer", asString, async () => "newer");
+    expect(store.prune).toHaveBeenCalledTimes(2);
+    expect(entries.has("page:1")).toBe(false);
+    expect(entries.size).toBe(MAX_LINK_PREVIEW_ENTRIES);
+  });
+
+  it("keeps a read that was under way when the cache was cleared to itself", async () => {
+    const { entries, store } = memoryStore();
+    const cache = new LinkPreviewCache(async () => store);
+    let finish!: (value: string) => void;
+    const reading = cache.read("page:a", asString, () => new Promise<string>((resolve) => { finish = resolve; }));
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    cache.fence();
+    finish("the previous person's page");
+    await expect(reading).resolves.toBe("the previous person's page");
+    expect(entries.has("page:a")).toBe(false);
+
+    await cache.read("page:b", asString, async () => "after");
+    expect(entries.has("page:b")).toBe(true);
   });
 
   it("reads the page when the browser keeps nothing", async () => {
