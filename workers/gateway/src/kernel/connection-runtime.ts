@@ -253,14 +253,14 @@ async handleSysConnect(
     if (outcome.peer.principal.kind === "human") {
       const ownerUid = outcome.peer.principal.account.uid;
       this.reconcileOwnedIdentities(ownerUid);
-      if (ownerUid >= 1000 && !ctx.auth.isPersonalAgentUid(ownerUid)
-        && ctx.config.get(`users/${ownerUid}/ui/welcome_card_seen`) === "1") {
+      // The owner's sign-in starts their pending welcome; a later sign-in only recovers its wake.
+      if (ownerUid >= 1000 && !ctx.auth.isPersonalAgentUid(ownerUid)) {
         ctx.defer(Promise.resolve().then(async () => {
           if (ctx.welcome.activate(ownerUid)) {
             await ctx.reconcileResponsibilityWake(ownerUid);
           }
         }).catch((error) => {
-          console.warn("[Kernel] Failed to resume onboarding:", exceptionDiagnostics(error));
+          console.warn("[Kernel] Failed to start onboarding:", exceptionDiagnostics(error));
         }));
       }
     }

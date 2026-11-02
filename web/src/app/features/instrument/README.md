@@ -58,13 +58,6 @@ actions and Help open in a vertical menu with touch-sized rows.
 Choosing a view, tapping outside or pressing Escape closes the menu.
 The menu button retains the unread People indicator while navigation is closed.
 
-On first sign-in, a spacious, nonmodal welcome card with large text appears above the web app's
-views for a personal human account. Closing it or choosing Try it out saves a
-per-user UI config flag, so the card stays dismissed across web and Desktop
-sessions. It never appears during activation or for the administrator. The Discord link opens
-separately, and the existing Feedback control remains in the header when available.
-If its saved state cannot be loaded, the card offers Retry without requiring a new session.
-
 Chat, Work, Memory and Settings mount on their first visit and retain their local
 state until the signed-in session ends. Moving between them keeps drafts,
 attachments, open forms, selection and reading position without a discard
@@ -153,9 +146,9 @@ state, so a replaced Ship asks again while a reset keeps it. A hover/focus toolt
 explains that scope; it never changes another Process's policy or
 remembers a denial.
 
-Chat owns the conversation. Dismissing the welcome card records the owner's choice and wakes Ship through its initial onboarding responsibility; a failed request leaves the card available to retry. Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
+Chat owns the conversation. The Kernel wakes Ship through its initial onboarding responsibility when a new owner first signs in; until Ship's first message lands, the empty chat reads "Ship is waking up". Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
 
-After the first welcome card is dismissed, the empty Ship chat shows a centered,
+On a new owner's first visit, the empty Ship chat shows a centered,
 muted privacy message until either person starts the conversation. It never
 appears in helper conversations, over existing messages, or while history is
 loading or unavailable. The notice sits behind the transcript without intercepting
