@@ -1,6 +1,5 @@
-/* Field status row — the same values as the .gsv-fld-stat block in
-   TextInput.css / Select.css, toned by its own class so it works without a
-   .gsv-fld root. --gsv-fld-glow follows the same light-theme switch. */
+/* Field status row: a tone-coloured dot and message under a field, toned by
+   its own class. TextInput and Select render it; it also stands alone. */
 .gsv-fld-stat {
   display: flex;
   align-items: center;
@@ -18,6 +17,8 @@
   /* size from .gsv-sublabel (12px); tracking kept */
   letter-spacing: 0.1em;
 }
+/* trailing content (a counter) sits at the row's end */
+.gsv-fld-stat > :not(.gsv-fld-dot, .gsv-fld-msg) { margin-left: auto; }
 .gsv-fld-stat.is-error .gsv-fld-msg { color: var(--error); }
 .gsv-fld-stat.is-error .gsv-fld-dot { background: var(--error); box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--error); }
 .gsv-fld-stat.is-success .gsv-fld-msg { color: var(--online); }
@@ -26,4 +27,5 @@
 .gsv-fld-stat.is-info .gsv-fld-dot { background: var(--live); box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--live); }
 .gsv-fld-stat.is-warn .gsv-fld-msg { color: var(--warn); }
 .gsv-fld-stat.is-warn .gsv-fld-dot { background: var(--warn); box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--warn); }
+/* Light theme: no neon on the status dot. */
 :is(.instrument.is-light, .gsv-auth-theme.is-light) { --gsv-fld-glow: 0px; }
