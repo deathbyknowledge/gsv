@@ -13,7 +13,6 @@ import { useT, type TextKey } from "../../../i18n/locale";
 import { INSTRUMENT_MESSENGERS_KEY } from "../wire/queryKeys";
 import { MessengerPairing } from "../settings/Telegram";
 import { loadMessengerConnections } from "../settings/messengerConnectionsService";
-import { GlyphStars } from "../../session/backgrounds/GlyphStars";
 import { MessengerIcon } from "./MessengerIcon";
 import type { PreferredSurface } from "./useFirstRunState";
 
@@ -60,8 +59,8 @@ export function Section({ name, icon, info, action, onAction, disabled, blurb, c
 
 /**
  * The last onboarding step, standing in front of the chat: where does this person want to message Ship?
- * The screen has its own star field, whatever the chat's stars preference. Each choice is a section
- * like Settings › Messengers, without the "nothing connected" line: this is a first run. A messenger pairs right here, through the same flow Settings uses (which names the countries
+ * Each choice is a section like Settings › Messengers, without the "nothing connected" line: this is a
+ * first run. A messenger pairs right here, through the same flow Settings uses (which names the countries
  * WhatsApp cannot reach), so Ship's greeting lands there; "continue here" completes at once. When the
  * messenger inventory cannot be loaded the screen says so and offers a retry, rather than passing the
  * failure off as a deployment without messengers; continuing here stays possible, since Settings can connect one later.
@@ -92,8 +91,7 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
   };
 
   return <section class="first-run" aria-labelledby="first-run-title">
-    <div class="first-run-field" aria-hidden="true"><GlyphStars density={0.013} /></div>
-    <div class="first-run-scroll"><div class="first-run-panel">
+    <div class="first-run-panel">
       <h1 id="first-run-title">{t("onboarding.surface.title")}</h1>
       <p class="first-run-lead">{t("onboarding.surface.lead", { address: new URL(gatewayHttpOrigin()).host })}</p>
       {completeError && <Alert variant="error" text={t("shell.firstRun.failed")} />}
@@ -146,6 +144,6 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
         <button type="button" class="first-run-text-action" disabled={busy} onClick={() => { void onComplete(inDesktopApp ? "desktop" : "web"); }}>{t("onboarding.surface.web")}</button>
         <p class="first-run-continue-note">{t("onboarding.surface.webSub")}</p>
       </div>
-    </div></div>
+    </div>
   </section>;
 }

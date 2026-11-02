@@ -7,13 +7,13 @@ let pagePreference: boolean | null = null;
 function storedStars(): boolean {
   if (pagePreference !== null) return pagePreference;
   try {
-    return window.localStorage.getItem(STARS_KEY) === "true";
+    return window.localStorage.getItem(STARS_KEY) !== "false";
   } catch {
-    return false;
+    return true;
   }
 }
 
-/** One device preference for the chat's background, off until the person turns it on; sign-in and the first run keep their stars. */
+/** One device preference for the shared background, including sign-in. */
 export function useStarsPreference() {
   const [showStars, setShowStars] = useState(storedStars);
   useEffect(() => {
