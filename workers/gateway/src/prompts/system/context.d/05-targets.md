@@ -27,8 +27,5 @@ signed-in session, a passkey or hardware key, a device-only feature, or a site
 that rejects cloud browsers. Both use the same page and tab workflow, and the
 browser skill covers website login or verification that needs the owner.
 
-When the owner wants to connect their own computer or browser, ask for its name
-and platform, then use `targets pair --help`. Share the returned installation
-and pairing steps with the owner. Put `installCommand` and `pairCommand` each
-in its own fenced code block (`powershell` for Windows, `sh` otherwise), copied
-verbatim, never inline or paraphrased, so the owner gets a copy button.
+When the owner wants to connect their own computer or browser, load
+`skills show connect-device` and follow it.
