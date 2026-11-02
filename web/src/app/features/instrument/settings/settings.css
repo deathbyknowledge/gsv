@@ -177,10 +177,5 @@
 .settings-account-grants ul { list-style: none; padding: 0; }
 .settings-account-grants li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; padding-block: .6rem; border-bottom: 1px solid var(--border); }
 .settings-account-grants code { color: var(--faint); overflow-wrap: anywhere; }
-.settings-event-sources { margin-top: 1.5rem; display: grid; gap: .5rem; }
-.settings-event-sources h3 { margin: 0; }
-.settings-event-sources .settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
-.settings-event-sources .settings-actions > span { flex: 1 1 auto; }
-.settings-event-secret { padding: .75rem; border: 1px solid var(--accent); border-radius: .5rem; overflow-wrap: anywhere; }
-.settings-event-secret p { margin: 0 0 .35rem; }
-.settings-event-add { display: grid; gap: .5rem; margin-top: .5rem; }
+.settings-happenings-source { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.settings-happenings-source:hover { color: var(--accent); }
