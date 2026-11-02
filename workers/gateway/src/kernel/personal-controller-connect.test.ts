@@ -99,6 +99,9 @@ describe("Kernel personal controller connect lifecycle", () => {
       },
       config: { get: vi.fn(() => null) },
       env: {},
+      // This owner has no welcome pending; starting one at sign-in is covered below.
+      welcome: { activate: vi.fn(() => false) },
+      reconcileResponsibilityWake: vi.fn(async () => {}),
       defer: vi.fn(),
     };
     const connection = { id: "connection-1", setState: vi.fn() };
