@@ -37,7 +37,7 @@ it.each(["MacIntel", "Win32"])("keeps onboarding destinations and shortcuts rele
     const hrefs = links.map((node) => node.props.href);
     expect(hrefs).toEqual(expect.arrayContaining([
       "/chat/settings?section=messengers", "/memory", "/chat/settings?section=permissions",
-      "https://operator.example/privacy", "mailto:hello@humansandmachin.es", "https://discord.gg/hy9ExJJFvn",
+      "https://operator.example/privacy", "mailto:support@humansandmachin.es", "https://discord.gg/hy9ExJJFvn",
     ]));
     expect(hrefs).not.toContain("https://ship.space/privacy");
     expect(hrefs.some((href) => href?.includes("gsv-manual") && href.startsWith("/memory"))).toBe(true);
