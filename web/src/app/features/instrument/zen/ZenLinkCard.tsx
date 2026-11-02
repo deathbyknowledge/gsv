@@ -7,9 +7,6 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { extractMessageLinks } from "./linkPreviews";
 
-/** A page read stays fresh for a day on this device; a failure is not kept, so the next view asks again. */
-const PREVIEW_STALE_MS = 24 * 60 * 60 * 1000;
-
 export function linkPreviewQueryKey(url: string) {
   return ["link-preview", url] as const;
 }
@@ -72,14 +69,17 @@ export function ZenLinkCards({ text }: { text: string }) {
   return <div class="zen-link-cards" ref={ref}>{near ? links.map((url) => <ZenLinkCard key={url} url={url} />) : null}</div>;
 }
 
-/** The page behind a link, as this device read it through `net.fetch`. Until it resolves, or when it fails or is empty, nothing shows. */
+/**
+ * The page behind a link, as this device read it through `net.fetch`. A session does not read it twice, and
+ * `linkPreviewCache` keeps it across sessions. Until it resolves, or when it fails or is empty, nothing shows.
+ */
 export function ZenLinkCard({ url }: { url: string }) {
   const { client, connected } = useGateway();
   const query = useQuery({
     queryKey: linkPreviewQueryKey(url),
     queryFn: () => fetchLinkPreview(client, url),
     enabled: connected,
-    staleTime: PREVIEW_STALE_MS,
+    staleTime: Infinity,
     retry: false,
   });
   const preview = query.data;
@@ -104,7 +104,7 @@ function ZenLinkImage({ url }: { url: string }) {
     queryKey: linkPreviewImageQueryKey(url),
     queryFn: () => fetchLinkPreviewImage(client, url),
     enabled: connected,
-    staleTime: PREVIEW_STALE_MS,
+    staleTime: Infinity,
     retry: false,
   });
   const source = useMediaObjectUrl(image.data);

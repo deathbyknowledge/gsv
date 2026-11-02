@@ -1,17 +1,21 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import { bodyToBytes } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
+import { linkPreviewCache, LinkPreviewUnavailableError } from "./linkPreviewCache";
+import type { LinkPreviewCache } from "./linkPreviewCache";
 
 type LinkPreviewGsvClient = Pick<GSVClient, "request">;
 
-export type LinkPreview = {
-  url: string;
-  resolvedUrl: string;
-  title?: string;
-  description?: string;
-  siteName?: string;
-  imageUrl?: string;
-};
+const linkPreviewSchema = z.object({
+  url: z.string(),
+  resolvedUrl: z.string(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  siteName: z.string().optional(),
+  imageUrl: z.string().optional(),
+});
+
+export type LinkPreview = z.infer<typeof linkPreviewSchema>;
 
 /** A page's preview tags sit in its head; reading stops there, or at this many bytes. */
 export const MAX_LINK_PREVIEW_PAGE_BYTES = 256 * 1024;
@@ -35,6 +39,8 @@ async function limited<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
+const keptImageSchema = z.instanceof(Blob).refine((image) => IMAGE_TYPES.has(image.type));
+
 const netFetchDataSchema = z.object({
   ok: z.boolean(),
   url: z.string(),
@@ -46,8 +52,8 @@ const netFetchDataSchema = z.object({
  * Reads a page through `net.fetch` on `gsv`, which relays the response as it arrives, and parses its preview tags here.
  * Only the head is read; the rest of the body is cancelled, which also stops the Kernel's request to the site.
  */
-export function fetchLinkPreview(client: LinkPreviewGsvClient, url: string): Promise<LinkPreview> {
-  return limited(() => readLinkPreview(client, url));
+export function fetchLinkPreview(client: LinkPreviewGsvClient, url: string, cache: LinkPreviewCache = linkPreviewCache): Promise<LinkPreview> {
+  return cache.read(`page:${url}`, linkPreviewSchema, () => limited(() => readLinkPreview(client, url)));
 }
 
 async function readLinkPreview(client: LinkPreviewGsvClient, url: string): Promise<LinkPreview> {
@@ -62,15 +68,15 @@ async function readLinkPreview(client: LinkPreviewGsvClient, url: string): Promi
   const contentType = data.headers["content-type"] ?? "";
   if (!data.ok || !/^\s*(text\/html|application\/xhtml\+xml)\b/i.test(contentType) || !response.body) {
     await response.body?.stream.cancel().catch(() => {});
-    throw new Error(`Link preview page is not HTML (status ${data.status})`);
+    throw new LinkPreviewUnavailableError(`Link preview page is not HTML (status ${data.status})`);
   }
   const head = await readHead(response.body.stream, charset(contentType));
   return { url, resolvedUrl: data.url || url, ...pageMetadata(head, data.url || url) };
 }
 
 /** The image travels through `net.fetch` too, so the browser never contacts the image host. */
-export function fetchLinkPreviewImage(client: LinkPreviewGsvClient, url: string): Promise<Blob> {
-  return limited(() => readLinkPreviewImage(client, url));
+export function fetchLinkPreviewImage(client: LinkPreviewGsvClient, url: string, cache: LinkPreviewCache = linkPreviewCache): Promise<Blob> {
+  return cache.read(`image:${url}`, keptImageSchema, () => limited(() => readLinkPreviewImage(client, url)));
 }
 
 async function readLinkPreviewImage(client: LinkPreviewGsvClient, url: string): Promise<Blob> {
@@ -85,7 +91,7 @@ async function readLinkPreviewImage(client: LinkPreviewGsvClient, url: string): 
   const mimeType = (data.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
   if (!data.ok || !IMAGE_TYPES.has(mimeType) || !response.body) {
     await response.body?.stream.cancel().catch(() => {});
-    throw new Error(`Link preview image is not a supported image (status ${data.status})`);
+    throw new LinkPreviewUnavailableError(`Link preview image is not a supported image (status ${data.status})`);
   }
   const bytes = await bodyToBytes(response.body, MAX_LINK_PREVIEW_IMAGE_BYTES);
   return new Blob([new Uint8Array(bytes)], { type: mimeType });
