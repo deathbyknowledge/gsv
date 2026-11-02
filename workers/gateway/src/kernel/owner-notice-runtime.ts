@@ -167,7 +167,10 @@ export class OwnerNoticeRuntime {
     const { subject } = notice;
     if (isSourceNotice(notice)) {
       const source = subject.sourceId ? ctx.eventSources.byId(subject.sourceId) : null;
-      return source?.enabled === 1 && source.owner_uid === notice.ownerUid ? { ...notice, subject: { ...subject, from: source.label } } : null;
+      if (source?.enabled !== 1 || source.owner_uid !== notice.ownerUid) return null;
+      // A quiet spell is noted with its notice; once an event or a change ends it, that notice is stale.
+      if (notice.topic === "event.silent" && (source.expect_every_ms === null || source.silence_noted_at !== notice.createdAtMs)) return null;
+      return { ...notice, subject: { ...subject, from: source.label } };
     }
     if (notice.topic === "notice.rule.changed" || notice.topic === "mail.received" || notice.topic === "machine.added"
       || notice.topic === "adapter.connected") return notice;

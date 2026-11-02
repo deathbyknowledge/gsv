@@ -5,7 +5,7 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import * as adapterSend from "./adapter-send";
 import type { Kernel } from "./do";
 import { OwnerNoticeRuntime } from "./owner-notice-runtime";
-import { EventSourceStore } from "./event-sources";
+import { EventSourceStore, noteSilentSources } from "./event-sources";
 import { OWNER_NOTICE_COLLAPSE_MS, OwnerNoticeStore } from "./owner-notice-store";
 import { NoticeRuleStore } from "./notice-rules";
 import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
@@ -24,8 +24,15 @@ afterEach(() => {
 describe("event source notices", () => {
   const source = (overrides: { notify?: "none" | "messenger"; ship?: "none" | "context" | "wake" } = {}) => ({
     name: "backups", label: "Backups", notify: overrides.notify ?? "messenger", ship: overrides.ship ?? "none",
-    webhook: "none" as const, secret: null, expectEveryMs: null,
+    webhook: "none" as const, hmac: null, senderSecret: false, secret: null, expectEveryMs: null,
   });
+  /** Let a source go quiet the way upkeep finds it, noting the silence and its notice together. */
+  const goQuiet = (eventSources: EventSourceStore, notices: OwnerNoticeStore, name: string) => {
+    const at = Date.now();
+    const row = eventSources.add(OWNER, { ...source(), name, label: "Backups", expectEveryMs: 60_000 }, "person", at - 60_000);
+    noteSilentSources(eventSources, notices, { isAccountDisabled: () => false }, at);
+    return row;
+  };
 
   it("shows an active person the event in their client instead of their messenger, and keeps it from a Ship left out", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
@@ -63,8 +70,7 @@ describe("event source notices", () => {
       const { runtime, notices, shipEvents, state, eventSources } = fixture(storage);
       state.activeClient = "connection-1";
       const send = sent();
-      const { source_id: sourceId } = eventSources.add(OWNER, source(), "person", Date.now());
-      notices.noteOnce(OWNER, `event.silent:${sourceId}:1`, "event.silent", { from: "Backups", sourceId }, Date.now());
+      goQuiet(eventSources, notices, "backups");
       await runtime.onOwnerNotices(OWNER, { id: "task:one" });
       expect(send).toHaveBeenCalledTimes(1);
 
@@ -102,9 +108,22 @@ describe("event source notices", () => {
       expect(send).not.toHaveBeenCalled();
 
       eventSources.update(row, { name: row.name, enabled: true }, "person", Date.now());
-      notices.noteOnce(OWNER, `event.silent:${row.source_id}:1`, "event.silent", { from: "Backups", sourceId: row.source_id }, Date.now());
+      goQuiet(eventSources, notices, "nightly");
       await runtime.onOwnerNotices(OWNER, { id: "task:two" });
       expect(send.mock.calls[0]?.[2]).toMatchObject({ text: "🔕 Backups has gone quiet: nothing arrived when it should have." });
+    });
+  });
+
+  it("drops a quiet source's notice once the source sends again or stops expecting events", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, notices, eventSources } = fixture(storage);
+      const send = sent();
+      const resumed = goQuiet(eventSources, notices, "backups");
+      eventSources.record(resumed, { id: "late", title: "Backup finished" }, "schedule", Date.now());
+      const relaxed = goQuiet(eventSources, notices, "nightly");
+      eventSources.update(relaxed, { name: relaxed.name, expectEveryMs: null }, "person", Date.now());
+      await runtime.onOwnerNotices(OWNER, { id: "task:one" });
+      expect(send).not.toHaveBeenCalled();
     });
   });
 
