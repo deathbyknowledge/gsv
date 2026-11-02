@@ -20,6 +20,7 @@ import type { StoredProcessMedia } from "./media";
 // Approved wording change on 2026-09-08: event markers precede annotations and schedule notices use concise labels.
 // Approved wording change on 2026-09-08: ipc.reply combines the worker process and task ID on one line.
 // Approved wording change on 2026-09-08: correction.text-only omits internal Process terminology.
+// Approved wording change on 2026-10-30: context.changed dates name the weekday.
 beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(GOLDEN_TIME); });
 afterEach(() => { vi.restoreAllMocks(); });
 

@@ -58,7 +58,7 @@ Use `--here` when each firing should run the current process:
 
 ```bash
 sched add --here --name <name> \
-  (--every <duration> | --cron <expr> [--timezone <zone>] | --after <duration> | --at <timestamp>) \
+  (--every <duration> | --cron <expr> [--timezone <zone>] | --after <duration> | --at <time> [--timezone <zone>]) \
   --message <prompt> [--conversation <id>]
 ```
 
@@ -68,11 +68,11 @@ Use `--to` for direct delivery without an agent run:
 
 ```bash
 sched add --to <destination> --name <name> \
-  (--every <duration> | --cron <expr> [--timezone <zone>] | --after <duration> | --at <timestamp>) \
+  (--every <duration> | --cron <expr> [--timezone <zone>] | --after <duration> | --at <time> [--timezone <zone>]) \
   --message <text>
 ```
 
-Choose exactly one time expression. An `--at` value must be a future ISO timestamp with `Z` or an explicit numeric UTC offset.
+Choose exactly one time expression. An `--at` value is a future local time such as `2026-10-26T10:00`, read in `--timezone` or your own timezone, or an ISO timestamp with `Z` or a UTC offset. Prefer the local form: it applies the offset in force on that date.
 
 Inspect and control schedules with:
 

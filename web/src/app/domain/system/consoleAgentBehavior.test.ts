@@ -150,6 +150,7 @@ describe("console agent behavior", () => {
       "fs.*",
       "shell.exec",
       "net.fetch",
+      "event.source.update",
       "shell.exec",
       "net.fetch",
       "fs.*",

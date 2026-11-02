@@ -447,7 +447,7 @@ describe("createGenerationService", () => {
       config: {
         ...CONFIG,
         provider: "openai-codex",
-        model: "gpt-5.5",
+        model: "gpt-5.6-sol",
         apiKey: "codex-access-token",
         openAiCodex: { accountId: "chatgpt-account-1" },
       },
@@ -457,7 +457,7 @@ describe("createGenerationService", () => {
 
     expect(completeWithOpenAiCodexFetchMock).toHaveBeenCalledWith(expect.objectContaining({
       model: expect.objectContaining({
-        id: "gpt-5.5",
+        id: "gpt-5.6-sol",
         provider: "openai-codex",
       }),
       context: CONTEXT,
@@ -477,7 +477,7 @@ describe("createGenerationService", () => {
       config: {
         ...CONFIG,
         provider: "openai-codex",
-        model: "gpt-5.5",
+        model: "gpt-5.6-sol",
         apiKey: "",
       },
       context: CONTEXT,

@@ -43,6 +43,28 @@ describe("gateway process controls integration", () => {
     });
   });
 
+  it("tells the model what to correct when a Shell tool call omits input", async () => {
+    await withRuntime(async (runtime) => {
+      runtime.ai.enqueue(
+        { kind: "tool-calls", calls: [{ id: "bad-shell", name: "Shell", arguments: { target: "gsv", command: "man send" } }] },
+        { kind: "message", text: "I will use input." },
+      );
+      const process = await runtime.spawn("malformed shell", { runAs: "process-runtime-agent" });
+      await runtime.configureAi(process.pid);
+      const sent = await runtime.client.proc.send({ pid: process.pid, message: "Read the send manual." });
+      if (!sent.ok) throw new Error(sent.error);
+      await waitForFinished(runtime, sent.runId);
+      const history = await processHistory(runtime, process.pid);
+      const result = history.messages.find(({ role }) => role === "toolResult");
+      expect(result?.content).toMatchObject({ isError: true, outcome: "failed" });
+      expect(JSON.parse(shellResultSchema.parse(result?.content).output ?? "")).toEqual({
+        status: "failed",
+        output: "",
+        error: 'shell.exec requires "input", the command to run',
+      });
+    });
+  });
+
   it("uses spawn-time model and effort for its first task and applies later edits to the next run", async () => {
     await withRuntime(async (runtime) => {
       const parent = await runtime.spawn("model catalog setup");

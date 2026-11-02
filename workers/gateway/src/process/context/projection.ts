@@ -91,14 +91,16 @@ function normalizeContextTimezone(value: string | undefined): string {
 function formatContextDate(date: Date, timezone: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
+    weekday: "long",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   }).formatToParts(date);
+  const weekday = parts.find((part) => part.type === "weekday")?.value ?? "Thursday";
   const year = parts.find((part) => part.type === "year")?.value ?? "1970";
   const month = parts.find((part) => part.type === "month")?.value ?? "01";
   const day = parts.find((part) => part.type === "day")?.value ?? "01";
-  return `${year}-${month}-${day}`;
+  return `${weekday}, ${year}-${month}-${day}`;
 }
 
 function normalizeTargets(devices: AiToolsTarget[]): ContextProjectionTarget[] {

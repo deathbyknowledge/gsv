@@ -1,5 +1,6 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { useSession } from "../../services/session/SessionProvider";
+import { readRecoveryOptions } from "../../services/session/accountRecovery";
 import { createMemberRecoveryAttempt, readMemberRecoveryAttempt, redeemMemberRecovery, startMemberRecovery } from "../../services/session/memberRecovery";
 import { AuthLayout } from "./AuthLayout";
 import { TextInput } from "../../components/ui/TextInput";
@@ -10,6 +11,7 @@ import { AppLink } from "../../services/navigation/appNavigation";
 import { useT } from "../../i18n/locale";
 import "./LoginScreen.css";
 
+/** "Forgot your password?": email the verified owner first, a messenger code as the alternative. */
 export function MemberRecoveryScreen() {
   const t = useT();
   const { service, snapshot } = useSession();
@@ -19,6 +21,12 @@ export function MemberRecoveryScreen() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState<{ url?: string; loaded: boolean }>({ loaded: false });
+  useEffect(() => {
+    let current = true;
+    void readRecoveryOptions(service.client, snapshot.url).then(({ emailUrl }) => { if (current) setEmail({ url: emailUrl, loaded: true }); });
+    return () => { current = false; };
+  }, [service.client, snapshot.url]);
   const start = async (event: Event) => {
     event.preventDefault();
     if (busy) return;
@@ -44,6 +52,12 @@ export function MemberRecoveryScreen() {
     <SectionHeader title={t("session.recovery.title")} titleSize="title" divider />
     <div class="gsv-login-body gsv-recovery-body">
       {done ? <><p>{t("session.recovery.done")}</p><AppLink href="/" class="gsv-auth-link">{t("session.recovery.return")}</AppLink></> : <>
+        {email.loaded && (email.url
+          ? <div class="gsv-login-fields">
+            <p>{t("session.recovery.emailIntro")}</p>
+            <a class="gsv-btn gsv-btn-primary gsv-btn-block" data-recovery-email href={email.url}>{t("session.recovery.email")}</a>
+          </div>
+          : <p>{t("session.recovery.emailUnavailable")}</p>)}
         <p>{t("session.recovery.intro")}</p>
         <form class="gsv-login-fields" onSubmit={(event) => void start(event)}>
           <Button variant="secondary" block type="submit" label={t(busy ? "session.recovery.wait" : attempt ? "session.recovery.requestNew" : "session.recovery.request")} disabled={busy} />

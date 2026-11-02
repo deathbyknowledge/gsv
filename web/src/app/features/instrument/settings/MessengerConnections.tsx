@@ -2,6 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/preact-query";
 import { useQuery } from "../../../services/navigation/viewQueries";
 import { useState } from "preact/hooks";
 import { LoadingState } from "../../../components/ui/Spinner";
+import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
+import { Tag } from "../../../components/ui/Tag";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { disconnectConsoleAdapterPairing } from "../../../services/system/consoleService";
 import type { ConsoleIdentityLink } from "../../../domain/system/consoleModels";
@@ -13,6 +15,7 @@ import { loadMessengerConnections, messengerConnectionStatus, type MessengerConn
 import { canConfigure } from "./settingsModel";
 import { SettingsError, type SettingsSectionProps } from "./settingsShared";
 import { useT, type TextKey } from "../../../i18n/locale";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 const MESSENGERS: ReadonlyArray<{ id: ManagedMessengerId; name: string; blurb: TextKey }> = [
   { id: "whatsapp", name: "WhatsApp", blurb: "settings.messengers.whatsapp" },
@@ -50,8 +53,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
   });
 
   return <section class="settings-messengers" aria-labelledby="settings-messengers-title">
-    <h1 id="settings-messengers-title">{t("settings.messengers.title")}</h1>
-    <p class="settings-intro">{t("settings.messengers.intro")}</p>
+    <PageHeading id="settings-messengers-title" title={t("settings.messengers.title")} description={t("settings.messengers.intro")} />
     {!canList && <p class="settings-muted">{t("settings.messengers.noAccess")}</p>}
     <SettingsError error={connections.error ?? unlink.error} />
     {connections.isPending && connected && canList && <LoadingState variant="panel">{t("settings.messengers.loading")}</LoadingState>}
@@ -59,13 +61,21 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
     {connections.data && MESSENGERS.map(({ id, name, blurb }) => {
       const adapter = connections.data.adapters.find((entry) => entry.adapter === id);
       const links = connections.data.links.filter((entry) => entry.adapter === id);
+      const statuses = links.map((link) => messengerConnectionStatus(adapter, link.accountId));
+      const nameTone: StatusTone = statuses.includes("needs-attention") ? "error"
+        : statuses.includes("reconnect-needed") ? "warn"
+        : statuses.includes("connected") ? "online" : "idle";
       const available = adapter?.enabled && adapter.supportsPairing;
       const canPair = adapter?.canLink === true;
       const comingSoon = id === "slack" || id === "discord";
       const canConnect = !comingSoon && connected && canPair && available && !unlink.isPending;
       return <section class="settings-messenger" key={id} aria-label={name}>
         <div class="settings-messenger-heading">
-          <h2>{name}{comingSoon && <small class="settings-coming-soon">{t("settings.messengers.comingSoon")}</small>}</h2>
+          <h2 class="settings-messenger-name">
+            <StatusDot tone={nameTone} size={7} />
+            {name}
+            {comingSoon && <Tag boxed size="medium" tone="idle" label={t("settings.messengers.comingSoon")} />}
+          </h2>
           <button class="settings-text-action" disabled={comingSoon || (pairing === id ? unlink.isPending : !canConnect)} onClick={() => { if (comingSoon) return; setRemoving(null); setPairing(pairing === id ? null : id); }}>
             {pairing === id ? t("settings.messengers.closeSetup") : links.length ? t("settings.messengers.connectAnother") : t("settings.messengers.connect", { name })}
           </button>
@@ -73,13 +83,21 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
         <p class="settings-muted">{t(blurb)}</p>
         {!available && <p class="settings-muted">{t("settings.messengers.unavailable", { name })}</p>}
         {available && !canPair && <p class="settings-muted">{t("settings.messengers.cannotLink", { name })}</p>}
-        {links.length === 0 && available && <p class="settings-muted">{t("settings.messengers.noLinks", { name })}</p>}
+        {links.length === 0 && available && !comingSoon && <ul class="settings-list settings-messenger-links"><li class="settings-messenger-state">
+          <span class="settings-messenger-status gsv-sublabel">{t("settings.messengers.noLinks", { name })}</span>
+        </li></ul>}
         <ul class="settings-list settings-messenger-links">{links.map((link) => {
           const status = messengerConnectionStatus(adapter, link.accountId);
           const error = adapter?.accounts.find((entry) => entry.accountId === link.accountId)?.error;
           const isRemoving = removing?.adapter === link.adapter && removing.accountId === link.accountId && removing.actorId === link.actorId;
           return <li key={JSON.stringify([link.accountId, link.actorId])}>
-            <div class="settings-server-heading"><strong>{t("settings.messengers.user", { platform: name, id: link.actorId })}</strong><span class={`settings-messenger-status${status === "connected" ? " is-connected" : ""}`}><i aria-hidden="true" />{t(STATUS_LABELS[status])}</span></div>
+            <div class="settings-server-heading">
+              <span class="settings-messenger-status gsv-sublabel">
+                {status === "connected"
+                  ? t("settings.messengers.connectedTo", { id: link.actorId })
+                  : `${t(STATUS_LABELS[status])} · ${t("settings.messengers.user", { platform: name, id: link.actorId })}`}
+              </span>
+            </div>
             {id === "slack" && <small>{t("settings.messengers.workspace", { id: link.accountId })}</small>}
             {error && <p class="settings-error" role="alert">{error}</p>}
             <div class="settings-actions">
@@ -95,7 +113,7 @@ export function MessengerConnections({ account, active }: Pick<SettingsSectionPr
           </li>;
         })}</ul>
         {!comingSoon && pairing === id && <fieldset disabled={!connected || !canPair || !available}>
-          <MessengerPairing adapter={id} onClose={() => setPairing(null)} onConnected={() => { setPairing(null); void refreshMessengerConnections(cache); }} />
+          <MessengerPairing adapter={id} disabled={!connected || !canPair || !available} onClose={() => setPairing(null)} onConnected={() => { setPairing(null); void refreshMessengerConnections(cache); }} />
         </fieldset>}
       </section>;
     })}

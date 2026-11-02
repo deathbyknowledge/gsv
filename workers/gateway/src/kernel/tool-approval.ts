@@ -25,16 +25,22 @@ export async function authorizeNestedOperation(
   const signal = ctx.requestSignal;
   signal?.throwIfAborted();
   const id = `approval:${crypto.randomUUID()}`;
-  const response = await raceWithAbort(send(ctx.installationId, ctx.processId, {
-    type: "req", id, call: "proc.tool.authorize", args: { ...ctx.toolOwner, syscall, args, target },
-  }), signal, {
-    onAbort: () => {
-      ctx.defer(send(ctx.installationId, ctx.processId!, {
-        type: "sig", signal: REQUEST_CANCEL_SIGNAL,
-        payload: { id, reason: "Owning operation was cancelled" },
-      }).catch(() => {}));
-    },
-  });
+  const releaseDeadlines = ctx.executionDeadlines?.hold();
+  let response;
+  try {
+    response = await raceWithAbort(send(ctx.installationId, ctx.processId, {
+      type: "req", id, call: "proc.tool.authorize", args: { ...ctx.toolOwner, syscall, args, target },
+    }), signal, {
+      onAbort: () => {
+        ctx.defer(send(ctx.installationId, ctx.processId!, {
+          type: "sig", signal: REQUEST_CANCEL_SIGNAL,
+          payload: { id, reason: "Owning operation was cancelled" },
+        }).catch(() => {}));
+      },
+    });
+  } finally {
+    releaseDeadlines?.();
+  }
   signal?.throwIfAborted();
   if (!response?.ok) throw new Error(response?.error.message ?? "Approval owner is unavailable");
   if (!response.data.approved) throw new Error(`Tool execution was not approved: ${syscall}`);

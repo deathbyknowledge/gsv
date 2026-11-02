@@ -13,7 +13,13 @@ You do not need to create a bot or paste its token into your Ship.
 When Ship needs your approval, the messenger shows what it wants to do. A
 request to publish on the [open network](/architecture/open-network) always
 names the handle and full address it publishes as, such as
-`@alice (alice.ship.space)`, whatever else Ship wrote.
+`@alice (alice.ship.space)`, whatever else Ship wrote. A request to install a
+crontab likewise shows the file and its jobs.
+
+A request raised while Ship is already running a command waits up to 9 minutes
+for your answer. If you answer a request that has ended, whether it timed out,
+was interrupted by a new message or was answered elsewhere, the messenger says
+your answer wasn't used; ask Ship to try again if it still needs doing.
 
 ## Ask Ship to connect
 
@@ -35,10 +41,22 @@ even when the deployment enables pairing. Existing links can still be inspected
 or disconnected. The Slack and Discord instructions below describe the adapter
 flows used through Ship; they are not currently available in Settings.
 
+## Quote a message
+
+Reply to a message by quoting it, and Ship sees what you quoted and who wrote it, so "yes, that
+one" is enough. This works in Telegram, Discord and WhatsApp, for your own messages and Ship's.
+Slack has no quote action: replying in a thread continues that thread instead.
+
+Long quotes are shortened. For a photo or file, Ship sees what it was, not the file again. Ship
+can't see quotes of messages more than 90 days old, sent before this feature, or sent elsewhere, and
+it can't see quotes of approval requests or notices. In those cases it knows that you quoted something
+it can't see, and it asks rather than guesses.
+
 ## Telegram
 
-1. In Ship, open **Messengers → Telegram** and use the link to open the official
-   Ship bot.
+1. In Ship, open **Messengers → Telegram** and choose **Connect**. It opens a
+   chat with the official Ship bot. To message it manually instead, find the
+   bot handle shown under the instructions.
 2. Send the bot any private message. It replies with a short-lived code.
 3. Enter that code back in Ship. Ship shows the Telegram display name, handle,
    and numeric ID that requested it.
@@ -120,11 +138,12 @@ confirmed author and observed destination.
 Ship uses one operator-owned WhatsApp Business number on the WhatsApp Business
 Platform. You message that number from your own WhatsApp account.
 
-1. In Ship, open **Settings → Messengers → WhatsApp**. It shows the Ship number
-   and a link that opens WhatsApp on it.
-2. Send the number any message. It replies with instructions and a separate
-   code-only message you can copy. The code expires in 10 minutes. If your
-   number is already connected to another Ship, send `/link` to get a new code.
+1. In Ship, open **Settings → Messengers → WhatsApp** and choose **Connect**.
+   It opens a chat with the Ship number, with the pairing message already filled
+   in. To message Ship manually instead, send `/link` to the number shown under
+   the instructions.
+2. Send that message. It replies with instructions and a separate code-only
+   message you can copy. The code expires in 10 minutes.
 3. Enter the code back in Ship. Ship shows the WhatsApp profile name and the
    masked number that requested it.
 4. Confirm only if that is your WhatsApp number. The code alone cannot choose a

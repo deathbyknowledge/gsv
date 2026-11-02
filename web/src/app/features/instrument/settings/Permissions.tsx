@@ -18,6 +18,7 @@ import { canConfigure, readSettingsPolicy, settingsAction, settingsPolicySchema,
 import { SettingsError, useSettingsDirty, type SettingsSectionProps } from "./settingsShared";
 import { permissionOptionsForRule } from "./permissionModel";
 import { useT } from "../../../i18n/locale";
+import { PageHeading } from "../../../components/ui/PageHeading";
 
 export function Permissions({ account, active, onDirty }: SettingsSectionProps) {
   const t = useT();
@@ -93,8 +94,7 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
     },
   ];
   return <section class="settings-permissions" aria-labelledby="settings-permissions-title">
-    <h1 id="settings-permissions-title">{t("settings.permissions.title")}</h1>
-    <p class="settings-intro">{t("settings.permissions.intro")}</p>
+    <PageHeading id="settings-permissions-title" title={t("settings.permissions.title")} description={t("settings.permissions.intro")} />
     <SettingsError error={config.error ?? error ?? save.error} />
     {config.isPending && connected && <LoadingState variant="panel">{t("settings.permissions.loading")}</LoadingState>}
     {targetQuery.error && <p class="settings-muted" role="status">{t("settings.permissions.targetsUnavailable")}</p>}
@@ -118,6 +118,11 @@ export function Permissions({ account, active, onDirty }: SettingsSectionProps) 
         <label class="settings-check"><input type="checkbox" checked={usesDefault} onChange={(event) => {
           if (policy) { setDraft({ inherited: event.currentTarget.checked, policy, base: draft?.base ?? original }); setSaved(false); }
         }} />{t("settings.permissions.useInherited")}</label>
+        <ul class="settings-notes">
+          <li>{t("settings.permissions.noteAlways")}</li>
+          <li>{t("settings.permissions.noteOrder")}</li>
+          <li>{t("settings.permissions.noteGrants")}</li>
+        </ul>
         {policy && <>
           <Select block label={t("settings.permissions.default")} options={actionOptions} selected={policy.default} disabled={usesDefault} onSelect={(value) => update({ ...policy, default: settingsAction(value) })} />
           <Table caption={t("settings.permissions.rules")} rows={ruleRows} rowId={(entry) => ruleId(entry.rule)} columns={ruleColumns} density="compact"

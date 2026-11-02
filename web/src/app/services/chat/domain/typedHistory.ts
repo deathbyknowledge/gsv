@@ -65,7 +65,8 @@ export function historyEventText(event: ProcHistoryEvent): string {
       target: event.payload.label ?? event.payload.targetId,
     });
     case "runtime.wake": return t("chat.event.wake");
-    case "owner.notified": return t("chat.event.ownerNotified", { channel: adapterDisplayName(event.payload.adapter), from: event.payload.from });
+    case "owner.notified":
+      return event.payload.adapter ? t("chat.event.ownerNotified", { channel: adapterDisplayName(event.payload.adapter), from: event.payload.from }) : generic;
   }
   return generic;
 }

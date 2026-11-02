@@ -209,7 +209,7 @@
   border-bottom: 1px solid rgba(151, 170, 255, 0.35);
 }
 /* a very long message folds once it has arrived: its first lines fade out above "read more" */
-.zen-moment .text.is-folded {
+.zen-resolving-text.is-folded {
   /* the line count is set inline from zenFold.ts; this holds where lh is unknown */
   max-height: 60vh;
   overflow: clip;
