@@ -171,8 +171,12 @@ export async function handleSysConfigSet(
   ctx.config.set(args.key, value);
   if (principal.kind === "human" && !ctx.processId && uid >= 1000
     && args.key === `users/${uid}/ui/welcome_card_seen` && value === "1") {
-    routeFirstRunToChosenSurface(ctx, uid);
-    if (ctx.welcome.activate(uid)) await ctx.reconcileResponsibilityWake(uid);
+    // Only a first run that still has the greeting ahead of it routes: a stale client finishing
+    // later, after Ship has acted, must not override where the person has written from since.
+    if (ctx.welcome.activate(uid)) {
+      routeFirstRunToChosenSurface(ctx, uid);
+      await ctx.reconcileResponsibilityWake(uid);
+    }
   }
   return { ok: true };
 }

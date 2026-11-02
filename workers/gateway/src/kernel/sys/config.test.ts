@@ -133,6 +133,7 @@ describe("sys.config.get", () => {
       ctx.connection = { id: "finishing-client" } as KernelContext["connection"];
       ctx.responsibilities = new ResponsibilityStore(storage);
       ctx.welcome = new InitialOnboarding(storage, ctx.responsibilities);
+      ctx.welcome.prepare(1000);
       const identityLinks = new IdentityLinkStore(sql);
       const privateDestinations = new PrivateAdapterDestinationStore(sql);
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -149,6 +150,19 @@ describe("sys.config.get", () => {
         : null);
       // a messenger choice hands replies to it; web and desktop select the client that finished
       expect(storage.kv.get<{ connectionId: string | null }>("ship-reply:1000")?.connectionId).toBe(routed ? null : "finishing-client");
+
+      // once Ship has acted on the welcome, a stale client finishing the same first run changes nothing
+      const seed = ctx.responsibilities.getByDedupeKey(1000, INITIAL_ONBOARDING_DEDUPE_KEY)!;
+      ctx.responsibilities.update({ ownerUid: 1000, id: seed.id,
+        patch: { state: "waiting", blocker: "Waiting for a reply", nextCheckAtMs: null },
+        actor: { kind: "process", processId: "ship" }, observedByShip: true, now: Date.now() });
+      ctx.shipReplies.recordClient(1000, "later-client");
+      privateDestinations.recordActivity(1000, { kind: "adapter", adapter: "slack", accountId: "team", actorId: "U1", surface: { kind: "dm", id: "D1" } }, "later-message", Date.now());
+      // SAFETY: only the finishing connection's id is read.
+      ctx.connection = { id: "stale-client" } as KernelContext["connection"];
+      await handleSysConfigSet({ key: "users/1000/ui/welcome_card_seen", value: "1" }, ctx);
+      expect(storage.kv.get<{ connectionId: string | null }>("ship-reply:1000")?.connectionId).toBe("later-client");
+      expect(privateDestinations.get(1000)?.destination.adapter).toBe("slack");
     });
   });
 
