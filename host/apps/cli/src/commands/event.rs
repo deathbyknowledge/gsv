@@ -1,7 +1,8 @@
-//! `gsv event`: record events from your own sources, without a public address.
+//! `gsv event emit`: record an event from your own source, without a public address.
 //!
 //! The same path a Ship's routines and scripts use, so a script on any computer
-//! can tell its owner or hand Ship some work.
+//! can tell its owner or hand Ship some work. Sources are looked after in Work,
+//! or with `gsv run event source`.
 
 use std::io::Read;
 
@@ -9,7 +10,7 @@ use gsv::kernel_client::{GatewayAuth, KernelClient};
 use serde_json::{json, Value};
 
 use crate::cli::EventAction;
-use crate::remote::{self, call, items, number, text, DynError, Output};
+use crate::remote::{self, call, number, DynError, Output};
 use crate::render;
 
 const EVENTS_PER_CALL: usize = 100;
@@ -55,41 +56,6 @@ pub(crate) async fn run(
 ) -> Result<(), DynError> {
     let client = remote::connect(url, auth).await?;
     match action {
-        EventAction::Sources => {
-            let result = call(&client, "event.source.list", json!({})).await?;
-            if out.json {
-                return render::print_json(&result);
-            }
-            for source in items(&result, "sources") {
-                println!(
-                    "{}\t{}\t{}",
-                    text(source, "name"),
-                    text(source, "ship"),
-                    text(source, "label")
-                );
-            }
-        }
-        EventAction::Add {
-            name,
-            label,
-            webhook,
-        } => {
-            let mut args = json!({ "name": name, "webhook": webhook });
-            if let Some(label) = label {
-                args["label"] = json!(label);
-            }
-            let result = call(&client, "event.source.add", args).await?;
-            if out.json {
-                return render::print_json(&result);
-            }
-            println!("Added {name}.");
-            for (key, title) in [("webhookUrl", "Address"), ("secret", "Signing secret")] {
-                let value = text(&result, key);
-                if !value.is_empty() {
-                    println!("{title}: {value}");
-                }
-            }
-        }
         EventAction::Emit {
             source,
             title,
@@ -120,24 +86,6 @@ pub(crate) async fn run(
                 );
             }
             println!("{accepted} accepted, {duplicates} already seen");
-        }
-        EventAction::List { source, limit } => {
-            let mut args = json!({ "limit": limit });
-            if let Some(source) = source {
-                args["source"] = json!(source);
-            }
-            let result = call(&client, "event.list", args).await?;
-            if out.json {
-                return render::print_json(&result);
-            }
-            for event in items(&result, "events") {
-                println!(
-                    "{}\t{}\t{}",
-                    text(event, "emittedBy"),
-                    text(event, "eventId"),
-                    text(event, "title")
-                );
-            }
         }
     }
     Ok(())

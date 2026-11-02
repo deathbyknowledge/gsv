@@ -241,15 +241,14 @@ archived. Without a terminal they refuse unless `--yes` is given.
 ### Events
 
 ```bash
-gsv event sources
-gsv event add NAME [--label TEXT] [--webhook standard|github|stripe|url]
 gsv event emit SOURCE --title TEXT [--id ID] [--preview TEXT] [--body TEXT]
 gsv event emit SOURCE --stdin
-gsv event list [SOURCE] [--limit N]
 ```
 
-Lets a script on any computer tell you something happened, without a public address. A
-new source tells you and leaves your Ship out; change that under Settings → When things happen.
+Lets a script on any computer tell you something happened, without a public address. Add the
+source first, in Work or with `gsv run event source add NAME`, and read what arrived there or with
+`gsv run event list`. A new source tells you and leaves your Ship out; change that under
+Settings → When things happen.
 With `--stdin`, each line is one JSON object with a `title` and optionally `id`, `preview` and `body`.
 Repeating an `id` is ignored, so a script can re-read the same items.
 

@@ -637,19 +637,6 @@ pub(crate) struct Cadence {
 
 #[derive(Subcommand, Clone)]
 pub(crate) enum EventAction {
-    /// List where your events come from
-    Sources,
-    /// Add a source; it tells you and leaves your Ship out until you change it in Settings
-    Add {
-        /// What commands call it, such as "backups"
-        name: String,
-        /// The name you see
-        #[arg(long)]
-        label: Option<String>,
-        /// Give it a public address: standard, github, stripe or url
-        #[arg(long, default_value = "none")]
-        webhook: String,
-    },
     /// Record an event
     Emit {
         /// The source's name
@@ -669,14 +656,6 @@ pub(crate) enum EventAction {
         /// Read one JSON object per line from standard input
         #[arg(long)]
         stdin: bool,
-    },
-    /// Show what arrived
-    List {
-        /// Only this source
-        source: Option<String>,
-        /// How many to show
-        #[arg(long, default_value_t = 20)]
-        limit: u32,
     },
 }
 
