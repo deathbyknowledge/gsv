@@ -211,7 +211,8 @@ contact destinations remain fixed. Personal Ship replies follow the owner's curr
   This preference survives the end of a run and Process replacement.
 - When the selected client disconnects or has been inactive for five minutes, Ship uses the owner's
   last authorized linked private messenger destination. A new messenger message selects that
-  messenger; sending a new message in the app selects that client again. Activity cannot revive an
+  messenger, and so does pairing one: the person has just written from that chat for the code.
+  Sending a new message in the app selects that client again. Activity cannot revive an
   expired selection. Without a usable destination,
   the message remains in canonical history.
 - Idle expiry includes 30 seconds of reporting grace so throttled input cannot cause an early

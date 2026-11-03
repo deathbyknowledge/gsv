@@ -4952,6 +4952,7 @@ describe("managed adapter pairing", () => {
     expect(ctx.adapters.identityLinks.get("telegram", "managed", "12345")).toBeNull();
     expect(service.adapterPairingActivate).not.toHaveBeenCalled();
     expect(service.adapterPairingFinalize).not.toHaveBeenCalled();
+    expect(ctx.adapters.privateDestinations.recordActivity).not.toHaveBeenCalled();
   });
 
   it("discovers the platform bot and confirms the displayed Telegram identity", async () => {
@@ -5055,6 +5056,16 @@ describe("managed adapter pairing", () => {
       adapter: "telegram",
       accountId: "managed",
     });
+    // The person just wrote from this chat to get the code, so Ship's next private reply goes there.
+    expect(ctx.adapters.privateDestinations.recordActivity).toHaveBeenCalledWith(1000, {
+      kind: "adapter",
+      adapter: "telegram",
+      accountId: "managed",
+      actorId: "12345",
+      surface: { kind: "dm", id: "12345" },
+    }, expect.stringMatching(/^pairing:/), expect.any(Number));
+    expect(ctx.adapters.privateDestinations.recordActivity).toHaveBeenCalledAfter(service.adapterPairingFinalize);
+    expect(ctx.shipReplies.recordAdapter).toHaveBeenCalledWith(1000);
 
     await expect(handleAdapterPairDisconnect({
       adapter: "telegram",

@@ -200,6 +200,8 @@ The canonical outbound path is:
 2. The Kernel commits the Message to the canonical conversation and selects its
    directed endpoint. Explicit Work, group and contact routes remain fixed.
 3. Personal Ship replies follow the owner's latest human message origin across runs.
+   Completing a messenger pairing counts as a message from that DM, since the person
+   wrote there for the code, so the `adapter.connected` hello lands on it.
    Client activity only refreshes the selected client's idle timer; it never selects
    another destination or revives an expired selection. If that client disconnects or is inactive for five minutes,
    the Kernel uses the owner's last-active linked private messenger destination.

@@ -281,6 +281,16 @@ async function completeAdapterPairing(
   if (finalizedLink?.uid !== uid || finalizedLink.metadata?.routeGeneration !== activated.route.generation) {
     throw new Error("Adapter pairing changed during finalization");
   }
+  // The person just wrote from this chat to get the code, so it is their latest message origin:
+  // Ship's next private reply, such as the `adapter.connected` hello below, goes there.
+  ctx.adapters.privateDestinations.recordActivity(uid, {
+    kind: "adapter",
+    adapter,
+    accountId: activated.candidate.accountId,
+    actorId: activated.candidate.actorId,
+    surface: { kind: "dm", id: activated.candidate.surfaceId },
+  }, `pairing:${operationId}`, Date.now());
+  ctx.shipReplies.recordAdapter(uid);
   const previousStatus = ctx.adapters.status.get(
     adapter,
     activated.candidate.accountId,
