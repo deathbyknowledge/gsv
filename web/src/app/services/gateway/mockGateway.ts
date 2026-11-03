@@ -352,9 +352,12 @@ function studioPdf(): Uint8Array {
   return bytes;
 }
 
+/** A fixture file: its type and a way to its bytes. */
+type MockFile = { contentType: string; bytes: () => Uint8Array };
+
 /** What each fixture file holds; anything else under a path reads as the backup notes. */
-function mockFile(path: string): { contentType: string; bytes: () => Uint8Array } {
-  const text = (content: string, contentType = "text/markdown") => ({ contentType, bytes: () => new TextEncoder().encode(content) });
+function mockFile(path: string): MockFile {
+  const text = (content: string, contentType = "text/markdown"): MockFile => ({ contentType, bytes: () => new TextEncoder().encode(content) });
   switch (path) {
     case "/home/esteve/notes/mara.md": return text(MARA_NOTES);
     case "/home/esteve/notes/backup.sh": return text(BACKUP_SCRIPT, "text/x-shellscript");
@@ -1338,7 +1341,11 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       if (kind === "image") return socket.bytesResponse(id, meta satisfies FsReadResult, bytes);
       if (kind === "file") return respond(id, { ok: false, error: `Binary file (${file.contentType}, ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB) — not readable as text` } satisfies FsReadResult);
       const { text, lines, truncated, nextOffset } = readTextLines(new TextDecoder().decode(bytes), read.offset, read.limit, read.maxBytes);
-      return socket.textResponse(id, { ...meta, lines, ...(truncated ? { truncated, ...(nextOffset === undefined ? {} : { nextOffset }) } : {}) } satisfies FsReadResult, text);
+      // a cut-off read says so, and where the next one starts when it knows
+      const page = !truncated ? { ...meta, lines }
+        : nextOffset === undefined ? { ...meta, lines, truncated }
+        : { ...meta, lines, truncated, nextOffset };
+      return socket.textResponse(id, page satisfies FsReadResult, text);
     }
     case "fs.transfer.send": {
       const { path: requestedPath, revision } = z.object({ target: z.string().optional(), path: z.string(), revision: z.string().optional() }).parse(args);
