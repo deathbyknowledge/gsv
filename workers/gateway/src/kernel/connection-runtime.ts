@@ -253,14 +253,14 @@ async handleSysConnect(
     if (outcome.peer.principal.kind === "human") {
       const ownerUid = outcome.peer.principal.account.uid;
       this.reconcileOwnedIdentities(ownerUid);
-      if (ownerUid >= 1000 && !ctx.auth.isPersonalAgentUid(ownerUid)
-        && ctx.config.get(`users/${ownerUid}/ui/welcome_card_seen`) === "1") {
+      // The owner's sign-in starts their pending welcome; a later sign-in only recovers its wake.
+      if (ownerUid >= 1000 && !ctx.auth.isPersonalAgentUid(ownerUid)) {
         ctx.defer(Promise.resolve().then(async () => {
           if (ctx.welcome.activate(ownerUid)) {
             await ctx.reconcileResponsibilityWake(ownerUid);
           }
         }).catch((error) => {
-          console.warn("[Kernel] Failed to resume onboarding:", exceptionDiagnostics(error));
+          console.warn("[Kernel] Failed to start onboarding:", exceptionDiagnostics(error));
         }));
       }
     }
@@ -346,7 +346,8 @@ disconnectTargetConnections(targetId: string, reason: string): void {
       : signal === "r12y.changed" ? "r12y.list"
       : signal === "r12y.source.changed" ? "r12y.source.list"
       : signal === "sched.changed" ? "sched.list"
-      : signal === "notify.rule.changed" ? "notify.rule.list" : null;
+      : signal === "notify.rule.changed" ? "notify.rule.list"
+      : signal === "event.source.changed" ? "event.source.list" : null;
     const interruptedReason = contactRead ? "Contact feed interrupted"
       : signal === "proc.changed" || signal === "process.exit" ? "Process feed interrupted"
       : "User feed interrupted";

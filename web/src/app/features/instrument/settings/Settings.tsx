@@ -25,6 +25,7 @@ export type SettingsProps = {
   onDirtyChange?: (dirty: boolean) => void;
   onSignOut?: () => void;
   onInspectProcess: (pid: string) => void;
+  onOpenSource: (name?: string) => void;
 };
 
 const SECTIONS = ["preferences", "voice", "standing", "permissions", "instructions", "messengers", "mcp", "logs", "account", "sign-in"] as const;
@@ -42,7 +43,7 @@ const SECTION_LABELS = {
   "sign-in": "settings.section.signIn",
 } satisfies Record<Section, TextKey>;
 
-export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: SettingsProps) {
+export function Settings({ onDirtyChange, onSignOut, onInspectProcess, onOpenSource }: SettingsProps) {
   const t = useT();
   const active = useViewActive();
   const desktop = useNativeInput() !== null;
@@ -87,7 +88,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
         </>}
         {account && <div key={account.uid}>
           <div hidden={section !== "preferences"}><Preferences account={account} active={active && section === "preferences"} onDirty={preferencesDirty} /></div>
-          <RetainedView active={active && section === "standing"}><WhenThingsHappen account={account} /></RetainedView>
+          <RetainedView active={active && section === "standing"}><WhenThingsHappen account={account} onOpenSource={onOpenSource} /></RetainedView>
           <div hidden={section !== "permissions"}><Permissions account={account} active={active && section === "permissions"} onDirty={permissionsDirty} /></div>
           <div hidden={section !== "instructions"}><Instructions account={account} active={active && section === "instructions"} onDirty={instructionsDirty} /></div>
           <div hidden={section !== "messengers"}><MessengerConnections account={account} active={active && section === "messengers"} /></div>
@@ -96,7 +97,7 @@ export function Settings({ onDirtyChange, onSignOut, onInspectProcess }: Setting
           <section hidden={section !== "account"} aria-labelledby="settings-account-title">
             <PageHeading id="settings-account-title" title={t("settings.account.title")} description={t("settings.account.intro")} />
             <h2>{t("settings.account.deleteTitle")}</h2>
-            <p class="settings-intro">{rich(t("settings.account.deleteRequest"), { email: <a href="mailto:hello@humansandmachin.es">hello@humansandmachin.es</a> })}</p>
+            <p class="settings-intro">{rich(t("settings.account.deleteRequest"), { email: <a href="mailto:privacy@humansandmachin.es">privacy@humansandmachin.es</a> })}</p>
             <p class="settings-muted">{t("settings.account.deleteExplanation")}</p>
           </section>
           {account.uid === 0 && <div hidden={section !== "sign-in"}><PageHeading title={t("settings.signIn.title")} description={t("settings.signIn.intro")} /><PersonalPasswordReset active={active && section === "sign-in"} /><OwnerAccess /></div>}

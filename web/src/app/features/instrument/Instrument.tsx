@@ -43,7 +43,7 @@ import "./instrument.css";
 export type Distance = "zen" | "fleet" | "memory" | "settings" | "people";
 
 /** A row in Fleet, addressed the way the manifest addresses it: `target:<id>` or `proc:<pid>`. */
-export type FleetRow = `target:${string}` | `proc:${string}` | `more:${string}` | `dir:${string}` | `file:${string}`;
+export type FleetRow = `target:${string}` | `proc:${string}` | `more:${string}` | `dir:${string}` | `file:${string}` | `source:${string}`;
 
 const DISTANCE_TO_PATH = {
   zen: "/chat",
@@ -113,8 +113,6 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [zenDirty, setZenDirty] = useState(false);
-  /* the founders' welcome still stands over the chat; Ship is not waking until it is dismissed */
-  const [welcomeOpen, setWelcomeOpen] = useState(true);
   const [firstRunShown, setFirstRunShown] = useState(false);
   const [fleetDirty, setFleetDirty] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
@@ -318,7 +316,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           setHelp(false);
           setNavigationOpen((open) => !open);
         }} />
-      <FirstRun active={distance === "zen" && zenPid === null} onOpenChange={setWelcomeOpen} onShownChange={setFirstRunShown} />
+      <FirstRun active={distance === "zen" && zenPid === null} onShownChange={setFirstRunShown} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label={t("shell.help.label")} ref={helpRef}>
           <HelpContent distance={distance} connected={status.state === "connected"} onClose={closeHelp} onSearch={openSearch} onFeedback={feedbackAvailable ? () => {
@@ -348,7 +346,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
             if (!move("memory")) return;
             if (page) setSelectedMemoryPage({ ...page });
           }} initialTarget={zenTarget} prefill={zenPrefill} requestPrefill={zenRequestPrefill} activityRequest={activityRequest}
-          onPrefillUsed={() => { setZenPrefill(null); setZenRequestPrefill(null); }} pid={zenPid} welcomeOpen={welcomeOpen}
+          onPrefillUsed={() => { setZenPrefill(null); setZenRequestPrefill(null); }} pid={zenPid}
           contactReplies={zenPid ? undefined : contactReplies}
           peopleActivity={zenPid ? undefined : peopleActivity}
           onPeopleActivity={(request) => {
@@ -367,7 +365,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           }} />
         </RetainedView>
         <RetainedView active={distance === "settings"}>
-          <Settings onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onSignOut={() => {
+          <Settings onDirtyChange={setSettingsDirty} onInspectProcess={(pid) => { move("fleet", `proc:${pid}`); }} onOpenSource={(name) => { move("fleet", name ? `source:${name}` : null); }} onSignOut={() => {
             if ((handsfreeDirty || settingsDirty || unsaved || fleetDirty || memoryDirty || peopleDirty) && !window.confirm(t("shell.confirm.signOut"))) return;
             void session.lock("session.status.signedOut");
           }} />

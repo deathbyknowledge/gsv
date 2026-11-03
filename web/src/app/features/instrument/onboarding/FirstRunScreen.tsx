@@ -14,7 +14,6 @@ import { INSTRUMENT_MESSENGERS_KEY } from "../wire/queryKeys";
 import { MessengerPairing } from "../settings/Telegram";
 import { loadMessengerConnections } from "../settings/messengerConnectionsService";
 import { MessengerIcon } from "./MessengerIcon";
-import type { PreferredSurface } from "./useFirstRunState";
 
 type MessengerChoice = "whatsapp" | "telegram";
 /** Which section is open; a messenger's holds the pairing flow until it reports the connection. */
@@ -33,7 +32,7 @@ type Props = {
   ownerUid: number;
   completing: boolean;
   completeError: boolean;
-  onComplete: (choice: PreferredSurface) => Promise<void>;
+  onComplete: () => Promise<void>;
 };
 
 /** One choice, laid out as a messenger is in Settings › Messengers: heading with its action, a line about it, and what opens beneath. */
@@ -61,7 +60,7 @@ export function Section({ name, icon, info, action, onAction, disabled, blurb, c
  * The last onboarding step, standing in front of the chat: where does this person want to message Ship?
  * Each choice is a section like Settings › Messengers, without the "nothing connected" line: this is a
  * first run. A messenger pairs right here, through the same flow Settings uses (which names the countries
- * WhatsApp cannot reach), so Ship's greeting lands there; "continue here" completes at once. When the
+ * WhatsApp cannot reach), and Ship says hello there once it connects; "continue here" completes at once. When the
  * messenger inventory cannot be loaded the screen says so and offers a retry, rather than passing the
  * failure off as a deployment without messengers; continuing here stays possible, since Settings can connect one later.
  */
@@ -94,7 +93,7 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
     <div class="first-run-panel">
       <h1 id="first-run-title">{t("onboarding.surface.title")}</h1>
       <p class="first-run-lead">{t("onboarding.surface.lead", { address: new URL(gatewayHttpOrigin()).host })}</p>
-      {completeError && <Alert variant="error" text={t("shell.firstRun.failed")} />}
+      {completeError && <Alert variant="error" text={t("onboarding.surface.failed")} />}
       {connections.isPending && connected && <LoadingState variant="panel">{t("onboarding.surface.loading")}</LoadingState>}
       {connections.isError && <Alert variant="error" text={t("onboarding.surface.loadFailed")}>
         <Button variant="secondary" label={t("common.tryAgain")} disabled={!connected || connections.isFetching} onClick={() => { void connections.refetch(); }} />
@@ -119,7 +118,7 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
             <Alert variant="success" title={t("onboarding.surface.connectedTitle")} text={t("onboarding.surface.connectedText", { platform: platformName(id) })} />
             <div class="first-run-actions">
               <span class="first-run-actions-spacer" />
-              <Button variant="primary" label={t("onboarding.surface.openChat")} disabled={busy} onClick={() => { void onComplete(id); }} />
+              <Button variant="primary" label={t("onboarding.surface.openChat")} disabled={busy} onClick={() => { void onComplete(); }} />
             </div>
           </div>}
         </Section>;
@@ -133,7 +132,7 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
           <div class="first-run-actions">
             <span class="first-run-actions-spacer" />
             {/* the choice is the desktop app; the browser is only where the first run happens to finish */}
-            <Button variant="secondary" label={t("onboarding.surface.continueHere")} disabled={busy} onClick={() => { void onComplete("desktop"); }} />
+            <Button variant="secondary" label={t("onboarding.surface.continueHere")} disabled={busy} onClick={() => { void onComplete(); }} />
             <Button variant="primary" href={LATEST_RELEASE_PAGE_URL} label={t("onboarding.surface.download")} />
           </div>
         </div>}
@@ -141,7 +140,7 @@ export function FirstRunScreen({ ownerUid, completing, completeError, onComplete
 
       <div class="first-run-continue">
         {/* "here" is the client the first run is finishing in */}
-        <button type="button" class="first-run-text-action" disabled={busy} onClick={() => { void onComplete(inDesktopApp ? "desktop" : "web"); }}>{t("onboarding.surface.web")}</button>
+        <button type="button" class="first-run-text-action" disabled={busy} onClick={() => { void onComplete(); }}>{t("onboarding.surface.web")}</button>
         <p class="first-run-continue-note">{t("onboarding.surface.webSub")}</p>
       </div>
     </div>

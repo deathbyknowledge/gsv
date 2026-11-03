@@ -94,7 +94,8 @@ const NOTICE_BODY = {
   "machine.added": "chat.notice.machine",
   "adapter.connected": "chat.notice.adapterConnected",
   "adapter.auth_required": "chat.notice.adapterAuth",
-} as const satisfies Record<Exclude<OwnerNotified["payload"]["topic"], "contact.message">, TextKey>;
+  "event.silent": "chat.notice.eventSilent",
+} as const satisfies Record<Exclude<OwnerNotified["payload"]["topic"], "contact.message" | "event.received">, TextKey>;
 
 /** A notice GSV sent the person, shown whole and opened as a whole: who wrote, what they said, and which messenger carried it. */
 function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { focus, index, phase, clock }: {
@@ -102,16 +103,16 @@ function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { f
 }) {
   const { payload } = event;
   const link = event.link ? eventLink(event.link) : null;
-  // A record without a messenger went only to Ship, so it has no card for the person.
-  if (!payload.adapter || payload.sentAtMs === undefined) return null;
-  const messenger = adapterDisplayName(payload.adapter);
-  const count = payload.messages !== undefined && payload.messages > 1 ? t("chat.notice.messages", { count: String(payload.messages) }) : null;
+  // A record the person wasn't told about went only to Ship, so it has no card for them.
+  if (payload.sentAtMs === undefined) return null;
+  const messenger = payload.adapter ? adapterDisplayName(payload.adapter) : null;
+  const count = payload.messages !== undefined && payload.messages > 1 ? t(payload.topic === "event.received" ? "chat.notice.events" : "chat.notice.messages", { count: String(payload.messages) }) : null;
   const content = <>
     <div class="notice-head">
       <span class="notice-from">{payload.from}</span>
       {payload.handle ? <span class="notice-handle">{`@${payload.handle}`}</span> : null}
     </div>
-    {payload.topic === "contact.message" ? (
+    {payload.topic === "contact.message" || payload.topic === "event.received" ? (
       <p class="notice-body">
         {count ? <span class="notice-count">{count}</span> : null}
         {payload.preview ? <q>{payload.preview}</q> : <span class="notice-quiet">{t("chat.notice.attachment")}</span>}
@@ -132,13 +133,13 @@ function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { f
       </div>
       <div class="notice-card">
         {link ? <AppLink class="notice-open" href={link.href}>{content}<span class="notice-go">{t(link.label)}</span></AppLink> : <div class="notice-open">{content}</div>}
-        <span class="notice-carrier">
+        {messenger ? <span class="notice-carrier">
           <Hint text={messenger} position="left">
             <span class="notice-carrier-mark" tabIndex={0} role="img" aria-label={t("chat.notice.sentOn", { channel: messenger })}>
               <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M2 8 14 2l-3 12-3-5-6-1Zm6 1 6-7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
             </span>
           </Hint>
-        </span>
+        </span> : null}
       </div>
     </div>
   );

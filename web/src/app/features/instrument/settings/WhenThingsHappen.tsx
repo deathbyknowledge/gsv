@@ -6,6 +6,8 @@ import { useGateway } from "../../../services/gateway/GatewayProvider";
 import { LoadingState } from "../../../components/ui/Spinner";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { INSTRUMENT_NOTICE_RULES_KEY, INSTRUMENT_SOURCES_KEY } from "../wire/queryKeys";
+import { EventSourceRows } from "./EventSources";
+import { useEventSources } from "../shared/useEventSources";
 import { canConfigure } from "./settingsModel";
 import { SettingsError } from "./settingsShared";
 import { useT, type TextKey } from "../../../i18n/locale";
@@ -33,7 +35,7 @@ function RowIcon({ path }: { path: string }) {
 
 const MEMORY_REVIEW = "memory.review";
 
-export function WhenThingsHappen({ account }: { account: ConsoleAccount }) {
+export function WhenThingsHappen({ account, onOpenSource }: { account: ConsoleAccount; onOpenSource: (name?: string) => void }) {
   const t = useT();
   const { client, connected } = useGateway();
   const cache = useQueryClient();
@@ -62,6 +64,7 @@ export function WhenThingsHappen({ account }: { account: ConsoleAccount }) {
       void cache.invalidateQueries({ queryKey: INSTRUMENT_SOURCES_KEY });
     },
   });
+  const events = useEventSources(hasRules);
   if (!canReadSources && !hasRules) return <p class="settings-muted">{t("settings.happenings.noAccess")}</p>;
   const busy = !connected || updateSource.isPending || updateRule.isPending;
   const loading = connected && ((canReadSources && sources.isPending) || (hasRules && rules.isPending));
@@ -69,7 +72,7 @@ export function WhenThingsHappen({ account }: { account: ConsoleAccount }) {
   return <section class="settings-standing" aria-label={t("settings.happenings.title")}>
     <PageHeading title={t("settings.happenings.title")} description={t("settings.happenings.intro")} />
     {loading && <LoadingState>{t("common.loading")}</LoadingState>}
-    <SettingsError error={sources.error ?? rules.error ?? updateSource.error ?? updateRule.error} />
+    <SettingsError error={sources.error ?? rules.error ?? updateSource.error ?? updateRule.error ?? events.error} />
     {!loading && <>
       {rules.data && <div class="settings-happenings">
         <span class="settings-happenings-head">{t("settings.happenings.event")}</span>
@@ -94,10 +97,12 @@ export function WhenThingsHappen({ account }: { account: ConsoleAccount }) {
             {rule.changedBy === "ship" && <small>{t("settings.happenings.changedByShip")}</small>}
           </Fragment>;
         })}
+        <EventSourceRows events={events} shipOutcomes={SHIP_OUTCOMES} RowIcon={RowIcon} disabled={busy || !canChangeRules} onOpen={onOpenSource} />
       </div>}
       {rules.data && <p class="settings-happenings-legend">
         {SHIP_OUTCOMES.map(({ outcome, label, icon }) => <span key={outcome}><RowIcon path={icon} />{t(label)}</span>)}
       </p>}
+      {rules.data && <p class="settings-muted">{t("settings.happenings.sources.inWork")} <button type="button" class="settings-text-action" onClick={() => onOpenSource()}>{t("settings.happenings.sources.openWork")}</button></p>}
       {memory && <div class="settings-happening">
         <label class="settings-check"><input type="checkbox" checked={memory.enabled} disabled={busy || !canChangeSources}
           onChange={() => updateSource.mutate(!memory.enabled)} />{t("settings.happenings.memoryReview")}</label>

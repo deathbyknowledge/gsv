@@ -15,45 +15,23 @@ async function buttonTree(props: ButtonProps): Promise<ComponentChildren> {
   return tree;
 }
 
-interface AnchorClick {
-  preventDefault: ReturnType<typeof vi.fn>;
-  currentTarget: { closest: (selector: string) => object | null };
-}
-
-function anchorProps(tree: ComponentChildren) {
-  const anchor = collectNodes(tree).find((node) => node.type === "a");
-  if (!anchor) throw new Error("expected the link-button to render an anchor");
-  // SAFETY: the anchor's props are the test subject.
-  return anchor.props as { href: string; onClick: (event: AnchorClick) => void };
-}
-
-function clickEvent(insideDisabledFieldset: boolean): AnchorClick {
-  return {
-    preventDefault: vi.fn(),
-    currentTarget: { closest: (selector: string) => (selector === "fieldset:disabled" && insideDisabledFieldset ? {} : null) },
-  };
-}
-
 beforeEach(() => vi.stubGlobal("document", {}));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Button with href", () => {
-  it("goes inert inside a disabled fieldset, which cannot disable an anchor itself", async () => {
+  it("renders a real link that opens an outside destination in a new tab and reports the click", async () => {
     const onClick = vi.fn();
-    const props = anchorProps(await buttonTree({ href: "https://wa.me/1", label: "Connect", onClick }));
-    const event = clickEvent(true);
-    props.onClick(event);
-    expect(event.preventDefault).toHaveBeenCalled();
-    expect(onClick).not.toHaveBeenCalled();
+    const anchor = collectNodes(await buttonTree({ href: "https://wa.me/1", label: "Connect", onClick })).find((node) => node.type === "a");
+    if (!anchor) throw new Error("expected the link-button to render an anchor");
+    expect(anchor.props).toMatchObject({ href: "https://wa.me/1", target: "_blank", rel: "noreferrer noopener" });
+    // SAFETY: the anchor's click handler is the test subject.
+    (anchor.props as { onClick: () => void }).onClick();
+    expect(onClick).toHaveBeenCalledOnce();
   });
 
-  it("follows its link and reports the click outside a disabled fieldset", async () => {
-    const onClick = vi.fn();
-    const props = anchorProps(await buttonTree({ href: "https://wa.me/1", label: "Connect", onClick }));
-    const event = clickEvent(false);
-    props.onClick(event);
-    expect(props.href).toBe("https://wa.me/1");
-    expect(event.preventDefault).not.toHaveBeenCalled();
-    expect(onClick).toHaveBeenCalledTimes(1);
+  it("becomes a disabled button with no link while disabled, so neither a click nor Enter can follow it", async () => {
+    const nodes = collectNodes(await buttonTree({ href: "https://wa.me/1", label: "Connect", disabled: true }));
+    expect(nodes.some((node) => node.type === "a")).toBe(false);
+    expect(nodes.find((node) => node.type === "button")?.props).toMatchObject({ disabled: true });
   });
 });

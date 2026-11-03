@@ -180,6 +180,13 @@ describe("ManagedWhatsAppOnboardingFlow", () => {
     expect(warning()).toBeUndefined();
   });
 
+  it("warns where the code is submitted that it replaces a link to another Ship", async () => {
+    const relink = "Already connected to another Ship from your number? Submitting a fresh code will end that connection and replace it with this one.";
+    expect(collectText(nodes())).not.toContain(relink);
+    await click("I HAVE A CODE");
+    expect(collectText(nodes())).toContain(relink);
+  });
+
   it("reveals the profile name and masked number before linking, then opens the account detail", async () => {
     await click("I HAVE A CODE");
     await act(() => {

@@ -104,8 +104,6 @@ export type ZenProps = {
   onSearchRequestHandled?: () => void;
   activityRequest?: ActivityRequest;
   requestPrefill?: string | null;
-  /** The founders' welcome card still stands over the chat, or its state is not known yet; Ship is not waking until it is dismissed. */
-  welcomeOpen?: boolean;
 };
 
 const HISTORY_LIMIT = 400;
@@ -334,7 +332,7 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
   );
 });
 
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, requestPrefill, welcomeOpen = false }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, requestPrefill }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -602,8 +600,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
   }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid, t]);
 
-  /* a Ship that has never spoken: the owner's own chat, the welcome dismissed, all history loaded and none of it missing, with no words from Ship yet; what they read meanwhile is the waking line */
-  const waking = ready && !pidProp && !welcomeOpen && !conversation.historyError && !processRuntime.history.isError
+  /* a Ship that has never spoken: the owner's own chat, all history loaded and none of it missing, with no words from Ship yet; what they read meanwhile is the waking line */
+  const waking = ready && !pidProp && !conversation.historyError && !processRuntime.history.isError
     && !conversation.hasMore && !processRuntime.hasOlderHistory && awaitingFirstMessage(moments);
   const showFirstOpenPrivacy = waking && !moments.some((moment) => moment.role === "human" || moment.text || moment.media?.length);
 

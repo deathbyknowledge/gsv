@@ -16,7 +16,6 @@
  */
 
 import type { KernelContext } from "../context";
-import { identityLinkDirectSurface } from "../adapter-destinations";
 import { requirePrincipal } from "../context";
 import { resolveCallerOwnerUid } from "../context";
 import type {
@@ -169,41 +168,5 @@ export async function handleSysConfigSet(
   }
 
   ctx.config.set(args.key, value);
-  if (principal.kind === "human" && !ctx.processId && uid >= 1000
-    && args.key === `users/${uid}/ui/welcome_card_seen` && value === "1") {
-    // Only a first run that still has the greeting ahead of it routes: a stale client finishing
-    // later, after Ship has acted, must not override where the person has written from since.
-    if (ctx.welcome.activate(uid)) {
-      routeFirstRunToChosenSurface(ctx, uid);
-      await ctx.reconcileResponsibilityWake(uid);
-    }
-  }
   return { ok: true };
-}
-
-/**
- * The first run ends with where the person wants to message Ship. A messenger choice makes that
- * messenger's DM Ship's private destination, so the greeting lands there before anyone has written
- * from it; web and Desktop leave routing to the client that is open. Pairing alone decides nothing.
- */
-/**
- * The first-run choice is the person's latest word on where Ship replies, as a message of theirs
- * would be: a messenger they linked becomes the private destination and reply preference; web or
- * desktop selects the client that finished the first run, over any messenger they wrote from meanwhile.
- */
-function routeFirstRunToChosenSurface(ctx: KernelContext, uid: number): void {
-  const chosen = ctx.config.get(`users/${uid}/ui/preferred_surface`);
-  const link = chosen === null || chosen === "web" || chosen === "desktop" ? undefined : ctx.adapters.identityLinks.list(uid)
-    .filter((entry) => entry.adapter === chosen)
-    .sort((a, b) => b.createdAt - a.createdAt)[0];
-  const surface = link ? identityLinkDirectSurface(link) : null;
-  // a messenger named without a usable link cannot carry the greeting; the person is still here
-  if (!link || !surface) {
-    if (ctx.connection) ctx.shipReplies.recordClient(uid, ctx.connection.id);
-    return;
-  }
-  ctx.adapters.privateDestinations.recordActivity(uid, {
-    kind: "adapter", adapter: link.adapter, accountId: link.accountId, actorId: link.actorId, surface,
-  }, `first-run:${uid}`, Date.now());
-  ctx.shipReplies.recordAdapter(uid);
 }

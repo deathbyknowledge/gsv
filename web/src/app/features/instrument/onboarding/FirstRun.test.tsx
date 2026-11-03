@@ -13,14 +13,12 @@ let uid: number;
 let config: Map<string, string>;
 let root: ReturnType<typeof createTestRoot>;
 const request = vi.fn<GSVClient["request"]>();
-const onOpenChange = vi.fn<(open: boolean) => void>();
 const onShownChange = vi.fn<(shown: boolean) => void>();
 const connected: GsvClientStatus = { state: "connected", url: "wss://space.example/ws", username: "person", connectionId: "test", message: null };
 const SEEN_KEY = "users/1000/ui/welcome_card_seen";
-const SURFACE_KEY = "users/1000/ui/preferred_surface";
 
 let active = true;
-function Harness() { tree = FirstRun({ active, onOpenChange, onShownChange }); return null; }
+function Harness() { tree = FirstRun({ active, onShownChange }); return null; }
 async function mount(name = "first run") {
   root = createTestRoot(name);
   await root.render(<GatewayProvider><Harness /></GatewayProvider>);
@@ -35,7 +33,6 @@ beforeEach(() => {
   active = true;
   config = new Map();
   request.mockReset();
-  onOpenChange.mockReset();
   onShownChange.mockReset();
   vi.stubGlobal("document", {});
   vi.stubGlobal("window", { location: { search: "" } });
@@ -63,24 +60,21 @@ afterEach(async () => {
 });
 
 describe("first run", () => {
-  it("puts the surface choice in front of a new owner's chat, then records it: the choice first, then the flag that wakes Ship", async () => {
+  it("puts the messenger choice in front of a new owner's chat once, then records that it is over", async () => {
     await mount();
-    expect(onOpenChange).toHaveBeenLastCalledWith(true);
     await vi.waitFor(() => expect(screen()).toMatchObject({ ownerUid: 1000, completing: false, completeError: false }));
     expect(onShownChange).toHaveBeenLastCalledWith(true);
     expect(setCalls()).toHaveLength(0);
-    await act(async () => { await screen()!.onComplete!("whatsapp"); });
-    expect(setCalls()).toEqual([{ key: SURFACE_KEY, value: "whatsapp" }, { key: SEEN_KEY, value: "1" }]);
-    await vi.waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
-    expect(onShownChange).toHaveBeenLastCalledWith(false);
+    await act(async () => { await screen()!.onComplete!(); });
+    expect(setCalls()).toEqual([{ key: SEEN_KEY, value: "1" }]);
+    await vi.waitFor(() => expect(onShownChange).toHaveBeenLastCalledWith(false));
     expect(tree).toBeNull();
 
     await root.unmount();
     request.mockClear();
-    onOpenChange.mockClear();
     await mount("next session");
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("sys.config.get", { key: SEEN_KEY }));
-    await vi.waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
+    await act(async () => {});
     expect(tree).toBeNull();
     expect(setCalls()).toHaveLength(0);
   });
@@ -92,7 +86,6 @@ describe("first run", () => {
     await act(async () => {});
     expect(screen()).toBeNull();
     expect(tree).toBeNull();
-    expect(onOpenChange).toHaveBeenLastCalledWith(true);
     expect(onShownChange).toHaveBeenLastCalledWith(false);
     active = true;
     await act(async () => { await root.render(<GatewayProvider><Harness /></GatewayProvider>); });
@@ -108,10 +101,9 @@ describe("first run", () => {
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("account.list", {}));
     await act(async () => {});
     expect(tree).toBeNull();
-    expect(onOpenChange).toHaveBeenLastCalledWith(true);
     active = true;
     await act(async () => { await root.render(<GatewayProvider><Harness /></GatewayProvider>); });
-    expect(collectText(tree)).toContain("Couldn't wake Ship.");
+    expect(collectText(tree)).toContain("Couldn't finish setting up. Try again.");
     await act(async () => { retryButton().props.onClick!(); });
     await vi.waitFor(() => expect(screen()).toMatchObject({ ownerUid: 1000 }));
   });
@@ -128,12 +120,12 @@ describe("first run", () => {
     uid = 0;
     await mount("root");
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("account.list", {}));
-    await vi.waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
+    await act(async () => {});
     expect(request).not.toHaveBeenCalledWith("sys.config.get", expect.anything());
     expect(tree).toBeNull();
   });
 
-  it.each(["account.list", "sys.config.get"])("offers a retry after %s fails, holding the chat's waking state", async (failedCall) => {
+  it.each(["account.list", "sys.config.get"])("offers a retry after %s fails", async (failedCall) => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const originalRequest = request.getMockImplementation()!;
     let fail = true;
@@ -142,18 +134,17 @@ describe("first run", () => {
       return originalRequest(...args);
     });
     await mount("recovery");
-    await vi.waitFor(() => expect(collectText(tree)).toContain("Couldn't wake Ship."));
-    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    await vi.waitFor(() => expect(collectText(tree)).toContain("Couldn't finish setting up. Try again."));
     await act(async () => { retryButton().props.onClick!(); });
     await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(2));
-    expect(collectText(tree)).toContain("Couldn't wake Ship.");
+    expect(collectText(tree)).toContain("Couldn't finish setting up. Try again.");
     fail = false;
     await act(async () => { retryButton().props.onClick!(); });
     await vi.waitFor(() => expect(screen()).toMatchObject({ ownerUid: 1000 }));
     expect(setCalls()).toHaveLength(0);
   });
 
-  it("keeps the screen up with its error when recording the choice fails, and completes on the next try", async () => {
+  it("keeps the screen up with its error when recording the end fails, and completes on the next try", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const originalRequest = request.getMockImplementation()!;
     let fail = true;
@@ -163,15 +154,13 @@ describe("first run", () => {
     });
     await mount("write failure");
     await vi.waitFor(() => expect(screen()).toMatchObject({ ownerUid: 1000 }));
-    await act(async () => { await screen()!.onComplete!("web"); });
+    await act(async () => { await screen()!.onComplete!(); });
     expect(error).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(screen()).toMatchObject({ ownerUid: 1000, completeError: true }));
-    expect(onOpenChange).toHaveBeenLastCalledWith(true);
     expect(config.has(SEEN_KEY)).toBe(false);
     fail = false;
-    await act(async () => { await screen()!.onComplete!("web"); });
-    await vi.waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
+    await act(async () => { await screen()!.onComplete!(); });
+    await vi.waitFor(() => expect(screen()).toBeNull());
     expect(config.get(SEEN_KEY)).toBe("1");
-    expect(config.get(SURFACE_KEY)).toBe("web");
   });
 });

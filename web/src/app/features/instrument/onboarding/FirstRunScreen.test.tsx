@@ -19,7 +19,7 @@ let links: ConsoleIdentityLink[];
 let completeError: boolean;
 let root: ReturnType<typeof createTestRoot>;
 const request = vi.fn<GSVClient["request"]>();
-const onComplete = vi.fn<(choice: string) => Promise<void>>();
+const onComplete = vi.fn<() => Promise<void>>();
 const connected: GsvClientStatus = { state: "connected", url: "wss://space.example/ws", username: "person", connectionId: "test", message: null };
 
 const managedAdapter = (adapter: string, overrides: Partial<ConsoleAdapter> = {}): ConsoleAdapter => ({
@@ -111,18 +111,18 @@ describe("first-run screen", () => {
     expect(alert()).toBeUndefined();
   });
 
-  it("inside the desktop app, hides the desktop section and records desktop for continuing here", async () => {
+  it("inside the desktop app, hides the desktop section", async () => {
     vi.stubGlobal("window", { __TAURI__: {}, location: { search: "", origin: "https://jessica.ship.space" }, navigator: { userAgent: "Mozilla/5.0 (Macintosh)", platform: "MacIntel", maxTouchPoints: 0 } });
     await mount();
     await vi.waitFor(() => expect(sections()).toEqual(["WhatsApp", "Telegram"]));
     await click(continueHere());
-    expect(onComplete).toHaveBeenCalledWith("desktop");
+    expect(onComplete).toHaveBeenCalledOnce();
   });
 
   it("continues here at once", async () => {
     await mount();
     await click(continueHere());
-    expect(onComplete).toHaveBeenCalledWith("web");
+    expect(onComplete).toHaveBeenCalledOnce();
   });
 
   it("opens the desktop section with the release download, closes it again, and continues in the web meanwhile", async () => {
@@ -133,7 +133,7 @@ describe("first-run screen", () => {
     expect(button("DOWNLOAD THE DESKTOP APP")).toBeUndefined();
     await click(action("download the app"));
     await click(button("CONTINUE IN THE WEB FOR NOW"));
-    expect(onComplete).toHaveBeenCalledWith("desktop");
+    expect(onComplete).toHaveBeenCalledOnce();
   });
 
   it("offers only the messengers this deployment lets the person pair", async () => {
@@ -160,10 +160,10 @@ describe("first-run screen", () => {
     expect(alert()?.props.text).toContain("Ship will say hello on Telegram");
     expect(onComplete).not.toHaveBeenCalled();
     await click(button("OPEN CHAT"));
-    expect(onComplete).toHaveBeenCalledWith("telegram");
+    expect(onComplete).toHaveBeenCalledOnce();
   });
 
-  it("treats leaving the flow with the messenger linked as the choice", async () => {
+  it("finishes when the person leaves the flow with the messenger linked", async () => {
     await mount();
     await vi.waitFor(() => expect(action("connect WhatsApp")).toBeDefined());
     await click(action("connect WhatsApp"));
@@ -173,7 +173,7 @@ describe("first-run screen", () => {
     expect(alert()?.props.text).toContain("Ship will say hello on WhatsApp");
     expect(collectText(tree)).toContain("connected to 31612345678");
     await click(button("OPEN CHAT"));
-    expect(onComplete).toHaveBeenCalledWith("whatsapp");
+    expect(onComplete).toHaveBeenCalledOnce();
   });
 
   it("shows an already paired messenger as connected and offers the chat from it", async () => {
@@ -183,13 +183,13 @@ describe("first-run screen", () => {
     await click(action("connect WhatsApp"));
     expect(pairing()).toBeUndefined();
     await click(button("OPEN CHAT"));
-    expect(onComplete).toHaveBeenCalledWith("whatsapp");
+    expect(onComplete).toHaveBeenCalledOnce();
   });
 
-  it("shows the failure to record a choice and keeps the sections available", async () => {
+  it("shows the failure to finish and keeps the sections available", async () => {
     completeError = true;
     await mount();
-    expect(alert()?.props.text).toBe("Couldn't wake Ship.");
+    expect(alert()?.props.text).toBe("Couldn't finish setting up. Try again.");
     expect(continueHere()).toBeDefined();
   });
 });

@@ -29,6 +29,7 @@ export type * from "./syscalls/ai";
 export { orderAiModelIds } from "./syscalls/ai";
 export type * from "./syscalls/mail";
 export type * from "./syscalls/notify";
+export type * from "./syscalls/event";
 export type * from "./syscalls/conversation";
 export * from "./syscalls/contact";
 export * from "./contact-invitation";

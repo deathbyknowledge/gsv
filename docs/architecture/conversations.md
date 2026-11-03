@@ -91,20 +91,15 @@ The Kernel owns the conversation directory and membership:
 
 - **Ship** is the stable conversation with the user's personal intelligence. Web, Desktop, CLI,
   Telegram, Slack, and other private surfaces all contribute to the same Ship message stream.
-  The current personal Process is replaceable; the Ship conversation is not. Finishing the
-  first-run surface choice creates an open onboarding responsibility through the ordinary
-  wake path; when the choice names a messenger whose link the person made there, that
-  messenger's DM becomes Ship's private destination and reply preference, as a message
-  from it would, so the welcome lands on it even if a client wrote moments earlier. Pairing
-  alone decides nothing; choosing Web or Desktop selects the client that finished the first
-  run, over a messenger the person wrote from meanwhile. The choice routes only while the
-  welcome is still ahead; a stale client finishing later changes nothing. Ship sends a welcome in the owner's preferred language, initially detected from
-  the browser. The welcome is a canonical Message shared across clients. A user can
-  write first, including on a surface that never wrote the flag: onboarding becomes
-  visible before that message reaches Ship. Until either action, onboarding stays internal
-  to the Kernel rather than appearing as a blocked responsibility.
-  After greeting, Ship waits for a reply. Repeated flag writes
-  and reconnects recover pending work without reopening a handled welcome.
+  The current personal Process is replaceable; the Ship conversation is not. The owner's
+  first sign-in, from any client, creates an open onboarding responsibility through the
+  ordinary wake path. Ship sends a welcome in the owner's preferred language, initially
+  detected from the browser at setup. The welcome is a canonical Message shared across
+  clients. A first message that reaches the Kernel before that also activates onboarding,
+  before the message reaches Ship. Until either, onboarding stays internal to the Kernel
+  rather than appearing as a blocked responsibility.
+  After greeting, Ship waits for a reply. Later sign-ins recover pending work without
+  reopening a handled welcome.
 - **Work** is a conversation handled by one explicit interactive work Process. Opening Work does not
   replace Ship or redefine the personal intelligence.
 - **Group** is tied to one normalized adapter surface and can retain multiple account and Process
@@ -143,6 +138,8 @@ count only, and a messenger that needs signing in can't carry the notice about i
 an event the person turned off or wasn't sent still reaches Ship as a model-only `owner.notified`, without a
 card or a run; a contact's event instead stays out of Ship while its owner simply wasn't reachable or was already
 active, as their words should reach Ship unsent only by choice. `wake` stays with each kind's responsibility source, and contact kinds never allow it.
+
+An owner's custom event sources (`event.source.*`) take a row in the same list and enter through one path, `event.emit`, however an event arrives: a script, a routine, `gsv event` or a webhook. Each source holds its own choices instead of a rule. A source's words are always untrusted. Its events follow the same rule as other notices, except that one left to an active client, or with no messenger to carry it, appears as a person-only card in the conversation, because nothing else in a client shows it. A source going quiet still goes to the messenger while a client is active. An event from a running process never wakes Ship, which keeps a source from looping on itself.
 
 Delegated Process work is not copied into Ship. A child returns a typed Process event to its caller;
 the personal intelligence decides whether the result should become a canonical Message, cause more

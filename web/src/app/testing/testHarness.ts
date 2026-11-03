@@ -18,7 +18,7 @@ export type TestNodeProps = {
   completing?: boolean;
   dataAttrs?: Record<`data-${string}`, string | number | boolean>;
   onClose?: () => void;
-  onComplete?: (choice: string) => Promise<void>;
+  onComplete?: () => Promise<void>;
   onConnected?: () => void;
   ownerUid?: number;
   selected?: boolean;

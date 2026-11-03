@@ -60,14 +60,15 @@ The menu button retains the unread People indicator while navigation is closed.
 
 On a personal human account's first sign-in, a full screen in front of the chat, over the
 instrument's star field with the chat kept out of sight beneath it, asks where the person
-wants to message Ship: Web, the Desktop app, WhatsApp or Telegram. Web completes at
-once; the Desktop app choice links to the release download and continues in the web; a messenger
-pairs inline through the Settings pairing flow, and finishing from its section records it as the
-choice, which the Kernel routes the greeting to. Messenger
+wants to message Ship: WhatsApp, Telegram, the Desktop app, or here. Ship's welcome has
+already started at sign-in; the screen only helps connect a messenger. Continuing here
+completes at once; the Desktop app choice links to the release download and continues in the
+web; a messenger pairs inline through the Settings pairing flow, and the Kernel's
+`adapter.connected` wake then says hello on it. Messenger
 sections appear only when the deployment offers that adapter, with no "nothing connected" line;
 the embedded WhatsApp flow names the countries the Ship number cannot reach when the device's languages point there, and a (?) note says
 Ship only sees the messages sent to it. "continue here" is a text action at the end, with its note as a small label. Finishing writes the
-choice and the per-user first-run flag, so the screen follows the account across web and Desktop
+per-user `ui/welcome_card_seen` flag, which only this screen reads, so the screen follows the account across web and Desktop
 and never shows again; inside Desktop the Desktop section is hidden.
 It never applies during activation or for the administrator. If the flag cannot be loaded, a
 small notice over the chat offers Retry; a failed save keeps the screen with an error.
@@ -160,7 +161,7 @@ state, so a replaced Ship asks again while a reset keeps it. A hover/focus toolt
 explains that scope; it never changes another Process's policy or
 remembers a denial.
 
-Chat owns the conversation. Finishing the first-run surface choice records the first-run flag and wakes Ship through its initial onboarding responsibility; a failed request keeps the screen available to retry. Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
+Chat owns the conversation. The Kernel wakes Ship through its initial onboarding responsibility when a new owner first signs in; until Ship's first message lands, the empty chat reads "Ship is waking up". Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
 
 On a new owner's first visit, the empty Ship chat shows a centered,
 muted privacy message until either person starts the conversation. It never

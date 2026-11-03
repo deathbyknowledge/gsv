@@ -122,7 +122,6 @@
 .settings-list > li.settings-messenger-state { flex-direction: row; align-items: center; gap: 0; }
 .settings-messenger-status { display: inline-flex; align-items: center; gap: .5rem; letter-spacing: .12em; color: var(--text-dim); }
 .settings-messenger-status::before { content: ""; width: .4rem; height: .4rem; background: currentColor; flex: none; }
-.settings-messenger-state .gsv-infotip { margin-inline-start: -2px; }
 .settings-messenger-links .settings-server-heading { flex-wrap: wrap; align-items: baseline; }
 .settings-mcp-options { border-top: 1px solid var(--border); padding-block: 1rem; margin-bottom: 1rem; font-size: .8rem; }
 .settings-mcp-options summary { color: var(--text-dim); cursor: pointer; }
@@ -175,3 +174,5 @@
 .settings-account-grants ul { list-style: none; padding: 0; }
 .settings-account-grants li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; padding-block: .6rem; border-bottom: 1px solid var(--border); }
 .settings-account-grants code { color: var(--faint); overflow-wrap: anywhere; }
+.settings-happenings-source { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.settings-happenings-source:hover { color: var(--accent); }

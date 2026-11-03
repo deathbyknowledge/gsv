@@ -283,6 +283,8 @@ function ManagedMessengerOnboardingFlow({
         render: () => (
           <>
             <p class="gsv-cf-desc">{t("settings.pairing.codeHint", { platform })}</p>
+            {/* activating a code moves the number's route, so the warning sits where the code is submitted */}
+            {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.whatsappRelink")}</p> : null}
             <div style={fieldStyle}>
               <TextInput
                 label={t("settings.pairing.codeField")}

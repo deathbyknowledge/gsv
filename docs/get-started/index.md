@@ -11,20 +11,19 @@ another username. Continue to review the early-access disclosure and confirm the
 age, Terms of Service and Privacy Policy
 agreement before creating your account. **Back** lets you revise your credentials.
 Creating your account signs you in and opens Chat, your conversation with your Ship.
-The first time you open the web app it asks where you want to message Ship:
-**Web**, the **Desktop app**, **WhatsApp** or **Telegram**. Web opens the chat at
-once; the Desktop app choice links to the download and continues in the web
-meanwhile; a messenger pairs right there, through the same steps as **Settings →
-Messengers**, and opening the chat from that messenger's section makes it where Ship
-greets you. Opening WhatsApp there says which
-countries the Ship number cannot reach, and a (?) note explains that connecting a
-messenger gives Ship only the messages you send it. The choice is recorded once
-per account, so Desktop and later visits go straight to the chat. Ship wakes as
-soon as you choose and greets you in a language detected from your browser; the
-chat reads "Ship is waking up" until its first message lands. If the choice
-cannot be saved, choose **Retry**. You can write first, ask Ship to switch
-languages, or change **Settings → Preferences → Language**. The greeting stays
-in your conversation across devices.
+The first time you sign in, Ship wakes and greets you in a language detected
+from your browser; the chat reads "Ship is waking up" until its first message
+lands. In front of the chat, the web app asks once where you want to message
+Ship: **WhatsApp**, **Telegram**, the **Desktop app**, or right here. A
+messenger pairs right there, through the same steps as **Settings →
+Messengers**, and Ship says hello on it once it connects; from then on Ship
+replies wherever you last wrote to it. If your device's language points to a
+country the Ship's WhatsApp number cannot reach, the WhatsApp steps say so, and
+a (?) note explains that connecting a messenger gives Ship only the messages you
+send it. The screen shows once per account, so Desktop and later visits go
+straight to the chat. You can write first,
+ask Ship to switch languages, or change **Settings → Preferences → Language**.
+The greeting stays in your conversation across devices.
 The **Feedback** button in the header is available when your operator offers
 it, and **Help** links to the community Discord.
 Start with what you want to do. You can connect computers and browsers from **Work** and
@@ -149,7 +148,7 @@ Unsaved preferences trigger a warning when leaving; if you leave, the draft stay
 available when you return. **Discard changes** resets it.
 
 To request account deletion, open **Settings → Account** and email
-[hello@humansandmachin.es](mailto:hello@humansandmachin.es). During early access,
+[privacy@humansandmachin.es](mailto:privacy@humansandmachin.es). During early access,
 the team handles deletion manually; there is no self-service deletion button yet.
 
 Under **Settings → Preferences → Appearance**, turn off **Show stars** for a

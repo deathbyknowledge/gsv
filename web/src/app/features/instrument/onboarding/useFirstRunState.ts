@@ -1,28 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 
-/** The per-account flag the Kernel watches: a human writing "1" here activates Ship's initial onboarding. */
-export const FIRST_RUN_SEEN = "ui/welcome_card_seen";
 /**
- * Where the person said they want to message Ship, recorded next to the flag. It is the stated
- * preference, not the client that finished the first run: choosing the desktop app and continuing
- * in the browser meanwhile records "desktop". Web and desktop select the client that finished the
- * first run for Ship's replies; a messenger choice moves them there.
+ * The per-account flag that the first run is over, so it follows the account between the web app and Desktop.
+ * It only decides whether this screen shows: Ship's welcome starts at sign-in, and Ship replies wherever the person
+ * writes from, a messenger they link here included.
  */
-export const PREFERRED_SURFACE = "ui/preferred_surface";
-
-export type PreferredSurface = "web" | "desktop" | "whatsapp" | "telegram";
+export const FIRST_RUN_SEEN = "ui/welcome_card_seen";
 
 export type FirstRunState = {
-  /** The first run still stands in front of the chat: not loaded yet, failed to load, or not completed. */
-  open: boolean;
   /** This person's uid while their first run is unfinished; null before loading, once finished, and for admins. */
   ownerUid: number | null;
   loadState: "pending" | "ready" | "failed";
   completing: boolean;
   completeError: boolean;
   retryLoad: () => void;
-  complete: (choice: PreferredSurface) => Promise<void>;
+  complete: () => Promise<void>;
 };
 
 /** A new owner's first run. The flag follows the account between the web app and Desktop. */
@@ -60,14 +53,12 @@ export function useFirstRunState(): FirstRunState {
     return () => { cancelled = true; };
   }, [client, connected, loadState]);
 
-  /* the choice is recorded first; the flag goes last, since writing it wakes Ship */
-  const complete = useCallback(async (choice: PreferredSurface) => {
+  const complete = useCallback(async () => {
     if (ownerUid === null || pendingCompletion.current) return;
     pendingCompletion.current = true;
     setCompleting(true);
     setCompleteError(false);
     try {
-      await client.sys.config.set({ key: `users/${ownerUid}/${PREFERRED_SURFACE}`, value: choice });
       await client.sys.config.set({ key: `users/${ownerUid}/${FIRST_RUN_SEEN}`, value: "1" });
       setOwnerUid(null);
     } catch (cause) {
@@ -80,7 +71,6 @@ export function useFirstRunState(): FirstRunState {
   }, [client, ownerUid]);
 
   return {
-    open: loadState !== "ready" || ownerUid !== null,
     ownerUid,
     loadState,
     completing,
