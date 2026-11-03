@@ -434,9 +434,9 @@ describe("managed WhatsApp clean-instance flow", () => {
           remember: true,
         },
       }));
-      // The decision the person tapped is acknowledged on their tap, not with another message.
+      // The decision the person tapped is acknowledged on their tap, ♾️ for Always allow, not with another message.
       expect(await graphRecords()).toContainEqual(expect.objectContaining({
-        kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.3", emoji: "✅" } }),
+        kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.3", emoji: "♾️" } }),
       }));
     });
     expect((await sentMessages()).filter((record) => record.body.context?.message_id === approvalMessageId)).toHaveLength(0);
@@ -449,7 +449,7 @@ describe("managed WhatsApp clean-instance flow", () => {
     }))).status).toBe(200);
     await vi.waitFor(async () => {
       expect(await graphRecords()).toContainEqual(expect.objectContaining({
-        kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.4", emoji: "✅" } }),
+        kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.4", emoji: "♾️" } }),
       }));
     });
     expect((await gatewayCalls()).filter((call) => call.call === "proc.hil")).toHaveLength(approvalCalls.length);

@@ -132,7 +132,7 @@ describe("WhatsApp approval buttons", () => {
       providerMessageId: "wamid.prompt",
       data: `gsvh:${controls.token}:a`,
     });
-    expect(status).toEqual({ kind: "acknowledge" });
+    expect(status).toEqual({ kind: "acknowledge", emoji: "♾️" });
     expect(linkedPeerFrame).toHaveBeenCalledWith(
       { installationId: "installation_test" },
       expect.objectContaining({ accountId: "managed", actorId: "34611111189", routeGeneration: "generation-1", interactionId: "wamid.reply" }),
@@ -145,7 +145,7 @@ describe("WhatsApp approval buttons", () => {
       surfaceId: "34611111189",
       providerMessageId: "wamid.prompt",
       data: `gsvh:${controls.token}:a`,
-    })).toEqual({ kind: "acknowledge" });
+    })).toEqual({ kind: "acknowledge", emoji: "♾️" });
     expect(linkedPeerFrame).toHaveBeenCalledOnce();
     expect(await handleWhatsAppApprovalReply(store, gateway, { installationId: "installation_test" }, {
       interactionId: "wamid.other",
@@ -161,5 +161,28 @@ describe("WhatsApp approval buttons", () => {
       providerMessageId: "wamid.prompt",
       data: "not-a-button",
     })).toBeNull();
+  });
+
+  it("acknowledges Allow once with ✅ and Block with 🚫", async () => {
+    for (const [button, decision, emoji] of [["o", "approve", "✅"], ["d", "deny", "🚫"]] as const) {
+      const store = storage();
+      const controls = (await prepareWhatsAppApproval(store, describeWhatsAppApproval(CONTEXT, REQUEST)))!;
+      const gateway: AdapterGatewayBinding = {
+        linkedPeerFrame: async (_installation, _context, frame) => ({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, pid: "proc-1", requestId: "request-1", decision, resumed: true, remembered: false },
+        }),
+        serviceFrame: async (): Promise<GatewayFrame | null> => null,
+      };
+      expect(await handleWhatsAppApprovalReply(store, gateway, { installationId: "installation_test" }, {
+        interactionId: "wamid.reply",
+        actorId: "34611111189",
+        surfaceId: "34611111189",
+        providerMessageId: "wamid.prompt",
+        data: `gsvh:${controls.token}:${button}`,
+      })).toEqual({ kind: "acknowledge", emoji });
+    }
   });
 });

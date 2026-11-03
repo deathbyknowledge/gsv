@@ -145,8 +145,11 @@ export async function attachWhatsAppApprovalMessage(
   await attachAdapterHilApprovalMessage(storage, PROVIDER, token, providerMessageId);
 }
 
-/** What the adapter does after a button: a ✅ on the person's tap, or a reply quoting the prompt. */
-export type WhatsAppApprovalAnswer = { kind: "acknowledge" } | { kind: "reply"; text: string };
+/** What the adapter does after a button: a reaction on the person's tap, or a reply quoting the prompt. */
+export type WhatsAppApprovalAnswer = { kind: "acknowledge"; emoji: string } | { kind: "reply"; text: string };
+
+/** Each decision's reaction, so the tap shows what Ship did without another message. */
+const ACKNOWLEDGEMENTS = { approve: "✅", approve_always: "♾️", deny: "🚫" } as const;
 
 /**
  * Resolve a reply button through the ordinary linked-human proc.hil path. When
@@ -182,7 +185,7 @@ export async function handleWhatsAppApprovalReply(
     return { kind: "reply", text: renderAdapterHilResolution(submission.presentation, "This approval is already being handled.") };
   }
   const tapped = parsed.decision.decision === "deny" ? "deny" : parsed.decision.remember ? "approve_always" : "approve";
-  if (submission.resolution === tapped) return { kind: "acknowledge" };
+  if (submission.resolution === tapped) return { kind: "acknowledge", emoji: ACKNOWLEDGEMENTS[tapped] };
   return { kind: "reply", text: renderAdapterHilResolution(submission.presentation, resolutionText(submission.resolution)) };
 }
 

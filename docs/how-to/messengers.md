@@ -158,7 +158,8 @@ messages, one per prose paragraph. Headings stay with the following block;
 code blocks, lists, tables and quotations stay together. When a message
 contains a link, WhatsApp shows the preview card for the first one. Approval
 prompts arrive with **Allow once**, **Always allow** and **Block** buttons.
-Ship marks the button you tapped with ✅ once the decision is made. If it could
+Once the decision is made, Ship reacts to the button you tapped: ✅ for
+**Allow once**, ♾️ for **Always allow** and 🚫 for **Block**. If it could
 not do what you tapped, or the request has already ended, it replies quoting the
 prompt instead. **Always allow** adds the same rule as in the app, shown in
 **Settings → Permissions**.

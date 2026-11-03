@@ -646,11 +646,11 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     return false;
   }
 
-  /** A ✅ on the person's tap; like the 👀, it is best effort and never retries the decision. */
-  private async acknowledgeApproval(reply: WhatsAppApprovalReply, route: ManagedWhatsAppPeerRoute): Promise<void> {
+  /** A reaction on the person's tap; like the 👀, it is best effort and never retries the decision. */
+  private async acknowledgeApproval(reply: WhatsAppApprovalReply, emoji: string, route: ManagedWhatsAppPeerRoute): Promise<void> {
     try {
       await reactToWhatsAppMessage(
-        this.accessToken(), this.phoneNumberId(), reply.actorId, reply.interactionId, "✅", this.whatsAppFetch(route),
+        this.accessToken(), this.phoneNumberId(), reply.actorId, reply.interactionId, emoji, this.whatsAppFetch(route),
       );
     } catch (error) {
       console.warn(JSON.stringify({
@@ -700,7 +700,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       );
       if (!answer) return { terminal: true };
       if (answer.kind === "acknowledge") {
-        await this.acknowledgeApproval(payload.reply, route);
+        await this.acknowledgeApproval(payload.reply, answer.emoji, route);
         return { terminal: true };
       }
       return {
