@@ -238,19 +238,20 @@ describe("remembered hostname routes", () => {
   it("forgets a remembered route once the Kernel it names refuses the request", async () => {
     const resolveHostname = directory(async () => ACTIVE);
     const ensureInstallationIdentity = vi.fn(async () => {}).mockRejectedValueOnce(new Error("Installation is retired"));
-    // SAFETY: HTTP routing uses only identity initialization on this selected stub before serving the web app.
-    vi.spyOn(env.KERNEL, "getByName").mockReturnValue({ ensureInstallationIdentity } as never);
-    vi.spyOn(env.ASSETS, "fetch").mockImplementation(async () => new Response("app"));
+    const getPublicProfile = vi.fn(async () => ({ url: "https://routes.example/profile", record: { displayName: "Routes" } }));
+    // SAFETY: HTTP routing uses only identity initialization and the public profile on this selected stub.
+    vi.spyOn(env.KERNEL, "getByName").mockReturnValue({ ensureInstallationIdentity, getPublicProfile } as never);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const app = async () => {
-      const response = await gateway.fetch(new Request("https://routes.example/settings"), env);
+    const profile = async () => {
+      const response = await gateway.fetch(new Request("https://routes.example/profile"), env);
       await response.arrayBuffer();
       return response.status;
     };
     expect(await metadata()).toBe(200);
-    expect(await app()).toBe(503);
-    expect(await app()).toBe(200);
+    expect(await profile()).toBe(503);
+    expect(await profile()).toBe(200);
     expect(resolveHostname).toHaveBeenCalledTimes(2);
+    expect(getPublicProfile).toHaveBeenCalledOnce();
   });
 
   it("remembers a bounded number of hostnames, the oldest giving way first", async () => {
