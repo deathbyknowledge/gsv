@@ -31,7 +31,12 @@ export type TestSpace = {
   run<T>(work: (ctx: KernelContext, storage: DurableObjectStorage) => T | Promise<T>): Promise<T>;
 };
 
-export async function testSpace(network: TestShipNetwork, name: string): Promise<TestSpace> {
+/** `telemetry` turns on the space's telemetry records, which it writes to the console. */
+export async function testSpace(
+  network: TestShipNetwork,
+  name: string,
+  options: { telemetry?: boolean } = {},
+): Promise<TestSpace> {
   const hostname = `${name}.ship.test`;
   const account = await network.account(hostname);
   const installationId = `inst_${name}_${crypto.randomUUID()}`;
@@ -74,7 +79,11 @@ export async function testSpace(network: TestShipNetwork, name: string): Promise
           ...base,
           // SAFETY: contact handlers only check that a direct human connection exists.
           connection: {} as KernelContext["connection"],
-          env: { ...base.env, PDS: testPds(network, space, base.shipIdentity) },
+          env: {
+            ...base.env,
+            PDS: testPds(network, space, base.shipIdentity),
+            ...(options.telemetry ? { GSV_TELEMETRY_ENABLED: "1" } : undefined),
+          },
         };
         try {
           return { ok: true as const, value: await work(ctx, state.storage) };

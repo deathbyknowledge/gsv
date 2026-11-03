@@ -322,14 +322,32 @@ export const attributionExampleSchema = z.enum([
   "bill", "delivery", "dentist", "jessica", "kawah", "refund", "saturday", "steve", "tickets", "other",
 ]);
 
+// `invite` means the signup carried another Ship's contact invitation and
+// Accounts resolved that Ship. Which Ship it was stays in Accounts; the record
+// never names it, so two installations' product series cannot be joined.
 const installationAttributedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("installation.attributed"),
   properties: z.strictObject({
-    origin: z.enum(["website", "direct"]),
+    origin: z.enum(["invite", "website", "direct"]),
     placement: z.optional(attributionPlacementSchema),
     example: z.optional(attributionExampleSchema),
   }),
+});
+
+// A Ship issuing a contact invitation link, and the first time another Ship
+// accepts one it issued. Both are counted for the issuing Ship only: the other
+// side's identity, the link and the name stay in the Kernel.
+const contactInviteCreatedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("contact.invite.created"),
+  properties: z.strictObject({}),
+});
+
+const contactInviteAcceptedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("contact.invite.accepted"),
+  properties: z.strictObject({}),
 });
 
 const targetConnectedSchema = z.strictObject({
@@ -494,6 +512,8 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   inferenceProviderAttemptFailedSchema,
   installationActivatedSchema,
   installationAttributedSchema,
+  contactInviteCreatedSchema,
+  contactInviteAcceptedSchema,
   shipMessageCommittedSchema,
   targetConnectedSchema,
   adapterConnectedSchema,
@@ -526,6 +546,8 @@ export const telemetryEventComponents = {
   "inference.provider_attempt.failed": ["inference"],
   "installation.activated": ["accounts"],
   "installation.attributed": ["accounts"],
+  "contact.invite.created": ["gateway"],
+  "contact.invite.accepted": ["gateway"],
   "ship.message.committed": ["gateway"],
   "target.connected": ["gateway"],
   "adapter.connected": ["gateway"],

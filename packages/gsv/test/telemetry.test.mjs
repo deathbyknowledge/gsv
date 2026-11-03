@@ -463,11 +463,40 @@ describe("installation.attributed", () => {
     assert.equal(record("gateway", { origin: "direct" }).success, false);
   });
 
+  it("reports an invited signup as a class only, never the inviting Ship", () => {
+    assert.equal(record("accounts", { origin: "invite" }).success, true);
+    assert.equal(record("accounts", { origin: "invite", placement: "hero" }).success, true);
+    assert.equal(record("accounts", { origin: "invite", inviter: "alice.ship.test" }).success, false);
+    assert.equal(record("accounts", { origin: "invite", inviterInstallationId: "inst_a" }).success, false);
+  });
+
   it("classifies the website's link slugs into the allowlist and nothing else", () => {
     assert.deepEqual(signupAttributionFromSlugs("hero-heading"), { placement: "hero" });
     assert.deepEqual(signupAttributionFromSlugs("early-access"), { placement: "final-call" });
     assert.deepEqual(signupAttributionFromSlugs("details-tickets", "tickets"), { placement: "example", example: "tickets" });
     assert.deepEqual(signupAttributionFromSlugs("sidebar-promo", "plan-a-trip"), { placement: "other", example: "other" });
     assert.deepEqual(signupAttributionFromSlugs(" HERO "), { placement: "hero" });
+  });
+});
+
+describe("contact invitations", () => {
+  const record = (component, name, properties) => {
+    try {
+      return telemetryRecordSchema.safeParse(createTelemetryRecord(
+        { installationId: "inst_telemetry", component, event: { stream: "product", name, properties } },
+        1_789_000_000_000,
+        "11111111-1111-4111-8111-111111111111",
+      ));
+    } catch {
+      return { success: false };
+    }
+  };
+
+  it("counts them for the issuing Ship with no content", () => {
+    assert.equal(record("gateway", "contact.invite.created", {}).success, true);
+    assert.equal(record("gateway", "contact.invite.accepted", {}).success, true);
+    assert.equal(record("accounts", "contact.invite.created", {}).success, false);
+    assert.equal(record("gateway", "contact.invite.created", { handle: "bob.ship.test" }).success, false);
+    assert.equal(record("gateway", "contact.invite.accepted", { remoteDid: "did:plc:x" }).success, false);
   });
 });
