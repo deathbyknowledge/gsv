@@ -225,6 +225,9 @@ describe("Accounts deletion runtime", () => {
         .bind(invitee.installationId, `delete-invitee-${id}`),
     ]);
     await expect(admin.getInstallation(state.second.installationId)).resolves.toMatchObject({ invitations: { total: 1 } });
+    // The fence admits only the clearing itself; it cannot carry another change through with it.
+    await expect(state.db.prepare("UPDATE provisioning_operations SET inviter_installation_id = NULL, state = 'failed' WHERE operation_id = ?")
+      .bind(`invitee-${id}`).run()).rejects.toThrow("installation is retired");
 
     const runtime = state.makeRuntime();
     const http = new InstallationDeletionHttp(runtime, { allows: async () => true }, "https://admin.example.com");
