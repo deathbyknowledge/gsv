@@ -225,7 +225,7 @@ describe("AdapterGatewayEntrypoint", () => {
     expect(getByName).not.toHaveBeenCalled();
   });
 
-  it("rejects invalid binding props before entering the Kernel", async () => {
+  it("keeps a request retryable when the binding props are invalid, before entering the Kernel", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const request = requestFrameWithTrackedBody("invalid-binding-props");
     const getByName = vi.fn();
@@ -237,8 +237,51 @@ describe("AdapterGatewayEntrypoint", () => {
     await expect(gateway.serviceFrame(
       { installationId: "inst_adapter_fixture" },
       request.frame,
-    )).resolves.toBeNull();
-    expect(request.cancelled()).toBe("Gateway service request failed");
+    )).resolves.toEqual({
+      type: "res", id: "invalid-binding-props", ok: false,
+      error: { code: 503, message: "Adapter service request failed", retryable: true },
+    });
+    expect(request.cancelled()).toBe("Adapter service request failed");
+    expect(getByName).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      "[AdapterGatewayEntrypoint] serviceFrame failed:",
+      expect.objectContaining({ exceptionMessage: "Adapter service binding props are invalid" }),
+    );
+    error.mockRestore();
+  });
+
+  it("keeps a request retryable when the Kernel call fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const request = requestFrameWithTrackedBody("kernel-reset");
+    const peerFrame = vi.fn(async () => { throw new Error("Durable Object reset because its code was updated"); });
+    const gateway = gatewayWithEnv({
+      KERNEL: { getByName: vi.fn(() => ({ peerFrame })) },
+      INSTALLATION_DIRECTORY: activeDirectory(),
+    });
+
+    await expect(gateway.serviceFrame({ installationId: "inst_adapter_fixture" }, request.frame)).resolves.toEqual({
+      type: "res", id: "kernel-reset", ok: false,
+      error: { code: 503, message: "Adapter service request failed", retryable: true },
+    });
+    expect(request.cancelled()).toBe("Adapter service request failed");
+    error.mockRestore();
+  });
+
+  it("rejects a malformed request as terminal before selecting a Kernel", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const request = requestFrameWithTrackedBody("malformed-installation");
+    const getByName = vi.fn();
+    const gateway = gatewayWithEnv({ KERNEL: { getByName }, INSTALLATION_DIRECTORY: activeDirectory() });
+
+    await expect(gateway.serviceFrame(
+      // SAFETY: a hostile adapter can send any shape across the service binding.
+      { installationId: 42 } as never,
+      request.frame,
+    )).resolves.toEqual({
+      type: "res", id: "malformed-installation", ok: false,
+      error: { code: 403, message: "Adapter service request was rejected", retryable: false },
+    });
+    expect(request.cancelled()).toBe("Adapter service request was rejected");
     expect(getByName).not.toHaveBeenCalled();
     error.mockRestore();
   });
