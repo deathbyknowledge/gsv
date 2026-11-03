@@ -55,6 +55,7 @@ import type { AdapterStatusRecord } from "./adapter-status";
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 const getConversationByIdMock = vi.spyOn(sharedUtils, "getConversationById");
 const sendFrameToProcessMock = vi.spyOn(sharedUtils, "sendFrameToProcess");
+const writeProcessResourceMock = vi.spyOn(sharedUtils, "writeProcessResource");
 
 type FakeAdapterStatusStore = {
   upsert: ReturnType<typeof vi.fn>;
@@ -208,7 +209,6 @@ function handleAdapterInbound(
 }
 
 function retainedAdapterResource(
-  frameId: string,
   {
     contentType = "image/png",
     mediaType = "image" as const,
@@ -224,23 +224,18 @@ function retainedAdapterResource(
   } = {},
 ) {
   return {
-    type: "res" as const,
-    id: frameId,
-    ok: true as const,
-    data: {
-      resource: {
-        type: "resource" as const,
-        ref: {
-          type: "file" as const,
-          target: "gsv",
-          path: `/home/sam/.gsv/media/archived-media:${digest.repeat(64)}`,
-          revision: `"${digest.repeat(32)}"`,
-          contentType,
-          size,
-        },
-        mediaType,
-        filename,
+    resource: {
+      type: "resource" as const,
+      ref: {
+        type: "file" as const,
+        target: "gsv",
+        path: `/home/sam/.gsv/media/archived-media:${digest.repeat(64)}`,
+        revision: `"${digest.repeat(32)}"`,
+        contentType,
+        size,
       },
+      mediaType,
+      filename,
     },
   };
 }
@@ -630,6 +625,7 @@ function makeContext(
 describe("adapter lifecycle handlers", () => {
   beforeEach(() => {
     sendFrameToProcessMock.mockReset();
+    writeProcessResourceMock.mockReset();
     ensurePersonalControllerMock.mockReset();
     ensurePersonalControllerMock.mockResolvedValue("pid-1");
     getConversationByIdMock.mockReset();
@@ -2464,6 +2460,7 @@ describe("adapter lifecycle handlers", () => {
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
     expect(ctx.runRoutes.setAdapterRoute).not.toHaveBeenCalled();
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    expect(writeProcessResourceMock).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
@@ -2473,13 +2470,13 @@ describe("adapter lifecycle handlers", () => {
     const ctx = makeContext({
       CHANNEL_TELEGRAM: { adapterSetActivity },
     }, { upsert: vi.fn() });
+    writeProcessResourceMock.mockImplementation(async (_installationId, _pid, _args, body) => {
+      await bodyToBytes(body);
+      return retainedAdapterResource();
+    });
     sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.resource.write") {
-        await bodyToBytes(frame.body);
-        return retainedAdapterResource(frame.id);
       }
       if (frame.call === "proc.adapter.deliver") {
         return {
@@ -2523,19 +2520,19 @@ describe("adapter lifecycle handlers", () => {
   it("stores adapter media before delivering proc.send", async () => {
     let uploadedBytes: number[] = [];
     let receivedByteStream = false;
+    writeProcessResourceMock.mockImplementation(async (_installationId, _pid, _args, body) => {
+      const reader = body.stream.getReader({ mode: "byob" });
+      receivedByteStream = true;
+      const chunk = await reader.read(new Uint8Array(3));
+      uploadedBytes = [...(chunk.value ?? [])];
+      const end = await reader.read(new Uint8Array(1));
+      expect(end.done).toBe(true);
+      reader.releaseLock();
+      return retainedAdapterResource({ size: 3 });
+    });
     sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.resource.write") {
-        const reader = frame.body.stream.getReader({ mode: "byob" });
-        receivedByteStream = true;
-        const chunk = await reader.read(new Uint8Array(3));
-        uploadedBytes = [...(chunk.value ?? [])];
-        const end = await reader.read(new Uint8Array(1));
-        expect(end.done).toBe(true);
-        reader.releaseLock();
-        return retainedAdapterResource(frame.id, { size: 3 });
       }
       if (frame.call === "proc.adapter.deliver") {
         return {
@@ -2571,15 +2568,14 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
 
-    const upload = sendFrameToProcessMock.mock.calls[0]?.[2];
-    expect(upload).toMatchObject({
-      call: "proc.resource.write",
-      args: { mediaType: "image", contentType: "image/png" },
-    });
-    expect(upload?.args).not.toHaveProperty("size");
+    const upload = writeProcessResourceMock.mock.calls[0]?.[2];
+    expect(upload).toMatchObject({ mediaType: "image", contentType: "image/png" });
+    expect(upload).not.toHaveProperty("size");
     expect(receivedByteStream).toBe(true);
     expect(uploadedBytes).toEqual([1, 2, 3]);
-    expect(sendFrameToProcessMock.mock.calls[1]?.[2]).toMatchObject({
+    expect(writeProcessResourceMock.mock.invocationCallOrder[0])
+      .toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0] ?? 0);
+    expect(sendFrameToProcessMock.mock.calls[0]?.[2]).toMatchObject({
       call: "proc.adapter.deliver",
       args: {
         media: [{
@@ -2596,17 +2592,14 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("stops adapter delivery when a later resource upload fails", async () => {
+    writeProcessResourceMock.mockImplementation(async (_installationId, _pid, args, body) => {
+      await bodyToBytes(body);
+      if (args.filename === "good.png") return retainedAdapterResource({ filename: "good.png" });
+      throw new Error("upload failed");
+    });
     sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.resource.write" && frame.args.filename === "good.png") {
-        await bodyToBytes(frame.body);
-        return retainedAdapterResource(frame.id, { filename: "good.png" });
-      }
-      if (frame.call === "proc.resource.write") {
-        await bodyToBytes(frame.body);
-        return { type: "res", id: frame.id, ok: false, error: { code: 500, message: "upload failed" } };
       }
       throw new Error(`Unexpected call: ${frame.call}`);
     });
@@ -2648,13 +2641,13 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("preserves adapter uploads when a Process error response leaves admission ambiguous", async () => {
+    writeProcessResourceMock.mockImplementation(async (_installationId, _pid, _args, body) => {
+      await bodyToBytes(body);
+      return retainedAdapterResource();
+    });
     sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.resource.write") {
-        await bodyToBytes(frame.body);
-        return retainedAdapterResource(frame.id);
       }
       if (frame.call === "proc.adapter.deliver") {
         return { type: "res", id: frame.id, ok: false, error: { code: 500, message: "delivery failed" } };
@@ -2694,13 +2687,13 @@ describe("adapter lifecycle handlers", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     let deliveryAttempts = 0;
+    writeProcessResourceMock.mockImplementation(async (_installationId, _pid, _args, body) => {
+      await bodyToBytes(body);
+      return retainedAdapterResource();
+    });
     sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.resource.write") {
-        await bodyToBytes(frame.body);
-        return retainedAdapterResource(frame.id);
       }
       if (frame.call === "proc.adapter.deliver") {
         deliveryAttempts++;
@@ -2764,9 +2757,7 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) => (
       frame.call === "proc.adapter.deliver"
     ))).toHaveLength(2);
-    expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) => (
-      frame.call === "proc.resource.write"
-    ))).toHaveLength(1);
+    expect(writeProcessResourceMock).toHaveBeenCalledTimes(1);
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(adapterSetActivity).not.toHaveBeenCalled();

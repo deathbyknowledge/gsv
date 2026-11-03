@@ -1,6 +1,6 @@
-import type { InternalRequestFrame } from "../protocol/process-frames";
+import { processResult } from "../protocol/process-frames";
 import type { DurableTaskOptions } from "../shared/durable-tasks";
-import { sendFrameToProcess } from "../shared/utils";
+import { deliverEventToProcess, sendFrameToProcess } from "../shared/utils";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import { admitQueuedContactEvent } from "./federation/attention";
 import { ensurePersonalController } from "./personal-controller";
@@ -91,18 +91,10 @@ export class ShipEventRuntime {
     const { event } = queued;
     if (event.type === "owner.notified") {
       // Recorded for Ship's next generation without starting a run of its own.
-      const request: InternalRequestFrame<"proc.event.deliver"> = {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.event.deliver",
-        args: {
-          eventId: queued.eventId,
-          event: { kind: "owner.notified", payload: event.payload, severity: "info", audience: event.audience ?? (event.payload.adapter ? "both" : "model"), ...(event.link ? { link: event.link } : undefined) },
-        },
-      };
-      const response = await sendFrameToProcess(this.host.installationId, processId, request);
-      if (!response) throw new Error("Ship event produced no Process response");
-      if (!response.ok) throw new Error(response.error.message);
+      processResult(await deliverEventToProcess(this.host.installationId, processId, {
+        eventId: queued.eventId,
+        event: { kind: "owner.notified", payload: event.payload, severity: "info", audience: event.audience ?? (event.payload.adapter ? "both" : "model"), ...(event.link ? { link: event.link } : undefined) },
+      }));
       this.host.shipEvents.delivered(queued.eventId);
       return;
     }

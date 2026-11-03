@@ -4,7 +4,7 @@ import type {
   AssistantMessage, AssistantMessageEvent, Context, ToolCall, Tool,
 } from "@humansandmachines/gsv/services/inference-context";
 import { z } from "zod";
-import type { InternalRequestFrame, ProcessApprovalTarget } from "../../protocol/process-frames";
+import type { ProcessApprovalTarget, ProcessMessageCommitArgs } from "../../protocol/process-frames";
 import type {
   CommittedRunControlMessage, RunControlResult, TerminalResponsibilityCheck, CompletedRunTransition,
   RunFinishEffects, RunFinishedTelemetryProperties, PreparedRunTickContext, RunTickGenerationAttemptOutcome,
@@ -30,7 +30,7 @@ import type { RunOutputMedia, RunState } from "./state";
 import {
   errorMessageFromUnknown, formatProviderErrorDiagnostic, isProviderContextOverflow, isProviderContextOverflowErrorMessage,
 } from "../../inference/errors";
-import { sendFrameToKernel, cancelProcessRequests } from "../../shared/utils";
+import { cancelProcessRequests, commitProcessMessage } from "../../shared/utils";
 import {
   terminalResponsibilitySnapshot, unhandledTerminalResponsibilityIds, terminalResponsibilityAdmissionKey,
 } from "../internal/events";
@@ -341,11 +341,10 @@ export class ProcessRun {
           delivery: { kind: "none" },
         };
       }
-      const request = this.buildRunControlMessageCommitRequest(run, options);
       const committedMessage = await this.commitRunControlMessage(
         options.runId,
         options.actionId,
-        request,
+        this.buildRunControlMessageCommitArgs(run, options),
       );
       this.host.store.messages.appendRunRecord(options.runId, {
         kind: "message",
@@ -404,7 +403,7 @@ export class ProcessRun {
     }
   }
 
-  buildRunControlMessageCommitRequest(
+  buildRunControlMessageCommitArgs(
     run: RunState,
     options: {
       runId: string;
@@ -412,8 +411,8 @@ export class ProcessRun {
       text: string;
       media: RunOutputMedia[];
     },
-  ): InternalRequestFrame<"proc.message.commit"> {
-    const args: InternalRequestFrame<"proc.message.commit">["args"] = {
+  ): ProcessMessageCommitArgs {
+    const args: ProcessMessageCommitArgs = {
       runId: options.runId,
       actionId: options.actionId,
       text: options.text,
@@ -422,18 +421,13 @@ export class ProcessRun {
     if (options.media.length > 0) {
       args.media = options.media.map((item) => this.host.resources.runOutputMediaResource(item));
     }
-    return {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.message.commit",
-      args,
-    };
+    return args;
   }
 
   async commitRunControlMessage(
     runId: string,
     actionId: string,
-    request: InternalRequestFrame<"proc.message.commit">,
+    args: ProcessMessageCommitArgs,
   ): Promise<CommittedRunControlMessage> {
     const deliverySpanId = this.host.trace.start({
       runId,
@@ -442,12 +436,7 @@ export class ProcessRun {
       reference: { kind: "delivery", callId: actionId },
     });
     try {
-      const response = await sendFrameToKernel(this.host.installationId, this.host.pid, request);
-      if (!response || response.type !== "res" || response.id !== request.id) {
-        throw new Error("Kernel returned no valid message response");
-      }
-      if (!response.ok) throw new Error(response.error.message);
-      const committedMessage = response.data.message;
+      const committedMessage = await commitProcessMessage(this.host.installationId, this.host.pid, args);
       this.host.trace.finish(deliverySpanId, "ok", {
         reference: {
           kind: "delivery",
@@ -573,13 +562,12 @@ export class ProcessRun {
     try {
       const release = this.beginRunControlCommit(runId);
       try {
-        const request = this.buildRunControlMessageCommitRequest(run, {
+        const committed = await this.commitRunControlMessage(runId, actionId, this.buildRunControlMessageCommitArgs(run, {
           runId,
           actionId,
           text: CORRECTION_FAILURE_NOTICE,
           media: [],
-        });
-        const committed = await this.commitRunControlMessage(runId, actionId, request);
+        }));
         this.host.store.messages.appendRunRecord(runId, {
           kind: "message",
           payload: {

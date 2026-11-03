@@ -71,13 +71,10 @@ describe("writing records", () => {
     const send = approval(false);
     const { ctx, repository } = context(shipProcess());
     await expect(handleAtprotoWrite({ writes: [NOTE] }, ctx)).rejects.toThrow("Tool execution was not approved: atproto.write");
-    expect(send).toHaveBeenCalledExactlyOnceWith("inst_alice", "proc:ship", expect.objectContaining({
-      call: "proc.tool.authorize",
-      args: expect.objectContaining({
+    expect(send).toHaveBeenCalledExactlyOnceWith("inst_alice", "proc:ship", expect.any(String), expect.objectContaining({
         runId: "run", requestId: "request", syscall: "atproto.write",
         args: { handle: "alice", address: "alice.ship.space", writes: [NOTE] },
-      }),
-    }));
+      }));
     expect(repository.applyWrites).not.toHaveBeenCalled();
     expect(repository.ensureAccount).not.toHaveBeenCalled();
   });
@@ -111,9 +108,9 @@ describe("writing records", () => {
 
   it("writes nothing when the profile became private while the person decided", async () => {
     const profile = { published: true };
-    vi.spyOn(processTransport, "sendFrameToProcess").mockImplementation(async () => {
+    vi.spyOn(processTransport, "authorizeProcessTool").mockImplementation(async () => {
       profile.published = false;
-      return { type: "res", id: "approval", ok: true, data: { approved: true } };
+      return { approved: true };
     });
     const { ctx, repository } = context({ ...shipProcess(), profile });
     await expect(handleAtprotoWrite({ writes: [NOTE] }, ctx)).rejects.toThrow("Your profile is private");
@@ -275,6 +272,6 @@ function shipProcess(): Partial<KernelContext> {
 }
 
 function approval(approved: boolean) {
-  return vi.spyOn(processTransport, "sendFrameToProcess")
-    .mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved } });
+  return vi.spyOn(processTransport, "authorizeProcessTool")
+    .mockResolvedValue({ approved });
 }

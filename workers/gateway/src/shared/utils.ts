@@ -12,11 +12,22 @@ import type { SyscallName } from "../syscalls";
 import type {
   InternalResponseFrame,
   InternalSyscallName,
+  ProcessEventDeliverArgs,
+  ProcessEventDeliverResult,
   ProcessInboundFrame,
+  ProcessMessageCommitArgs,
   ProcessOutboundFrame,
   ProcessApprovalTarget,
+  ProcessResourcesRetainArgs,
+  ProcessResourceWriteArgs,
+  ProcessRunAttachArgs,
+  ProcessRunAttachResult,
+  ProcessRunStagedArgs,
+  ProcessRunStagedResult,
+  ProcessToolAuthorizeArgs,
+  ProcessUnavailable,
 } from "../protocol/process-frames";
-import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
+import type { ConversationMessage, NetFetchArgs, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import {
   conversationDurableObjectName,
   getKernelByInstallationId,
@@ -88,9 +99,18 @@ export async function sendFrameToKernel(
   processId: string,
   frame: ProcessOutboundFrame,
   approvedTarget?: ProcessApprovalTarget,
-): Promise<Frame | InternalResponseFrame | null> {
+): Promise<Frame | null> {
   const kernel = await getKernelPtr(installationId);
   return await kernel.recvFrame(processId, frame, approvedTarget);
+}
+
+export async function commitProcessMessage(
+  installationId: string,
+  processId: string,
+  args: ProcessMessageCommitArgs,
+): Promise<ConversationMessage> {
+  const kernel = await getKernelPtr(installationId);
+  return await kernel.commitProcessMessage(processId, args);
 }
 
 export async function attachProcessRunStream(
@@ -140,6 +160,64 @@ export async function sendFrameToProcess(
 ): Promise<Frame | InternalResponseFrame | null> {
   const proc = await getProcessByPid(pid, installationId);
   return await proc.recvFrame(frame);
+}
+
+export async function deliverEventToProcess(
+  installationId: string,
+  pid: string,
+  args: ProcessEventDeliverArgs,
+): Promise<ProcessEventDeliverResult | ProcessUnavailable> {
+  const proc = await getProcessByPid(pid, installationId);
+  return await proc.deliverEvent(args);
+}
+
+/** Asks the Process that owns a tool whether an operation nested under it may run. */
+export async function authorizeProcessTool(
+  installationId: string,
+  pid: string,
+  requestId: string,
+  args: ProcessToolAuthorizeArgs,
+): Promise<{ approved: boolean } | ProcessUnavailable> {
+  const proc = await getProcessByPid(pid, installationId);
+  return await proc.authorizeTool(requestId, args);
+}
+
+export async function retainProcessResources(
+  installationId: string,
+  pid: string,
+  requestId: string,
+  args: ProcessResourcesRetainArgs,
+): Promise<{ resources: ResourceBlock[] } | ProcessUnavailable> {
+  const proc = await getProcessByPid(pid, installationId);
+  return await proc.retainResources(requestId, args);
+}
+
+export async function writeProcessResource(
+  installationId: string,
+  pid: string,
+  args: ProcessResourceWriteArgs,
+  body: FrameBody,
+): Promise<{ resource: ResourceBlock } | ProcessUnavailable> {
+  const proc = await getProcessByPid(pid, installationId);
+  return await proc.writeResource(args, body);
+}
+
+export async function attachProcessRunMedia(
+  installationId: string,
+  pid: string,
+  args: ProcessRunAttachArgs,
+): Promise<ProcessRunAttachResult | ProcessUnavailable> {
+  const proc = await getProcessByPid(pid, installationId);
+  return await proc.attachRunMedia(args);
+}
+
+export async function countProcessStagedRunMedia(
+  installationId: string,
+  pid: string,
+  args: ProcessRunStagedArgs,
+): Promise<ProcessRunStagedResult | ProcessUnavailable> {
+  const proc = await getProcessByPid(pid, installationId);
+  return await proc.countStagedRunMedia(args);
 }
 
 export function getConversationById(

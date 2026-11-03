@@ -117,14 +117,14 @@ describe("messenger pairing from the native shell", () => {
   it("honors tool policy without requiring an extra confirmation or exposing the code", async () => {
     await fixture("whatsapp", async (ctx, shell, service) => {
       ctx.toolOwner = { runId: "run", requestId: "tool" };
-      const authorize = vi.spyOn(utils, "sendFrameToProcess").mockResolvedValue({ type: "res", id: "denied", ok: false, error: { code: 403, message: "Pairing denied by policy" } });
+      const authorize = vi.spyOn(utils, "authorizeProcessTool").mockRejectedValue(new Error("Pairing denied by policy"));
       try {
         expect((await shell.exec("messenger connect whatsapp < /tmp/code.txt")).stderr).toContain("Pairing denied by policy");
         expect(service.adapterPairingPrepare).not.toHaveBeenCalled();
         const authorization = JSON.stringify(authorize.mock.calls);
         expect(authorization).toContain("adapter.pair.confirm");
         expect(authorization).not.toContain(CODE);
-        authorize.mockResolvedValue({ type: "res", id: "approved", ok: true, data: { approved: true } });
+        authorize.mockResolvedValue({ approved: true });
         const result = await shell.exec("messenger connect whatsapp < /tmp/code.txt");
         expect(result.exitCode, result.stderr).toBe(0);
       } finally { authorize.mockRestore(); }

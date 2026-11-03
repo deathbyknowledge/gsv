@@ -1,6 +1,5 @@
 import { createInstallationStorage } from "../installation/storage";
 import { bodyFromBytes, type ProcHistoryRecord } from "@humansandmachines/gsv/protocol";
-import type { InternalRequestFrame } from "../protocol/protocol/process-frames";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -13,20 +12,12 @@ describe("model context", () => {
   it("persists active-run reply media on the final assistant message and signals", async () => {
     const pid = "mech-final-reply-media";
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const uploaded = await stub.recvFrame({
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.resource.write",
-      args: {
-        resourceId: "final-report",
-        mediaType: "document",
-        contentType: "application/pdf",
-        filename: "report.pdf",
-      },
-      body: bodyFromBytes(new Uint8Array([1, 2, 3])),
-    } satisfies InternalRequestFrame<"proc.resource.write">);
-    if (!uploaded.ok) throw new Error(uploaded.error.message);
-    const resource = uploaded.data.resource;
+    const uploaded = await stub.writeResource(
+      { resourceId: "final-report", mediaType: "document", contentType: "application/pdf", filename: "report.pdf" },
+      bodyFromBytes(new Uint8Array([1, 2, 3])),
+    );
+    if ("unavailable" in uploaded) throw new Error(uploaded.message);
+    const resource = uploaded.resource;
     const result = await runInProcess(stub, async (process) => {
       const emitted = captureSignals(process);
       mockGeneration(process, async () => {
@@ -44,15 +35,7 @@ describe("model context", () => {
         contextWindowTokens: 256000
       }));
 
-      const attach = await process.recvFrame({
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.run.attach",
-        args: {
-          runId: "run-final-reply-media",
-          media: [resource],
-        },
-      } satisfies InternalRequestFrame<"proc.run.attach">);
+      const attach = await process.attachRunMedia({ runId: "run-final-reply-media", media: [resource] });
       await process.run.runTick("run-final-reply-media");
       const history = await process.controller.handleProcHistory({});
       return {
@@ -66,11 +49,8 @@ describe("model context", () => {
 
     expect(result.attach).toMatchObject({
       ok: true,
-      data: {
-        ok: true,
-        runId: "run-final-reply-media",
-        media: [{ type: "resource", ref: { path: resource.ref.path } }],
-      },
+      runId: "run-final-reply-media",
+      media: [{ type: "resource", ref: { path: resource.ref.path } }],
     });
     expect(
       result.messages.findLast((message: any) => message.role === "assistant"),
@@ -229,20 +209,12 @@ describe("model context", () => {
   it("keeps immutable source media when the run aborts before a final answer", async () => {
     const pid = "mech-aborted-reply-media";
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const uploaded = await stub.recvFrame({
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.resource.write",
-      args: {
-        resourceId: "unfinished-report",
-        mediaType: "document",
-        contentType: "application/pdf",
-        filename: "report.pdf",
-      },
-      body: bodyFromBytes(new Uint8Array([1])),
-    } satisfies InternalRequestFrame<"proc.resource.write">);
-    if (!uploaded.ok) throw new Error(uploaded.error.message);
-    const resource = uploaded.data.resource;
+    const uploaded = await stub.writeResource(
+      { resourceId: "unfinished-report", mediaType: "document", contentType: "application/pdf", filename: "report.pdf" },
+      bodyFromBytes(new Uint8Array([1])),
+    );
+    if ("unavailable" in uploaded) throw new Error(uploaded.message);
+    const resource = uploaded.resource;
     const key = resource.ref.path.replace(/^\/+/, "");
 
     await runInProcess(stub, async (process) => {
@@ -250,16 +222,8 @@ describe("model context", () => {
       process.runs.active = {
         runId: "run-aborted-reply-media",
       };
-      const attach = await process.recvFrame({
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.run.attach",
-        args: {
-          runId: "run-aborted-reply-media",
-          media: [resource],
-        },
-      } satisfies InternalRequestFrame<"proc.run.attach">);
-      expect(attach).toMatchObject({ ok: true, data: { ok: true } });
+      const attach = await process.attachRunMedia({ runId: "run-aborted-reply-media", media: [resource] });
+      expect(attach).toMatchObject({ ok: true });
       const abort = await process.controller.handleProcAbort({
         runId: "run-aborted-reply-media",
       });

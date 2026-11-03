@@ -1,10 +1,7 @@
 import {
   procHistoryTargetEventRegistry, type ProcHistoryEventPayload,
 } from "@humansandmachines/gsv/protocol";
-import {
-  processEventDeliverResultSchema, type InternalRequestFrame, type InternalResponseFrame,
-} from "../protocol/process-frames";
-import { sendFrameToProcess } from "../shared/utils";
+import { deliverEventToProcess } from "../shared/utils";
 import type { Kernel } from "./do";
 import { getVisibleTarget } from "./targets";
 import { peerAllowsCall } from "./peer";
@@ -34,33 +31,21 @@ export async function deliverTargetConnectionEvent(
       const audience = watch.audience ?? definition.defaultAudience;
       if (!definition.allowedAudiences.includes(audience)) throw new Error("Unsupported target event audience");
       const eventId = `${transitionId}:${watch.watchId}`;
-      const request: InternalRequestFrame<"proc.event.deliver"> = {
-        type: "req", id: crypto.randomUUID(), call: "proc.event.deliver",
-        args: {
+      let result: Awaited<ReturnType<typeof deliverEventToProcess>>;
+      try {
+        result = await deliverEventToProcess(kernel.installationId, watch.targetProcessId, {
           eventId,
           event: { kind: definition.kind, payload, severity: definition.severity, audience },
-        },
-      };
-      let response: InternalResponseFrame<"proc.event.deliver"> | null;
-      try {
-        response = await sendFrameToProcess(kernel.installationId, watch.targetProcessId, request);
+        });
       } catch {
-        // A transport failure skips this transition without retiring the subscription.
+        // A transport or Process failure skips this transition without retiring the subscription.
         continue;
       }
-      if (response?.type === "res" && !response.ok && (
-        response.error.code === 409 || (response.error.code >= 500 && response.error.code < 600)
-      )) {
-        continue;
-      }
-      if (!response || response.type !== "res" || !response.ok) {
+      if ("unavailable" in result) {
+        if (result.unavailable === "transitioning") continue;
         throw new Error("Target event delivery was not acknowledged");
       }
-      const result = processEventDeliverResultSchema.safeParse(response.data);
-      if (!result.success || result.data.eventId !== eventId) {
-        throw new Error("Target event acknowledgment did not match the delivery");
-      }
-      if (result.data.ignored) continue;
+      if (result.ignored) continue;
       if (watch.once) kernel.signalWatches.deleteHandled(watch.watchId, watch.revision);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

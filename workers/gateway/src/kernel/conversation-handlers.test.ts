@@ -16,6 +16,7 @@ import * as personalController from "./personal-controller";
 import * as targets from "./targets";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
+const retainProcessResourcesMock = vi.spyOn(utils, "retainProcessResources");
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 
 import {
@@ -118,6 +119,7 @@ describe("conversation handlers", () => {
   beforeEach(() => {
     getConversationByIdMock.mockReset();
     sendFrameToProcessMock.mockReset();
+    retainProcessResourcesMock.mockReset();
     ensurePersonalControllerMock.mockReset();
     ensurePersonalControllerMock.mockResolvedValue(PROCESS.processId);
   });
@@ -349,23 +351,17 @@ describe("conversation handlers", () => {
         size: 3,
       },
     };
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
-      if (frame.type === "sig") return null;
-      return await new Promise<never>(() => {});
-    });
+    retainProcessResourcesMock.mockImplementation(() => new Promise<never>(() => {}));
+    sendFrameToProcessMock.mockResolvedValue(null);
 
     const retaining = retainConversationResources([resource], PROCESS.processId, ctx);
-    await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(retainProcessResourcesMock).toHaveBeenCalledWith(
       "inst_test",
       PROCESS.processId,
-      expect.objectContaining({ call: "proc.resources.retain" }),
+      expect.any(String),
+      expect.objectContaining({ resources: [resource] }),
     ));
-    const retainFrame = sendFrameToProcessMock.mock.calls.find(
-      ([, , frame]) => frame.type === "req" && frame.call === "proc.resources.retain",
-    )?.[2];
-    if (!retainFrame || retainFrame.type !== "req") {
-      throw new Error("Resource retain request was not captured");
-    }
+    const requestId = retainProcessResourcesMock.mock.calls[0]?.[2];
 
     controller.abort(new Error("Upload cancelled"));
 
@@ -376,7 +372,7 @@ describe("conversation handlers", () => {
       {
         type: "sig",
         signal: REQUEST_CANCEL_SIGNAL,
-        payload: { id: retainFrame.id, reason: "Upload cancelled" },
+        payload: { id: requestId, reason: "Upload cancelled" },
       },
     );
   });

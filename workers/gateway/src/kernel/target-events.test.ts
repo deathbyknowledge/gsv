@@ -29,10 +29,9 @@ function setup(kernel: Kernel) {
 }
 
 function acknowledgeEvents() {
-  return vi.spyOn(utils, "sendFrameToProcess").mockImplementation(async (_installationId, _pid, frame) => {
-    if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected fixture delivery");
-    return { type: "res", id: frame.id, ok: true, data: { eventId: frame.args.eventId, runId: null, queued: false, messageId: 1 } };
-  });
+  return vi.spyOn(utils, "deliverEventToProcess").mockImplementation(async (_installationId, _pid, args) => (
+    { eventId: args.eventId, runId: null, queued: false, messageId: 1 }
+  ));
 }
 
 const event = { targetId: "machine:visible", event: "connected", platform: "linux", observedAt: 100 } as const;
@@ -112,6 +111,7 @@ describe("registered target event watches", () => {
           'null', 1, 'active', 1, 1)`,
       );
       const send = vi.spyOn(utils, "sendFrameToProcess");
+      const deliver = vi.spyOn(utils, "deliverEventToProcess");
       const broadcast = vi.spyOn(kernel.processOutput, "broadcastProcessSignal").mockImplementation(() => {});
       const frame = {
         type: "sig", signal: "proc.run.finished", payload: { pid: "proc:child", runId: "run:child", timestamp: Date.now() },
@@ -119,15 +119,17 @@ describe("registered target event watches", () => {
       try {
         await kernel.processOutput.handleProcessSignal("proc:child", frame, frame);
         expect(send).not.toHaveBeenCalled();
+        expect(deliver).not.toHaveBeenCalled();
         expect(broadcast).toHaveBeenCalledWith(7000, "proc:child", null, frame);
       } finally {
         send.mockRestore();
+        deliver.mockRestore();
         broadcast.mockRestore();
       }
     });
   });
 
-  it("retains target watches across eviction and requires a matching delivery acknowledgment", async () => {
+  it("retains target watches across eviction until a delivery is acknowledged", async () => {
     const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     await runInDurableObject(stub, (kernel: Kernel) => {
       const ctx = setup(kernel);
@@ -139,19 +141,11 @@ describe("registered target event watches", () => {
     try {
       await runInDurableObject(stub, async (kernel: Kernel) => {
         await deliverTargetConnectionEvent(kernel, event, "transition:one", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-        expect(send).toHaveBeenCalledWith(kernel.installationId, "proc:observer", expect.objectContaining({
-          call: "proc.event.deliver", args: {
-            eventId: expect.stringMatching(/^transition:one:/),
-            event: { kind: "target.connection", payload: event, audience: "person", severity: "info" },
-          },
-        }));
+        expect(send).toHaveBeenCalledWith(kernel.installationId, "proc:observer", {
+          eventId: expect.stringMatching(/^transition:one:/),
+          event: { kind: "target.connection", payload: event, audience: "person", severity: "info" },
+        });
         expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toEqual([]);
-        const ctx = kernel.buildProcessContext("proc:observer")!;
-        const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId }, ctx);
-        send.mockResolvedValueOnce({ type: "res", id: "mismatch", ok: true, data: { eventId: "different", runId: null, queued: false } });
-        await deliverTargetConnectionEvent(kernel, event, "transition:two", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-        expect(kernel.ctx.storage.sql.exec<{ status: string }>("SELECT status FROM signal_watches WHERE watch_id = ?", watch.watchId).toArray())
-          .toEqual([{ status: "failed" }]);
       });
     } finally { send.mockRestore(); }
   });
@@ -177,29 +171,19 @@ describe("registered target event watches", () => {
 
   it.each([
     ["resetting", true], ["resetting", false],
-    ["server-error", true], ["server-error", false],
-    ["transport-error", true], ["transport-error", false],
+    ["error", true], ["error", false],
     ["ignored", true], ["ignored", false],
   ] as const)("retains a watch after %s with once=%s and handles the next connection transition", async (failure, once) => {
     const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     const entered = deferred();
     const release = deferred();
     const send = acknowledgeEvents();
-    send.mockImplementationOnce(async (_installationId, _pid, frame) => {
+    send.mockImplementationOnce(async (_installationId, _pid, args) => {
       entered.resolve();
       await release.promise;
-      if (failure === "ignored") {
-        if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected fixture delivery");
-        return {
-          type: "res", id: frame.id, ok: true,
-          data: { eventId: frame.args.eventId, runId: null, queued: false, ignored: true },
-        };
-      }
-      if (failure === "transport-error") throw new Error("Fixture RPC transport unavailable");
-      return {
-        type: "res", id: frame.id, ok: false,
-        error: { code: failure === "resetting" ? 409 : 503, message: "Fixture Process temporarily unavailable" },
-      };
+      if (failure === "ignored") return { eventId: args.eventId, runId: null, queued: false, ignored: true };
+      if (failure === "error") throw new Error("Fixture Process temporarily unavailable");
+      return { unavailable: "transitioning", message: "Process lifecycle is resetting" };
     });
     try {
       await runInDurableObject(stub, async (kernel: Kernel) => {
@@ -220,10 +204,7 @@ describe("registered target event watches", () => {
           kernel.connectionRuntime.broadcastTargetStatus(event.targetId, "disconnected");
           await Promise.all(waits);
           expect(send).toHaveBeenCalledTimes(2);
-          const delivered = send.mock.calls.map(([, , frame]) => {
-            if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected fixture delivery");
-            return frame.args.event.payload.event;
-          });
+          const delivered = send.mock.calls.map(([, , args]) => args.event.payload.event);
           expect(delivered).toEqual(["connected", "disconnected"]);
           const remaining = kernel.signalWatches.matchTarget(event.targetId, "target.status");
           if (once) expect(remaining).toEqual([]);
@@ -236,7 +217,7 @@ describe("registered target event watches", () => {
   it("marks a watch failed when its Process permanently rejects the delivery", async () => {
     const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     const send = acknowledgeEvents();
-    send.mockResolvedValueOnce({ type: "res", id: "gone", ok: false, error: { code: 410, message: "Process no longer exists" } });
+    send.mockResolvedValueOnce({ unavailable: "killed", message: "Process no longer exists" });
     try {
       await runInDurableObject(stub, async (kernel: Kernel) => {
         const ctx = setup(kernel);
@@ -254,20 +235,12 @@ describe("registered target event watches", () => {
     const entered = deferred();
     const release = deferred();
     const send = acknowledgeEvents();
-    send.mockImplementationOnce(async (_installationId, _pid, frame) => {
-      if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected fixture delivery");
+    send.mockImplementationOnce(async (_installationId, _pid, args) => {
       entered.resolve();
       await release.promise;
-      if (outcome === "failed" || outcome === "resetting") {
-        return {
-          type: "res", id: frame.id, ok: false,
-          error: { code: outcome === "resetting" ? 409 : 410, message: "Fixture delivery rejected" },
-        };
-      }
-      return {
-        type: "res", id: frame.id, ok: true,
-        data: { eventId: frame.args.eventId, runId: null, queued: false, ignored: outcome === "ignored" },
-      };
+      if (outcome === "failed") return { unavailable: "killed", message: "Process no longer exists" };
+      if (outcome === "resetting") return { unavailable: "transitioning", message: "Process lifecycle is resetting" };
+      return { eventId: args.eventId, runId: null, queued: false, ignored: outcome === "ignored" };
     });
     try {
       await runInDurableObject(stub, async (kernel: Kernel) => {
@@ -294,11 +267,10 @@ describe("registered target event watches", () => {
     const entered = deferred();
     const release = deferred();
     const send = acknowledgeEvents();
-    send.mockImplementationOnce(async (_installationId, _pid, frame) => {
-      if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected fixture delivery");
+    send.mockImplementationOnce(async (_installationId, _pid, args) => {
       entered.resolve();
       await release.promise;
-      return { type: "res", id: frame.id, ok: true, data: { eventId: frame.args.eventId, runId: null, queued: false } };
+      return { eventId: args.eventId, runId: null, queued: false };
     });
     try {
       await runInDurableObject(stub, async (kernel: Kernel) => {
@@ -314,10 +286,7 @@ describe("registered target event watches", () => {
           release.resolve();
           await Promise.all(waits);
           expect(send).toHaveBeenCalledTimes(2);
-          for (const [, , frame] of send.mock.calls) {
-            if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected fixture delivery");
-            expect(frame.args.eventId.endsWith(`:${original.watchId}`)).toBe(true);
-          }
+          for (const [, , args] of send.mock.calls) expect(args.eventId.endsWith(`:${original.watchId}`)).toBe(true);
         } finally { release.resolve(); waiting.mockRestore(); }
       });
     } finally { release.resolve(); send.mockRestore(); }
@@ -392,10 +361,7 @@ describe("registered target event watches", () => {
           kernel.connectionRuntime.broadcastTargetStatus(event.targetId, "disconnected");
           await Promise.all(waits);
         } finally { waiting.mockRestore(); }
-        const delivered = send.mock.calls.map(([, , frame]) => {
-          if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected fixture delivery");
-          return frame.args;
-        });
+        const delivered = send.mock.calls.map(([, , args]) => args);
         expect(delivered.map(({ event }) => event.payload.event)).toEqual(["connected", "disconnected"]);
         expect(delivered[0]).toMatchObject({ event: {
           audience: "model", payload: { targetId: "machine:visible", platform: "linux", label: "Fixture machine", version: "fixture-version", observedAt: expect.any(Number) },

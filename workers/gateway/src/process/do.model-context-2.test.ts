@@ -606,10 +606,7 @@ describe("model context", () => {
     // every generation, corrections included, saw the same tools: a changed tool list would invalidate the provider's prompt cache
     expect(result.offered).toEqual([["Shell", "Send"], ["Shell", "Send"], ["Shell", "Send"], ["Shell", "Send"]]);
     expect(result.notices).toHaveLength(1);
-    expect(result.notices[0][2]).toMatchObject({
-      call: "proc.message.commit",
-      args: { runId, text: "I wrote a reply but did not send it. Ask me again." },
-    });
+    expect(result.notices[0][2]).toMatchObject({ runId, text: "I wrote a reply but did not send it. Ask me again." });
     expect(
       result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
     ).toMatchObject({
@@ -865,10 +862,7 @@ describe("model context", () => {
     });
 
     expect(result.commits).toHaveLength(1);
-    expect(result.commits[0][2]).toMatchObject({
-      call: "proc.message.commit",
-      args: { runId, actionId: "send-1", text: "all done" },
-    });
+    expect(result.commits[0][2]).toMatchObject({ runId, actionId: "send-1", text: "all done" });
     const sendResult = result.messages.find((message: any) => message.role === "toolResult");
     expect(sendResult).toMatchObject({ content: "Message committed and run yielded", toolCallId: "send-1" });
     // the result is recorded under the tool's own name, so the call and its result pair up for every provider

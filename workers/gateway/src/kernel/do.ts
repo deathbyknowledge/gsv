@@ -37,6 +37,7 @@ import { consumeProcessRunStream } from "../protocol/process-run-stream";
 import type {
   AdapterLinkedPeerContext,
   BinaryBody,
+  ConversationMessage,
   ManagedInboundMailAccepted,
   ManagedInboundMailCompletion,
   ManagedInboundMailMetadata,
@@ -108,7 +109,7 @@ import {
   assertAdapterMessageDestinationAccess,
   identityLinkRouteGeneration,
 } from "./adapter-destinations";
-import type { InternalResponseFrame, ProcessApprovalTarget, ProcessApprovalTargetRef } from "../protocol/process-frames";
+import type { ProcessApprovalTarget, ProcessApprovalTargetRef, ProcessMessageCommitArgs } from "../protocol/process-frames";
 import type {
   ProcessOutboundFrame,
 } from "../protocol/process-frames";
@@ -1081,30 +1082,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     processId: string,
     frame: ProcessOutboundFrame,
     approvedTarget?: ProcessApprovalTarget,
-  ): Promise<Frame | InternalResponseFrame<"proc.message.commit"> | null> {
+  ): Promise<Frame | null> {
     try { this.retirement.assertActive(); } catch (error) {
       await cancelUnlockedBody("body" in frame ? frame.body : undefined, "Installation admission is closed");
       throw error;
     }
     if (frame.type === "req") {
-      if (frame.call === "proc.message.commit") {
-        try {
-          return {
-            type: "res",
-            id: frame.id,
-            ok: true,
-            data: {
-              message: await this.processOutput.commitProcessMessage(processId, frame.args),
-            },
-          };
-        } catch (error) {
-          return errFrame(
-            frame.id,
-            500,
-            error instanceof Error ? error.message : String(error),
-          );
-        }
-      }
       try {
         return await this.handleProcessReq(processId, frame, approvedTarget);
       } finally {
@@ -1153,6 +1136,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
 
     return null;
+  }
+
+  /** Commits a user-visible message from one of a Process's runs. */
+  async commitProcessMessage(processId: string, args: ProcessMessageCommitArgs): Promise<ConversationMessage> {
+    this.retirement.assertActive();
+    return await this.processOutput.commitProcessMessage(processId, args);
   }
 
       async acceptProcessRunStream(

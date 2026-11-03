@@ -207,10 +207,7 @@ describe("Send text streaming", () => {
     // the escaped surrogate pair split across chunks arrives whole, never as a lone half
     expect(result.streamed.map((entry) => entry.delta)).toContain("😀 there\n");
     expect(result.commits).toHaveLength(1);
-    expect(result.commits[0][2]).toMatchObject({
-      call: "proc.message.commit",
-      args: { runId, actionId: "send-stream-1", text },
-    });
+    expect(result.commits[0][2]).toMatchObject({ runId, actionId: "send-stream-1", text });
     expect(
       result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
     ).toMatchObject({ status: "ok", reason: "run.yielded" });

@@ -179,8 +179,8 @@ The command validates the public syscall argument contract and delegates to the
 same capability-checked Kernel handlers; it does not add a model tool.
 
 The Kernel captures connection facts from its target registry, checks target
-access and the watching Process's current capability, and uses an internal
-`proc.event.deliver` request. Public callers cannot send that request, choose a
+access and the watching Process's current capability, and calls the Process's
+internal `deliverEvent` method. Public callers cannot make that call, choose a
 target identity in a machine signal, or register arbitrary payload shapes.
 The managed installation work gate also applies before delivery. Watch revisions
 fence updates and removal while an earlier delivery is in flight.
@@ -198,7 +198,7 @@ available independently of the canonical Conversation.
 Target connection notifications are best effort. SQL retains the watch.
 Temporary Process lifecycle conflicts, service errors, and RPC failures leave
 watches eligible for later transitions, including one-shot
-watches that have not received a matching successful acknowledgment. The missed
-transition is not replayed. Authorization failures, a gone Process, and invalid
-acknowledgments still disable the watch.
+watches that have not received a successful acknowledgment. The missed
+transition is not replayed. Authorization failures and a gone Process still
+disable the watch.
 Stale events ignored at the Process reset boundary do not consume one-shot watches.

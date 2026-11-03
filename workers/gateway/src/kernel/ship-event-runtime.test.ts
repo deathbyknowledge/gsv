@@ -58,15 +58,14 @@ describe("Ship event delivery", () => {
       const link = { kind: "contact", contactId: "contact:remote" } as const;
       shipEvents.enqueue(OWNER, "owner.notified:contact.message:contact:remote:1:0", { type: "owner.notified", payload, link }, Date.now());
       vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
-      const send = vi.spyOn(processTransport, "sendFrameToProcess")
-        .mockResolvedValue({ type: "res", id: "response", ok: true, data: {} });
+      const send = vi.spyOn(processTransport, "deliverEventToProcess")
+        .mockResolvedValue({ eventId: "owner.notified:contact.message:contact:remote:1:0", runId: null, queued: false });
 
       await runtime.onShipEvents(OWNER, { id: "task:notice" });
-      expect(send).toHaveBeenCalledWith("installation:test", "proc:ship", expect.objectContaining({
-        call: "proc.event.deliver",
-        args: { eventId: "owner.notified:contact.message:contact:remote:1:0",
-          event: { kind: "owner.notified", payload, severity: "info", audience: "both", link } },
-      }));
+      expect(send).toHaveBeenCalledWith("installation:test", "proc:ship", {
+        eventId: "owner.notified:contact.message:contact:remote:1:0",
+        event: { kind: "owner.notified", payload, severity: "info", audience: "both", link },
+      });
     });
   });
 

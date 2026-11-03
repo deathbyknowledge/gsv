@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildEventCommand } from "../drivers/native/shell/event";
 import { testPeer } from "../test-support/peers";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
-import type { sendFrameToProcess } from "../shared/utils";
+import type { authorizeProcessTool } from "../shared/utils";
 import type { KernelContext } from "./context";
 import {
   EventSourceStore,
@@ -171,11 +171,11 @@ describe("event sources", () => {
       const k = kernel(storage);
       await handleEventSourceAdd({ name: "feed" }, context(k));
       const ship = Object.assign(context(k, "ship"), { installationId: "inst", toolOwner: { runId: "run", requestId: "req" } });
-      const answering = (approved: boolean) => vi.fn<typeof sendFrameToProcess>().mockResolvedValue({ type: "res", id: "x", ok: true, data: { approved } });
+      const answering = (approved: boolean) => vi.fn<typeof authorizeProcessTool>().mockResolvedValue({ approved });
 
       const refuse = answering(false);
       await expect(handleEventSourceUpdate({ name: "feed", ship: "wake" }, ship, refuse)).rejects.toThrow("not approved");
-      expect(refuse.mock.calls[0]).toMatchObject(["inst", SHIP_PID, { call: "proc.tool.authorize", args: { syscall: "event.source.update" } }]);
+      expect(refuse.mock.calls[0]).toMatchObject(["inst", SHIP_PID, expect.any(String), { syscall: "event.source.update" }]);
       expect(k.eventSources.row(OWNER, "feed")?.ship).toBe("none");
       await expect(handleEventSourceAdd({ name: "other", ship: "wake" }, ship, refuse)).rejects.toThrow("not approved");
       expect(k.eventSources.row(OWNER, "other")).toBeNull();
@@ -196,16 +196,16 @@ describe("event sources", () => {
       const k = kernel(storage);
       await handleEventSourceAdd({ name: "feed" }, context(k));
       const ship = Object.assign(context(k, "ship"), { installationId: "inst", toolOwner: { runId: "run", requestId: "req" } });
-      const approved = { type: "res", id: "x", ok: true, data: { approved: true } } as const;
+      const approved = { approved: true };
 
-      await handleEventSourceUpdate({ name: "feed", ship: "wake" }, ship, vi.fn<typeof sendFrameToProcess>(async () => {
+      await handleEventSourceUpdate({ name: "feed", ship: "wake" }, ship, vi.fn<typeof authorizeProcessTool>(async () => {
         await handleEventSourceUpdate({ name: "feed", enabled: false, label: "Renamed" }, context(k));
         return approved;
       }));
       expect(k.eventSources.row(OWNER, "feed")).toMatchObject({ ship: "wake", enabled: 0, label: "Renamed" });
 
       await handleEventSourceUpdate({ name: "feed", ship: "none" }, context(k));
-      await expect(handleEventSourceUpdate({ name: "feed", ship: "wake" }, ship, vi.fn<typeof sendFrameToProcess>(async () => {
+      await expect(handleEventSourceUpdate({ name: "feed", ship: "wake" }, ship, vi.fn<typeof authorizeProcessTool>(async () => {
         handleEventSourceRemove({ name: "feed" }, context(k));
         return approved;
       }))).rejects.toThrow("no source");
@@ -217,10 +217,10 @@ describe("event sources", () => {
       const k = kernel(storage);
       await handleEventSourceAdd({ name: "feed" }, context(k));
       const ship = Object.assign(context(k, "ship"), { installationId: "inst", toolOwner: { runId: "run", requestId: "req" } });
-      await expect(handleEventSourceUpdate({ name: "feed", ship: "wake" }, ship, vi.fn<typeof sendFrameToProcess>(async () => {
+      await expect(handleEventSourceUpdate({ name: "feed", ship: "wake" }, ship, vi.fn<typeof authorizeProcessTool>(async () => {
         handleEventSourceRemove({ name: "feed" }, context(k));
         await handleEventSourceAdd({ name: "feed", webhook: "url" }, context(k));
-        return { type: "res", id: "x", ok: true, data: { approved: true } };
+        return { approved: true };
       }))).rejects.toThrow("changed while");
       expect(k.eventSources.row(OWNER, "feed")?.ship).toBe("none");
     });
