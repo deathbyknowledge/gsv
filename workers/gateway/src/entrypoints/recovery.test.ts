@@ -1,6 +1,6 @@
 import { createExecutionContext } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import { GatewayRecoveryEntrypoint } from "./recovery-entrypoint";
+import { GatewayRecoveryEntrypoint } from "./recovery";
 
 function fixture(authority: string | undefined, state = "active", found = true) {
   const ctx = createExecutionContext();

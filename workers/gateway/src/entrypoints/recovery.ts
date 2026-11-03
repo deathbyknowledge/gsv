@@ -1,7 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { AuthorizeRootRecoveryInput, InstallationRecoveryGatewayService } from "@humansandmachines/gsv/services/ownership";
 import type { GatewayEnv } from "../runtime-env";
-import { getKernelByInstallationId } from "./routing";
+import { getKernelByInstallationId } from "../installation/routing";
 
 /** Only an Accounts binding with deployment-owned props grants incoming recovery authority. */
 export class GatewayRecoveryEntrypoint extends WorkerEntrypoint<GatewayEnv, { authority: "installation-owner-recovery" }>

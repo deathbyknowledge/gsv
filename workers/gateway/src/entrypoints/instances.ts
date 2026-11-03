@@ -1,7 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { instanceChangeSchema, instanceExecChangeSchema, type InstancesGatewayService } from "@humansandmachines/gsv/services/instances";
 import type { GatewayEnv } from "../runtime-env";
-import { getKernelByInstallationId } from "./routing";
+import { getKernelByInstallationId } from "../installation/routing";
 
 /** Only the deployment's instance service can invalidate its owners' browser inventories. */
 export class InstancesGatewayEntrypoint extends WorkerEntrypoint<GatewayEnv, { authority: "instance-notifications" }>

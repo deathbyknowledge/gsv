@@ -1,5 +1,5 @@
 import { installationDeletionInspectionSchema, installationDeletionInventoryImportSchema, type InstallationDeletionDiscoveryService, type InstallationDeletionInspection, type InstallationDeletionInventoryImport } from "@humansandmachines/gsv/services/lifecycle-discovery";
-import { GatewayDeletionDiscovery } from "./deletion-discovery";
+import { GatewayDeletionDiscovery } from "../installation/deletion-discovery";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import {
   installationDeletionRequestSchema,
@@ -7,7 +7,7 @@ import {
   type InstallationDeletionService,
 } from "@humansandmachines/gsv/services/lifecycle";
 import type { GatewayEnv } from "../runtime-env";
-import { parseInstallationId } from "./identity";
+import { parseInstallationId } from "../installation/identity";
 
 /** Accounts closes directory admission before calling this deployment-owned binding. */
 export class GatewayLifecycleEntrypoint extends WorkerEntrypoint<GatewayEnv, { authority: "installation-deletion" }>

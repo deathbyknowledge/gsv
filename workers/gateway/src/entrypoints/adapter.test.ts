@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { AdapterGatewayEntrypoint, GatewayEntrypoint } from "./index";
-import type { ServicePeerProfile } from "./kernel/peer";
-import type { Frame } from "./protocol/frames";
+import { AdapterGatewayEntrypoint } from "./adapter";
+import { GatewayEntrypoint } from "./mail";
+import type { ServicePeerProfile } from "../kernel/peer";
+import type { Frame } from "../protocol/frames";
 
 type TrackedBodyFixture = {
   frame: Frame;

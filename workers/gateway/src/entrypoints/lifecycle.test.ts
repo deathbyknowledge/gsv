@@ -1,6 +1,6 @@
 import { createExecutionContext } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import { GatewayLifecycleEntrypoint } from "./deletion-entrypoint";
+import { GatewayLifecycleEntrypoint } from "./lifecycle";
 import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
 
 function fixture(authority: string | undefined = "installation-deletion", retiredState = "retained", retiredId = "inst_retired") {
