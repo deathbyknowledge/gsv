@@ -158,3 +158,29 @@ describe("signup attribution body", () => {
     expect(JSON.parse(stored!.attribution_json)).toEqual({ placement: "example", example: "tickets" });
   });
 });
+
+describe("signup inviter body", () => {
+  it("accepts the inviting Ship's hostname and rejects anything that is not one with the request", async () => {
+    const f = await fixture();
+    await f.signIn();
+    const inviterOwner = await f.accounts.createPrincipal({ email: `inviter-${crypto.randomUUID()}@example.com`, displayName: "Inviter", verified: true });
+    const inviter = await f.accounts.reserveInstallation({ principalId: inviterOwner.id, operationId: crypto.randomUUID(), handle: `inviter-${crypto.randomUUID().slice(0, 8)}` });
+    await env.INSTALLATIONS_DB.batch([
+      env.INSTALLATIONS_DB.prepare("UPDATE installations SET state = 'active' WHERE id = ?").bind(inviter.installationId),
+      env.INSTALLATIONS_DB.prepare("UPDATE hostnames SET state = 'active' WHERE installation_id = ?").bind(inviter.installationId),
+    ]);
+    const handle = `inv-${crypto.randomUUID()}`;
+    for (const value of ["a".repeat(250) + ".com", `https://${inviter.handle}.example.com`, `${inviter.handle}.example.com/profile`, "", 42]) {
+      const operationId = crypto.randomUUID();
+      const rejected = await f.request("/spaces", f.sessionSecret, { operationId, handle, inviter: value });
+      expect(rejected.status).toBe(400);
+      expect(await f.accounts.getReservationByOperation(operationId)).toBeNull();
+    }
+    const operationId = crypto.randomUUID();
+    const accepted = await f.request("/spaces", f.sessionSecret, { operationId, handle, inviter: `${inviter.handle.toUpperCase()}.Example.com.` });
+    expect(accepted.status).toBe(200);
+    const stored = await env.INSTALLATIONS_DB.prepare("SELECT inviter_installation_id FROM provisioning_operations WHERE operation_id = ?")
+      .bind(operationId).first<{ inviter_installation_id: string | null }>();
+    expect(stored?.inviter_installation_id).toBe(inviter.installationId);
+  });
+});

@@ -253,7 +253,7 @@ export class InstallationOnboardingStore {
     const claimId = parseOpaqueId(input?.claimId, "claimId");
     const installationId = parseOpaqueId(input?.installationId, "installationId");
     const claim = await this.db.prepare(
-      `SELECT p.operation_id, p.principal_id, p.attribution_json, i.owner_setup
+      `SELECT p.operation_id, p.principal_id, p.attribution_json, i.owner_setup, p.inviter_installation_id IS NOT NULL AS invited
        FROM installation_onboarding_claims c
        JOIN installations i ON i.id = c.installation_id
        JOIN provisioning_operations p
@@ -267,6 +267,7 @@ export class InstallationOnboardingStore {
       principal_id: string;
       attribution_json: string | null;
       owner_setup: number;
+      invited: number;
     }>();
     if (!claim) throw new Error("installation onboarding claim is unavailable");
 
@@ -281,7 +282,7 @@ export class InstallationOnboardingStore {
     if (claim.owner_setup === 1) emitTelemetry(this.telemetry, {
       component: "accounts",
       installationId,
-      event: { stream: "product", name: "installation.attributed", properties: attributionProperties(claim.attribution_json) },
+      event: { stream: "product", name: "installation.attributed", properties: attributionProperties(claim.attribution_json, claim.invited === 1) },
     });
     return { state: "complete", installationId };
   }
@@ -297,8 +298,14 @@ function installationIdentity(row: OnboardingClaimRow): InstallationIdentity {
 
 type AttributionProperties = Extract<TelemetryEvent, { name: "installation.attributed" }>["properties"];
 
+/** A resolved inviter outranks the website link, whose placement stays; the record says only that there was one. */
+function attributionProperties(stored: string | null, invited: boolean): AttributionProperties {
+  const properties = websiteAttribution(stored);
+  return invited ? { ...properties, origin: "invite" } : properties;
+}
+
 /** The classified origin stored with the reservation becomes the record; a missing or malformed value reports a direct signup. */
-function attributionProperties(stored: string | null): AttributionProperties {
+function websiteAttribution(stored: string | null): AttributionProperties {
   if (!stored) return { origin: "direct" };
   let parsed: Partial<SignupAttribution>;
   try {

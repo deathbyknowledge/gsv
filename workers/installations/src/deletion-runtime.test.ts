@@ -5,6 +5,7 @@ import type { JsonValue } from "./http";
 import type { InstallationDeletionReceipt, InstallationDeletionRequest, InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
 import { RequestReports } from "./request-reports";
 import { AccountStore } from "./store";
+import { InstallationAdminStore } from "./administration";
 import { InstallationResetCoordinator } from "./reset-preparation";
 import { AccountsDeletionRuntime } from "./deletion-runtime";
 import { InstallationDeletionHttp } from "./deletion-http";
@@ -207,6 +208,43 @@ describe("Accounts deletion runtime", () => {
     state.tick();
     expect(await state.makeRuntime().retry(state.old.installationId)).toMatchObject({ phase: "erased", owners: [] });
     expect(await state.db.prepare("SELECT * FROM installation_reset_operations WHERE previous_installation_id = ?").bind(state.old.installationId).first()).toBeNull();
+  });
+
+  it("forgets an erased Ship as an inviter and as an invitee, even while its invitee is being erased", async () => {
+    const state = await fixture();
+    const admin = new InstallationAdminStore(state.db);
+    const id = crypto.randomUUID();
+    // The erased Ship joined through the second Ship's invitation and invited a third, which is itself retiring.
+    await state.db.prepare("UPDATE provisioning_operations SET inviter_installation_id = ? WHERE operation_id = ?")
+      .bind(state.second.installationId, state.createOperationId).run();
+    const invitee = await state.accounts.reserveInstallation({ principalId: state.principal.id, operationId: `invitee-${id}`,
+      handle: `c${id.slice(0, 8)}`, inviterInstallationId: state.old.installationId });
+    await state.db.batch([
+      state.db.prepare("UPDATE installations SET state = 'retained' WHERE id = ?").bind(invitee.installationId),
+      state.db.prepare("INSERT INTO installation_account_deletions (installation_id, operation_id, phase, updated_at) VALUES (?, ?, 'quiesced', 1)")
+        .bind(invitee.installationId, `delete-invitee-${id}`),
+    ]);
+    await expect(admin.getInstallation(state.second.installationId)).resolves.toMatchObject({ invitations: { total: 1 } });
+
+    const runtime = state.makeRuntime();
+    const http = new InstallationDeletionHttp(runtime, { allows: async () => true }, "https://admin.example.com");
+    const url = `https://admin.example.com/admin/api/installations/${state.old.installationId}/deletion`;
+    const post = (suffix: string, body: JsonValue) => http.handle(new Request(url + suffix, {
+      method: "POST", headers: { origin: "https://admin.example.com", "content-type": "application/json" }, body: JSON.stringify(body),
+    }));
+    expect((await post("/retire", { operationId: state.operationId, confirmHandle: state.old.handle, reason: "owner asked" }))?.status).toBe(200);
+    const registered = z.object({ sha256: z.string() }).parse(await (await post("/inventory", state.manifest))!.json());
+    expect((await post("", { operationId: state.operationId, inventorySha256: registered.sha256 }))?.status).toBe(201);
+    let phase = "";
+    for (let attempt = 0; attempt < 10 && phase !== "live-erased"; attempt += 1) phase = (await runtime.retry(state.old.installationId)).phase;
+    expect(phase).toBe("live-erased");
+
+    const inviter = await state.db.prepare("SELECT inviter_installation_id FROM provisioning_operations WHERE operation_id = ?")
+      .bind(`invitee-${id}`).first<{ inviter_installation_id: string | null }>();
+    expect(inviter).toEqual({ inviter_installation_id: null });
+    await expect(state.db.prepare("UPDATE provisioning_operations SET state = 'failed' WHERE operation_id = ?")
+      .bind(`invitee-${id}`).run()).rejects.toThrow("installation is retired");
+    await expect(admin.getInstallation(state.second.installationId)).resolves.toMatchObject({ invitations: { total: 0, active: 0 } });
   });
 
   it("retires a space only once its operator types the handle and gives a reason, and says what retiring does", async () => {
