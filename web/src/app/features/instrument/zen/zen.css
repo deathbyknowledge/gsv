@@ -180,14 +180,14 @@
 .zen-moment.is-ship.is-older .text {
   font-size: clamp(17px, 1.6vw, 22px);
 }
-.instrument.is-scale-075 .zen-content { padding-block: 12px; }
-.instrument.is-scale-075 .zen-moment { padding-block: 6px; }
-.instrument.is-scale-075 .zen-moment.is-approval { padding-block: 0; }
-.instrument.is-scale-075 .zen-moment > .who { margin-bottom: 3px; font-size: 14px; letter-spacing: .08em; }
-.instrument.is-scale-075 .zen-moment:is(.is-human, .is-ship) .text { font-size: 20px; line-height: 1.4; }
-.instrument.is-scale-075 .zen-moment.is-older { opacity: .85; }
-.instrument.is-scale-075 .zen-moment .text p { margin-bottom: .35em; }
-.instrument.is-scale-075 .zen-moment .text p:last-child { margin-bottom: 0; }
+.instrument:is(.is-scale-065, .is-scale-075) .zen-content { padding-block: 12px; }
+.instrument:is(.is-scale-065, .is-scale-075) .zen-moment { padding-block: 6px; }
+.instrument:is(.is-scale-065, .is-scale-075) .zen-moment.is-approval { padding-block: 0; }
+.instrument:is(.is-scale-065, .is-scale-075) .zen-moment > .who { margin-bottom: 3px; font-size: 14px; letter-spacing: .08em; }
+.instrument:is(.is-scale-065, .is-scale-075) .zen-moment:is(.is-human, .is-ship) .text { font-size: 20px; line-height: 1.4; }
+.instrument:is(.is-scale-065, .is-scale-075) .zen-moment.is-older { opacity: .85; }
+.instrument:is(.is-scale-065, .is-scale-075) .zen-moment .text p { margin-bottom: .35em; }
+.instrument:is(.is-scale-065, .is-scale-075) .zen-moment .text p:last-child { margin-bottom: 0; }
 .zen-moment .text p { margin: 0 0 0.6em; }
 .zen-moment .text p:last-child { margin-bottom: 0; }
 .zen-moment .text table {
