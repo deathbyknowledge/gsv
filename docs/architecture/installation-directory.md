@@ -168,6 +168,16 @@ reservation itself so a retry can neither lose nor change them, and reports
 them on activation as `installation.attributed` (see the telemetry
 architecture). They never identify a visitor.
 
+A signup that followed a contact invitation link may also name the inviting
+Ship's hostname. Accounts resolves it through its own directory and records the
+inviting installation on the create operation only when it is an active
+installation that the signing owner does not own; anything else is ignored
+without error, since the hostname is a claim from the link, not proof of who
+sent it. The link is written once with the reservation, cleared if the inviting
+installation is erased, and never copied to a reset replacement. Activation then
+reports `origin: "invite"` without naming the inviter. Administration shows who
+invited a Ship and how many Ships its invitations created.
+
 The existing provisioning ledger owns progress and diagnostic references.
 `installations.owner_setup` identifies setups an owner may resume. The forward
 migration preserves this marker for Spaces created through legacy signup codes;

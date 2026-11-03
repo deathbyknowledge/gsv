@@ -167,6 +167,13 @@ accents and separators, but checks the whole name. Existing Ships and unfinished
 activations keep their names. See the [username policy](../architecture/installation-directory.md#open-registration)
 for matching rules and terms that require contextual review.
 
+The installations list shows each Ship's source: `invite` when its signup
+followed another Ship's contact invitation, `website` when it came from a
+ship.space link, otherwise `direct`. A Ship's detail page names who invited it
+and how many Ships its own invitations created, with how many of those are
+active. The inviter is taken from the invitation link the signup carried and
+checked only against the directory, so treat the counts as reported, not proven.
+
 Administration timestamps use your device's timezone, including audit entries and
 run times. With JavaScript disabled, they use the labelled UTC fallback.
 

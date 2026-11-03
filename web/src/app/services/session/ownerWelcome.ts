@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { t } from "../../i18n/locale";
+import { contactInvitationInviter } from "./contactInvitationIntent";
 
 export const ONBOARDING_KEY = "gsv.ui.installation-onboarding.v1";
 export type WelcomeState = {
@@ -28,9 +29,11 @@ export type WelcomeStorage = { save(revision: string, value: WelcomeState | null
 type OwnerFetch = (url: string, init: {
   method: "GET" | "POST"; headers: Record<string, string>; credentials: "omit"; cache: "no-store"; body?: string; signal: AbortSignal;
 }) => Promise<Pick<Response, "ok" | "status" | "text">>;
+/** The space reservation body: the website's attribution and the inviting Ship's hostname ride along only when known. */
+type SpaceRequest = { operationId: string; handle: string; attribution?: SignupAttribution; inviter?: string };
 type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
-  | { operationId: string; handle: string; attribution?: SignupAttribution } | Record<string, never>;
+  | SpaceRequest | Record<string, never>;
 type OwnerHeaders = { "content-type": string; authorization?: string };
 const deliverySchema = z.object({ deliveryStatus: z.enum(["sent", "sending", "failed"]) });
 const verifiedSchema = z.object({ email: z.string(), expiresAt: z.number() });
@@ -106,7 +109,11 @@ export class OwnerWelcome {
   async prepare(handle: string, operationId = this.state.operationId ?? crypto.randomUUID()): Promise<PreparedSpace> {
     await this.save({ flow: "create", operationId, handle });
     const attribution = this.state.attribution ?? undefined;
-    const prepared = await this.request("/spaces", preparationSchema, attribution ? { operationId, handle, attribution } : { operationId, handle });
+    const inviter = this.state.contactInvite ? contactInvitationInviter(this.state.contactInvite) : null;
+    const body: SpaceRequest = { operationId, handle };
+    if (attribution) body.attribution = attribution;
+    if (inviter) body.inviter = inviter;
+    const prepared = await this.request("/spaces", preparationSchema, body);
     if (!prepared.onboardingToken) await this.completeCreation();
     return prepared;
   }

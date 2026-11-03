@@ -122,6 +122,8 @@ export class AccountStore {
     allowReservedHandle?: boolean;
     /** Where the signup link was clicked, already classified; written with the reservation, never updated. */
     attribution?: SignupAttribution;
+    /** The inviting Ship, resolved by Accounts and never taken from a request body as an id; written with the reservation, never updated. */
+    inviterInstallationId?: string;
   }): Promise<InstallationReservation> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
     const operationId = parseOpaqueId(input.operationId, "operationId");
@@ -184,9 +186,10 @@ export class AccountStore {
         this.db.prepare(
           `INSERT INTO provisioning_operations (
              operation_id, installation_id, principal_id, kind, state,
-             attempt, last_error, updated_at, attribution_json
-           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?, ?)`,
-        ).bind(operationId, identity.installationId, principalId, now, input.attribution ? JSON.stringify(input.attribution) : null),
+             attempt, last_error, updated_at, attribution_json, inviter_installation_id
+           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?, ?, ?)`,
+        ).bind(operationId, identity.installationId, principalId, now, input.attribution ? JSON.stringify(input.attribution) : null,
+          input.inviterInstallationId ?? null),
       ]);
     } catch (error) {
       const replay = await this.getReservationByOperation(operationId);

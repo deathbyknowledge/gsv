@@ -154,7 +154,11 @@ producer switch and tail consumer; schema support alone does not export anything
 without granting those adapters ownership of another component's application events.
 
 - Gateway: terminal runs, compaction completion and failure stage, delegation,
-  committed messages, target/adapter connection and adapter transport outcomes.
+  committed messages, target/adapter connection, adapter transport outcomes and
+  contact invitations. `contact.invite.created` counts an invitation link the
+  Ship issued and `contact.invite.accepted` the first time another Ship
+  accepted one; both carry no properties and are recorded for the issuing Ship
+  only, so the other Ship, its handle and the link never enter a record.
   `delegation.finished` distinguishes `aborted` child runs from `failed` work,
   including when completion delivery is recovered after a Kernel restart.
   Terminal adapter delivery failures report the route/media/adapter stage,
@@ -196,9 +200,14 @@ without granting those adapters ownership of another component's application eve
   responsibility" and "first delegation" are backend computations over those
   events; GSV keeps no one-time marker for either.
 - Accounts: activation and attribution. `installation.attributed` is reported
-  once when onboarding completes, with `origin: "website"` and a closed
-  placement class (`hero`, `final-call`, `example` or `other`) and, for example
-  cards, a closed example id, or `origin: "direct"` when there were none. The
+  once when onboarding completes, with `origin: "invite"` when the signup
+  carried another Ship's contact invitation that Accounts resolved, otherwise
+  `origin: "website"` with a closed placement class (`hero`, `final-call`,
+  `example` or `other`) and, for example cards, a closed example id, or
+  `origin: "direct"` when there were none. A reset replacement reports nothing:
+  the person's original installation already did. Which Ship invited the new one stays
+  in Accounts; the record never names it, so two installations' product series
+  cannot be joined through it. The
   signup page reads the website's slugs from the signup link's fragment in the
   browser and keeps them in its own signup state until the space request; the
   owner API bounds their shape and classifies them into the allowlist before
