@@ -375,18 +375,6 @@ const onboardingWelcomeDeliveredSchema = z.strictObject({
   }),
 });
 
-// A record entering the owner's responsibility ledger through the ordinary
-// create syscall: Ship or a helper committing to something (`process`) or the
-// person adding one (`account`). Kernel-seeded records never pass this path.
-const responsibilityCreatedSchema = z.strictObject({
-  stream: z.literal("product"),
-  name: z.literal("responsibility.created"),
-  properties: z.strictObject({
-    source: z.enum(["process", "account"]),
-    parent: z.boolean(),
-  }),
-});
-
 const targetConnectedSchema = z.strictObject({
   stream: z.literal("product"),
   name: z.literal("target.connected"),
@@ -553,7 +541,6 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   conversationReplyFailedSchema,
   onboardingWelcomeActivatedSchema,
   onboardingWelcomeDeliveredSchema,
-  responsibilityCreatedSchema,
   targetConnectedSchema,
   adapterConnectedSchema,
   integrationConnectedSchema,
@@ -589,7 +576,6 @@ export const telemetryEventComponents = {
   "conversation.reply.failed": ["gateway"],
   "onboarding.welcome.activated": ["gateway"],
   "onboarding.welcome.delivered": ["gateway"],
-  "responsibility.created": ["gateway"],
   "target.connected": ["gateway"],
   "adapter.connected": ["gateway"],
   "integration.connected": ["gateway"],

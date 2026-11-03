@@ -480,12 +480,6 @@ describe("onboarding funnel events", () => {
     assert.equal(record("gateway", "onboarding.welcome.delivered", { durationMs: 54_000, delivery: "client" }).success, false);
   });
 
-  it("reports a created responsibility by who created it", () => {
-    assert.equal(record("gateway", "responsibility.created", { source: "process", parent: false }).success, true);
-    assert.equal(record("gateway", "responsibility.created", { source: "account", parent: true }).success, true);
-    assert.equal(record("gateway", "responsibility.created", { source: "system", parent: false }).success, false);
-  });
-
   it("keeps each funnel event with its owning component", () => {
     assert.equal(record("accounts", "ship.message.received", { source: "client", platform: "web", hasText: true, hasMedia: false }).success, false);
     assert.equal(record("inference", "conversation.reply.failed", { outcome: "error", failure: "other", replied: false, durationMs: 1 }).success, false);

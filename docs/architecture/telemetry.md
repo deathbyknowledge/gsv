@@ -189,14 +189,7 @@ without granting those adapters ownership of another component's application eve
   it, once per owner, with the time between them, so it measures first sign-in
   to Ship's first message. The Kernel keeps both marks in its private
   `initial-onboarding` record, so an owner whose welcome predates the record is
-  never reported. `responsibility.created` reports a record
-  entering the owner's ledger through the ordinary create syscall, as `process`
-  when Ship or a helper created it and `account` when the person did, with
-  whether it has a parent; records the Kernel seeds itself (the welcome,
-  release briefs, memory reviews, lifecycle checks, scheduled runs, mail and
-  contact intake) never pass that path and are not reported. "First
-  responsibility" and "first delegation" are backend computations over those
-  events; GSV keeps no one-time marker for either.
+  never reported.
 - Accounts: activation. This is not a full signup funnel; anonymous invite/email
   steps intentionally do not invent an installation identity or export addresses.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,
