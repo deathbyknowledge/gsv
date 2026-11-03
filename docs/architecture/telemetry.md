@@ -165,8 +165,18 @@ without granting those adapters ownership of another component's application eve
   reply route pinned for that message, so it names the client or messenger the
   reply was delivered to; the reported peer platform string and adapter name
   never leave the Gateway.
-- Accounts: activation. This is not a full signup funnel; anonymous invite/email
-  steps intentionally do not invent an installation identity or export addresses.
+- Accounts: activation and attribution. `installation.attributed` is reported
+  once when onboarding completes, with `origin: "website"` and a closed
+  placement class (`hero`, `final-call`, `example` or `other`) and, for example
+  cards, a closed example id, or `origin: "direct"` when there were none. The
+  signup page reads the website's slugs from the signup link's fragment in the
+  browser and keeps them in its own signup state until the space request; the
+  owner API bounds their shape and classifies them into the allowlist before
+  they are stored with the reservation, so an unknown slug becomes `other` and
+  the raw string never enters storage or a record. Nothing in it is a visitor
+  identity. This is not a full signup funnel;
+  anonymous invite/email steps intentionally do not invent an installation
+  identity or export addresses.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,
   workload and failure stage, plus entitlement-refresh health.
 - Gateway, Inference and Accounts: correlated model-metadata lookup outcomes and

@@ -12,6 +12,7 @@ import {
   shipPlatformFromAdapter,
   shipPlatformFromPeer,
   shipPlatformSchema,
+  signupAttributionFromSlugs,
   telemetryRecordSchema,
 } from "../dist/telemetry.js";
 
@@ -436,5 +437,37 @@ describe("ship.message.committed", () => {
       assert.equal(shipPlatformSchema.safeParse(value).success, true);
       assert.equal(value, "other");
     }
+  });
+});
+
+describe("installation.attributed", () => {
+  const record = (component, properties) => {
+    try {
+      return telemetryRecordSchema.safeParse(createTelemetryRecord(
+        { installationId: "inst_telemetry", component, event: { stream: "product", name: "installation.attributed", properties } },
+        1_789_000_000_000,
+        "11111111-1111-4111-8111-111111111111",
+      ));
+    } catch {
+      return { success: false };
+    }
+  };
+
+  it("accepts only the closed placement and example classes for the signup origin", () => {
+    assert.equal(record("accounts", { origin: "direct" }).success, true);
+    assert.equal(record("accounts", { origin: "website", placement: "hero", example: "tickets" }).success, true);
+    assert.equal(record("accounts", { origin: "website", placement: "example", example: "other" }).success, true);
+    assert.equal(record("accounts", { origin: "website", placement: "hero-heading" }).success, false);
+    assert.equal(record("accounts", { origin: "website", placement: "hero", example: "plan-a-trip" }).success, false);
+    assert.equal(record("accounts", { origin: "website", placement: "hero", visitorId: "abc" }).success, false);
+    assert.equal(record("gateway", { origin: "direct" }).success, false);
+  });
+
+  it("classifies the website's link slugs into the allowlist and nothing else", () => {
+    assert.deepEqual(signupAttributionFromSlugs("hero-heading"), { placement: "hero" });
+    assert.deepEqual(signupAttributionFromSlugs("early-access"), { placement: "final-call" });
+    assert.deepEqual(signupAttributionFromSlugs("details-tickets", "tickets"), { placement: "example", example: "tickets" });
+    assert.deepEqual(signupAttributionFromSlugs("sidebar-promo", "plan-a-trip"), { placement: "other", example: "other" });
+    assert.deepEqual(signupAttributionFromSlugs(" HERO "), { placement: "hero" });
   });
 });

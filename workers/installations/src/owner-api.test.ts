@@ -142,3 +142,19 @@ it("returns unavailable for normalized policy matches and rejects direct creatio
     await policy.replace({ reserved: initial.reserved.join("\n"), blocked: initial.blocked.join("\n") });
   }
 });
+
+describe("signup attribution body", () => {
+  it("accepts closed slugs and rejects anything else with the request", async () => {
+    const f = await fixture();
+    await f.signIn();
+    const operationId = crypto.randomUUID();
+    const handle = `attr-${crypto.randomUUID()}`;
+    const rejected = await f.request("/spaces", f.sessionSecret, { operationId, handle, attribution: { placement: "Hero Banner" } });
+    expect(rejected.status).toBe(400);
+    expect(await f.accounts.getReservationByOperation(operationId)).toBeNull();
+    const accepted = await f.request("/spaces", f.sessionSecret, { operationId, handle, attribution: { placement: "details-tickets", example: "tickets" } });
+    expect(accepted.status).toBe(200);
+    const stored = await env.INSTALLATIONS_DB.prepare("SELECT attribution_json FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ attribution_json: string }>();
+    expect(JSON.parse(stored!.attribution_json)).toEqual({ placement: "example", example: "tickets" });
+  });
+});

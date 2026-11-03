@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import type { D1Migration } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { telemetryRecordSchema } from "@humansandmachines/gsv/telemetry";
 import { InstallationOnboardingStore } from "./onboarding";
 import { AccountStore } from "./store";
 import { createOpaqueToken } from "./tokens";
@@ -217,5 +218,44 @@ describe("installation onboarding claims", () => {
       installationId: fixture.installationId,
       claimId: original.claimId,
     })).rejects.toThrow("installation onboarding claim is unavailable");
+  });
+});
+
+describe("activation attribution", () => {
+  async function activate(suffix: string, attribution: string | null) {
+    const fixture = await provisioningInstallation(suffix);
+    const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, fixture.accounts, undefined, { GSV_TELEMETRY_ENABLED: "1" });
+    await env.INSTALLATIONS_DB.prepare("UPDATE provisioning_operations SET attribution_json = ? WHERE installation_id = ?")
+      .bind(attribution, fixture.installationId).run();
+    const issued = await onboarding.issue(fixture.installationId);
+    const authorization = await onboarding.authorize({ installationId: fixture.installationId, token: new URL(issued.onboardingUrl).hash.slice(1) });
+    if (!authorization.ok) throw new Error("claim was not authorized");
+    const logged: unknown[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((value) => { logged.push(value); });
+    try {
+      await onboarding.complete({ claimId: authorization.claimId, installationId: fixture.installationId });
+    } finally {
+      log.mockRestore();
+    }
+    return { installationId: fixture.installationId, records: logged.flatMap((value) => {
+      const record = telemetryRecordSchema.safeParse(value);
+      return record.success ? [record.data] : [];
+    }) };
+  }
+
+  it("reports where a website signup came from when the Ship activates", async () => {
+    const { installationId, records } = await activate("attributed", JSON.stringify({ placement: "example", example: "tickets" }));
+    expect(records).toEqual([expect.objectContaining({ component: "accounts", installationId, event: {
+      stream: "product", name: "installation.attributed", properties: { origin: "website", placement: "example", example: "tickets" },
+    } })]);
+  });
+
+  it("reports a direct signup, and treats a malformed origin as direct", async () => {
+    expect((await activate("direct", null)).records.map((record) => record.event)).toEqual([
+      { stream: "product", name: "installation.attributed", properties: { origin: "direct" } },
+    ]);
+    expect((await activate("malformed", JSON.stringify({ placement: "hero-heading", visitorId: "abc" }))).records.map((record) => record.event)).toEqual([
+      { stream: "product", name: "installation.attributed", properties: { origin: "direct" } },
+    ]);
   });
 });
