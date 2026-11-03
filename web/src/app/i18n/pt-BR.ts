@@ -1501,6 +1501,29 @@ export const ptBR = {
   // Shell: first run
   "shell.retryButton": "Tentar de novo",
 
+  // Onboarding: where to message Ship
+  "onboarding.surface.title": "Por onde você quer falar com o Ship?",
+  "onboarding.surface.failed": "Não foi possível concluir a configuração. Tente de novo.",
+  "onboarding.surface.lead": "Você sempre pode encontrar o seu Ship em {address}. Gerencie suas conexões em Configurações → Apps de mensagem a qualquer momento.",
+  "onboarding.surface.web": "continuar aqui",
+  "onboarding.surface.webSub": "Você pode conectar um app de mensagem depois.",
+  "onboarding.surface.desktop": "App para computador",
+  "onboarding.surface.desktopSub": "Baixe a beta para macOS, Windows ou Linux",
+  "onboarding.surface.desktopAction": "baixar o app",
+  "onboarding.surface.messengerPrivacy": "Conectar um app de mensagem não dá ao Ship acesso à sua conta, aos seus contatos nem a outras conversas. O Ship só vê as mensagens que você envia para ele.",
+  "onboarding.surface.whatsappSub": "Fale com o Ship pelo WhatsApp no seu celular",
+  "onboarding.surface.telegramSub": "Fale com o Ship pelo Telegram",
+  "onboarding.surface.connectedSub": "Conectado",
+  "onboarding.surface.loading": "Verificando quais apps de mensagem estão disponíveis…",
+  "onboarding.surface.loadFailed": "Não foi possível verificar quais apps de mensagem estão disponíveis. Você pode continuar e conectar um depois em Configurações → Apps de mensagem.",
+  "onboarding.surface.desktopText": "Baixe o app, entre com o nome de usuário e a senha que você acabou de escolher, e o Ship estará lá. A web continua disponível também.",
+  "onboarding.surface.back": "VOLTAR",
+  "onboarding.surface.download": "BAIXAR O APP PARA COMPUTADOR",
+  "onboarding.surface.continueHere": "CONTINUAR NA WEB POR ENQUANTO",
+  "onboarding.surface.connectedTitle": "Conectado",
+  "onboarding.surface.connectedText": "O Ship vai dizer oi no {platform} em instantes. Sua conversa é a mesma aqui e lá.",
+  "onboarding.surface.openChat": "ABRIR O CHAT",
+
   // Shell: feedback
   "shell.feedback.trigger": "comentários",
   "shell.feedback.title": "Comentários",

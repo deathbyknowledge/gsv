@@ -13,7 +13,15 @@ agreement before creating your account. **Back** lets you revise your credential
 Creating your account signs you in and opens Chat, your conversation with your Ship.
 The first time you sign in, Ship wakes and greets you in a language detected
 from your browser; the chat reads "Ship is waking up" until its first message
-lands. You can write first,
+lands. In front of the chat, the web app asks once where you want to message
+Ship: **WhatsApp**, **Telegram**, the **Desktop app**, or right here. A
+messenger pairs right there, through the same steps as **Settings →
+Messengers**, and Ship says hello on it once it connects; from then on Ship
+replies wherever you last wrote to it. If your device's language points to a
+country the Ship's WhatsApp number cannot reach, the WhatsApp steps say so, and
+a (?) note explains that connecting a messenger gives Ship only the messages you
+send it. The screen shows once per account, so Desktop and later visits go
+straight to the chat. You can write first,
 ask Ship to switch languages, or change **Settings → Preferences → Language**.
 The greeting stays in your conversation across devices.
 The **Feedback** button in the header is available when your operator offers
@@ -194,7 +202,7 @@ Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search 
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns you to where you were, with your draft.
 
-On your first visit, while Ship wakes, the empty chat shows a
+On your first visit, once you have chosen where to message Ship and while it wakes, the empty chat shows a
 quiet, centered privacy message. It clears as soon as you or Ship starts the
 conversation.
 

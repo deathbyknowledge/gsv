@@ -195,10 +195,10 @@ service is offered for your number.
 Meta restricts WhatsApp Business messaging across the borders of Brazil (+55)
 and Indonesia (+62). A Ship number registered elsewhere cannot deliver the
 code to numbers in either country, and a number registered in one of
-them cannot reach the other. The WhatsApp page in **Settings → Messengers**
-names the countries the Ship number cannot reach, and Ship says so when you
-ask it to connect, offering Telegram, Discord, Slack, email, or the Ship app
-instead. The operator sets `WHATSAPP_UNREACHABLE_CALLING_CODES` when Meta's
+them cannot reach the other. When your device's language points to one of
+those countries, such as Portuguese (Brazil) or Indonesian, the first-run screen
+and the WhatsApp page in **Settings → Messengers** warn that the Ship number
+cannot reach it; pick Telegram, email, or the Ship app instead. The operator sets `WHATSAPP_UNREACHABLE_CALLING_CODES` when Meta's
 record for the account differs from the number's country, or empties it once
 Meta has unlocked cross-border messaging.
 

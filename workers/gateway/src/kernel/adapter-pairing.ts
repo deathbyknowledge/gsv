@@ -281,6 +281,14 @@ async function completeAdapterPairing(
   if (finalizedLink?.uid !== uid || finalizedLink.metadata?.routeGeneration !== activated.route.generation) {
     throw new Error("Adapter pairing changed during finalization");
   }
+  // Ship's next private reply, such as the `adapter.connected` hello below, goes to the paired DM.
+  ctx.shipReplies.recordAdapterPairing(uid, operationId, {
+    kind: "adapter",
+    adapter,
+    accountId: activated.candidate.accountId,
+    actorId: activated.candidate.actorId,
+    surface: { kind: "dm", id: activated.candidate.surfaceId },
+  }, ctx.adapters.privateDestinations, ctx.runRoutes);
   const previousStatus = ctx.adapters.status.get(
     adapter,
     activated.candidate.accountId,

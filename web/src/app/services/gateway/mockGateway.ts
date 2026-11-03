@@ -72,6 +72,7 @@ import { z } from "zod";
 
 const MOCK_FLAG = "gsv.ui.mock";
 const FRESH_FLAG = "gsv.ui.mock.fresh";
+const FIRST_RUN_SEEN = "gsv.mock.first_run_seen";
 /** The session service's persisted token (sessionService.ts); seeding one is how the mock signs in without the form. */
 const SESSION_TOKEN_KEY = "gsv.ui.session.token.v1";
 const SEEDED_TOKEN_ID = "mock-session";
@@ -95,7 +96,10 @@ export function mockGatewayRequested(): boolean {
 function freshRequested(): boolean {
   try {
     const asked = new URLSearchParams(window.location.search).get("fresh");
-    if (asked === "1") window.sessionStorage.setItem(FRESH_FLAG, "1");
+    if (asked === "1") {
+      window.sessionStorage.setItem(FRESH_FLAG, "1");
+      window.localStorage.removeItem(FIRST_RUN_SEEN);
+    }
     if (asked === "0") window.sessionStorage.removeItem(FRESH_FLAG);
     return window.sessionStorage.getItem(FRESH_FLAG) === "1";
   } catch {
@@ -133,6 +137,7 @@ const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
 /** The config this browser keeps for the mock, with its storage key: the owner's language. */
 const STORED_CONFIG = new Map([
+  [`users/${OWNER.uid}/ui/welcome_card_seen`, FIRST_RUN_SEEN],
   [`users/${OWNER.uid}/locale/language`, "gsv.mock.language"],
 ]);
 const mockEventSources: EventSource[] = [
@@ -1027,7 +1032,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "adapter.pair.info": {
       const { adapter } = z.object({ adapter: z.string() }).parse(args);
       return respond(id, { adapter, accountId: `mock-${adapter}`, configured: true,
-        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink" } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
+        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink", unreachableCallingCodes: ["55", "62"] } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
     }
     case "adapter.pair.inspect": {
       const { adapter, code } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
@@ -1036,6 +1041,8 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "adapter.pair.confirm": {
       const { adapter } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
+      // The link shows up in Settings and on the first-run screen, as the Kernel's identity link would.
+      if (!messengerLinks.some((link) => link.adapter === adapter)) messengerLinks.push({ adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", uid: OWNER.uid, linkedByUid: OWNER.uid, createdAt: Date.now() });
       return respond(id, { paired: true, adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", surfaceId: "mock-surface", uid: OWNER.uid });
     }
     case "contact.list": return respond(id, { contacts: fresh ? [] : [maraContact] });
