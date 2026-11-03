@@ -6,6 +6,7 @@ import { renderMarkdownHtml } from "../shared/markdown";
 import { enhanceCodeBlocks } from "../shared/codeBlocks";
 import { memoryLinkFromUrl, memoryLinkHref, resolveMemoryLink, type MemoryLink } from "./memoryLinks";
 import { useT, type Translate } from "../../../i18n/locale";
+import "../shared/prose.css";
 
 function scrollToHeading(article: HTMLElement, fragment: string): void {
   const heading = fragment ? [...article.querySelectorAll<HTMLElement>("[id]")].find((node) => node.id === fragment) : null;

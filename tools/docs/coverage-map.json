@@ -135,7 +135,10 @@
       "paths": [
         "web/src/app/features/instrument/fleet/**",
         "web/src/app/features/instrument/shared/PlaceFiles.tsx",
-        "web/src/app/features/instrument/shared/FilePreview.tsx"
+        "web/src/app/features/instrument/shared/FilePreview.tsx",
+        "web/src/app/features/instrument/shared/filePreview.css",
+        "web/src/app/features/instrument/shared/filePreviewModel.ts",
+        "web/src/app/features/instrument/shared/prose.css"
       ],
       "docs": [
         "docs/how-to/contact-people.md",

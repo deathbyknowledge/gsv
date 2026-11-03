@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { ConsoleAccount, ConsoleTarget } from "../../../domain/system/consoleModels";
 import { RetainedView } from "../../../services/navigation/ViewActivity";
 import { FleetDialog } from "../fleet/FleetDialog";
@@ -47,10 +47,12 @@ export function ChatPanels({ context, active, account, targets, ready, onClose, 
   if (context?.kind === "path") path.current = context;
   const [activityDirty, setActivityDirty] = useState(false);
   const [personDirty, setPersonDirty] = useState(false);
+  /** What the path panel shows right now: the linked file or folder, or a file picked from the folder. */
+  const [pathName, setPathName] = useState<string | null>(null);
   useLayoutEffect(() => { onDirty(activityDirty || personDirty); }, [activityDirty, personDirty, onDirty]);
   const shown = last.current;
   const open = (kind: ChatContext["kind"]) => active && context?.kind === kind;
-  const title = shown.kind === "path" ? shown.location.path : t(TITLES[shown.kind]);
+  const title = shown.kind === "path" ? pathName ?? fileName(shown.location.path) : t(TITLES[shown.kind]);
   return <FleetDialog className={`chat-context-panel is-${shown.kind}`} open={active && context !== null} title={title} onClose={onClose}>
     <RetainedView active={open("activity")}><ChatActivity account={account} request={activity.current.request}
       onAsk={onAsk} onFleet={onFleet} onDirty={setActivityDirty} /></RetainedView>
@@ -62,27 +64,34 @@ export function ChatPanels({ context, active, account, targets, ready, onClose, 
       onClose={onClose} onConnected={onConnected} /></RetainedView>
     <RetainedView active={open("path")}>{path.current && <ChatPath key={`${path.current.location.kind}:${path.current.location.target}:${path.current.location.path}`}
       location={path.current.location} targets={targets} ready={ready} allowed={!!account && canConfigure(account, "fs.read")}
-      onAsk={onAsk} />}</RetainedView>
+      onAsk={onAsk} onFleet={onFleet} onShown={setPathName} />}</RetainedView>
   </FleetDialog>;
 }
 
 /** A path Ship wrote, opened over the chat: a file's preview, or a folder's tree with its files opening in place. */
-export function ChatPath({ location, targets, ready, allowed, onAsk }: {
+export function ChatPath({ location, targets, ready, allowed, onAsk, onFleet, onShown }: {
   location: Extract<ChatContext, { kind: "path" }>["location"];
   targets: readonly ConsoleTarget[];
   ready: boolean;
   allowed: boolean;
   onAsk: (text: string) => void;
+  /** The full reader lives in Work; opening it there closes this panel. */
+  onFleet: (reference: FleetReference) => void;
+  /** The name of what the panel shows, for its title. */
+  onShown?: (name: string) => void;
 }) {
   const t = useT();
   const [file, setFile] = useState<OpenFile | null>(location.kind === "file"
     ? { target: location.target, path: location.path, name: fileName(location.path) } : null);
   const [folder, setFolder] = useState<string | null>(location.kind === "dir" ? location.path : null);
+  const shownName = file ? file.name : fileName(folder ?? location.path);
+  useEffect(() => { onShown?.(shownName); }, [shownName, onShown]);
   if (!allowed) return <p class="note">{t("chat.panel.noFiles")}</p>;
   const place = orderPlaces([...targets]).find((candidate) => candidate.id === location.target) ?? null;
   if (file) return <>
     {folder !== null && <button type="button" class="fleet-text-action chat-context-back" onClick={() => setFile(null)}>← {fileName(folder)}</button>}
     <FilePreview file={file} placeLabel={place?.label ?? location.target} enabled={ready} onAsk={onAsk}
+      open={{ label: t("shell.file.openInWork"), onOpen: () => onFleet(`file:${file.target}:${file.path}`) }}
       // A link cannot say whether it names a folder; one that does opens as the folder's tree.
       onFolder={folder === null ? (path) => { setFolder(path); setFile(null); } : undefined} />
   </>;

@@ -268,10 +268,6 @@
   color: var(--text-dim);
   margin-bottom: 16px;
 }
-/* The file's place and path, with the copy action beside it and the copy outcome beneath. */
-.file-preview-head { margin-bottom: 16px; }
-.file-preview-head .sub { display: flex; align-items: center; gap: 6px; margin-bottom: 0; }
-.file-preview-head .sub > span { min-width: 0; overflow-wrap: anywhere; }
 .fleet-kv {
   display: grid;
   grid-template-columns: 110px 1fr;
@@ -417,16 +413,13 @@
 .fleet .inspector .sub { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 16px; }
 .fleet .inspector .note { margin-top: 18px; font-size: 12px; color: var(--text-dim); line-height: 1.55; }
 
-/* deeper directories and files in the tree; a bounded preview in the inspector */
+/* deeper directories and files in the tree; the file preview itself is shared/filePreview.css */
 .fleet-tree .dir .place-head { font-size: 12px; }
 .fleet-tree li.f button.file { color: var(--text); font: inherit; padding: 1px 0; text-align: left; }
 .fleet-tree li.f button.file:hover { color: var(--accent); }
 .fleet .more td { padding: 8px 10px; border-top: 1px solid var(--rule-inner); }
 .fleet .more button { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); }
 .fleet .more button:hover { color: var(--accent); }
-.fleet .file-preview { margin-top: 12px; max-height: 40vh; overflow: auto; border-left: 2px solid var(--border); padding-left: 12px; }
-.fleet .file-preview pre { margin: 0; font-family: var(--gsv-font-mono); font-size: 11px; line-height: 1.5; color: var(--label); white-space: pre; }
-.fleet .file-preview img { max-width: 100%; display: block; }
 
 .fleet-ledger .row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; min-width: 0; padding-left: 8px; }
 .fleet-ledger .older { grid-column: 1 / -1; padding: 6px 0 2px; border-top: 1px solid var(--rule-inner); }

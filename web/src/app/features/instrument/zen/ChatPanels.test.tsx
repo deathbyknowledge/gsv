@@ -12,7 +12,8 @@ async function mountedPath(location: ComponentProps<typeof ChatPath>["location"]
   const root = createTestRoot("chat path");
   let tree: ComponentChildren;
   const onAsk = vi.fn();
-  function Harness() { tree = ChatPath({ location, targets, ready: true, allowed: true, onAsk }); return null; }
+  const onFleet = vi.fn();
+  function Harness() { tree = ChatPath({ location, targets, ready: true, allowed: true, onAsk, onFleet }); return null; }
   await root.render(<Harness />);
   const props = <P,>(component: ComponentType<P>): P => {
     const node = collectNodes(tree).find((entry) => entry.type === component);
@@ -22,21 +23,23 @@ async function mountedPath(location: ComponentProps<typeof ChatPath>["location"]
   };
   const has = (component: ComponentType<never>) => collectNodes(tree).some((entry) => entry.type === component);
   const back = () => collectNodes(tree).find((entry) => entry.type === "button" && String(entry.props.class).includes("chat-context-back"));
-  return { props, has, back, onAsk, unmount: () => root.unmount() };
+  return { props, has, back, onAsk, onFleet, unmount: () => root.unmount() };
 }
 
 describe("ChatPath", () => {
   beforeEach(() => vi.stubGlobal("document", {}));
   afterEach(() => vi.unstubAllGlobals());
 
-  it("previews a linked file in place, without Work's reader", async () => {
+  it("previews a linked file in place, with Work's reader a step away", async () => {
     const view = await mountedPath({ kind: "file", target: "gsv", path: "/home/x/notes/plan.md" });
     try {
       const preview = view.props(FilePreview);
       expect(preview.file).toEqual({ target: "gsv", path: "/home/x/notes/plan.md", name: "plan.md" });
       expect(preview.placeLabel).toBe(cloudPlace().label);
-      expect(preview.onExpand).toBeUndefined();
+      expect(preview.open?.label).toBe("open in Work");
       expect(view.back()).toBeUndefined();
+      preview.open?.onOpen();
+      expect(view.onFleet).toHaveBeenCalledWith("file:gsv:/home/x/notes/plan.md");
     } finally { await view.unmount(); }
   });
 
@@ -49,6 +52,8 @@ describe("ChatPath", () => {
       expect(tree.place.id).toBe("gsv");
       await act(() => { tree.onOpenFile({ target: "gsv", path: "~/notes/calls/mara.md", name: "mara.md" }); });
       expect(view.props(FilePreview).file.name).toBe("mara.md");
+      view.props(FilePreview).open?.onOpen();
+      expect(view.onFleet).toHaveBeenCalledWith("file:gsv:~/notes/calls/mara.md");
       expect(view.back()?.props.children).toEqual(["← ", "notes"]);
       await act(() => { view.back()?.props.onClick?.(); });
       expect(view.has(FilePreview)).toBe(false);

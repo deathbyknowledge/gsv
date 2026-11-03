@@ -35,8 +35,11 @@ export type FilesFilePayload = {
   directoryPath: string;
   pathStyle: FilesPathStyle;
   content: string | FilesContentItem[];
+  contentType: string | null;
   size: number | null;
+  /** The number of lines returned by this read, not the file's length. */
   lines: number | null;
+  truncated: boolean;
 };
 
 export type FilesReadPayload = FilesDirectoryPayload | FilesFilePayload;

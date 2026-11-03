@@ -11,6 +11,7 @@ import { collectNodes, createTestRoot } from "../../../testing/testHarness";
 import { BrowserControlProvider } from "../browser/BrowserControl";
 import { FilePreview } from "../shared/FilePreview";
 import { PlaceTree } from "../shared/PlaceFiles";
+import { FileReader } from "./FileReader";
 import { Fleet, type FleetProps } from "./Fleet";
 import { FleetDialog } from "./FleetDialog";
 import type { FleetRow } from "../Instrument";
@@ -32,14 +33,16 @@ async function openFleet(reference: FleetRow) {
     if (call === "sys.target.list") return { data: { targets: [] } };
     if (call === "proc.list") return { data: { processes: [] } };
     if (call === "account.list") return { data: { accounts: [] } };
+    if (call === "fs.read") return { data: { ok: false, error: "no files in this test" } };
     throw new Error(`Unexpected request ${call}`);
   });
   const root = createTestRoot("Fleet file references");
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   let tree: ComponentChildren;
   let openRequest: FleetProps["openRequest"] = null;
+  const onZen = vi.fn();
   function Harness() {
-    tree = Fleet({ openRequest, onCommand: vi.fn(), onZen: vi.fn(), onActivity: vi.fn() });
+    tree = Fleet({ openRequest, onCommand: vi.fn(), onZen, onActivity: vi.fn() });
     return null;
   }
   const render = () => root.render(<GatewayProvider><SessionProvider createService={(client) => {
@@ -57,49 +60,22 @@ async function openFleet(reference: FleetRow) {
     return node ? node.props as P : null;
   };
   const nodes = () => collectNodes(tree);
-  return { find, nodes, render, async close() { await root.unmount(); cache.clear(); } };
+  return { find, nodes, render, onZen, async close() { await root.unmount(); cache.clear(); } };
 }
 
-describe("paths opened from Ship's text", () => {
-  it("opens a linked file in the preview", async () => {
+describe("files opened from Chat", () => {
+  it("opens a linked file in the full reader, with the chat a step back", async () => {
     const view = await openFleet("file:gsv:/home/hank/lease/summary.md");
     try {
-      expect(view.find(FleetDialog)?.open).toBe(true);
-      expect(view.find(FilePreview)?.file).toEqual({ target: "gsv", path: "/home/hank/lease/summary.md", name: "summary.md" });
-      expect(view.find(PlaceTree)).toBeNull();
-    } finally { await view.close(); }
-  });
-
-  it("opens a linked folder in the cloud home's tree at that folder", async () => {
-    const view = await openFleet("dir:gsv:~/lease");
-    try {
+      expect(view.find(FileReader)?.file).toEqual({ target: "gsv", path: "/home/hank/lease/summary.md", name: "summary.md" });
+      expect(view.find(FileReader)?.backLabel).toBe("← chat");
+      expect(view.find(FleetDialog)?.open).toBe(false);
       expect(view.find(FilePreview)).toBeNull();
-      expect(view.find(PlaceTree)?.place.id).toBe("gsv");
-      expect(view.find(PlaceTree)?.initialPath).toBe("~/lease");
-    } finally { await view.close(); }
-  });
-
-  it("goes back from a linked folder to its place", async () => {
-    const view = await openFleet("dir:gsv:~/lease");
-    try {
-      const back = view.nodes().find((node) => node.type === "button" && String(node.props.class).includes("chat-context-back"));
-      await act(() => back?.props.onClick?.());
-      await view.render();
       expect(view.find(PlaceTree)).toBeNull();
-      // The place's own inspector, the one that offers browsing its files, replaces the tree.
-      expect(view.nodes().some((node) => "onBrowse" in node.props)).toBe(true);
-    } finally { await view.close(); }
-  });
-
-  it("shows a linked path without a trailing slash as a folder when it reads as one", async () => {
-    const view = await openFleet("file:gsv:/home/hank/lease");
-    try {
-      const onFolder = view.find(FilePreview)?.onFolder;
-      expect(onFolder).toBeTypeOf("function");
-      await act(() => onFolder?.("/home/hank/lease"));
+      await act(() => view.find(FileReader)?.onClose());
       await view.render();
-      expect(view.find(FilePreview)).toBeNull();
-      expect(view.find(PlaceTree)?.initialPath).toBe("/home/hank/lease");
+      expect(view.onZen).toHaveBeenCalledWith();
+      expect(view.find(FileReader)).toBeNull();
     } finally { await view.close(); }
   });
 });

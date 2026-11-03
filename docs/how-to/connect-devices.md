@@ -33,6 +33,11 @@ current starting folder and stops at that connection’s filesystem root.
 **Chat → + → reference a file** selects a file into your draft in one tap.
 A path Ship writes in Chat opens over the chat: tap it to open the file's preview, or the
 folder's file list, from the cloud home without leaving the conversation.
+The preview shows the file itself: Markdown rendered as a document, other text as a
+code block with a copy control, an image fitted to the panel. A long file shows its first
+lines and says so beneath. Closing the preview returns to the conversation.
+**Open in Work** opens the same file in Work's full reader, with edit, download and delete;
+its back action returns to the chat. In Work's own file list, **expand** opens that reader.
 A file preview’s **talk about it** control adds its connection and path to your Chat
 draft as editable text, keeping existing text and attachments. It sends nothing
 until you choose **send**.
