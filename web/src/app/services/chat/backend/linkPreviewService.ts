@@ -117,13 +117,22 @@ async function readHead(stream: ReadableStream<Uint8Array>, encoding: string): P
       if (done) break;
       read += value.byteLength;
       text += decoder.decode(value, { stream: true });
-      const end = text.search(/<\/head\s*>|<body[\s>]/i);
-      if (end >= 0) return text.slice(0, end);
+      const markup = withoutRawText(text);
+      const end = markup.search(/<\/head\s*>|<body[\s>]/i);
+      if (end >= 0) return markup.slice(0, end);
     }
-    return text;
+    return withoutRawText(text);
   } finally {
     await reader.cancel().catch(() => {});
   }
+}
+
+/**
+ * The page without comments or the contents of script, style, template and noscript, whose text can look like
+ * tags. One still open at the end of what was read runs to the end, so its text is never taken for the head's end.
+ */
+function withoutRawText(html: string): string {
+  return html.replace(/<!--[\s\S]*?(?:-->|$)|<(script|style|template|noscript)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, "");
 }
 
 function charset(contentType: string): string {

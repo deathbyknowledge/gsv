@@ -67,6 +67,15 @@ describe("link preview fetch", () => {
     expect(body.cancel).toHaveBeenCalled();
   });
 
+  it("reads past a body or head tag inside a script, style or comment", async () => {
+    const body = textStream([
+      '<html><head><script>const shell = "<body></head>";</script><!-- <body> -->',
+      '<style>b::after { content: "</head>"; }</style><meta property="og:title" content="After">',
+      '<script>document.write("<meta property=\'og:title\' content=\'Inside\'>")</script></head><body>',
+    ]);
+    await expect(fetchLinkPreview(client({ "content-type": "text/html" }, body), PAGE)).resolves.toMatchObject({ title: "After" });
+  });
+
   it("stops reading a page whose head never closes at the byte bound", async () => {
     const chunk = "x".repeat(64 * 1024);
     const body = textStream(Array.from({ length: 10 }, () => chunk));
