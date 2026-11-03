@@ -426,7 +426,7 @@
       "id": "operator-ship-snapshot",
       "paths": [
         "packages/gsv/src/services/operator.ts",
-        "workers/gateway/src/installation/operator-entrypoint.ts",
+        "workers/gateway/src/entrypoints/operator.ts",
         "workers/gateway/src/kernel/operator-snapshot.ts",
         "workers/gateway/src/process/operator-summary.ts",
         "workers/installations/src/admin/insight.ts"

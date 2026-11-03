@@ -12,8 +12,8 @@ import {
 } from "@humansandmachines/gsv/services/operator";
 import type { Kernel } from "../kernel/do";
 import type { GatewayEnv } from "../runtime-env";
-import { parseInstallationId } from "./identity";
-import { getKernelByInstallationId } from "./routing";
+import { parseInstallationId } from "../installation/identity";
+import { getKernelByInstallationId } from "../installation/routing";
 
 /**
  * Only an Accounts binding with deployment-owned props reaches this. It reads

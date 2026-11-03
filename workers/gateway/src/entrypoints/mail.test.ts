@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { GatewayEntrypoint } from "./index";
+import { GatewayEntrypoint } from "./mail";
 
 describe("outbound mail reference resolution", () => {
   function fixture() {
