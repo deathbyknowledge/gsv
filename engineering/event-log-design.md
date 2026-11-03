@@ -1,7 +1,7 @@
 # Events: one log, one runner
 
-Status: design for review, 2026-11-03. Branch `refactor/event-log`, stacked on
-#642. No code yet.
+Status: reviewed 2026-11-03; the decisions are folded in and listed under
+Decided. Branch `refactor/event-log`, stacked on #642. No code yet.
 
 ## Problem
 
@@ -60,8 +60,8 @@ after
             │
             ▼
   runner        one task, one retry rule per consumer, one gate check
-            ├─▶ personal:<uid>   the Ship, whatever its pid   proc.event.deliver
-            ├─▶ proc:<pid>       one process                  proc.event.deliver
+            ├─▶ personal:<uid>   the Ship, whatever its pid   deliverEvent
+            ├─▶ proc:<pid>       one process                  deliverEvent
             ├─▶ inbox:<contact>  a contact's inbound message  Conversation append
             ├─▶ crew:<uid>       memory reviews               Crew Ticket start
             ├─▶ notices:<uid>    the owner's messenger        notice send
@@ -117,7 +117,7 @@ CREATE TABLE events (
 CREATE TABLE deliveries (
   seq INTEGER NOT NULL REFERENCES events (seq) ON DELETE CASCADE,
   consumer TEXT NOT NULL,          -- "personal:7", "proc:<pid>", "route:<id>"
-  lane TEXT NOT NULL,              -- order within the consumer
+  lane TEXT,                       -- order within the consumer; NULL once redelivered
   state TEXT NOT NULL CHECK (state IN ('pending', 'delivered', 'withdrawn', 'failed')),
   attempt_count INTEGER NOT NULL DEFAULT 0,
   next_attempt_at INTEGER NOT NULL,
@@ -128,7 +128,8 @@ CREATE TABLE deliveries (
   PRIMARY KEY (seq, consumer)
 );
 CREATE INDEX deliveries_due ON deliveries (next_attempt_at) WHERE state = 'pending';
-CREATE INDEX deliveries_lane ON deliveries (consumer, lane, seq) WHERE state = 'pending';
+CREATE INDEX deliveries_lane ON deliveries (consumer, lane, seq)
+  WHERE state = 'pending' AND lane IS NOT NULL;
 ```
 
 The runner:
@@ -137,7 +138,8 @@ The runner:
 async onEvents(task: { id: string }): Promise<void> {
   const gate = await this.host.onboarding.managedWorkGate();
   if (!gate.allowed) return await this.arm(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS, task.id);
-  // The oldest pending row of each lane; lanes run concurrently, each one at a time.
+  // The oldest pending row of each lane, plus every due redelivery.
+  // Lanes run concurrently, each one at a time.
   await Promise.all(this.deliveries.dueHeads(Date.now()).map(async (head) => {
     const consumer = consumerFor(head.consumer);
     if (consumer.admit(head) === "withdrawn") return this.deliveries.withdraw(head);
@@ -164,7 +166,8 @@ async onEvents(task: { id: string }): Promise<void> {
   `person` carries chat and messengers. `background` carries everything else,
   in per-owner order as `ship_events` keeps it today. A person's message never
   waits behind background events. Each messenger chat, contact and target
-  process is one lane.
+  process is one lane. A redelivery after a failed run leaves its lane and
+  goes out when due, so it never holds a lane and nothing waits for it.
 - **At least once.** A delivery is done when its consumer answers. A lost
   answer redelivers, so the Process still dedupes by event id, which is now
   stable. A replacement Ship never receives an event the Kernel already marked
@@ -179,15 +182,15 @@ async onEvents(task: { id: string }): Promise<void> {
 - **Failed runs.** Some types declare that their subject needs action:
   `responsibility.due`, `contact.message` and `mail.received`. If the run
   that received one fails, or its pid dies before the run starts, the
-  delivery returns to `pending` and is retried at 5 m, 15 m, 1 h and 6 h
-  while the subject still needs action. The ledger's recovery wakes move
+  delivery returns to `pending` outside its lane and is retried at 5 m,
+  15 m, 1 h and 6 h while the subject still needs action. The ledger's recovery wakes move
   here, as agreed on 2026-10-20.
 - **Retry.** The delay is `min(cap, base × 2^(attempt − 1))`. Each consumer
   declares its base, cap, attempt limit and terminal action. The runner
   re-arms; it never waits inside the alarm.
-- **Gate.** While the managed gate is closed, the runner parks every consumer
-  and checks again in 60 s. Edge producers already refuse before appending.
-  Open question 4 asks about outbound settlement.
+- **Gate.** While the managed gate is closed, the runner parks every consumer,
+  outbound included, and checks again in 60 s. Everything resumes if the
+  space is reactivated. Edge producers already refuse before appending.
 - **Bodies.** An event carries up to 64 KiB of JSON inline, the custom-source
   limit today. Anything larger stays in the store that accepted it:
   Conversation, mailbox, federation inbox or R2 media. The event carries an
@@ -202,8 +205,12 @@ async onEvents(task: { id: string }): Promise<void> {
   `notice.sent` for the Ship. An adapter delivery out of attempts appends
   `delivery.failed` for its pid.
 - **Retention.** Deliveries keep their outcome for inspection. Events stay in
-  SQLite for 30 days and then move to R2 segments with their outcomes. Keys
-  are kept for 180 days for dedupe, as custom sources keep theirs today.
+  SQLite for 30 days and then move to R2 segments with their outcomes. The
+  row then keeps only its type and key until day 180, so a duplicate that
+  arrives late, such as a resent mail or webhook, still appends nothing. A
+  key is about 100 bytes; an event can carry 64 KiB. The log stays
+  Kernel-internal until a later owner- or root-scoped list syscall; a source's
+  listing is its first owner-scoped read.
 
 Not converted: answers inside a run (`proc.hil`, tool `res` frames, the tick,
 queue promotion). They resume work that was already admitted; none of them is
@@ -230,10 +237,11 @@ Today each entry handler decides for itself.
 | `delivery.failed` | record | record | `proc.delivery.notice` |
 | `ipc.replied`, `ipc.timed_out`, `ipc.overdue` | settles the call | settles the call | signals |
 
-One Kernel → Process call, `proc.event.deliver`, replaces the seven calls and
-the IPC answer signals in the last column. The public syscalls stay. Its
-admission applies the declared policy, which is the first cut of the Process
-admission state machine.
+One Kernel → Process call replaces the seven calls and the IPC answer signals
+in the last column: the typed Durable Object method `deliverEvent(delivery)`,
+not a frame (see Frames and RPC). The public syscalls stay. Its admission
+applies the declared policy, which is the first cut of the Process admission
+state machine.
 
 ## Fit: producers
 
@@ -298,6 +306,44 @@ state machine, that consumer stays as it is.
 That leaves 8 task kinds instead of 18: the runner, 3 timers and 4
 housekeeping tasks. Timers append events; they never deliver.
 
+## Frames and RPC
+
+Kernel and Process already call each other over Durable Object RPC; each
+side's `recvFrame` takes frame objects, not JSON. Frames stay where they earn
+their keep:
+
+- **The edge.** Clients, machines, the browser extension and adapters speak
+  the protocol, and their frames are validated where they arrive.
+- **Routed syscalls.** When the Kernel passes a public syscall to its
+  implementer, a device or a Process, it forwards the frame. Authorization,
+  the ledger and cancellation follow one path, and an answer that arrives
+  minutes later, after eviction, still matches by frame id. An RPC promise
+  does not survive eviction.
+
+Ten internal calls ride `recvFrame` as if they were syscalls, each with a
+made-up id, a `res` wrapper and a branch in an `if (frame.call === …)` chain.
+They become typed Durable Object methods, or go away with their producer:
+
+| Call | Direction | Becomes |
+|---|---|---|
+| `proc.event.deliver` | Kernel → Process | `deliverEvent(delivery)` |
+| `proc.tool.authorize` | Kernel → Process | a typed method |
+| `proc.resources.retain` | Kernel → Process | a typed method |
+| `proc.resource.write` | Kernel → Process | a typed method; the bytes stay a stream |
+| `proc.run.attach`, `proc.run.staged` | gsv shell `message` → Process | typed methods |
+| `proc.message.commit` | Process → Kernel | a typed method |
+| `proc.runtime.event.deliver` | Kernel → Process | deleted with contact messages |
+| `proc.schedule.deliver` | Kernel → Process | deleted with schedules |
+| `proc.adapter.deliver` | Kernel → Process | deleted with messengers |
+
+The calls that wait, `proc.tool.authorize` and `proc.resources.retain`, keep
+a request id so the Kernel can still cancel them.
+
+Typed calls add no validation. Kernel and Process ship in one Worker and
+deploy together, so their TypeScript types are the contract. Validation stays
+where input is untrusted: wire and adapter frames, and syscall arguments,
+which come from the model.
+
 ## Naming
 
 `event_log` already exists: v090's custom event sources (hooks and
@@ -305,13 +351,14 @@ housekeeping tasks. Timers append events; they never deliver.
 ids kept 180 days, a rate bucket and `onEventUpkeep`. It is a small version of
 this log.
 
-Proposal: fold it in. Source events become `source.event` rows, a source's
-listing reads the log by subject `source:<id>`, and its retention becomes the
-log's. `event_log` and `onEventUpkeep` go away. The new tables are `events`
-and `deliveries`.
+It folds in. Source events become `source.event` rows, a source's listing
+reads the log by subject `source:<id>`, and its retention becomes the log's,
+so the listing shows 30 days instead of 180. `event_log` and `onEventUpkeep`
+go away. The new tables are `events` and `deliveries`.
 
-`ship_events` goes away in step 2. `proc.event.deliver` already exists and
-becomes the one Process entry.
+`ship_events` goes away with contact messages and owner notices. The internal
+`proc.event.deliver` call becomes `deliverEvent`, the one Process entry for
+events.
 
 ## Order of work
 
@@ -319,18 +366,21 @@ Each step is its own stacked PR with failing-first tests, a clean-instance
 flow, and the numbers below. Each conversion narrows the `KernelContext` its
 module receives.
 
-1. Substrate: `events`, `deliveries`, the registry, the runner, and
-   `proc.event.deliver` with declared admission. No producer is converted.
+1. Typed internal calls: the seven calls under Frames and RPC become Durable
+   Object methods. No behaviour changes.
+2. Substrate: `events`, `deliveries`, the registry, the runner, and
+   `deliverEvent` with declared admission. No producer is converted.
    Deletes `onProcessApprovalNotice`.
-2. Contact messages and owner notices. Deletes `ship_events`, `onShipEvents`
-   and `onOwnerNotices`.
-3. Responsibility wakes. r12y goes back to being state. Deletes wake batches
+3. Contact messages and owner notices. Deletes `ship_events`, `onShipEvents`,
+   `onOwnerNotices` and `proc.runtime.event.deliver`.
+4. Responsibility wakes. r12y goes back to being state. Deletes wake batches
    and `r12y.ready`.
-4. Schedules.
-5. Mail and hooks. `event_log` folds in.
-6. IPC.
-7. Chat and messengers: inline, on the person lane.
-8. Outbound: adapter routes, the federation outbox and outbound mail.
+5. Schedules. Deletes `proc.schedule.deliver`.
+6. Mail and hooks. `event_log` folds in.
+7. IPC.
+8. Chat and messengers: inline, on the person lane. Deletes
+   `proc.adapter.deliver`.
+9. Outbound: adapter routes, the federation outbox and outbound mail.
 
 ## Measures
 
@@ -345,21 +395,20 @@ Before and after each step, on a clean instance:
 - **Kernel alarms per message:** each alarm is a billed Durable Object
   request.
 
-## Open questions
+## Decided
 
-1. **Rows, not cursors.** We discussed subscriptions as (consumer, filter,
-   cursor). A cursor per consumer blocks unrelated subjects behind one failing
-   delivery, and per-delivery retry state needs somewhere to live. This page
-   fans out at append into one delivery row per consumer. The registry plays
-   the filter and the lane plays the cursor. OK?
+Reviewed with the maintainer on 2026-11-03:
+
+1. **Rows, not cursors.** One delivery row per event and consumer. A cursor
+   per consumer would block unrelated subjects behind one failing delivery,
+   and per-delivery retry state needs somewhere to live.
 2. **Two Ship lanes.** A person's message never waits behind background
-   events, and background events keep per-owner order. OK?
-3. **`event_log`.** Fold it into the log, or rename it `source_events` and keep
-   it as a producer?
-4. **Outbound during a restriction.** Inbound deliveries pause while a Ship is
-   restricted. AGENTS.md says "work already admitted may reach its terminal
-   boundary." Should messages committed before the restriction still go out
-   through adapters, federation and mail?
-5. **Retention and inspection.** The proposal: 30 days in SQLite, keys for 180
-   days, then R2. The log stays Kernel-internal until a later owner- or
-   root-scoped list syscall. OK, or should inspection come in step 1?
+   events. A redelivery after a failed run leaves its lane.
+3. **`event_log` folds in.** Two tables named `event_log` and `events` would
+   confuse more than the shorter source listing costs.
+4. **No outbound exception during a restriction.** The gate pauses outbound
+   with everything else; a restriction while a delivery is in retry is rare.
+5. **Retention.** 30 days in SQLite, then R2; keys for 180 days. Inspection
+   comes with a later list syscall.
+6. **Frames stay at the edge and for routed syscalls.** Internal calls become
+   typed methods.
