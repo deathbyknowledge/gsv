@@ -78,11 +78,10 @@ consumer derives unrelated pseudonyms for the two streams with different HMAC
 keys. This makes an operational installation series useful for reliability
 without giving the backend a shared installation join key for the product-usage
 series. Product events are personless: they do not create or update user
-profiles. Product funnel measurements are taken inside the Gateway and Accounts
-and exported only as durations, booleans and closed categories; they carry no
-Process, run, message or conversation identifier, so a backend can relate them
-to each other only through the product pseudonym and time, never to an
-operational record.
+profiles. Product funnel measurements are taken inside the Gateway and exported
+only as durations, booleans and closed categories; they carry no Process, run,
+message or conversation identifier, so a backend can relate them to each other
+only through the product pseudonym and time, never to an operational record.
 
 ## Deployment boundary
 
@@ -195,18 +194,8 @@ without granting those adapters ownership of another component's application eve
   contact intake) never pass that path and are not reported. "First
   responsibility" and "first delegation" are backend computations over those
   events; GSV keeps no one-time marker for either.
-- Accounts: activation and attribution. `installation.attributed` is reported
-  once when onboarding completes, with `origin: "website"` and a closed
-  placement class (`hero`, `final-call`, `example` or `other`) and, for example
-  cards, a closed example id, or `origin: "direct"` when there were none. The
-  signup page reads the website's slugs from the signup link's fragment in the
-  browser and keeps them in its own signup state until the space request; the
-  owner API bounds their shape and classifies them into the allowlist before
-  they are stored with the reservation, so an unknown slug becomes `other` and
-  the raw string never enters storage or a record. Nothing in it is a visitor
-  identity. This is not a full signup funnel;
-  anonymous invite/email steps intentionally do not invent an installation
-  identity or export addresses.
+- Accounts: activation. This is not a full signup funnel; anonymous invite/email
+  steps intentionally do not invent an installation identity or export addresses.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,
   workload and failure stage, plus entitlement-refresh health.
 - Gateway, Inference and Accounts: correlated model-metadata lookup outcomes and

@@ -12,7 +12,6 @@ import {
   shipPlatformFromAdapter,
   shipPlatformFromPeer,
   shipPlatformSchema,
-  signupAttributionFromSlugs,
   telemetryRecordSchema,
 } from "../dist/telemetry.js";
 
@@ -481,23 +480,6 @@ describe("onboarding funnel events", () => {
     assert.equal(record("gateway", "onboarding.welcome.delivered", { durationMs: 54_000, delivery: "client" }).success, false);
   });
 
-  it("accepts only the closed placement and example classes for the signup origin", () => {
-    assert.equal(record("accounts", "installation.attributed", { origin: "direct" }).success, true);
-    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero", example: "tickets" }).success, true);
-    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "example", example: "other" }).success, true);
-    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero-heading" }).success, false);
-    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero", example: "plan-a-trip" }).success, false);
-    assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero", visitorId: "abc" }).success, false);
-  });
-
-  it("classifies the website's link slugs into the allowlist and nothing else", () => {
-    assert.deepEqual(signupAttributionFromSlugs("hero-heading"), { placement: "hero" });
-    assert.deepEqual(signupAttributionFromSlugs("early-access"), { placement: "final-call" });
-    assert.deepEqual(signupAttributionFromSlugs("details-tickets", "tickets"), { placement: "example", example: "tickets" });
-    assert.deepEqual(signupAttributionFromSlugs("sidebar-promo", "plan-a-trip"), { placement: "other", example: "other" });
-    assert.deepEqual(signupAttributionFromSlugs(" HERO "), { placement: "hero" });
-  });
-
   it("reports a created responsibility by who created it", () => {
     assert.equal(record("gateway", "responsibility.created", { source: "process", parent: false }).success, true);
     assert.equal(record("gateway", "responsibility.created", { source: "account", parent: true }).success, true);
@@ -507,6 +489,5 @@ describe("onboarding funnel events", () => {
   it("keeps each funnel event with its owning component", () => {
     assert.equal(record("accounts", "ship.message.received", { source: "client", platform: "web", hasText: true, hasMedia: false }).success, false);
     assert.equal(record("inference", "conversation.reply.failed", { outcome: "error", failure: "other", replied: false, durationMs: 1 }).success, false);
-    assert.equal(record("gateway", "installation.attributed", { origin: "direct" }).success, false);
   });
 });
