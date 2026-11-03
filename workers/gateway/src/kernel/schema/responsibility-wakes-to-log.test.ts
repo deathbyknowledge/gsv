@@ -32,10 +32,11 @@ describe("responsibility wakes migration", () => {
           actor: { kind: "kernel" }, body: { responsibilityIds: [FIRST], ledgerRevision: 3 },
         },
       ]);
-      // A batch that already failed retries at once, as the wake timer would have.
+      // A batch that already failed retries at once, as the wake timer would have. No lane
+      // holds it behind Ship's other events (v094).
       expect(sql.exec("SELECT seq, consumer, lane, state, attempt_count, next_attempt_at, last_error, updated_at FROM deliveries ORDER BY seq").toArray()).toEqual([
-        { seq: events[0]!.seq, consumer: "personal:1000", lane: "background", state: "pending", attempt_count: 0, next_attempt_at: 5, last_error: null, updated_at: 5 },
-        { seq: events[1]!.seq, consumer: "personal:1001", lane: "background", state: "pending", attempt_count: 2, next_attempt_at: 40, last_error: "Process is restarting", updated_at: 40 },
+        { seq: events[0]!.seq, consumer: "personal:1000", lane: null, state: "pending", attempt_count: 0, next_attempt_at: 5, last_error: null, updated_at: 5 },
+        { seq: events[1]!.seq, consumer: "personal:1001", lane: null, state: "pending", attempt_count: 2, next_attempt_at: 40, last_error: "Process is restarting", updated_at: 40 },
       ]);
     });
   });

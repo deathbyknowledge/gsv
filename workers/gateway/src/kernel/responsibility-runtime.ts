@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import { deliveryId, shipConsumer } from "./events/consumers";
@@ -33,7 +34,8 @@ function unsettled(event: LoggedEvent, ctx: KernelContext) {
 
 /** Responsibilities that need Ship's attention, taken by the wake timer. */
 export const responsibilityReadyEvent: EventDefinition = {
-  routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: "background" }],
+  // Unlaned, so a stuck contact message or notice never holds the ledger's wakes; one waits at a time.
+  routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: null }],
   // Checked before Ship is found, so a batch with nothing left starts no Ship.
   withdrawal: (event, ctx) => unsettled(event, ctx).ids.length === 0 ? "its work was settled while it waited" : null,
   admit(event, _prepared, ctx) {
@@ -136,7 +138,16 @@ export class ResponsibilityRuntime {
 
     // A removed account takes no new batch; one already on its way still goes.
     if (!this.host.auth.isAccountDisabled(payload.ownerUid) && !this.batchWaiting(payload.ownerUid)) {
+      const gate = await this.host.onboarding.managedWorkGate();
+      if (!gate.allowed) {
+        // A restricted space takes nothing from its ledger; the timer looks again shortly.
+        await this.scheduleResponsibilityWakeAt(
+          payload.ownerUid, payload.generation, Date.now() + MANAGED_LIFECYCLE_RECHECK_MS, state.taskId,
+        );
+        return;
+      }
       const appended = this.host.ctx.storage.transactionSync(() => {
+        if (this.batchWaiting(payload.ownerUid)) return false;
         const batch = this.host.responsibilities.takeReadyBatch(payload.ownerUid, Date.now());
         if (!batch) return false;
         this.host.eventRuntime.append({

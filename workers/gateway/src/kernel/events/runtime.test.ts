@@ -343,6 +343,117 @@ describe("event runtime", () => {
     });
   });
 
+  it("tries again a minute later when a pass throws, so kicked work is not stranded", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, events, schedule, gate } = fixture(storage);
+      gate.mockRejectedValueOnce(new Error("Installation directory is briefly unreachable"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const event = runtime.append(noticed("stranded"));
+      const before = Date.now();
+      await runtime.onEvents({ id: "task:unreachable" });
+      expect(events.delivery(event.seq, shipConsumer(OWNER))).toMatchObject({ state: "pending", attemptCount: 0 });
+      const [when, , , options] = schedule.mock.lastCall!;
+      expect(when.getTime()).toBeGreaterThanOrEqual(before + 60_000);
+      expect(options).toEqual({ idempotent: true, excludeTaskId: "task:unreachable" });
+      expect(warn).toHaveBeenCalledWith("[Kernel] Event pass failed; trying again in a minute:", "Installation directory is briefly unreachable");
+    });
+  });
+
+  it("lets every lane finish before a pass that hit an error ends", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, events, schedule } = fixture(storage);
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const release = Promise.withResolvers<void>();
+      const deliver = acknowledge();
+      const background = runtime.append(noticed("background"));
+      const person = runtime.append(noticed("person", "fixture:person"));
+      deliver.mockImplementation(async (_installationId, _pid, args) => {
+        if (args.eventId.startsWith(`${person.id}:`)) await release.promise;
+        return { eventId: args.eventId, runId: null, queued: false };
+      });
+      const recorded = events.delivered.bind(events);
+      vi.spyOn(events, "delivered").mockImplementation((seq, consumer, result, now) => {
+        if (seq === background.seq) throw new Error("SQLITE_FULL: database or disk is full");
+        recorded(seq, consumer, result, now);
+      });
+      let ended = false;
+      const pass = runtime.onEvents({ id: "task:mixed" }).then(() => { ended = true; });
+      await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(2));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(ended).toBe(false);
+      release.resolve();
+      await pass;
+      expect(events.delivery(person.seq, shipConsumer(OWNER))).toMatchObject({ state: "delivered" });
+      expect(events.delivery(background.seq, shipConsumer(OWNER))).toMatchObject({ state: "pending" });
+      expect(schedule.mock.lastCall![3]).toEqual({ idempotent: true, excludeTaskId: "task:mixed" });
+    });
+  });
+
+  it("records a delivery its Process received even when its producer withdrew it meanwhile", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, events } = fixture(storage);
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      const deliver = acknowledge();
+      const event = runtime.append(noticed("raced", "fixture:subject"));
+      deliver.mockImplementationOnce(async (_installationId, _pid, args) => {
+        runtime.withdraw(runtime.pending("fixture.noticed", "fixture:subject")[0]!, "the person took over");
+        return { eventId: args.eventId, runId: "run:raced", queued: false };
+      });
+      await runtime.onEvents({ id: "task:raced" });
+      expect(events.delivery(event.seq, shipConsumer(OWNER))).toMatchObject({
+        state: "delivered", runId: "run:raced", lastError: null,
+      });
+    });
+  });
+
+  it("prunes only once retention has work due, and not more than hourly", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, events } = fixture(storage);
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      let restarting = true;
+      const deliver = acknowledge();
+      const prune = vi.spyOn(events, "prune");
+      const nextPruneAt = vi.spyOn(events, "nextPruneAt");
+      const ship = shipConsumer(OWNER);
+      await runtime.recover();
+      const first = runtime.append(noticed("first"));
+      const stuck = runtime.append(noticed("stuck", "fixture:person"));
+      deliver.mockImplementation(async (_installationId, _pid, args) => {
+        if (restarting && args.eventId.startsWith(`${stuck.id}:`)) throw new Error("Process is restarting");
+        return { eventId: args.eventId, runId: null, queued: false };
+      });
+      await runtime.onEvents({ id: "task:first" });
+      await runtime.onEvents({ id: "task:again" });
+      expect(prune).not.toHaveBeenCalled();
+      expect(nextPruneAt).toHaveBeenCalledTimes(1);
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(Date.now() + 31 * 24 * 60 * 60 * 1_000);
+        await runtime.onEvents({ id: "task:month" });
+        expect(prune).toHaveBeenCalledTimes(1);
+        expect(events.delivery(first.seq, ship)).toBeNull();
+        expect(events.delivery(stuck.seq, ship)).toMatchObject({ state: "pending" });
+
+        // Settled long after it was appended, it is due at once, but retention waits for the hour.
+        restarting = false;
+        vi.setSystemTime(Date.now() + 5 * 60_000);
+        await runtime.onEvents({ id: "task:settled" });
+        expect(events.delivery(stuck.seq, ship)).toMatchObject({ state: "delivered" });
+        expect(prune).toHaveBeenCalledTimes(1);
+
+        vi.setSystemTime(Date.now() + 56 * 60_000);
+        await runtime.onEvents({ id: "task:hour" });
+        expect(prune).toHaveBeenCalledTimes(2);
+        expect(events.delivery(stuck.seq, ship)).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it("re-arms from stored deliveries when the Kernel starts", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, events, schedule } = fixture(storage);

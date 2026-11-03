@@ -150,6 +150,48 @@ describe("responsibility wakes on the event log", () => {
     });
   });
 
+  it("takes no batch while the space is restricted, and checks again in a minute", async () => {
+    const { deliver } = ship();
+    await fixture(async (kernel) => {
+      const record = ready(kernel, "Answer the landlord");
+      const revision = kernel.responsibilities.revision(OWNER);
+      vi.spyOn(kernel.onboarding, "managedWorkGate").mockResolvedValue({ allowed: false, code: 423, message: "Installation is restricted" });
+      const before = Date.now();
+      await wake(kernel);
+      expect(batches(kernel)).toEqual([]);
+      expect(kernel.responsibilities.revision(OWNER)).toBe(revision);
+      expect(kernel.responsibilities.get(OWNER, record.id)).toMatchObject({ state: "open" });
+      expect(kernel.responsibilities.wakeState(OWNER).scheduledAtMs).toBeGreaterThanOrEqual(before + MINUTE_MS);
+      expect(deliver).not.toHaveBeenCalled();
+    });
+  });
+
+  it("hands Ship due work while a contact message ahead of it keeps failing", async () => {
+    const { deliver } = ship();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await fixture(async (kernel) => {
+      // A contact message whose stored body no longer reads keeps retrying in Ship's background lane.
+      const now = Date.now();
+      const { seq } = kernel.ctx.storage.sql.exec<{ seq: number }>(
+        `INSERT INTO events (type, owner_uid, subject, actor_json, idempotency_key, body_json, created_at)
+         VALUES ('contact.message', ?, 'contact:stuck', '{"kind":"kernel"}', 'stuck', '{}', ?) RETURNING seq`,
+        OWNER, now,
+      ).one();
+      kernel.ctx.storage.sql.exec(
+        `INSERT INTO deliveries (seq, consumer, lane, state, attempt_count, next_attempt_at, updated_at)
+         VALUES (?, ?, 'background', 'pending', 0, ?, ?)`,
+        seq, `personal:${OWNER}`, now, now,
+      );
+      const record = ready(kernel, "Answer the landlord");
+      await wake(kernel);
+      await runEvents(kernel);
+      expect(batches(kernel)).toMatchObject([{ state: "delivered", body: { responsibilityIds: [record.id] } }]);
+      expect(deliver).toHaveBeenCalledOnce();
+      expect(kernel.ctx.storage.sql.exec("SELECT state, attempt_count FROM deliveries WHERE seq = ?", seq).one())
+        .toEqual({ state: "pending", attempt_count: 1 });
+    });
+  });
+
   it("tells Ship about work the person settled before the batch was taken", async () => {
     const { deliver } = ship();
     await fixture(async (kernel) => {

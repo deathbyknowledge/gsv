@@ -208,10 +208,12 @@ export class EventStore {
     ).one().at;
   }
 
+  /** Records what its Process answered; that wins over a withdrawal made while the call was out. */
   delivered(seq: number, consumer: string, result: { runId: string | null; outcome: JsonObject }, now: number): void {
     this.sql.exec(
-      `UPDATE deliveries SET state = 'delivered', run_id = ?, outcome_json = ?, updated_at = ?
-       WHERE seq = ? AND consumer = ? AND state = 'pending'`,
+      `UPDATE deliveries SET state = 'delivered', run_id = ?, outcome_json = ?, updated_at = ?,
+         last_error = CASE state WHEN 'withdrawn' THEN NULL ELSE last_error END
+       WHERE seq = ? AND consumer = ? AND state IN ('pending', 'withdrawn')`,
       result.runId, JSON.stringify(result.outcome), now, seq, consumer,
     );
   }

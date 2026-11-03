@@ -141,16 +141,19 @@ CREATE INDEX deliveries_lane ON deliveries (consumer, lane, seq)
 The runner:
 
 ```ts
-// One pass per onEvents task; a pass that is already running re-arms when it ends.
+// One pass per onEvents task; a pass that is already running re-arms when it ends,
+// and one that throws re-arms a minute later.
 private async pass(taskId: string): Promise<void> {
   const gate = await this.host.onboarding.managedWorkGate();
   if (!gate.allowed) return await this.arm(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS, taskId);
-  this.host.events.prune(Date.now());
+  this.pruneWhenDue(Date.now());   // at most hourly, once something is due
   // The oldest due row of each lane, plus every due unlaned row. Lanes run
   // concurrently; each drains one row at a time, in order, and waits while
   // its head backs off. An attempt ends withdrawn (no call), delivered, or
-  // failed with its next attempt time.
-  await Promise.all(this.host.events.dueHeads(Date.now()).map((head) => this.drain(head)));
+  // failed with its next attempt time. Every lane ends before the pass does.
+  const drained = await Promise.allSettled(this.host.events.dueHeads(Date.now()).map((head) => this.drain(head)));
+  const failure = drained.find((outcome) => outcome.status === "rejected");
+  if (failure) throw failure.reason;
   await this.arm(this.nextRunAt(), taskId);   // one task, moved earlier when needed
 }
 ```
@@ -167,7 +170,9 @@ private async pass(taskId: string): Promise<void> {
 - **Lanes.** A lane is the order key within one consumer. The Ship has two.
   `person` carries chat and messengers. `background` carries everything else,
   in per-owner order. A person's message never waits behind background
-  events. A process is one lane.
+  events. A process is one lane. A wake batch has no lane: only one waits per
+  owner, and a contact message or notice that keeps failing never holds the
+  ledger's wakes.
 - **At least once.** A delivery is done when its consumer answers. A lost
   answer redelivers, so the Process still dedupes by the delivery's id,
   `evt_<seq>:<consumer>`, which is now stable. A replacement Ship never receives an event the Kernel already marked
@@ -179,11 +184,12 @@ private async pass(taskId: string): Promise<void> {
   schedule. A withdrawn delivery ends as `withdrawn` without a Process call.
   This one rule replaces six ways of handling a killed pid. The runner checks
   again after its last await, such as finding or starting the Ship, and sends
-  synchronously after that check. A delivery already attempted may have
+  synchronously after that check. A delivery with a failed attempt may have
   reached its Process, so a removed account doesn't withdraw it: it retries
   until it ends, and the Process dedupes it. A producer can also withdraw its
   own pending deliveries: taking a contact back from Ship withdraws that
-  contact's messages still queued for it.
+  contact's messages still queued for it. A delivery its Process answered is
+  recorded delivered even if its producer withdrew it while the call was out.
 - **Failed runs.** A delivery can hand its run responsibilities, as a contact
   message hands Ship the work it belongs to. The runner marks them delivered
   in the transaction that ends the delivery, which arms the ledger's recovery
@@ -195,7 +201,8 @@ private async pass(taskId: string): Promise<void> {
   deliveries retry from 2 s, doubling to 256 s, without a limit. The runner
   re-arms; it never waits inside the alarm.
 - **Gate.** While the managed gate is closed, the runner parks both consumers
-  and checks again in 60 s. Everything resumes if the space is reactivated.
+  and checks again in 60 s, and the wake timer takes nothing from the ledger.
+  Everything resumes if the space is reactivated.
   Edge producers already refuse before appending. The outboxes keep their own
   rules: the federation outbox parks for 60 s, outbound mail fails for a
   retained, deleting or deleted installation and skips other inactive states,
@@ -217,7 +224,9 @@ private async pass(taskId: string): Promise<void> {
   attempts appends `delivery.failed` for its pid.
 - **Retention.** Deliveries keep their outcome for inspection. A settled
   event keeps its body and outcomes in SQLite for 30 days; an event with a
-  pending delivery keeps both. The row then keeps only its type and key until
+  pending delivery keeps both. Retention runs once something falls due, at
+  most hourly: the runner reads the next due time from the log at start-up
+  and after each run, and an append or a settle only brings it forward. The row then keeps only its type and key until
   day 180, so a duplicate that arrives late, such as a resent mail or
   webhook, still appends nothing. A key is about 100 bytes; an event can
   carry 64 KiB. The log stays Kernel-internal until a later owner- or

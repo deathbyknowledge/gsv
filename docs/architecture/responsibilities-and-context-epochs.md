@@ -113,7 +113,10 @@ without duplicating it in the wake event or changing the frozen system prompt.
 
 A record settled after its batch was taken leaves the batch: if Ship settled it,
 Ship knows, and anyone else's change goes in the next batch. A batch with nothing
-left is withdrawn before a Ship is found.
+left is withdrawn before a Ship is found. A batch does not wait behind Ship's other
+background events, so a contact message that keeps failing never holds the ledger's
+wakes. While the space is restricted, the wake task takes nothing and checks again
+in a minute.
 
 ### Ship events
 

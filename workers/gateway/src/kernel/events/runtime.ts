@@ -7,7 +7,7 @@ import type { Kernel } from "../do";
 import { ensurePersonalController } from "../personal-controller";
 import { deliveryId, parseConsumer, type EventConsumer } from "./consumers";
 import { EVENT_REGISTRY, isWithdrawn, type EventDefinition, type EventRegistry, type ProcessEventDelivery } from "./registry";
-import type { EventInput, LoggedEvent, PendingDelivery } from "./store";
+import { EVENT_BODY_RETENTION_MS, type EventInput, type LoggedEvent, type PendingDelivery } from "./store";
 
 /** What the runtime reaches on its Kernel. */
 export type EventRuntimeHost = Pick<
@@ -21,6 +21,10 @@ export type KernelEvents = Pick<EventRuntime, "append" | "kick" | "pending" | "w
 
 /** A Process delivery retries without limit: 2 s, doubling to 256 s. */
 const PROCESS_RETRY = { baseMs: 2_000, capMs: 256_000 };
+/** A pass that throws is tried again after this long. */
+const FAILED_PASS_RETRY_MS = 60_000;
+/** Retention runs once something is due, at most this often. */
+const PRUNE_SPACING_MS = 60 * 60_000;
 
 type AttemptResult =
   | { kind: "delivered"; runId: string | null; outcome: JsonObject; responsibilities?: ProcessEventDelivery["responsibilities"] }
@@ -29,6 +33,8 @@ type AttemptResult =
 /** Appends Kernel events and delivers them: one task, one gate check, one retry rule per consumer. */
 export class EventRuntime {
   private running: Promise<void> | null = null;
+  /** When retention next has work, read from the log once; null until then. Events appended or settled since only bring it forward. */
+  private retention: { dueAt: number | null; ranAt: number } | null = null;
 
   constructor(
     private readonly host: EventRuntimeHost,
@@ -39,7 +45,9 @@ export class EventRuntime {
   append(input: EventInput): LoggedEvent {
     const definition = this.registry[input.type];
     if (!definition) throw new Error(`Event type ${input.type} is not registered`);
-    return this.host.events.append(input, definition.routes(input), Date.now()).event;
+    const { event } = this.host.events.append(input, definition.routes(input), Date.now());
+    this.retainUntil(event);
+    return event;
   }
 
   /** Runs due deliveries soon; call after the producer's transaction commits. */
@@ -55,6 +63,7 @@ export class EventRuntime {
   /** Ends a pending delivery its producer no longer wants to go, without a call. */
   withdraw(delivery: PendingDelivery, reason: string): void {
     this.host.events.withdrawn(delivery.event.seq, delivery.consumer, reason, Date.now());
+    this.retainUntil(delivery.event);
   }
 
   /** Re-arms the runner from the stored deliveries when the Kernel starts. */
@@ -68,6 +77,10 @@ export class EventRuntime {
     this.running = this.pass(task.id);
     try {
       await this.running;
+    } catch (error) {
+      // A kick during the pass found this task, so the runner must stay armed.
+      console.warn("[Kernel] Event pass failed; trying again in a minute:", error instanceof Error ? error.message : String(error));
+      await this.arm(Date.now() + FAILED_PASS_RETRY_MS, task.id);
     } finally {
       this.running = null;
     }
@@ -79,9 +92,11 @@ export class EventRuntime {
       await this.arm(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS, taskId);
       return;
     }
-    this.host.events.prune(Date.now());
-    // Lanes run concurrently, each one row at a time and in order.
-    await Promise.all(this.host.events.dueHeads(Date.now()).map((head) => this.drain(head)));
+    this.pruneWhenDue(Date.now());
+    // Lanes run concurrently, each one row at a time and in order; every lane ends before the pass does.
+    const drained = await Promise.allSettled(this.host.events.dueHeads(Date.now()).map((head) => this.drain(head)));
+    const failure = drained.find((outcome) => outcome.status === "rejected");
+    if (failure) throw failure.reason;
     await this.arm(this.nextRunAt(), taskId);
   }
 
@@ -100,6 +115,7 @@ export class EventRuntime {
     if (!definition || !target) {
       const error = definition ? `Event consumer ${consumer} is not known` : `Event type ${event.type} is not registered`;
       this.host.events.failed(event.seq, consumer, error, null, Date.now());
+      this.retainUntil(event);
       console.warn(`[Kernel] Ended event delivery ${event.id} to ${consumer}: ${error}`);
       return true;
     }
@@ -125,6 +141,7 @@ export class EventRuntime {
         if (responsibilities) this.host.responsibilities.markEventDelivered(event.ownerUid, responsibilities.ids, now);
       });
     }
+    this.retainUntil(event);
     if (definition.settled) {
       try {
         await definition.settled(event, ctx);
@@ -166,8 +183,9 @@ export class EventRuntime {
 
   /**
    * Why a delivery should not go, read from current state; null while it may. Removing an
-   * account fences deliveries not yet attempted. One already attempted may have reached its
-   * Process, so it retries until it ends, and the Process dedupes it.
+   * account fences deliveries with no failed attempt. One whose attempt failed may have
+   * reached its Process, so it retries until it ends, and the Process dedupes it. An attempt
+   * cut off before it recorded anything counts as fresh.
    */
   private withdrawal(
     definition: EventDefinition<object | undefined>, { event, attemptCount }: PendingDelivery, target: EventConsumer, ctx: KernelContext,
@@ -185,8 +203,28 @@ export class EventRuntime {
   }
 
   private nextRunAt(): number | null {
-    const due = [this.host.events.nextDueAt(), this.host.events.nextPruneAt()].filter((at): at is number => at !== null);
+    const due = [this.host.events.nextDueAt(), this.retentionDueAt()].filter((at): at is number => at !== null);
     return due.length ? Math.min(...due) : null;
+  }
+
+  private retentionDueAt(): number | null {
+    this.retention ??= { dueAt: this.host.events.nextPruneAt(), ranAt: 0 };
+    const { dueAt, ranAt } = this.retention;
+    return dueAt === null ? null : Math.max(dueAt, ranAt + PRUNE_SPACING_MS);
+  }
+
+  private pruneWhenDue(now: number): void {
+    const due = this.retentionDueAt();
+    if (due === null || due > now) return;
+    this.host.events.prune(now);
+    this.retention = { dueAt: this.host.events.nextPruneAt(), ranAt: now };
+  }
+
+  /** An event appended or settled may bring retention forward; a body is kept 30 days from its append. */
+  private retainUntil(event: LoggedEvent): void {
+    if (!this.retention) return;
+    const at = event.createdAt + EVENT_BODY_RETENTION_MS;
+    this.retention.dueAt = this.retention.dueAt === null ? at : Math.min(this.retention.dueAt, at);
   }
 
   /** Keeps one pending task, moved earlier when a delivery falls due sooner. */
