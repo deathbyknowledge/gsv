@@ -4788,6 +4788,49 @@ describe("native administration shell commands", () => {
     expect(history.stdout).toContain("hello from Flynn");
   });
 
+  it("reads the Ship conversation when message history names no conversation, as search does", async () => {
+    const ship = {
+      id: "conversation:ship",
+      ownerUid: IDENTITY.uid,
+      kind: "ship" as const,
+      title: "Ship",
+      handlerPid: "proc:ship",
+      latestSequence: 1,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    getConversationByIdMock.mockReturnValue({
+      history: vi.fn(async () => ({
+        messages: [{
+          id: "msg:hello",
+          conversationId: ship.id,
+          sequence: 1,
+          author: { kind: "human", uid: IDENTITY.uid },
+          text: "hi from telegram",
+          origin: { kind: "adapter", adapter: "telegram" },
+          createdAt: 1,
+        }],
+        hasMore: false,
+        latestSequence: 1,
+      })),
+    });
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "conversation.history"],
+      procs: { get: vi.fn(() => makeProcess({ processId: "proc:ship", isPersonalController: true })) },
+      processId: "proc:ship",
+    });
+    ctx.conversations = focusedFixture<KernelContext["conversations"]>({
+      get: vi.fn(() => ship),
+      getShip: vi.fn(() => ship),
+    });
+
+    const history = await handleShellExec({ input: "message history --limit 5" }, ctx);
+
+    expect(history).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(history.stdout).toContain(`conversation=${ship.id}`);
+    expect(history.stdout).toContain("hi from telegram");
+  });
+
   it("links a contact send to Ship work and rejects that option for other destinations", async () => {
     const send = vi.spyOn(federationService, "handleContactSend").mockResolvedValue({
       deliveryId: "delivery:work", conversationId: "conversation:friend", state: "queued",
