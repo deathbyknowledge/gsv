@@ -9,6 +9,9 @@ import { AccountRecoveryStore } from "./account-recovery";
 import { IdentityLinkStore } from "./identity-links";
 import { assertAdapterMessageDestinationAccess } from "./adapter-destinations";
 import { AdapterStatusStore } from "./adapter-status";
+import { PrivateAdapterDestinationStore } from "./private-adapter-destinations";
+import { ShipReplies } from "./ship-replies";
+import { RunRouteStore } from "./run-routes";
 import { handleAdapterPairConfirm, handleAdapterPairDisconnect } from "./adapter-pairing";
 import type { AdapterPairingWorkerInterface, AdapterServiceDescriptor } from "../adapter-interface";
 import { activateAdapterPairing, disconnectAdapterPeer, finalizeAdapterPairing, prepareAdapterPairing, type AdapterPeerLink } from "../../../adapters/shared/src/pairing-route";
@@ -23,16 +26,18 @@ async function fixture(work: (recovery: AccountRecoveryStore, ctx: KernelContext
     auth.setShadow(makeShadowEntry("friend", await hashPassword("friend-password")));
     const recovery = new AccountRecoveryStore(storage, auth, "installation_people");
     // SAFETY: the people owner uses only the auth/capability stores, home bucket and session invalidator below.
-    // Pairing additionally uses the real adapter stores, disabled responsibility sources and status callback.
+    // Pairing additionally uses the real adapter and reply stores, disabled responsibility sources and status callback.
     const ctx = { auth, accountRecovery: recovery, caps: new CapabilityStore(sql), env: { STORAGE: { head: vi.fn(async () => null), put: vi.fn(async () => null) } },
       installationId: "installation_people", installationIdentity: { canonicalOrigin: "https://people.example.test" },
       connection: null, peer: testPeer({ account: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, calls: ["*"] }),
       invalidateAccountConnections: vi.fn(), broadcastToUserUid: vi.fn(),
       defer: (promise: Promise<unknown>) => { void promise.catch(() => undefined); },
-      responsibilitySources: { isEnabled: () => false }, responsibilities: { listActiveByDedupeKeyPrefix: () => [] },
-      adapters: { identityLinks: new IdentityLinkStore(sql), status: new AdapterStatusStore(sql), surfaceRoutes: { get: () => null } },
+      responsibilitySources: { isEnabled: () => false }, noticeRules: { wantsNotice: () => false }, responsibilities: { listActiveByDedupeKeyPrefix: () => [] },
+      shipReplies: new ShipReplies(storage), runRoutes: new RunRouteStore(sql),
+      adapters: { identityLinks: new IdentityLinkStore(sql), status: new AdapterStatusStore(sql), surfaceRoutes: { get: () => null },
+        privateDestinations: new PrivateAdapterDestinationStore(sql) },
     } as KernelContext;
-    await work(recovery, ctx, sql);
+    await work(recovery, ctx, sql, storage);
   });
 }
 
@@ -113,6 +118,27 @@ describe("personal password reset and messenger recovery", () => {
       ctx.peer!.provenance = { kind: "process-registry", processId: "proc:root-agent" };
       await expect(recovery.resetPersonalPassword({ password: "new-password" }, ctx)).rejects.toThrow("signed-in root human");
       expect(await ctx.auth.authenticate("friend", "friend-password")).toMatchObject({ ok: true });
+    });
+  });
+
+  it("routes Ship's replies to a paired messenger once, so a replayed confirmation keeps a newer choice", async () => {
+    await fixture(async (_recovery, ctx, _sql, storage) => {
+      const { service, code } = pairedMessenger(ctx, 1000, false);
+      // A replayed operation is answered with its original route, as the adapter's pairing claim does.
+      const prepare = service.adapterPairingPrepare.getMockImplementation()!;
+      let prepared: Awaited<ReturnType<typeof prepare>> | undefined;
+      service.adapterPairingPrepare.mockImplementation(async (...args) => prepared ??= await prepare(...args));
+      const member = directMember(ctx, 1000);
+      const preference = () => storage.kv.get<{ connectionId: string | null }>("ship-reply:1000")?.connectionId;
+      ctx.shipReplies.recordClient(1000, "web");
+      await expect(handleAdapterPairConfirm({ adapter: "telegram", code }, member)).resolves.toMatchObject({ paired: true });
+      expect(ctx.adapters.privateDestinations.get(1000)?.destination).toMatchObject({ adapter: "telegram", actorId: "actor" });
+      expect(preference()).toBeNull();
+
+      // The person writes from the app; the first confirmation's reply was lost and the client retries it.
+      ctx.shipReplies.recordClient(1000, "web");
+      await expect(handleAdapterPairConfirm({ adapter: "telegram", code }, member)).resolves.toMatchObject({ paired: true });
+      expect(preference()).toBe("web");
     });
   });
 

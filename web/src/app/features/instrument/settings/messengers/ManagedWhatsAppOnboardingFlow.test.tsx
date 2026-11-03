@@ -78,6 +78,7 @@ async function click(label: string): Promise<void> {
 
 beforeEach(async () => {
   vi.stubGlobal("document", {});
+  vi.stubGlobal("navigator", { languages: ["pt-BR", "id"] });
   mocks.confirm.mockReset();
   mocks.currentFlow = null;
   mocks.currentStep = -1;
@@ -120,33 +121,70 @@ afterEach(async () => {
 });
 
 describe("ManagedWhatsAppOnboardingFlow", () => {
-  it("shows the operator's number and opens WhatsApp on it without asking for credentials", () => {
+  it("shows the operator's number and leads with opening WhatsApp on it without asking for credentials", () => {
     expect(mocks.infoAdapter).toBe("whatsapp");
     expect(currentFlow().title).toBe("Connect WhatsApp");
     const allNodes = currentFlow().steps.flatMap((step) => flowStepNodes(currentFlow(), step.key));
     expect(allNodes.some((node) => node.props.label === "ACCESS TOKEN")).toBe(false);
-    const instructions = nodes().find((node) => node.props.text?.includes("+34600000000"));
-    expect(instructions?.props.text).toContain("send /link to get a new code");
-    const open = nodes().find((node) => node.props.href === "https://wa.me/34600000000?text=%2Flink");
-    expect(collectText(open)).toBe("OPEN WHATSAPP");
+    const instructions = nodes().find((node) => node.props.text?.includes("Clicking \"Connect\""));
+    expect(instructions?.props.text).toBe(
+      "Clicking \"Connect\" opens WhatsApp with a message to Ship ready to go. Send it, and Ship will reply with a short-lived connection code.",
+    );
+    expect(collectText(nodes())).toContain("To message Ship manually, send \"/link\" to +34600000000.");
+    const open = nodeWithLabel(nodes(), "CONNECT");
+    expect(open.props.href).toBe("https://wa.me/34600000000?text=%2Flink");
+    expect(open.props.variant).toBe("primary");
+    expect(nodeWithLabel(nodes(), "I HAVE A CODE").props.variant).toBe("secondary");
   });
 
-  it("warns about the countries the adapter reports the operator's number cannot reach", async () => {
-    const warning = () => nodes().find((node) => node.props.text?.includes("cannot connect"));
-    expect(warning()?.props.text).toContain("Brazil (+55) and Indonesia (+62)");
-
+  it("disables the launch link while the host suspends pairing", async () => {
     await root?.unmount();
-    mocks.unreachableCallingCodes = ["62"];
     root = createTestRoot("Managed WhatsApp onboarding harness");
     await root.render(
       <ManagedWhatsAppOnboardingFlow
         onBack={() => undefined}
         onConnected={mocks.onConnected}
+        disabled
         dependencies={dependencies}
       />,
     );
+    expect(nodeWithLabel(nodes(), "CONNECT").props.disabled).toBe(true);
+  });
+
+  it("warns about the blocked countries this device's languages place it in", async () => {
+    const warning = () => nodes().find((node) => node.props.text?.includes("cannot connect"));
+    const remount = async (languages: string[], codes: string[]) => {
+      await root?.unmount();
+      vi.stubGlobal("navigator", { languages });
+      mocks.unreachableCallingCodes = codes;
+      root = createTestRoot("Managed WhatsApp onboarding harness");
+      await root.render(
+        <ManagedWhatsAppOnboardingFlow
+          onBack={() => undefined}
+          onConnected={mocks.onConnected}
+          dependencies={dependencies}
+        />,
+      );
+    };
+    expect(warning()?.props.text).toContain("Brazil (+55) and Indonesia (+62)");
+
+    await remount(["pt-BR", "id"], ["62"]);
     expect(warning()?.props.text).toContain("WhatsApp numbers in Indonesia (+62) cannot connect");
     expect(warning()?.props.text).not.toContain("Brazil");
+
+    await remount(["en-GB", "pt-BR"], ["55", "62"]);
+    expect(warning()?.props.text).toContain("WhatsApp numbers in Brazil (+55) cannot connect");
+    expect(warning()?.props.text).not.toContain("Indonesia");
+
+    await remount(["en-US", "es-ES", "not a tag"], ["55", "62"]);
+    expect(warning()).toBeUndefined();
+  });
+
+  it("warns where the code is submitted that it replaces a link to another Ship", async () => {
+    const relink = "Already connected to another Ship from your number? Submitting a fresh code will end that connection and replace it with this one.";
+    expect(collectText(nodes())).not.toContain(relink);
+    await click("I HAVE A CODE");
+    expect(collectText(nodes())).toContain(relink);
   });
 
   it("reveals the profile name and masked number before linking, then opens the account detail", async () => {

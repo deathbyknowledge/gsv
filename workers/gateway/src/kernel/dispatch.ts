@@ -165,6 +165,16 @@ import { requestAdapterTarget } from "./adapter-targets";
 import { handleMailSend } from "./outbound-mail";
 import { handleMailList, handleMailRead, handleMailSearch } from "./inbound-mail-read";
 import { handleMailStatus } from "./outbound-status";
+import { handleNotifyRuleList, handleNotifyRuleReset, handleNotifyRuleSet } from "./notice-rules";
+import {
+  handleEventEmit,
+  handleEventList,
+  handleEventSourceAdd,
+  handleEventSourceList,
+  handleEventSourceRemove,
+  handleEventSourceRotate,
+  handleEventSourceUpdate,
+} from "./event-sources";
 import {
   handleConversationForProcess,
   handleConversationHistory,
@@ -475,6 +485,38 @@ async function dispatchKernel(
         data = await handleMailRead(frame.args, ctx);
         break;
 
+      case "notify.rule.list":
+        data = handleNotifyRuleList(ctx);
+        break;
+      case "notify.rule.set":
+        data = handleNotifyRuleSet(frame.args, ctx);
+        break;
+      case "notify.rule.reset":
+        data = handleNotifyRuleReset(frame.args, ctx);
+        break;
+
+      case "event.source.list":
+        data = handleEventSourceList(ctx);
+        break;
+      case "event.source.add":
+        data = await handleEventSourceAdd(frame.args, ctx);
+        break;
+      case "event.source.update":
+        data = await handleEventSourceUpdate(frame.args, ctx);
+        break;
+      case "event.source.rotate":
+        data = await handleEventSourceRotate(frame.args, ctx);
+        break;
+      case "event.source.remove":
+        data = handleEventSourceRemove(frame.args, ctx);
+        break;
+      case "event.emit":
+        data = handleEventEmit(frame.args, ctx);
+        break;
+      case "event.list":
+        data = handleEventList(frame.args, ctx);
+        break;
+
       case "conversation.ship":
         data = await handleConversationShip(ctx);
         break;
@@ -760,6 +802,7 @@ async function dispatchKernel(
       case "account.recovery.code.start":
       case "account.recovery.code.redeem":
       case "account.recovery.redeem":
+      case "account.recovery.options":
         return errFrame(frame.id, 400, "Account recovery requires the connection enrollment path");
       case "account.password.set":
         data = await ctx.accountRecovery.resetPersonalPassword(frame.args, ctx);

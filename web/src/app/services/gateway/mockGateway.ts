@@ -5,11 +5,11 @@
  * `?mock=1` (http://localhost:5180/?mock=1); production builds drop this module. The choice sticks to
  * the tab, since Instrument rewrites the URL on navigation, and `?mock=0` turns it off again. A seeded
  * session lands straight in Zen signed in; with storage cleared, any username and password sign in.
- * `?fresh=1` is a brand-new space instead: no conversation, the welcome card up, and dismissing it
- * wakes Ship the way the Kernel does, a quiet beat, a long think, then the welcome landing whole.
+ * `?fresh=1` is a brand-new space instead: no conversation, and signing in wakes Ship the way the
+ * Kernel does, a quiet beat, a long think, then the welcome landing whole.
  * `?fresh=0` returns to the seeded conversation.
- * Of the config, this browser keeps only the welcome card's dismissal and the Language preference, so
- * Settings can switch the interface language; other settings refuse to save.
+ * Of the config, this browser keeps only the Language preference, so Settings can switch the
+ * interface language; other settings refuse to save.
  * The real GSVClient runs unchanged over an in-memory WebSocket, so the frames, statuses and signals
  * are the ones the wire would carry, in the order the gateway emits them: stream events, run output,
  * typed history records, tool signals, ledger rows and the message stream. Fixtures are the plain
@@ -30,6 +30,8 @@
  *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
  *   anything else is committed as your message and answered briefly a second later
  */
+import type { EventRecord, EventSource, EventSourceAddArgs } from "@humansandmachines/gsv/protocol";
+import type { NoticeRule, ResponsibilitySourcePolicy } from "@humansandmachines/gsv/protocol";
 import { GSVClient, type GsvPeerInfo } from "@humansandmachines/gsv/client";
 import type { ProfileState } from "@humansandmachines/gsv/protocol";
 import { contactSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
@@ -70,7 +72,7 @@ import { z } from "zod";
 
 const MOCK_FLAG = "gsv.ui.mock";
 const FRESH_FLAG = "gsv.ui.mock.fresh";
-const WELCOME_SEEN = "gsv.mock.welcome_seen";
+const FIRST_RUN_SEEN = "gsv.mock.first_run_seen";
 /** The session service's persisted token (sessionService.ts); seeding one is how the mock signs in without the form. */
 const SESSION_TOKEN_KEY = "gsv.ui.session.token.v1";
 const SEEDED_TOKEN_ID = "mock-session";
@@ -90,13 +92,13 @@ export function mockGatewayRequested(): boolean {
   }
 }
 
-/** A fresh space sticks to the tab like the mock itself; asking for it again puts the welcome card back up. */
+/** A fresh space sticks to the tab like the mock itself. */
 function freshRequested(): boolean {
   try {
     const asked = new URLSearchParams(window.location.search).get("fresh");
     if (asked === "1") {
       window.sessionStorage.setItem(FRESH_FLAG, "1");
-      window.localStorage.removeItem(WELCOME_SEEN);
+      window.localStorage.removeItem(FIRST_RUN_SEEN);
     }
     if (asked === "0") window.sessionStorage.removeItem(FRESH_FLAG);
     return window.sessionStorage.getItem(FRESH_FLAG) === "1";
@@ -133,11 +135,22 @@ let ownProfile: ProfileState = {
 };
 const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
-/** The config this browser keeps for the mock, with its storage key: the welcome card's dismissal and the owner's language. */
+/** The config this browser keeps for the mock, with its storage key: the owner's language. */
 const STORED_CONFIG = new Map([
-  [`users/${OWNER.uid}/ui/welcome_card_seen`, WELCOME_SEEN],
+  [`users/${OWNER.uid}/ui/welcome_card_seen`, FIRST_RUN_SEEN],
   [`users/${OWNER.uid}/locale/language`, "gsv.mock.language"],
 ]);
+const mockEventSources: EventSource[] = [
+  { sourceId: "src_backups", name: "backups", label: "Backups", notify: "messenger", ship: "none", shipChoices: ["none", "context", "wake"], webhook: "none", enabled: true, lastEventAtMs: Date.now() - 2 * 3_600_000, expectEveryMs: 86_400_000, createdBy: "ship", updatedAtMs: Date.now() },
+  { sourceId: "src_github", name: "github", label: "GitHub", notify: "none", ship: "wake", shipChoices: ["none", "context", "wake"], webhook: "hmac", hmac: { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=", idHeader: "x-github-delivery", typeHeader: "x-github-event" }, enabled: true, lastEventAtMs: Date.now() - 40 * 60_000, createdBy: "person", updatedAtMs: Date.now() },
+];
+
+const MOCK_EVENTS: EventRecord[] = [
+  { sourceId: "src_backups", eventId: "2026-11-02", title: "Nightly backup failed", preview: "Disk full on nas-01, 3 of 12 folders copied", body: "rsync: write failed on /backup/photos: No space left on device (28)\nCopied 3 of 12 folders in 14 minutes.", emittedBy: "client", receivedAtMs: Date.now() - 2 * 3_600_000 },
+  { sourceId: "src_backups", eventId: "2026-11-01", title: "Nightly backup finished", preview: "12 folders, 41 GB", emittedBy: "schedule", receivedAtMs: Date.now() - 26 * 3_600_000 },
+  { sourceId: "src_github", eventId: "evt_8123", title: "gsv: pull request opened", preview: "Fix the first-run hint on small screens", emittedBy: "webhook", receivedAtMs: Date.now() - 40 * 60_000 },
+];
+
 const MODEL = { api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet-4-5", responseModel: "claude-sonnet-4-5-20250929" };
 
 /** A wall-clock instant some days back, so the conversation always spans yesterday and today. */
@@ -178,7 +191,7 @@ const targets: SysTargetSummary[] = [
 ];
 
 const accounts: AccountSummary[] = [
-  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
+  { uid: OWNER.uid, username: OWNER.username, displayName: "Esteve", relation: "self", runnable: false, capabilities: ["event.*", "notify.rule.*", "r12y.source.update", "sys.ledger.list", "sys.target.list", "proc.list", "r12y.list", "r12y.source.list", "sched.list", "r12y.get", "r12y.update", "sched.add", "sched.update", "conversation.send", "profile.resolve", "profile.get", "profile.update", "profile.publish", "profile.unpublish", "contact.list", "approach.create", "approach.list", "contact.preferences.update", "conversation.inbox", "conversation.history", "conversation.view.update", "contact.send", "adapter.list", "sys.link.list", "adapter.pair.info", "adapter.pair.inspect", "adapter.pair.confirm", "adapter.pair.disconnect", "sys.pair.create", "fs.read", "sys.config.set"] },
   { uid: SHIP.uid, username: SHIP.username, displayName: "Ship", relation: "personal-agent", runnable: true },
 ];
 
@@ -371,8 +384,29 @@ type World = {
   context: ProcContextState | null; contextRevision: number;
   run: OpenRun | null; connections: number; sockets: Set<MockSocket>;
 };
+const responsibilitySources: ResponsibilitySourcePolicy[] = [
+  { id: "interaction.response", name: "Conversation replies", description: "", control: "required", enabled: true, defaultEnabled: true },
+  { id: "process.delegation", name: "Delegated work", description: "", control: "required", enabled: true, defaultEnabled: true },
+  { id: "schedule.due", name: "Scheduled responsibilities", description: "", control: "required", enabled: true, defaultEnabled: true },
+  { id: "memory.review", name: "Personal memory", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "mail.received", name: "Incoming mail", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "machine.added", name: "New machines", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "adapter.connected", name: "Connected adapters", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+  { id: "adapter.auth_required", name: "Adapter authentication", description: "", control: "configurable", enabled: true, defaultEnabled: true },
+];
+const mockRule = (kind: NoticeRule["kind"], contact: boolean): NoticeRule => contact
+  ? { kind, notify: "messenger", ship: "context", defaultNotify: "messenger", defaultShip: "context", shipChoices: ["none", "context"] }
+  : { kind, notify: "none", ship: "wake", defaultNotify: "none", defaultShip: "wake", shipChoices: ["none", "context", "wake"] };
+let noticeRules: NoticeRule[] = [
+  mockRule("contact.request", true), mockRule("contact.message", true), mockRule("contact.invite.accepted", true),
+  mockRule("mail.received", false), mockRule("machine.added", false), mockRule("adapter.connected", false), mockRule("adapter.auth_required", false),
+];
 const world: World = { messages: [], sequence: 0, records: [], revision: 1, messageId: 0, recordId: 0, ledger: [], context: null, contextRevision: 0, run: null, connections: 0, sockets: new Set() };
 const fresh = freshRequested();
+/* Telegram starts linked so Settings › Messengers shows a connected messenger beside the unlinked ones. */
+let messengerLinks: { adapter: string; accountId: string; actorId: string; uid: number; createdAt: number; linkedByUid: number }[] = fresh ? [] : [
+  { adapter: "telegram", accountId: "mock-telegram", actorId: "351913787780", uid: OWNER.uid, createdAt: at(3, 10, 0), linkedByUid: OWNER.uid },
+];
 let streamSeq = 0;
 
 function record(who: "you" | "ship", text: string, createdAt: number, runId: string): ConversationMessage {
@@ -847,8 +881,8 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
   switch (call) {
     case "sys.connect":
       world.sockets.add(socket);
-      // Reconnecting after the card was dismissed resumes the welcome, as the Kernel does on sign-in.
-      if (fresh && window.localStorage.getItem(WELCOME_SEEN) === "1") void wake();
+      // Signing in wakes a fresh Ship for its welcome, as the Kernel does.
+      if (fresh) void wake();
       return respond(id, connectResult(connectArgs.safeParse(args).data?.protocol ?? 4));
     case "sys.token.create": {
       const token: SysTokenCreateResult = { token: { tokenId: SEEDED_TOKEN_ID, token: "mock-session-token", tokenPrefix: "mock", uid: OWNER.uid, kind: "human", label: "gsv-ui-session", peerId: null, createdAt: Date.now(), expiresAt: tokenArgs.parse(args).expiresAt ?? null } };
@@ -868,10 +902,62 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       const storage = STORED_CONFIG.get(key);
       if (!storage) return refuse(id, 501, `The mock gateway does not implement ${call} for ${key}.`);
       window.localStorage.setItem(storage, value);
-      if (fresh && storage === WELCOME_SEEN && value === "1") void wake();
       return respond(id, { ok: true });
     }
     case "account.list": return respond(id, { accounts });
+    case "event.source.list": return respond(id, { sources: mockEventSources });
+    case "event.source.update": {
+      // SAFETY: the Settings page in this tab sends these shapes.
+      const change = args as { name: string; notify?: "none" | "messenger"; ship?: "none" | "context" | "wake"; enabled?: boolean };
+      const source = mockEventSources.find((entry) => entry.name === change.name);
+      if (source) Object.assign(source, change);
+      return respond(id, { source });
+    }
+    case "event.source.add": {
+      // SAFETY: the Settings page in this tab sends these shapes.
+      const input = args as EventSourceAddArgs;
+      const webhook = input.webhook ?? "none";
+      const senderSecret = input.senderSecret === true || input.secret !== undefined;
+      const source: EventSource = {
+        sourceId: `src_${input.name}`, name: input.name, label: input.name, notify: "messenger", ship: "none",
+        shipChoices: webhook === "url" ? ["none", "context"] : ["none", "context", "wake"], webhook,
+        ...(input.hmac ? { hmac: input.hmac } : undefined),
+        ...(senderSecret ? { senderSecret: true } : undefined),
+        ...(senderSecret && !input.secret ? { awaitingSecret: true } : undefined),
+        enabled: true, createdBy: "person", updatedAtMs: Date.now(),
+      };
+      mockEventSources.push(source);
+      return respond(id, { source, ...(webhook === "none" ? undefined : { webhookUrl: `https://esteve.ship.space/hooks/src_${input.name}` }), ...(webhook === "none" || webhook === "url" || senderSecret ? undefined : { secret: "mock-secret" }) });
+    }
+    case "event.source.rotate": {
+      // SAFETY: the Work page in this tab sends these shapes.
+      const input = args as { name: string; secret?: string };
+      const source = mockEventSources.find((entry) => entry.name === input.name);
+      if (source && input.secret) delete source.awaitingSecret;
+      return respond(id, { source, ...(input.secret ? undefined : { secret: "mock-secret-2" }) });
+    }
+    case "event.list": {
+      // SAFETY: the Work page in this tab sends these shapes.
+      const name = (args as { source?: string }).source;
+      const source = mockEventSources.find((entry) => entry.name === name);
+      return respond(id, { events: source ? MOCK_EVENTS.filter((event) => event.sourceId === source.sourceId) : MOCK_EVENTS });
+    }
+    case "event.source.remove": {
+      // SAFETY: the Settings page in this tab sends these shapes.
+      const name = (args as { name: string }).name;
+      const index = mockEventSources.findIndex((entry) => entry.name === name);
+      if (index >= 0) mockEventSources.splice(index, 1);
+      return respond(id, { removed: index >= 0 });
+    }
+    case "notify.rule.list": return respond(id, { rules: noticeRules });
+    case "notify.rule.set": {
+      const change = z.object({ kind: z.string(), notify: z.enum(["none", "messenger"]).optional(), ship: z.enum(["none", "context", "wake"]).optional() }).parse(args);
+      const current = noticeRules.find((entry) => entry.kind === change.kind);
+      if (!current) throw new Error(`Unknown kind: ${change.kind}`);
+      const rule: NoticeRule = { ...current, notify: change.notify ?? current.notify, ship: change.ship ?? current.ship, changedBy: "person", updatedAtMs: Date.now() };
+      noticeRules = noticeRules.map((entry) => entry === current ? rule : entry);
+      return respond(id, { rule });
+    }
     case "sys.target.list": return respond(id, { targets });
     case "sys.ledger.list": return respond(id, { lines: [...world.ledger].reverse(), nextCursor: null });
     case "proc.list": return respond(id, { processes: processes() });
@@ -940,11 +1026,13 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     /* Settings › Messengers: every messenger is deployed and unlinked, so each pairing flow can be looked at */
     case "adapter.list": return respond(id, { adapters: ["telegram", "slack", "discord", "whatsapp"].map((adapter) => ({ adapter, available: true, enabled: true, canLink: true,
-      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true, accounts: [] })) });
+      supportsConnect: true, supportsDisconnect: true, supportsSend: true, supportsStatus: false, supportsActivity: false, supportsPairing: true,
+      /* A linked messenger reports its account as connected; disconnecting drops both. */
+      accounts: messengerLinks.filter((link) => link.adapter === adapter).map((link) => ({ accountId: link.accountId, connected: true, authenticated: true })) })) });
     case "adapter.pair.info": {
       const { adapter } = z.object({ adapter: z.string() }).parse(args);
       return respond(id, { adapter, accountId: `mock-${adapter}`, configured: true,
-        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink" } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
+        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink", unreachableCallingCodes: ["55", "62"] } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
     }
     case "adapter.pair.inspect": {
       const { adapter, code } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
@@ -953,6 +1041,8 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "adapter.pair.confirm": {
       const { adapter } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
+      // The link shows up in Settings and on the first-run screen, as the Kernel's identity link would.
+      if (!messengerLinks.some((link) => link.adapter === adapter)) messengerLinks.push({ adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", uid: OWNER.uid, linkedByUid: OWNER.uid, createdAt: Date.now() });
       return respond(id, { paired: true, adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", surfaceId: "mock-surface", uid: OWNER.uid });
     }
     case "contact.list": return respond(id, { contacts: fresh ? [] : [maraContact] });
@@ -1035,7 +1125,6 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
-    case "sys.link.list": return respond(id, { links: [] });
     case "sys.pair.create": {
       const { id: pairingId, targetId, label } = z.object({ id: z.string(), targetId: z.string(), label: z.string() }).parse(args);
       const existing = pairings.find((pairing) => pairing.id === pairingId);
@@ -1053,12 +1142,26 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       pairing.state = "cancelled";
       return respond(id, { pairing });
     }
+    case "sys.link.list": return respond(id, { links: messengerLinks });
+    case "adapter.pair.disconnect": {
+      const { adapter, accountId, actorId } = z.object({ adapter: z.string(), accountId: z.string(), actorId: z.string() }).parse(args);
+      const before = messengerLinks.length;
+      messengerLinks = messengerLinks.filter((link) => !(link.adapter === adapter && link.accountId === accountId && link.actorId === actorId));
+      return respond(id, { disconnected: messengerLinks.length < before, adapter, accountId, actorId });
+    }
     case "r12y.list": {
       const { states, includeTerminal, offset = 0, limit = 100 } = responsibilityListArgs.parse(args);
       const records = responsibilities.filter((record) => states ? states.includes(record.state) : includeTerminal || !["resolved", "cancelled"].includes(record.state));
       return respond(id, { responsibilities: records.slice(offset, offset + limit), count: records.length, revision: 1 });
     }
-    case "r12y.source.list": return respond(id, { sources: [] });
+    case "r12y.source.list": return respond(id, { sources: responsibilitySources });
+    case "r12y.source.update": {
+      const update = z.object({ id: z.string(), enabled: z.boolean() }).parse(args);
+      const source = responsibilitySources.find((entry) => entry.id === update.id);
+      if (!source || source.control !== "configurable") return refuse(id, 403, "This responsibility is always on");
+      source.enabled = update.enabled;
+      return respond(id, { source });
+    }
     case "r12y.get": {
       const { id: recordId } = z.object({ id: z.string() }).parse(args);
       const responsibility = responsibilities.find((record) => record.id === recordId);

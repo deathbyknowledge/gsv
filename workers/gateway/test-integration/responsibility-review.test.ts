@@ -3,45 +3,44 @@ import type { ScriptedOpenAiResponse } from "./openai-fixture";
 import { startProcessRuntimeHarness } from "./process-runtime-harness";
 
 describe("waiting responsibility reviews", () => {
-  it("commits an onboarding reply before Ship handles the work that blocks yielding", async () => {
+  it("commits a reply before Ship handles the work that blocks yielding", async () => {
     const runtime = await startProcessRuntimeHarness();
     const releases: Array<() => void> = [];
     try {
       const ship = (await runtime.client.proc.list({})).processes.find(({ personal }) => personal);
       if (!ship) throw new Error("Setup did not create Ship");
+      await runtime.settleWelcome();
       await runtime.configureAi(ship.pid);
       await runtime.client.sys.config.set({ key: `users/${ship.uid}/ai/tools/approval`, value: JSON.stringify({ default: "auto", rules: [] }) });
       const { conversation } = await runtime.client.conversation.ship({});
+      const greeted = (await runtime.client.conversation.history({ conversationId: conversation.id })).messages.length;
       const text = "What would you like me to look up?";
-      // The owner's first message activates onboarding, so its id is known only once that step is requested.
+      // The responsibility arrives while the run is active, so its id is known only once that step is requested.
       const update = (id: string, patch: string): ScriptedOpenAiResponse => ({ kind: "tool-calls", calls: [{ id, name: "Shell", arguments: { input: patch } }] });
-      const begin = runtime.ai.hold(update("begin-onboarding", "true"));
+      const begin = runtime.ai.hold(update("begin-question", "true"));
       releases.push(begin.release);
-      const reply = runtime.ai.hold({ kind: "tool-calls", calls: [{ id: "onboarding-question", name: "Send", arguments: { text, yield: true } }] });
+      const reply = runtime.ai.hold({ kind: "tool-calls", calls: [{ id: "ask-question", name: "Send", arguments: { text, yield: true } }] });
       releases.push(reply.release);
       const held = runtime.ai.hold(update("wait-for-answer", "true"));
       releases.push(held.release);
-      runtime.ai.enqueue({ kind: "tool-calls", calls: [{ id: "finish-onboarding-turn", name: "Send", arguments: { yield: true } }] });
+      runtime.ai.enqueue({ kind: "tool-calls", calls: [{ id: "finish-turn", name: "Send", arguments: { yield: true } }] });
       const sent = await runtime.client.proc.send({ pid: ship.pid, message: "Hello, I would like some help." });
       if (!sent.ok) throw new Error(sent.error);
       await begin.started;
-      const onboarding = (await runtime.client.r12y.list({})).responsibilities.find(
-        ({ details }) => details?.responsibilityType === "onboarding.initial",
-      );
-      if (!onboarding) throw new Error("The first message did not activate the onboarding responsibility");
-      begin.release(update("begin-onboarding", `r12y update ${onboarding.id} --json '{"state":"active","blocker":null}'`));
+      const { responsibility: question } = await runtime.client.r12y.create({ title: "Find out what to look up" });
+      begin.release(update("begin-question", `r12y update ${question.id} --json '{"state":"active","blocker":null}'`));
       await reply.started;
       await runtime.waitFor(async () => {
         const history = await runtime.client.proc.history({ pid: ship.pid, format: 2 });
         return history.ok && history.format === 2 && history.records.some((record) =>
           record.kind === "event" && record.payload.kind === "responsibility.ready"
-          && record.payload.payload.responsibilityIds.includes(onboarding.id));
-      }, "onboarding responsibility batch to reach the active run");
+          && record.payload.payload.responsibilityIds.includes(question.id));
+      }, "responsibility batch to reach the active run");
       reply.release();
       await held.started;
 
       const messages = await runtime.client.conversation.history({ conversationId: conversation.id });
-      expect(messages.messages.filter(({ author }) => author.kind === "process").map(({ text }) => text)).toEqual([text]);
+      expect(messages.messages.slice(greeted).filter(({ author }) => author.kind === "process").map(({ text }) => text)).toEqual([text]);
       expect(await runtime.client.proc.history({ pid: ship.pid })).toMatchObject({ activeRunId: sent.runId });
       expect(runtime.signals).toContainEqual(expect.objectContaining({
         signal: "message.committed", payload: expect.objectContaining({ message: expect.objectContaining({ text }) }),
@@ -49,13 +48,13 @@ describe("waiting responsibility reviews", () => {
       expect(runtime.signals.some(({ signal }) => signal === "message.aborted")).toBe(false);
       const continuation = JSON.stringify(runtime.ai.requests.at(-1)?.messages);
       expect(continuation).toContain("Message committed; run remains active");
-      expect(continuation).toContain(onboarding.id);
+      expect(continuation).toContain(question.id);
 
-      held.release(update("wait-for-answer", `r12y update ${onboarding.id} --json '{"state":"waiting","blocker":"Waiting for your answer"}'`));
+      held.release(update("wait-for-answer", `r12y update ${question.id} --json '{"state":"waiting","blocker":"Waiting for your answer"}'`));
       await runtime.waitFor(async () => {
         const history = await runtime.client.proc.history({ pid: ship.pid });
         return history.ok && history.activeRunId === null;
-      }, "Ship to yield after deferring onboarding");
+      }, "Ship to yield after deferring the question");
       expect((await runtime.client.conversation.history({ conversationId: conversation.id })).messages).toEqual(messages.messages);
     } finally {
       for (const release of releases) release();
@@ -71,6 +70,7 @@ describe("waiting responsibility reviews", () => {
     try {
       const ship = (await runtime.client.proc.list({})).processes.find(({ personal }) => personal);
       if (!ship) throw new Error("Setup did not create Ship");
+      await runtime.settleWelcome();
       await runtime.configureAi(ship.pid);
       await runtime.client.sys.config.set({ key: `users/${ship.uid}/ai/tools/approval`, value: JSON.stringify({ default: "auto", rules: [] }) });
       const { conversation } = await runtime.client.conversation.ship({});

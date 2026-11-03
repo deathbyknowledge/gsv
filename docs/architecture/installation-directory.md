@@ -254,10 +254,17 @@ and provider logs require operator-specific retention or deletion evidence;
 routing retirement alone proves neither. See the
 [operator cleanup guide](../how-to/operate-gsv.md#connect-services-and-verify-cleanup).
 
-Root recovery authenticates the current verified owner and requires fresh
+Owner recovery authenticates the current verified owner and requires fresh
 verification bound to the exact recovery attempt. An ordinary owner session is
-insufficient. Accounts authorizes the operation; the Kernel changes local root
-credentials. Verification mail is independent of the space being recovered.
+insufficient. Accounts authorizes the operation; the Kernel changes the local
+credentials. A Ship has one person, so the owner can already reach both of its
+accounts, and the single claim's receiver spends it on the personal password or
+root's. Verification mail is independent of the space being recovered.
+
+The Ship's sign-in page finds the owner page through `account.recovery.options`,
+built from `GSV_OWNER_SIGNUP_URL`'s origin and the Ship's own handle. Like the
+setup link, it carries no authority. The owner page gives the same answer whether
+or not an email owns a handle, including when a send limit applied.
 
 ## Schema
 

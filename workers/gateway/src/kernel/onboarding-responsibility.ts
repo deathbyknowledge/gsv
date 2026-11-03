@@ -138,7 +138,7 @@ export class InitialOnboarding {
 /** Admit the person's message before scheduling recovery of newly activated work. */
 export async function withInitialOnboarding<T>(
   ownerUid: number | undefined,
-  ctx: KernelContext,
+  ctx: Pick<KernelContext, "welcome" | "reconcileResponsibilityWake" | "defer">,
   deliver: () => Promise<T>,
 ): Promise<T> {
   const activated = ownerUid !== undefined && ctx.welcome.activate(ownerUid);

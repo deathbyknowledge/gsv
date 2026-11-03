@@ -1,10 +1,5 @@
 /* Tag — dot pulse for in-progress states (the rest of the component is
    inline-styled; only the animation needs a stylesheet). */
-/* The dot's neon glow switches off on the light themes through --gsv-tag-glow
-   (the blur radius), which the light theme roots zero out. */
-:is(.instrument.is-light, .gsv-auth-theme.is-light) {
-  --gsv-tag-glow: 0px;
-}
 @keyframes gsvTagPulse {
   0%,
   100% {

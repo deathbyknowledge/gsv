@@ -528,6 +528,124 @@ only.
 than 100,000 characters comes back cut short, with `truncated` set; the whole
 message stays readable at `textPath`.
 
+## Custom events: `event.source.*`, `event.emit`, `event.list`
+
+A source is somewhere an owner's events come from. Each event takes one path, whichever
+way it arrived: the shell's `event emit`, `gsv event`, a routine, or a delivery to the
+source's public address. The Kernel records who sent it from the caller, never from
+the event.
+
+```ts
+type EventInput = { id?: string; title: string; preview?: string; body?: string };
+type EventSourceWebhook = "none" | "url" | "standard" | "hmac";
+type WebhookHmac = {
+  header: string; encoding: "hex" | "base64"; prefix?: string;
+  pairs?: { timestamp: string; signature: string };
+  idHeader?: string; typeHeader?: string;
+};
+
+interface EventSyscalls {
+  "event.source.list": { args: {}; result: { sources: EventSource[] } };
+  "event.source.add": {
+    args: { name: string; label?: string; notify?: NoticeDelivery; ship?: ShipOutcome;
+      webhook?: EventSourceWebhook; hmac?: WebhookHmac; senderSecret?: boolean; secret?: string;
+      expectEveryMs?: number };
+    result: { source: EventSource; secret?: string; webhookUrl?: string };
+  };
+  "event.source.update": {
+    args: { name: string; label?: string; notify?: NoticeDelivery; ship?: ShipOutcome;
+      enabled?: boolean; expectEveryMs?: number | null };
+    result: { source: EventSource };
+  };
+  "event.source.rotate": { args: { name: string; secret?: string }; result: { source: EventSource; secret?: string; webhookUrl?: string } };
+  "event.source.remove": { args: { name: string }; result: { removed: boolean } };
+  "event.emit": { args: { source: string; events: EventInput[] }; result: { accepted: number; duplicates: number } };
+  "event.list": { args: { source?: string; limit?: number }; result: { events: EventRecord[] } };
+}
+```
+
+Only a signed-in person or their Ship manages sources, under the `event.*` capability;
+any of the owner's processes and routines may emit. A new source tells its owner and leaves
+Ship out, and it has no public address unless `webhook` asks for one. Ship setting a source to
+`wake` needs approval (`event.source.update`), and Ship turning off telling or starting
+to act tells its owner.
+
+While the owner is active in a client, or has no messenger, an event appears as a card in their
+conversation rather than on the messenger, and stays out of model context unless the source's `ship` says otherwise. A source going quiet still goes to the messenger.
+
+An `id` already seen for a source is a duplicate and does nothing, for 180 days, and doesn't count against the source's rate limit. Bodies are
+kept for 30 days. Each source accepts 60 events a minute with bursts of 120, and each
+owner 600 a minute. With `expectEveryMs`, the owner is told once when that long passes
+without an event.
+
+An event's words are untrusted wherever they end up. An event from a running process
+never wakes Ship.
+
+A source with a webhook takes a `POST` at `/hooks/<sourceId>`, with a body of up to 256 KiB.
+A webhook names how a delivery proves its sender, never who the sender is. `standard` checks
+the [Standard Webhooks](https://www.standardwebhooks.com/) signature. `hmac` checks an
+HMAC-SHA256 with the source's secret, in `hmac.header`, encoded as `hmac.encoding` after an
+optional `hmac.prefix`. It covers the body, or, with `hmac.pairs`, the header holds
+comma-separated `KEY=VALUE` pairs with a Unix timestamp under `pairs.timestamp`, within five
+minutes, and signatures under `pairs.signature`, each covering `TIMESTAMP.BODY`. One scheme
+covers many senders: GitHub, Shopify and Linear sign the body; Stripe uses the pairs. Clients
+offer such senders as presets that fill in `hmac`.
+
+An event's id comes from `hmac.idHeader`, Standard Webhooks' `webhook-id`, or the body's `id`.
+Its title is `hmac.typeHeader` with the body's `action`, or else the body's `title`, `subject`,
+`type` or `event`.
+
+A rotated secret keeps working for 24 hours. With `senderSecret`, the sender issues the secret:
+`secret` gives it when adding, or `event.source.rotate`'s `secret` gives it later, and until
+then the source shows `awaitingSecret` and refuses every delivery. A sender-issued secret is
+never returned. `url` is for senders that can't sign: the address `/hooks/<sourceId>/<token>`
+is the only proof, only its hash is stored, and such a source can't be set to `wake`.
+Request logs on the way may record that address, so treat it as a low-trust channel. A secret
+or secret address is returned once.
+
+## Notification settings: `notify.rule.list`, `notify.rule.set`, `notify.rule.reset`
+
+Each person decides, for each kind of thing that happens, whether their messenger
+hears about it and what their Ship does. The signed-in person or their Ship may
+call these, under the `notify.rule.*` capability; any other process is refused.
+
+```ts
+type NoticeKind =
+  | "contact.request" | "contact.message" | "contact.invite.accepted"
+  | "mail.received" | "machine.added" | "adapter.connected" | "adapter.auth_required";
+type NoticeDelivery = "none" | "messenger";
+type ShipOutcome = "none" | "context" | "wake"; // context records it without starting a run
+type NoticeRule = {
+  kind: NoticeKind;
+  notify: NoticeDelivery;
+  ship: ShipOutcome;
+  defaultNotify: NoticeDelivery;
+  defaultShip: ShipOutcome;
+  shipChoices: ShipOutcome[]; // contact kinds never allow wake
+  changedBy?: "person" | "ship"; // absent while the kind is at its default
+  updatedAtMs?: number;
+};
+
+type NotifySyscalls = {
+  "notify.rule.list": { args: {}; result: { rules: NoticeRule[] } };
+  "notify.rule.set": { args: { kind: NoticeKind; notify?: NoticeDelivery; ship?: ShipOutcome }; result: { rule: NoticeRule } };
+  "notify.rule.reset": { args: { kind: NoticeKind }; result: { rule: NoticeRule } };
+};
+```
+
+`notify.rule.list` returns every kind, including those still at their default.
+Contact kinds default to `messenger` and `context`; the others default to `none`
+and `wake`. `notify.rule.set` changes only what it names and refuses an outcome the
+kind's `shipChoices` doesn't include. A notice change applies when a notice is about
+to be sent, so turning a kind off also holds back notices already waiting.
+`notify.rule.reset` returns a kind to its default.
+
+`wake` for the four non-contact kinds is the same setting as their configurable
+responsibility source, so `r12y source enable|disable` and these rules can't disagree.
+When Ship itself turns off `notify` or sets `wake`, the owner's messenger is told,
+whatever their rules say and even while a client is active. An owner with no
+messenger sees the change marked on that rule in Settings.
+
 ## Web search: `web.search`
 
 Indexed web search uses the targetable `web.search` syscall, exposed as the
@@ -1958,12 +2076,12 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
+| `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates the credential, derives the principal kind, returns independent call/signal/implementation grants, registers peers that implement syscalls as route targets, closes older sessions for the same logical peer, and ensures a human user's personal intelligence exists. A human owner's sign-in starts their pending welcome in the background; later sign-ins recover its wake without reopening handled work. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone and owner language preference, optional profile choice, optional AI config, optional machine token, home layout, and imports the manual. Built-in skills are served from `/sys/skills.d` rather than copied into homes. Username, password, timezone, and BCP 47 language are validated. The Kernel prepares onboarding outside the model-visible ledger until the owner dismisses the welcome card or sends their first Ship message, then creates an open responsibility with no blocker. Retries preserve handled work. Setup recovery identifies the human separately from locked agent accounts. On a managed installation, a step that fails after the request is accepted answers `503` with a diagnostic ID, and the person can retry with the same credentials; a refused request answers `400` with its reason. That retry's password check is paced like `sys.connect`'s, and refuses with the same wait message while the account waits. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, personal agent and owned Crew account, optional timezone and owner language preference, optional profile choice, optional AI config, optional machine token, home layout, and imports the manual. Built-in skills are served from `/sys/skills.d` rather than copied into homes. Username, password, timezone, and BCP 47 language are validated. The Kernel prepares onboarding outside the model-visible ledger until the owner first signs in or sends their first Ship message, then creates an open responsibility with no blocker. Retries preserve handled work. Setup recovery identifies the human separately from locked agent accounts. On a managed installation, a step that fails after the request is accepted answers `503` with a diagnostic ID, and the person can retry with the same credentials; a refused request answers `400` with its reason. That retry's password check is paced like `sys.connect`'s, and refuses with the same wait message while the account waits. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual` and registers it as a public system repository. The gateway's bundled skills are served read-only at `/sys/skills.d`, not copied into homes. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is the compatible immutable revision in `workers/gateway/src/kernel/sys/manual-version.json`. Existing installations refresh on authenticated activity when that revision changes; failures retain the installed copy and local edits are preserved. `wiki refresh gsv-manual` refreshes only the Manual. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
-| `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write permitted user-overridable keys for their own account and delegated agents, including `users/<uid>/ai/` and `users/<uid>/ui/`. Instrument stores `"1"` at `users/<uid>/ui/welcome_card_seen` when the person dismisses the welcome card, so the dismissal follows the account across web and Desktop. A direct human write of this flag for their own account activates pending onboarding as an open responsibility and reconciles its wake before acknowledgment; retries do not reopen handled work. Reconnecting recovers a saved dismissal in the background without delaying sign-in. Values are coerced with `String(value)`. |
+| `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write permitted user-overridable keys for their own account and delegated agents, including `users/<uid>/ai/` and `users/<uid>/ui/`. Values are coerced with `String(value)`. |
 | `sys.feedback` | `handleSysFeedback` | Sends an explicit report to the optional operator `FEEDBACK` service. Requires authentication and `sys.feedback`. Arguments contain an optional UUID `id` for retry correlation and optional `context` with `view`, `platform`, and app `version`. A required UTF-8 JSON body carries `message` (1–8,000 characters) and optional `activity` (at most 20 message groups and 64,000 characters); the body is limited to 512 KiB. Report content stays out of syscall ledger arguments, and service exceptions become a generic delivery error. Kernel attaches the trusted installation, space origin, caller's human owner and server version. Returns `{ id }` after the service accepts it. Delivery has a ten-second deadline; timeout or caller cancellation disposes the remote call. Reuse the report ID when retrying an uncertain delivery. |
 | `sys.target.list` | `handleSysTargetList` | Lists targets accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
 | `sys.target.get` | `handleSysTargetGet` | Reads one target descriptor. Missing or inaccessible targets return `target: null` rather than a permission error. |
@@ -2191,9 +2309,10 @@ type SystemSyscalls = {
     args: { id: string; secret: string };
     result: { url: string; expiresAt: number };
   };
+  "account.recovery.options": { args: Record<string, never>; result: { emailUrl?: string } };
   "account.recovery.redeem": {
-    args: { id: string; secret: string; proof: string; password: string };
-    result: { username: "root" };
+    args: { id: string; secret: string; proof: string; password: string; account?: "personal" | "administrator" };
+    result: { username: string };
   };
   "account.recovery.code.start": { args: { id: string; username?: string; proof: string }; result: { accepted: true; expiresAt: number } };
   "account.recovery.code.redeem": { args: { id: string; proof: string; code: string; password: string }; result: { username: string } };
@@ -2216,12 +2335,20 @@ Existing account UIDs, homes and credentials are preserved.
 immutable installation identity to Accounts. The browser then verifies the
 external owner through the configured identity provider. `account.recovery.redeem`
 is available before connection authentication, behind the ordinary installation
-work gate. Accounts authorizes only a short-lived root-reset claim through its
-deployment-granted recovery binding; redemption atomically consumes the claim,
-updates root's password, and revokes earlier root credentials and sessions.
-The receiving browser persists its random proof before redemption. Identical
-retries recover the receipt without rewriting the password; another proof or
-password cannot reuse a consumed claim. Secrets are excluded from the ledger.
+work gate. Accounts authorizes only a short-lived claim for the verified owner
+through its deployment-granted recovery binding; redemption atomically consumes
+the claim, updates the password of the chosen `account`, and revokes that account's
+earlier credentials and sessions. `account` is `personal` or `administrator`;
+omitting it means `administrator`. A personal account that is locked, disabled or
+absent answers with `details.recovery: "personal-unavailable"` and leaves the claim
+usable. The receiving browser persists its random proof before redemption.
+Identical retries recover the receipt without rewriting the password; another
+proof, password or account cannot reuse a consumed claim. Secrets are excluded from
+the ledger.
+
+`account.recovery.options` is available before connection authentication and
+returns the operator's owner recovery page for this Ship, when one is configured.
+The link is navigation only and says nothing about who owns the Ship.
 
 Member recovery is available before authentication through `account.recovery.code.start`
 and `account.recovery.code.redeem`. The browser persists its UUID and 32-byte proof

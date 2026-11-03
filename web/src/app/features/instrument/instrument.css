@@ -485,6 +485,14 @@
   --label: #4a4677;
   --text-muted: #5f5a8e;
   --text-dim: #6d6899;
+  --prose-dim: #6d6899; /* dim prose / blurb body (AA 4.66:1 on the page) */
+  /* Status dots: lighter than the AA text tones, still >=3:1 on the page (idle is the off state). */
+  --dot-online: #139e5b;
+  --dot-error: #dd6177;
+  --dot-update: #be7c00;
+  --dot-warn: #bd7b00;
+  --dot-live: #8983c9;
+  --dot-idle: #b3afd6;
   --faint: #a7a3c8;
   --glyph: #6b5fd6;
   --star: #b8b2e6;

@@ -36,7 +36,7 @@ describe("setup welcome", () => {
     await harness.close();
   });
 
-  it("recovers setup, waits for popup dismissal, then wakes Ship once with its language", async () => {
+  it("recovers setup, then wakes Ship once with its language when the owner first signs in", async () => {
     const setup = new GSVClient();
     await expect(setup.requestOnce(endpoint, "sys.connect", { protocol: 4,
       peer: { id: "setup-probe", version: "test", platform: "browser" } })).rejects.toMatchObject({
@@ -57,12 +57,7 @@ describe("setup welcome", () => {
     await client.connect();
     const connected = client;
     const { conversation } = await connected.conversation.ship({});
-    const { responsibilities } = await connected.r12y.list({});
-    expect(responsibilities.some((record) => record.details?.responsibilityType === "onboarding.initial")).toBe(false);
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-    expect(await recorder.listScriptedManagedRequests(INSTALLATION)).toEqual([]);
-    await connected.sys.config.set({ key: "users/1000/ui/welcome_card_seen", value: "1" });
-    await until(async () => (await recorder.listScriptedManagedRequests(INSTALLATION)).length > 0, "popup dismissal to wake Ship without a chat message");
+    await until(async () => (await recorder.listScriptedManagedRequests(INSTALLATION)).length > 0, "sign-in to wake Ship without a chat message");
     const initial = (await recorder.listScriptedManagedRequests(INSTALLATION))[0]!;
     const prompt = initial.systemPrompt ?? "";
     expect(prompt.includes("Preferred language: es-MX")).toBe(true);
@@ -82,7 +77,10 @@ describe("setup welcome", () => {
     expect(messages[0]).toMatchObject({ text: GREETING, author: { kind: "process" } });
     expect(messages.some((message) => message.author.kind === "user")).toBe(false);
 
-    await connected.sys.config.set({ key: "users/1000/ui/welcome_card_seen", value: "1" });
+    const again = new GSVClient({ url: endpoint, username: args.username, password: PASSWORD,
+      peer: { id: "welcome-test-again", platform: "browser", version: "test" } });
+    clients.push(again);
+    await again.connect();
     await expect(setup.requestOnce(endpoint, "sys.setup", args)).rejects.toBeDefined();
     expect((await connected.r12y.get({ id: welcome.id })).responsibility.state).toBe("waiting");
     await connected.sys.config.set({ key: "users/1000/locale/language", value: "fr" });
@@ -106,8 +104,6 @@ describe("setup welcome", () => {
     clients.push(client);
     await client.connect();
     const connected = client;
-    expect(await recorder.listScriptedManagedRequests(INSTALLATION)).toEqual([]);
-    await connected.sys.config.set({ key: "users/1000/ui/welcome_card_seen", value: "1" });
     await until(async () => (await recorder.listScriptedManagedRequests(INSTALLATION)).length === 1, "initial welcome generation");
     const first = (await recorder.listScriptedManagedRequests(INSTALLATION))[0]!;
     expect(first.systemPrompt.includes("Preferred language: en")).toBe(true);
@@ -129,57 +125,19 @@ describe("setup welcome", () => {
     expect(history.map((message) => message.text)).toEqual(["Hola, soy Rosa. Ayúdame con mis correos.", "Hola, Rosa. Empecemos con tus correos."]);
   });
 
-  it("honors a user message before dismissal without starting another welcome afterwards", async () => {
+  it("never repeats the handled welcome on a later sign-in", async () => {
     await new GSVClient().requestOnce(endpoint, "sys.setup", {
-      onboardingToken: "integration-onboarding-default", username: "direct-owner", password: PASSWORD, language: "en",
+      onboardingToken: "integration-onboarding-default", username: "returning-owner", password: PASSWORD, language: "es",
     });
-    const client = new GSVClient({ url: endpoint, username: "direct-owner", password: PASSWORD,
-      peer: { id: "direct-input-test", platform: "browser", version: "test" } });
-    clients.push(client);
-    await client.connect();
-    const connected = client;
-    const { conversation } = await connected.conversation.ship({});
-    expect(await recorder.listScriptedManagedRequests(INSTALLATION)).toEqual([]);
-    await connected.conversation.send({ conversationId: conversation.id, text: "Hola, soy Rosa. Ayúdame con mis correos.", idempotencyKey: "before-dismissal" });
-    await until(async () => (await recorder.listScriptedManagedRequests(INSTALLATION)).length > 0, "first message to activate onboarding");
-    const welcome = (await connected.r12y.list({})).responsibilities.find((record) => record.details?.responsibilityType === "onboarding.initial")!;
-    expect(welcome.state).toBe("open");
-    expect(welcome.blocker).toBeUndefined();
-    const first = (await recorder.listScriptedManagedRequests(INSTALLATION))[0]!;
-    expect(first.systemPrompt).toContain("onboarding.initial");
-    expect(first.systemPrompt).not.toContain("Waiting for the user to dismiss the welcome card");
-    expect(first.messages).toContain("Hola, soy Rosa");
-    await recorder.scriptManagedInference(INSTALLATION, [waitForUser(welcome.id), "message send --message 'Hola, Rosa. Empecemos con tus correos.' && yield"]);
-    await until(async () => (await connected.conversation.history({ conversationId: conversation.id })).messages.length === 2, "direct reply before dismissal");
-    const count = (await recorder.listScriptedManagedRequests(INSTALLATION)).length;
-    await connected.sys.config.set({ key: "users/1000/ui/welcome_card_seen", value: "1" });
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-    expect((await recorder.listScriptedManagedRequests(INSTALLATION)).length).toBe(count);
-    expect((await connected.r12y.get({ id: welcome.id })).responsibility.state).toBe("waiting");
-  });
-
-  it("resumes an initialized installation with a saved dismissal and never repeats the handled welcome", async () => {
-    await new GSVClient().requestOnce(endpoint, "sys.setup", {
-      onboardingToken: "integration-onboarding-default", username: "returning-owner", password: PASSWORD,
-      rootPassword: PASSWORD, language: "es",
-    });
-    const root = new GSVClient({ url: endpoint, username: "root", password: PASSWORD });
-    clients.push(root);
-    await root.connect();
-    await root.sys.config.set({ key: "users/1000/ui/welcome_card_seen", value: "1" });
-    expect(await recorder.listScriptedManagedRequests(INSTALLATION)).toEqual([]);
-    root.close();
-
     let owner = new GSVClient({ url: endpoint, username: "returning-owner", password: PASSWORD,
       peer: { id: "returning-owner", platform: "browser", version: "test" } });
     clients.push(owner);
     await owner.connect();
-    const connected = owner;
-    const { conversation } = await connected.conversation.ship({});
-    await until(async () => (await recorder.listScriptedManagedRequests(INSTALLATION)).length > 0, "saved dismissal to resume onboarding on reconnect");
-    const welcome = (await connected.r12y.list({})).responsibilities.find((record) => record.details?.responsibilityType === "onboarding.initial")!;
+    const { conversation } = await owner.conversation.ship({});
+    await until(async () => (await recorder.listScriptedManagedRequests(INSTALLATION)).length > 0, "sign-in to wake Ship");
+    const welcome = (await owner.r12y.list({})).responsibilities.find((record) => record.details?.responsibilityType === "onboarding.initial")!;
     await recorder.scriptManagedInference(INSTALLATION, [waitForUser(welcome.id), `message send --message '${GREETING}' && yield`]);
-    await until(async () => (await connected.conversation.history({ conversationId: conversation.id })).messages.length === 1, "recovered welcome");
+    await until(async () => (await owner.conversation.history({ conversationId: conversation.id })).messages.length === 1, "welcome");
     const count = (await recorder.listScriptedManagedRequests(INSTALLATION)).length;
     owner.close();
     owner = new GSVClient({ url: endpoint, username: "returning-owner", password: PASSWORD });
