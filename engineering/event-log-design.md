@@ -62,14 +62,12 @@ after
             ▼
   runner        one task, one retry rule per consumer, one gate check
             ├─▶ personal:<uid>   the Ship, whatever its pid   deliverEvent
-            ├─▶ proc:<pid>       one process                  deliverEvent
-            ├─▶ inbox:<contact>  a contact's inbound message  Conversation append
-            ├─▶ crew:<uid>       memory reviews               Crew Ticket start
-            ├─▶ notices:<uid>    the owner's messenger        notice send
-            ├─▶ route:<id>       one messenger chat           adapter.send
-            ├─▶ contact:<id>     a contact's Ship             federation XRPC
-            └─▶ mail:<uid>       outbound mail                the outbound mail Queue
+            └─▶ proc:<pid>       one process                  deliverEvent
 ```
+
+Outboxes keep their own tasks: adapter route sends, the federation outbox,
+outbound mail and the owner's messenger notices. Each may append an event in
+the transaction that records its outcome (see Chained events).
 
 An event:
 
@@ -123,8 +121,8 @@ CREATE INDEX events_created ON events (created_at);
 
 CREATE TABLE deliveries (
   seq INTEGER NOT NULL REFERENCES events (seq) ON DELETE CASCADE,
-  consumer TEXT NOT NULL,          -- "personal:7", "proc:<pid>", "route:<id>"
-  lane TEXT,                       -- order within the consumer; NULL once redelivered
+  consumer TEXT NOT NULL,          -- "personal:7" or "proc:<pid>"
+  lane TEXT,                       -- order within the consumer; NULL goes whenever due
   state TEXT NOT NULL CHECK (state IN ('pending', 'delivered', 'withdrawn', 'failed')),
   attempt_count INTEGER NOT NULL DEFAULT 0,
   next_attempt_at INTEGER NOT NULL,
@@ -167,9 +165,8 @@ private async pass(taskId: string): Promise<void> {
   is today. The task only carries retries.
 - **Lanes.** A lane is the order key within one consumer. The Ship has two.
   `person` carries chat and messengers. `background` carries everything else,
-  in per-owner order as `ship_events` keeps it today. A person's message never
-  waits behind background events. Each messenger chat, contact and target
-  process is one lane.
+  in per-owner order. A person's message never waits behind background
+  events. A process is one lane.
 - **At least once.** A delivery is done when its consumer answers. A lost
   answer redelivers, so the Process still dedupes by the delivery's id,
   `evt_<seq>:<consumer>`, which is now stable. A replacement Ship never receives an event the Kernel already marked
@@ -196,11 +193,16 @@ private async pass(taskId: string): Promise<void> {
   declares its base, cap, attempt limit and terminal action. Ship and process
   deliveries retry from 2 s, doubling to 256 s, without a limit. The runner
   re-arms; it never waits inside the alarm.
-- **Gate.** While the managed gate is closed, the runner parks every consumer,
-  outbound included, and checks again in 60 s. Everything resumes if the
-  space is reactivated. Edge producers already refuse before appending.
-- **Bodies.** An event carries up to 64 KiB of JSON inline, the custom-source
-  limit today. Anything larger stays in the store that accepted it:
+- **Gate.** While the managed gate is closed, the runner parks both consumers
+  and checks again in 60 s. Everything resumes if the space is reactivated.
+  Edge producers already refuse before appending. The outboxes keep their own
+  rules: the federation outbox parks for 60 s, outbound mail fails for a
+  retained, deleting or deleted installation and skips other inactive states,
+  and adapter route delivery has no gate.
+- **Bodies.** An event carries up to 64 KiB of serialized JSON inline. The
+  custom-source limit today covers a hook's body alone, so the hooks step
+  either lowers it by the size of the event's other fields or keeps larger
+  bodies by reference. Anything larger stays in the store that accepted it:
   Conversation, mailbox, federation inbox or R2 media. The event carries an
   immutable reference. It never owns bytes; the accepting store still owns
   cleanup.
@@ -208,10 +210,10 @@ private async pass(taskId: string): Promise<void> {
   epoch of the request it answers. After `proc.reset`, the Process drops
   answers from an earlier epoch. New input is never fenced: a contact message
   queued before a reset still reaches the reset Ship.
-- **Chained events.** A consumer may append the next event in the transaction
-  that records its outcome. A notice the messenger accepted appends
-  `notice.sent` for the Ship. An adapter delivery out of attempts appends
-  `delivery.failed` for its pid.
+- **Chained events.** An outbox may append an event in the transaction that
+  records its outcome. A notice round the messenger accepted, or left to a
+  client, appends `owner.notified` for the Ship. An adapter delivery out of
+  attempts appends `delivery.failed` for its pid.
 - **Retention.** Deliveries keep their outcome for inspection. A settled
   event keeps its body and outcomes in SQLite for 30 days; an event with a
   pending delivery keeps both. The row then keeps only its type and key until
@@ -219,7 +221,9 @@ private async pass(taskId: string): Promise<void> {
   webhook, still appends nothing. A key is about 100 bytes; an event can
   carry 64 KiB. The log stays Kernel-internal until a later owner- or
   root-scoped list syscall, which brings the R2 archive with it; a source's
-  listing is its first owner-scoped read.
+  listing is its first owner-scoped read. v091 has no index on owner or
+  subject, so the hooks step adds the one that listing needs, and a source's
+  removal deletes its events.
 
 Not converted: answers inside a run (`proc.hil`, tool `res` frames, the tick,
 queue promotion). They resume work that was already admitted; none of them is
@@ -237,12 +241,12 @@ Today each entry handler decides for itself.
 | `ipc.message`, `ipc.call` | start | own run after | `proc.ipc.deliver` |
 | `work.returned` | start | own run after | `adapter.work.returned` with `distinctRun` |
 | `contact.message` | start | join | `proc.runtime.event.deliver` |
-| `responsibility.due` | start | join | `r12y.ready` |
-| `mail.received` | start | join | via r12y |
+| `responsibility.ready`: a batch of up to 25 records | start | join | `r12y.ready` |
+| `mail.received` | start, or record when its rule says `context` | join | via r12y |
 | `source.event`: hook, `event.emit` | start, or record when the source says `context` | join | via r12y or a notice |
 | `schedule.fired` | start | join; own run after with `replyTo` | `proc.schedule.deliver` |
 | `target.status` | start, or record when only the person sees it | join | `proc.event.deliver` |
-| `notice.sent` (now `owner.notified`) | record | join | `proc.event.deliver` |
+| `owner.notified` | record | join | `proc.event.deliver` |
 | `delivery.failed` | record | record | `proc.delivery.notice` |
 | `ipc.replied`, `ipc.timed_out`, `ipc.overdue` | settles the call | settles the call | signals |
 
@@ -258,9 +262,9 @@ state machine.
 |---|---|---|---|---|---|---|
 | Contact message | `contact.message`, appended by the inbox's projection beside the responsibility it owes | `contact:<id>` | the Conversation message id, derived from contact, generation and delivery id | ref: Conversation message | Ship · join | `ship_events`, `onShipEvents`, `ship-event-runtime.ts`, the contact branch of `proc.runtime.event.deliver`; the inbox keeps its own intake and `onFederationInbox` |
 | Owner notice | `owner.notified`, appended when a round is sent or left to a client | `notice:<round id>` | round id | inline | Ship · record or join | Ship's half of `ship_events`; `onOwnerNotices` still sends to the messenger |
-| Responsibility due | `responsibility.due` | `r12y:<id>` | id + due revision | inline | Ship · join | `responsibility_wake_batches`, `wake_retry_at` and `wake_retry_count`, `onResponsibilityWake`, `r12y.ready`, change wakes |
+| Responsibility wake | `responsibility.ready`, appended by the wake timer for a batch of up to 25 records; none while one is still pending, so bursts merge as today | `owner:<uid>` | batch id | inline: record ids and ledger revision | Ship · join | `responsibility_wake_batches`, `onResponsibilityWake`'s delivery, `r12y.ready`; the timer and the ledger's recovery wakes stay |
 | Inbound mail | `mail.received` | `mail:<id>` | message id | ref: `mail_messages` row | Ship · join; notices when a rule says | the wake through r12y and the parallel notice |
-| Hook, `event.emit` | `source.event` | `source:<id>` | source event id | inline | Ship · join or record; notices when the source says | `event_log`, `onEventUpkeep`, the wake through r12y, the double delivery |
+| Hook, `event.emit` | `source.event` | `source:<id>` | source id + source event id, which is unique only per source | inline | Ship · join or record; notices when the source says | `event_log`, `onEventUpkeep`'s retention, the wake through r12y, the double delivery |
 | Schedule | `schedule.fired` | `schedule:<id>` | schedule id + fire time | inline | Ship or `proc:<pid>` · join, or own run with `replyTo` | the ledger route for Ship schedules, `proc.schedule.deliver`, the one-shot attempt loop |
 | IPC send, call | `ipc.message`, `ipc.call` | `proc:<target>` | call id | inline | `proc:<target>` · own run after | `onIpcCallDelivery` and its in-alarm retry |
 | IPC answer | `ipc.replied`, `ipc.timed_out`, `ipc.overdue` | `proc:<caller>` | call id + outcome | inline | `proc:<caller>` · settles | the signal path, the timeout task's delivery |
@@ -268,23 +272,25 @@ state machine.
 | Direct `proc.send`, spawn prompt | `message.received` from a person, `process.message` from a process | `proc:<pid>` | the caller's request id; none today | inline | `proc:<pid>` · interrupt from a person, own run after from a process | `handleProcSend`'s choice by origin |
 | Messenger | `message.received` | `route:<surface>` | adapter + account + delivery id | ref: Conversation message | routed pid or Ship · interrupt, inline | `proc.adapter.deliver`; `adapter_ingress_receipts` once the key and row cover its checkpoint |
 | `/ship` work return | `work.returned` | `proc:<work pid>` | work pid + return id | inline | Ship · own run after | the `work_return` checkpoint, `adapter.work.returned` |
-| Memory review | `memory.review.queued` | `owner:<uid>` | source slice id | ref: retained sources | `crew:<uid>` · one open review per owner | KV `memory-reviews:<uid>`, the 60 s successor tasks |
-| Welcome | `responsibility.due`, appended with the person's first `message.received` | `r12y:<welcome>` | `onboarding.initial` | none | Ship · join that message's run | nothing: its wake becomes an ordinary responsibility event |
-| Target connection | `target.status` | `target:<id>` | target id + observed time | inline | watching pids · join | the in-memory chain, which gains retry |
-| Failed delivery | `delivery.failed` | `proc:<pid>` | delivery id | inline | `proc:<pid>` · record | `onProcessDeliveryNotice` |
+| Memory review | none: the queue admits a low-priority Ship responsibility, `memory.review:<pid>:<segment>`, which Ship delegates to Crew | — | — | — | Ship, through `responsibility.ready` | `onMemoryReview`'s 60 s successor: settling a review admits the next in the same transaction |
+| Welcome | none: sign-in, or the owner's first Ship message, creates the welcome responsibility | — | — | — | Ship, through `responsibility.ready` | nothing of its own |
+| Target connection | `target.status`, one per watch, since each watch has its own audience | `target:<id>` | transition id + watch id | inline | the watching pid · join, or record when only the person sees it | the in-memory chain, which gains retry; a newer transition withdraws an older one still pending |
+| Failed delivery | `delivery.failed` | `proc:<pid>` | the hash of run, kind, delivery id and state | inline | `proc:<pid>` · record | `onProcessDeliveryNotice` |
 
 Responsibilities stay as state: what is owed and when. A producer that also
-owes work writes its responsibility with `observedByShip`, so the ledger never
-wakes the Ship on its own.
+appends an event for the work marks its responsibility `announced`, so the
+ledger doesn't wake the Ship for it as well. `observedByShip` doesn't stop a
+wake: a Ship write that leaves work actionable wakes on purpose, and the
+yield gate covers it.
 
 ## Fit: outbound
 
 | Today | Event | Consumer, lane | Retry today | Deleted once converted |
 |---|---|---|---|---|
-| Adapter route delivery, `onAdapterRouteDelivery` | `message.committed` with an adapter route | `route:<id>`, one lane per chat | its own re-queue ×10, 1 s→30 s, plus the task retry inside the alarm | `onAdapterRouteDelivery`, retry payloads in task rows |
+| Adapter route delivery, `onAdapterRouteDelivery` | `message.committed` with an adapter route, a HIL prompt or a run failure for the route | `route:<id>`, one lane per chat | its own re-queue ×10, 1 s doubling to 30 s, about 151 s, plus the task retry inside the alarm; an ambiguous send ends without retry | `onAdapterRouteDelivery`, retry payloads in task rows |
 | Client `message.committed` signal | the same event | live: connections at commit, no row | none; clients resync by sequence | nothing; it stays live |
-| Federation outbox, `onFederationDelivery` | `contact.send` | `contact:<id>`, one lane per contact | ×12, 2 s→1 h | its attempt columns and task; the outbox keeps the signed envelope |
-| Outbound mail, `onManagedOutboundEnqueue` | `mail.send` | `mail:<uid>` | 5 s→1 h, no limit | its task; `mail_outbound` keeps staging and Queue claims |
+| Federation outbox, `onFederationDelivery` | `contact.send`, a request, its update or a revocation | `contact:<id>`, one lane per contact | ×12, 2 s doubling to 2048 s, about 68 min, plus the task retry inside the alarm; ends at 7 days, on a 4xx other than 408 or 429, a takedown or a gone Ship | its attempt columns and task, though `contact.delivery.list` and `contact.delivery.retry` expose them; the outbox keeps the payload and signs a fresh service-auth token each attempt |
+| Outbound mail, `onManagedOutboundEnqueue` | `mail.send` | `mail:<uid>` | 5 s→1 h, no limit, republishing until the mail service completes it, plus the task retry inside the alarm | its task; `mail_outbound` keeps staging and Queue claims; Queue acceptance isn't completion |
 
 The outbound side converts last. If a conversion doesn't shrink its owner's
 state machine, that consumer stays as it is.
@@ -293,20 +299,20 @@ state machine, that consumer stays as it is.
 
 | Task | Retry today | Becomes |
 |---|---|---|
-| `onShipEvents` | 2 s doubling to 256 s, no limit | runner |
+| `onShipEvents` | 2 s doubling to 256 s, no limit | runner, done in step 3 |
 | `onOwnerNotices` | the same formula | stays: it sends to the person's messenger |
-| `onResponsibilityWake` | the same formula, plus recovery wakes at 5 m, 15 m, 1 h, then every 6 h, armed at delivery | timer that appends `responsibility.due`; recovery wakes stay in the ledger |
+| `onResponsibilityWake` | the same formula, plus recovery wakes at 5 m, 15 m, 1 h, then every 6 h, armed at delivery | timer that appends `responsibility.ready`; recovery wakes stay in the ledger |
 | `onScheduleDue` | 5 s→5 min, 10 attempts for one-shot | timer that appends `schedule.fired` |
 | `onIpcCallTimeout` | default task retry: 3 attempts, in-alarm | timer that appends `ipc.timed_out` |
 | `onIpcCallDelivery` | re-queue every 5 s, no limit, plus in-alarm 1 s→30 s ×10 | runner |
 | `onProcessDeliveryNotice` | in-alarm 1 s→30 s ×10 | runner |
 | `onAdapterRouteDelivery` | ×10 1 s→30 s, plus in-alarm ×10 | stays: the adapter route outbox |
-| `onFederationDelivery` | ×12 2 s→1 h | stays: the federation outbox |
+| `onFederationDelivery` | ×12 2 s→2048 s, plus in-alarm retry | stays: the federation outbox |
 | `onFederationInbox` | fixed 30 s | stays: the inbox's own intake |
-| `onManagedOutboundEnqueue` | 5 s→1 h | stays: the outbound mail outbox |
-| `onMemoryReview` | fixed 60 s successor | runner |
+| `onManagedOutboundEnqueue` | 5 s→1 h, republishing until completion, plus in-alarm retry | stays: the outbound mail outbox |
+| `onMemoryReview` | fixed 60 s successor | delete: settling a review admits the next |
 | `onEventUpkeep` | none | timer for silent sources; its retention moves to the log |
-| `onProcessApprovalNotice` | none: it already returns at once | delete |
+| `onProcessApprovalNotice` | none: it already returns at once | delete, done in step 2 |
 | `onRouteExpired` | none | stays: request route expiry |
 | `onLedgerRotate` | none | stays: syscall ledger rotation |
 | `onBrowserHandoffs` | none | stays: handoff reconciliation |
@@ -372,9 +378,11 @@ events.
 
 ## Order of work
 
-Each step is its own stacked PR with failing-first tests, a clean-instance
-flow, and the numbers below. Each conversion narrows the `KernelContext` its
-module receives.
+Steps 1 and 2 are their own PRs. From step 3, each conversion is a commit on
+the substrate's PR, with failing-first tests and the numbers below, and deletes
+the path it replaces. The PR merges once a census test fires every producer on
+a clean instance and finds each in the log. Each conversion narrows the
+`KernelContext` its module receives.
 
 1. Typed internal calls: the seven calls under Frames and RPC become Durable
    Object methods. No behaviour changes.
@@ -384,15 +392,18 @@ module receives.
 3. Contact messages and Ship's record of owner notices. Deletes
    `ship_events`, `onShipEvents` and the contact branch of
    `proc.runtime.event.deliver`.
-4. Responsibility wakes. r12y goes back to being state. Deletes wake batches
-   and `r12y.ready`.
+4. Responsibility wakes and the welcome. r12y goes back to being state.
+   Deletes wake batches and `r12y.ready`.
 5. Schedules. Deletes `proc.schedule.deliver`.
 6. Mail and hooks. `event_log` folds in.
 7. IPC.
-8. Chat and messengers: inline, on the person lane. Deletes
-   `proc.adapter.deliver`.
-9. Outbound, only where moving it makes its owner smaller: adapter routes,
-   the federation outbox and outbound mail.
+8. Target connections and memory reviews. Deletes the in-memory chain and
+   `onMemoryReview`.
+9. Chat, messengers and `/ship` work returns: inline, on the person lane.
+   Deletes `proc.adapter.deliver` and `proc.runtime.event.deliver`.
+10. Failed deliveries. Deletes `onProcessDeliveryNotice`.
+11. Outbound, only where moving it makes its owner smaller: adapter routes,
+    the federation outbox and outbound mail.
 
 ## Measures
 
@@ -420,6 +431,8 @@ Reviewed with the maintainer on 2026-11-03:
    confuse more than the shorter source listing costs.
 4. **No outbound exception during a restriction.** The gate pauses outbound
    with everything else; a restriction while a delivery is in retry is rare.
+   Since 8, the outboxes stay out of the log and keep their own gate rules
+   (see Gate).
 5. **Retention.** 30 days in SQLite, then R2; keys for 180 days. Inspection
    comes with a later list syscall.
 6. **Frames stay at the edge and for routed syscalls.** Internal calls become
