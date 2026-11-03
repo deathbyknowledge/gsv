@@ -122,7 +122,11 @@ export class AccountStore {
     allowReservedHandle?: boolean;
     /** Where the signup link was clicked, already classified; written with the reservation, never updated. */
     attribution?: SignupAttribution;
-    /** The inviting Ship, resolved by Accounts and never taken from a request body as an id; written with the reservation, never updated. */
+    /**
+     * The Ship the signup's contact invitation named, resolved by Accounts and never taken from a
+     * request body as an id. The insert itself keeps it only while it is an active installation someone
+     * else owns, so an inviter erased in between leaves the reservation intact without an inviter.
+     */
     inviterInstallationId?: string;
   }): Promise<InstallationReservation> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
@@ -187,9 +191,10 @@ export class AccountStore {
           `INSERT INTO provisioning_operations (
              operation_id, installation_id, principal_id, kind, state,
              attempt, last_error, updated_at, attribution_json, inviter_installation_id
-           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?, ?,
+             (SELECT id FROM installations WHERE id = ? AND state = 'active' AND owner_principal_id != ?))`,
         ).bind(operationId, identity.installationId, principalId, now, input.attribution ? JSON.stringify(input.attribution) : null,
-          input.inviterInstallationId ?? null),
+          input.inviterInstallationId ?? null, principalId),
       ]);
     } catch (error) {
       const replay = await this.getReservationByOperation(operationId);

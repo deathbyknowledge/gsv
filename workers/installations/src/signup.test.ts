@@ -218,16 +218,18 @@ describe("signup inviter", () => {
     }
   });
 
-  it("never records a Ship as inviting its own owner", async () => {
+  it("never records a Ship as inviting its own owner, and keeps a reservation whose inviter vanished", async () => {
     const principalId = await owner();
     const own = await ship("active", principalId);
-    const reserve = vi.spyOn(accounts, "reserveInstallation");
-    try {
-      await expect(signup.prepare(crypto.randomUUID(), principalId, handle(), undefined, own.hostname)).rejects.toThrow("You already have a Ship");
-      expect(reserve).toHaveBeenCalledWith(expect.objectContaining({ inviterInstallationId: undefined }));
-    } finally {
-      reserve.mockRestore();
-    }
+    // Operator allocation has no one-Ship limit, so the owner's own Ship can be offered as inviter and must be dropped by the insert.
+    const operationId = crypto.randomUUID();
+    await accounts.reserveInstallation({ principalId, operationId, handle: handle(), inviterInstallationId: own.installationId });
+    expect((await inviterOf(operationId)).inviter_installation_id).toBeNull();
+    // An inviter erased between the lookup and the write leaves the reservation intact, without an inviter.
+    const gone = crypto.randomUUID();
+    await expect(accounts.reserveInstallation({ principalId, operationId: gone, handle: handle(), inviterInstallationId: "inst_gone" }))
+      .resolves.toMatchObject({ state: "reserved" });
+    expect((await inviterOf(gone)).inviter_installation_id).toBeNull();
   });
 
   it("keeps the first request's inviter when a resumed signup carries another or none", async () => {

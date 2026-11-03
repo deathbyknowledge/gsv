@@ -48,7 +48,7 @@ export class InstallationSignup {
     if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
     // The origin is written with the reservation itself, so the request that reserves the operation
     // sets it once and a retry or resumed signup can neither lose nor rewrite it.
-    const inviterInstallationId = !existing && inviter ? await this.inviterInstallation(inviter, principalId) : undefined;
+    const inviterInstallationId = !existing && inviter ? await this.inviterInstallation(inviter) : undefined;
     const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true, attribution, inviterInstallationId });
     const owned = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_setup = 1 AND owner_principal_id = ?")
       .bind(space.installationId, principalId).first();
@@ -74,12 +74,12 @@ export class InstallationSignup {
     }
   }
 
-  /** The inviter is the signup's own claim: only an active Ship someone else owns counts, and anything else is dropped silently. */
-  private async inviterInstallation(hostname: string, principalId: string): Promise<string | undefined> {
+  /**
+   * The inviter is the signup's own claim: an unknown address is dropped silently here, and the
+   * reservation keeps the Ship only if it is still active and owned by someone else when it is written.
+   */
+  private async inviterInstallation(hostname: string): Promise<string | undefined> {
     const inviter = await this.accounts.resolveHostname(hostname);
-    if (!inviter.found || inviter.state !== "active") return undefined;
-    const own = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_principal_id = ?")
-      .bind(inviter.installationId, principalId).first();
-    return own ? undefined : inviter.installationId;
+    return inviter.found ? inviter.installationId : undefined;
   }
 }
