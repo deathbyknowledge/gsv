@@ -71,7 +71,10 @@ async function readLinkPreview(client: LinkPreviewGsvClient, url: string): Promi
     throw new LinkPreviewUnavailableError(`Link preview page is not HTML (status ${data.status})`);
   }
   const head = await readHead(response.body.stream, charset(contentType));
-  return { url, resolvedUrl: data.url || url, ...pageMetadata(head, data.url || url) };
+  const metadata = pageMetadata(head, data.url || url);
+  // The card needs a title or an image; without either the page is remembered as having nothing to show.
+  if (!metadata.title && !metadata.imageUrl) throw new LinkPreviewUnavailableError("Link preview page has no title or image");
+  return { url, resolvedUrl: data.url || url, ...metadata };
 }
 
 /** The image travels through `net.fetch` too, so the browser never contacts the image host. */
@@ -130,7 +133,8 @@ function charset(contentType: string): string {
 /** Open Graph first, then Twitter cards, then the plain title and description. */
 export function pageMetadata(head: string, pageUrl: string): Omit<LinkPreview, "url" | "resolvedUrl"> {
   const tags = new Map<string, string>();
-  for (const [tag] of head.matchAll(/<meta\b[^>]*>/gi)) {
+  // A quoted value may hold ">", so the tag ends at the first one outside quotes.
+  for (const [tag] of head.matchAll(/<meta\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi)) {
     const attributes = tagAttributes(tag);
     const name = (attributes.get("property") ?? attributes.get("name"))?.toLowerCase();
     const content = attributes.get("content")?.trim();

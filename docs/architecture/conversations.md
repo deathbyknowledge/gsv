@@ -418,7 +418,7 @@ arrives, and parses the preview tags itself: it reads only up to the end of the 
 cancels the body, which also stops the Kernel's request. The image comes through `net.fetch` too, so
 the browser never contacts the linked site or its image host. A few previews are read at a time.
 The device keeps what it read in IndexedDB for a week, at most 500 entries, so reopening a
-conversation does not read its pages again. A page or image that answered with nothing to show is
+conversation does not read its pages again. A page or image that answered with nothing to show, such as a page with neither a title nor an image, is
 asked again after an hour, and a lost connection is not kept at all. Signing out deletes the store.
 Until a preview resolves, or when it fails or offers neither a title nor an image, the message shows
 no card and takes no extra room. A preview is presentation only: it is never part of the canonical

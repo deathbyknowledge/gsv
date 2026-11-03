@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fetchLinkPreview, fetchLinkPreviewImage, MAX_LINK_PREVIEW_PAGE_BYTES, pageMetadata } from "./linkPreviewService";
+import { LinkPreviewUnavailableError } from "./linkPreviewCache";
 
 const PAGE = "https://guide.example/start";
 
@@ -43,6 +44,11 @@ describe("link preview metadata", () => {
     expect(pageMetadata("<title>\n  Only a  title\n</title>", PAGE)).toEqual({ title: "Only a title" });
   });
 
+  it("keeps a quoted value whole, including a > inside it", () => {
+    expect(pageMetadata(`<meta property="og:title" content="A > B"><meta name='description' content='x > y'>`, PAGE))
+      .toEqual({ title: "A > B", description: "x > y" });
+  });
+
   it("ignores an image that is not a web address", () => {
     expect(pageMetadata('<meta property="og:image" content="javascript:alert(1)">', PAGE)).toEqual({});
   });
@@ -64,9 +70,14 @@ describe("link preview fetch", () => {
   it("stops reading a page whose head never closes at the byte bound", async () => {
     const chunk = "x".repeat(64 * 1024);
     const body = textStream(Array.from({ length: 10 }, () => chunk));
-    await fetchLinkPreview(client({ "content-type": "text/html" }, body), PAGE);
+    await expect(fetchLinkPreview(client({ "content-type": "text/html" }, body), PAGE)).rejects.toBeInstanceOf(LinkPreviewUnavailableError);
     expect(body.pulled()).toBeLessThanOrEqual(MAX_LINK_PREVIEW_PAGE_BYTES / chunk.length + 1);
     expect(body.cancel).toHaveBeenCalled();
+  });
+
+  it("counts a page with neither a title nor an image as having nothing to show", async () => {
+    const body = textStream(['<html><head><meta name="description" content="Only words"></head>']);
+    await expect(fetchLinkPreview(client({ "content-type": "text/html" }, body), PAGE)).rejects.toBeInstanceOf(LinkPreviewUnavailableError);
   });
 
   it("fails without reading a page that is not HTML or did not succeed", async () => {
