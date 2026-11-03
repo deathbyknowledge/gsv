@@ -14,7 +14,7 @@ function fixture(answer: (installationId: string) => Promise<InstallationDirecto
   const env = {
     INSTALLATION_DIRECTORY: { resolveHostname: vi.fn(), resolveInstallation },
     KERNEL: { getByName },
-  } as unknown as GatewayEnv;
+  } as GatewayEnv;
   return { env, resolveInstallation, getByName };
 }
 

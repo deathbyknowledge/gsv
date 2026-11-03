@@ -49,7 +49,7 @@ type GatewayRoute = EdgeRoute | KernelRoute;
  * being set up. A `fresh` route asks Accounts on every request; any other
  * read may take a route Accounts gave within the last minute.
  */
-const ROUTE_POLICY: Record<GatewayRoute["kind"], { provisioning: boolean; fresh: boolean }> = {
+const ROUTE_POLICY = {
   presentation: { provisioning: true, fresh: false },
   "oauth-client": { provisioning: false, fresh: false },
   did: { provisioning: false, fresh: false },
@@ -62,7 +62,7 @@ const ROUTE_POLICY: Record<GatewayRoute["kind"], { provisioning: boolean; fresh:
   "oauth-callback": { provisioning: false, fresh: true },
   websocket: { provisioning: true, fresh: true },
   git: { provisioning: false, fresh: true },
-};
+} satisfies Record<GatewayRoute["kind"], { provisioning: boolean; fresh: boolean }>;
 
 export default {
   async fetch(request, env): Promise<Response> {
