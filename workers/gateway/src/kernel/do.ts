@@ -577,6 +577,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
     this.shipEvents = new ShipEventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
+    // Fires once per owner, when their first sign-in (or an earlier first message) opens the welcome.
     this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities, () => {
       emitTelemetry(this.bindings, {
         installationId: this.installationId, component: "gateway",

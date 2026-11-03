@@ -477,7 +477,8 @@ async commitProcessMessage(
         component: "gateway",
         event: { stream: "product", name: "ship.message.committed", properties },
       });
-      // Tracked even with telemetry off, so enabling it later never reports a stale welcome.
+      // The owner's first Ship message after the welcome opened at first sign-in. Tracked even with
+      // telemetry off, so enabling it later never reports a stale welcome.
       const welcomeMs = this.host.welcome.markWelcomeDelivered(process.ownerUid);
       if (welcomeMs !== null) {
         emitTelemetry(this.host.bindings, {

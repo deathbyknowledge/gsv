@@ -1592,7 +1592,7 @@ describe("Kernel canonical message commits", () => {
     }
   });
 
-  it("reports the welcome once, from activation to the first Ship message", async () => {
+  it("reports the welcome once, from first sign-in to the first Ship message", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const kernel = buildCommitKernel(null);
       const responsibilities = new ResponsibilityStore(storage);

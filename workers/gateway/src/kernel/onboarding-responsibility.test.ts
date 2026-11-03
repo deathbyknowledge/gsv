@@ -135,13 +135,14 @@ describe("initial onboarding responsibility", () => {
 });
 
 describe("welcome timing", () => {
-  it("records when the welcome opened and measures its first delivery once", async () => {
+  it("times the welcome from first sign-in to the first Ship message, once", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const store = new ResponsibilityStore(storage);
       const activations: number[] = [];
       const welcome = new InitialOnboarding(storage, store, (uid) => activations.push(uid));
       expect(welcome.markWelcomeDelivered(1000, 500)).toBeNull();
       welcome.prepare(1000, 1_000);
+      // First sign-in opens the welcome; a later sign-in only recovers its wake.
       expect(welcome.activate(1000, 2_000)).toBe(true);
       expect(activations).toEqual([1000]);
       expect(welcome.activate(1000, 3_000)).toBe(true);
@@ -152,7 +153,24 @@ describe("welcome timing", () => {
     });
   });
 
-  it("times a welcome created by the previous runtime from its activation, not its seed", async () => {
+  it("starts the timing at a first message that beats sign-in, and the later sign-in does not restart it", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const store = new ResponsibilityStore(storage);
+      const activations: number[] = [];
+      const welcome = new InitialOnboarding(storage, store, (uid) => activations.push(uid));
+      welcome.prepare(1000, 1_000);
+      const deferred: Promise<unknown>[] = [];
+      const ctx = { welcome, reconcileResponsibilityWake: vi.fn(async () => {}), defer: (promise: Promise<unknown>) => { deferred.push(promise); } };
+      await withInitialOnboarding(1000, ctx, async () => {});
+      await Promise.all(deferred);
+      expect(activations).toEqual([1000]);
+      expect(welcome.activate(1000)).toBe(true);
+      expect(activations).toEqual([1000]);
+      expect(welcome.markWelcomeDelivered(1000)).not.toBeNull();
+    });
+  });
+
+  it("times a waiting welcome seeded by the previous runtime from the sign-in that opens it, not its seed", async () => {
     await runWithRealKernelSql((_sql, storage) => {
       const store = new ResponsibilityStore(storage);
       store.create({

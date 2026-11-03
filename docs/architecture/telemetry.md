@@ -181,12 +181,15 @@ without granting those adapters ownership of another component's application eve
   closed failure category (`generation`, `context`, `media`, `no_send`,
   `command`, `delivery`, `runtime`, `superseded`, `cancelled`, `killed` or
   `other`), whether it had already replied, and its duration; the reason and
-  cause stay in Process history. `onboarding.welcome.activated` marks the
-  transition that opens the welcome responsibility for an owner, and
+  cause stay in Process history. `onboarding.welcome.activated` reports the
+  welcome responsibility opening for an owner, which happens at their first
+  sign-in from any client, or at their first message if that reaches the Kernel
+  before a sign-in does; later sign-ins do not report it again.
   `onboarding.welcome.delivered` reports the first Ship message accepted after
-  it, once per owner, with the time between them; the Kernel keeps both marks in
-  its private `initial-onboarding` record, so an owner whose welcome predates
-  the record is never reported. `responsibility.created` reports a record
+  it, once per owner, with the time between them, so it measures first sign-in
+  to Ship's first message. The Kernel keeps both marks in its private
+  `initial-onboarding` record, so an owner whose welcome predates the record is
+  never reported. `responsibility.created` reports a record
   entering the owner's ledger through the ordinary create syscall, as `process`
   when Ship or a helper created it and `account` when the person did, with
   whether it has a parent; records the Kernel seeds itself (the welcome,

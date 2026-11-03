@@ -8,7 +8,7 @@ type OnboardingState = {
   createdAtMs: number;
   details?: JsonObject;
   activatedRevision?: number;
-  /** When the welcome responsibility first opened for this owner. */
+  /** When the welcome first opened: the owner's first sign-in, or an earlier first message. */
   activatedAtMs?: number;
   /** When the first Ship message after that activation was accepted. */
   welcomedAtMs?: number;
@@ -66,7 +66,7 @@ export class InitialOnboarding {
   constructor(
     private readonly storage: DurableObjectStorage,
     private readonly responsibilities: ResponsibilityStore,
-    /** Runs once per owner, after the welcome responsibility has durably opened. */
+    /** Runs once per owner, after the welcome has durably opened at first sign-in or first message. */
     private readonly onActivated?: (ownerUid: number) => void,
   ) {}
 
@@ -123,7 +123,7 @@ export class InitialOnboarding {
 
   /**
    * Record the first Ship message accepted after the welcome opened and return
-   * how long it took, once per owner. Later calls, and owners whose welcome
+   * how long it took from that first sign-in or message, once per owner. Later calls, and owners whose welcome
    * predates this record, return null.
    */
   markWelcomeDelivered(ownerUid: number, now = Date.now()): number | null {
