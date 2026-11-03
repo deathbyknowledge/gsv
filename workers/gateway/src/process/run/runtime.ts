@@ -2166,7 +2166,8 @@ export class ProcessRun {
     let run = settledRun;
     if (!run.config) {
       const aiTextGenerateConfig = this.host.settings.aiTextGenerateConfig;
-      const config = await this.host.settings.resolveAiConfig(this.runAbortSignal(runId));
+      const config = await this.traced(runId, "Load configuration",
+        () => this.host.settings.resolveAiConfig(this.runAbortSignal(runId)));
       const updated = this.host.mutateActiveRun(runId, (current) => ({
         ...current,
         aiTextGenerateConfig,
@@ -2179,7 +2180,7 @@ export class ProcessRun {
     if (!activeConfig) throw new Error("Process AI configuration was not loaded");
 
     if (!run.tools) {
-      const toolsResult = await this.host.kernel.kernelRpc("ai.tools", {});
+      const toolsResult = await this.traced(runId, "Load tools", () => this.host.kernel.kernelRpc("ai.tools", {}));
       const updated = this.host.mutateActiveRun(runId, (current) => ({
         ...current,
         tools: toolsResult.tools,
@@ -2209,6 +2210,19 @@ export class ProcessRun {
     }));
     if (!offeredRun) return null;
     return { run: offeredRun, activeConfig, workTools, tools };
+  }
+
+  /** One context span around a Kernel read that precedes the first generation. */
+  private async traced<T>(runId: string, name: string, read: () => Promise<T>): Promise<T> {
+    const spanId = this.host.trace.start({ runId, kind: "context", name });
+    let status: Exclude<ProcTraceSpanStatus, "running"> = "error";
+    try {
+      const value = await read();
+      status = "ok";
+      return value;
+    } finally {
+      this.host.trace.finish(spanId, status);
+    }
   }
 
   async prepareRunTickContext(
