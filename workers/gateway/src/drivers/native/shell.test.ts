@@ -2416,6 +2416,32 @@ describe("proc native command", () => {
     expect(result.stdout).toContain(`responsibility=${responsibilityId}`);
   });
 
+  it("shows a responsibility as JSON with or without --json, as list does", async () => {
+    const responsibility: ResponsibilityRecord = {
+      id: "r12y:33333333-3333-4333-8333-333333333333",
+      ownerUid: IDENTITY.uid,
+      title: "Welcome to Ship",
+      source: { kind: "system", component: "onboarding" },
+      assignee: { kind: "ship" },
+      state: "open",
+      priority: "high",
+      revision: 1,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    };
+    const ctx = makeContext({
+      capabilities: ["r12y.get"],
+      responsibilities: { get: vi.fn(() => responsibility), revision: vi.fn(() => 1), isVisibleToProcess: vi.fn(() => true) },
+    });
+
+    const plain = await handleShellExec({ input: "r12y show 33333333-3333-4333-8333-333333333333" }, ctx);
+    const json = await handleShellExec({ input: "r12y show 33333333-3333-4333-8333-333333333333 --json" }, ctx);
+
+    expect(plain).toMatchObject({ ok: true, exitCode: 0, stderr: "" });
+    expect(json).toEqual(plain);
+    expect(JSON.parse(json.ok ? json.stdout : "").responsibility.title).toBe("Welcome to Ship");
+  });
+
   it("returns a responsibility to Ship when delegated admission fails", async () => {
     const responsibilityId = "r12y:22222222-2222-4222-8222-222222222222";
     const parent = makeProcess({
