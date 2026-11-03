@@ -45,10 +45,6 @@ import type {
   ManagedOutboundMailCompletion,
   ManagedOutboundMailLookup,
   ManagedOutboundMailReference,
-  UnlinkManagedAdapterIdentityInput,
-  UnlinkManagedAdapterIdentityResult,
-  UnlinkManagedTelegramIdentityInput,
-  UnlinkManagedTelegramIdentityResult,
   NetFetchArgs,
   ProcessIdentity,
   SysTargetDeleteResult,
@@ -61,6 +57,7 @@ import { PasswordAttempts } from "./password-attempts";
 import { DevicePairingStore } from "./device-pairings";
 import { MemberRecoveryStore } from "./member-recovery";
 import { AccountRecoveryStore } from "./account-recovery";
+import type { UnlinkAdapterIdentityInput, UnlinkAdapterIdentityResult } from "@humansandmachines/gsv/services/adapters";
 import type { AuthorizeRootRecoveryInput } from "@humansandmachines/gsv/services/ownership";
 import type { ArgsOf, ResultOf } from "@humansandmachines/gsv/protocol";
 import { CapabilityStore, hasCapability } from "./capabilities";
@@ -374,14 +371,6 @@ const processSignalFrameSchema = z.object({
   signal: z.string(),
   payload: z.json().optional(),
   seq: z.number().optional(),
-});
-const managedTelegramUnlinkSchema = z.object({
-  installationId: z.string(),
-  operationId: z.string().min(1),
-  actorId: z.string().regex(/^[1-9][0-9]{0,19}$/),
-  surfaceId: z.string(),
-  expectedLocalUid: z.number().int().nonnegative(),
-  expectedGeneration: z.string().min(1),
 });
 const managedAdapterUnlinkSchema = z.object({
   operationId: z.string().min(1),
@@ -1454,30 +1443,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
     );
   }
 
-  async unlinkManagedTelegramIdentity(
-    input: UnlinkManagedTelegramIdentityInput,
-  ): Promise<UnlinkManagedTelegramIdentityResult> {
-    const parsed = managedTelegramUnlinkSchema.parse(input);
-    if (parsed.installationId !== this.installationId) {
-      throw new Error("Managed Telegram installation identity mismatch");
-    }
-    if (parsed.surfaceId !== parsed.actorId) {
-      throw new Error("Managed Telegram unlink input is invalid");
-    }
-    return await this.unlinkManagedAdapterIdentity("telegram", {
-      operationId: parsed.operationId,
-      accountId: "managed",
-      actorId: parsed.actorId,
-      surfaceId: parsed.surfaceId,
-      expectedLocalUid: parsed.expectedLocalUid,
-      expectedGeneration: parsed.expectedGeneration,
-    });
-  }
-
   async unlinkManagedAdapterIdentity(
     adapter: string,
-    input: UnlinkManagedAdapterIdentityInput,
-  ): Promise<UnlinkManagedAdapterIdentityResult> {
+    input: UnlinkAdapterIdentityInput,
+  ): Promise<UnlinkAdapterIdentityResult> {
     const normalizedAdapter = adapter.trim().toLowerCase();
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(normalizedAdapter)) {
       throw new Error("Managed adapter identity is invalid");

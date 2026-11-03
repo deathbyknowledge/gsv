@@ -49,16 +49,6 @@ export interface MailService {
   ): Promise<ManagedMailIntakePage>;
 }
 
-/** @deprecated Import `MailGatewayService` from `@humansandmachines/gsv/services/mail`. */
-export interface ManagedMailGatewayService {
-  acceptManagedInboundMail: MailGatewayService["acceptInboundMail"];
-  completeManagedInboundMail: MailGatewayService["completeInboundMail"];
-  claimManagedOutboundMail: MailGatewayService["claimOutboundMail"];
-  completeManagedOutboundMail: MailGatewayService["completeOutboundMail"];
-}
-/** @deprecated Import `MailService` from `@humansandmachines/gsv/services/mail`. */
-export type ManagedMailService = MailService;
-
 export type {
   ListManagedMailIntakesInput,
   ManagedInboundMailAccepted,
