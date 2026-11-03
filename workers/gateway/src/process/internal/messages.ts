@@ -14,7 +14,6 @@ import {
 import {
   assistantMessageDiagnosticsSchema, nonEmptyStringSchema, protocolStopReasonSchema, storedStringArraySchema,
 } from "./schemas";
-import { isWorkersAiProvider } from "../../inference/features";
 
 export function normalizeOptionalString(
   value: Parameters<typeof nonEmptyStringSchema.safeParse>[0],
@@ -299,4 +298,8 @@ export function isPositiveInteger(value: number | undefined): value is number {
 
 export function isHistoryOverflowPolicy(value: string | undefined): value is ProcHistoryOverflowPolicy {
   return value === "auto-compact" || value === "fail";
+}
+
+function isWorkersAiProvider(provider: string): boolean {
+  return ["workers-ai", "workersai", "cloudflare-workers-ai"].includes(provider.trim().toLowerCase());
 }

@@ -245,18 +245,8 @@ function parseMachineConfig(args: SysSetupArgs): SetupMachineConfig | null {
   };
 }
 
-function setupServerBuild(
-  ctx: KernelContext,
-  features: string[],
-): SysSetupResult["server"] {
-  const server: SysSetupResult["server"] = {
-    version: ctx.serverVersion,
-    release: SERVER_RELEASE,
-  };
-  if (features.length > 0) {
-    server.features = features;
-  }
-  return server;
+function setupServerBuild(ctx: KernelContext): SysSetupResult["server"] {
+  return { version: ctx.serverVersion, release: SERVER_RELEASE, features: [GSV_INFERENCE_FEATURE] };
 }
 
 export async function handleSysSetup(
@@ -444,7 +434,7 @@ export async function handleSysSetup(
     );
 
     return {
-      server: setupServerBuild(ctx, [GSV_INFERENCE_FEATURE]),
+      server: setupServerBuild(ctx),
       user: processIdentity,
       rootLocked,
       bootstrap,
@@ -518,7 +508,7 @@ export async function recoverCompletedSysSetup(
 
   const rootShadow = ctx.auth.getShadowByUsername("root");
   return {
-    server: setupServerBuild(ctx, [GSV_INFERENCE_FEATURE]),
+    server: setupServerBuild(ctx),
     user: {
       ...authenticated.identity,
       cwd: authenticated.identity.home,

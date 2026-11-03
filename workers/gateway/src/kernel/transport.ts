@@ -43,8 +43,6 @@ import {
   type RouteOrigin,
 } from "./routing";
 import {
-} from "./connect";
-import {
   bindByteStreamToAbort,
 } from "../shared/streams";
 import {

@@ -7,10 +7,10 @@ import type {
 } from "@humansandmachines/gsv/services/inference-execution";
 import type { ManagedInferenceResult } from "@humansandmachines/gsv/services/inference";
 
-export const UNIT_TEST_INFERENCE_REFUSAL = "Unit tests run no inference";
+const UNIT_TEST_INFERENCE_REFUSAL = "Unit tests run no inference";
 
 /** Refuses every request; tests that generate bind their own executor. */
-class RefusingExecutor extends RpcTarget implements InferenceExecutor {
+export class RefusingExecutor extends RpcTarget implements InferenceExecutor {
   async generate(): Promise<ManagedInferenceResult> {
     throw new Error(UNIT_TEST_INFERENCE_REFUSAL);
   }

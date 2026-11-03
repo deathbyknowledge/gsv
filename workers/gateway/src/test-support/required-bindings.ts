@@ -1,5 +1,5 @@
 import type { GatewayEnv } from "../runtime-env";
-import { UNIT_TEST_INFERENCE_REFUSAL } from "../test-fixtures/inference-execution";
+import { RefusingExecutor } from "../test-fixtures/inference-execution";
 import { answerFromEmptyRipgit } from "../test-fixtures/ripgit";
 
 /**
@@ -10,9 +10,7 @@ import { answerFromEmptyRipgit } from "../test-fixtures/ripgit";
 export function requiredTestBindings(): Pick<GatewayEnv, "INFERENCE_EXECUTION" | "RIPGIT"> {
   return {
     INFERENCE_EXECUTION: {
-      getExecutor: async () => {
-        throw new Error(UNIT_TEST_INFERENCE_REFUSAL);
-      },
+      getExecutor: async () => new RefusingExecutor(),
       resolveModel: async (provider, model) => ({ provider, model, contextWindowTokens: null }),
     },
     // SAFETY: Gateway code reaches ripgit only through fetch.
