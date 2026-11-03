@@ -18,11 +18,11 @@ import type {
   ResourceBlock,
   BinaryBody,
 } from "@humansandmachines/gsv/protocol";
-import type { InternalRequestFrame } from "../protocol/process-frames";
+import { processResult } from "../protocol/process-frames";
 import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { raceWithAbort } from "../shared/abort";
-import { getConversationById, sendFrameToProcess } from "../shared/utils";
+import { getConversationById, retainProcessResources, sendFrameToProcess } from "../shared/utils";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
@@ -265,17 +265,12 @@ export async function retainConversationResources(
 ): Promise<ResourceBlock[] | undefined> {
   if (!resources?.length) return undefined;
   ctx.requestSignal?.throwIfAborted();
-  const request: InternalRequestFrame<"proc.resources.retain"> = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.resources.retain",
-    args: { batchId, resources },
-  };
-  const pending = sendFrameToProcess(ctx.installationId, pid, request);
+  const requestId = crypto.randomUUID();
+  const pending = retainProcessResources(ctx.installationId, pid, requestId, { batchId, resources });
   let cancellation: Promise<unknown> | undefined;
-  let response: Awaited<typeof pending>;
+  let result: Awaited<typeof pending>;
   try {
-    response = await raceWithAbort(pending, ctx.requestSignal, {
+    result = await raceWithAbort(pending, ctx.requestSignal, {
       abortReason: () => ctx.requestSignal?.reason ?? new Error("Request cancelled"),
       onAbort: () => {
         const reason = ctx.requestSignal?.reason instanceof Error
@@ -284,7 +279,7 @@ export async function retainConversationResources(
         cancellation = sendFrameToProcess(ctx.installationId, pid, {
           type: "sig",
           signal: REQUEST_CANCEL_SIGNAL,
-          payload: { id: request.id, reason },
+          payload: { id: requestId, reason },
         });
       },
     });
@@ -293,14 +288,7 @@ export async function retainConversationResources(
     throw error;
   }
   ctx.requestSignal?.throwIfAborted();
-  if (!response || response.type !== "res" || response.id !== request.id) {
-    throw new Error("Conversation handler returned no resource response");
-  }
-  if (!response.ok) throw new Error(response.error.message);
-  if (!("resources" in response.data)) {
-    throw new Error("Conversation handler returned an invalid resource batch");
-  }
-  return response.data.resources;
+  return processResult(result).resources;
 }
 
 export async function handleConversationMediaRead(

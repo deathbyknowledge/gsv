@@ -38,11 +38,15 @@ function readyResponsibility(kernel: Kernel, ownerUid: number) {
 
 function eventTransport() {
   return vi.spyOn(processTransport, "sendFrameToProcess").mockImplementation(async (_installation, _pid, frame) => {
-    if (frame.type !== "req" || (frame.call !== "proc.runtime.event.deliver" && frame.call !== "proc.event.deliver")) {
-      throw new Error("Unexpected event fixture frame");
-    }
+    if (frame.type !== "req" || frame.call !== "proc.runtime.event.deliver") throw new Error("Unexpected event fixture frame");
     return { type: "res", id: frame.id, ok: true, data: { eventId: frame.args.eventId, runId: frame.args.eventId, queued: false } };
   });
+}
+
+function watchDelivery() {
+  return vi.spyOn(processTransport, "deliverEventToProcess").mockImplementation(async (_installation, _pid, args) => (
+    { eventId: args.eventId, runId: args.eventId, queued: false }
+  ));
 }
 
 const targetEvent = { targetId: "machine:shared", event: "connected", platform: "linux", observedAt: Date.now() } as const;
@@ -125,7 +129,7 @@ describe("new Kernel event admission after account removal", () => {
   });
 
   it.each(["person", "both"] as const)("fences a fresh %s watch event after owner removal during admission", async (audience) => {
-    const send = eventTransport();
+    const send = watchDelivery();
     try {
       await fixture(async (kernel) => {
         const removed = targetWatch(kernel, 1000, 2000, audience);
@@ -138,7 +142,7 @@ describe("new Kernel event admission after account removal", () => {
         gate.resolve({ allowed: true });
         await pending;
         expect(send).toHaveBeenCalledTimes(1);
-        expect(send.mock.calls[0]?.[2]).toMatchObject({ args: { eventId: `transition:removal:${control.watchId}` } });
+        expect(send.mock.calls[0]?.[2]).toMatchObject({ eventId: `transition:removal:${control.watchId}` });
         expect(kernel.ctx.storage.sql.exec<{ status: string }>("SELECT status FROM signal_watches WHERE watch_id = ?", removed.watchId).one().status).toBe("failed");
         admission.mockRestore();
       });
@@ -146,7 +150,7 @@ describe("new Kernel event admission after account removal", () => {
   });
 
   it("fences a watch whose run-as account was removed while its owner remains active", async () => {
-    const send = eventTransport();
+    const send = watchDelivery();
     try {
       await fixture(async (kernel) => {
         targetWatch(kernel, 1001, 1000, "both");
@@ -159,14 +163,13 @@ describe("new Kernel event admission after account removal", () => {
   });
 
   it("keeps an admitted watch delivery's late acknowledgment after removal", async () => {
-    const send = eventTransport();
+    const send = watchDelivery();
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    send.mockImplementationOnce(async (_installation, _pid, frame) => {
-      if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected event fixture frame");
+    send.mockImplementationOnce(async (_installation, _pid, args) => {
       entered.resolve();
       await release.promise;
-      return { type: "res", id: frame.id, ok: true, data: { eventId: frame.args.eventId, runId: frame.args.eventId, queued: false } };
+      return { eventId: args.eventId, runId: args.eventId, queued: false };
     });
     try {
       await fixture(async (kernel) => {

@@ -1,8 +1,5 @@
 import { createInstallationStorage } from "../installation/storage";
-import type { InternalRequestFrame } from "../protocol/process-frames";
-import type {
-  ProcessAdapterDeliverArgs,
-} from "../protocol/process-frames";
+import type { ProcessAdapterDeliverArgs, ProcessResourcesRetainArgs } from "../protocol/process-frames";
 import { REQUEST_CANCEL_SIGNAL, bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { runDurableObjectAlarm } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -587,23 +584,12 @@ describe("proc.send", () => {
     const pid = "mech-send-media";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
-    const upload = await stub.recvFrame({
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.resource.write",
-      args: {
-        resourceId: "proof",
-        mediaType: "image",
-        contentType: "image/png",
-        filename: "proof.png",
-      },
-      body: bodyFromBytes(new Uint8Array([1, 2, 3])),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-    } satisfies InternalRequestFrame<"proc.resource.write">);
-    if (!upload.ok) {
-      throw new Error(upload.error.message);
-    }
-    expect(upload.data).toMatchObject({
+    const upload = await stub.writeResource(
+      { resourceId: "proof", mediaType: "image", contentType: "image/png", filename: "proof.png" },
+      bodyFromBytes(new Uint8Array([1, 2, 3])),
+    );
+    if ("unavailable" in upload) throw new Error(upload.message);
+    expect(upload).toMatchObject({
       resource: {
         type: "resource",
         ref: {
@@ -612,7 +598,7 @@ describe("proc.send", () => {
         },
       },
     });
-    const uploadedMedia = upload.data.resource;
+    const uploadedMedia = upload.resource;
 
     const res = await okProcessResponse(
       stub,
@@ -795,43 +781,31 @@ describe("proc.send", () => {
           await storedGate;
           return object;
         });
-        const request: InternalRequestFrame<"proc.resources.retain"> = {
-          type: "req",
-          id: "retain-cancelled",
-          call: "proc.resources.retain",
-          args: {
-            batchId: "retain-cancelled",
-            resources: [
-              {
-                type: "resource",
-                ref: {
-                  type: "file",
-                  target: "gsv",
-                  path: sourcePath,
-                  revision: source.httpEtag,
-                  contentType: "image/png",
-                  size: bytes.byteLength,
-                },
+        const retaining = instance.retainResources("retain-cancelled", {
+          batchId: "retain-cancelled",
+          resources: [
+            {
+              type: "resource",
+              ref: {
+                type: "file",
+                target: "gsv",
+                path: sourcePath,
+                revision: source.httpEtag,
+                contentType: "image/png",
+                size: bytes.byteLength,
               },
-            ],
-          },
-        };
-
-        const retaining = instance.recvFrame(request);
+            },
+          ],
+        });
         await stored;
         await instance.recvFrame({
           type: "sig",
           signal: REQUEST_CANCEL_SIGNAL,
-          payload: { id: request.id, reason: "Send cancelled" },
+          payload: { id: "retain-cancelled", reason: "Send cancelled" },
         });
         releaseStored();
 
-        await expect(retaining).resolves.toMatchObject({
-          type: "res",
-          id: request.id,
-          ok: false,
-          error: { message: "Send cancelled" },
-        });
+        await expect(retaining).rejects.toThrow("Send cancelled");
         expect(retainedKey).toMatch(/^root\/\.gsv\/media\/archived-media:/);
         expect(await process.storage.head(retainedKey)).toBeNull();
       });
@@ -854,35 +828,28 @@ describe("proc.send", () => {
     let successfulKey = "";
     let cancelledKey = "";
 
-    const request = (id: string): InternalRequestFrame<"proc.resources.retain"> => ({
-      type: "req",
-      id,
-      call: "proc.resources.retain",
-      args: {
-        batchId: id,
-        resources: [
-          {
-            type: "resource",
-            ref: {
-              type: "file",
-              target: "gsv",
-              path: sourcePath,
-              revision: source.httpEtag,
-              contentType: "image/png",
-              size: bytes.byteLength,
-            },
+    const request = (batchId: string): ProcessResourcesRetainArgs => ({
+      batchId,
+      resources: [
+        {
+          type: "resource",
+          ref: {
+            type: "file",
+            target: "gsv",
+            path: sourcePath,
+            revision: source.httpEtag,
+            contentType: "image/png",
+            size: bytes.byteLength,
           },
-        ],
-      },
+        },
+      ],
     });
 
     try {
       await runInProcess(successfulStub, async (_process, _state, instance) => {
-        const response = await instance.recvFrame(request("retain-successful"));
-        if (!response || response.type !== "res" || !response.ok) {
-          throw new Error("successful Process did not retain the fixture");
-        }
-        successfulKey = response.data.resources[0].ref.path.replace(/^\/+/, "");
+        const response = await instance.retainResources("retain-successful", request("retain-successful"));
+        if ("unavailable" in response) throw new Error("successful Process did not retain the fixture");
+        successfulKey = response.resources[0].ref.path.replace(/^\/+/, "");
         expect(await createInstallationStorage(env.STORAGE, "inst_test").head(successfulKey)).not.toBeNull();
       });
 
@@ -906,7 +873,7 @@ describe("proc.send", () => {
           await storedGate;
           return object;
         });
-        const retaining = instance.recvFrame(request("retain-cancelled-cross-process"));
+        const retaining = instance.retainResources("retain-cancelled-cross-process", request("retain-cancelled-cross-process"));
         await stored;
         await instance.recvFrame({
           type: "sig",
@@ -915,12 +882,7 @@ describe("proc.send", () => {
         });
         releaseStored();
 
-        await expect(retaining).resolves.toMatchObject({
-          type: "res",
-          id: "retain-cancelled-cross-process",
-          ok: false,
-          error: { message: "Send cancelled" },
-        });
+        await expect(retaining).rejects.toThrow("Send cancelled");
         expect(cancelledKey).not.toBe(successfulKey);
         expect(await createInstallationStorage(env.STORAGE, "inst_test").head(cancelledKey)).toBeNull();
         expect(await createInstallationStorage(env.STORAGE, "inst_test").head(successfulKey)).not.toBeNull();
@@ -948,44 +910,35 @@ describe("proc.send", () => {
         const before = (await process.storage.list({ prefix: archivePrefix })).objects
           .map((object: R2Object) => object.key)
           .sort();
-        const request: InternalRequestFrame<"proc.resources.retain"> = {
-          type: "req",
-          id: "retain-batch-rollback",
-          call: "proc.resources.retain",
-          args: {
-            batchId: "delivery:batch-rollback",
-            resources: [
-              {
-                type: "resource",
-                ref: {
-                  type: "file",
-                  target: "gsv",
-                  path: sourcePath,
-                  revision: source.httpEtag,
-                  contentType: "image/png",
-                  size: bytes.byteLength,
-                },
+        const retaining = instance.retainResources("retain-batch-rollback", {
+          batchId: "delivery:batch-rollback",
+          resources: [
+            {
+              type: "resource",
+              ref: {
+                type: "file",
+                target: "gsv",
+                path: sourcePath,
+                revision: source.httpEtag,
+                contentType: "image/png",
+                size: bytes.byteLength,
               },
-              {
-                type: "resource",
-                ref: {
-                  type: "file",
-                  target: "gsv",
-                  path: "/root/resource-retain-missing.png",
-                  revision: "missing-revision",
-                  contentType: "image/png",
-                  size: bytes.byteLength,
-                },
+            },
+            {
+              type: "resource",
+              ref: {
+                type: "file",
+                target: "gsv",
+                path: "/root/resource-retain-missing.png",
+                revision: "missing-revision",
+                contentType: "image/png",
+                size: bytes.byteLength,
               },
-            ],
-          },
-        };
-
-        await expect(instance.recvFrame(request)).resolves.toMatchObject({
-          type: "res",
-          id: request.id,
-          ok: false,
+            },
+          ],
         });
+
+        await expect(retaining).rejects.toThrow();
         expect(
           (await process.storage.list({ prefix: archivePrefix })).objects
             .map((object: R2Object) => object.key)

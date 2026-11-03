@@ -15,13 +15,15 @@ it("retires persisted approval notices without reading a child or waking a paren
       targetPid: "child", targetRunId: "child-run", deadlineAt: Date.now() + 60_000 });
     const gate = vi.spyOn(kernel.onboarding, "managedWorkGate").mockResolvedValue({ allowed: true });
     const send = vi.spyOn(utils, "sendFrameToProcess").mockRejectedValue(new Error("No model notice should be sent"));
+    const deliver = vi.spyOn(utils, "deliverEventToProcess").mockRejectedValue(new Error("No model notice should be sent"));
     try {
       const task = await kernel.schedule(0, "onProcessApprovalNotice", {
         pid: "child", runId: "child-run", requestId: "request",
       });
       await kernel.alarm();
       expect(send).not.toHaveBeenCalled();
+      expect(deliver).not.toHaveBeenCalled();
       expect(state.storage.sql.exec("SELECT id FROM cf_agents_schedules WHERE id = ?", task.id).toArray()).toEqual([]);
-    } finally { send.mockRestore(); gate.mockRestore(); }
+    } finally { send.mockRestore(); deliver.mockRestore(); gate.mockRestore(); }
   });
 });

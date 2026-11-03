@@ -47,7 +47,7 @@ import { syscallToolName } from "../../syscalls/constants";
 import { cancelProcessRequests } from "../../shared/utils";
 import type {
   InternalResponseFrame,
-  ProcessInternalCall,
+  ProcessUnavailable,
 } from "../../protocol/process-frames";
 import type {
   ProcessRuntimeEventDeliverArgs,
@@ -57,10 +57,9 @@ import type {
   ProcessRequestFrame,
 } from "../../protocol/process-frames";
 import { AGENT_READ_MAX_BYTES } from "../../syscalls/read";
-import type { ResponseErrFrame, ResponseFrame, ResponseOkFrame, SignalFrame } from "../../protocol/frames";
+import type { FrameBody, ResponseErrFrame, ResponseFrame, ResponseOkFrame, SignalFrame } from "../../protocol/frames";
 import type { ResultOf, SyscallName } from "../../syscalls";
 import { formatAgentToolResponse, materializeToolResponse } from "../tool-response";
-import { deliverProcessEvent } from "./events";
 import { handOffMemoryReviews } from "../memory-review";
 
 const retiredWatchedSignalEnvelopeSchema = z.object({ watched: z.literal(true) });
@@ -1989,6 +1988,28 @@ export class ProcessController {
     return null;
   }
 
+  /**
+   * Runs a typed internal call under the lifecycle rules `recvFrame` applies
+   * to requests: a killed or transitioning Process declines it and cancels
+   * its body, and a failure after a kill reports the kill.
+   */
+  async internalCall<T>(body: FrameBody | undefined, run: () => Promise<T>): Promise<T | ProcessUnavailable> {
+    if (this.host.killed) {
+      await body?.stream.cancel("Process no longer exists").catch(() => {});
+      return { unavailable: "killed", message: "Process no longer exists" };
+    }
+    if (this.host.lifecyclePhase !== "ready") {
+      await body?.stream.cancel("Process lifecycle transition in progress").catch(() => {});
+      return { unavailable: "transitioning", message: `Process lifecycle is ${this.host.lifecyclePhase}` };
+    }
+    try {
+      return await run();
+    } catch (error) {
+      if (this.host.killed) return { unavailable: "killed", message: errorMessageFromUnknown(error) };
+      throw error;
+    }
+  }
+
   async recvFrame(frame: ProcessInboundFrame) {
     if (this.host.killed) return await this.handleKilledFrame(frame);
     if (this.host.lifecyclePhase !== "ready") return await this.handleTransitioningFrame(frame);
@@ -2097,18 +2118,8 @@ export class ProcessController {
 
   async handleReq(
     frame: ProcessRequestFrame,
-  ): Promise<ResponseFrame | InternalResponseFrame<ProcessInternalCall> | null> {
+  ): Promise<ResponseFrame | InternalResponseFrame | null> {
     try {
-      if (frame.call === "proc.tool.authorize") {
-        const approved = await this.handleCancellableRequest(frame.id, (signal) =>
-          this.host.tools.authorizeNestedTool(frame.args, signal),
-        );
-        return { type: "res", id: frame.id, ok: true, data: { approved } };
-      }
-      if (frame.call === "proc.event.deliver") {
-        const result = await deliverProcessEvent(this.host, frame.args);
-        return { type: "res", id: frame.id, ok: true, data: result };
-      }
       if (frame.call === "proc.runtime.event.deliver") {
         const result = await this.handleProcessRuntimeEventDeliver(frame.args);
         return { type: "res", id: frame.id, ok: true, data: result };
@@ -2121,16 +2132,6 @@ export class ProcessController {
       if (frame.call === "proc.schedule.deliver") {
         const result = await this.handleProcScheduleDeliver(frame.args);
         return { type: "res", id: frame.id, ok: true, data: result };
-      }
-      if (frame.call === "proc.resources.retain") {
-        const resources = await this.handleCancellableRequest(frame.id, (signal) =>
-          this.host.resources.handleProcessResourcesRetain(frame, signal),
-        );
-        return { type: "res", id: frame.id, ok: true, data: { resources } };
-      }
-      if (frame.call === "proc.resource.write") {
-        const resource = await this.host.resources.handleProcessResourceWrite(frame);
-        return { type: "res", id: frame.id, ok: true, data: { resource } };
       }
       let data: ResultOf<SyscallName>;
 
@@ -2170,12 +2171,6 @@ export class ProcessController {
           break;
         case "proc.ai.config.set":
           data = await this.host.settings.setAiConfig(frame.args);
-          break;
-        case "proc.run.attach":
-          data = await this.host.resources.handleProcRunAttach(frame.args);
-          break;
-        case "proc.run.staged":
-          data = this.host.resources.handleProcRunStaged(frame.args);
           break;
         default:
           return await this.handleHistoryOrLifecycleRequest(frame);

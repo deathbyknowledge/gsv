@@ -1,8 +1,8 @@
 import { REQUEST_CANCEL_SIGNAL, type JsonObject } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import type { SyscallName } from "../syscalls";
-import type { ProcessApprovalTarget, ProcessToolOwner } from "../protocol/process-frames";
-import { sendFrameToProcess } from "../shared/utils";
+import { processResult, type ProcessApprovalTarget, type ProcessToolOwner } from "../protocol/process-frames";
+import { authorizeProcessTool, sendFrameToProcess } from "../shared/utils";
 import { raceWithAbort } from "../shared/abort";
 
 export function nestedToolOwner(ctx: KernelContext): ProcessToolOwner | undefined {
@@ -17,7 +17,7 @@ export async function authorizeNestedOperation(
   ctx: KernelContext,
   syscall: SyscallName,
   args: JsonObject,
-  send: typeof sendFrameToProcess = sendFrameToProcess,
+  authorize: typeof authorizeProcessTool = authorizeProcessTool,
   target?: ProcessApprovalTarget,
 ): Promise<void> {
   if (!ctx.toolOwner) return;
@@ -28,11 +28,11 @@ export async function authorizeNestedOperation(
   const releaseDeadlines = ctx.executionDeadlines?.hold();
   let response;
   try {
-    response = await raceWithAbort(send(ctx.installationId, ctx.processId, {
-      type: "req", id, call: "proc.tool.authorize", args: { ...ctx.toolOwner, syscall, args, target },
+    response = await raceWithAbort(authorize(ctx.installationId, ctx.processId, id, {
+      ...ctx.toolOwner, syscall, args, target,
     }), signal, {
       onAbort: () => {
-        ctx.defer(send(ctx.installationId, ctx.processId!, {
+        ctx.defer(sendFrameToProcess(ctx.installationId, ctx.processId!, {
           type: "sig", signal: REQUEST_CANCEL_SIGNAL,
           payload: { id, reason: "Owning operation was cancelled" },
         }).catch(() => {}));
@@ -42,6 +42,5 @@ export async function authorizeNestedOperation(
     releaseDeadlines?.();
   }
   signal?.throwIfAborted();
-  if (!response?.ok) throw new Error(response?.error.message ?? "Approval owner is unavailable");
-  if (!response.data.approved) throw new Error(`Tool execution was not approved: ${syscall}`);
+  if (!processResult(response).approved) throw new Error(`Tool execution was not approved: ${syscall}`);
 }

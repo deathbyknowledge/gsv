@@ -42,16 +42,13 @@ import { resolveCallerOwnerUid } from "../../../kernel/context";
 import { findInteractiveProcess, type ProcessRecord } from "../../../kernel/processes";
 import type { RunRoute } from "../../../kernel/run-routes";
 import type { SurfaceRouteRecord } from "../../../kernel/surface-routes";
-import type { InternalRequestFrame } from "../../../protocol/process-frames";
-import type {
-  ProcessRunAttachResult,
-} from "../../../protocol/process-frames";
+import { processResult } from "../../../protocol/process-frames";
 import {
   MAX_MESSAGE_MEDIA_ITEMS,
   MAX_MESSAGE_MEDIA_PART_BYTES,
   MAX_MESSAGE_MEDIA_TOTAL_BYTES,
 } from "../../../shared/message-media-limits";
-import { sendFrameToProcess } from "../../../shared/utils";
+import { attachProcessRunMedia, countProcessStagedRunMedia } from "../../../shared/utils";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 export function buildMessageCommand(fs: GsvFs, ctx: KernelContext) {
@@ -287,23 +284,11 @@ async function attachToReply(
 
   const resources = await referenceAttachments(paths, requestedMime, shellCtx, fs);
 
-  const request: InternalRequestFrame<"proc.run.attach"> = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.run.attach",
-    args: { runId, media: resources, ...(ctx.toolOwner ? { requestId: ctx.toolOwner.requestId } : undefined) },
-  };
-  const response = await sendFrameToProcess(ctx.installationId, pid, request);
-  if (!response || response.type !== "res" || !response.ok) {
-    throw new Error(
-      response && response.type === "res" && !response.ok
-        ? response.error.message
-        : "no response while attaching media to the current reply",
-    );
-  }
-  const result: ProcessRunAttachResult | undefined = response.data;
-  if (!result?.ok) {
-    throw new Error(result?.error || "failed to attach media to the current reply");
+  const result = processResult(await attachProcessRunMedia(ctx.installationId, pid, {
+    runId, media: resources, ...(ctx.toolOwner ? { requestId: ctx.toolOwner.requestId } : undefined),
+  }));
+  if (!result.ok) {
+    throw new Error(result.error || "failed to attach media to the current reply");
   }
   return completed([
     "attached=true",
@@ -315,17 +300,13 @@ async function attachToReply(
 }
 
 async function stagedReplyFileCount(pid: string, runId: string, destination: string, ctx: KernelContext): Promise<number> {
-  const request: InternalRequestFrame<"proc.run.staged"> = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.run.staged",
-    args: { runId, destination, ...(ctx.toolOwner ? { requestId: ctx.toolOwner.requestId } : undefined) },
-  };
-  const response = await sendFrameToProcess(ctx.installationId, pid, request);
-  if (!response || response.type !== "res" || !response.ok) {
+  const result = await countProcessStagedRunMedia(ctx.installationId, pid, {
+    runId, destination, ...(ctx.toolOwner ? { requestId: ctx.toolOwner.requestId } : undefined),
+  });
+  if ("unavailable" in result) {
     throw new Error("could not check this run's staged attachments; retry the send");
   }
-  return response.data.count;
+  return result.count;
 }
 
 async function showCurrentReplyDestination(

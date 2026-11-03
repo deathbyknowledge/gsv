@@ -209,10 +209,7 @@ describe("Send text streaming", () => {
     // the escaped surrogate pair split across chunks arrives whole, never as a lone half
     expect(result.streamed.map((entry) => entry.delta)).toContain("😀 there\n");
     expect(result.commits).toHaveLength(1);
-    expect(result.commits[0][2]).toMatchObject({
-      call: "proc.message.commit",
-      args: { runId, actionId: "send-stream-1", text },
-    });
+    expect(result.commits[0][2]).toMatchObject({ runId, actionId: "send-stream-1", text });
     expect(
       result.emitted.findLast((entry) => entry.signal === "proc.run.finished")?.payload,
     ).toMatchObject({ status: "ok", reason: "run.yielded" });
@@ -299,8 +296,8 @@ describe("reply telemetry", () => {
     });
     expect(result.first.ok && result.second.ok).toBe(true);
     expect(result.replied).toBe(true);
-    expect(result.commits[0][2].args.replyMs).toBeGreaterThanOrEqual(250);
-    expect(result.commits[1][2].args.replyMs).toBeUndefined();
+    expect(result.commits[0][2].replyMs).toBeGreaterThanOrEqual(250);
+    expect(result.commits[1][2].replyMs).toBeUndefined();
   });
 
   it("leaves a run that no person started without a reply timing", async () => {
@@ -314,7 +311,7 @@ describe("reply telemetry", () => {
       await process.run.commitMessageRunControlAction({ runId, actionId: "send-1", text: "hi", finish: false, media: [] });
       return process.run.commitRunControlMessage.mock.calls;
     });
-    expect(commits[0][2].args.replyMs).toBeUndefined();
+    expect(commits[0][2].replyMs).toBeUndefined();
   });
 
   it("reports a person's run that ended without a reply, by category only", async () => {

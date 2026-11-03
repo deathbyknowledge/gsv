@@ -2,9 +2,10 @@ import type {
   AdapterInboundMessage,
   AdapterSurface,
 } from "../adapter-interface";
-import type {
-  InternalRequestFrame,
-  InternalResponseFrame,
+import {
+  processResult,
+  type InternalRequestFrame,
+  type InternalResponseFrame,
 } from "../protocol/process-frames";
 import type {
   AdapterInboundArgs,
@@ -35,6 +36,7 @@ import type {
 import {
   getConversationById,
   sendFrameToProcess,
+  writeProcessResource,
 } from "../shared/utils";
 import type {
   ConversationAppendRequest,
@@ -903,27 +905,15 @@ async function storeAdapterInboundMedia(
       media: item,
       body: partBody,
     }) => {
-      const request: InternalRequestFrame<"proc.resource.write"> = {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.resource.write",
-        args: {
-          resourceId: `${runId}:${mediaIndex}`,
-          mediaType: item.type,
-          contentType: item.mimeType,
-          filename: item.filename,
-          duration: item.duration,
-          transcription: item.transcription,
-        },
-        body: partBody,
-      };
-      const response = await sendFrameToProcess(installationId, pid, request);
-      if (!response || response.type !== "res" || !response.ok) {
-        throw new Error(response && response.type === "res" && !response.ok
-          ? response.error.message
-          : "No response while storing adapter media");
-      }
-      stored.push(response.data.resource);
+      const result = await writeProcessResource(installationId, pid, {
+        resourceId: `${runId}:${mediaIndex}`,
+        mediaType: item.type,
+        contentType: item.mimeType,
+        filename: item.filename,
+        duration: item.duration,
+        transcription: item.transcription,
+      }, partBody);
+      stored.push(processResult(result).resource);
     }, {
       maxBytes: MAX_MESSAGE_MEDIA_TOTAL_BYTES,
       maxPartBytes: MAX_MESSAGE_MEDIA_PART_BYTES,

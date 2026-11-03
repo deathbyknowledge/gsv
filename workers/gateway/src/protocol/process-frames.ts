@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type {
   AdapterInteractionOrigin,
-  ConversationMessage,
   EventReplyTarget,
   JsonObject,
   ProcMediaInput,
@@ -108,14 +107,6 @@ export type ProcessEventDeliverResult = {
   ignored?: boolean;
 };
 
-export const processEventDeliverResultSchema: z.ZodType<ProcessEventDeliverResult> = z.strictObject({
-  eventId: z.string(),
-  runId: z.string().nullable(),
-  queued: z.boolean(),
-  messageId: z.number().int().positive().optional(),
-  ignored: z.boolean().optional(),
-});
-
 type ProcessScheduleDataValue =
   | string
   | number
@@ -208,12 +199,11 @@ export type ProcessMessageCommitArgs = {
 };
 
 /**
- * Kernel-to-Process and Process-to-Kernel calls that never cross a public
- * carrier. They share the public frame envelope but have their own contract table.
+ * Kernel-to-Process deliveries that still share the public frame envelope.
+ * Each goes away when its producer moves to the event log; other internal
+ * calls are typed Durable Object methods.
  */
 export type InternalSyscallDomains = {
-  "proc.tool.authorize": { args: ProcessToolAuthorizeArgs; result: { approved: boolean } };
-  "proc.event.deliver": { args: ProcessEventDeliverArgs; result: ProcessEventDeliverResult };
   "proc.runtime.event.deliver": {
     args: ProcessRuntimeEventDeliverArgs;
     result: ProcessRuntimeEventDeliverResult;
@@ -223,25 +213,12 @@ export type InternalSyscallDomains = {
     result: ProcessScheduleDeliverResult;
   };
   "proc.adapter.deliver": { args: ProcessAdapterDeliverArgs; result: ProcSendResult };
-  "proc.run.attach": { args: ProcessRunAttachArgs; result: ProcessRunAttachResult };
-  "proc.run.staged": { args: ProcessRunStagedArgs; result: ProcessRunStagedResult };
-  "proc.resources.retain": {
-    args: ProcessResourcesRetainArgs;
-    result: { resources: ResourceBlock[] };
-  };
-  "proc.resource.write": { args: ProcessResourceWriteArgs; result: { resource: ResourceBlock } };
-  "proc.message.commit": { args: ProcessMessageCommitArgs; result: { message: ConversationMessage } };
 };
 
 export type InternalSyscallName = keyof InternalSyscallDomains;
 
-/** `proc.resource.write` carries its bytes as a mandatory body. */
-type InternalRequestOf<S extends InternalSyscallName> = S extends "proc.resource.write"
-  ? TypedRequest<InternalSyscallDomains, S, FrameBody> & { body: FrameBody }
-  : TypedRequest<InternalSyscallDomains, S, FrameBody>;
-
 export type InternalRequestFrame<S extends InternalSyscallName = InternalSyscallName> = {
-  [K in S]: InternalRequestOf<K>;
+  [K in S]: TypedRequest<InternalSyscallDomains, K, FrameBody>;
 }[S];
 
 /** Internal calls always answer with their result; only public frames may omit data. */
@@ -251,8 +228,17 @@ export type InternalResponseFrame<S extends InternalSyscallName = InternalSyscal
     })
   | ResponseErrEnvelope;
 
-/** Internal calls the Kernel sends to a Process. */
-export type ProcessInternalCall = Exclude<InternalSyscallName, "proc.message.commit">;
+/**
+ * What a typed internal Process call answers instead of its result while the
+ * Process is killed or changing lifecycle. Other failures are thrown.
+ */
+export type ProcessUnavailable = { unavailable: "killed" | "transitioning"; message: string };
+
+/** A typed internal call's result, where an unavailable Process is a failure. */
+export function processResult<T extends object>(result: T | ProcessUnavailable): T {
+  if ("unavailable" in result) throw new Error(result.message);
+  return result;
+}
 
 export function processMessageDraftId(runId: string, actionId: string): string {
   return `draft:${runId}:${actionId}`;
@@ -269,9 +255,6 @@ export type ProcessMessageStreamSignal = SignalFrame<{
   timestamp: number;
 }> & { signal: "proc.message.stream" };
 
-export type ProcessRequestFrame = (RequestFrame | InternalRequestFrame<ProcessInternalCall>) & { toolOwner?: ProcessToolOwner };
+export type ProcessRequestFrame = (RequestFrame | InternalRequestFrame) & { toolOwner?: ProcessToolOwner };
 export type ProcessInboundFrame = Exclude<Frame, { type: "req" }> | ProcessRequestFrame;
-export type ProcessOutboundFrame =
-  | Frame
-  | InternalRequestFrame<"proc.message.commit">
-  | ProcessMessageStreamSignal;
+export type ProcessOutboundFrame = Frame | ProcessMessageStreamSignal;

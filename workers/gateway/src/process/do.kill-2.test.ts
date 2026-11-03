@@ -1,6 +1,5 @@
 import { createInstallationStorage } from "../installation/storage";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
-import type { InternalRequestFrame } from "../protocol/protocol/process-frames";
 import { evictDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
@@ -14,19 +13,12 @@ describe("proc.kill", () => {
     const runId = "run-kill-finish-media-order";
     const key = `var/media/0/${pid}/scratch.png`;
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const uploaded = await stub.recvFrame({
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.resource.write",
-      args: {
-        resourceId: "reply.png",
-        mediaType: "image",
-        contentType: "image/png",
-      },
-      body: bodyFromBytes(new Uint8Array([7, 8, 9])),
-    } satisfies InternalRequestFrame<"proc.resource.write">);
-    if (!uploaded.ok) throw new Error(uploaded.error.message);
-    const resource = uploaded.data.resource;
+    const uploaded = await stub.writeResource(
+      { resourceId: "reply.png", mediaType: "image", contentType: "image/png" },
+      bodyFromBytes(new Uint8Array([7, 8, 9])),
+    );
+    if ("unavailable" in uploaded) throw new Error(uploaded.message);
+    const resource = uploaded.resource;
     await createInstallationStorage(env.STORAGE, "inst_test").put(key, new Uint8Array([7, 8, 9]), {
       httpMetadata: { contentType: "image/png" },
     });
