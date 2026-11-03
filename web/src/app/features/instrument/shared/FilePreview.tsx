@@ -74,7 +74,8 @@ export function FilePreview({
   }, [copied]);
   useEffect(() => { setCopied("idle"); }, [file.path]);
   const copyPath = () => {
-    navigator.clipboard.writeText(file.path).then(() => setCopied("copied"), () => setCopied("failed"));
+    // Without the Clipboard API (an insecure context) the write throws before any promise exists; that is a failed copy too.
+    Promise.resolve().then(() => navigator.clipboard.writeText(file.path)).then(() => setCopied("copied"), () => setCopied("failed"));
   };
   const size = contents ? formatChatMediaSize(contents.size) : "";
   const extent = contents?.truncated ? t("shell.file.firstLines", { count: contents.lines ?? 0 }) : "";

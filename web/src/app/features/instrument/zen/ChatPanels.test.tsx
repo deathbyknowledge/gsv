@@ -8,12 +8,12 @@ import { FilePreview } from "../shared/FilePreview";
 import { PlaceTree } from "../shared/PlaceFiles";
 import { ChatPath } from "./ChatPanels";
 
-async function mountedPath(location: ComponentProps<typeof ChatPath>["location"], targets: readonly ConsoleTarget[] = []) {
+async function mountedPath(location: ComponentProps<typeof ChatPath>["location"], targets: readonly ConsoleTarget[] = [], ready = true) {
   const root = createTestRoot("chat path");
   let tree: ComponentChildren;
   const onAsk = vi.fn();
   const onFleet = vi.fn();
-  function Harness() { tree = ChatPath({ location, targets, ready: true, allowed: true, onAsk, onFleet }); return null; }
+  function Harness() { tree = ChatPath({ location, targets, ready, allowed: true, onAsk, onFleet }); return null; }
   await root.render(<Harness />);
   const props = <P,>(component: ComponentType<P>): P => {
     const node = collectNodes(tree).find((entry) => entry.type === component);
@@ -59,6 +59,17 @@ describe("ChatPath", () => {
       expect(view.has(FilePreview)).toBe(false);
       expect(view.props(PlaceTree).initialPath).toBe("~/notes/");
     } finally { await view.unmount(); }
+  });
+
+  it("reads a cloud file before the target list arrives, but waits for it on another place", async () => {
+    const cloud = await mountedPath({ kind: "file", target: "gsv", path: "/home/x/notes/plan.md" }, [], false);
+    try {
+      expect(cloud.props(FilePreview).enabled).toBe(true);
+    } finally { await cloud.unmount(); }
+    const laptop = await mountedPath({ kind: "file", target: "laptop", path: "/srv/plan.md" }, [], false);
+    try {
+      expect(laptop.props(FilePreview).enabled).toBe(false);
+    } finally { await laptop.unmount(); }
   });
 
   it("says so when the linked place is not connected", async () => {

@@ -3,7 +3,7 @@ import type { ConsoleAccount, ConsoleTarget } from "../../../domain/system/conso
 import { RetainedView } from "../../../services/navigation/ViewActivity";
 import { FleetDialog } from "../fleet/FleetDialog";
 import { ConnectPlace } from "../fleet/ConnectPlace";
-import { orderPlaces, type FleetReference } from "../fleet/fleetModel";
+import { CLOUD_TARGET_ID, orderPlaces, type FleetReference } from "../fleet/fleetModel";
 import { PlaceTree, type OpenFile } from "../shared/PlaceFiles";
 import { FilePreview } from "../shared/FilePreview";
 import { fileName } from "../../../services/files/domain/paths";
@@ -88,9 +88,11 @@ export function ChatPath({ location, targets, ready, allowed, onAsk, onFleet, on
   useEffect(() => { onShown?.(shownName); }, [shownName, onShown]);
   if (!allowed) return <p class="note">{t("chat.panel.noFiles")}</p>;
   const place = orderPlaces([...targets]).find((candidate) => candidate.id === location.target) ?? null;
+  // The cloud's files need only the gateway, which the preview checks itself; the target list only resolves other places.
+  const readable = file?.target === CLOUD_TARGET_ID || ready;
   if (file) return <>
     {folder !== null && <button type="button" class="fleet-text-action chat-context-back" onClick={() => setFile(null)}>← {fileName(folder)}</button>}
-    <FilePreview file={file} placeLabel={place?.label ?? location.target} enabled={ready} onAsk={onAsk}
+    <FilePreview file={file} placeLabel={place?.label ?? location.target} enabled={readable} onAsk={onAsk}
       open={{ label: t("shell.file.openInWork"), onOpen: () => onFleet(`file:${file.target}:${file.path}`) }}
       // A link cannot say whether it names a folder; one that does opens as the folder's tree.
       onFolder={folder === null ? (path) => { setFolder(path); setFile(null); } : undefined} />
