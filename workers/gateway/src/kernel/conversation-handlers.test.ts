@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../test-support/peers";
 import {
-  REQUEST_CANCEL_SIGNAL,
   type ConversationMessage,
   type ConversationSummary,
   type ResourceBlock,
@@ -17,6 +16,7 @@ import * as targets from "./targets";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
 const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
 const retainProcessResourcesMock = vi.spyOn(utils, "retainProcessResources");
+const cancelProcessCallMock = vi.spyOn(utils, "cancelProcessCall");
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 
 import {
@@ -120,6 +120,7 @@ describe("conversation handlers", () => {
     getConversationByIdMock.mockReset();
     sendFrameToProcessMock.mockReset();
     retainProcessResourcesMock.mockReset();
+    cancelProcessCallMock.mockReset().mockResolvedValue();
     ensurePersonalControllerMock.mockReset();
     ensurePersonalControllerMock.mockResolvedValue(PROCESS.processId);
   });
@@ -352,7 +353,6 @@ describe("conversation handlers", () => {
       },
     };
     retainProcessResourcesMock.mockImplementation(() => new Promise<never>(() => {}));
-    sendFrameToProcessMock.mockResolvedValue(null);
 
     const retaining = retainConversationResources([resource], PROCESS.processId, ctx);
     await vi.waitFor(() => expect(retainProcessResourcesMock).toHaveBeenCalledWith(
@@ -361,20 +361,12 @@ describe("conversation handlers", () => {
       expect.any(String),
       expect.objectContaining({ resources: [resource] }),
     ));
-    const requestId = retainProcessResourcesMock.mock.calls[0]?.[2];
+    const cancelId = retainProcessResourcesMock.mock.calls[0]?.[2];
 
     controller.abort(new Error("Upload cancelled"));
 
     await expect(retaining).rejects.toThrow("Upload cancelled");
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      "inst_test",
-      PROCESS.processId,
-      {
-        type: "sig",
-        signal: REQUEST_CANCEL_SIGNAL,
-        payload: { id: requestId, reason: "Upload cancelled" },
-      },
-    );
+    expect(cancelProcessCallMock).toHaveBeenCalledWith("inst_test", PROCESS.processId, cancelId, "Upload cancelled");
   });
 
   it("reads canonical history and media only through an owned conversation", async () => {

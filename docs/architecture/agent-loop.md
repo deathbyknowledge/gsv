@@ -45,7 +45,10 @@ and media retention includes every member of a group. Format-2 clients synchroni
 complete groups using durable history revisions and reset detection. See
 [Process History](./process-history.md) for record identity, rendering, and cursors.
 
-The Kernel delivers frames to the Process DO through `recvFrame`. Direct clients
+The Kernel delivers public syscall frames, their answers and signals to the Process
+DO through `recvFrame`, and makes its own calls through typed methods: events,
+nested tool approvals, resource retention and run media, each cancelled through
+`cancelCall` when its caller gives up. Direct clients
 append canonical input with `conversation.send`, which privately admits the same
 interaction to its handler Process. Adapter ingress follows the same Kernel-owned
 conversation path. `proc.send` remains the Process admission primitive and handles

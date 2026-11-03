@@ -175,21 +175,32 @@ export async function deliverEventToProcess(
 export async function authorizeProcessTool(
   installationId: string,
   pid: string,
-  requestId: string,
+  cancelId: string,
   args: ProcessToolAuthorizeArgs,
 ): Promise<{ approved: boolean } | ProcessUnavailable> {
   const proc = await getProcessByPid(pid, installationId);
-  return await proc.authorizeTool(requestId, args);
+  return await proc.authorizeTool(cancelId, args);
 }
 
 export async function retainProcessResources(
   installationId: string,
   pid: string,
-  requestId: string,
+  cancelId: string,
   args: ProcessResourcesRetainArgs,
 ): Promise<{ resources: ResourceBlock[] } | ProcessUnavailable> {
   const proc = await getProcessByPid(pid, installationId);
-  return await proc.retainResources(requestId, args);
+  return await proc.retainResources(cancelId, args);
+}
+
+/** Cancels a call the Kernel made to a Process under `cancelId`. */
+export async function cancelProcessCall(
+  installationId: string,
+  pid: string,
+  cancelId: string,
+  reason: string,
+): Promise<void> {
+  const proc = await getProcessByPid(pid, installationId);
+  await proc.cancelCall(cancelId, reason);
 }
 
 export async function writeProcessResource(

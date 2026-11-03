@@ -1053,7 +1053,7 @@ async function routeToTarget(
 
   try {
     await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse({ ...frame.args, target: target.targetId }),
-      undefined, approvalTargetIdentity(target));
+      approvalTargetIdentity(target));
     ctx.requestSignal?.throwIfAborted();
     if (ctx.toolOwner) {
       const current = await resolveVisibleTarget(ctx, target.targetId, { includeOffline: true });
