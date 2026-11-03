@@ -11,9 +11,8 @@ import type {
   ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
 import type { MailGatewayService } from "@humansandmachines/gsv/services/mail";
-import { resolveAdapterInstallationId } from "../installation/admission";
-import { managedInstallationWorkGate } from "../installation/lifecycle";
-import { getKernelByInstallationId } from "../installation/routing";
+import { kernelForSettlement, kernelForWork } from "../installation/admission";
+import type { Kernel } from "../kernel/do";
 import type { GatewayEnv } from "../runtime-env";
 
 export class GatewayEntrypoint
@@ -26,10 +25,7 @@ export class GatewayEntrypoint
     body: BinaryBody,
   ): Promise<ManagedInboundMailAccepted> {
     try {
-      const installationId = resolveAdapterInstallationId(this.env, installation);
-      const gate = await managedInstallationWorkGate(this.env, installationId);
-      if (!gate.allowed) throw new Error(gate.message);
-      const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+      const kernel = await admittedKernel(this.env, installation);
       return await kernel.acceptManagedInboundMail(metadata, body);
     } finally {
       if (!body.stream.locked) {
@@ -42,10 +38,7 @@ export class GatewayEntrypoint
     installation: AdapterInstallationContext,
     completion: ManagedInboundMailCompletion,
   ): Promise<void> {
-    const installationId = resolveAdapterInstallationId(this.env, installation);
-    const gate = await managedInstallationWorkGate(this.env, installationId);
-    if (!gate.allowed) throw new Error(gate.message);
-    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    const kernel = await admittedKernel(this.env, installation);
     await kernel.completeManagedInboundMail(completion);
   }
 
@@ -53,10 +46,7 @@ export class GatewayEntrypoint
     installation: AdapterInstallationContext,
     lookup: ManagedOutboundMailLookup,
   ): Promise<ManagedOutboundMailReference | null> {
-    const installationId = resolveAdapterInstallationId(this.env, installation);
-    const gate = await managedInstallationWorkGate(this.env, installationId);
-    if (!gate.allowed) throw new Error(gate.message);
-    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    const kernel = await admittedKernel(this.env, installation);
     return await kernel.resolveOutboundMailReference(lookup);
   }
 
@@ -64,10 +54,7 @@ export class GatewayEntrypoint
     installation: AdapterInstallationContext,
     reference: ManagedOutboundMailReference,
   ): Promise<ManagedOutboundMailClaimOutcome> {
-    const installationId = resolveAdapterInstallationId(this.env, installation);
-    const gate = await managedInstallationWorkGate(this.env, installationId);
-    if (!gate.allowed) throw new Error(gate.message);
-    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    const kernel = await admittedKernel(this.env, installation);
     return await kernel.claimManagedOutboundMail(reference);
   }
 
@@ -75,14 +62,18 @@ export class GatewayEntrypoint
     installation: AdapterInstallationContext,
     completion: ManagedOutboundMailCompletion,
   ): Promise<void> {
-    const installationId = resolveAdapterInstallationId(this.env, installation);
-    const directory = this.env.INSTALLATION_DIRECTORY;
-    const result = await directory.resolveInstallation(installationId);
-    if (!result.found) return;
-    if (result.installationId !== installationId) {
-      throw new Error("Managed installation identity does not match directory state");
-    }
-    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
-    await kernel.completeManagedOutboundMail(completion);
+    // Records the outcome of a send the Kernel already claimed, so it lands even after a restriction.
+    const kernel = await kernelForSettlement(this.env, installation);
+    await kernel?.completeManagedOutboundMail(completion);
   }
+}
+
+/** The Kernel for new mail work; a refusal fails the call with Accounts' reason. */
+async function admittedKernel(
+  env: GatewayEnv,
+  installation: AdapterInstallationContext,
+): Promise<DurableObjectStub<Kernel>> {
+  const admission = await kernelForWork(env, installation);
+  if (!admission.allowed) throw new Error(admission.message);
+  return admission.kernel;
 }

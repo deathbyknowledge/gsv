@@ -21,9 +21,7 @@ import {
   cancelBinaryBody,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame, FrameError } from "../protocol/frames";
-import { resolveAdapterInstallationId } from "../installation/admission";
-import { managedInstallationWorkGate } from "../installation/lifecycle";
-import { getKernelByInstallationId } from "../installation/routing";
+import { kernelForSettlement, kernelForWork, type WorkAdmission } from "../installation/admission";
 import type { ServicePeerProfile } from "../kernel/peer";
 import type { GatewayEnv } from "../runtime-env";
 
@@ -112,14 +110,8 @@ export class AdapterGatewayEntrypoint
     installation: AdapterInstallationContext,
     input: UnlinkAdapterIdentityInput,
   ): Promise<UnlinkAdapterIdentityResult> {
-    const directory = this.env.INSTALLATION_DIRECTORY;
-    if (!directory) throw new Error("Managed adapter pairing is not enabled");
-    const installationId = resolveAdapterInstallationId(this.env, installation);
-    const resolved = await directory.resolveInstallation(installationId);
-    if (!resolved.found || resolved.installationId !== installationId) {
-      return { removed: false };
-    }
-    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    const kernel = await kernelForSettlement(this.env, installation);
+    if (!kernel) return { removed: false };
     return await kernel.unlinkManagedAdapterIdentity(
       this.resolveServicePeerProfile().id,
       input,
@@ -143,22 +135,14 @@ async function routeAdapterServiceFrame(
 ): Promise<Frame | null> {
   const body = adapterServiceFrameBody(frame);
   try {
-    const installationId = resolveAdapterInstallationId(bindings, installation);
-    const gate = await managedInstallationWorkGate(bindings, installationId);
-    if (!gate.allowed) {
+    const admission = await kernelForWork(bindings, installation);
+    if (!admission.allowed) {
       if (body && !body.stream.locked) {
-        await body.stream.cancel(gate.message).catch(() => {});
+        await body.stream.cancel(admission.message).catch(() => {});
       }
-      return frame.type === "req"
-        ? {
-            type: "res",
-            id: frame.id,
-            ok: false,
-            error: { code: gate.code, message: gate.message },
-          }
-        : null;
+      return refusalFrame(frame, admission);
     }
-    const kernelStub: unknown = await getKernelByInstallationId(bindings.KERNEL, installationId);
+    const kernelStub: unknown = admission.kernel;
     // SAFETY: this namespace is generated from Kernel; the narrow view avoids
     // recursively expanding every unrelated RPC method in Cloudflare's stub type.
     const kernel = kernelStub as {
@@ -181,19 +165,9 @@ async function routeAdapterLinkedPeerFrame(
   context: AdapterLinkedPeerContext,
   frame: Frame,
 ): Promise<Frame | null> {
-  const installationId = resolveAdapterInstallationId(bindings, installation);
-  const gate = await managedInstallationWorkGate(bindings, installationId);
-  if (!gate.allowed) {
-    return frame.type === "req"
-      ? {
-          type: "res",
-          id: frame.id,
-          ok: false,
-          error: { code: gate.code, message: gate.message },
-        }
-      : null;
-  }
-  const kernelStub: unknown = await getKernelByInstallationId(bindings.KERNEL, installationId);
+  const admission = await kernelForWork(bindings, installation);
+  if (!admission.allowed) return refusalFrame(frame, admission);
+  const kernelStub: unknown = admission.kernel;
   // SAFETY: this namespace is generated from Kernel; the narrow view avoids
   // recursively expanding every unrelated RPC method in Cloudflare's stub type.
   const kernel = kernelStub as {
@@ -204,6 +178,16 @@ async function routeAdapterLinkedPeerFrame(
     ): Promise<Frame | null>;
   };
   return await kernel.linkedAdapterPeerFrame(profile, context, frame);
+}
+
+/** Answers a request Accounts did not admit with its reason; other frames get no answer. */
+function refusalFrame(
+  frame: Frame,
+  refusal: Extract<WorkAdmission, { allowed: false }>,
+): Frame | null {
+  return frame.type === "req"
+    ? { type: "res", id: frame.id, ok: false, error: { code: refusal.code, message: refusal.message } }
+    : null;
 }
 
 async function failLinkedPeerFrame(

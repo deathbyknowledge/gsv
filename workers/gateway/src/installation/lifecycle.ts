@@ -19,7 +19,7 @@ type ResolvedManagedInstallation = Extract<
 >;
 
 export type ManagedInstallationLifecycleBindings = {
-  INSTALLATION_DIRECTORY?: InstallationDirectoryService;
+  INSTALLATION_DIRECTORY: InstallationDirectoryService;
   GSV_OWNER_SIGNUP_URL?: string;
   PDS?: unknown;
 };
@@ -44,22 +44,12 @@ export async function resolveManagedInstallationById(
   bindings: ManagedInstallationLifecycleBindings,
   installationIdValue: string,
 ): Promise<ResolvedManagedInstallation> {
-  const directory = bindings.INSTALLATION_DIRECTORY;
-  if (!directory) throw new Error("Installation directory is not configured");
-
   const installationId = parseInstallationId(installationIdValue);
-  const result = await directory.resolveInstallation(installationId);
+  const result = await bindings.INSTALLATION_DIRECTORY.resolveInstallation(installationId);
   if (!result.found || result.installationId !== installationId) {
     throw new Error("Managed installation is unavailable");
   }
   return result;
-}
-
-export async function managedInstallationWorkGate(
-  bindings: ManagedInstallationLifecycleBindings,
-  installationId: string,
-): Promise<ManagedInstallationWorkGate> {
-  return await lookupManagedWorkGate(bindings, installationId);
 }
 
 /** How long a confirmed-active answer stands before Accounts is asked again. */
@@ -119,14 +109,12 @@ async function lookupManagedWorkGate(
   bindings: ManagedInstallationLifecycleBindings,
   installationIdValue: string,
 ): Promise<ManagedInstallationWorkGate> {
-  const directory = bindings.INSTALLATION_DIRECTORY;
-  if (!directory) return UNAVAILABLE;
   const installationId = parseInstallationId(installationIdValue);
   let result: InstallationDirectoryResult;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     result = await Promise.race([
-      directory.resolveInstallation(installationId),
+      bindings.INSTALLATION_DIRECTORY.resolveInstallation(installationId),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error("Accounts lookup timed out")), LOOKUP_TIMEOUT_MS);
       }),

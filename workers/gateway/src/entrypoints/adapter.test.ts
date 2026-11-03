@@ -212,8 +212,7 @@ describe("AdapterGatewayEntrypoint", () => {
     );
   });
 
-  it("rejects unavailable or missing directories before selecting a Kernel and cancels bodies", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("refuses an installation Accounts does not admit before selecting a Kernel and cancels its body", async () => {
     const getByName = vi.fn();
     const unavailable = requestFrameWithTrackedBody("unavailable-directory");
     const gateway = gatewayWithEnv({
@@ -223,13 +222,7 @@ describe("AdapterGatewayEntrypoint", () => {
     await expect(gateway.serviceFrame({ installationId: "inst_missing" }, unavailable.frame))
       .resolves.toMatchObject({ ok: false, error: { code: 503 } });
     expect(unavailable.cancelled()).toBe("Managed installation is unavailable");
-    const missing = requestFrameWithTrackedBody("missing-directory");
-    await expect(gatewayWithEnv({ KERNEL: { getByName } }).serviceFrame(
-      { installationId: "inst_missing" }, missing.frame,
-    )).resolves.toBeNull();
-    expect(missing.cancelled()).toBe("Gateway service request failed");
     expect(getByName).not.toHaveBeenCalled();
-    error.mockRestore();
   });
 
   it("rejects invalid binding props before entering the Kernel", async () => {
