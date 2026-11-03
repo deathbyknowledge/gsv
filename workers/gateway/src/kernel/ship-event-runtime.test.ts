@@ -65,6 +65,7 @@ describe("Ship event delivery", () => {
       expect(send).toHaveBeenCalledWith("installation:test", "proc:ship", {
         eventId: "owner.notified:contact.message:contact:remote:1:0",
         event: { kind: "owner.notified", payload, severity: "info", audience: "both", link },
+        admission: { idle: "record", busy: "join" },
       });
     });
   });

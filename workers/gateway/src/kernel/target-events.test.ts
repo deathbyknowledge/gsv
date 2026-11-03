@@ -144,6 +144,7 @@ describe("registered target event watches", () => {
         expect(send).toHaveBeenCalledWith(kernel.installationId, "proc:observer", {
           eventId: expect.stringMatching(/^transition:one:/),
           event: { kind: "target.connection", payload: event, audience: "person", severity: "info" },
+          admission: { idle: "start", busy: "join" },
         });
         expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toEqual([]);
       });

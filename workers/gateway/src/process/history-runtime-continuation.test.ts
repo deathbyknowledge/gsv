@@ -14,6 +14,7 @@ function targetEvent(eventId: string): ProcessEventDeliverArgs {
       kind: "target.connection", severity: "info", audience: "model",
       payload: { targetId: "laptop", platform: "linux", event: "connected", observedAt: Date.now() },
     },
+    admission: { idle: "start", busy: "join" },
   };
 }
 

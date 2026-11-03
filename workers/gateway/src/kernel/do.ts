@@ -205,6 +205,8 @@ import { NoticeRuleStore } from "./notice-rules";
 import { EventSourceStore, noteSilentSources, receiveWebhook } from "./event-sources";
 import { ShipEventRuntime } from "./ship-event-runtime";
 import { ShipEventStore } from "./ship-event-store";
+import { EventRuntime } from "./events/runtime";
+import { EventStore } from "./events/store";
 import { FederationRuntime } from "./federation-runtime";
 import { ProcessOutput } from "./process-output";
 import { AdapterDelivery } from "./adapter-delivery";
@@ -250,7 +252,6 @@ type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
 type KernelTask =
   | { callback: "onMemoryReview"; payload: number }
-  | { callback: "onProcessApprovalNotice"; payload: { pid: string; runId: string; requestId: string } }
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
   | { callback: "onIpcCallDelivery"; payload: string }
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
@@ -269,6 +270,7 @@ type KernelTask =
       payload: { ownerUid: number; generation: number };
     }
   | { callback: "onShipEvents"; payload: number }
+  | { callback: "onEvents"; payload: null }
   | { callback: "onOwnerNotices"; payload: number }
   | { callback: "onEventUpkeep"; payload: null }
   | { callback: "onLedgerRotate"; payload: string }
@@ -305,8 +307,6 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       attempt: z.number().int().positive(),
     }),
   }),
-  // Decode notices persisted by the staged approval implementation so alarms can retire them.
-  z.object({ callback: z.literal("onProcessApprovalNotice"), payload: z.object({ pid: z.string(), runId: z.string(), requestId: z.string() }) }),
   z.object({ callback: z.literal("onIpcCallDelivery"), payload: z.string() }),
   z.object({
     callback: z.literal("onIpcCallTimeout"),
@@ -348,6 +348,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
     }),
   }),
   z.object({ callback: z.literal("onShipEvents"), payload: z.number().int().nonnegative() }),
+  z.object({ callback: z.literal("onEvents"), payload: z.null() }),
   z.object({ callback: z.literal("onOwnerNotices"), payload: z.number().int().nonnegative() }),
   z.object({ callback: z.literal("onEventUpkeep"), payload: z.null() }),
   z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
@@ -415,6 +416,7 @@ export function kernelRuntimes(host: Kernel) {
     federationRuntime: new FederationRuntime(host),
     responsibilityRuntime: new ResponsibilityRuntime(host),
     shipEventRuntime: new ShipEventRuntime(host),
+    eventRuntime: new EventRuntime(host),
     ownerNoticeRuntime: new OwnerNoticeRuntime(host),
     browserHandoffs: new BrowserHandoffRuntime(host),
     ipc: new IpcRuntime(host),
@@ -458,6 +460,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly mailboxes: MailboxStore;
   readonly responsibilities: ResponsibilityStore;
   readonly shipEvents: ShipEventStore;
+  readonly events: EventStore;
   readonly ownerNotices: OwnerNoticeStore;
   readonly noticeRules: NoticeRuleStore;
   readonly eventSources: EventSourceStore;
@@ -483,6 +486,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   declare readonly ipc: IpcRuntime;
   declare readonly responsibilityRuntime: ResponsibilityRuntime;
   declare readonly shipEventRuntime: ShipEventRuntime;
+  declare readonly eventRuntime: EventRuntime;
   declare readonly ownerNoticeRuntime: OwnerNoticeRuntime;
   declare readonly federationRuntime: FederationRuntime;
   declare readonly processOutput: ProcessOutput;
@@ -564,6 +568,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
     this.shipEvents = new ShipEventStore(ctx.storage);
+    this.events = new EventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
     // Fires once per owner, when their first sign-in (or an earlier first message) opens the welcome.
     this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities, () => {
@@ -608,6 +613,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     ctx.waitUntil(this.responsibilityRuntime.recoverResponsibilityWakes().catch((error) => {
       console.warn(
         "[Kernel] Failed to recover responsibility wakes:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }));
+    ctx.waitUntil(this.eventRuntime.recover().catch((error) => {
+      console.warn(
+        "[Kernel] Failed to recover event deliveries:",
         error instanceof Error ? error.message : String(error),
       );
     }));
@@ -1012,9 +1023,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       case "onMemoryReview":
         await runMemoryReview(this, task.payload, task.id);
         return;
-      case "onProcessApprovalNotice":
-        // Child approvals reach the human through registry signals and adapter routes.
-        return;
       case "onAdapterRouteDelivery":
         await this.adapterDelivery.onAdapterRouteDelivery(task.payload);
         return;
@@ -1060,6 +1068,9 @@ export class Kernel extends DurableObject<GatewayEnv> {
         return;
       case "onShipEvents":
         await this.shipEventRuntime.onShipEvents(task.payload, task);
+        return;
+      case "onEvents":
+        await this.eventRuntime.onEvents(task);
         return;
       case "onOwnerNotices":
         await this.ownerNoticeRuntime.onOwnerNotices(task.payload, task);

@@ -93,10 +93,19 @@ export type ProcessRuntimeEventDeliverResult = {
   queued: boolean;
 };
 
+/** What a delivered event does to its Process, declared once per event type. */
+export type ProcessEventAdmission = {
+  /** With no active run: start one, or only record the event in history. */
+  idle: "start" | "record";
+  /** During a run: join it, or only record the event. */
+  busy: "join" | "record";
+};
+
 /** Kernel-derived registered events; this call is never available to public peers. */
 export type ProcessEventDeliverArgs = {
   eventId: string;
   event: Extract<ProcHistoryEvent, { kind: "target.connection" | "owner.notified" }>;
+  admission: ProcessEventAdmission;
 };
 
 export type ProcessEventDeliverResult = {

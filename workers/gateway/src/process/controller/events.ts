@@ -12,7 +12,7 @@ const noticeReceiptsSchema = z.array(z.strictObject({
   eventId: z.string(), messageId: z.number().int().positive(), generation: z.number().int().nonnegative(),
 }));
 
-/** Internal Kernel admission preserves notice durability without allocating a model run. */
+/** Records a Kernel event, or admits it to a run when its declared admission says so. */
 export async function deliverProcessEvent(
   host: Process,
   args: ProcessEventDeliverArgs,
@@ -26,24 +26,20 @@ export async function deliverProcessEvent(
     if (event.severity !== "info" || !expected.includes(event.audience)) {
       throw new Error("Process event is not registered for this delivery path");
     }
-    // A card only for the person gives a run nothing to see.
-    if (event.audience === "person") return appendNotice(host, eventId, event);
-    // A notice joins an active run like any runtime event; otherwise it waits, without
-    // starting a run, for the owner's reply that needs it.
-    if (host.runs.active) return admitRuntimeEvent(host, eventId, event);
-    return appendNotice(host, eventId, event);
+  } else {
+    const definition = procHistoryTargetEventRegistry["target.status"];
+    if (event.kind !== definition.kind || event.severity !== definition.severity ||
+        !definition.allowedAudiences.includes(event.audience)) {
+      throw new Error("Process event is not registered for this delivery path");
+    }
+    const resetAt = Number(host.store.state.getValue(PROCESS_RESET_AT_KEY) ?? 0);
+    if (event.payload.observedAt <= resetAt) {
+      return { eventId, runId: null, queued: false, ignored: true };
+    }
   }
-  const definition = procHistoryTargetEventRegistry["target.status"];
-  if (event.kind !== definition.kind || event.severity !== definition.severity ||
-      !definition.allowedAudiences.includes(event.audience)) {
-    throw new Error("Process event is not registered for this delivery path");
-  }
-  const resetAt = Number(host.store.state.getValue(PROCESS_RESET_AT_KEY) ?? 0);
-  if (event.payload.observedAt <= resetAt) {
-    return { eventId, runId: null, queued: false, ignored: true };
-  }
-  if (event.audience !== "person") return admitRuntimeEvent(host, eventId, event);
-  return appendNotice(host, eventId, event);
+  // An event only the person sees gives a run nothing to read.
+  const action = event.audience === "person" ? "record" : host.runs.active ? args.admission.busy : args.admission.idle;
+  return action === "record" ? appendNotice(host, eventId, event) : admitRuntimeEvent(host, eventId, event);
 }
 
 async function admitRuntimeEvent(

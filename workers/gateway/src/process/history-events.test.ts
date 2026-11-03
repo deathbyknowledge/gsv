@@ -13,12 +13,16 @@ import { renderHistoryEvent } from "./history/event-renderer";
 
 afterEach(() => vi.restoreAllMocks());
 
+const START_OR_JOIN = { idle: "start", busy: "join" } as const;
+const RECORD_OR_JOIN = { idle: "record", busy: "join" } as const;
+
 function request(eventId: string, audience: "model" | "person" | "both" = "person"): ProcessEventDeliverArgs {
   return {
     eventId, event: {
       kind: "target.connection", severity: "info", audience,
       payload: { targetId: "laptop", label: "My laptop", platform: "linux", event: "disconnected", observedAt: 1000 },
     },
+    admission: START_OR_JOIN,
   };
 }
 
@@ -31,6 +35,7 @@ function ownerNotice(eventId: string): ProcessEventDeliverArgs {
         preview: "are we still on for tomorrow?", contactId: "contact:ada", conversationId: "conv:ada", messages: 1, sentAtMs: 1000,
       },
     },
+    admission: RECORD_OR_JOIN,
   };
 }
 
@@ -234,6 +239,30 @@ describe("registered Process events", () => {
       expect(schedule).not.toHaveBeenCalled();
       expect(process.runs.active).toMatchObject({ runId: "active", pendingRuntimeEvents: 1 });
       expect(process.store.messages.getRecords()).toMatchObject([{ kind: "event", payload: args.event }]);
+    });
+  });
+
+  it("records an event its admission declares record, idle or busy, without starting or joining a run", async () => {
+    const stub = await initProcess("history-events-declared-record", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+      const idle = { ...request("event:declared-idle", "model"), admission: { idle: "record", busy: "record" } } as const;
+      expect(await process.deliverEvent(idle)).toEqual({ eventId: idle.eventId, runId: null, queued: false, messageId: 1 });
+      process.runs.active = { runId: "active" };
+      const busy = { ...request("event:declared-busy", "model"), admission: { idle: "record", busy: "record" } } as const;
+      expect(await process.deliverEvent(busy)).toEqual({ eventId: busy.eventId, runId: null, queued: false, messageId: 2 });
+      expect(schedule).not.toHaveBeenCalled();
+      expect(process.runs.active).toEqual({ runId: "active" });
+    });
+  });
+
+  it("starts a run for an owner notice whose admission declares start", async () => {
+    const stub = await initProcess("history-events-declared-start", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+      const args = { ...ownerNotice("owner.notified:declared-start"), admission: START_OR_JOIN };
+      expect(await process.deliverEvent(args)).toMatchObject({ runId: args.eventId, queued: false });
+      expect(schedule).toHaveBeenCalledTimes(1);
     });
   });
 

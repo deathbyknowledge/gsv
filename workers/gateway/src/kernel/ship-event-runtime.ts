@@ -1,4 +1,4 @@
-import { processResult } from "../protocol/process-frames";
+import { processResult, type ProcessEventAdmission } from "../protocol/process-frames";
 import type { DurableTaskOptions } from "../shared/durable-tasks";
 import { deliverEventToProcess, sendFrameToProcess } from "../shared/utils";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
@@ -8,6 +8,12 @@ import type { QueuedShipEvent } from "./ship-event-store";
 import type { Kernel } from "./do";
 
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
+
+/**
+ * A notice joins an active run like any runtime event; otherwise it waits,
+ * without starting a run, for the owner's reply that needs it.
+ */
+const OWNER_NOTICE_ADMISSION: ProcessEventAdmission = { idle: "record", busy: "join" };
 
 /** Delivers each owner's Ship events in order to its current Ship, retrying until admitted. */
 export class ShipEventRuntime {
@@ -94,6 +100,7 @@ export class ShipEventRuntime {
       processResult(await deliverEventToProcess(this.host.installationId, processId, {
         eventId: queued.eventId,
         event: { kind: "owner.notified", payload: event.payload, severity: "info", audience: event.audience ?? (event.payload.adapter ? "both" : "model"), ...(event.link ? { link: event.link } : undefined) },
+        admission: OWNER_NOTICE_ADMISSION,
       }));
       this.host.shipEvents.delivered(queued.eventId);
       return;

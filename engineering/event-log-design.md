@@ -75,7 +75,7 @@ An event:
 ```ts
 type KernelEvent = {
   seq: number;          // log order
-  id: string;           // stable: "evt_" + hash(type, key)
+  id: string;           // "evt_" + seq: stable and never reused
   type: EventType;      // registered, e.g. "contact.message"
   ownerUid: number;     // whose event: visibility and the Ship's lanes
   subject: string;      // what it is about: "contact:<id>", "proc:<pid>", "schedule:<id>"
@@ -86,24 +86,24 @@ type KernelEvent = {
 };
 ```
 
-Each type's registry entry sits in `workers/gateway/src/kernel/events/`. The
-history payload schemas stay in `@humansandmachines/gsv/protocol`.
+Each type's registry entry sits in `workers/gateway/src/kernel/events/registry.ts`.
+The history payload schemas stay in `@humansandmachines/gsv/protocol`.
 
 ```ts
 "contact.message": {
-  consumers: [ship],            // personal:<ownerUid>
-  lane: "background",
-  admission: "join",            // see Busy Ship
-  admit: contactStillAllowed,   // withdrawn once the contact is blocked or removed
+  // Read once, at append: each consumer and the lane that orders it there.
+  routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: "background" }],
+  // What the Process records, and whether it starts or joins a run (see Busy Ship).
+  process: (event) => ({ event: contactMessageEvent(event), admission: { idle: "start", busy: "join" } }),
+  wanted: contactStillAllowed,  // withdrawn once the contact is blocked or removed
 },
 ```
 
-Tables, sketched:
+Tables, as v091 creates them:
 
 ```sql
 CREATE TABLE events (
-  seq INTEGER PRIMARY KEY,
-  event_id TEXT NOT NULL UNIQUE,
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,  -- never reused, so "evt_" + seq stays unique
   type TEXT NOT NULL,
   owner_uid INTEGER NOT NULL,
   subject TEXT NOT NULL,
@@ -113,6 +113,7 @@ CREATE TABLE events (
   created_at INTEGER NOT NULL,
   UNIQUE (type, idempotency_key)
 );
+CREATE INDEX events_created ON events (created_at);
 
 CREATE TABLE deliveries (
   seq INTEGER NOT NULL REFERENCES events (seq) ON DELETE CASCADE,
@@ -135,21 +136,17 @@ CREATE INDEX deliveries_lane ON deliveries (consumer, lane, seq)
 The runner:
 
 ```ts
-async onEvents(task: { id: string }): Promise<void> {
+// One pass per onEvents task; a pass that is already running re-arms when it ends.
+private async pass(taskId: string): Promise<void> {
   const gate = await this.host.onboarding.managedWorkGate();
-  if (!gate.allowed) return await this.arm(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS, task.id);
-  // The oldest pending row of each lane, plus every due redelivery.
-  // Lanes run concurrently, each one at a time.
-  await Promise.all(this.deliveries.dueHeads(Date.now()).map(async (head) => {
-    const consumer = consumerFor(head.consumer);
-    if (consumer.admit(head) === "withdrawn") return this.deliveries.withdraw(head);
-    try {
-      this.deliveries.delivered(head, await consumer.deliver(head));
-    } catch (error) {
-      this.deliveries.failed(head, error, retryAt(consumer.retry, head.attemptCount + 1));
-    }
-  }));
-  await this.arm(this.deliveries.nextDueAt(), task.id);   // one task, moved earlier when needed
+  if (!gate.allowed) return await this.arm(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS, taskId);
+  this.host.events.prune(Date.now());
+  // The oldest due row of each lane, plus every due unlaned row. Lanes run
+  // concurrently; each drains one row at a time, in order, and waits while
+  // its head backs off. An attempt ends withdrawn (no call), delivered, or
+  // failed with its next attempt time.
+  await Promise.all(this.host.events.dueHeads(Date.now()).map((head) => this.drain(head)));
+  await this.arm(this.nextRunAt(), taskId);   // one task, moved earlier when needed
 }
 ```
 
@@ -169,16 +166,17 @@ async onEvents(task: { id: string }): Promise<void> {
   process is one lane. A redelivery after a failed run leaves its lane and
   goes out when due, so it never holds a lane and nothing waits for it.
 - **At least once.** A delivery is done when its consumer answers. A lost
-  answer redelivers, so the Process still dedupes by event id, which is now
-  stable. A replacement Ship never receives an event the Kernel already marked
+  answer redelivers, so the Process still dedupes by the delivery's id,
+  `evt_<seq>:<consumer>`, which is now stable. A replacement Ship never receives an event the Kernel already marked
   delivered. Only a delivery in flight during the replacement can reach the
   new pid, and that pid has no earlier copy.
-- **Withdrawal.** Before each attempt, the consumer's `admit` reads the current
-  state: a blocked contact, a read notice, a deleted schedule, a killed pid, a
-  disabled account. A withdrawn delivery ends as `withdrawn` without a Process
-  call. This one rule replaces six ways of handling a killed pid. As
-  `ship_events` does today, a consumer checks admission again after its last
-  await and sends synchronously after that check.
+- **Withdrawal.** Before each attempt, the runner reads the current state: a
+  disabled account or a gone pid for every delivery, then the type's `wanted`:
+  a blocked contact, a read notice, a deleted schedule. A withdrawn delivery
+  ends as `withdrawn` without a Process call. This one rule replaces six ways
+  of handling a killed pid. As `ship_events` does today, the runner checks
+  again after its last await, such as finding or starting the Ship, and sends
+  synchronously after that check.
 - **Failed runs.** Some types declare that their subject needs action:
   `responsibility.due`, `contact.message` and `mail.received`. If the run
   that received one fails, or its pid dies before the run starts, the
@@ -186,7 +184,8 @@ async onEvents(task: { id: string }): Promise<void> {
   15 m, 1 h and 6 h while the subject still needs action. The ledger's recovery wakes move
   here, as agreed on 2026-10-20.
 - **Retry.** The delay is `min(cap, base × 2^(attempt − 1))`. Each consumer
-  declares its base, cap, attempt limit and terminal action. The runner
+  declares its base, cap, attempt limit and terminal action. Ship and process
+  deliveries retry from 2 s, doubling to 256 s, without a limit. The runner
   re-arms; it never waits inside the alarm.
 - **Gate.** While the managed gate is closed, the runner parks every consumer,
   outbound included, and checks again in 60 s. Everything resumes if the
@@ -204,12 +203,13 @@ async onEvents(task: { id: string }): Promise<void> {
   that records its outcome. A notice the messenger accepted appends
   `notice.sent` for the Ship. An adapter delivery out of attempts appends
   `delivery.failed` for its pid.
-- **Retention.** Deliveries keep their outcome for inspection. Events stay in
-  SQLite for 30 days and then move to R2 segments with their outcomes. The
-  row then keeps only its type and key until day 180, so a duplicate that
-  arrives late, such as a resent mail or webhook, still appends nothing. A
-  key is about 100 bytes; an event can carry 64 KiB. The log stays
-  Kernel-internal until a later owner- or root-scoped list syscall; a source's
+- **Retention.** Deliveries keep their outcome for inspection. A settled
+  event keeps its body and outcomes in SQLite for 30 days; an event with a
+  pending delivery keeps both. The row then keeps only its type and key until
+  day 180, so a duplicate that arrives late, such as a resent mail or
+  webhook, still appends nothing. A key is about 100 bytes; an event can
+  carry 64 KiB. The log stays Kernel-internal until a later owner- or
+  root-scoped list syscall, which brings the R2 archive with it; a source's
   listing is its first owner-scoped read.
 
 Not converted: answers inside a run (`proc.hil`, tool `res` frames, the tick,
@@ -371,8 +371,9 @@ module receives.
 2. Substrate: `events`, `deliveries`, the registry, the runner, and
    `deliverEvent` with declared admission. No producer is converted.
    Deletes `onProcessApprovalNotice`.
-3. Contact messages and owner notices. Deletes `ship_events`, `onShipEvents`,
-   `onOwnerNotices` and `proc.runtime.event.deliver`.
+3. Contact messages and owner notices, and redelivery after a failed run.
+   Deletes `ship_events`, `onShipEvents`, `onOwnerNotices` and
+   `proc.runtime.event.deliver`.
 4. Responsibility wakes. r12y goes back to being state. Deletes wake batches
    and `r12y.ready`.
 5. Schedules. Deletes `proc.schedule.deliver`.
@@ -412,3 +413,8 @@ Reviewed with the maintainer on 2026-11-03:
    comes with a later list syscall.
 6. **Frames stay at the edge and for routed syscalls.** Internal calls become
    typed methods.
+7. **Settled while building the substrate.** Event ids are `evt_<seq>`, not
+   a hash of type and key: the unique type and key already refuse a
+   duplicate, and a seq is never reused, even after its key expires. The R2
+   archive comes with the list syscall that reads it. Redelivery after a
+   failed run comes with contact messages, its first event type.

@@ -1,11 +1,15 @@
 import {
   procHistoryTargetEventRegistry, type ProcHistoryEventPayload,
 } from "@humansandmachines/gsv/protocol";
+import type { ProcessEventAdmission } from "../protocol/process-frames";
 import { deliverEventToProcess } from "../shared/utils";
 import type { Kernel } from "./do";
 import { getVisibleTarget } from "./targets";
 import { peerAllowsCall } from "./peer";
 import type { SignalWatchRecord } from "./signal-watches";
+
+/** A connection change starts or joins a run when the model may see it. */
+const TARGET_STATUS_ADMISSION: ProcessEventAdmission = { idle: "start", busy: "join" };
 
 /** Kernel lifecycle facts are the only producer; claimed machine frames never enter this path. */
 export async function deliverTargetConnectionEvent(
@@ -36,6 +40,7 @@ export async function deliverTargetConnectionEvent(
         result = await deliverEventToProcess(kernel.installationId, watch.targetProcessId, {
           eventId,
           event: { kind: definition.kind, payload, severity: definition.severity, audience },
+          admission: TARGET_STATUS_ADMISSION,
         });
       } catch (error) {
         // A transport or Process failure skips this transition without retiring the subscription.
