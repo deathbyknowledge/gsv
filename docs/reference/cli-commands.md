@@ -15,6 +15,7 @@ Talk
 Look after things
   work               What your Ship and its helpers are doing
   routines           Things your Ship does on a schedule
+  event              Tell your Ship something happened, from a script
   memory             Your wiki, and the notes your Ship always reads
   activity           What ran, where, and how it went
 
@@ -236,6 +237,20 @@ app or on a messenger.
 archives the history and tears the work down for good with `proc.kill`; your
 Ship itself can't be ended. Both ask first and report how many messages were
 archived. Without a terminal they refuse unless `--yes` is given.
+
+### Events
+
+```bash
+gsv event emit SOURCE --title TEXT [--id ID] [--preview TEXT] [--body TEXT]
+gsv event emit SOURCE --stdin
+```
+
+Lets a script on any computer tell you something happened, without a public address. Add the
+source first, in Work or with `gsv run event source add NAME`, and read what arrived there or with
+`gsv run event list`. A new source tells you and leaves your Ship out; change that under
+Settings → When things happen.
+With `--stdin`, each line is one JSON object with a `title` and optionally `id`, `preview` and `body`.
+Repeating an `id` is ignored, so a script can re-read the same items.
 
 ### Routines
 
@@ -1038,7 +1053,10 @@ answer to appear in a chat:
 ```
 
 The crontab file is the desired state: reinstalling it deletes and recreates the
-linked Kernel schedule rows, so crontab-backed `sched` ids are not stable. Use
+linked Kernel schedule rows, so crontab-backed `sched` ids are not stable. Jobs
+in a per-user crontab use your timezone unless the file sets `CRON_TZ` or `TZ`,
+and system crontabs default to the server timezone. The timezone is fixed when
+the file is installed, so reinstall it to pick up a changed preference. Use
 `sched list` to inspect next fire time, last status, error, source, and target.
 For a command that invokes `proc spawn`, status `ok` means the command was
 dispatched and the spawn was accepted; it does not mean the child finished or

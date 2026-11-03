@@ -9,10 +9,30 @@ import {
   recordAdapterStatusTransition,
   recordMachineAddedResponsibility,
 } from "./lifecycle-responsibilities";
+import { NoticeRuleStore } from "./notice-rules";
+import { OwnerNoticeStore } from "./owner-notice-store";
 import { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import { ResponsibilityStore } from "./responsibility-store";
 
 describe("Kernel lifecycle responsibilities", () => {
+  it("notes a new computer for its owner only when a rule asks, whatever Ship does about it", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ctx = lifecycleContext(sql, storage);
+      const machine: TargetRecord = {
+        target_id: "workstation", owner_uid: 1000, label: "Workstation", description: "", implements: ["shell.exec"],
+        platform: "linux", version: "1.0.0", online: true, first_seen_at: 1_700_000_000_000,
+        last_seen_at: 1_700_000_000_000, connected_at: 1_700_000_000_000, disconnected_at: null,
+      };
+      await recordMachineAddedResponsibility(machine, ctx);
+      expect(ctx.ownerNotices.next(1000)).toBeNull();
+
+      ctx.noticeRules.set(1000, "machine.added", { notify: "messenger", ship: "none" }, "person", 1);
+      await recordMachineAddedResponsibility({ ...machine, target_id: "laptop", first_seen_at: machine.first_seen_at + 1 }, ctx);
+      expect(ctx.ownerNotices.next(1000)).toMatchObject({ topic: "machine.added", subject: { from: "Workstation" } });
+      expect(ctx.responsibilities.list({ ownerUid: 1000 }).records).toHaveLength(1);
+    });
+  });
+
   it("creates one confirmation for a newly added physical machine", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const ctx = lifecycleContext(sql, storage);
@@ -275,6 +295,7 @@ function lifecycleContext(
   sql: SqlStorage,
   storage: DurableObjectStorage,
 ): KernelContext {
+  const responsibilitySources = new ResponsibilitySourcePolicyStore(sql);
   // SAFETY: the lifecycle helpers use only the concrete Kernel fields supplied by this fixture.
   return {
     auth: {
@@ -282,7 +303,10 @@ function lifecycleContext(
     },
     adapters: new AdapterStore(sql),
     responsibilities: new ResponsibilityStore(storage),
-    responsibilitySources: new ResponsibilitySourcePolicyStore(sql),
+    responsibilitySources,
+    noticeRules: new NoticeRuleStore(storage, responsibilitySources),
+    ownerNotices: new OwnerNoticeStore(storage),
+    queueOwnerNotices: vi.fn(async () => undefined),
     reconcileResponsibilityWake: vi.fn(async () => undefined),
     defer: vi.fn((promise: Promise<unknown>) => {
       void promise;

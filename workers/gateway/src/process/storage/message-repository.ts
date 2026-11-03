@@ -1,7 +1,7 @@
 import type { ProcessStore } from "../store";
 import type { Message } from "@humansandmachines/gsv/services/inference-context";
 import {
-  procHistoryRecordDataSchema, type JsonObject, type JsonValue, type ProcHistoryRecord,
+  procHistoryRecordDataSchema, type JsonObject, type JsonValue, type ProcHistoryMessageQuote, type ProcHistoryRecord,
   type ProcHistoryRecordData, type ProcToolResultOutcome, type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import { parseStoredProcessMedia } from "../media";
@@ -51,6 +51,7 @@ export class ProcessMessageRepository {
       queueKind?: string;
       provenance?: JsonObject;
       selectedTarget?: string;
+      quote?: ProcHistoryMessageQuote;
       legacy?: boolean;
     },
   ): number {

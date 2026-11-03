@@ -51,7 +51,7 @@ export function WireSync(): null {
         void queryClient.cancelQueries({ queryKey: INSTRUMENT_PROFILE_KEY }).then(() => queryClient.invalidateQueries({ queryKey: INSTRUMENT_PROFILE_KEY }));
         return;
       }
-      if (signal === "r12y.changed" || signal === "r12y.source.changed" || signal === "sched.changed") {
+      if (signal === "r12y.changed" || signal === "r12y.source.changed" || signal === "sched.changed" || signal === "notify.rule.changed" || signal === "event.source.changed") {
         void syncWorkSignal(queryClient, signal);
         return;
       }

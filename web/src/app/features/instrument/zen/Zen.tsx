@@ -55,6 +55,7 @@ import { WakingUp } from "./WakingUp";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenDraftPaste, ZenMedia } from "./ZenMedia";
+import { ZenLinkCards } from "./ZenLinkCard";
 import { longPaste, zenAttachment, zenDraftMessage, type ZenAttachment, type ZenPaste } from "./zenAttachments";
 import { FeedbackNote, MomentTime, NoteMoment, zenErrorText, zenFailure, zenNotice, type ZenNote } from "./ZenNotes";
 import type { ChatErrorContext } from "../../../services/chat/domain/errorPresentation";
@@ -104,8 +105,6 @@ export type ZenProps = {
   onSearchRequestHandled?: () => void;
   activityRequest?: ActivityRequest;
   requestPrefill?: string | null;
-  /** The founders' welcome card still stands over the chat, or its state is not known yet; Ship is not waking until it is dismissed. */
-  welcomeOpen?: boolean;
 };
 
 const HISTORY_LIMIT = 400;
@@ -334,7 +333,7 @@ const Receipt = memo(function Receipt({ receipt, who, places, collections, open,
   );
 });
 
-export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, requestPrefill, welcomeOpen = false }: ZenProps) {
+export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, onPrefillUsed, pid: pidProp, onDraftChange, contactReplies, peopleActivity, onPeopleActivity, searchRequested, onSearchRequestHandled, activityRequest, requestPrefill }: ZenProps) {
   const active = useViewActive();
   const browserControl = useBrowserControl();
   const { client, connected } = useGateway();
@@ -604,8 +603,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     return { moments, receipts: receiptsForMoments(moments, runtime.activeRunId, pid) };
   }, [answerHistory, conversation.rows, conversation.conversation?.id, outbox.messages, localRuns, runtime.activeRunId, runtime.rows, pid, t]);
 
-  /* a Ship that has never spoken: the owner's own chat, the welcome dismissed, all history loaded and none of it missing, with no words from Ship yet; what they read meanwhile is the waking line */
-  const waking = ready && !pidProp && !welcomeOpen && !conversation.historyError && !processRuntime.history.isError
+  /* a Ship that has never spoken: the owner's own chat, all history loaded and none of it missing, with no words from Ship yet; what they read meanwhile is the waking line */
+  const waking = ready && !pidProp && !conversation.historyError && !processRuntime.history.isError
     && !conversation.hasMore && !processRuntime.hasOlderHistory && awaitingFirstMessage(moments);
   const showFirstOpenPrivacy = waking && !moments.some((moment) => moment.role === "human" || moment.text || moment.media?.length);
 
@@ -1039,6 +1038,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         ) : moment.thinking || moment.streaming ? (
           <div class="text">{waking ? <WakingUp /> : null}<ThinkingMark tick={tick} /></div>
         ) : null}
+        {moment.role === "ship" && !moment.streaming && !settling.has(moment.id) && moment.text ? <ZenLinkCards text={moment.text} /> : null}
         {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
         {moment.text && <MomentCopyButton text={moment.text} />}
         {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (

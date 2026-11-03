@@ -8,6 +8,7 @@ import type {
   SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
 import type { TextKey } from "../../i18n/locale";
+import { clearLinkPreviewCache } from "../chat/backend/linkPreviewCache";
 import {
   clearInstallationOnboardingToken,
   readInstallationOnboardingToken,
@@ -125,6 +126,8 @@ export type SessionServiceOptions = {
   storage?: SessionStorage;
   onboarding?: false | { token: string; signup?: boolean; discard(): Promise<void>; complete(): Promise<void> };
   resumeSetup?: (url: string) => void;
+  /** Forgets what this device kept for the signed-in person; signing out runs it. */
+  forgetDevice?: () => Promise<void>;
 };
 
 function readStored(key: string, storage?: SessionStorage): string | null {
@@ -850,6 +853,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
 
   const lock = async (reason: TextKey = "session.status.locked"): Promise<void> => {
     cancelSilentReconnect();
+    if (reason === "session.status.signedOut") void (options.forgetDevice ?? clearLinkPreviewCache)();
     const lockGeneration = reconnectGeneration;
     clearRefreshTimer();
     setSnapshot({

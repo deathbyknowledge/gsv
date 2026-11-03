@@ -13,6 +13,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   DeliveryLedger,
   fingerprintOutboundDelivery,
+  MAX_DELIVERY_MESSAGE_IDS,
   type DeliveryClaim,
   type DeliveryFailureKind,
 } from "../../shared/src/delivery-ledger";
@@ -1031,7 +1032,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         parts.push(async () => (await part(index)).messageId);
       };
       const addText = (body: string): void => {
-        addPart((index) => send({ to, type: "text", text: { preview_url: false, body } }, index));
+        addPart((index) => send({ to, type: "text", text: { preview_url: true, body } }, index));
       };
       // The provider id reported for the delivery: the message that carries
       // the approval buttons when there are any, otherwise the first message.
@@ -1075,20 +1076,27 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       // Every accepted part is recorded before the next provider call, so a
       // retry of this delivery resumes after the parts the person already has.
       let anchorMessageId = claim.progress.messageId;
+      const messageIds = [...claim.progress.messageIds ?? []];
       for (let index = claim.progress.sent; index < parts.length; index += 1) {
         if (sentInAttempt > 0) await this.typingBetweenParts(current, fetcher);
         attemptedProviderSend = true;
         const messageId = await parts[index]!();
         sentInAttempt += 1;
         if (index === anchor) anchorMessageId = messageId;
+        if (messageId) messageIds.push(messageId);
         await this.deliveries.recordProgress(message.deliveryId, claim.attemptId, {
           sent: index + 1,
           messageId: anchorMessageId,
+          messageIds,
           formatVersion: legacyGrouping ? 0 : 1,
         });
       }
-      await this.deliveries.succeed(message.deliveryId, claim.attemptId, anchorMessageId);
-      return { ok: true, messageId: anchorMessageId };
+      await this.deliveries.succeed(message.deliveryId, claim.attemptId, anchorMessageId, messageIds);
+      return {
+        ok: true,
+        messageId: anchorMessageId,
+        ...(messageIds.length > 1 ? { messageIds: messageIds.slice(0, MAX_DELIVERY_MESSAGE_IDS) } : undefined),
+      };
     } catch (error) {
       if (error instanceof ManagedWhatsAppDeliveryError) {
         // Meta knows the window better than the local receipt: when it refuses

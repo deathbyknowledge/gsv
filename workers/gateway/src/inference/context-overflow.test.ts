@@ -17,6 +17,8 @@ describe("context pressure without a provider SDK", () => {
     "maximum prompt length is 100 but request contains 101",
     "reduce the length of the messages",
     "413 status code (no body)",
+    "413: Payload Too Large",
+    "Prime Intellect API error (413): request body too large",
     "The input (1001 tokens) is longer than the model's context length (1000 tokens)",
     "Prompt has 2,001 tokens, but the configured context size is 2,000 tokens",
     "model_context_window_exceeded",

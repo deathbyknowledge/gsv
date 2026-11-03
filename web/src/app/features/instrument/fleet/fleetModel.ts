@@ -204,6 +204,10 @@ export function targetRow(placeId: string): FleetRow {
   return `target:${placeId}`;
 }
 
+export function sourceRow(name: string): FleetRow {
+  return `source:${name}`;
+}
+
 export function processRow(pid: string): FleetRow {
   return `proc:${pid}`;
 }

@@ -4154,6 +4154,117 @@ describe("native administration shell commands", () => {
     expect(result.stdout).toContain("cmd:printf 'agent cron fired\\n'");
   });
 
+  describe("crontab default timezone", () => {
+    const AGENT: ProcessIdentity = { uid: 2000, gid: 2000, gids: [2000], username: "sam-agent", home: "/home/sam-agent", cwd: "/home/sam-agent" };
+    const ROOT: ProcessIdentity = { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" };
+    const OWNER_PREFERENCE = { "users/1000/locale/timezone": "Asia/Tokyo" };
+    const SERVER_DEFAULT = { "config/server/timezone": "Europe/Amsterdam" };
+
+    function cronContext(identity: ProcessIdentity, config: Record<string, string>) {
+      const accounts = [IDENTITY, AGENT, ROOT].map((account) => ({
+        username: account.username,
+        uid: account.uid,
+        gid: account.gid,
+        gecos: "",
+        home: account.home,
+        shell: "/bin/init",
+      }));
+      const cronFiles = new Map<string, { path: string; ownerUid: number | null; content: string; createdAtMs: number; updatedAtMs: number }>();
+      const create = vi.fn((input) => ({
+        ...input,
+        id: "sched-cron",
+        overlapPolicy: "skip",
+        createdAtMs: input.now,
+        updatedAtMs: input.now,
+        state: { nextRunAtMs: input.now + 60_000, runningAtMs: null, lastRunAtMs: null, lastStatus: null, lastError: null, lastDurationMs: null, runCount: 0 },
+      }));
+      const ctx = makeContext({
+        identity,
+        config,
+        capabilities: ["shell.exec", "fs.write", "fs.read", "sched.add", "sched.remove", "sched.list"],
+        auth: {
+          getPasswdByUsername: vi.fn((username: string) => accounts.find((account) => account.username === username) ?? null),
+          getPasswdByUid: vi.fn((uid: number) => accounts.find((account) => account.uid === uid) ?? null),
+          getPersonalAgentUid: vi.fn(() => AGENT.uid),
+          resolveGids: vi.fn(() => [...identity.gids]),
+        },
+        caps: { resolve: vi.fn(() => ["shell.exec"]) },
+        procs: { getOwnerUid: vi.fn(() => IDENTITY.uid) },
+        schedules: {
+          create,
+          setWakeScheduleId: vi.fn(),
+          getStored: vi.fn(() => null),
+          getCronFile: vi.fn((path: string) => cronFiles.get(path) ?? null),
+          upsertCronFile: vi.fn((input) => {
+            const record = { path: input.path, ownerUid: input.ownerUid, content: input.content, createdAtMs: input.now, updatedAtMs: input.now };
+            cronFiles.set(input.path, record);
+            return record;
+          }),
+          cronFileScheduleIds: vi.fn(() => []),
+          clearCronFileScheduleLinks: vi.fn(),
+          linkCronFileSchedule: vi.fn(),
+        },
+        scheduleScheduleWake: vi.fn(async () => "wake-1"),
+      });
+      return { ctx, create };
+    }
+
+    it.each([
+      { label: "a human's own crontab", identity: IDENTITY, path: "/var/spool/cron/sam", config: { ...SERVER_DEFAULT, ...OWNER_PREFERENCE }, expected: "Asia/Tokyo" },
+      { label: "an agent process's crontab", identity: AGENT, path: "/var/spool/cron/sam-agent", config: { ...SERVER_DEFAULT, ...OWNER_PREFERENCE }, expected: "Asia/Tokyo" },
+      { label: "a human's crontab written by root", identity: ROOT, path: "/var/spool/cron/sam", config: { ...SERVER_DEFAULT, ...OWNER_PREFERENCE }, expected: "Asia/Tokyo" },
+      { label: "an owner with no preference", identity: IDENTITY, path: "/var/spool/cron/sam", config: SERVER_DEFAULT, expected: "Europe/Amsterdam" },
+    ])("uses the owner's timezone for $label written through the filesystem", async ({ identity, path, config, expected }) => {
+      const { ctx, create } = cronContext(identity, config);
+
+      const result = await handleShellExec({ input: `printf '0 9 * * * echo hi\\n' > ${path}` }, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(result.ok).toBe(true);
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "cron", expr: "0 9 * * *", timezone: expected },
+      }));
+    });
+
+    it("uses the owner's timezone for crontab FILE", async () => {
+      const { ctx, create } = cronContext(IDENTITY, { ...SERVER_DEFAULT, ...OWNER_PREFERENCE });
+      await env.STORAGE.put("home/sam/owner-tz.cron", "0 9 * * * echo hi\n");
+
+      const result = await handleShellExec({ input: "crontab owner-tz.cron" }, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(result.ok).toBe(true);
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "cron", expr: "0 9 * * *", timezone: "Asia/Tokyo" },
+      }));
+    });
+
+    it.each(["CRON_TZ", "TZ"])("lets a %s line override the owner's timezone", async (variable) => {
+      const { ctx, create } = cronContext(IDENTITY, { ...SERVER_DEFAULT, ...OWNER_PREFERENCE });
+
+      const result = await handleShellExec({
+        input: `printf '${variable}=America/New_York\\n0 9 * * * echo hi\\n' > /var/spool/cron/sam`,
+      }, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        expression: { kind: "cron", expr: "0 9 * * *", timezone: "America/New_York" },
+      }));
+    });
+
+    it("keeps system crontabs on the server timezone", async () => {
+      const { ctx, create } = cronContext(ROOT, { ...SERVER_DEFAULT, ...OWNER_PREFERENCE });
+
+      const result = await handleShellExec({ input: "printf '0 9 * * * sam echo hi\\n' > /etc/cron.d/nightly" }, ctx);
+
+      expect(result.stderr).toBe("");
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        ownerUid: IDENTITY.uid,
+        expression: { kind: "cron", expr: "0 9 * * *", timezone: "Europe/Amsterdam" },
+      }));
+    });
+  });
+
   it("keeps sched add as a low-level JSON compatibility path", async () => {
     const wake = vi.fn(async () => "wake-1");
     const setWakeScheduleId = vi.fn();
@@ -5763,7 +5874,7 @@ describe("native administration shell commands", () => {
       vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-20T12:00:00Z"));
     });
     afterEach(() => {
-      vi.restoreAllMocks();
+      vi.mocked(Date.now).mockRestore();
     });
 
     it.each([

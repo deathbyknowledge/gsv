@@ -3,6 +3,7 @@ pub(crate) mod activity;
 pub(crate) mod activity_labels;
 pub(crate) mod approvals;
 pub(crate) mod contacts;
+pub(crate) mod event;
 pub(crate) mod files;
 pub(crate) mod mail;
 pub(crate) mod memory;

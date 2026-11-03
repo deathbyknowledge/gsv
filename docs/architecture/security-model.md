@@ -34,6 +34,16 @@ Root must be selected explicitly. Setup uses the trusted space handle for the
 internal account name, while upgrades preserve existing UIDs, names and homes.
 Contact invitations connect people across spaces and never grant local accounts.
 
+Forgot-password recovery by email follows the same one-person model. The space's
+verified owner can already reach root, and root can already reset the personal
+password, so a fresh code to that email may set either password directly without
+granting anything new. Each attempt is bound to one space and one browser, its
+one-time secret travels in the URL fragment and is hashed at rest, the receiver
+persists its proof before redeeming, and the claim expires and fails once the
+chosen account's credentials change. Accounts authorizes; only the Kernel changes
+credentials. An owner session alone is never enough. Resetting one account doesn't
+change the other, so root keeps its own password after a personal reset.
+
 `sys.connect` is the WebSocket login syscall. The request identifies the peer
 program and any syscalls it implements, but never claims an authority role. The
 Kernel derives a human, machine, or service principal from the credential:
