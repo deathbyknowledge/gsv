@@ -59,10 +59,7 @@ describe("outbound mail reference resolution", () => {
   });
 });
 
-describe.each([
-  { accept: "acceptManagedInboundMail", complete: "completeManagedOutboundMail", claim: "claimManagedOutboundMail" },
-  { accept: "acceptInboundMail", complete: "completeOutboundMail", claim: "claimOutboundMail" },
-] as const)("mail Gateway routing through $accept", ({ accept, complete, claim }) => {
+describe("mail Gateway routing", () => {
   it("checks the installation directory before addressing a Kernel and cancels the body", async () => {
     const resolveInstallation = vi.fn(async () => ({ found: false as const }));
     const getByName = vi.fn(() => {
@@ -82,7 +79,7 @@ describe.each([
       length: 1,
     };
 
-    await expect(gateway[accept](
+    await expect(gateway.acceptInboundMail(
       { installationId: "installation-unknown" },
       // SAFETY: The request metadata is unused by this boundary test.
       {} as never,
@@ -107,7 +104,7 @@ describe.each([
     });
     const cancel = vi.fn();
 
-    await expect(gateway[accept](
+    await expect(gateway.acceptInboundMail(
       { installationId: "../not-an-installation" },
       // SAFETY: The request metadata is unused by this boundary test.
       {} as never,
@@ -149,11 +146,11 @@ describe.each([
       fingerprint: `sha256:${"a".repeat(64)}`,
     };
 
-    await expect(gateway[claim](
+    await expect(gateway.claimOutboundMail(
       { installationId: "installation-hank" },
       reference,
     )).rejects.toThrow("suspended");
-    await expect(gateway[complete](
+    await expect(gateway.completeOutboundMail(
       { installationId: "installation-hank" },
       { ...reference, state: "failed", errorCode: "installation_inactive" },
     )).resolves.toBeUndefined();
@@ -187,7 +184,7 @@ describe.each([
       errorCode: "installation_inactive",
     };
 
-    await expect(gateway[complete](
+    await expect(gateway.completeOutboundMail(
       { installationId: "installation-missing" },
       completion,
     )).resolves.toBeUndefined();
@@ -214,7 +211,7 @@ describe.each([
       },
     });
 
-    await expect(gateway[complete](
+    await expect(gateway.completeOutboundMail(
       { installationId: "installation-missing" },
       {
         version: 1,
@@ -242,7 +239,7 @@ describe.each([
       },
     });
 
-    await expect(gateway[complete](
+    await expect(gateway.completeOutboundMail(
       { installationId: "installation-missing" },
       {
         version: 1,

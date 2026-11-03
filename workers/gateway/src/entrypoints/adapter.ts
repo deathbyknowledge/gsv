@@ -7,10 +7,12 @@ import type {
 import type {
   AdapterLinkedPeerContext,
   BinaryBody,
-  ManagedAdapterGatewayService,
-  UnlinkManagedAdapterIdentityInput,
-  UnlinkManagedAdapterIdentityResult,
 } from "@humansandmachines/gsv/protocol";
+import type {
+  AdapterGatewayService,
+  UnlinkAdapterIdentityInput,
+  UnlinkAdapterIdentityResult,
+} from "@humansandmachines/gsv/services/adapters";
 import {
   adapterGatewayFrameSchema,
   adapterInstallationContextSchema,
@@ -43,7 +45,7 @@ const adapterServicePeerProfileSchema = z.object({
 
 export class AdapterGatewayEntrypoint
   extends WorkerEntrypoint<GatewayEnv, ServicePeerProfile>
-  implements GatewayAdapterInterface, ManagedAdapterGatewayService
+  implements GatewayAdapterInterface, AdapterGatewayService
 {
   async serviceFrame(
     inputInstallation: AdapterInstallationContext,
@@ -106,10 +108,10 @@ export class AdapterGatewayEntrypoint
     }
   }
 
-  async unlinkManagedAdapterIdentity(
+  async unlinkAdapterIdentity(
     installation: AdapterInstallationContext,
-    input: UnlinkManagedAdapterIdentityInput,
-  ): Promise<UnlinkManagedAdapterIdentityResult> {
+    input: UnlinkAdapterIdentityInput,
+  ): Promise<UnlinkAdapterIdentityResult> {
     const directory = this.env.INSTALLATION_DIRECTORY;
     if (!directory) throw new Error("Managed adapter pairing is not enabled");
     const installationId = resolveAdapterInstallationId(this.env, installation);
@@ -122,13 +124,6 @@ export class AdapterGatewayEntrypoint
       this.resolveServicePeerProfile().id,
       input,
     );
-  }
-
-  async unlinkAdapterIdentity(
-    installation: AdapterInstallationContext,
-    input: UnlinkManagedAdapterIdentityInput,
-  ): Promise<UnlinkManagedAdapterIdentityResult> {
-    return await this.unlinkManagedAdapterIdentity(installation, input);
   }
 
   private resolveServicePeerProfile(): ServicePeerProfile {

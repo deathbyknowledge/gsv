@@ -1,7 +1,5 @@
 import type { AiStopReason } from "./syscalls/ai";
 import type { ManagedMailSummaryCategory } from "./syscalls/mail";
-import type { AdapterInstallationContext } from "./adapters";
-import type { UnlinkAdapterIdentityInput, UnlinkAdapterIdentityResult } from "../services/adapters";
 import type {
   ManagedInferenceActor,
   ManagedInferencePurpose,
@@ -140,35 +138,3 @@ export type {
   InstallationOnboardingAuthorization,
   InstallationOnboardingService,
 } from "../services/onboarding";
-
-/** @deprecated Use UnlinkAdapterIdentityInput from services/adapters. */
-export type UnlinkManagedAdapterIdentityInput = UnlinkAdapterIdentityInput;
-/** @deprecated Use UnlinkAdapterIdentityResult from services/adapters. */
-export type UnlinkManagedAdapterIdentityResult = UnlinkAdapterIdentityResult;
-
-/** Attenuated cleanup RPC exposed only on a deployment-owned adapter binding. */
-export interface ManagedAdapterGatewayService {
-  unlinkManagedAdapterIdentity(
-    installation: AdapterInstallationContext,
-    input: UnlinkManagedAdapterIdentityInput,
-  ): Promise<UnlinkManagedAdapterIdentityResult>;
-}
-
-export type UnlinkManagedTelegramIdentityInput = {
-  installationId: string;
-  operationId: string;
-  actorId: string;
-  surfaceId: string;
-  expectedLocalUid: number;
-  expectedGeneration: string;
-};
-
-export type UnlinkManagedTelegramIdentityResult = {
-  removed: boolean;
-};
-
-export interface ManagedTelegramGatewayService {
-  unlinkManagedTelegramIdentity(
-    input: UnlinkManagedTelegramIdentityInput,
-  ): Promise<UnlinkManagedTelegramIdentityResult>;
-}

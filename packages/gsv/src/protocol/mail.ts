@@ -134,8 +134,3 @@ export type ManagedMailIntakePage = {
   items: ManagedMailIntakeDiagnostic[];
   cursor?: string;
 };
-
-export type {
-  ManagedMailGatewayService,
-  MailService as ManagedMailService,
-} from "../services/mail";
