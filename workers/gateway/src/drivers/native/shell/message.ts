@@ -300,12 +300,16 @@ async function attachToReply(
 }
 
 async function stagedReplyFileCount(pid: string, runId: string, destination: string, ctx: KernelContext): Promise<number> {
-  const result = await countProcessStagedRunMedia(ctx.installationId, pid, {
-    runId, destination, ...(ctx.toolOwner ? { requestId: ctx.toolOwner.requestId } : undefined),
-  });
-  if ("unavailable" in result) {
-    throw new Error("could not check this run's staged attachments; retry the send");
+  const unchecked = "could not check this run's staged attachments; retry the send";
+  let result: Awaited<ReturnType<typeof countProcessStagedRunMedia>>;
+  try {
+    result = await countProcessStagedRunMedia(ctx.installationId, pid, {
+      runId, destination, ...(ctx.toolOwner ? { requestId: ctx.toolOwner.requestId } : undefined),
+    });
+  } catch (error) {
+    throw new Error(unchecked, { cause: error });
   }
+  if ("unavailable" in result) throw new Error(unchecked);
   return result.count;
 }
 

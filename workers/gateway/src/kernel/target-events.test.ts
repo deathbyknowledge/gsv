@@ -214,6 +214,26 @@ describe("registered target event watches", () => {
     } finally { release.resolve(); send.mockRestore(); }
   });
 
+  it("keeps a watch whose Process throws on delivery, and says why", async () => {
+    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
+    const send = acknowledgeEvents();
+    send.mockRejectedValueOnce(new Error("Process event is not registered for this delivery path"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await runInDurableObject(stub, async (kernel: Kernel) => {
+        const ctx = setup(kernel);
+        const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId, once: true }, ctx);
+        await deliverTargetConnectionEvent(kernel, event, "transition:refused", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
+        expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toMatchObject([
+          { watchId: watch.watchId, status: "active", error: null },
+        ]);
+        expect(warn).toHaveBeenCalledWith(
+          `[Kernel] Target event transition:refused:${watch.watchId} was not delivered; its watch stays: Process event is not registered for this delivery path`,
+        );
+      });
+    } finally { warn.mockRestore(); send.mockRestore(); }
+  });
+
   it("marks a watch failed when its Process permanently rejects the delivery", async () => {
     const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
     const send = acknowledgeEvents();

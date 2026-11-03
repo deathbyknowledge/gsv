@@ -4870,6 +4870,21 @@ describe("native administration shell commands", () => {
     } finally { send.mockRestore(); }
   });
 
+  it("asks for a retry when the Process could not count the staged files", async () => {
+    const send = vi.spyOn(federationService, "handleContactSend");
+    countProcessStagedRunMediaMock.mockRejectedValue(new Error("SQLITE_BUSY: database is locked"));
+    try {
+      const ctx = makeContext({ capabilities: ["shell.exec", "contact.send"], processRunId: "run-photo" });
+      const refused = await handleShellExec({
+        input: 'message send --to contact:friend --message "the photo" --also',
+      }, ctx);
+      expect(refused).toMatchObject({ status: "failed", exitCode: 1 });
+      expect(refused.stderr).toContain("could not check this run's staged attachments; retry the send");
+      expect(refused.stderr).not.toContain("SQLITE_BUSY");
+      expect(send).not.toHaveBeenCalled();
+    } finally { send.mockRestore(); }
+  });
+
   it("names the sending tool call so the Process can fence parallel attaches", async () => {
     const send = vi.spyOn(federationService, "handleContactSend").mockResolvedValue({
       deliveryId: "delivery:text", conversationId: "conversation:friend", state: "queued",
