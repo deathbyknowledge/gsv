@@ -58,7 +58,7 @@ type RunFinishStatus = z.infer<typeof runFinishStatusSchema>;
 export type RunFinishPayload = z.infer<typeof pendingRunFinishSchema>;
 
 export type RunFinishOptions = {
-  reason: string;
+  reason: RunFinishReason;
   status?: RunFinishStatus;
   resultText?: string | null;
   delivery?: RunDelivery;
@@ -103,25 +103,43 @@ export const pendingRunFinishesSchema = z.array(z.union([
 }));
 
 /**
+ * Every reason a run finishes with, and the closed category it reports when a
+ * person's message started the run and it ended in `error` or `aborted`.
+ * Reasons that only end a run normally report nothing and map to null. A new
+ * reason must be added here, with its category, before any producer can use it.
+ */
+const RUN_FINISH_REPLY_FAILURES = {
+  "run.yielded": null,
+  "ipc.returned": null,
+  "generation.error": "generation",
+  "generation.empty": "generation",
+  "context.provider_overflow": "context",
+  "context.checkpoint.failed": "context",
+  "context.policy.fail": "context",
+  "context.auto_compact.empty": "context",
+  "context.auto_compact.failed": "context",
+  "context.auto_compact.insufficient": "context",
+  "media.error": "media",
+  "media.timeout": "media",
+  "message.action.missing": "no_send",
+  "message.command.failed": "command",
+  "message.delivery.failed": "delivery",
+  "schedule.error": "runtime",
+  "tick.error": "runtime",
+  "recovery.schedule.error": "runtime",
+  "user.superseded": "superseded",
+  "user": "cancelled",
+  "process.reset": "cancelled",
+  "process.kill": "killed",
+} as const satisfies Record<string, ConversationReplyFailure | null>;
+
+export type RunFinishReason = keyof typeof RUN_FINISH_REPLY_FAILURES;
+
+/**
  * Classify how a run that a person's message started ended, as a closed
  * category. The finish reason and error text stay in Process history.
  */
-export function replyFailureFromFinish(
-  status: RunFinishStatus,
-  reason: string | undefined,
-): ConversationReplyFailure {
-  const key = reason ?? "";
-  if (status === "aborted") {
-    if (key === "user.superseded") return "superseded";
-    if (key === "process.kill") return "killed";
-    return "cancelled";
-  }
-  if (key.startsWith("generation.")) return "generation";
-  if (key.startsWith("context.")) return "context";
-  if (key.startsWith("media.")) return "media";
-  if (key === "message.action.missing") return "no_send";
-  if (key === "message.command.failed") return "command";
-  if (key === "message.delivery.failed") return "delivery";
-  if (key === "schedule.error" || key === "tick.error" || key === "recovery.schedule.error") return "runtime";
-  return "other";
+export function replyFailureFromFinish(reason: RunFinishReason): ConversationReplyFailure {
+  // A completion reason never ends a failed run; keep the record valid if one ever does.
+  return RUN_FINISH_REPLY_FAILURES[reason] ?? "other";
 }

@@ -4,6 +4,7 @@ import type { Process } from "./do";
 import { MAX_TERMINAL_COMMAND_FAILURES } from "./internal/lifecycle";
 import type { MessageRecord } from "./storage/store-codecs";
 import type { RunState } from "./run/state";
+import type { RunFinishReason } from "./run/finish";
 import {
   ROOT_IDENTITY, captureSignals, generationRun, initProcess, processTestConfig, runInProcess, testUsage,
 } from "./do-test-harness";
@@ -325,8 +326,8 @@ describe("reply telemetry", () => {
       process.env.GSV_TELEMETRY_ENABLED = "1";
       const log = vi.spyOn(console, "log").mockImplementation(() => {});
       try {
-        const finish = (runId: string, run: Partial<RunState>, status: "error" | "aborted", reason: string) => process.run.completeRunFinish({
-          run: { runId, ...run }, startedAt: 1_000, newlyFinished: true, cleanupKeys: [],
+        const finish = (runId: string, run: Partial<RunState>, status: "error" | "aborted", reason: RunFinishReason) => process.run.completeRunFinish({
+          run: { runId, ...run }, reason, startedAt: 1_000, newlyFinished: true, cleanupKeys: [],
           payload: { pid, runId, status, reason, error: "private provider failure", queuedCount: 0, timestamp: 4_000, result: { text: null }, delivery: { kind: "none" } },
         });
         finish("run-a", { conversationId: "conv:ship", inputAt: 1_500, replied: true }, "error", "generation.error");

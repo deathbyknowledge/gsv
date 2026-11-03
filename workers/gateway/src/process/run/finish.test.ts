@@ -1,25 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { replyFailureFromFinish } from "./finish";
+import { replyFailureFromFinish, type RunFinishReason } from "./finish";
 
 describe("replyFailureFromFinish", () => {
   it.each([
-    ["error", "generation.error", "generation"],
-    ["error", "generation.empty", "generation"],
-    ["error", "context.policy.fail", "context"],
-    ["error", "media.timeout", "media"],
-    ["error", "message.action.missing", "no_send"],
-    ["error", "message.command.failed", "command"],
-    ["error", "message.delivery.failed", "delivery"],
-    ["error", "schedule.error", "runtime"],
-    ["error", "tick.error", "runtime"],
-    ["error", "recovery.schedule.error", "runtime"],
-    ["error", "something.new", "other"],
-    ["error", undefined, "other"],
-    ["aborted", "user.superseded", "superseded"],
-    ["aborted", "process.kill", "killed"],
-    ["aborted", "user", "cancelled"],
-    ["aborted", undefined, "cancelled"],
-  ] as const)("maps %s/%s to %s", (status, reason, expected) => {
-    expect(replyFailureFromFinish(status, reason)).toBe(expected);
+    ["generation.error", "generation"],
+    ["generation.empty", "generation"],
+    ["context.checkpoint.failed", "context"],
+    ["context.policy.fail", "context"],
+    ["context.auto_compact.empty", "context"],
+    ["context.auto_compact.failed", "context"],
+    ["context.auto_compact.insufficient", "context"],
+    ["context.provider_overflow", "context"],
+    ["media.error", "media"],
+    ["media.timeout", "media"],
+    ["message.action.missing", "no_send"],
+    ["message.command.failed", "command"],
+    ["message.delivery.failed", "delivery"],
+    ["schedule.error", "runtime"],
+    ["tick.error", "runtime"],
+    ["recovery.schedule.error", "runtime"],
+    ["user.superseded", "superseded"],
+    ["user", "cancelled"],
+    ["process.reset", "cancelled"],
+    ["process.kill", "killed"],
+  ] as const satisfies ReadonlyArray<readonly [RunFinishReason, string]>)("maps %s to %s", (reason, expected) => {
+    expect(replyFailureFromFinish(reason)).toBe(expected);
+  });
+
+  it.each(["run.yielded", "ipc.returned"] as const)("keeps a failed record valid if completion reason %s ever ends one", (reason) => {
+    expect(replyFailureFromFinish(reason)).toBe("other");
   });
 });

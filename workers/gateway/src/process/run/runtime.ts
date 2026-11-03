@@ -35,7 +35,9 @@ import {
   terminalResponsibilitySnapshot, unhandledTerminalResponsibilityIds, terminalResponsibilityAdmissionKey,
 } from "../internal/events";
 import type { Process } from "../do";
-import { replyFailureFromFinish, type RunFinishOptions, type RunFinishPayload, type RunResult } from "./finish";
+import {
+  replyFailureFromFinish, type RunFinishOptions, type RunFinishPayload, type RunFinishReason, type RunResult,
+} from "./finish";
 import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import { isRoutableSyscall, type ArgsOf } from "../../syscalls";
 import { inferenceLogicalRequestId, type InferenceAttribution } from "../../inference/provider";
@@ -646,7 +648,7 @@ export class ProcessRun {
 
   async failWithHistoryEvent(
     runId: string,
-    payload: ProcHistoryEventPayload<"context.failed">,
+    payload: ProcHistoryEventPayload<"context.failed"> & { reason: Extract<RunFinishReason, `context.${string}`> },
   ): Promise<void> {
     const event = {
       kind: "context.failed", payload, severity: "error", audience: "both",
@@ -735,6 +737,7 @@ export class ProcessRun {
     const newlyFinished = this.host.finishDelivery.record(payload);
     return {
       run,
+      reason: options.reason,
       payload,
       startedAt,
       newlyFinished,
@@ -787,7 +790,7 @@ export class ProcessRun {
             name: "conversation.reply.failed",
             properties: {
               outcome: payload.status,
-              failure: replyFailureFromFinish(payload.status, payload.reason),
+              failure: replyFailureFromFinish(effects.reason),
               replied: run.replied === true,
               durationMs: Math.max(0, payload.timestamp - run.inputAt),
             },

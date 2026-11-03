@@ -14,6 +14,7 @@ import {
   type PendingHilRecord, type QueuedRun, ProcessStore, type ToolCallRecord,
 } from "../store";
 import type { RunState, ResponsibilityBatchState } from "../run/state";
+import type { RunFinishReason } from "../run/finish";
 import {
   abortedRunIdsSchema, archivedToolResultMetadataSchema, type IpcReplyPayload,
   cancelRequestPayloadSchema, deliveryNoticePayloadSchema, identityChangedPayloadSchema, ipcReplyPayloadSchema,
@@ -1328,7 +1329,7 @@ export class ProcessController {
     this.host.deferredTickRunIds.clear();
   }
 
-  async resetExecutionState(reason: string): Promise<void> {
+  async resetExecutionState(reason: RunFinishReason): Promise<void> {
     const resetError = new Error(`Process execution was reset: ${reason}`);
     this.host.settings.abortTitleGeneration(resetError);
     this.host.resources.abortMediaUploads(resetError);
