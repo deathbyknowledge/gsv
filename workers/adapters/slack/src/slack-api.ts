@@ -165,8 +165,8 @@ export type SlackUpdateMessageInput = {
 type SlackPostMessagePayload = {
   channel: string;
   text: string;
-  unfurl_links: false;
-  unfurl_media: false;
+  unfurl_links: true;
+  unfurl_media: true;
   thread_ts?: string;
   blocks?: SlackBlock[];
 };
@@ -445,8 +445,8 @@ export async function postSlackMessage(
   const payload: SlackPostMessagePayload = {
     channel: requireSlackId(input.channel, "Slack channel"),
     text: requireText(input.text, "Slack message", 40_000),
-    unfurl_links: false,
-    unfurl_media: false,
+    unfurl_links: true,
+    unfurl_media: true,
   };
   if (input.threadTs) payload.thread_ts = requireSlackTimestamp(input.threadTs);
   if (input.blocks?.length) payload.blocks = requireSlackBlocks(input.blocks);

@@ -405,6 +405,26 @@ does not present them as “Memory” messages or interrupt the composer when th
 working context changes.
 
 
+## Link previews in the web app
+
+Chat shows a quiet card under a settled Ship message for each web link it contains, in order and
+once per URL and at most ten per message, with the page's image, site name, title and description;
+the card opens the link in a new tab. Links inside code, images and the person's own messages get no
+card, and neither do links to a Ship on the deployment's domains, which need a session the preview
+does not carry. Previews resolve lazily, and only for messages near the viewport, so opening a long
+history fetches nothing for what it scrolled past.
+
+The browser reads the page with an ordinary `net.fetch` on `gsv`, which relays the response as it
+arrives, and parses the preview tags itself: it reads only up to the end of the page's head and then
+cancels the body, which also stops the Kernel's request. The image comes through `net.fetch` too, so
+the browser never contacts the linked site or its image host. A few previews are read at a time.
+The device keeps what it read in IndexedDB for a week, at most 500 entries, so reopening a
+conversation does not read its pages again. A page or image that answered with nothing to show, such as a page with neither a title nor an image, is
+asked again after an hour, and a lost connection is not kept at all. Signing out deletes the store.
+Until a preview resolves, or when it fails or offers neither a title nor an image, the message shows
+no card and takes no extra room. A preview is presentation only: it is never part of the canonical
+message, its history or its search index, and messengers present links in their own way.
+
 ## Contextual requests in the web app
 
 Chat’s `+` menu can attach a file, find a person by handle, saved name or GSV address,

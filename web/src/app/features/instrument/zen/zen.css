@@ -798,6 +798,19 @@
 .zen-media-image { display: block; width: fit-content; max-width: 100%; }
 .zen-media img, .zen-media video { display: block; max-width: 100%; max-height: min(28rem, 55vh); object-fit: contain; }
 .zen-media audio { max-width: 100%; }
+/* the pages a Ship message links to, read through net.fetch: quiet cards under the text, one per link, no room taken until one resolves */
+.zen-link-cards:empty { min-height: 1px; }
+.zen-link-cards:not(:empty) { display: flex; flex-direction: column; align-items: flex-start; gap: .75rem; margin: 1rem 0; }
+.zen-link-card { display: block; width: min(100%, 28rem); color: inherit; text-decoration: none; }
+.zen-link-card:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.zen-link-card > .gsv-surface { padding: 0; overflow: hidden; }
+.zen-link-card-image { display: block; aspect-ratio: 1.91 / 1; background: var(--hover); border-bottom: 1px solid var(--border); }
+.zen-link-card-image img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.zen-link-card-text { display: flex; flex-direction: column; gap: .3rem; padding: .75rem 1rem; min-width: 0; }
+.zen-link-card-site { overflow: hidden; color: var(--text-dim); font: .7rem/1.5 var(--gsv-font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.zen-link-card-title, .zen-link-card-description { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.zen-link-card-title { -webkit-line-clamp: 2; color: var(--text); font: 500 .95rem/1.4 var(--gsv-font-prose); }
+.zen-link-card-description { -webkit-line-clamp: 3; color: var(--text-dim); font: .85rem/1.5 var(--gsv-font-prose); }
 .zen-media figcaption { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin-top: .5rem; color: var(--text-dim); overflow-wrap: anywhere; }
 .zen-media a { color: var(--accent); text-underline-offset: 3px; }
 .zen-media.is-document { border-left: 1px solid var(--border); padding-left: 1rem; }

@@ -256,6 +256,17 @@ describe("account setup", () => {
     service.dispose?.();
   });
 
+  it("forgets this device's link previews when the person signs out, not when the session only locks", async () => {
+    installWindow();
+    const forgetDevice = vi.fn(async () => {});
+    const service = createSessionService(createSetupClient(), { forgetDevice });
+    await service.lock();
+    expect(forgetDevice).not.toHaveBeenCalled();
+    await service.lock("session.status.signedOut");
+    expect(forgetDevice).toHaveBeenCalledOnce();
+    service.dispose?.();
+  });
+
   it("does not create an account after locking during the feature probe", async () => {
     installWindow();
     const client = createSetupClient();
