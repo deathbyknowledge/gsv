@@ -253,7 +253,7 @@ export class InstallationOnboardingStore {
     const claimId = parseOpaqueId(input?.claimId, "claimId");
     const installationId = parseOpaqueId(input?.installationId, "installationId");
     const claim = await this.db.prepare(
-      `SELECT p.operation_id, p.principal_id, p.attribution_json
+      `SELECT p.operation_id, p.principal_id, p.attribution_json, i.owner_setup
        FROM installation_onboarding_claims c
        JOIN installations i ON i.id = c.installation_id
        JOIN provisioning_operations p
@@ -266,6 +266,7 @@ export class InstallationOnboardingStore {
       operation_id: string;
       principal_id: string;
       attribution_json: string | null;
+      owner_setup: number;
     }>();
     if (!claim) throw new Error("installation onboarding claim is unavailable");
 
@@ -274,7 +275,10 @@ export class InstallationOnboardingStore {
       claim.principal_id,
       claimId,
     );
-    emitTelemetry(this.telemetry, {
+    // Only a self-service signup has an origin to report. An operator-created Ship or a reset
+    // replacement reaches this same completion without one, and reporting it would count a
+    // person who never signed up here, or who was already counted.
+    if (claim.owner_setup === 1) emitTelemetry(this.telemetry, {
       component: "accounts",
       installationId,
       event: { stream: "product", name: "installation.attributed", properties: attributionProperties(claim.attribution_json) },

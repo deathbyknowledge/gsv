@@ -166,7 +166,8 @@ without granting those adapters ownership of another component's application eve
   reply was delivered to; the reported peer platform string and adapter name
   never leave the Gateway.
 - Accounts: activation and attribution. `installation.attributed` is reported
-  once when onboarding completes, with `origin: "website"` and a closed
+  once when a self-service signup completes onboarding (a Ship an operator
+  created or reset reports nothing), with `origin: "website"` and a closed
   placement class (`hero`, `final-call`, `example` or `other`) and, for example
   cards, a closed example id, or `origin: "direct"` when there were none. The
   signup page reads the website's slugs from the signup link's fragment in the

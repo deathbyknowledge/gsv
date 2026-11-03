@@ -222,11 +222,13 @@ describe("installation onboarding claims", () => {
 });
 
 describe("activation attribution", () => {
-  async function activate(suffix: string, attribution: string | null) {
+  async function activate(suffix: string, attribution: string | null, ownerSetup = true) {
     const fixture = await provisioningInstallation(suffix);
     const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, fixture.accounts, undefined, { GSV_TELEMETRY_ENABLED: "1" });
-    await env.INSTALLATIONS_DB.prepare("UPDATE provisioning_operations SET attribution_json = ? WHERE installation_id = ?")
-      .bind(attribution, fixture.installationId).run();
+    await env.INSTALLATIONS_DB.batch([
+      env.INSTALLATIONS_DB.prepare("UPDATE provisioning_operations SET attribution_json = ? WHERE installation_id = ?").bind(attribution, fixture.installationId),
+      env.INSTALLATIONS_DB.prepare("UPDATE installations SET owner_setup = ? WHERE id = ?").bind(ownerSetup ? 1 : 0, fixture.installationId),
+    ]);
     const issued = await onboarding.issue(fixture.installationId);
     const authorization = await onboarding.authorize({ installationId: fixture.installationId, token: new URL(issued.onboardingUrl).hash.slice(1) });
     if (!authorization.ok) throw new Error("claim was not authorized");
@@ -248,6 +250,13 @@ describe("activation attribution", () => {
     expect(records).toEqual([expect.objectContaining({ component: "accounts", installationId, event: {
       stream: "product", name: "installation.attributed", properties: { origin: "website", placement: "example", example: "tickets" },
     } })]);
+  });
+
+  it("reports nothing for a Ship an operator created or reset, which was never a signup here", async () => {
+    const operator = await activate("operator-made", null, false);
+    expect(operator.records).toEqual([]);
+    const reset = await activate("reset-replacement", JSON.stringify({ placement: "hero" }), false);
+    expect(reset.records).toEqual([]);
   });
 
   it("reports a direct signup, and treats a malformed origin as direct", async () => {
