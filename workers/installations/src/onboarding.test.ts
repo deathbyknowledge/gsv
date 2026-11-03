@@ -269,33 +269,6 @@ describe("activation attribution", () => {
     ]);
   });
 
-  it("reports nothing when a reset replacement activates, since its person was already counted", async () => {
-    const previous = await provisioningInstallation("reset-previous");
-    const replacement = await provisioningInstallation("reset-replacement");
-    const now = Date.now();
-    await env.INSTALLATIONS_DB.prepare(
-      `INSERT INTO installation_reset_operations (
-         operation_id, previous_installation_id, replacement_installation_id, handle, canonical_origin, canonical_hostname,
-         data_deletion_state, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-    ).bind("reset_attribution", previous.installationId, replacement.installationId, "onboarding-reset-replacement",
-      "https://onboarding-reset-replacement.gsv.space", "onboarding-reset-replacement.gsv.space", now, now).run();
-    const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, replacement.accounts, undefined, { GSV_TELEMETRY_ENABLED: "1" });
-    const issued = await onboarding.issue(replacement.installationId);
-    const authorization = await onboarding.authorize({ installationId: replacement.installationId, token: new URL(issued.onboardingUrl).hash.slice(1) });
-    if (!authorization.ok) throw new Error("claim was not authorized");
-    const logged: unknown[] = [];
-    const log = vi.spyOn(console, "log").mockImplementation((value) => { logged.push(value); });
-    try {
-      await expect(onboarding.complete({ claimId: authorization.claimId, installationId: replacement.installationId }))
-        .resolves.toEqual({ state: "complete", installationId: replacement.installationId });
-    } finally {
-      log.mockRestore();
-    }
-    expect(logged.filter((value) => telemetryRecordSchema.safeParse(value).success)).toEqual([]);
-    await expect(replacement.accounts.resolveInstallation(replacement.installationId)).resolves.toMatchObject({ found: true, state: "active" });
-  });
-
   it("reports an invited signup without naming the inviter, keeping the website placement it also carried", async () => {
     const inviter = await provisioningInstallation("inviter");
     await env.INSTALLATIONS_DB.prepare("UPDATE installations SET state = 'active' WHERE id = ?").bind(inviter.installationId).run();

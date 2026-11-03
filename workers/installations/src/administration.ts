@@ -25,16 +25,6 @@ type AdminOperationState =
 /** How a Ship's owner arrived: another Ship's invitation, a website link, or neither. */
 export type AdminInstallationOrigin = "invite" | "website" | "direct";
 
-// A reset keeps a Ship's lineage under a fresh installation ID. Signup facts
-// stay on the original create operation, so every lookup walks the chain:
-// back from a Ship to its first installation, forward from an old ID to the
-// Ship it is today.
-const LINEAGE = `lineage(id) AS (
-  SELECT ?
-  UNION SELECT r.previous_installation_id FROM installation_reset_operations r
-  JOIN lineage l ON r.replacement_installation_id = l.id
-)`;
-
 export type AdminInstallationSummary = {
   installationId: string;
   handle: string;
@@ -145,37 +135,30 @@ export class InstallationAdminStore {
          WHERE ${where}`,
       ).bind(...bindings).first<{ total: number }>(),
       this.db.prepare(
-        `WITH RECURSIVE page AS (
-           SELECT
-             i.id, i.handle, i.state,
-             (
-               SELECT p.state
-               FROM provisioning_operations p
-               WHERE p.installation_id = i.id AND p.kind = 'create'
-               ORDER BY p.updated_at DESC
-               LIMIT 1
-             ) AS operation_state,
-             i.created_at
-           FROM installations i
-           WHERE ${where}
-           ORDER BY i.created_at DESC, i.id DESC
-           LIMIT ? OFFSET ?
-         ), lineage(ship, id) AS (
-           SELECT id, id FROM page
-           UNION SELECT l.ship, r.previous_installation_id FROM installation_reset_operations r
-           JOIN lineage l ON r.replacement_installation_id = l.id
-         )
-         SELECT page.*, (
-           SELECT CASE
-             WHEN MAX(p.inviter_installation_id IS NOT NULL) THEN 'invite'
-             WHEN MAX(p.attribution_json IS NOT NULL) THEN 'website'
-             ELSE 'direct' END
-           FROM lineage l
-           JOIN provisioning_operations p ON p.installation_id = l.id AND p.kind = 'create'
-           WHERE l.ship = page.id
-         ) AS origin
-         FROM page
-         ORDER BY page.created_at DESC, page.id DESC`,
+        `SELECT
+           i.id, i.handle, i.state,
+           (
+             SELECT p.state
+             FROM provisioning_operations p
+             WHERE p.installation_id = i.id AND p.kind = 'create'
+             ORDER BY p.updated_at DESC
+             LIMIT 1
+           ) AS operation_state,
+           (
+             SELECT CASE
+               WHEN p.inviter_installation_id IS NOT NULL THEN 'invite'
+               WHEN p.attribution_json IS NOT NULL THEN 'website'
+               ELSE 'direct' END
+             FROM provisioning_operations p
+             WHERE p.installation_id = i.id AND p.kind = 'create'
+             ORDER BY p.updated_at DESC
+             LIMIT 1
+           ) AS origin,
+           i.created_at
+         FROM installations i
+         WHERE ${where}
+         ORDER BY i.created_at DESC, i.id DESC
+         LIMIT ? OFFSET ?`,
       ).bind(
         ...bindings,
         ADMIN_INSTALLATIONS_PAGE_SIZE,
@@ -229,38 +212,27 @@ export class InstallationAdminStore {
   async getInstallation(installationIdValue: string): Promise<AdminInstallation | null> {
     const installationId = parseOpaqueId(installationIdValue, "installationId");
     const row = await this.db.prepare(
-      `WITH RECURSIVE ${LINEAGE}, inviter(id) AS (
-         SELECT p.inviter_installation_id FROM provisioning_operations p
-         JOIN lineage l ON p.installation_id = l.id
-         WHERE p.kind = 'create' AND p.inviter_installation_id IS NOT NULL
-         UNION SELECT r.replacement_installation_id FROM installation_reset_operations r
-         JOIN inviter ON r.previous_installation_id = inviter.id
-       ), current_inviter AS (
-         SELECT i.id, i.handle FROM inviter JOIN installations i ON i.id = inviter.id
-         WHERE NOT EXISTS (SELECT 1 FROM installation_reset_operations r WHERE r.previous_installation_id = i.id)
-         LIMIT 1
-       ), invitee(first, id) AS (
-         SELECT p.installation_id, p.installation_id FROM provisioning_operations p
-         WHERE p.kind = 'create' AND p.inviter_installation_id IN (SELECT id FROM lineage)
-         UNION SELECT invitee.first, r.replacement_installation_id FROM installation_reset_operations r
-         JOIN invitee ON r.previous_installation_id = invitee.id
-       )
-       SELECT i.id, i.handle, i.canonical_origin, i.state,
+      `SELECT i.id, i.handle, i.canonical_origin, i.state,
          (SELECT p.state FROM provisioning_operations p
           WHERE p.installation_id = i.id AND p.kind = 'create'
           ORDER BY p.updated_at DESC LIMIT 1) AS operation_state,
          c.expires_at AS onboarding_expires_at, i.created_at, i.activated_at,
          reset.previous_installation_id, reset.data_deletion_state,
-         (SELECT id FROM current_inviter) AS inviter_installation_id,
-         (SELECT handle FROM current_inviter) AS inviter_handle,
-         (SELECT COUNT(DISTINCT first) FROM invitee) AS invitations_total,
-         (SELECT COUNT(DISTINCT invitee.first) FROM invitee
-          JOIN installations invited ON invited.id = invitee.id AND invited.state = 'active') AS invitations_active
+         inviter.id AS inviter_installation_id, inviter.handle AS inviter_handle,
+         (SELECT COUNT(*) FROM provisioning_operations p
+          WHERE p.kind = 'create' AND p.inviter_installation_id = i.id) AS invitations_total,
+         (SELECT COUNT(*) FROM provisioning_operations p
+          JOIN installations invited ON invited.id = p.installation_id AND invited.state = 'active'
+          WHERE p.kind = 'create' AND p.inviter_installation_id = i.id) AS invitations_active
        FROM installations i
        LEFT JOIN installation_onboarding_claims c ON c.installation_id = i.id
        LEFT JOIN installation_reset_operations reset ON reset.replacement_installation_id = i.id
+       LEFT JOIN installations inviter ON inviter.id = (
+         SELECT p.inviter_installation_id FROM provisioning_operations p
+         WHERE p.installation_id = i.id AND p.kind = 'create'
+         ORDER BY p.updated_at DESC LIMIT 1)
        WHERE i.id = ? AND i.state != 'deleted' LIMIT 1`,
-    ).bind(installationId, installationId).first<AdminInstallationRow>();
+    ).bind(installationId).first<AdminInstallationRow>();
     return row ? adminInstallationFromRow(row) : null;
   }
 }

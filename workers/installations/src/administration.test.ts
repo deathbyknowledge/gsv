@@ -83,4 +83,15 @@ it("shows who invited a Ship and how many Ships it invited, across resets on eit
     invitedBy: { installationId: inviterReset.installationId, handle: "invites-host" },
   });
   await expect(origins()).resolves.toMatchObject({ "invites-host": "direct", "invites-joined": "invite" });
+
+  // The old installations' rows and the reset edges go with cleanup; the facts now live on the replacements.
+  await db.batch([
+    db.prepare("DELETE FROM installation_reset_operations WHERE operation_id IN ('reset_invites_host', 'reset_invites_joined')"),
+    db.prepare("DELETE FROM provisioning_operations WHERE installation_id IN (?, ?)").bind(inviter.installationId, joined.installationId),
+  ]);
+  await expect(admin.getInstallation(inviterReset.installationId)).resolves.toMatchObject({ invitations: { total: 2, active: 1 } });
+  await expect(admin.getInstallation(joinedReset.installationId)).resolves.toMatchObject({
+    invitedBy: { installationId: inviterReset.installationId, handle: "invites-host" },
+  });
+  await expect(origins()).resolves.toMatchObject({ "invites-host": "direct", "invites-joined": "invite" });
 });

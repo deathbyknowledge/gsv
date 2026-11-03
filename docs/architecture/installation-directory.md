@@ -173,9 +173,11 @@ Ship's hostname. Accounts resolves it through its own directory and records the
 inviting installation on the create operation only when it is an active
 installation that the signing owner does not own; anything else is ignored
 without error, since the hostname is a claim from the link, not proof of who
-sent it. The link is written once with the reservation, cleared if the inviting
-installation is erased, and never copied to a reset replacement. Activation then
-reports `origin: "invite"` without naming the inviter. Administration shows who
+sent it. The link is written once with the reservation and cleared if the inviting
+installation is erased. A reset moves the signup origin, the inviter and the
+invitees to the replacement installation, which continues the same person and
+reports no new attribution. Activation otherwise reports `origin: "invite"`
+without naming the inviter. Administration shows who
 invited a Ship and how many Ships its invitations created.
 
 The existing provisioning ledger owns progress and diagnostic references.
