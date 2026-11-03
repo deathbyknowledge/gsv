@@ -20,6 +20,7 @@ import {
   binaryBodySchema,
   cancelBinaryBody,
 } from "@humansandmachines/gsv/protocol";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { Frame, FrameError } from "../protocol/frames";
 import { kernelForSettlement, kernelForWork, type WorkAdmission } from "../installation/admission";
 import type { ServicePeerProfile } from "../kernel/peer";
@@ -49,9 +50,19 @@ export class AdapterGatewayEntrypoint
     inputInstallation: AdapterInstallationContext,
     inputFrame: Frame,
   ): Promise<Frame | null> {
+    let installation: AdapterInstallationContext;
+    let frame: Frame;
     try {
-      const installation = adapterInstallationContextSchema.parse(inputInstallation);
-      const frame = requireAdapterServiceFrame(inputFrame);
+      installation = adapterInstallationContextSchema.parse(inputInstallation);
+      frame = requireAdapterServiceFrame(inputFrame);
+    } catch (error) {
+      return await failAdapterFrame("serviceFrame", inputFrame, error, {
+        code: 403,
+        message: "Adapter service request was rejected",
+        retryable: false,
+      });
+    }
+    try {
       return await routeAdapterServiceFrame(
         this.env,
         installation,
@@ -59,12 +70,13 @@ export class AdapterGatewayEntrypoint
         frame,
       );
     } catch (error) {
-      await cancelBinaryBody(
-        adapterServiceFrameBody(inputFrame),
-        "Gateway service request failed",
-      );
-      console.error("[AdapterGatewayEntrypoint] serviceFrame failed:", error);
-      return null;
+      // The Kernel answers its own refusals with error frames. A thrown failure
+      // is transport, service or binding trouble, so the adapter keeps the request and retries.
+      return await failAdapterFrame("serviceFrame", inputFrame, error, {
+        code: 503,
+        message: "Adapter service request failed",
+        retryable: true,
+      });
     }
   }
 
@@ -81,7 +93,7 @@ export class AdapterGatewayEntrypoint
       context = adapterLinkedPeerContextSchema.parse(inputContext);
       frame = requireAdapterServiceFrame(inputFrame);
     } catch (error) {
-      return await failLinkedPeerFrame(inputFrame, error, {
+      return await failAdapterFrame("linkedPeerFrame", inputFrame, error, {
         code: 403,
         message: "Linked adapter request was rejected",
         retryable: false,
@@ -98,7 +110,7 @@ export class AdapterGatewayEntrypoint
     } catch (error) {
       // The Kernel answers its own refusals with error frames. A thrown failure
       // is transport or service trouble, so the adapter keeps the person's choice and retries.
-      return await failLinkedPeerFrame(inputFrame, error, {
+      return await failAdapterFrame("linkedPeerFrame", inputFrame, error, {
         code: 503,
         message: "Linked adapter request failed",
         retryable: true,
@@ -133,29 +145,18 @@ async function routeAdapterServiceFrame(
   profile: ServicePeerProfile,
   frame: Frame,
 ): Promise<Frame | null> {
-  const body = adapterServiceFrameBody(frame);
-  try {
-    const admission = await kernelForWork(bindings, installation);
-    if (!admission.allowed) {
-      if (body && !body.stream.locked) {
-        await body.stream.cancel(admission.message).catch(() => {});
-      }
-      return refusalFrame(frame, admission);
-    }
-    const kernelStub: unknown = admission.kernel;
-    // SAFETY: this namespace is generated from Kernel; the narrow view avoids
-    // recursively expanding every unrelated RPC method in Cloudflare's stub type.
-    const kernel = kernelStub as {
-      peerFrame(profile: ServicePeerProfile, frame: Frame): Promise<Frame | null>;
-    };
-    return await kernel.peerFrame(profile, frame);
-  } catch (error) {
-    if (body && !body.stream.locked) {
-      await body.stream.cancel("Gateway service request failed").catch(() => {});
-    }
-    console.error("[GatewayEntrypoint] serviceFrame failed:", error);
-    return null;
+  const admission = await kernelForWork(bindings, installation);
+  if (!admission.allowed) {
+    await cancelBinaryBody(adapterServiceFrameBody(frame), admission.message);
+    return refusalFrame(frame, admission);
   }
+  const kernelStub: unknown = admission.kernel;
+  // SAFETY: this namespace is generated from Kernel; the narrow view avoids
+  // recursively expanding every unrelated RPC method in Cloudflare's stub type.
+  const kernel = kernelStub as {
+    peerFrame(profile: ServicePeerProfile, frame: Frame): Promise<Frame | null>;
+  };
+  return await kernel.peerFrame(profile, frame);
 }
 
 async function routeAdapterLinkedPeerFrame(
@@ -190,13 +191,15 @@ function refusalFrame(
     : null;
 }
 
-async function failLinkedPeerFrame(
+/** Ends a frame the Gateway could not route: cancels its body, records why, and answers a request with `error`. */
+async function failAdapterFrame(
+  method: "serviceFrame" | "linkedPeerFrame",
   inputFrame: Frame,
   cause: unknown,
   error: FrameError,
 ): Promise<Frame | null> {
   await cancelBinaryBody(adapterServiceFrameBody(inputFrame), error.message);
-  console.error("[AdapterGatewayEntrypoint] linkedPeerFrame failed:", cause);
+  console.error(`[AdapterGatewayEntrypoint] ${method} failed:`, exceptionDiagnostics(cause));
   const parsedCandidate = adapterGatewayFrameSchema.safeParse(inputFrame);
   return parsedCandidate.success && parsedCandidate.data.type === "req"
     ? { type: "res", id: parsedCandidate.data.id, ok: false, error }
