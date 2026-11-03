@@ -16,3 +16,8 @@ export function parseConsumer(consumer: string): EventConsumer | null {
   if (consumer.startsWith("proc:") && consumer.length > "proc:".length) return { kind: "process", pid: consumer.slice("proc:".length) };
   return null;
 }
+
+/** One delivery's id, which the Process dedupes by and runs under. */
+export function deliveryId(eventId: string, consumer: string): string {
+  return `${eventId}:${consumer}`;
+}

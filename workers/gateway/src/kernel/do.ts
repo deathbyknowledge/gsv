@@ -984,7 +984,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
   async alarm(): Promise<void> {
     if (this.retirement.state) return;
-    await this.tasks.alarm();
+    // A timer that appends an event kicks the runner, which then delivers in the same alarm.
+    await this.tasks.alarm({ followUps: true });
   }
 
   schedule(

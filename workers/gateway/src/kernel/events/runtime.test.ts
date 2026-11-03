@@ -14,6 +14,7 @@ const OWNER = 1000;
 const WATCHER = "proc:watcher";
 let subjectWanted = true;
 let prepared: { text: string } | Withdrawn = { text: "prepared" };
+const settledKeys: string[] = [];
 
 const NOTICE_ADMISSION = { idle: "record", busy: "join" } as const;
 const WATCH_ADMISSION = { idle: "start", busy: "join" } as const;
@@ -42,6 +43,22 @@ const REGISTRY = {
       admission: WATCH_ADMISSION,
     }),
   },
+  /** Tells its producer when each delivery ends, as the ledger's events do. */
+  "fixture.settled": {
+    routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: "background" }],
+    withdrawal: () => subjectWanted ? null : "its subject no longer wants it",
+    admit: (event) => ({
+      event: {
+        kind: "owner.notified", severity: "info", audience: "model",
+        payload: { noticeId: event.key, topic: "event.received", from: "Fixture", preview: event.key },
+      },
+      admission: NOTICE_ADMISSION,
+    }),
+    settled: async (event) => {
+      settledKeys.push(event.key);
+      if (event.key === "unheard") throw new Error("The producer could not follow up");
+    },
+  },
   /** Reads its content elsewhere, and hands its Ship the responsibility named in its body. */
   "fixture.prepared": {
     routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: "background" }],
@@ -63,6 +80,7 @@ function noticed(key: string, subject = "fixture:background"): EventInput {
 
 afterEach(() => {
   subjectWanted = true;
+  settledKeys.length = 0;
   prepared = { text: "prepared" };
   vi.restoreAllMocks();
 });
@@ -87,7 +105,7 @@ describe("event runtime", () => {
       expect(events.delivery(event.seq, shipConsumer(OWNER))).toMatchObject({
         state: "delivered", runId: null, outcome: { pid: "proc:ship", queued: false },
       });
-      expect(host.responsibilityRuntime.reconcileResponsibilityWake).not.toHaveBeenCalled();
+      expect(host).not.toHaveProperty("responsibilityRuntime");
     });
   });
 
@@ -208,13 +226,14 @@ describe("event runtime", () => {
 
   it("hands the Process what was prepared, and arms recovery for the responsibilities the delivery carries", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
-      const { host, runtime, events, responsibilities } = fixture(storage);
+      const { runtime, events, responsibilities } = fixture(storage);
       const work = responsibilities.create({ ownerUid: OWNER, title: "Reply to Remote", source: actor, actor,
         assignee: { kind: "ship" }, state: "open", priority: "normal", observedByShip: false, announced: true, now: Date.now() }).record;
       expect(responsibilities.nextWakeAt(OWNER, Date.now())).toBeNull();
       vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
       const deliver = acknowledge();
       const event = runtime.append({ ...noticed("carried"), type: "fixture.prepared", body: work.id });
+      const before = Date.now();
       await runtime.onEvents({ id: "task:carried" });
       expect(deliver).toHaveBeenCalledWith("installation:test", "proc:ship", {
         eventId: `${event.id}:personal:${OWNER}`,
@@ -223,9 +242,39 @@ describe("event runtime", () => {
         responsibilities: { ledgerRevision: 7, ids: [work.id] },
       });
       expect(events.delivery(event.seq, shipConsumer(OWNER))).toMatchObject({ state: "delivered" });
-      expect(responsibilities.createReadyBatch(OWNER, Date.now())).toBeNull();
-      expect(responsibilities.nextWakeAt(OWNER, Date.now())).toBeGreaterThan(Date.now());
-      expect(host.responsibilityRuntime.reconcileResponsibilityWake).toHaveBeenCalledExactlyOnceWith(OWNER);
+      expect(responsibilities.takeReadyBatch(OWNER, Date.now())).toBeNull();
+      // The handed work recovers five minutes after the delivery, if its run never settles it.
+      const recoveryAt = responsibilities.nextWakeAt(OWNER, Date.now());
+      expect(recoveryAt).toBeGreaterThanOrEqual(before + 5 * 60_000);
+      expect(recoveryAt).toBeLessThanOrEqual(Date.now() + 5 * 60_000);
+    });
+  });
+
+  it("tells the producer once each delivery ends, delivered or withdrawn, and keeps a delivery its producer couldn't follow up", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, events } = fixture(storage);
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      const deliver = acknowledge();
+      deliver.mockRejectedValueOnce(new Error("Process is restarting"));
+      const retried = runtime.append({ ...noticed("retried"), type: "fixture.settled" });
+      await runtime.onEvents({ id: "task:retried" });
+      expect(settledKeys).toEqual([]);
+      storage.sql.exec("UPDATE deliveries SET next_attempt_at = 0 WHERE seq = ?", retried.seq);
+      await runtime.onEvents({ id: "task:retry" });
+      expect(settledKeys).toEqual(["retried"]);
+
+      subjectWanted = false;
+      runtime.append({ ...noticed("withdrawn"), type: "fixture.settled" });
+      await runtime.onEvents({ id: "task:withdrawn" });
+      expect(settledKeys).toEqual(["retried", "withdrawn"]);
+
+      subjectWanted = true;
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const unheard = runtime.append({ ...noticed("unheard"), type: "fixture.settled" });
+      await runtime.onEvents({ id: "task:unheard" });
+      expect(settledKeys).toEqual(["retried", "withdrawn", "unheard"]);
+      expect(events.delivery(unheard.seq, shipConsumer(OWNER))).toMatchObject({ state: "delivered" });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(unheard.id), "The producer could not follow up");
     });
   });
 
@@ -319,7 +368,6 @@ function fixture(storage: DurableObjectStorage, registry: EventRegistry = REGIST
     installationId: "installation:test",
     events,
     responsibilities,
-    responsibilityRuntime: { reconcileResponsibilityWake: vi.fn(async (_uid: number) => {}) },
     auth: { isAccountDisabled: (uid: number) => disabled.has(uid) },
     procs: { get: (pid: string) => processes.get(pid) ?? null },
     onboarding: { managedWorkGate: gate },

@@ -45,6 +45,11 @@ export async function deliverProcessEvent(
     if (event.severity !== "info" || event.audience !== "model" || !carried.responsibilities) {
       throw new Error("Process event is not registered for this delivery path");
     }
+  } else if (event.kind === "responsibility.ready") {
+    // Work that came due is handed to Ship alone; the person sees it on the ledger.
+    if (event.severity !== "info" || event.audience !== "model" || !carried.responsibilities || carried.attachments) {
+      throw new Error("Process event is not registered for this delivery path");
+    }
   } else if (carried.responsibilities || carried.attachments) {
     throw new Error("Process event is not registered for this delivery path");
   } else if (event.kind === "owner.notified") {
@@ -92,6 +97,7 @@ async function admitRuntimeEvent(
     provenance: JSON.stringify({
       source: "kernel", eventId, eventType: recorded.kind,
       ...(recorded.kind === "contact.message" ? { contactId: recorded.payload.contactId } : undefined),
+      ...(recorded.kind === "responsibility.ready" ? { ledgerRevision: recorded.payload.ledgerRevision } : undefined),
     }),
     event: recorded,
     ...(responsibilities

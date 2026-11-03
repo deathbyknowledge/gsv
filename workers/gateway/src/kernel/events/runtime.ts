@@ -5,7 +5,7 @@ import { deliverEventToProcess } from "../../shared/utils";
 import type { KernelContext } from "../context";
 import type { Kernel } from "../do";
 import { ensurePersonalController } from "../personal-controller";
-import { parseConsumer, type EventConsumer } from "./consumers";
+import { deliveryId, parseConsumer, type EventConsumer } from "./consumers";
 import { EVENT_REGISTRY, isWithdrawn, type EventDefinition, type EventRegistry, type ProcessEventDelivery } from "./registry";
 import type { EventInput, LoggedEvent, PendingDelivery } from "./store";
 
@@ -13,7 +13,7 @@ import type { EventInput, LoggedEvent, PendingDelivery } from "./store";
 export type EventRuntimeHost = Pick<
   Kernel,
   | "installationId" | "events" | "auth" | "procs" | "onboarding" | "buildKernelContext" | "schedule" | "cancelSchedule"
-  | "responsibilities" | "responsibilityRuntime"
+  | "responsibilities"
 >;
 
 /** What producers reach through their Kernel context. */
@@ -103,9 +103,10 @@ export class EventRuntime {
       console.warn(`[Kernel] Ended event delivery ${event.id} to ${consumer}: ${error}`);
       return true;
     }
+    const ctx = this.host.buildKernelContext({ callerOwnerUid: event.ownerUid });
     let result: AttemptResult;
     try {
-      result = await this.deliver(definition, delivery, target);
+      result = await this.deliver(definition, delivery, target, ctx);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const retryAt = Date.now() + Math.min(PROCESS_RETRY.capMs, PROCESS_RETRY.baseMs * 2 ** delivery.attemptCount);
@@ -115,30 +116,31 @@ export class EventRuntime {
     }
     if (result.kind === "withdrawn") {
       this.host.events.withdrawn(event.seq, consumer, result.reason, Date.now());
-      return true;
+    } else {
+      const { responsibilities } = result;
+      const now = Date.now();
+      this.host.events.transaction(() => {
+        this.host.events.delivered(event.seq, consumer, result, now);
+        // The ledger's recovery wake covers a run that never settles what it was handed.
+        if (responsibilities) this.host.responsibilities.markEventDelivered(event.ownerUid, responsibilities.ids, now);
+      });
     }
-    const { responsibilities } = result;
-    const now = Date.now();
-    this.host.events.transaction(() => {
-      this.host.events.delivered(event.seq, consumer, result, now);
-      // The ledger's recovery wake covers a run that never settles what it was handed.
-      if (responsibilities) this.host.responsibilities.markEventDelivered(event.ownerUid, responsibilities.ids, now);
-    });
-    if (responsibilities) {
+    if (definition.settled) {
       try {
-        await this.host.responsibilityRuntime.reconcileResponsibilityWake(event.ownerUid);
+        await definition.settled(event, ctx);
       } catch (error) {
-        // The delivery stands; a later reconcile, or the next start-up, arms the wake this one missed.
-        console.warn(`[Kernel] Could not arm responsibility recovery after event ${event.id}:`, error instanceof Error ? error.message : String(error));
+        // The delivery stands; the producer's own recovery, at the latest the next start-up, catches up.
+        console.warn(`[Kernel] Event ${event.id} settled, but its producer could not follow up:`, error instanceof Error ? error.message : String(error));
       }
     }
     return true;
   }
 
   /** Delivers once; the Process call is made synchronously after the last withdrawal check. */
-  private async deliver(definition: EventDefinition<object | undefined>, delivery: PendingDelivery, target: EventConsumer): Promise<AttemptResult> {
+  private async deliver(
+    definition: EventDefinition<object | undefined>, delivery: PendingDelivery, target: EventConsumer, ctx: KernelContext,
+  ): Promise<AttemptResult> {
     const { event } = delivery;
-    const ctx = this.host.buildKernelContext({ callerOwnerUid: event.ownerUid });
     const early = this.withdrawal(definition, delivery, target, ctx);
     if (early) return { kind: "withdrawn", reason: early };
     // Read before finding the Ship, so content that is gone never starts one.
@@ -150,8 +152,7 @@ export class EventRuntime {
     const admitted = definition.admit(event, prepared, ctx);
     if (isWithdrawn(admitted)) return { kind: "withdrawn", reason: admitted.withdrawn };
     const result = await deliverEventToProcess(this.host.installationId, pid, {
-      // One id per delivery: the Process dedupes by it and runs under it.
-      eventId: `${event.id}:${delivery.consumer}`,
+      eventId: deliveryId(event.id, delivery.consumer),
       ...admitted,
     });
     if ("unavailable" in result) throw new Error(result.message);

@@ -4,7 +4,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../shared/message-media-limits";
 import type { Process } from "./do";
-import type { ProcessEventDeliverArgs, ProcessRuntimeEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
+import type { ProcessEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
 import { evictDurableObject } from "cloudflare:test";
 import {
   initProcess, ROOT_IDENTITY, runInProcess,
@@ -75,31 +75,17 @@ describe("typed controller history producers", () => {
 
   it.each([false, true])("persists each responsibility wake once across reload with active run=%s", async (busy) => {
     const stub = await initProcess(`typed-responsibility-ready-${busy}`, ROOT_IDENTITY);
-    const input = {
-      eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000081",
-      event: {
-        type: "r12y.ready", batchId: "batch:00000000-0000-4000-8000-000000000081",
-        ledgerRevision: 2, responsibilityIds: ["r12y:00000000-0000-4000-8000-000000000082"],
-      },
-    } satisfies ProcessRuntimeEventDeliverArgs;
+    const ids = ["r12y:00000000-0000-4000-8000-000000000082"];
+    const input = responsibilityReady("evt_81:personal:0", ids);
     const retained = await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
       if (busy) process.runs.active = { runId: "existing-run" };
-      const first = await process.controller.handleProcessRuntimeEventDeliver(input);
-      const duplicate = await process.controller.handleProcessRuntimeEventDeliver(input);
+      const first = await process.deliverEvent(input);
+      const duplicate = await process.deliverEvent(input);
       expect(duplicate).toEqual(first);
       expect(first.runId).toBe(busy ? "existing-run" : input.eventId);
       const records = storedRecords(process);
-      expect(records).toEqual([{
-        kind: "event",
-        payload: {
-          kind: "responsibility.ready", severity: "info", audience: "model",
-          payload: {
-            batchId: input.event.batchId, ledgerRevision: 2,
-            responsibilityIds: input.event.responsibilityIds, receivedAtMs: expect.any(Number),
-          },
-        },
-      }]);
+      expect(records).toEqual([{ kind: "event", payload: input.event }]);
       expect(await process.history.buildContextMessages()).toEqual([
         expect.objectContaining({ role: "user", content: expect.stringContaining("Responsibilities due: ") }),
       ]);
@@ -108,12 +94,9 @@ describe("typed controller history producers", () => {
     await evictDurableObject(stub);
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
-      await process.controller.handleProcessRuntimeEventDeliver(input);
+      await process.deliverEvent(input);
       expect(storedRecords(process)).toEqual(retained);
-      await process.controller.handleProcessRuntimeEventDeliver({
-        eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000083",
-        event: { ...input.event, batchId: "batch:00000000-0000-4000-8000-000000000083" },
-      });
+      await process.deliverEvent(responsibilityReady("evt_83:personal:0", ids));
       expect(storedRecords(process)).toHaveLength(2);
       expect(await process.history.buildContextMessages()).toHaveLength(2);
     });
@@ -457,6 +440,18 @@ describe("typed controller history producers", () => {
     });
   });
 });
+
+function responsibilityReady(eventId: string, ids: string[]): ProcessEventDeliverArgs {
+  return {
+    eventId,
+    event: {
+      kind: "responsibility.ready", severity: "info", audience: "model",
+      payload: { batchId: eventId, ledgerRevision: 2, responsibilityIds: ids, receivedAtMs: 1 },
+    },
+    admission: { idle: "start", busy: "join" },
+    responsibilities: { ledgerRevision: 2, ids },
+  };
+}
 
 function contactMessage(eventId: string, messageId: string, attachments: ResourceBlock[]): ProcessEventDeliverArgs {
   const responsibilityId = "r12y:00000000-0000-4000-8000-000000000091";

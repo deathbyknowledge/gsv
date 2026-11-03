@@ -5,7 +5,7 @@ import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { InternalRequestFrame } from "../protocol/process-frames";
 import type {
   ProcessAdapterDeliverArgs,
-  ProcessRuntimeEventDeliverArgs,
+  ProcessEventDeliverArgs,
   ProcessInboundFrame,
   ProcessScheduleDeliverArgs,
 } from "../protocol/process-frames";
@@ -109,14 +109,16 @@ export function makeAdapterDeliverReq(
   };
 }
 
-export function makeRuntimeEventDeliverReq(
-  args: ProcessRuntimeEventDeliverArgs,
-): InternalRequestFrame<"proc.runtime.event.deliver"> {
+/** A batch of responsibilities as the Kernel's event log delivers it to Ship. */
+export function responsibilityReady(eventId: string, ids: string[], ledgerRevision: number): ProcessEventDeliverArgs {
   return {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.runtime.event.deliver",
-    args,
+    eventId,
+    event: {
+      kind: "responsibility.ready", severity: "info", audience: "model",
+      payload: { batchId: eventId, ledgerRevision, responsibilityIds: ids, receivedAtMs: Date.now() },
+    },
+    admission: { idle: "start", busy: "join" },
+    responsibilities: { ledgerRevision, ids },
   };
 }
 

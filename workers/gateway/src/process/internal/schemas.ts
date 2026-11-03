@@ -111,23 +111,6 @@ export const workReturnedRuntimeEventSchema = z.strictObject({
   workPid: z.string().trim().regex(/^[a-zA-Z0-9._:-]{1,200}$/u),
 });
 
-export const responsibilityBatchSchema = z.strictObject({
-  batchId: z.string().trim().regex(/^batch:[0-9a-f-]{36}$/u),
-  ledgerRevision: z.number().int().nonnegative().safe(),
-  responsibilityIds: z.array(
-    z.string().trim().regex(/^r12y:[0-9a-f-]{36}$/u),
-  ).min(1).max(100),
-});
-
-export const responsibilityReadyRuntimeEventSchema = responsibilityBatchSchema.extend({
-  type: z.literal("r12y.ready"),
-});
-
-export const processRuntimeEventSchema = z.discriminatedUnion("type", [
-  workReturnedRuntimeEventSchema,
-  responsibilityReadyRuntimeEventSchema,
-]);
-
 const federationResponsibilityBaseSchema = {
   contactId: z.string(),
   contactGeneration: z.string(),

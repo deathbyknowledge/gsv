@@ -1014,7 +1014,7 @@ async function wake(): Promise<void> {
   const run: OpenRun = { runId: "run-welcome", question: null, open: null, approval: null, superseded: false };
   world.run = run;
   announce("running", run.runId);
-  broadcast("proc.run.started", { pid: SHIP.pid, runId: run.runId, reason: "r12y.ready", queuedCount: 0, timestamp: Date.now() });
+  broadcast("proc.run.started", { pid: SHIP.pid, runId: run.runId, reason: "responsibility.ready", queuedCount: 0, timestamp: Date.now() });
   changed(["context"], { context: contextState(run) });
   await wait(jitter(2500));
   if (!live(run)) return;

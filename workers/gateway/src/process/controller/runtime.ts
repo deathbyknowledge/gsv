@@ -1614,53 +1614,19 @@ export class ProcessController {
     if (!eventId || !/^[a-zA-Z0-9._:-]{1,200}$/.test(eventId)) {
       throw new Error("Runtime event id is invalid");
     }
-    const runId = eventId;
     const admitted = this.runtimeEventAdmission(eventId);
     if (admitted) return { eventId, runId: admitted.runId, queued: admitted.queued };
-    let admission: RuntimeEventAdmission;
-    if (event.type === "r12y.ready") {
-      const historyEvent: ProcHistoryEvent = {
-        kind: "responsibility.ready",
-        payload: {
-          batchId: event.batchId,
-          ledgerRevision: event.ledgerRevision,
-          responsibilityIds: event.responsibilityIds,
-          receivedAtMs: Date.now(),
-        },
-        severity: "info",
-        audience: "model",
-      };
-      admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
-        runId,
-        event: historyEvent,
-        kind: event.type,
-        dedupeId: eventId,
-        provenance: JSON.stringify({
-          source: "kernel",
-          eventId,
-          eventType: event.type,
-          batchId: event.batchId,
-          ledgerRevision: event.ledgerRevision,
-        }),
-        responsibilityBatch: {
-          batchId: event.batchId,
-          ledgerRevision: event.ledgerRevision,
-          responsibilityIds: event.responsibilityIds,
-        },
-      });
-    } else {
-      const historyEvent: ProcHistoryEvent = {
-        kind: "adapter.work.returned",
-        payload: { eventId, workPid: event.workPid },
-        severity: "info",
-        audience: "model",
-      };
-      admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
-        distinctRun: true,
-        runId,
-        event: historyEvent,
-      });
-    }
+    const historyEvent: ProcHistoryEvent = {
+      kind: "adapter.work.returned",
+      payload: { eventId, workPid: event.workPid },
+      severity: "info",
+      audience: "model",
+    };
+    const admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
+      distinctRun: true,
+      runId: eventId,
+      event: historyEvent,
+    });
     if (!admission.ok) {
       throw new Error(admission.error);
     }

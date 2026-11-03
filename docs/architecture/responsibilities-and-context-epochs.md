@@ -96,32 +96,39 @@ The existing Kernel durable-task scheduler owns responsibility deadlines. The Ke
 maintains at most one earliest wake task per owner. Persisting or changing a
 responsibility happens before its wake is scheduled.
 
-When work becomes actionable, the Kernel creates a batch containing the relevant
-responsibility ids and admits a typed `r12y.ready` control event to the existing
-personal Process. An idle Ship starts a run; a busy Ship attaches the batch to its
-current run. Admission atomically records a model-visible `responsibility.ready`
-history event with the batch identity, affected ids, and receipt time. Its prompt
-names only the due records; standing context says how Ship handles a wake: send
-whatever the person is owed, and resolve, cancel, delegate or wait on each record
-before yielding. The event explains why Ship has been woken even when a deadline or recovery
-retry leaves the ledger revision unchanged. Replayed admission does not append another event. The baseline
-and revisioned transitions continue to supply the responsibility state without
-duplicating it in the wake event or changing the frozen system prompt.
+When work becomes actionable, the wake task takes up to 25 records that need Ship
+and, in the same transaction, appends one `responsibility.ready` event naming them
+and the ledger revision they were taken through. The event log delivers it to Ship,
+as described below. While one batch is on its way the task takes no other; once that
+batch is delivered or withdrawn, work that came due meanwhile goes in the next. An
+idle Ship starts a run; a busy Ship attaches the batch to its current run. Admission
+atomically records a model-visible `responsibility.ready` history event with the
+batch identity, affected ids, and receipt time. Its prompt names only the due
+records; standing context says how Ship handles a wake: send whatever the person is
+owed, and resolve, cancel, delegate or wait on each record before yielding. The
+event explains why Ship has been woken even when a deadline or recovery retry leaves
+the ledger revision unchanged. Replayed admission does not append another event. The
+baseline and revisioned transitions continue to supply the responsibility state
+without duplicating it in the wake event or changing the frozen system prompt.
+
+A record settled after its batch was taken leaves the batch: if Ship settled it,
+Ship knows, and anyone else's change goes in the next batch. A batch with nothing
+left is withdrawn before a Ship is found.
 
 ### Ship events
 
-Some producers address Ship with an event rather than a ledger wake. A producer
-appends the event to the Kernel's event log in the transaction that changes the
-state it reports, under a key of its own, so appending it again is the same event.
+Producers address Ship through the Kernel's event log, the wake task among them. A
+producer appends the event in the transaction that changes the state it reports,
+under a key of its own, so appending it again is the same event.
 The log keeps one delivery for each consumer the event names. Ship's go to the
 owner's current Ship pid, one at a time and in order, retrying with backoff until
 the Process admits one. Each delivery has its own id, and the Process deduplicates
 by it. A producer that changes the ledger in the same transaction marks that change
 announced, so the ledger does not wake Ship for it. The transaction that records the
-delivery gives the records it names the same recovery wake as a delivered batch, and
-the run that receives it gates yield on those records. An `owner.notified` event
-names no records and starts no run: Process records it in history for the next
-generation, or adds it to the run already active.
+delivery arms the recovery wake of the records it names, and the run that receives it
+gates yield on those records. An `owner.notified` event names no records and starts
+no run: Process records it in history for the next generation, or adds it to the run
+already active.
 
 A contact message event names its Conversation message rather than copying it.
 Each attempt reads the message's text and attachments before it starts the Ship
@@ -142,17 +149,18 @@ A responsibility-triggered run may yield only after every record in its current 
 is resolved, delegated, waiting, or explicitly deferred. The overall ledger need not
 be empty. Future and delegated records retain their own wake conditions.
 
-Delivery is revisioned and idempotent. If event admission fails, the persisted batch
-remains pending and the Kernel scheduler retries it. A recovered Ship requests any
-missing transitions after its last observed revision before generating.
-After successful admission, actionable work gets a five-minute recovery wake. Each
+Delivery is revisioned and idempotent. If admission fails, the batch stays queued in
+the log and retries with backoff. A recovered Ship requests any missing transitions
+after its last observed revision before generating. When a delivery hands records to
+a run, actionable work gets a recovery wake five minutes after that delivery. Each
 further recovery wake that finds the record untouched waits longer: 15 minutes, then an
 hour, then every six hours. Any real state change clears that retry and installs the
 record's new deadline, lease, or check condition, and a wake for a change, check,
-deadline, lease, or Ship event starts again at five minutes. This prevents a provider or
-terminal-action failure from silently stranding an otherwise open responsibility
-without polling deferred or delegated work, and a Ship that keeps failing to handle a
-record reaches its owner a few times a day rather than every five minutes.
+deadline, lease, or a new contact message starts again at five minutes. This prevents
+a provider or terminal-action failure from silently stranding an otherwise open
+responsibility without polling deferred or delegated work, and a Ship that keeps
+failing to handle a record reaches its owner a few times a day rather than every five
+minutes.
 
 When a human or Process explicitly puts a Ship assignment into `waiting`, the ledger
 sets `nextCheckAtMs` to 24 hours later if no future check remains. An earlier future

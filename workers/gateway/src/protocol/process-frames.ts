@@ -56,16 +56,7 @@ export type ProcessAdapterWorkReturnedRuntimeEvent = {
   workPid: string;
 };
 
-export type ProcessResponsibilityReadyRuntimeEvent = {
-  type: "r12y.ready";
-  batchId: string;
-  ledgerRevision: number;
-  responsibilityIds: string[];
-};
-
-export type ProcessRuntimeEvent =
-  | ProcessAdapterWorkReturnedRuntimeEvent
-  | ProcessResponsibilityReadyRuntimeEvent;
+export type ProcessRuntimeEvent = ProcessAdapterWorkReturnedRuntimeEvent;
 
 export type ProcessRuntimeEventDeliverArgs = {
   eventId: string;
@@ -89,7 +80,7 @@ export type ProcessEventAdmission = {
 /** Kernel-derived registered events; this call is never available to public peers. */
 export type ProcessEventDeliverArgs = {
   eventId: string;
-  event: Extract<ProcHistoryEvent, { kind: "target.connection" | "owner.notified" | "contact.message" }>;
+  event: Extract<ProcHistoryEvent, { kind: "target.connection" | "owner.notified" | "contact.message" | "responsibility.ready" }>;
   admission: ProcessEventAdmission;
   /** Responsibilities the event hands its run, which the run settles before it yields. */
   responsibilities?: { ledgerRevision: number; ids: string[] };

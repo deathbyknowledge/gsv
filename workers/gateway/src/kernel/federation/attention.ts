@@ -70,6 +70,8 @@ export function admitContactMessage(contact: FederationContactRecord, inbox: Fed
       }
       return false;
     }
+    // The message is new input for its work, so recovery after it starts over.
+    ctx.responsibilities.restartRecovery(current.ownerUid, work.id);
     ctx.events.append({
       type: "contact.message",
       ownerUid: current.ownerUid,
@@ -138,6 +140,7 @@ export const contactMessageEvent: EventDefinition<ContactMessageContent> = {
       const target = contactMessageTarget(event.ownerUid, body, ctx);
       if ("withdrawn" in target) return target;
       const work = target.work ?? pendingMessages(target.contact, ctx);
+      if (!target.work) ctx.responsibilities.restartRecovery(event.ownerUid, work.id);
       return {
         event: {
           kind: "contact.message", severity: "info", audience: "model",
@@ -152,6 +155,8 @@ export const contactMessageEvent: EventDefinition<ContactMessageContent> = {
       };
     });
   },
+  // A delivered message armed its work's recovery wake.
+  settled: (event, ctx) => ctx.reconcileResponsibilityWake(event.ownerUid),
 };
 
 /** The contact a queued message goes to and its open work, null when standing handling takes it; or why it should not go. */

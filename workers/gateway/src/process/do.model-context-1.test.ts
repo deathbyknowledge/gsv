@@ -1,9 +1,8 @@
-import type { ProcessRuntimeEventDeliverArgs } from "../protocol/process-frames";
 import type { ProcHistoryRecordData } from "@humansandmachines/gsv/protocol";
 import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
-  deferred, runInProcess, ROOT_IDENTITY, initProcess, makeRuntimeEventDeliverReq,
+  deferred, runInProcess, ROOT_IDENTITY, initProcess, responsibilityReady,
   makeRuntimeEventReq, responsibilityKernelResult, terminalTestConfig,
 } from "./do-test-harness";
 
@@ -108,16 +107,8 @@ describe("model context", () => {
       const epoch = await process.history.ensureContextEpoch(runId, run, run.config);
       const promptBefore = epoch.systemPrompt;
 
-      const admission = await instance.recvFrame(
-        makeRuntimeEventDeliverReq({
-          eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000008",
-          event: {
-            type: "r12y.ready",
-            batchId: "batch:00000000-0000-4000-8000-000000000008",
-            ledgerRevision: 2,
-            responsibilityIds: [responsibilityId, requestResponsibilityId],
-          },
-        }),
+      const admission = await instance.deliverEvent(
+        responsibilityReady("evt_8:personal:0", [responsibilityId, requestResponsibilityId], 2),
       );
       await process.history.syncResponsibilityDeltas(runId, epoch);
 
@@ -130,11 +121,7 @@ describe("model context", () => {
       };
     });
 
-    expect(result.admission).toMatchObject({
-      type: "res",
-      ok: true,
-      data: { runId, queued: false },
-    });
+    expect(result.admission).toMatchObject({ runId, queued: false });
     expect(result.promptBefore).toContain("No unresolved responsibilities");
     expect(result.promptAfter).toBe(result.promptBefore);
     expect(result.promptAfter).not.toContain("Hello from another Ship");
@@ -808,46 +795,25 @@ describe("model context", () => {
 
   it("admits a responsibility batch into the active run exactly once", async () => {
     const stub = await initProcess("mech-r12y-event-active", ROOT_IDENTITY);
-    const args: ProcessRuntimeEventDeliverArgs = {
-      eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000001",
-      event: {
-        type: "r12y.ready",
-        batchId: "batch:00000000-0000-4000-8000-000000000001",
-        ledgerRevision: 7,
-        responsibilityIds: ["r12y:00000000-0000-4000-8000-000000000002"],
-      },
-    };
+    const responsibilityId = "r12y:00000000-0000-4000-8000-000000000002";
+    const args = responsibilityReady("evt_1:personal:0", [responsibilityId], 7);
 
     await runInProcess(stub, async (process, _state, instance) => {
       process.sendSignal = vi.fn(async () => {});
       process.run.scheduleTick = vi.fn(async () => {});
       process.runs.active = { runId: "run-busy" };
 
-      const first = await instance.recvFrame(makeRuntimeEventDeliverReq(args));
-      const repeat = await instance.recvFrame(makeRuntimeEventDeliverReq(args));
+      const first = await instance.deliverEvent(args);
+      const repeat = await instance.deliverEvent(args);
 
-      expect(first).toMatchObject({
-        type: "res",
-        ok: true,
-        data: {
-          eventId: args.eventId,
-          runId: "run-busy",
-          queued: false,
-        },
-      });
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect((repeat as any).data).toEqual((first as any).data);
+      expect(first).toEqual({ eventId: args.eventId, runId: "run-busy", queued: false });
+      expect(repeat).toEqual(first);
       expect(process.store.messages.getMessages()).toHaveLength(1);
       expect(process.store.messages.getMessages()[0].content).toContain("Responsibilities due: ");
       expect(process.runs.active).toMatchObject({
         runId: "run-busy",
         pendingRuntimeEvents: 1,
-        responsibilityBatches: [
-          {
-            batchId: args.event.batchId,
-            responsibilityIds: [args.event.responsibilityIds[0]],
-          },
-        ],
+        responsibilityBatches: [{ batchId: args.eventId, ledgerRevision: 7, responsibilityIds: [responsibilityId] }],
       });
     });
   });
@@ -856,24 +822,8 @@ describe("model context", () => {
     const pid = "mech-r12y-input-loading-race";
     const runId = "run-r12y-input-loading-race";
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const first = {
-      eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000031",
-      event: {
-        type: "r12y.ready" as const,
-        batchId: "batch:00000000-0000-4000-8000-000000000031",
-        ledgerRevision: 1,
-        responsibilityIds: ["r12y:00000000-0000-4000-8000-000000000032"],
-      },
-    };
-    const second = {
-      eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000033",
-      event: {
-        type: "r12y.ready" as const,
-        batchId: "batch:00000000-0000-4000-8000-000000000033",
-        ledgerRevision: 2,
-        responsibilityIds: ["r12y:00000000-0000-4000-8000-000000000034"],
-      },
-    };
+    const first = responsibilityReady("evt_31:personal:0", ["r12y:00000000-0000-4000-8000-000000000032"], 1);
+    const second = responsibilityReady("evt_33:personal:0", ["r12y:00000000-0000-4000-8000-000000000034"], 2);
 
     await runInProcess(stub, async (process, _state, instance) => {
       const { promise: configBlocked, resolve: releaseConfig } = deferred();
@@ -915,10 +865,10 @@ describe("model context", () => {
 
       const ticking = process.run.runTick(runId);
       await configStarted;
-      await instance.recvFrame(makeRuntimeEventDeliverReq(first));
+      await instance.deliverEvent(first);
       releaseConfig();
       await toolsStarted;
-      await instance.recvFrame(makeRuntimeEventDeliverReq(second));
+      await instance.deliverEvent(second);
       releaseTools();
       await contextStarted;
 
@@ -926,14 +876,8 @@ describe("model context", () => {
         runId,
         pendingRuntimeEvents: 2,
         responsibilityBatches: [
-          {
-            batchId: first.event.batchId,
-            responsibilityIds: first.event.responsibilityIds,
-          },
-          {
-            batchId: second.event.batchId,
-            responsibilityIds: second.event.responsibilityIds,
-          },
+          { batchId: first.eventId, responsibilityIds: first.responsibilities!.ids },
+          { batchId: second.eventId, responsibilityIds: second.responsibilities!.ids },
         ],
       });
 

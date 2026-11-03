@@ -2,7 +2,8 @@
 
 Status: reviewed 2026-11-03; the decisions are folded in and listed under
 Decided. Typed internal calls are in #645 and the substrate in #646, where
-producers convert one commit at a time. Both are open drafts.
+producers convert one commit at a time: contact messages, owner notices and
+responsibility wakes so far. Both are open drafts.
 
 ## Problem
 
@@ -262,7 +263,7 @@ state machine.
 |---|---|---|---|---|---|---|
 | Contact message | `contact.message`, appended by the inbox's projection beside the responsibility it owes | `contact:<id>` | the Conversation message id, derived from contact, generation and delivery id | ref: Conversation message | Ship · join | `ship_events`, `onShipEvents`, `ship-event-runtime.ts`, the contact branch of `proc.runtime.event.deliver`; the inbox keeps its own intake and `onFederationInbox` |
 | Owner notice | `owner.notified`, appended when a round is sent or left to a client | `notice:<round id>` | round id | inline | Ship · record or join | Ship's half of `ship_events`; `onOwnerNotices` still sends to the messenger |
-| Responsibility wake | `responsibility.ready`, appended by the wake timer for a batch of up to 25 records; none while one is still pending, so bursts merge as today | `owner:<uid>` | batch id | inline: record ids and ledger revision | Ship · join | `responsibility_wake_batches`, `onResponsibilityWake`'s delivery, `r12y.ready`; the timer and the ledger's recovery wakes stay |
+| Responsibility wake | `responsibility.ready`, appended by the wake timer for a batch of up to 25 records; none while one is still pending, so bursts merge as today | `owner:<uid>` | a fresh id per batch | inline: record ids and ledger revision | Ship · join | `responsibility_wake_batches`, `onResponsibilityWake`'s delivery, `r12y.ready`; the timer and the ledger's recovery wakes stay |
 | Inbound mail | `mail.received` | `mail:<id>` | message id | ref: `mail_messages` row | Ship · join; notices when a rule says | the wake through r12y and the parallel notice |
 | Hook, `event.emit` | `source.event` | `source:<id>` | source id + source event id, which is unique only per source | inline | Ship · join or record; notices when the source says | `event_log`, `onEventUpkeep`'s retention, the wake through r12y, the double delivery |
 | Schedule | `schedule.fired` | `schedule:<id>` | schedule id + fire time | inline | Ship or `proc:<pid>` · join, or own run with `replyTo` | the ledger route for Ship schedules, `proc.schedule.deliver`, the one-shot attempt loop |
@@ -301,7 +302,7 @@ state machine, that consumer stays as it is.
 |---|---|---|
 | `onShipEvents` | 2 s doubling to 256 s, no limit | runner, done in step 3 |
 | `onOwnerNotices` | the same formula | stays: it sends to the person's messenger |
-| `onResponsibilityWake` | the same formula, plus recovery wakes at 5 m, 15 m, 1 h, then every 6 h, armed at delivery | timer that appends `responsibility.ready`; recovery wakes stay in the ledger |
+| `onResponsibilityWake` | the same formula, plus recovery wakes at 5 m, 15 m, 1 h, then every 6 h, armed at delivery | timer that appends `responsibility.ready`, done in step 4; recovery wakes stay in the ledger |
 | `onScheduleDue` | 5 s→5 min, 10 attempts for one-shot | timer that appends `schedule.fired` |
 | `onIpcCallTimeout` | default task retry: 3 attempts, in-alarm | timer that appends `ipc.timed_out` |
 | `onIpcCallDelivery` | re-queue every 5 s, no limit, plus in-alarm 1 s→30 s ×10 | runner |
@@ -447,3 +448,12 @@ Reviewed with the maintainer on 2026-11-03:
    a process. Adapter routes, the federation outbox, outbound mail and owner
    notices to the messenger keep their own outboxes; one moves only if moving
    it makes its owner smaller.
+9. **Settled while converting responsibility wakes.** A batch drops records
+   settled after it was taken, and one with nothing left is withdrawn before a
+   Ship is found. A definition's `settled` runs once its delivery ends, so the
+   wake timer re-arms for work that came due meanwhile. The timer records each
+   record's recovery step when it takes it, and the delivery arms the wake from
+   that step; a contact's new message starts it over. The Kernel alarm reads
+   due tasks once more before re-arming, so a timer's kick delivers in the same
+   alarm. The Process keeps one read, since it checks kill and reset once per
+   alarm.

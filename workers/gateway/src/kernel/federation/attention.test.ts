@@ -81,7 +81,7 @@ describe("contact attention admission", () => {
       expect(work).toMatchObject({ title: "Pending messages from Remote", state: "open", assignee: { kind: "ship" }, details: { contentTrust: "untrusted" } });
       expect(admitContactMessage(contact, caption.inbox, caption.message, ctx)).toBe(true);
       expect(ctx.responsibilities.get(OWNER.uid, work.id)?.revision).toBe(work.revision);
-      expect(ctx.responsibilities.createReadyBatch(OWNER.uid, Date.now())).toBeNull();
+      expect(ctx.responsibilities.takeReadyBatch(OWNER.uid, Date.now())).toBeNull();
 
       const [first, second] = queued(ctx, contact);
       expect(first).toMatchObject({ consumer: shipConsumer(OWNER.uid), lane: "background", event: {
@@ -136,6 +136,34 @@ describe("contact attention admission", () => {
       expect(queued(ctx, contact)).toEqual([]);
       // Ship owes this work a run; the ledger now recovers it if that run never settles it.
       expect(ctx.responsibilities.nextWakeAt(OWNER.uid, Date.now())).toBeGreaterThan(Date.now());
+    });
+  });
+
+  it("starts its work's recovery wakes over when the contact writes again", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const first = receive(contact, ctx, "human");
+      admitContactMessage(contact, first.inbox, first.message, ctx);
+      const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
+      // Ship left the work untouched through three recovery wakes, so the next would be 6 h away.
+      storage.sql.exec("UPDATE responsibilities SET wake_retry_count = 3 WHERE responsibility_id = ?", work.id);
+      const second = receive(contact, ctx, "human", undefined, 2);
+      admitContactMessage(contact, second.inbox, second.message, ctx);
+      readable(second.message);
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      vi.spyOn(sharedUtils, "deliverEventToProcess").mockImplementation(async (_installation, _pid, args) => (
+        { eventId: args.eventId, runId: args.eventId, queued: false }
+      ));
+
+      const deliveredFrom = Date.now();
+      await runtime(storage, ctx).onEvents({ id: "task:again" });
+
+      expect(queued(ctx, contact)).toEqual([]);
+      const recoveryAt = ctx.responsibilities.nextWakeAt(OWNER.uid, Date.now())!;
+      expect(recoveryAt).toBeGreaterThanOrEqual(deliveredFrom + 5 * 60_000);
+      expect(recoveryAt).toBeLessThanOrEqual(Date.now() + 5 * 60_000);
     });
   });
 
@@ -444,7 +472,6 @@ function runtime(storage: DurableObjectStorage, ctx: KernelContext): EventRuntim
     installationId: "installation:test",
     events: new EventStore(storage),
     responsibilities: ctx.responsibilities,
-    responsibilityRuntime: { reconcileResponsibilityWake: vi.fn(async (_uid: number) => {}) },
     auth: { isAccountDisabled: (_uid: number) => false },
     procs: { get: (_pid: string) => null },
     onboarding: { managedWorkGate: async () => ({ allowed: true }) },
