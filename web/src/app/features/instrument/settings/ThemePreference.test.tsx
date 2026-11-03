@@ -6,7 +6,7 @@ import type { SelectProps } from "../../../components/ui/Select";
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("lets a fresh device pin Light directly instead of presenting it as already saved", async () => {
+it.each([false, true])("follows the system until a fresh device pins Light (system light: %s)", async (systemLight) => {
   vi.resetModules();
   const stored = new Map<string, string>();
   vi.stubGlobal("document", {});
@@ -15,7 +15,7 @@ it("lets a fresh device pin Light directly instead of presenting it as already s
       getItem: (key: string) => stored.get(key) ?? null,
       setItem: (key: string, value: string) => stored.set(key, value),
     },
-    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    matchMedia: () => ({ matches: systemLight, addEventListener() {}, removeEventListener() {} }),
   }));
   const { ThemePreference } = await import("./ThemePreference");
   const { useColorTheme } = await import("../../../components/ui/useColorTheme");
@@ -25,7 +25,7 @@ it("lets a fresh device pin Light directly instead of presenting it as already s
   let signInTheme: string;
   function Harness() {
     tree = ThemePreference();
-    signInTheme = useColorTheme("light").theme;
+    signInTheme = useColorTheme().theme;
     return null;
   }
   // SAFETY: Appearance renders one design-system Select.
@@ -36,7 +36,7 @@ it("lets a fresh device pin Light directly instead of presenting it as already s
     expect(select().props.options).not.toContainEqual(expect.objectContaining({ value: "" }));
     expect(select().props.placeholder).toBe("Default");
     expect(stored.has("gsv.instrument.theme")).toBe(false);
-    expect(signInTheme!).toBe("light");
+    expect(signInTheme!).toBe(systemLight ? "light" : "dark");
 
     await act(() => select().props.onSelect?.("light"));
     expect(select().props.selected).toBe("light");
