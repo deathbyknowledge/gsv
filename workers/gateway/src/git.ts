@@ -18,7 +18,7 @@ type BasicAuth = {
 //   uses the private service binding directly).
 export type GitProxyAccess = "public-read" | "write" | "refuse";
 
-type GitPathMatch = {
+export type GitPathMatch = {
   owner: string;
   repo: string;
   suffix: string;
