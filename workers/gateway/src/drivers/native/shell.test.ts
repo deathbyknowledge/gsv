@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../../test-support/peers";
+import { requiredTestBindings } from "../../test-support/required-bindings";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
 import { GsvFs } from "../../fs/gsv-fs";
@@ -267,6 +268,7 @@ function makeContext(options?: {
   const testEnv = focusedFixture<Env>({
     STORAGE: env.STORAGE,
     RIPGIT: options?.ripgit ?? focusedFixture<Fetcher>({}),
+    INFERENCE_EXECUTION: requiredTestBindings().INFERENCE_EXECUTION,
     LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
   });
   if (options?.media) {

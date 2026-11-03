@@ -516,9 +516,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.installationEnv = envWithInstallationResources(
       env,
       this.installationStorage,
-      env.RIPGIT
-        ? createInstallationRipgit(env.RIPGIT, this.installationId)
-        : undefined,
+      createInstallationRipgit(env.RIPGIT, this.installationId),
       this.retirement,
     );
 
@@ -2098,7 +2096,7 @@ function decodeKernelTask(callback: string, payloadJson: string): KernelTask {
 function envWithInstallationResources(
   env: GatewayEnv,
   storage: R2Bucket,
-  ripgit: Fetcher | undefined,
+  ripgit: Fetcher,
   retirement: InstallationRetirement,
 ): GatewayEnv {
   return new Proxy(env, {

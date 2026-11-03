@@ -3,6 +3,7 @@ import { testPeer } from "../test-support/peers";
 import type { PeerContext } from "./peer";
 import { principalOf } from "./context";
 import type { KernelContext } from "./context";
+import { requiredTestBindings } from "../test-support/required-bindings";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   ensurePersonalAgent,
@@ -151,6 +152,7 @@ function createCtx() {
       caps: { resolve: vi.fn(() => []) } as KernelContext["caps"],
       env: {
         STORAGE: storage,
+        ...requiredTestBindings(),
         ...(options.ripgit ? { RIPGIT: ripgit } : undefined),
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       } as KernelContext["env"],

@@ -153,14 +153,4 @@ describe("handleSysBootstrap", () => {
     )).rejects.toThrow("sys.bootstrap does not accept source overrides");
     expect(importFromUpstreamMock).not.toHaveBeenCalled();
   });
-
-  it("requires the RIPGIT binding", async () => {
-    const ctx = makeContext();
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    delete (ctx.env as Partial<Env>).RIPGIT;
-
-    await expect(handleSysBootstrap(undefined, ctx)).rejects.toThrow(
-      "RIPGIT binding is required for system bootstrap",
-    );
-  });
 });

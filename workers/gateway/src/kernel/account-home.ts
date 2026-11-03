@@ -32,7 +32,6 @@ export function reconcileHomeOnce(
   message: string,
   collect: (client: RipgitClient, snapshot: RipgitRepoRef) => Promise<RipgitApplyOp[]>,
 ): Promise<void> {
-  if (!ctx.env.RIPGIT) return Promise.resolve();
   let checks = homeReconciliations.get(ctx.auth);
   if (!checks) {
     checks = new Map();
@@ -64,7 +63,6 @@ export async function seedAccountHome(
   message: string,
   collect: (client: RipgitClient, snapshot: RipgitRepoRef) => Promise<RipgitApplyOp[]>,
 ): Promise<void> {
-  if (!env.RIPGIT) return;
   const client = new RipgitClient(env.RIPGIT);
   const repo = accountHomeRepoRef(identity.username);
   for (let attempt = 0; ; attempt++) {

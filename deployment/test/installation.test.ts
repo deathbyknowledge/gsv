@@ -242,7 +242,10 @@ describe("public operator composition", () => {
     expect(gatewayWorker?.props.compatibility).toMatchObject({ flags: expect.arrayContaining(["global_fetch_strictly_public"]) });
     expect(gatewayWorker?.props.limits).toEqual({ cpuMs: 120_000 });
     const gateway = gatewayWorker?.props.env;
-    expect(gateway).toHaveProperty("INFERENCE_EXECUTION");
+    // The Gateway assumes these services rather than checking for them.
+    for (const binding of ["INSTALLATION_DIRECTORY", "INFERENCE_EXECUTION", "RIPGIT", "LOADER"]) {
+      expect(gateway).toHaveProperty(binding);
+    }
     expect(gateway).not.toHaveProperty("AI");
     expect(gateway).not.toHaveProperty("MANAGED_INFERENCE");
     expect(gateway).not.toHaveProperty("MANAGED_INFERENCE_INSTALLATIONS");

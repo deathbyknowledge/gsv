@@ -158,18 +158,8 @@ receives the account's authorized signals. A reconnecting operation provider
 replaces the older provider connection with the same peer name, account and
 principal kind; it does not replace ordinary UI connections.
 
-The gateway rejects setup-mode connections with error code `425` and details:
-
-```json
-{
-  "setupMode": true,
-  "next": "sys.setup",
-  "setupFeatures": ["language", "profile"]
-}
-```
-
-Managed first boot is different: a provisioning hostname may serve the desktop
-and accept its WebSocket, but normal `sys.connect` returns `503` until setup is
+Before setup completes, a provisioning hostname may serve the desktop and
+accept its WebSocket, but normal `sys.connect` returns `503` until setup is
 complete. `sys.setup` and `sys.setup.assist` must include the one-time
 `onboardingToken` issued for that exact installation. The Kernel removes the
 token before invoking the ordinary setup implementation and activates routing
@@ -182,7 +172,7 @@ that URL and require reissue by the operator. Clients discard rejected setup
 tokens and re-probe `sys.connect` before resuming; an active space then opens ordinary sign-in, while an
 unfinished space receives fresh setup authorization after owner verification.
 
-Setup-mode and provisioning responses advertise optional setup fields through
+Provisioning responses advertise optional setup fields through
 `details.setupFeatures`. Web and Desktop probe `sys.connect` before sending an
 initial `language` in `sys.setup`, and include it only when `"language"` is
 advertised. `"profile"` appears only on a Gateway with an open-network host; the
@@ -301,10 +291,10 @@ password.
 }
 ```
 
-`server.features` is an optional list of runtime capabilities advertised by the
-connected deployment. Gateways with the `INFERENCE_EXECUTION` service binding
-include `ai.provider.gsv`, whether the operator uses the public reference service
-or its own inference policy and funding implementation.
+`server.features` lists runtime capabilities advertised by the connected
+deployment. Every Gateway composes the inference execution service and includes
+`ai.provider.gsv`, whether the operator uses the public reference service or its
+own inference policy and funding implementation.
 
 The three grant axes are independent:
 

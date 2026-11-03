@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { principalOf } from "./context";
 import { testPeer } from "../test-support/peers";
 import type { KernelContext } from "./context";
+import { requiredTestBindings } from "../test-support/required-bindings";
 import type { TargetRecord } from "./target-registry";
 import { OAuthStore, type OAuthAccountRecord } from "./oauth-store";
 import { ConfigStore } from "./config";
@@ -247,22 +248,6 @@ describe("handleAiTools", () => {
     expect(ctx.mcp.listTools).not.toHaveBeenCalled();
   });
 
-  it("does not advertise CodeMode without a Worker Loader binding", async () => {
-    const ctx = makeContext("ready");
-    delete ctx.env.LOADER;
-
-    const result = await handleAiTools(ctx);
-
-    expect(result.tools.map((tool) => tool.name)).toEqual([
-      "Read",
-      "Write",
-      "Edit",
-      "Delete",
-      "Search",
-      "Shell",
-    ]);
-  });
-
   it("only advertises Search with a search implementation and a web.search grant", async () => {
     const unconfigured = makeContext("ready");
     delete unconfigured.env.WEB_SEARCH;
@@ -398,7 +383,7 @@ describe("handleAiConfig", () => {
     const uid = options.uid ?? 1000;
     const ownerUid = options.ownerUid ?? uid;
     const oauthAccounts = options.oauthAccounts ?? [];
-    const env: Partial<KernelContext["env"]> = {};
+    const env: Partial<KernelContext["env"]> = requiredTestBindings();
     if (options.ripgit) env.RIPGIT = options.ripgit;
     const ownerEntry = {
       uid: ownerUid,
@@ -1090,7 +1075,7 @@ describe("handleAiConfig", () => {
       model: "claude-test",
       text: "pong",
     });
-    expect(createGenerationServiceMock).toHaveBeenCalledWith({});
+    expect(createGenerationServiceMock).toHaveBeenCalledWith(ctx.env);
   });
 
   it("generates text with a stable Process model preference in the kernel", async () => {

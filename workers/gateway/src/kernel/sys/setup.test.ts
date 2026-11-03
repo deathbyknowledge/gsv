@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { KernelContext } from "../context";
+import { requiredTestBindings } from "../../test-support/required-bindings";
+import { GSV_INFERENCE_FEATURE } from "@humansandmachines/gsv/services/inference";
 
 import * as utils from "../../shared/utils";
 import * as bootstrap from "./bootstrap";
@@ -14,7 +16,6 @@ import { handleSysSetup, recoverCompletedSysSetup, SetupStepError } from "./setu
 function createCtx(overrides?: {
   setupMode?: boolean;
   ripgit?: Fetcher;
-  inferenceExecution?: boolean;
 }) {
   type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
   type GroupRow = { name: string; gid: number; members: string[] };
@@ -161,8 +162,8 @@ function createCtx(overrides?: {
     config: config as KernelContext["config"],
     env: {
       STORAGE: storage,
+      ...requiredTestBindings(),
       ...(overrides?.ripgit ? { RIPGIT: overrides.ripgit } : undefined),
-      ...(overrides?.inferenceExecution ? { INFERENCE_EXECUTION: {} } : undefined),
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext["env"],
     conversations: {
@@ -253,14 +254,14 @@ describe("handleSysSetup", () => {
       expect.any(Object),
     );
     expect(result.user.username).toBe("alice");
-    expect(result.server).toEqual({ version: "0.0.1-test", release: "dev" });
+    expect(result.server).toEqual({ version: "0.0.1-test", release: "dev", features: [GSV_INFERENCE_FEATURE] });
     expect(result.machineToken?.peerId).toBe("macbook");
     expect(ensurePersonalControllerMock).toHaveBeenCalledWith(1000, ctx, undefined);
   });
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   it("leaves the base implicit when setup has no AI selection", async () => {
-    const { ctx, config } = createCtx({ inferenceExecution: true });
+    const { ctx, config } = createCtx();
 
     const result = await handleSysSetup(
       {
@@ -289,7 +290,7 @@ describe("handleSysSetup", () => {
   });
 
   it("writes nothing for an explicit GSV Included choice, which is the base", async () => {
-    const { ctx, config } = createCtx({ inferenceExecution: true });
+    const { ctx, config } = createCtx();
 
     await handleSysSetup(
       {
@@ -310,7 +311,7 @@ describe("handleSysSetup", () => {
   });
 
   it("preserves an explicit bring-your-own provider during setup", async () => {
-    const { ctx, config } = createCtx({ inferenceExecution: true });
+    const { ctx, config } = createCtx();
 
     await handleSysSetup(
       {

@@ -15,7 +15,6 @@ import {
 import type { InstallationSetupStep } from "@humansandmachines/gsv/telemetry";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
-import { gsvInferenceFeaturesFromEnv } from "../../inference/features";
 import { ensurePersonalController } from "../personal-controller";
 import { normalizeLanguage } from "../language";
 import { recordSetupProfileChoice } from "../profiles";
@@ -183,14 +182,8 @@ function parseAiConfig(args: SysSetupArgs): SetupAiConfig {
   };
 }
 
-function resolveSetupAiConfig(
-  ai: SetupAiConfig,
-  managedInferenceAvailable: boolean,
-): SetupAiConfig {
+function resolveSetupAiConfig(ai: SetupAiConfig): SetupAiConfig {
   if (ai.provider === GSV_INFERENCE_PROVIDER) {
-    if (!managedInferenceAvailable) {
-      throw new Error("Ship included inference is not available");
-    }
     if (ai.model !== undefined && ai.model !== GSV_INFERENCE_MODEL) {
       throw new Error("Ship included inference does not accept a model selection");
     }
@@ -282,12 +275,7 @@ export async function handleSysSetup(
   }
 
   const { username, password } = parseSetupIdentity(args, ctx);
-  const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
-  const managedInferenceAvailable = serverFeatures.includes(GSV_INFERENCE_FEATURE);
-  const ai = resolveSetupAiConfig(
-    parseAiConfig(args),
-    managedInferenceAvailable,
-  );
+  const ai = resolveSetupAiConfig(parseAiConfig(args));
   const aiModels = setupAiModelStack(ai);
   const timezone = parseTimezone(args);
   const language = args.language === undefined ? undefined : normalizeLanguage(args.language);
@@ -337,16 +325,14 @@ export async function handleSysSetup(
   let machineToken: SysSetupResult["machineToken"];
 
   try {
-    if (ctx.env.RIPGIT) {
-      bootstrap = await timeSetupStep(
-        timings,
-        "bootstrap-system",
-        () => handleSysBootstrap(undefined, {
-          ...ctx,
-          peer: bootstrapPeer,
-        }),
-      );
-    }
+    bootstrap = await timeSetupStep(
+      timings,
+      "bootstrap-system",
+      () => handleSysBootstrap(undefined, {
+        ...ctx,
+        peer: bootstrapPeer,
+      }),
+    );
 
     await timeSetupStep(timings, "write-auth-state", async () => {
       auth.addUser({
@@ -458,7 +444,7 @@ export async function handleSysSetup(
     );
 
     return {
-      server: setupServerBuild(ctx, serverFeatures),
+      server: setupServerBuild(ctx, [GSV_INFERENCE_FEATURE]),
       user: processIdentity,
       rootLocked,
       bootstrap,
@@ -531,9 +517,8 @@ export async function recoverCompletedSysSetup(
   }
 
   const rootShadow = ctx.auth.getShadowByUsername("root");
-  const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
   return {
-    server: setupServerBuild(ctx, serverFeatures),
+    server: setupServerBuild(ctx, [GSV_INFERENCE_FEATURE]),
     user: {
       ...authenticated.identity,
       cwd: authenticated.identity.home,

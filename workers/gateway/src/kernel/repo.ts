@@ -107,7 +107,7 @@ export async function handleRepoCreate(
   const repo = parseRepoSlug(args.repo);
   assertCanWriteRepo(repo, ctx);
   const ref = normalizeRef(args.ref);
-  const ripgit = requireRipgitClient(ctx);
+  const ripgit = ripgitClient(ctx);
   const refs = await ripgit.refs(repo);
   const currentHead = refs.heads?.[ref] ?? null;
   if (currentHead) {
@@ -134,7 +134,7 @@ export async function handleRepoRefs(
 ): Promise<RepoRefsResult> {
   const repo = parseRepoSlug(args.repo);
   assertCanReadRepo(repo, ctx);
-  const refs = await requireRipgitClient(ctx).refs(repo);
+  const refs = await ripgitClient(ctx).refs(repo);
   const result: RepoRefsResult = {
     repo: repoSlug(repo),
     heads: refs.heads ?? {},
@@ -154,7 +154,7 @@ export async function handleRepoRead(
   assertCanReadRepo(repo, ctx);
   const ref = normalizeReadRef(args.ref);
   const path = normalizeRepoPath(args.path, true);
-  const result = await requireRipgitClient(ctx).readPath({ ...repo, branch: ref }, path);
+  const result = await ripgitClient(ctx).readPath({ ...repo, branch: ref }, path);
   if (result.kind === "missing") {
     throw new Error(`Path not found: ${path || "/"}`);
   }
@@ -196,7 +196,7 @@ export async function handleRepoSearch(
     throw new Error("query is required");
   }
   const prefix = normalizeRepoPath(args.prefix, true);
-  const result = await requireRipgitClient(ctx).search(
+  const result = await ripgitClient(ctx).search(
     { ...repo, branch: ref },
     query,
     prefix || undefined,
@@ -224,7 +224,7 @@ export async function handleRepoLog(
   const ref = normalizeReadRef(args.ref);
   const limit = clampRepoLimit(args.limit);
   const offset = clampRepoOffset(args.offset);
-  const entries = await requireRipgitClient(ctx).log({ ...repo, branch: ref }, { limit, offset });
+  const entries = await ripgitClient(ctx).log({ ...repo, branch: ref }, { limit, offset });
   return {
     repo: repoSlug(repo),
     ref,
@@ -255,7 +255,7 @@ export async function handleRepoDiff(
   if (!commit) {
     throw new Error("commit is required");
   }
-  const diff = await requireRipgitClient(ctx).diffCommit(repo, commit, {
+  const diff = await ripgitClient(ctx).diffCommit(repo, commit, {
     context: clampContext(args.context),
   });
   return {
@@ -278,7 +278,7 @@ export async function handleRepoCompare(
   if (!base || !head) {
     throw new Error("base and head are required");
   }
-  const comparison = await requireRipgitClient(ctx).compare(repo, base, head, {
+  const comparison = await ripgitClient(ctx).compare(repo, base, head, {
     context: clampContext(args.context),
     stat: args.stat === true,
   });
@@ -304,7 +304,7 @@ export async function handleRepoApply(
   }
   const ops = normalizeApplyOps(args.ops);
   const actor = requireIdentity(ctx).account;
-  const result = await requireRipgitClient(ctx).apply(
+  const result = await ripgitClient(ctx).apply(
     { ...repo, branch: ref },
     actor.username,
     `${actor.username}@gsv.local`,
@@ -338,7 +338,7 @@ export async function handleRepoImport(
       ? ref
       : undefined;
   const actor = requireIdentity(ctx).account;
-  const imported = await requireRipgitClient(ctx).importFromUpstream(
+  const imported = await ripgitClient(ctx).importFromUpstream(
     { ...repo, branch: ref },
     actor.username,
     `${actor.username}@gsv.local`,
@@ -375,7 +375,7 @@ export async function handleRepoDelete(
   const finishDeletion = repo.owner === "root" && repo.repo === "gsv-manual"
     ? ctx.manual.beginDeletion() : undefined;
   try {
-    await requireRipgitClient(ctx).deleteRepository(repo, actor.username);
+    await ripgitClient(ctx).deleteRepository(repo, actor.username);
     unregisterRepo(ctx, repo);
   } finally {
     finishDeletion?.();
@@ -410,10 +410,7 @@ function requireIdentity(ctx: KernelContext): PrincipalView {
   return requirePrincipal(ctx);
 }
 
-function requireRipgitClient(ctx: KernelContext): RipgitClient {
-  if (!ctx.env.RIPGIT) {
-    throw new Error("RIPGIT binding is required");
-  }
+function ripgitClient(ctx: KernelContext): RipgitClient {
   return new RipgitClient(ctx.env.RIPGIT);
 }
 

@@ -186,7 +186,6 @@ export async function resolveInstallationRoute(
 ): Promise<InstallationRoute | null> {
   const hostname = new URL(request.url).hostname;
   const directory = installationDirectory();
-  if (!directory) throw new Error("Installation directory is not configured");
   const routes = routesFor(directory);
   const remembered = routes.remembered.get(hostname);
   if (options.cached && remembered && Date.now() - remembered.confirmedAt < ROUTE_CONFIRMATION_MS) {
@@ -227,8 +226,7 @@ function forgetLookup(routes: HostnameRoutes, hostname: string, lookup: Promise<
 
 /** Forgets a hostname's remembered route, as when the Kernel it names refuses the request. */
 export function forgetInstallationRoute(request: Request): void {
-  const directory = installationDirectory();
-  if (directory) hostnameRoutes.get(directory)?.remembered.delete(new URL(request.url).hostname);
+  hostnameRoutes.get(installationDirectory())?.remembered.delete(new URL(request.url).hostname);
 }
 
 function routesFor(directory: InstallationDirectoryService): HostnameRoutes {
@@ -240,7 +238,7 @@ function routesFor(directory: InstallationDirectoryService): HostnameRoutes {
   return routes;
 }
 
-function installationDirectory(): InstallationDirectoryService | undefined {
+function installationDirectory(): InstallationDirectoryService {
   // SAFETY: Deployment binds the trusted directory RPC contract described by GatewayEnv.
   return (env as Env & GatewayEnv).INSTALLATION_DIRECTORY;
 }

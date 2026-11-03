@@ -54,14 +54,10 @@ export type AccountHomeBackendOptions = {
 
 export function createAccountHomeBackend(
   bucket: R2Bucket,
-  ripgitBinding: Fetcher | undefined,
+  ripgitBinding: Fetcher,
   identity: ProcessIdentity,
   options?: AccountHomeBackendOptions,
-): MountBackend | null {
-  if (!ripgitBinding) {
-    return null;
-  }
-
+): MountBackend {
   const client = new RipgitClient(ripgitBinding);
   const primary = new AccountHomeMountBackend(
     client,

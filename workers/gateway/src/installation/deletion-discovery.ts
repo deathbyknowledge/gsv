@@ -31,7 +31,6 @@ export class GatewayDeletionDiscovery {
       let evidence: ResourceStorageInspection;
       let name = resource.name;
       if (resource.kind === "ripgit") {
-        if (!this.env.RIPGIT) { observations.push(observation); continue; }
         const response = await this.env.RIPGIT.fetch("https://ripgit.invalid/.gsv/discovery/inspect", {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(resource),
         });
@@ -96,7 +95,7 @@ export class GatewayDeletionDiscovery {
       }
     }
     const repositories = batch.resources.filter((resource) => resource.kind === "ripgit");
-    if (this.env.RIPGIT && repositories.length) {
+    if (repositories.length) {
       const response = await this.env.RIPGIT.fetch("https://ripgit.invalid/.gsv/discovery/import", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ installationId: request.installationId, names: repositories.map((resource) => resource.name) }),

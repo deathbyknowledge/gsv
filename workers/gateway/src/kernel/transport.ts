@@ -43,8 +43,6 @@ import {
   type RouteOrigin,
 } from "./routing";
 import {
-  setupRequiredDetails,
-  SETUP_REQUIRED_ERROR_CODE,
 } from "./connect";
 import {
   bindByteStreamToAbort,
@@ -305,21 +303,11 @@ async handleReq(
 
       if (!state || state.step !== "connected" || !state.peer) {
         if (this.host.auth.isSetupMode()) {
-          if (this.host.onboarding.managedOnboardingService()) {
-            this.sendError(
-              connection,
-              frame.id,
-              503,
-              "Managed installation provisioning is incomplete",
-            );
-            return;
-          }
           this.sendError(
             connection,
             frame.id,
-            SETUP_REQUIRED_ERROR_CODE,
-            "Setup required",
-            setupRequiredDetails(this.host.env),
+            503,
+            "Managed installation provisioning is incomplete",
           );
           return;
         }

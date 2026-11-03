@@ -1,8 +1,8 @@
 /**
  * Wrangler configuration for unit tests.
  * 
- * This is a stripped-down version of wrangler.jsonc that doesn't include
- * service bindings (which would require external workers to be running).
+ * This is a stripped-down version of wrangler.jsonc. Its service bindings
+ * point at fixtures in this Worker, so no external Worker needs to run.
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
@@ -57,7 +57,12 @@
 			}
 		]
 	},
-	"services": [{ "binding": "INSTALLATION_DIRECTORY", "service": "gateway-test", "entrypoint": "TestInstallationDirectory" }],
+	// The Gateway's required services, answered by fixtures in this Worker.
+	"services": [
+		{ "binding": "INSTALLATION_DIRECTORY", "service": "gateway-test", "entrypoint": "TestInstallationDirectory" },
+		{ "binding": "INFERENCE_EXECUTION", "service": "gateway-test", "entrypoint": "TestInferenceExecution" },
+		{ "binding": "RIPGIT", "service": "gateway-test", "entrypoint": "TestRipgit" }
+	],
 	// Test Kernels resolve DIDs against the fake directory Ship tests install, never plc.directory.
 	"vars": { "PLC_URL": "https://plc.test" },
 	"observability": {

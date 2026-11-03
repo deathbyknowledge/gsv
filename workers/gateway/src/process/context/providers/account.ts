@@ -15,21 +15,19 @@ async function listAccountContextFiles(
   account: PromptAssemblyInput["identity"],
 ): Promise<AccountContextFile[]> {
   const ripgit = input.ripgit;
-  if (ripgit) {
-    const repo = accountHomeRepoRef(account.username);
-    const contextTree = await ripgit.readPath(repo, "context.d");
-    if (contextTree.kind === "tree") {
-      return contextTree.entries
-        .filter((entry) => entry.type === "blob" && entry.name.endsWith(".md"))
-        .map((entry) => ({
-          name: entry.name,
-          read: async () => {
-            const file = await ripgit.readPath(repo, `context.d/${entry.name}`);
-            return file.kind === "file" ? TEXT_DECODER.decode(file.bytes) : null;
-          },
-        }))
-        .sort((left, right) => left.name.localeCompare(right.name));
-    }
+  const repo = accountHomeRepoRef(account.username);
+  const contextTree = await ripgit.readPath(repo, "context.d");
+  if (contextTree.kind === "tree") {
+    return contextTree.entries
+      .filter((entry) => entry.type === "blob" && entry.name.endsWith(".md"))
+      .map((entry) => ({
+        name: entry.name,
+        read: async () => {
+          const file = await ripgit.readPath(repo, `context.d/${entry.name}`);
+          return file.kind === "file" ? TEXT_DECODER.decode(file.bytes) : null;
+        },
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name));
   }
 
   const contextPrefix = `${account.home.replace(/^\//, "")}/context.d/`;

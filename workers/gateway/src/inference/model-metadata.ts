@@ -29,13 +29,12 @@ const contextWindows = new WeakMap<InferenceExecutionService, Map<string, Cached
  */
 export class ModelMetadataResolver {
   constructor(
-    private readonly env: TelemetryEnvironment & { INFERENCE_EXECUTION?: InferenceExecutionService },
+    private readonly env: TelemetryEnvironment & { INFERENCE_EXECUTION: InferenceExecutionService },
     private readonly installationId: string,
   ) {}
 
   async resolve(provider: string, model: string, generationTimeoutMs: number): Promise<number | null> {
     const service = this.env.INFERENCE_EXECUTION;
-    if (!service) return null;
     let cache = contextWindows.get(service);
     if (!cache) {
       cache = new Map();

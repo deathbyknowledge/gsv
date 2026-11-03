@@ -12,10 +12,6 @@ export async function ensurePersonalMemory(
   for (const file of contextFiles("user")) {
     await seedContextFile(ctx.env, human, file.name, file.text);
   }
-  if (!ctx.env.RIPGIT) {
-    return;
-  }
-
   const repo = {
     owner: human.username,
     repo: "personal",

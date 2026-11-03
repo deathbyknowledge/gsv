@@ -9,7 +9,6 @@ import { TOOL_DISPATCH_TIMEOUT_MS } from "./internal/lifecycle";
 import {
   NET_FETCH, FS_DELETE, FS_EDIT, FS_READ, FS_SEARCH, FS_WRITE, MAIL_SEND, SHELL_EXEC, SYS_MCP_CALL,
 } from "../syscalls/constants";
-import { CODE_MODE_UNAVAILABLE_ERROR, type CodeModeEnvironment } from "../codemode/availability";
 import { jsonObjectSchema, jsonValueSchema, type JsonObject, type JsonValue } from "@humansandmachines/gsv/protocol";
 
 export { buildCodeModeMcpToolBindings } from "../codemode/mcp";
@@ -294,17 +293,11 @@ function looksLikeFunctionExpression(source: string): boolean {
 const CODE_MODE_SANDBOX_BACKSTOP_MS = CODE_MODE_EXECUTION_TIMEOUT_MS + TOOL_DISPATCH_TIMEOUT_MS;
 
 export async function executeCodeMode(
-  env: CodeModeEnvironment,
+  env: { LOADER: WorkerLoader },
   code: string,
   requestTool: CodeModeToolRequest,
   options?: CodeModeExecutionOptions,
 ): Promise<CodeModeExecResult> {
-  if (!env.LOADER) {
-    return {
-      status: "failed",
-      error: CODE_MODE_UNAVAILABLE_ERROR,
-    };
-  }
   const executor = new DynamicWorkerExecutor({
     loader: env.LOADER,
     timeout: options?.approvalDeadlines ? CODE_MODE_SANDBOX_BACKSTOP_MS : CODE_MODE_EXECUTION_TIMEOUT_MS,

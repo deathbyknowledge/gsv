@@ -68,7 +68,6 @@ import { FS_DELETE_DEFINITION } from "../syscalls/delete";
 import { WEB_SEARCH_DEFINITION } from "../syscalls/search";
 import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
 import { CODEMODE_EXEC_DEFINITION } from "../syscalls/codemode";
-import { isCodeModeAvailable } from "../codemode/availability";
 import { DEFAULT_TEXT_GENERATION_MAX_TOKENS } from "../inference/default-models";
 import { createGenerationService } from "../inference/execution-client";
 import { extractGeneratedText } from "../inference/generated-text";
@@ -174,7 +173,6 @@ export async function handleAiTools(
 
   for (const { syscall, definition } of SYSCALL_TOOLS) {
     if (!hasCapability(capabilities, syscall)) continue;
-    if (syscall === "codemode.exec" && !isCodeModeAvailable(ctx.env)) continue;
     if (syscall === "web.search" && !canSearch) continue;
 
     tools.push(withPurpose(

@@ -8,7 +8,6 @@ import {
   parseConversationDurableObjectName,
   parseProcessDurableObjectName,
   processDurableObjectName,
-  resolveInstallationRoute,
 } from "./routing";
 
 describe("installation routing", () => {
@@ -126,20 +125,6 @@ describe("installation routing", () => {
     }
   });
 
-  it("fails closed without a directory instead of deriving identity from the request", async () => {
-    const getByName = vi.spyOn(env.KERNEL, "getByName");
-    const previous = Object.getOwnPropertyDescriptor(env, "INSTALLATION_DIRECTORY");
-    Object.defineProperty(env, "INSTALLATION_DIRECTORY", { configurable: true, value: undefined });
-    try {
-      await expect(resolveInstallationRoute(new Request("http://localhost:8787/ws")))
-        .rejects.toThrow("Installation directory is not configured");
-      expect(getByName).not.toHaveBeenCalled();
-    } finally {
-      if (previous) Object.defineProperty(env, "INSTALLATION_DIRECTORY", previous);
-      else Reflect.deleteProperty(env, "INSTALLATION_DIRECTORY");
-      getByName.mockRestore();
-    }
-  });
 });
 
 describe("remembered hostname routes", () => {

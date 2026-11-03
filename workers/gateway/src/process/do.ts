@@ -57,7 +57,7 @@ type ProcessInstallationRuntime = {
   store: ProcessStore;
   runs: ProcessRunRepository;
   storage: R2Bucket;
-  ripgit: RipgitClient | null;
+  ripgit: RipgitClient;
   tasks: DurableTaskScheduler<ProcessTask>;
 };
 
@@ -77,7 +77,7 @@ export class Process extends DurableObject<GatewayEnv> {
   readonly finishDelivery = new ProcessFinishDeliveryService(this);
   get storage(): R2Bucket { return this.namedRuntime().storage; }
   readonly generation: ReturnType<typeof createGenerationService>;
-  get ripgit(): RipgitClient | null { return this.namedRuntime().ripgit; }
+  get ripgit(): RipgitClient { return this.namedRuntime().ripgit; }
   get tasks(): DurableTaskScheduler<ProcessTask> { return this.namedRuntime().tasks; }
   readonly controller = new ProcessController(this);
   readonly history = new ProcessHistory(this);
@@ -130,7 +130,7 @@ export class Process extends DurableObject<GatewayEnv> {
       runs: new ProcessRunRepository(store),
       storage: createInstallationStorage(env.STORAGE, processIdentity.installationId, retirement),
       tasks: new DurableTaskScheduler(ctx.storage, decodeProcessTask, this.run.runScheduledTask.bind(this.run)),
-      ripgit: env.RIPGIT ? new RipgitClient(createInstallationRipgit(env.RIPGIT, processIdentity.installationId)) : null,
+      ripgit: new RipgitClient(createInstallationRipgit(env.RIPGIT, processIdentity.installationId)),
     };
     this.startup = (retirement.state ? Promise.resolve() : recoverProcess(this)).catch((error) => {
       console.warn("[Process] Recovery failed:", error);

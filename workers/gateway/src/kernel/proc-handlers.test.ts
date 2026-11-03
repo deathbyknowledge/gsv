@@ -6,6 +6,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { KernelContext } from "./context";
+import { requiredTestBindings } from "../test-support/required-bindings";
 
 import * as utils from "../shared/utils";
 import { forwardToProcess, handleProcFork, handleProcIpcCall, handleProcIpcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
@@ -1023,10 +1024,11 @@ describe("proc handlers", () => {
       installationId: TEST_INSTALLATION_ID,
       env: {
         STORAGE: makeStorageBucket(),
+        ...requiredTestBindings(),
       },
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
-      config: { get: vi.fn(() => "1002") },
+      config: { get: vi.fn(() => "1002"), set: vi.fn() },
       welcome: { createdAt: vi.fn() },
       defer: vi.fn(),
       responsibilities: {
@@ -1095,10 +1097,11 @@ describe("proc handlers", () => {
       installationId: TEST_INSTALLATION_ID,
       env: {
         STORAGE: makeStorageBucket(),
+        ...requiredTestBindings(),
       },
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
-      config: { get: vi.fn(() => "1002") },
+      config: { get: vi.fn(() => "1002"), set: vi.fn() },
       welcome: { createdAt: vi.fn() },
       defer: vi.fn(),
       responsibilities: {
