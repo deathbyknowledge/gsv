@@ -14,15 +14,30 @@ afterEach(() => vi.restoreAllMocks());
 
 async function fixture(work: (kernel: Kernel) => Promise<void>) {
   const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
-  await runInDurableObject(stub, work);
+  await runInDurableObject(stub, async (kernel: Kernel) => {
+    // The tests run each wake and pass themselves; no alarm runs one behind them.
+    vi.spyOn(kernel.ctx.storage, "setAlarm").mockResolvedValue(undefined);
+    try {
+      await work(kernel);
+    } finally {
+      // Test files share modules, so nothing this Kernel scheduled may run during a later test.
+      kernel.ctx.storage.sql.exec("DELETE FROM cf_agents_schedules");
+      await kernel.ctx.storage.deleteAlarm();
+    }
+  });
 }
 
+/** Spies that answer every Kernel; tests read only the calls their own Kernel made. */
 function ship() {
   const found = vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
   const deliver = vi.spyOn(processTransport, "deliverEventToProcess").mockImplementation(async (_installation, _pid, args) => (
     { eventId: args.eventId, runId: args.eventId, queued: false }
   ));
-  return { found, deliver };
+  return {
+    deliver,
+    found: (kernel: Kernel) => found.mock.calls.filter(([, ctx]) => ctx.installationId === kernel.installationId),
+    delivered: (kernel: Kernel) => deliver.mock.calls.filter(([installationId]) => installationId === kernel.installationId),
+  };
 }
 
 function ready(kernel: Kernel, title: string) {
@@ -51,7 +66,7 @@ function batches(kernel: Kernel) {
 
 describe("responsibility wakes on the event log", () => {
   it("hands due work to Ship as one event and arms its recovery from the delivery", async () => {
-    const { deliver } = ship();
+    const { delivered } = ship();
     await fixture(async (kernel) => {
       const first = ready(kernel, "Answer the landlord");
       const second = ready(kernel, "Book the dentist");
@@ -70,7 +85,7 @@ describe("responsibility wakes on the event log", () => {
       const deliveredFrom = Date.now();
       await runEvents(kernel);
       const eventId = `evt_${batch!.seq}:personal:${OWNER}`;
-      expect(deliver).toHaveBeenCalledExactlyOnceWith(expect.any(String), "proc:ship", {
+      expect(delivered(kernel)).toEqual([[kernel.installationId, "proc:ship", {
         eventId,
         event: {
           kind: "responsibility.ready", severity: "info", audience: "model",
@@ -78,7 +93,7 @@ describe("responsibility wakes on the event log", () => {
         },
         admission: { idle: "start", busy: "join" },
         responsibilities: { ledgerRevision, ids: [first.id, second.id] },
-      });
+      }]]);
       expect(batches(kernel)).toMatchObject([{ state: "delivered" }]);
       const recoveryAt = kernel.responsibilities.nextWakeAt(OWNER, Date.now())!;
       expect(recoveryAt).toBeGreaterThanOrEqual(deliveredFrom + 5 * MINUTE_MS);
@@ -89,9 +104,16 @@ describe("responsibility wakes on the event log", () => {
   });
 
   it("holds work that comes due while a batch waits for the next batch", async () => {
-    const { deliver } = ship();
-    deliver.mockRejectedValueOnce(new Error("Ship is restarting"));
+    const { deliver, delivered } = ship();
     await fixture(async (kernel) => {
+      let restarting = true;
+      deliver.mockImplementation(async (installationId, _pid, args) => {
+        if (installationId === kernel.installationId && restarting) {
+          restarting = false;
+          throw new Error("Ship is restarting");
+        }
+        return { eventId: args.eventId, runId: args.eventId, queued: false };
+      });
       const first = ready(kernel, "Answer the landlord");
       await wake(kernel);
       await runEvents(kernel);
@@ -110,12 +132,12 @@ describe("responsibility wakes on the event log", () => {
         { state: "delivered", body: { responsibilityIds: [first.id] } },
         { state: "delivered", body: { responsibilityIds: [second.id, third.id] } },
       ]);
-      expect(deliver).toHaveBeenCalledTimes(3);
+      expect(delivered(kernel)).toHaveLength(3);
     });
   });
 
   it("withdraws a batch whose work was settled while it waited, without finding Ship", async () => {
-    const { found, deliver } = ship();
+    const { found, delivered } = ship();
     await fixture(async (kernel) => {
       const record = ready(kernel, "Answer the landlord");
       await wake(kernel);
@@ -124,15 +146,15 @@ describe("responsibility wakes on the event log", () => {
         actor: SHIP, observedByShip: true, now: Date.now(),
       });
       await runEvents(kernel);
-      expect(found).not.toHaveBeenCalled();
-      expect(deliver).not.toHaveBeenCalled();
+      expect(found(kernel)).toEqual([]);
+      expect(delivered(kernel)).toEqual([]);
       expect(batches(kernel)).toMatchObject([{ state: "withdrawn", last_error: "its work was settled while it waited" }]);
       expect(kernel.responsibilities.wakeState(OWNER)).toMatchObject({ taskId: null, scheduledAtMs: null });
     });
   });
 
   it("delivers only the work still open when part of a batch was settled", async () => {
-    const { deliver } = ship();
+    const { delivered } = ship();
     await fixture(async (kernel) => {
       const answered = ready(kernel, "Answer the landlord");
       const open = ready(kernel, "Book the dentist");
@@ -142,8 +164,8 @@ describe("responsibility wakes on the event log", () => {
         actor: SHIP, observedByShip: true, now: Date.now(),
       });
       await runEvents(kernel);
-      expect(deliver).toHaveBeenCalledOnce();
-      expect(deliver.mock.calls[0]?.[2]).toMatchObject({
+      expect(delivered(kernel)).toHaveLength(1);
+      expect(delivered(kernel)[0]?.[2]).toMatchObject({
         event: { payload: { responsibilityIds: [open.id] } },
         responsibilities: { ids: [open.id] },
       });
@@ -151,7 +173,7 @@ describe("responsibility wakes on the event log", () => {
   });
 
   it("takes no batch while the space is restricted, and checks again in a minute", async () => {
-    const { deliver } = ship();
+    const { delivered } = ship();
     await fixture(async (kernel) => {
       const record = ready(kernel, "Answer the landlord");
       const revision = kernel.responsibilities.revision(OWNER);
@@ -162,12 +184,12 @@ describe("responsibility wakes on the event log", () => {
       expect(kernel.responsibilities.revision(OWNER)).toBe(revision);
       expect(kernel.responsibilities.get(OWNER, record.id)).toMatchObject({ state: "open" });
       expect(kernel.responsibilities.wakeState(OWNER).scheduledAtMs).toBeGreaterThanOrEqual(before + MINUTE_MS);
-      expect(deliver).not.toHaveBeenCalled();
+      expect(delivered(kernel)).toEqual([]);
     });
   });
 
   it("hands Ship due work while a contact message ahead of it keeps failing", async () => {
-    const { deliver } = ship();
+    const { delivered } = ship();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     await fixture(async (kernel) => {
       // A contact message whose stored body no longer reads keeps retrying in Ship's background lane.
@@ -186,14 +208,14 @@ describe("responsibility wakes on the event log", () => {
       await wake(kernel);
       await runEvents(kernel);
       expect(batches(kernel)).toMatchObject([{ state: "delivered", body: { responsibilityIds: [record.id] } }]);
-      expect(deliver).toHaveBeenCalledOnce();
+      expect(delivered(kernel)).toHaveLength(1);
       expect(kernel.ctx.storage.sql.exec("SELECT state, attempt_count FROM deliveries WHERE seq = ?", seq).one())
         .toEqual({ state: "pending", attempt_count: 1 });
     });
   });
 
   it("tells Ship about work the person settled before the batch was taken", async () => {
-    const { deliver } = ship();
+    const { delivered } = ship();
     await fixture(async (kernel) => {
       const record = ready(kernel, "Answer the landlord");
       kernel.responsibilities.update({
@@ -202,7 +224,7 @@ describe("responsibility wakes on the event log", () => {
       });
       await wake(kernel);
       await runEvents(kernel);
-      expect(deliver.mock.calls[0]?.[2]).toMatchObject({ responsibilities: { ids: [record.id] } });
+      expect(delivered(kernel)[0]?.[2]).toMatchObject({ responsibilities: { ids: [record.id] } });
     });
   });
 });
