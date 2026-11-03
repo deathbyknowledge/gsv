@@ -37,8 +37,9 @@ export async function deliverTargetConnectionEvent(
           eventId,
           event: { kind: definition.kind, payload, severity: definition.severity, audience },
         });
-      } catch {
+      } catch (error) {
         // A transport or Process failure skips this transition without retiring the subscription.
+        console.warn(`[Kernel] Target event ${eventId} was not delivered; its watch stays: ${error instanceof Error ? error.message : String(error)}`);
         continue;
       }
       if ("unavailable" in result) {
