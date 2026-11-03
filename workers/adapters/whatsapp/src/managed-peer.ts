@@ -111,6 +111,7 @@ import {
   whatsAppDeliveryToken,
   type ManagedWhatsAppInbound,
   type ManagedWhatsAppPeerEvent,
+  type WhatsAppApprovalReply,
   type WhatsAppTemplateTap,
 } from "./whatsapp-webhook";
 
@@ -645,6 +646,22 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     return false;
   }
 
+  /** A ✅ on the person's tap; like the 👀, it is best effort and never retries the decision. */
+  private async acknowledgeApproval(reply: WhatsAppApprovalReply, route: ManagedWhatsAppPeerRoute): Promise<void> {
+    try {
+      await reactToWhatsAppMessage(
+        this.accessToken(), this.phoneNumberId(), reply.actorId, reply.interactionId, "✅", this.whatsAppFetch(route),
+      );
+    } catch (error) {
+      console.warn(JSON.stringify({
+        component: "managed_whatsapp",
+        event: "reaction_delivery_failed",
+        action: "acknowledge_approval",
+        diagnostics: exceptionDiagnostics(error),
+      }));
+    }
+  }
+
   private async forwardInbound(
     payload: InboundPayload,
   ): Promise<InboundDeliveryDisposition<ResponseContext>> {
@@ -675,13 +692,17 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
       if (!route || this.retirement.retired(route) || !payload.routeGeneration || route.generation !== payload.routeGeneration) {
         return { terminal: true };
       }
-      const status = await handleWhatsAppApprovalReply(
+      const answer = await handleWhatsAppApprovalReply(
         this.ctx.storage,
         this.env.GATEWAY,
         { installationId: route.installationId },
         payload.reply,
       );
-      if (!status) return { terminal: true };
+      if (!answer) return { terminal: true };
+      if (answer.kind === "acknowledge") {
+        await this.acknowledgeApproval(payload.reply, route);
+        return { terminal: true };
+      }
       return {
         terminal: true,
         responses: [{
@@ -689,7 +710,7 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
             deliveryId: `managed-approval:${whatsAppDeliveryToken(payload.reply.interactionId)}`,
             surface: { kind: "dm", id: payload.reply.surfaceId },
             actorId: payload.reply.actorId,
-            text: status,
+            text: answer.text,
             replyToId: payload.reply.providerMessageId,
           },
           context: { kind: "installation", installationId: route.installationId, generation: route.generation },

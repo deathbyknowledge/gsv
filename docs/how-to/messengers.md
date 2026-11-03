@@ -157,9 +157,11 @@ replies with text and attachments, and a long reply arrives as several
 messages, one per prose paragraph. Headings stay with the following block;
 code blocks, lists, tables and quotations stay together. When a message
 contains a link, WhatsApp shows the preview card for the first one. Approval
-prompts arrive with **Allow once**, **Always allow** and **Block** buttons; the
-decision comes back as a reply quoting the prompt. **Always allow** adds the
-same rule as in the app, shown in **Settings → Permissions**.
+prompts arrive with **Allow once**, **Always allow** and **Block** buttons.
+Ship marks the button you tapped with ✅ once the decision is made. If it could
+not do what you tapped, or the request has already ended, it replies quoting the
+prompt instead. **Always allow** adds the same rule as in the app, shown in
+**Settings → Permissions**.
 
 While Ship works on a message you sent from WhatsApp, it reacts to that message
 with 👀 and removes the reaction when it replies, asks for approval or stops.

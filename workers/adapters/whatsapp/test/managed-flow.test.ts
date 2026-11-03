@@ -434,29 +434,23 @@ describe("managed WhatsApp clean-instance flow", () => {
           remember: true,
         },
       }));
-      expect(await sentMessages()).toContainEqual(expect.objectContaining({
-        body: expect.objectContaining({
-          text: expect.objectContaining({ body: expect.stringContaining("Allowed from now on. Change this in Settings → Permissions.") }),
-          context: { message_id: approvalMessageId },
-        }),
+      // The decision the person tapped is acknowledged on their tap, not with another message.
+      expect(await graphRecords()).toContainEqual(expect.objectContaining({
+        kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.3", emoji: "✅" } }),
       }));
     });
-    const resolution = (await sentMessages()).findLast((record) => record.body.context?.message_id === approvalMessageId);
-    expect(resolution?.body.text?.body).toContain("Check the current time.");
-    expect(resolution?.body.text?.body).not.toContain("\"date\"");
-    expect(resolution?.body.text?.body).not.toContain("I need your confirmation");
-    expect(resolution?.body.text?.body).not.toContain("hil[");
+    expect((await sentMessages()).filter((record) => record.body.context?.message_id === approvalMessageId)).toHaveLength(0);
 
     const approvalCalls = (await gatewayCalls()).filter((call) => call.call === "proc.hil");
-    const statusCount = (await sentMessages()).filter((record) => record.body.context?.message_id === approvalMessageId).length;
     expect((await SELF.fetch(await notification("wamid.in.4", {
       type: "interactive",
       context: { from: "34600000000", id: approvalMessageId },
       interactive: { type: "button_reply", button_reply: { id: approveAlways, title: "Always allow" } },
     }))).status).toBe(200);
     await vi.waitFor(async () => {
-      expect((await sentMessages()).filter((record) => record.body.context?.message_id === approvalMessageId))
-        .toHaveLength(statusCount + 1);
+      expect(await graphRecords()).toContainEqual(expect.objectContaining({
+        kind: "message", body: expect.objectContaining({ type: "reaction", reaction: { message_id: "wamid.in.4", emoji: "✅" } }),
+      }));
     });
     expect((await gatewayCalls()).filter((call) => call.call === "proc.hil")).toHaveLength(approvalCalls.length);
 
