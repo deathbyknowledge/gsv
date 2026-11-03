@@ -1,40 +1,39 @@
 import type { ProcessEventDeliverArgs } from "../../protocol/process-frames";
 import type { KernelContext } from "../context";
+import { contactMessageEvent } from "../federation/attention";
+import { ownerNotifiedEvent } from "../owner-notice-runtime";
 import type { EventInput, EventRoute, LoggedEvent } from "./store";
 
 /** What a receiving Process records for an event, and whether it starts or joins a run. */
 export type ProcessEventDelivery = Omit<ProcessEventDeliverArgs, "eventId">;
 
-/** One registered event type: where it goes and what it does there. */
-export type EventDefinition = {
+/** A delivery that should not go, and why. */
+export type Withdrawn = { withdrawn: string };
+
+/**
+ * One registered event type: where it goes and what it hands the Process there.
+ * An attempt checks `withdrawal`, runs `prepare`, finds the Ship, checks
+ * `withdrawal` again and runs `admit`, then calls the Process without another await.
+ */
+export type EventDefinition<Prepared extends object | undefined = undefined> = {
   /** The consumers an event goes to, each with the lane that orders it there; read once, at append. */
   routes(event: EventInput): readonly EventRoute[];
-  /** What a Ship or process delivery hands the Process. */
-  process(event: LoggedEvent): ProcessEventDelivery;
-  /** Whether the event's subject still wants it; read before each attempt and again after its last await. */
-  wanted?(event: LoggedEvent, ctx: KernelContext): boolean;
+  /** Why the event's subject no longer wants it, read from current state; null while it does. */
+  withdrawal?(event: LoggedEvent, ctx: KernelContext): string | null;
+  /** Reads what the delivery needs from the store that holds it. */
+  prepare?(event: LoggedEvent, ctx: KernelContext): Promise<Prepared | Withdrawn>;
+  /** Builds the delivery from current state, which it may rebind: the call follows at once. */
+  admit(event: LoggedEvent, prepared: Prepared, ctx: KernelContext): ProcessEventDelivery | Withdrawn;
 };
 
-export type EventRegistry = Readonly<Record<string, EventDefinition>>;
+export type EventRegistry = Readonly<Record<string, EventDefinition<object | undefined>>>;
 
-/** Event types the Kernel appends. Each type arrives with the producer that appends it. */
-export const EVENT_REGISTRY: EventRegistry = {};
+/** Event types the Kernel appends. Each type is defined beside the producer that appends it. */
+export const EVENT_REGISTRY = {
+  "contact.message": contactMessageEvent,
+  "owner.notified": ownerNotifiedEvent,
+} satisfies EventRegistry;
 
-/** The owner's Ship, whichever pid it has when the delivery goes. */
-export function shipConsumer(ownerUid: number): string {
-  return `personal:${ownerUid}`;
-}
-
-/** One process; the delivery is withdrawn once that pid is gone. */
-export function processConsumer(pid: string): string {
-  return `proc:${pid}`;
-}
-
-export type EventConsumer = { kind: "ship"; ownerUid: number } | { kind: "process"; pid: string };
-
-export function parseConsumer(consumer: string): EventConsumer | null {
-  const ship = /^personal:(\d+)$/.exec(consumer);
-  if (ship) return { kind: "ship", ownerUid: Number(ship[1]) };
-  if (consumer.startsWith("proc:") && consumer.length > "proc:".length) return { kind: "process", pid: consumer.slice("proc:".length) };
-  return null;
+export function isWithdrawn<Value extends object | undefined>(value: Value | Withdrawn): value is Withdrawn {
+  return value !== undefined && "withdrawn" in value;
 }

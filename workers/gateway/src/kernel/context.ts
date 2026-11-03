@@ -40,10 +40,10 @@ import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
 import type { MailboxStore } from "./mailbox-store";
 import type { ResponsibilityStore } from "./responsibility-store";
+import type { KernelEvents } from "./events/runtime";
 import type { OwnerNoticeStore } from "./owner-notice-store";
 import type { NoticeRuleStore } from "./notice-rules";
 import type { EventSourceStore } from "./event-sources";
-import type { ShipEventStore } from "./ship-event-store";
 import type { ResponsibilitySourcePolicyStore } from "./responsibility-source-policies";
 import type { FederationStore } from "./federation-store";
 import type { DidDocumentStore } from "./ships/did-directory";
@@ -87,7 +87,8 @@ export type KernelContext = {
   schedules: ScheduleStore;
   mailboxes: MailboxStore;
   responsibilities: ResponsibilityStore;
-  shipEvents: ShipEventStore;
+  /** The event log: append inside the producer's transaction, kick its runner once that commits. */
+  events: KernelEvents;
   ownerNotices: OwnerNoticeStore;
   noticeRules: NoticeRuleStore;
   eventSources: EventSourceStore;
@@ -133,8 +134,6 @@ export type KernelContext = {
   scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
   cancelScheduleWake: (wakeScheduleId: string) => Promise<void>;
   reconcileResponsibilityWake: (ownerUid: number) => Promise<void>;
-  /** Deliver the owner's queued Ship events, in order, after the producer's transaction commits. */
-  queueShipEvents: (ownerUid: number) => Promise<void>;
   /** Send the owner's pending notices after the producer's transaction commits. */
   queueOwnerNotices: (ownerUid: number) => Promise<void>;
   queueEventUpkeep: () => Promise<void>;

@@ -110,26 +110,33 @@ duplicating it in the wake event or changing the frozen system prompt.
 
 ### Ship events
 
-Some producers address Ship with an event rather than a ledger wake. The Kernel
-stores each Ship event durably per owner in `ship_events`, keyed by a stable event
-id, and delivers the owner's events in order to the current Ship pid through
-`proc.runtime.event.deliver`, retrying with backoff until the Process admits one.
-The Process deduplicates by event id. A producer that changes the ledger in the same
-transaction marks that change announced, so the ledger does not wake Ship for it;
-once the event is admitted, the records it names get the same recovery wake as a
-delivered batch, and the run that receives it gates yield on those records. Contact
-messages are the first producer. An `owner.notified` event names no records and starts
-no run: Process records it in history for the next generation, or adds it to the run
-already active.
+Some producers address Ship with an event rather than a ledger wake. A producer
+appends the event to the Kernel's event log in the transaction that changes the
+state it reports, under a key of its own, so appending it again is the same event.
+The log keeps one delivery for each consumer the event names. Ship's go to the
+owner's current Ship pid, one at a time and in order, retrying with backoff until
+the Process admits one. Each delivery has its own id, and the Process deduplicates
+by it. A producer that changes the ledger in the same transaction marks that change
+announced, so the ledger does not wake Ship for it. The transaction that records the
+delivery gives the records it names the same recovery wake as a delivered batch, and
+the run that receives it gates yield on those records. An `owner.notified` event
+names no records and starts no run: Process records it in history for the next
+generation, or adds it to the run already active.
+
+A contact message event names its Conversation message rather than copying it.
+Each attempt reads the message's text and attachments before it starts the Ship
+controller, so a message that has gone is withdrawn without starting one.
 
 The producer decides again before every delivery attempt, including after the Ship
 controller starts, whether a queued event may still reach Ship. A contact message
-is fenced to the contact generation that queued it and stays with open work. If
+is fenced to the contact generation that admitted it and stays with open work. If
 Ship resolved that work while the message waited, the message joins the contact's
 standing handling as a newly arriving message would. It is withdrawn when the
-account is removed, the contact is inactive or blocked, or its work was cancelled.
-Taking back a contact's messages withdraws every queued message of its standing
-handling; messages bound to a specific task stay with that task.
+contact is inactive or blocked, or its work was cancelled. Taking back a contact's
+messages withdraws every queued message of its standing handling; messages bound to
+a specific task stay with that task. Removing the owner's account withdraws a
+delivery not yet attempted. One already attempted may have reached Ship, so it keeps
+retrying and the Process deduplicates it.
 
 A responsibility-triggered run may yield only after every record in its current batch
 is resolved, delegated, waiting, or explicitly deferred. The overall ledger need not

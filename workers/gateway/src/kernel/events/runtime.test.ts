@@ -1,35 +1,40 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { DurableTaskOptions } from "../../shared/durable-tasks";
 import * as processTransport from "../../shared/utils";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
 import * as personalController from "../personal-controller";
-import { processConsumer, shipConsumer, type EventRegistry } from "./registry";
+import { ResponsibilityStore } from "../responsibility-store";
+import { processConsumer, shipConsumer } from "./consumers";
+import type { EventRegistry, Withdrawn } from "./registry";
 import { EventRuntime, type EventRuntimeHost } from "./runtime";
 import { EventStore, type EventInput } from "./store";
 
 const OWNER = 1000;
 const WATCHER = "proc:watcher";
 let subjectWanted = true;
+let prepared: { text: string } | Withdrawn = { text: "prepared" };
 
 const NOTICE_ADMISSION = { idle: "record", busy: "join" } as const;
 const WATCH_ADMISSION = { idle: "start", busy: "join" } as const;
+const actor = { kind: "system", component: "test" } as const;
 
-/** Two fixture types: one for the owner's Ship, one for a watching process. */
-const REGISTRY: EventRegistry = {
+/** Fixture types: two for the owner's Ship, one for a watching process. */
+const REGISTRY = {
   "fixture.noticed": {
     routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: event.subject === "fixture:person" ? "person" : "background" }],
-    process: (event) => ({
+    withdrawal: () => subjectWanted ? null : "its subject no longer wants it",
+    admit: (event) => ({
       event: {
         kind: "owner.notified", severity: "info", audience: "model",
         payload: { noticeId: event.key, topic: "event.received", from: "Fixture", preview: event.key },
       },
       admission: NOTICE_ADMISSION,
     }),
-    wanted: () => subjectWanted,
   },
   "fixture.watched": {
     routes: () => [{ consumer: processConsumer(WATCHER), lane: "watch" }],
-    process: () => ({
+    admit: () => ({
       event: {
         kind: "target.connection", severity: "info", audience: "model",
         payload: { targetId: "laptop", platform: "linux", event: "connected", observedAt: 1 },
@@ -37,7 +42,20 @@ const REGISTRY: EventRegistry = {
       admission: WATCH_ADMISSION,
     }),
   },
-};
+  /** Reads its content elsewhere, and hands its Ship the responsibility named in its body. */
+  "fixture.prepared": {
+    routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: "background" }],
+    prepare: async () => prepared,
+    admit: (event, content: { text: string }) => ({
+      event: {
+        kind: "owner.notified", severity: "info", audience: "model",
+        payload: { noticeId: event.key, topic: "event.received", from: "Fixture", preview: content.text },
+      },
+      admission: WATCH_ADMISSION,
+      responsibilities: { ledgerRevision: 7, ids: [z.string().parse(event.body)] },
+    }),
+  },
+} satisfies EventRegistry;
 
 function noticed(key: string, subject = "fixture:background"): EventInput {
   return { type: "fixture.noticed", ownerUid: OWNER, subject, actor: { kind: "kernel" }, key };
@@ -45,13 +63,14 @@ function noticed(key: string, subject = "fixture:background"): EventInput {
 
 afterEach(() => {
   subjectWanted = true;
+  prepared = { text: "prepared" };
   vi.restoreAllMocks();
 });
 
 describe("event runtime", () => {
   it("delivers an event to the owner's current Ship with its declared admission", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
-      const { runtime, events, schedule } = fixture(storage);
+      const { host, runtime, events, schedule } = fixture(storage);
       const ensure = vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
       const deliver = acknowledge();
       const event = storage.transactionSync(() => runtime.append(noticed("one")));
@@ -68,6 +87,7 @@ describe("event runtime", () => {
       expect(events.delivery(event.seq, shipConsumer(OWNER))).toMatchObject({
         state: "delivered", runId: null, outcome: { pid: "proc:ship", queued: false },
       });
+      expect(host.responsibilityRuntime.reconcileResponsibilityWake).not.toHaveBeenCalled();
     });
   });
 
@@ -139,6 +159,24 @@ describe("event runtime", () => {
     });
   });
 
+  it("retries a delivery already attempted when its owner's account is removed, since its Process may have it", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, events, disabled } = fixture(storage);
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      const deliver = acknowledge();
+      const attempted = runtime.append(noticed("attempted"));
+      events.failed(attempted.seq, shipConsumer(OWNER), "Saved event response was lost", Date.now(), Date.now());
+      const fresh = runtime.append(noticed("fresh", "fixture:person"));
+      disabled.add(OWNER);
+      await runtime.onEvents({ id: "task:removed" });
+      expect(deliver).toHaveBeenCalledExactlyOnceWith("installation:test", "proc:ship", expect.objectContaining({
+        eventId: `${attempted.id}:personal:${OWNER}`,
+      }));
+      expect(events.delivery(attempted.seq, shipConsumer(OWNER))).toMatchObject({ state: "delivered" });
+      expect(events.delivery(fresh.seq, shipConsumer(OWNER))).toMatchObject({ state: "withdrawn", lastError: "the owner's account was removed" });
+    });
+  });
+
   it("reads withdrawal again after resolving the Ship", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, events } = fixture(storage);
@@ -151,6 +189,58 @@ describe("event runtime", () => {
       await runtime.onEvents({ id: "task:late" });
       expect(deliver).not.toHaveBeenCalled();
       expect(events.delivery(event.seq, shipConsumer(OWNER))).toMatchObject({ state: "withdrawn", lastError: "its subject no longer wants it" });
+    });
+  });
+
+  it("reads what a delivery needs before finding the Ship, and withdraws without one when it is gone", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, events } = fixture(storage);
+      prepared = { withdrawn: "the message is gone" };
+      const ensure = vi.spyOn(personalController, "ensurePersonalController");
+      const deliver = acknowledge();
+      const event = runtime.append({ ...noticed("gone"), type: "fixture.prepared" });
+      await runtime.onEvents({ id: "task:gone" });
+      expect(ensure).not.toHaveBeenCalled();
+      expect(deliver).not.toHaveBeenCalled();
+      expect(events.delivery(event.seq, shipConsumer(OWNER))).toMatchObject({ state: "withdrawn", lastError: "the message is gone" });
+    });
+  });
+
+  it("hands the Process what was prepared, and arms recovery for the responsibilities the delivery carries", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { host, runtime, events, responsibilities } = fixture(storage);
+      const work = responsibilities.create({ ownerUid: OWNER, title: "Reply to Remote", source: actor, actor,
+        assignee: { kind: "ship" }, state: "open", priority: "normal", observedByShip: false, announced: true, now: Date.now() }).record;
+      expect(responsibilities.nextWakeAt(OWNER, Date.now())).toBeNull();
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      const deliver = acknowledge();
+      const event = runtime.append({ ...noticed("carried"), type: "fixture.prepared", body: work.id });
+      await runtime.onEvents({ id: "task:carried" });
+      expect(deliver).toHaveBeenCalledWith("installation:test", "proc:ship", {
+        eventId: `${event.id}:personal:${OWNER}`,
+        event: expect.objectContaining({ payload: expect.objectContaining({ preview: "prepared" }) }),
+        admission: WATCH_ADMISSION,
+        responsibilities: { ledgerRevision: 7, ids: [work.id] },
+      });
+      expect(events.delivery(event.seq, shipConsumer(OWNER))).toMatchObject({ state: "delivered" });
+      expect(responsibilities.createReadyBatch(OWNER, Date.now())).toBeNull();
+      expect(responsibilities.nextWakeAt(OWNER, Date.now())).toBeGreaterThan(Date.now());
+      expect(host.responsibilityRuntime.reconcileResponsibilityWake).toHaveBeenCalledExactlyOnceWith(OWNER);
+    });
+  });
+
+  it("lists an owner's pending deliveries about one subject, and lets their producer withdraw one", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, events } = fixture(storage);
+      const first = runtime.append(noticed("first", "fixture:subject"));
+      runtime.append(noticed("other", "fixture:other"));
+      const second = runtime.append(noticed("second", "fixture:subject"));
+      const pending = runtime.pending("fixture.noticed", "fixture:subject");
+      expect(pending.map(({ event }) => event.key)).toEqual(["first", "second"]);
+      runtime.withdraw(pending[0]!, "the person took over");
+      expect(events.delivery(first.seq, shipConsumer(OWNER))).toMatchObject({ state: "withdrawn", lastError: "the person took over" });
+      expect(runtime.pending("fixture.noticed", "fixture:subject").map(({ event }) => event.seq)).toEqual([second.seq]);
+      expect(events.backlog(shipConsumer(OWNER))).toEqual({ queued: 2, oldestQueuedAt: expect.any(Number) });
     });
   });
 
@@ -224,9 +314,12 @@ function fixture(storage: DurableObjectStorage, registry: EventRegistry = REGIST
   const disabled = new Set<number>();
   const processes = new Map<string, { uid: number; ownerUid: number }>();
   const gate = vi.fn(async (): Promise<{ allowed: true } | { allowed: false; code: number; message: string }> => ({ allowed: true }));
+  const responsibilities = new ResponsibilityStore(storage);
   const host = {
     installationId: "installation:test",
     events,
+    responsibilities,
+    responsibilityRuntime: { reconcileResponsibilityWake: vi.fn(async (_uid: number) => {}) },
     auth: { isAccountDisabled: (uid: number) => disabled.has(uid) },
     procs: { get: (pid: string) => processes.get(pid) ?? null },
     onboarding: { managedWorkGate: gate },
@@ -236,7 +329,7 @@ function fixture(storage: DurableObjectStorage, registry: EventRegistry = REGIST
   };
   // SAFETY: EventRuntime reaches only these Kernel members.
   const runtime = new EventRuntime(host as EventRuntimeHost, registry);
-  return { host, runtime, events, schedule, disabled, processes, gate };
+  return { host, runtime, events, responsibilities, schedule, disabled, processes, gate };
 }
 
 function acknowledge() {

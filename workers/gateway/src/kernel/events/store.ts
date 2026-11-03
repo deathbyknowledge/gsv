@@ -29,6 +29,9 @@ export type EventInput = {
   body?: JsonValue;
 };
 
+/** How many deliveries wait for one consumer, and when the oldest of their events was appended. */
+export type EventBacklog = { queued: number; oldestQueuedAt: number | null };
+
 /** An appended event as the log holds it. */
 export type LoggedEvent = Omit<EventInput, "body"> & {
   seq: number;
@@ -130,6 +133,10 @@ export class EventStore {
     });
   }
 
+  transaction<T>(operation: () => T): T {
+    return this.storage.transactionSync(operation);
+  }
+
   event(seq: number): LoggedEvent | null {
     const row = this.sql.exec<EventRow>("SELECT * FROM events WHERE seq = ?", seq).toArray()[0];
     return row ? eventFromRow(row) : null;
@@ -173,6 +180,25 @@ export class EventStore {
       consumer, lane,
     ).toArray()[0];
     return row && row.next_attempt_at <= now ? pendingFromRow(row) : null;
+  }
+
+  /** Pending deliveries of one type about one subject, oldest first. */
+  pending(type: string, subject: string): PendingDelivery[] {
+    return this.sql.exec<PendingRow>(
+      `SELECT ${PENDING_COLUMNS} FROM deliveries d JOIN events e ON e.seq = d.seq
+       WHERE d.state = 'pending' AND e.type = ? AND e.subject = ?
+       ORDER BY d.seq, d.consumer`,
+      type, subject,
+    ).toArray().map(pendingFromRow);
+  }
+
+  backlog(consumer: string): EventBacklog {
+    const row = this.sql.exec<{ queued: number; oldest: number | null }>(
+      `SELECT COUNT(*) AS queued, MIN(e.created_at) AS oldest FROM deliveries d JOIN events e ON e.seq = d.seq
+       WHERE d.state = 'pending' AND d.consumer = ?`,
+      consumer,
+    ).one();
+    return { queued: row.queued, oldestQueuedAt: row.oldest };
   }
 
   /** When the next attempt falls due; a delivery behind its lane's head waits for the head. */

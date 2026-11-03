@@ -63,24 +63,9 @@ export type ProcessResponsibilityReadyRuntimeEvent = {
   responsibilityIds: string[];
 };
 
-/** One contact message for Ship, with its attachments as references to the contact's Ship. */
-export type ProcessContactMessageRuntimeEvent = {
-  type: "contact.message";
-  contactId: string;
-  contactGeneration: string;
-  conversationId: string;
-  messageId: string;
-  from: string;
-  text: string;
-  media?: ResourceBlock[];
-  responsibilityId: string;
-  ledgerRevision: number;
-};
-
 export type ProcessRuntimeEvent =
   | ProcessAdapterWorkReturnedRuntimeEvent
-  | ProcessResponsibilityReadyRuntimeEvent
-  | ProcessContactMessageRuntimeEvent;
+  | ProcessResponsibilityReadyRuntimeEvent;
 
 export type ProcessRuntimeEventDeliverArgs = {
   eventId: string;
@@ -104,8 +89,12 @@ export type ProcessEventAdmission = {
 /** Kernel-derived registered events; this call is never available to public peers. */
 export type ProcessEventDeliverArgs = {
   eventId: string;
-  event: Extract<ProcHistoryEvent, { kind: "target.connection" | "owner.notified" }>;
+  event: Extract<ProcHistoryEvent, { kind: "target.connection" | "owner.notified" | "contact.message" }>;
   admission: ProcessEventAdmission;
+  /** Responsibilities the event hands its run, which the run settles before it yields. */
+  responsibilities?: { ledgerRevision: number; ids: string[] };
+  /** Resources the event carries, retained as this Process's own media before admission. */
+  attachments?: ResourceBlock[];
 };
 
 export type ProcessEventDeliverResult = {

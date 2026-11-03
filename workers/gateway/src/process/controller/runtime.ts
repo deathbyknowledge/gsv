@@ -28,10 +28,9 @@ import {
   type ProcIpcDeliverResult, type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
   type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type ProcRunToolStartedSignal,
   type InteractionOrigin, type JsonObject,
-  type ProcHistoryEvent, type ProcHistoryEventPayload, type ProcHistoryMessageQuote, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
+  type ProcHistoryEvent, type ProcHistoryMessageQuote, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import { agentArchiveMediaPath } from "../../shared/process-media-path";
-import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../../shared/message-media-limits";
 import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive } from "../history/helpers";
 import { historyCursor, parseHistoryCursor } from "../history/cursor";
 import { storeIncomingProcessMedia, stringifyStoredProcessMedia, parseStoredProcessMedia, deleteProcessMedia } from "../media";
@@ -1649,41 +1648,6 @@ export class ProcessController {
           responsibilityIds: event.responsibilityIds,
         },
       });
-    } else if (event.type === "contact.message") {
-      const { media, attachmentErrors } = await this.retainContactAttachments(event.media ?? []);
-      let preparedMedia: string | undefined;
-      if (media.length > 0) {
-        try {
-          preparedMedia = await this.host.resources.prepareEventMedia(media) ?? undefined;
-        } catch (error) {
-          // Only enrichment failed: keep the retained attachments themselves.
-          preparedMedia = stringifyStoredProcessMedia(media) ?? undefined;
-          attachmentErrors.push(`attachments could not be prepared: ${errorMessageFromUnknown(error)}`);
-        }
-      }
-      const payload: ProcHistoryEventPayload<"contact.message"> = {
-        contactId: event.contactId,
-        conversationId: event.conversationId,
-        messageId: event.messageId,
-        from: event.from,
-        text: event.text,
-        responsibilityId: event.responsibilityId,
-      };
-      if (attachmentErrors.length > 0) payload.attachmentErrors = attachmentErrors;
-      const historyEvent: ProcHistoryEvent = { kind: "contact.message", payload, severity: "info", audience: "model" };
-      admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
-        runId,
-        event: historyEvent,
-        kind: event.type,
-        dedupeId: eventId,
-        provenance: JSON.stringify({ source: "kernel", eventId, eventType: event.type, contactId: event.contactId }),
-        responsibilityBatch: {
-          batchId: eventId,
-          ledgerRevision: event.ledgerRevision,
-          responsibilityIds: [event.responsibilityId],
-        },
-        media: preparedMedia,
-      });
     } else {
       const historyEvent: ProcHistoryEvent = {
         kind: "adapter.work.returned",
@@ -1705,30 +1669,6 @@ export class ProcessController {
       runId: admission.runId,
       queued: admission.queued,
     };
-  }
-
-  /** Contact attachments become this Process's own media, as messenger attachments do. */
-  private async retainContactAttachments(blocks: ResourceBlock[]): Promise<{
-    media: ProcMediaInput[];
-    attachmentErrors: string[];
-  }> {
-    const media: ProcMediaInput[] = [];
-    const attachmentErrors: string[] = [];
-    // The message's byte budget is checked against declared sizes before any bytes are fetched.
-    let remainingBytes = MAX_MESSAGE_MEDIA_TOTAL_BYTES;
-    for (const block of blocks) {
-      if (block.ref.size > remainingBytes) {
-        attachmentErrors.push(`${block.filename ?? "an attachment"} exceeds the message attachment byte limit`);
-        continue;
-      }
-      try {
-        media.push(...await this.host.resources.resolveIncomingMedia([block]));
-        remainingBytes -= block.ref.size;
-      } catch (error) {
-        attachmentErrors.push(errorMessageFromUnknown(error));
-      }
-    }
-    return { media, attachmentErrors };
   }
 
   async handleProcScheduleDeliver(

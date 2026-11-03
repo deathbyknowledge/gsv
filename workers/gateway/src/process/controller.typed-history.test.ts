@@ -4,7 +4,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../shared/message-media-limits";
 import type { Process } from "./do";
-import type { ProcessRuntimeEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
+import type { ProcessEventDeliverArgs, ProcessRuntimeEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
 import { evictDurableObject } from "cloudflare:test";
 import {
   initProcess, ROOT_IDENTITY, runInProcess,
@@ -131,22 +131,20 @@ describe("typed controller history producers", () => {
       const photo = contactResource("selfie.png", 10);
       // The second attachment no longer fits the message's byte budget and is never fetched.
       const oversized = contactResource("video.mp4", MAX_MESSAGE_MEDIA_TOTAL_BYTES);
-      await process.controller.handleProcessRuntimeEventDeliver({
-        eventId: "contact.message:msg:photo",
-        event: {
-          type: "contact.message", contactId: "contact:remote", contactGeneration: "1", conversationId: "conv:remote", messageId: "msg:photo",
-          from: "Xisca", text: "", media: [photo, oversized],
-          responsibilityId: "r12y:00000000-0000-4000-8000-000000000091", ledgerRevision: 3,
-        },
-      });
+      const delivery = contactMessage("evt_1:personal:0", "msg:photo", [photo, oversized]);
+      const first = await process.deliverEvent(delivery);
+      expect(await process.deliverEvent(delivery)).toEqual(first);
       expect(resolve).toHaveBeenCalledExactlyOnceWith([photo]);
       expect(prepare).toHaveBeenCalledExactlyOnceWith([retained]);
       expect(process.store.sql.exec<{ media_json: string | null }>("SELECT media_json FROM messages").toArray())
         .toEqual([{ media_json: prepared }]);
       expect(process.runs.active?.pendingMediaMessageId).toBeUndefined();
+      expect(process.runs.active?.responsibilityBatches).toEqual([{
+        batchId: delivery.eventId, ledgerRevision: 3, responsibilityIds: ["r12y:00000000-0000-4000-8000-000000000091"],
+      }]);
       expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: {
         kind: "contact.message",
-        payload: { attachmentErrors: ["video.mp4 exceeds the message attachment byte limit"] },
+        payload: { from: "Xisca", attachmentErrors: ["video.mp4 exceeds the message attachment byte limit"] },
         media: JSON.parse(prepared),
       } }]);
     });
@@ -159,19 +157,29 @@ describe("typed controller history producers", () => {
       const retained = { type: "audio" as const, mimeType: "audio/ogg", key: "home/root/.gsv/media/archived-media:voice", size: 10, filename: "voice.ogg" };
       vi.spyOn(process.resources, "resolveIncomingMedia").mockResolvedValue([retained]);
       vi.spyOn(process.resources, "prepareEventMedia").mockRejectedValue(new Error("transcription timed out"));
-      await process.controller.handleProcessRuntimeEventDeliver({
-        eventId: "contact.message:msg:voice",
-        event: {
-          type: "contact.message", contactId: "contact:remote", contactGeneration: "1", conversationId: "conv:remote", messageId: "msg:voice",
-          from: "Xisca", text: "", media: [contactResource("voice.ogg", 10)],
-          responsibilityId: "r12y:00000000-0000-4000-8000-000000000092", ledgerRevision: 3,
-        },
-      });
+      await process.deliverEvent(contactMessage("evt_2:personal:0", "msg:voice", [contactResource("voice.ogg", 10)]));
       const [row] = process.store.sql.exec<{ media_json: string | null }>("SELECT media_json FROM messages").toArray();
       expect(JSON.parse(row?.media_json ?? "[]")).toEqual([expect.objectContaining({ key: retained.key, filename: "voice.ogg" })]);
       expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: { kind: "contact.message", payload: {
         attachmentErrors: ["attachments could not be prepared: transcription timed out"],
       } } }]);
+    });
+  });
+
+  it("refuses attachments on an event that is not a contact message", async () => {
+    const stub = await initProcess("typed-event-attachments", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      const resolve = vi.spyOn(process.resources, "resolveIncomingMedia");
+      await expect(process.deliverEvent({
+        eventId: "evt_3:personal:0",
+        event: { kind: "owner.notified", severity: "info", audience: "model",
+          payload: { noticeId: "n", topic: "event.received", from: "Backups", preview: "x" } },
+        admission: { idle: "record", busy: "join" },
+        attachments: [contactResource("selfie.png", 10)],
+      })).rejects.toThrow("Process event is not registered for this delivery path");
+      expect(resolve).not.toHaveBeenCalled();
+      expect(process.store.messages.messageCount()).toBe(0);
     });
   });
 
@@ -449,6 +457,20 @@ describe("typed controller history producers", () => {
     });
   });
 });
+
+function contactMessage(eventId: string, messageId: string, attachments: ResourceBlock[]): ProcessEventDeliverArgs {
+  const responsibilityId = "r12y:00000000-0000-4000-8000-000000000091";
+  return {
+    eventId,
+    event: {
+      kind: "contact.message", severity: "info", audience: "model",
+      payload: { contactId: "contact:remote", conversationId: "conv:remote", messageId, from: "Xisca", text: "", responsibilityId },
+    },
+    admission: { idle: "start", busy: "join" },
+    responsibilities: { ledgerRevision: 3, ids: [responsibilityId] },
+    attachments,
+  };
+}
 
 function contactResource(filename: string, size: number): ResourceBlock {
   return {

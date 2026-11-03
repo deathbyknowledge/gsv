@@ -1,7 +1,8 @@
 # Events: one log, one runner
 
 Status: reviewed 2026-11-03; the decisions are folded in and listed under
-Decided. Branch `refactor/event-log`, stacked on #642. No code yet.
+Decided. Typed internal calls are in #645 and the substrate in #646, where
+producers convert one commit at a time. Both are open drafts.
 
 ## Problem
 
@@ -86,17 +87,22 @@ type KernelEvent = {
 };
 ```
 
-Each type's registry entry sits in `workers/gateway/src/kernel/events/registry.ts`.
-The history payload schemas stay in `@humansandmachines/gsv/protocol`.
+`workers/gateway/src/kernel/events/registry.ts` lists the types. Each
+definition sits beside the producer that appends it, and the history payload
+schemas stay in `@humansandmachines/gsv/protocol`.
 
 ```ts
-"contact.message": {
+export const contactMessageEvent: EventDefinition<ContactMessageContent> = {
   // Read once, at append: each consumer and the lane that orders it there.
   routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: "background" }],
-  // What the Process records, and whether it starts or joins a run (see Busy Ship).
-  process: (event) => ({ event: contactMessageEvent(event), admission: { idle: "start", busy: "join" } }),
-  wanted: contactStillAllowed,  // withdrawn once the contact is blocked or removed
-},
+  // Read before each attempt and again after its last await; a reason withdraws it.
+  withdrawal: (event, ctx) => …,  // a block, a changed relationship, work Ship no longer has
+  // Reads what the delivery needs from the store that holds it, before the Ship is found.
+  prepare: async (event, ctx) => …,  // the message, from its Conversation
+  // What the Process records, whether it starts or joins a run (see Busy Ship),
+  // and the responsibilities it hands that run. It may rebind state: the call follows at once.
+  admit: (event, message, ctx) => ({ event, admission: { idle: "start", busy: "join" }, responsibilities, attachments }),
+};
 ```
 
 Tables, as v091 creates them:
@@ -163,26 +169,29 @@ private async pass(taskId: string): Promise<void> {
   `person` carries chat and messengers. `background` carries everything else,
   in per-owner order as `ship_events` keeps it today. A person's message never
   waits behind background events. Each messenger chat, contact and target
-  process is one lane. A redelivery after a failed run leaves its lane and
-  goes out when due, so it never holds a lane and nothing waits for it.
+  process is one lane.
 - **At least once.** A delivery is done when its consumer answers. A lost
   answer redelivers, so the Process still dedupes by the delivery's id,
   `evt_<seq>:<consumer>`, which is now stable. A replacement Ship never receives an event the Kernel already marked
   delivered. Only a delivery in flight during the replacement can reach the
   new pid, and that pid has no earlier copy.
 - **Withdrawal.** Before each attempt, the runner reads the current state: a
-  disabled account or a gone pid for every delivery, then the type's `wanted`:
-  a blocked contact, a read notice, a deleted schedule. A withdrawn delivery
-  ends as `withdrawn` without a Process call. This one rule replaces six ways
-  of handling a killed pid. As `ship_events` does today, the runner checks
+  gone pid for every delivery, a removed account for one not yet attempted,
+  then the type's `withdrawal`: a blocked contact, a read notice, a deleted
+  schedule. A withdrawn delivery ends as `withdrawn` without a Process call.
+  This one rule replaces six ways of handling a killed pid. The runner checks
   again after its last await, such as finding or starting the Ship, and sends
-  synchronously after that check.
-- **Failed runs.** Some types declare that their subject needs action:
-  `responsibility.due`, `contact.message` and `mail.received`. If the run
-  that received one fails, or its pid dies before the run starts, the
-  delivery returns to `pending` outside its lane and is retried at 5 m,
-  15 m, 1 h and 6 h while the subject still needs action. The ledger's recovery wakes move
-  here, as agreed on 2026-10-20.
+  synchronously after that check. A delivery already attempted may have
+  reached its Process, so a removed account doesn't withdraw it: it retries
+  until it ends, and the Process dedupes it. A producer can also withdraw its
+  own pending deliveries: taking a contact back from Ship withdraws that
+  contact's messages still queued for it.
+- **Failed runs.** A delivery can hand its run responsibilities, as a contact
+  message hands Ship the work it belongs to. The runner marks them delivered
+  in the transaction that ends the delivery, which arms the ledger's recovery
+  wakes: 5 m, 15 m, 1 h, then every 6 h while the work still needs action.
+  They cover a run that fails or never starts, so nothing in the log
+  redelivers.
 - **Retry.** The delay is `min(cap, base × 2^(attempt − 1))`. Each consumer
   declares its base, cap, attempt limit and terminal action. Ship and process
   deliveries retry from 2 s, doubling to 256 s, without a limit. The runner
@@ -247,8 +256,8 @@ state machine.
 
 | Producer | Event | Subject | Key | Body | Consumer · busy | Deleted once converted |
 |---|---|---|---|---|---|---|
-| Contact message | `contact.received`; its projection into the Conversation appends `contact.message` | `contact:<id>` | federation delivery id | ref: `federation_inbox` row | inbox projection, then Ship · join | `ship_events`, `onShipEvents`, `ship-event-runtime.ts`, `onFederationInbox`, the 5-minute redelivery |
-| Owner notice | `notice.raised`, then `notice.sent` | `notice:<id>` | notice id | inline | notices, then Ship · record or join | `onOwnerNotices`; the delivery columns of `owner_notices` |
+| Contact message | `contact.message`, appended by the inbox's projection beside the responsibility it owes | `contact:<id>` | the Conversation message id, derived from contact, generation and delivery id | ref: Conversation message | Ship · join | `ship_events`, `onShipEvents`, `ship-event-runtime.ts`, the contact branch of `proc.runtime.event.deliver`; the inbox keeps its own intake and `onFederationInbox` |
+| Owner notice | `owner.notified`, appended when a round is sent or left to a client | `notice:<round id>` | round id | inline | Ship · record or join | Ship's half of `ship_events`; `onOwnerNotices` still sends to the messenger |
 | Responsibility due | `responsibility.due` | `r12y:<id>` | id + due revision | inline | Ship · join | `responsibility_wake_batches`, `wake_retry_at` and `wake_retry_count`, `onResponsibilityWake`, `r12y.ready`, change wakes |
 | Inbound mail | `mail.received` | `mail:<id>` | message id | ref: `mail_messages` row | Ship · join; notices when a rule says | the wake through r12y and the parallel notice |
 | Hook, `event.emit` | `source.event` | `source:<id>` | source event id | inline | Ship · join or record; notices when the source says | `event_log`, `onEventUpkeep`, the wake through r12y, the double delivery |
@@ -285,26 +294,27 @@ state machine, that consumer stays as it is.
 | Task | Retry today | Becomes |
 |---|---|---|
 | `onShipEvents` | 2 s doubling to 256 s, no limit | runner |
-| `onOwnerNotices` | the same formula | runner |
-| `onResponsibilityWake` | the same formula, plus recovery wakes at 5 m, 15 m, 1 h and 6 h after a failed run | timer that appends `responsibility.due`; recovery moves to deliveries |
+| `onOwnerNotices` | the same formula | stays: it sends to the person's messenger |
+| `onResponsibilityWake` | the same formula, plus recovery wakes at 5 m, 15 m, 1 h, then every 6 h, armed at delivery | timer that appends `responsibility.due`; recovery wakes stay in the ledger |
 | `onScheduleDue` | 5 s→5 min, 10 attempts for one-shot | timer that appends `schedule.fired` |
 | `onIpcCallTimeout` | default task retry: 3 attempts, in-alarm | timer that appends `ipc.timed_out` |
 | `onIpcCallDelivery` | re-queue every 5 s, no limit, plus in-alarm 1 s→30 s ×10 | runner |
 | `onProcessDeliveryNotice` | in-alarm 1 s→30 s ×10 | runner |
-| `onAdapterRouteDelivery` | ×10 1 s→30 s, plus in-alarm ×10 | runner |
-| `onFederationDelivery` | ×12 2 s→1 h | runner |
-| `onFederationInbox` | fixed 30 s | runner |
-| `onManagedOutboundEnqueue` | 5 s→1 h | runner |
+| `onAdapterRouteDelivery` | ×10 1 s→30 s, plus in-alarm ×10 | stays: the adapter route outbox |
+| `onFederationDelivery` | ×12 2 s→1 h | stays: the federation outbox |
+| `onFederationInbox` | fixed 30 s | stays: the inbox's own intake |
+| `onManagedOutboundEnqueue` | 5 s→1 h | stays: the outbound mail outbox |
 | `onMemoryReview` | fixed 60 s successor | runner |
-| `onEventUpkeep` | none | runner retention |
+| `onEventUpkeep` | none | timer for silent sources; its retention moves to the log |
 | `onProcessApprovalNotice` | none: it already returns at once | delete |
 | `onRouteExpired` | none | stays: request route expiry |
 | `onLedgerRotate` | none | stays: syscall ledger rotation |
 | `onBrowserHandoffs` | none | stays: handoff reconciliation |
 | `onApproachMaintenance` | gate recheck 60 s | stays: contact request upkeep |
 
-That leaves 8 task kinds instead of 18: the runner, 3 timers and 4
-housekeeping tasks. Timers append events; they never deliver.
+That leaves 14 task kinds instead of 18: the runner, 4 timers, 4 outboxes,
+the federation inbox and 4 housekeeping tasks. Timers append events; they
+never deliver.
 
 ## Frames and RPC
 
@@ -332,7 +342,7 @@ They become typed Durable Object methods, or go away with their producer:
 | `proc.resource.write` | Kernel → Process | a typed method; the bytes stay a stream |
 | `proc.run.attach`, `proc.run.staged` | gsv shell `message` → Process | typed methods |
 | `proc.message.commit` | Process → Kernel | a typed method |
-| `proc.runtime.event.deliver` | Kernel → Process | deleted with contact messages |
+| `proc.runtime.event.deliver` | Kernel → Process | loses contact messages to `deliverEvent`; deleted with responsibility wakes and work returns |
 | `proc.schedule.deliver` | Kernel → Process | deleted with schedules |
 | `proc.adapter.deliver` | Kernel → Process | deleted with messengers |
 
@@ -371,8 +381,8 @@ module receives.
 2. Substrate: `events`, `deliveries`, the registry, the runner, and
    `deliverEvent` with declared admission. No producer is converted.
    Deletes `onProcessApprovalNotice`.
-3. Contact messages and owner notices, and redelivery after a failed run.
-   Deletes `ship_events`, `onShipEvents`, `onOwnerNotices` and
+3. Contact messages and Ship's record of owner notices. Deletes
+   `ship_events`, `onShipEvents` and the contact branch of
    `proc.runtime.event.deliver`.
 4. Responsibility wakes. r12y goes back to being state. Deletes wake batches
    and `r12y.ready`.
@@ -381,7 +391,8 @@ module receives.
 7. IPC.
 8. Chat and messengers: inline, on the person lane. Deletes
    `proc.adapter.deliver`.
-9. Outbound: adapter routes, the federation outbox and outbound mail.
+9. Outbound, only where moving it makes its owner smaller: adapter routes,
+   the federation outbox and outbound mail.
 
 ## Measures
 
@@ -404,7 +415,7 @@ Reviewed with the maintainer on 2026-11-03:
    per consumer would block unrelated subjects behind one failing delivery,
    and per-delivery retry state needs somewhere to live.
 2. **Two Ship lanes.** A person's message never waits behind background
-   events. A redelivery after a failed run leaves its lane.
+   events.
 3. **`event_log` folds in.** Two tables named `event_log` and `events` would
    confuse more than the shorter source listing costs.
 4. **No outbound exception during a restriction.** The gate pauses outbound
@@ -416,5 +427,10 @@ Reviewed with the maintainer on 2026-11-03:
 7. **Settled while building the substrate.** Event ids are `evt_<seq>`, not
    a hash of type and key: the unique type and key already refuse a
    duplicate, and a seq is never reused, even after its key expires. The R2
-   archive comes with the list syscall that reads it. Redelivery after a
-   failed run comes with contact messages, its first event type.
+   archive comes with the list syscall that reads it.
+8. **Settled while converting contact messages.** Recovery after a failed run
+   stays with the ledger: a delivery marks the responsibilities it hands its
+   run, which arms the recovery wakes. The log has two consumers, the Ship and
+   a process. Adapter routes, the federation outbox, outbound mail and owner
+   notices to the messenger keep their own outboxes; one moves only if moving
+   it makes its owner smaller.
