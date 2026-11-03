@@ -490,6 +490,21 @@ describe("onboarding funnel events", () => {
     assert.equal(record("accounts", "installation.attributed", { origin: "website", placement: "hero", visitorId: "abc" }).success, false);
   });
 
+  it("reports an invited signup as a class only, never the inviting Ship", () => {
+    assert.equal(record("accounts", "installation.attributed", { origin: "invite" }).success, true);
+    assert.equal(record("accounts", "installation.attributed", { origin: "invite", placement: "hero" }).success, true);
+    assert.equal(record("accounts", "installation.attributed", { origin: "invite", inviter: "alice.ship.test" }).success, false);
+    assert.equal(record("accounts", "installation.attributed", { origin: "invite", inviterInstallationId: "inst_a" }).success, false);
+  });
+
+  it("counts contact invitations for the issuing Ship with no content", () => {
+    assert.equal(record("gateway", "contact.invite.created", {}).success, true);
+    assert.equal(record("gateway", "contact.invite.accepted", {}).success, true);
+    assert.equal(record("accounts", "contact.invite.created", {}).success, false);
+    assert.equal(record("gateway", "contact.invite.created", { handle: "bob.ship.test" }).success, false);
+    assert.equal(record("gateway", "contact.invite.accepted", { remoteDid: "did:plc:x" }).success, false);
+  });
+
   it("classifies the website's link slugs into the allowlist and nothing else", () => {
     assert.deepEqual(signupAttributionFromSlugs("hero-heading"), { placement: "hero" });
     assert.deepEqual(signupAttributionFromSlugs("early-access"), { placement: "final-call" });
