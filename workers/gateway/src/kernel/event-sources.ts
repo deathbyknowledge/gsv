@@ -26,7 +26,6 @@ import { resolveCallerOwnerUid } from "./context";
 import { MAX_WEBHOOK_BYTES, newWebhookSecret, verifyWebhook, webhookEvent } from "./event-webhook";
 import { requireContactCaller } from "./federation/authority";
 import type { OwnerNoticeStore } from "./owner-notice-store";
-import { authorizeProcessTool } from "../shared/utils";
 import { authorizeNestedOperation, nestedToolOwner } from "./tool-approval";
 
 const MAX_TITLE = 200;
@@ -401,9 +400,9 @@ function requireShipChoice(webhook: EventSourceWebhook, ship: ShipOutcome | unde
 }
 
 /** Someone else's words can start Ship working only once its owner has said so. */
-async function askBeforeShipActs(ctx: KernelContext, changedBy: "person" | "ship", name: string, authorize: typeof authorizeProcessTool): Promise<void> {
+async function askBeforeShipActs(ctx: KernelContext, changedBy: "person" | "ship", name: string): Promise<void> {
   if (changedBy !== "ship") return;
-  await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "event.source.update", { name, ship: "wake" }, authorize);
+  await authorizeNestedOperation({ ...ctx, toolOwner: nestedToolOwner(ctx) }, "event.source.update", { name, ship: "wake" });
 }
 
 function webhookUrl(ctx: KernelContext, row: SourceRow, token: string | null): string | undefined {
@@ -416,7 +415,7 @@ export function handleEventSourceList(ctx: KernelContext): EventSourceListResult
   return { sources: ctx.eventSources.list(changer(ctx).ownerUid) };
 }
 
-export async function handleEventSourceAdd(args: EventSourceAddArgs, ctx: KernelContext, authorize: typeof authorizeProcessTool = authorizeProcessTool): Promise<EventSourceSecretResult> {
+export async function handleEventSourceAdd(args: EventSourceAddArgs, ctx: KernelContext): Promise<EventSourceSecretResult> {
   const input = parseArgs(addSchema, args, "event.source.add");
   const { ownerUid, changedBy } = changer(ctx);
   const webhook = input.webhook ?? "none";
@@ -426,7 +425,7 @@ export async function handleEventSourceAdd(args: EventSourceAddArgs, ctx: Kernel
   if (senderSecret && webhook !== "standard" && webhook !== "hmac") throw new Error(`event.source.add: a ${webhook} source has no signing secret`);
   if (input.senderSecret === false && input.secret !== undefined) throw new Error("event.source.add: a secret given here is the sender's");
   requireShipChoice(webhook, ship, "event.source.add");
-  if (ship === "wake") await askBeforeShipActs(ctx, changedBy, input.name, authorize);
+  if (ship === "wake") await askBeforeShipActs(ctx, changedBy, input.name);
   const secret = senderSecret ? input.secret ?? null : newWebhookSecret(webhook);
   const now = Date.now();
   const row = ctx.eventSources.add(ownerUid, {
@@ -452,12 +451,12 @@ export async function handleEventSourceAdd(args: EventSourceAddArgs, ctx: Kernel
   };
 }
 
-export async function handleEventSourceUpdate(args: EventSourceUpdateArgs, ctx: KernelContext, authorize: typeof authorizeProcessTool = authorizeProcessTool): Promise<EventSourceUpdateResult> {
+export async function handleEventSourceUpdate(args: EventSourceUpdateArgs, ctx: KernelContext): Promise<EventSourceUpdateResult> {
   const input = parseArgs(updateSchema, args, "event.source.update");
   const { ownerUid, changedBy } = changer(ctx);
   const previous = requireSource(ctx, ownerUid, input.name, "event.source.update");
   requireShipChoice(previous.webhook, input.ship, "event.source.update");
-  if (input.ship === "wake" && previous.ship !== "wake") await askBeforeShipActs(ctx, changedBy, input.name, authorize);
+  if (input.ship === "wake" && previous.ship !== "wake") await askBeforeShipActs(ctx, changedBy, input.name);
   // The owner may have changed it while that approval waited.
   const current = requireSource(ctx, ownerUid, input.name, "event.source.update");
   if (current.source_id !== previous.source_id) throw new Error(`event.source.update: "${input.name}" changed while waiting for approval`);

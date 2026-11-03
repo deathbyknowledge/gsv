@@ -19,10 +19,9 @@ import type {
   BinaryBody,
 } from "@humansandmachines/gsv/protocol";
 import { processResult } from "../protocol/process-frames";
-import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { raceWithAbort } from "../shared/abort";
-import { getConversationById, retainProcessResources, sendFrameToProcess } from "../shared/utils";
+import { cancelProcessCall, getConversationById, retainProcessResources, sendFrameToProcess } from "../shared/utils";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
@@ -248,8 +247,8 @@ export async function retainConversationResources(
 ): Promise<ResourceBlock[] | undefined> {
   if (!resources?.length) return undefined;
   ctx.requestSignal?.throwIfAborted();
-  const requestId = crypto.randomUUID();
-  const pending = retainProcessResources(ctx.installationId, pid, requestId, { batchId, resources });
+  const cancelId = crypto.randomUUID();
+  const pending = retainProcessResources(ctx.installationId, pid, cancelId, { batchId, resources });
   let cancellation: Promise<unknown> | undefined;
   let result: Awaited<typeof pending>;
   try {
@@ -259,11 +258,7 @@ export async function retainConversationResources(
         const reason = ctx.requestSignal?.reason instanceof Error
           ? ctx.requestSignal.reason.message
           : "Request cancelled";
-        cancellation = sendFrameToProcess(ctx.installationId, pid, {
-          type: "sig",
-          signal: REQUEST_CANCEL_SIGNAL,
-          payload: { id: requestId, reason },
-        });
+        cancellation = cancelProcessCall(ctx.installationId, pid, cancelId, reason);
       },
     });
   } catch (error) {
