@@ -27,8 +27,6 @@ import type {
   ProcHistoryExportResult,
   ProcIpcCallArgs,
   ProcIpcCallResult,
-  ProcIpcDeliverArgs,
-  ProcIpcDeliverResult,
   ProcIpcSendArgs,
   ProcIpcSendResult,
   ProcSpawnArgs,
@@ -45,6 +43,9 @@ import { canOwnerDelegateRunAs } from "./account-access";
 import { invalidatePersonalControllerReadiness } from "./personal-controller";
 import { notifyProcessChanged, unregisterProcess } from "./process-notifications";
 import { resolveSelectedMessageTarget } from "./targets";
+import { deliveryId, processConsumer } from "./events/consumers";
+import { eventBodyBytes, MAX_EVENT_BODY_BYTES, type EventInput } from "./events/store";
+import { ipcForward, type IpcForward } from "./ipc-events";
 import { nestedToolOwner } from "./tool-approval";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
@@ -588,39 +589,20 @@ export async function handleProcIpcSend(
 ): Promise<ProcIpcSendResult> {
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.send");
   if (!resolved.ok) return resolved;
-  const runId = crypto.randomUUID();
-
-  const response = await sendFrameToProcess(ctx.installationId, resolved.args.pid, {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.ipc.deliver",
-    args: {
-      runId,
-      sourcePid: resolved.sourcePid,
-      source: requirePrincipal(ctx).account,
-      message: resolved.args.message,
-      metadata: resolved.args.metadata,
-      origin: processInteractionOrigin(resolved.sourcePid, resolved.source.uid),
-      sentAt: Date.now(),
-    },
-  });
-
-  if (response && response.type === "res") {
-    if (!response.ok) {
-      return { ok: false, error: response.error.message };
-    }
-    // SAFETY: this response corresponds to the proc.ipc.deliver request above.
-    const delivered = response.data as ProcIpcDeliverResult | undefined;
-    if (!delivered) {
-      return { ok: false, error: "proc.ipc.deliver returned no data" };
-    }
-    if (delivered.ok && delivered.runId !== runId) {
-      return { ok: false, error: "proc.ipc.deliver returned an unexpected runId" };
-    }
-    return delivered;
-  }
-
-  return { ok: false, error: "proc.ipc.deliver did not return a response" };
+  const input = ipcForwardEvent(resolved, ctx);
+  if (eventBodyBytes(input.body ?? null) > MAX_EVENT_BODY_BYTES) return ipcForwardTooLarge("proc.ipc.send");
+  const consumer = processConsumer(resolved.args.pid);
+  const event = ctx.events.append(input);
+  const sent = await ctx.events.deliverNow(event, consumer);
+  if (sent.state === "withdrawn") return { ok: false, error: sent.reason };
+  return {
+    ok: true,
+    status: "started",
+    pid: resolved.args.pid,
+    sourcePid: resolved.sourcePid,
+    runId: deliveryId(event.id, consumer),
+    ...(sent.state === "pending" || sent.queued ? { queued: true } : undefined),
+  };
 }
 
 export async function handleProcIpcCall(
@@ -637,22 +619,13 @@ export async function handleProcIpcCall(
   const timeoutMs = resolveIpcCallTimeoutMs(args.timeoutMs);
   const deadlineAt = Date.now() + timeoutMs;
   const callId = crypto.randomUUID();
-  const runId = crypto.randomUUID();
+  const supervised = options.superviseAfterTimeout === true;
+  const input = ipcForwardEvent(resolved, ctx, { callId, deadlineAt, ...(supervised ? { supervised } : undefined) });
+  if (eventBodyBytes(input.body ?? null) > MAX_EVENT_BODY_BYTES) return ipcForwardTooLarge("proc.ipc.call");
 
-  ctx.ipcCalls.create({
-    callId,
-    uid: resolved.source.ownerUid,
-    sourcePid: resolved.sourcePid,
-    sourceRunId: ctx.processRunId ?? null,
-    targetPid: resolved.args.pid,
-    targetRunId: runId,
-    deadlineAt,
-    supervised: options.superviseAfterTimeout === true,
-    responsibilityId: options.responsibilityId,
-  });
-
+  // The timer goes first, so every call the log holds has its timeout.
   try {
-    if (options.superviseAfterTimeout) {
+    if (supervised) {
       await ctx.scheduleIpcCallTimeout(callId, deadlineAt, {
         mode: "supervise",
         intervalMs: timeoutMs,
@@ -663,90 +636,74 @@ export async function handleProcIpcCall(
       await ctx.scheduleIpcCallTimeout(callId, deadlineAt);
     }
   } catch (error) {
-    ctx.ipcCalls.remove(callId);
     return {
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     };
   }
 
-  const deliverCall: NonNullable<ProcIpcDeliverArgs["call"]> = {
-    callId,
-    deadlineAt,
-  };
-  if (options.superviseAfterTimeout) deliverCall.supervised = true;
-
-  let response: Awaited<ReturnType<typeof sendFrameToProcess>>;
-  try {
-    response = await sendFrameToProcess(ctx.installationId, resolved.args.pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.ipc.deliver",
-      args: {
-        runId,
-        sourcePid: resolved.sourcePid,
-        source: requirePrincipal(ctx).account,
-        message: resolved.args.message,
-        metadata: resolved.args.metadata,
-        origin: processInteractionOrigin(resolved.sourcePid, resolved.source.uid),
-        sentAt: Date.now(),
-        call: deliverCall,
-      },
+  const targetPid = resolved.args.pid;
+  const consumer = processConsumer(targetPid);
+  const event = ctx.events.transaction(() => {
+    const appended = ctx.events.append(input);
+    // The target runs the call under its delivery's id, so the run's end finds this row.
+    ctx.ipcCalls.create({
+      callId,
+      uid: resolved.source.ownerUid,
+      sourcePid: resolved.sourcePid,
+      sourceRunId: ctx.processRunId ?? null,
+      targetPid,
+      targetRunId: deliveryId(appended.id, consumer),
+      deadlineAt,
+      supervised,
+      responsibilityId: options.responsibilityId,
     });
-  } catch (error) {
-    ctx.ipcCalls.remove(callId);
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-
-  if (!response || response.type !== "res") {
-    ctx.ipcCalls.remove(callId);
-    return { ok: false, error: "proc.ipc.deliver did not return a response" };
-  }
-  if (!response.ok) {
-    ctx.ipcCalls.remove(callId);
-    return { ok: false, error: response.error.message };
-  }
-
-  // SAFETY: this response corresponds to the proc.ipc.deliver request above.
-  const delivered = response.data as ProcIpcDeliverResult | undefined;
-  if (!delivered) {
-    ctx.ipcCalls.remove(callId);
-    return { ok: false, error: "proc.ipc.deliver returned no data" };
-  }
-  if (!delivered.ok) {
-    ctx.ipcCalls.remove(callId);
-    return delivered;
-  }
-  if (delivered.runId !== runId) {
-    ctx.ipcCalls.remove(callId);
-    return { ok: false, error: "proc.ipc.deliver returned an unexpected runId" };
-  }
-
+    return appended;
+  });
+  const sent = await ctx.events.deliverNow(event, consumer);
   const call = ctx.ipcCalls.get(callId);
-  if (
-    call?.status === "timed_out"
-    || (!options.superviseAfterTimeout && Date.now() >= deadlineAt)
-  ) {
+  if (sent.state === "withdrawn") {
+    // Its target never took it, so the caller hears here and nowhere else; a call that timed out first says so.
+    ctx.ipcCalls.remove(callId);
+    return { ok: false, error: call?.status === "timed_out" ? call.error ?? "IPC call timed out" : sent.reason };
+  }
+  if (call?.status === "timed_out" || (!supervised && Date.now() >= deadlineAt)) {
     return {
       ok: false,
       error: call?.error ?? "IPC call timed out",
     };
   }
-
-  const result: Extract<ProcIpcCallResult, { ok: true }> = {
+  return {
     ok: true,
     status: "started",
     callId,
-    pid: delivered.pid,
+    pid: targetPid,
     sourcePid: resolved.sourcePid,
-    runId,
+    runId: deliveryId(event.id, consumer),
     deadlineAt,
+    ...(sent.state === "pending" || sent.queued ? { queued: true } : undefined),
   };
-  if (delivered.queued) result.queued = true;
-  return result;
+}
+
+/** A message or call as the log keeps it until its target takes it. */
+function ipcForwardEvent(
+  resolved: Extract<ResolvedSameOwnerIpc, { ok: true }>,
+  ctx: KernelContext,
+  call?: IpcForward["call"],
+): EventInput {
+  return ipcForward(resolved.source.ownerUid, {
+    targetPid: resolved.args.pid,
+    sourcePid: resolved.sourcePid,
+    source: requirePrincipal(ctx).account,
+    message: resolved.args.message,
+    ...(resolved.args.metadata === undefined ? undefined : { metadata: resolved.args.metadata }),
+    ...(call === undefined ? undefined : { call }),
+  });
+}
+
+/** The log holds 64 KiB of an event inline; a bigger message travels as a file. */
+function ipcForwardTooLarge(syscall: "proc.ipc.send" | "proc.ipc.call"): Extract<ProcIpcSendResult, { ok: false }> {
+  return { ok: false, error: `${syscall} message and metadata exceed 64 KiB; write the content to a file and send its path` };
 }
 
 /**

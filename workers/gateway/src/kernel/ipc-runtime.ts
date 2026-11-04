@@ -10,11 +10,12 @@ import {
   type IpcCallRecord,
 } from "./ipc-calls";
 import {
-  sendFrameToProcess,
-} from "../shared/utils";
-import {
   MANAGED_LIFECYCLE_RECHECK_MS,
 } from "../installation/lifecycle";
+import type { EventActor } from "./events/store";
+import {
+  IPC_OVERDUE, IPC_REPLY, IPC_TIMEOUT, ipcAnswer, ipcCheckIn, ipcSubject,
+} from "./ipc-events";
 import type { Kernel } from "./do";
 import {
   ipcCallTimeoutPayloadSchema,
@@ -42,23 +43,6 @@ type IpcCompletionResponse = {
   usage: JsonValue;
   media?: MessageAttachment[];
 };
-
-
-type IpcDeliverySignalPayload = {
-  callId: string;
-  sourcePid: string;
-  sourceRunId?: string;
-  targetPid: string;
-  runId: string;
-  deadlineAt: number;
-  createdAt: number;
-  status: IpcCallRecord["status"];
-  nextCheckAt?: number;
-  checkInCount?: number;
-  response?: IpcCallRecord["response"];
-  error?: string;
-};
-
 
 
 export class IpcRuntime {
@@ -92,11 +76,7 @@ async scheduleIpcCallTimeoutTask(
   }
 
 failIpcCallsByTarget(uid: number, targetPid: string, error: string): void {
-    for (const callId of this.host.ipcCalls.failByTargetPid({ uid, targetPid, error })) {
-      const call = this.host.ipcCalls.get(callId);
-      if (call) this.returnDelegatedResponsibility(call);
-      this.queueIpcCallDelivery(callId);
-    }
+    this.answer(() => this.host.ipcCalls.failByTargetPid({ uid, targetPid, error }), IPC_REPLY, { kind: "kernel" });
   }
 
 async onIpcCallTimeout(
@@ -114,11 +94,26 @@ async onIpcCallTimeout(
       await this.continueSupervisedIpcCall(timeout, call, task);
       return;
     }
-    const timedOut = this.host.ipcCalls.timeout(callId);
-    if (!timedOut) return;
-    const timedOutCall = this.host.ipcCalls.get(callId);
-    if (timedOutCall) this.returnDelegatedResponsibility(timedOutCall);
-    this.queueIpcCallDelivery(callId);
+    this.answer(() => this.host.ipcCalls.timeout(callId) ? [callId] : [], IPC_TIMEOUT, { kind: "kernel" });
+  }
+
+  /**
+   * Ends calls and appends each one's answer for its caller in one transaction; the log
+   * reads the answer from the call's row when it delivers. The ledger then takes back
+   * delegated work.
+   */
+  private answer(end: () => string[], type: typeof IPC_REPLY | typeof IPC_TIMEOUT, actor: EventActor): void {
+    const ended = this.host.events.transaction(() => end().flatMap((callId) => {
+      const call = this.host.ipcCalls.get(callId);
+      if (!call) return [];
+      this.host.eventRuntime.append(ipcAnswer(type, call, actor));
+      return [call];
+    }));
+    if (ended.length === 0) return;
+    for (const call of ended) this.returnDelegatedResponsibility(call);
+    this.host.ctx.waitUntil(this.host.eventRuntime.kick().catch((error) => {
+      console.warn("[Kernel] Failed to arm IPC answer delivery:", error);
+    }));
   }
 
 async continueSupervisedIpcCall(
@@ -161,27 +156,20 @@ async continueSupervisedIpcCall(
     );
     const nextCheckAt = successor.time * 1_000;
     const checkedAt = nextCheckAt - intervalMs;
-    const renewed = this.host.ipcCalls.renewDeadline(call.callId, nextCheckAt);
+    const renewed = this.host.events.transaction(() => {
+      const record = this.host.ipcCalls.renewDeadline(call.callId, nextCheckAt);
+      if (!record) return null;
+      // The caller hears the latest check-in, not a backlog of them.
+      for (const older of this.host.eventRuntime.pending(IPC_OVERDUE, ipcSubject(record.callId))) {
+        this.host.eventRuntime.withdraw(older, "a newer check-in replaced it");
+      }
+      this.host.eventRuntime.append(ipcCheckIn(record, { checkedAt, nextCheckAt, checkInCount }));
+      return record;
+    });
     if (!renewed) return;
 
     this.recordDelegationCheckIn(renewed, checkedAt, nextCheckAt, checkInCount);
-    const payload: IpcDeliverySignalPayload = {
-      callId: renewed.callId,
-      sourcePid: renewed.sourcePid,
-      targetPid: renewed.targetPid,
-      runId: renewed.targetRunId,
-      deadlineAt: checkedAt,
-      nextCheckAt,
-      checkInCount,
-      createdAt: renewed.createdAt,
-      status: "pending",
-    };
-    if (renewed.sourceRunId) payload.sourceRunId = renewed.sourceRunId;
-    await sendFrameToProcess(this.host.installationId, renewed.sourcePid, {
-      type: "sig",
-      signal: "ipc.overdue",
-      payload,
-    });
+    await this.host.eventRuntime.kick();
   }
 
 recordDelegationCheckIn(
@@ -238,65 +226,6 @@ recordDelegationCheckIn(
     }));
   }
 
-async onIpcCallDelivery(callId: string): Promise<void> {
-    await this.deliverIpcCall(callId);
-  }
-
-queueIpcCallDelivery(callId: string): void {
-    this.host.ctx.waitUntil(this.host.schedule(
-      new Date(Date.now() + 10),
-      "onIpcCallDelivery",
-      callId,
-      {
-        idempotent: true,
-        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-      },
-    ).catch(() => this.deliverIpcCall(callId)));
-  }
-
-async deliverIpcCall(callId: string): Promise<void> {
-    const call = this.host.ipcCalls.claimDelivery(callId);
-    if (!call) {
-      return;
-    }
-    try {
-      this.returnDelegatedResponsibility(call);
-      if (call.responsibilityId && !this.host.procs.get(call.sourcePid)) {
-        this.host.ipcCalls.remove(callId);
-        return;
-      }
-      await this.deliverIpcCallSignal(call);
-      this.host.ipcCalls.remove(callId);
-    } catch (error) {
-      this.host.ipcCalls.releaseDelivery(callId);
-      console.warn(`[Kernel] Failed to deliver IPC call ${callId}:`, error);
-      await this.host.schedule(5, "onIpcCallDelivery", callId, {
-        idempotent: false,
-        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-      });
-    }
-  }
-
-async deliverIpcCallSignal(call: IpcCallRecord): Promise<void> {
-    const payload: IpcDeliverySignalPayload = {
-      callId: call.callId,
-      sourcePid: call.sourcePid,
-      targetPid: call.targetPid,
-      runId: call.targetRunId,
-      deadlineAt: call.deadlineAt,
-      createdAt: call.createdAt,
-      status: call.status,
-    };
-    if (call.sourceRunId) payload.sourceRunId = call.sourceRunId;
-    if (call.status === "completed") payload.response = call.response;
-    if (call.error) payload.error = call.error;
-    await sendFrameToProcess(this.host.installationId, call.sourcePid, {
-      type: "sig",
-      signal: call.status === "timed_out" ? "ipc.timeout" : "ipc.reply",
-      payload,
-    });
-  }
-
 completeIpcCallsForProcessSignal(
     processId: string,
     frame: UserProcessSignalFrame,
@@ -338,20 +267,14 @@ completeIpcCallsForProcessSignal(
         sourceRunId: runId,
       });
     }
-    const completed = this.host.ipcCalls.completeByRun({
+    this.answer(() => this.host.ipcCalls.completeByRun({
       uid: ownerUid,
       targetPid: processId,
       runId,
       runStatus: status,
       response,
       error,
-    });
-
-    for (const callId of completed) {
-      const call = this.host.ipcCalls.get(callId);
-      if (call) this.returnDelegatedResponsibility(call);
-      this.queueIpcCallDelivery(callId);
-    }
+    }), IPC_REPLY, { kind: "process", pid: processId });
   }
 
 returnDelegatedResponsibility(call: IpcCallRecord): void {

@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { runSqlMigrations } from "../../schema/runner";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
 import { IpcCallStore } from "../ipc-calls";
-import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT, runKernelSqlMigrations } from "./migrations";
+import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT } from "./migrations";
 
 describe("IPC run status migration", () => {
-  it("preserves pending deliveries and backfills only recognized aborted completions", async () => {
+  it("backfills only recognized aborted completions, leaving the rest of each call alone", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       await storage.deleteAll();
       runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 68));
@@ -27,14 +27,15 @@ describe("IPC run status migration", () => {
       }
       const before = sql.exec("SELECT * FROM ipc_calls ORDER BY call_id").toArray();
 
-      runKernelSqlMigrations(storage);
-      runKernelSqlMigrations(storage);
+      // v097 later moves calls' answers onto the event log; this checks v068 on its own.
+      const throughV068 = KERNEL_MIGRATIONS.filter((migration) => migration.id <= 68);
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, throughV068);
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, throughV068);
 
       expect(sql.exec("SELECT * FROM ipc_calls ORDER BY call_id").toArray()).toEqual(before.map((row) => ({
         ...row, run_status: fixtures.find(({ callId }) => callId === row.call_id)!.runStatus,
       })));
-      expect(calls.recoverDeliveryIds().sort()).toEqual(["aborted", "completed", "failed", "superseded", "timed-out"]);
-      expect(calls.claimDelivery("superseded")).toMatchObject({
+      expect(calls.get("superseded")).toMatchObject({
         runStatus: "aborted", status: "completed", error: "Target run was aborted: user.superseded",
       });
       expect(() => sql.exec("UPDATE ipc_calls SET run_status = 'unknown' WHERE call_id = 'pending'"))

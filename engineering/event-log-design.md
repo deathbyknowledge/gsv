@@ -1,9 +1,10 @@
 # Events: one log, one runner
 
 Status: reviewed 2026-11-03; the decisions are folded in and listed under
-Decided. Typed internal calls are in #645 and the substrate in #646, where
-producers convert one commit at a time: contact messages, owner notices,
-responsibility wakes, schedules and source events so far. Both are open drafts.
+Decided. Typed internal calls (#645) are merged into `refactor/event-log`. The
+substrate is in #646, an open draft, where producers convert one commit at a
+time: contact messages, owner notices, responsibility wakes, schedules, source
+events and IPC so far.
 
 ## Problem
 
@@ -256,7 +257,7 @@ Today each entry handler decides for itself.
 | `target.status` | start, or record when only the person sees it | join | `proc.event.deliver` |
 | `owner.notified` | record | join | `proc.event.deliver` |
 | `delivery.failed` | record | record | `proc.delivery.notice` |
-| `ipc.replied`, `ipc.timed_out`, `ipc.overdue` | settles the call | settles the call | signals |
+| `ipc.reply`, `ipc.timeout`, `ipc.overdue` | start | join the run that asked; own run after for another run | signals |
 
 Mail and source events have no row: a wake is a responsibility, which
 arrives as `responsibility.ready`, and a notice reaches the Ship as
@@ -278,8 +279,8 @@ state machine.
 | Inbound mail | none: a wake is a `mail.received` responsibility, and a notice is a notice | — | — | — | Ship, through `responsibility.ready` and `owner.notified` | nothing of its own; both are on the log since steps 3 and 4 |
 | Hook, `event.emit` | `source.event`, kept for the source's list and to refuse a repeat | `source:<id>` | source id + source event id, which is unique only per source | inline: up to 64 KiB with title and preview | none; a wake stays a responsibility and a notice a notice | `event_log` and `onEventUpkeep`'s retention, done in step 6 |
 | Schedule | `schedule.fired`; a Ship's schedule stays a `responsibility` target | `schedule:<id>` | schedule id + occurrence: due time, forced run or one-shot | inline: schedule id, pid, due and fire times; the message and data are read from the schedule at delivery | `proc:<pid>` · join, or own run after with `replyTo` | `proc.schedule.deliver` and the fire-time turn of a Ship-pid schedule into a responsibility; the one-shot attempt loop stays for `adapter.send` |
-| IPC send, call | `ipc.message`, `ipc.call` | `proc:<target>` | call id | inline | `proc:<target>` · own run after | `onIpcCallDelivery` and its in-alarm retry |
-| IPC answer | `ipc.replied`, `ipc.timed_out`, `ipc.overdue` | `proc:<caller>` | call id + outcome | inline | `proc:<caller>` · settles | the signal path, the timeout task's delivery |
+| IPC send, call | `ipc.message`, `ipc.call` | `ipc:<id>`: the exchange, shared by a call's check-ins and its end | a fresh id for a message, the call id for a call | inline: the message and metadata, up to 64 KiB | `proc:<target>` · own run after, inline | `proc.ipc.deliver` |
+| IPC answer | `ipc.reply`, `ipc.timeout`, `ipc.overdue` | `ipc:<call id>` | call id; a check-in's adds its count | names the call; the answer is read from the call's row at delivery, so it has no size limit | `proc:<caller>` · join the run that asked, or own run after | the three answer signals, `onIpcCallDelivery` and its retry, the row's delivery claim, the Process's 256-entry list of handled calls |
 | Chat | `message.received` | `conversation:<id>` | message id | ref: Conversation message | Ship · interrupt, inline | `proc.send`'s interaction branch |
 | Direct `proc.send`, spawn prompt | `message.received` from a person, `process.message` from a process | `proc:<pid>` | the caller's request id; none today | inline | `proc:<pid>` · interrupt from a person, own run after from a process | `handleProcSend`'s choice by origin |
 | Messenger | `message.received` | `route:<surface>` | adapter + account + delivery id | ref: Conversation message | routed pid or Ship · interrupt, inline | `proc.adapter.deliver`; `adapter_ingress_receipts` once the key and row cover its checkpoint |
@@ -315,8 +316,8 @@ state machine, that consumer stays as it is.
 | `onOwnerNotices` | the same formula | stays: it sends to the person's messenger |
 | `onResponsibilityWake` | the same formula, plus recovery wakes at 5 m, 15 m, 1 h, then every 6 h, armed at delivery | timer that appends `responsibility.ready`, done in step 4; recovery wakes stay in the ledger |
 | `onScheduleDue` | 5 s→5 min, 10 attempts for one-shot | timer that appends `schedule.fired`, done in step 5; one-shot attempts stay for `adapter.send` |
-| `onIpcCallTimeout` | default task retry: 3 attempts, in-alarm | timer that appends `ipc.timed_out` |
-| `onIpcCallDelivery` | re-queue every 5 s, no limit, plus in-alarm 1 s→30 s ×10 | runner |
+| `onIpcCallTimeout` | default task retry: 3 attempts, in-alarm | timer that appends `ipc.timeout` or a check-in, done in step 7 |
+| `onIpcCallDelivery` | re-queue every 5 s, no limit, plus in-alarm 1 s→30 s ×10 | runner, done in step 7 |
 | `onProcessDeliveryNotice` | in-alarm 1 s→30 s ×10 | runner |
 | `onAdapterRouteDelivery` | ×10 1 s→30 s, plus in-alarm ×10 | stays: the adapter route outbox |
 | `onFederationDelivery` | ×12 2 s→2048 s, plus in-alarm retry | stays: the federation outbox |
@@ -410,7 +411,8 @@ a clean instance and finds each in the log. Each conversion narrows the
 5. Schedules. Deletes `proc.schedule.deliver`.
 6. Mail and hooks. `event_log` folds in; mail is already on the log through
    its responsibility and its notice.
-7. IPC.
+7. IPC. Deletes `proc.ipc.deliver`, the three answer signals and
+   `onIpcCallDelivery`.
 8. Target connections and memory reviews. Deletes the in-memory chain and
    `onMemoryReview`.
 9. Chat, messengers and `/ship` work returns: inline, on the person lane.
@@ -491,3 +493,20 @@ Reviewed with the maintainer on 2026-11-03:
     as stored. `event.emit` refuses a call holding a bigger one before taking
     any of it, and a webhook's event arrives without a payload that doesn't
     fit. v096 moves existing rows and drops `event_log`.
+12. **Settled while converting IPC.** A message or call takes a run of its
+    own under its delivery's id, `evt_<seq>:proc:<pid>`. When its target
+    can't take it right now, the syscall still succeeds with `queued: true`
+    and the log retries. A call's deadline counts from the call: one its
+    target hasn't received by then is withdrawn, and the caller gets
+    `ipc.timeout`. An answer names its call, and the log reads the answer
+    from the call's row when it delivers; `settled` removes the row whether
+    the delivery went or was withdrawn, so a caller that is gone leaves
+    nothing behind. An answer joins the run that asked while that run is
+    active, and otherwise waits as a run of its own; it is no longer recorded
+    at once beside an unrelated run. One for an aborted run, or made before
+    the caller's last reset, is dropped by the Process. A newer check-in
+    replaces one still waiting, and the call's end withdraws a waiting
+    check-in, since the answer says more. A message and its metadata are
+    limited to 64 KiB together; larger content travels as a file path. v097
+    moves answers still on their way onto the log, and Process v019 drops
+    the list of handled calls.

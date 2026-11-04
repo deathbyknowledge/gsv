@@ -2590,7 +2590,6 @@ export const ptBR = {
   "fleet.ledger.procSend": "enviou uma entrada a um ajudante",
   "fleet.ledger.procIpcSend": "enviou uma mensagem a um ajudante",
   "fleet.ledger.procIpcCall": "pediu um resultado a um ajudante",
-  "fleet.ledger.procIpcDeliver": "entregou o resultado de um ajudante",
   "fleet.ledger.procAbort": "interrompeu uma execução",
   "fleet.ledger.procHil": "respondeu a uma solicitação de aprovação",
   "fleet.ledger.procHistory": "leu o histórico de um ajudante",

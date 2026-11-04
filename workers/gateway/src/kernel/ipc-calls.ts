@@ -213,44 +213,6 @@ export class IpcCallStore {
     return cursor.rowsWritten > 0;
   }
 
-  claimDelivery(callId: string): IpcCallRecord | null {
-    const now = Date.now();
-    const rows = this.sql.exec<IpcCallRow>(
-      `UPDATE ipc_calls
-          SET delivery_started_at = ?,
-              updated_at = ?
-        WHERE call_id = ?
-          AND status IN ('completed', 'timed_out')
-          AND delivery_started_at IS NULL
-        RETURNING *`,
-      now,
-      now,
-      callId,
-    ).toArray();
-    return rows[0] ? toIpcCallRecord(rows[0]) : null;
-  }
-
-  releaseDelivery(callId: string): void {
-    this.sql.exec(
-      `UPDATE ipc_calls
-          SET delivery_started_at = NULL,
-              updated_at = ?
-        WHERE call_id = ?
-          AND status IN ('completed', 'timed_out')`,
-      Date.now(),
-      callId,
-    );
-  }
-
-  recoverDeliveryIds(): string[] {
-    return this.sql.exec<{ call_id: string }>(
-      `UPDATE ipc_calls
-          SET delivery_started_at = NULL
-        WHERE status IN ('completed', 'timed_out')
-        RETURNING call_id`,
-    ).toArray().map((row) => row.call_id);
-  }
-
   get(callId: string): IpcCallRecord | null {
     const rows = this.sql.exec<IpcCallRow>(
       "SELECT * FROM ipc_calls WHERE call_id = ? LIMIT 1",

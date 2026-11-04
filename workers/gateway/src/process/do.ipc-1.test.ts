@@ -6,7 +6,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
   mockGeneration, generationRun, assistantResponse, deferred, okProcessResponse, runInProcess,
-  ROOT_IDENTITY, drainProcessQueue, driveProcessUntilIdle, initProcess, makeReq, messageAction,
+  ROOT_IDENTITY, drainProcessQueue, driveProcessUntilIdle, initProcess, ipcAnswer, ipcMessage, makeReq, messageAction,
   registerInKernel, stubGeneration, terminalTestConfig, waitForStoredMessage,
 } from "./do-test-harness";
 
@@ -382,23 +382,14 @@ describe("proc.ipc.*", () => {
       process.controller.rememberAbortedRun("run-aborted");
       process.runs.active = { runId: "run-successor" };
 
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-
-      await instance.recvFrame({
-        type: "sig",
-        signal: "ipc.reply",
-        payload: {
-          callId: "call-aborted",
-          sourcePid: pid,
-          sourceRunId: "run-aborted",
-          targetPid: "target-process",
-          runId: "target-run",
-          deadlineAt: Date.now() + 30_000,
-          status: "completed",
-          response: { text: "late delegated result", usage: null },
-        },
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-      } as any);
+      const delivery = ipcAnswer("ipc.reply", {
+        callId: "call-aborted",
+        sourceRunId: "run-aborted",
+        targetPid: "target-process",
+        deadlineAt: Date.now() + 30_000,
+        response: { text: "late delegated result", usage: null },
+      });
+      expect(await instance.deliverEvent(delivery)).toEqual({ eventId: delivery.eventId, runId: null, queued: false, ignored: true });
 
       expect(process.store.messages.getMessages()).toEqual([]);
       expect(process.store.queue.queueSize()).toBe(0);
@@ -415,20 +406,14 @@ describe("proc.ipc.*", () => {
     const createdAt = Date.now() - 1_000;
 
     await stub.recvFrame(makeReq("proc.reset", {}));
-    await stub.recvFrame({
-      type: "sig",
-      signal: "ipc.reply",
-      payload: {
-        callId: "call-before-reset",
-        sourcePid: pid,
-        targetPid: "target-process",
-        runId: "target-run",
-        createdAt,
-        deadlineAt: Date.now() + 30_000,
-        status: "completed",
-        response: { text: "stale result", usage: null },
-      },
+    const delivery = ipcAnswer("ipc.reply", {
+      callId: "call-before-reset",
+      targetPid: "target-process",
+      createdAt,
+      deadlineAt: Date.now() + 30_000,
+      response: { text: "stale result", usage: null },
     });
+    expect(await stub.deliverEvent(delivery)).toEqual({ eventId: delivery.eventId, runId: null, queued: false, ignored: true });
 
     await runInProcess(stub, (process) => {
       expect(process.store.messages.getMessages()).toEqual([]);
@@ -440,21 +425,14 @@ describe("proc.ipc.*", () => {
     const stub = await initProcess("mech-ipc-killed-source", ROOT_IDENTITY);
 
     await stub.recvFrame(makeReq("proc.kill", { archive: false }));
-    const late = await stub.recvFrame({
-      type: "sig",
-      signal: "ipc.timeout",
-      payload: {
-        callId: "call-after-kill",
-        sourcePid: "mech-ipc-killed-source",
-        targetPid: "target-process",
-        runId: "target-run",
-        createdAt: Date.now() - 1_000,
-        deadlineAt: Date.now(),
-        status: "timed_out",
-        error: "IPC call timed out",
-      },
-    });
-    expect(late).toBeNull();
+    const late = await stub.deliverEvent(ipcAnswer("ipc.timeout", {
+      callId: "call-after-kill",
+      targetPid: "target-process",
+      createdAt: Date.now() - 1_000,
+      deadlineAt: Date.now(),
+      error: "IPC call timed out",
+    }));
+    expect(late).toMatchObject({ unavailable: "killed" });
 
     await runInProcess(stub, (_instance, state) => {
       const tables = state.storage.sql
@@ -473,50 +451,23 @@ describe("proc.ipc.*", () => {
     const callId = "call-overdue";
     const createdAt = Date.now() - 1_000;
 
-    await stub.recvFrame({
-      type: "sig",
-      signal: "ipc.overdue",
-      payload: {
-        callId,
-        sourcePid: pid,
-        targetPid: "target-process",
-        runId: "target-run",
-        createdAt,
-        deadlineAt: Date.now(),
-        nextCheckAt: Date.now() + 60_000,
-        checkInCount: 1,
-        status: "pending",
-      },
+    const checkIn = ipcAnswer("ipc.overdue", {
+      callId,
+      targetPid: "target-process",
+      createdAt,
+      deadlineAt: Date.now(),
+      nextCheckAt: Date.now() + 60_000,
+      checkInCount: 1,
     });
-    await stub.recvFrame({
-      type: "sig",
-      signal: "ipc.overdue",
-      payload: {
-        callId,
-        sourcePid: pid,
-        targetPid: "target-process",
-        runId: "target-run",
-        createdAt,
-        deadlineAt: Date.now() + 1_000,
-        nextCheckAt: Date.now() + 61_000,
-        checkInCount: 1,
-        status: "pending",
-      },
-    });
-    await stub.recvFrame({
-      type: "sig",
-      signal: "ipc.reply",
-      payload: {
-        callId,
-        sourcePid: pid,
-        targetPid: "target-process",
-        runId: "target-run",
-        createdAt: Date.now() - 1_000,
-        deadlineAt: Date.now(),
-        status: "completed",
-        response: { text: "eventual result", usage: null },
-      },
-    });
+    await stub.deliverEvent(checkIn);
+    await stub.deliverEvent(checkIn);
+    await stub.deliverEvent(ipcAnswer("ipc.reply", {
+      callId,
+      targetPid: "target-process",
+      createdAt,
+      deadlineAt: Date.now(),
+      response: { text: "eventual result", usage: null },
+    }));
 
     await runInProcess(stub, (process) => {
       const messages = process.store.messages.getMessages();
@@ -530,33 +481,22 @@ describe("proc.ipc.*", () => {
     });
   });
 
-  it("deduplicates retried IPC terminal delivery by call id", async () => {
+  it("records a redelivered answer once, by its delivery's id", async () => {
     const pid = "mech-ipc-deduplicated-reply";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
     await runInProcess(stub, async (process, _state, instance) => {
       process.sendSignal = vi.fn();
       process.run.scheduleTick = vi.fn(async () => {});
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const frame = {
-        type: "sig",
-        signal: "ipc.reply",
-        payload: {
-          callId: "call-retried",
-          sourcePid: pid,
-          targetPid: "target-process",
-          runId: "target-run",
-          deadlineAt: Date.now() + 30_000,
-          status: "completed",
-          response: { text: "delivered once", usage: null },
-        },
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-      } as const;
+      const delivery = ipcAnswer("ipc.reply", {
+        callId: "call-retried",
+        targetPid: "target-process",
+        deadlineAt: Date.now() + 30_000,
+        response: { text: "delivered once", usage: null },
+      });
 
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      await instance.recvFrame(frame as any);
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      await instance.recvFrame(frame as any);
+      const first = await instance.deliverEvent(delivery);
+      expect(await instance.deliverEvent(delivery)).toEqual(first);
 
       expect(
         process.store.messages
@@ -568,7 +508,7 @@ describe("proc.ipc.*", () => {
     });
   });
 
-  it("queues an IPC reply for its source run instead of mutating a different active run", async () => {
+  it("gives an answer for another run its own run after the active one, leaving the active run alone", async () => {
     const pid = "mech-ipc-other-source-run";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -577,40 +517,27 @@ describe("proc.ipc.*", () => {
       process.run.scheduleTick = vi.fn(async () => {});
       process.runs.active = { runId: "run-active" };
 
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-
-      await instance.recvFrame({
-        type: "sig",
-        signal: "ipc.reply",
-        payload: {
-          callId: "call-other-run",
-          sourcePid: pid,
-          sourceRunId: "run-waiting",
-          targetPid: "target-process",
-          runId: "target-run",
-          deadlineAt: Date.now() + 30_000,
-          status: "completed",
-          response: { text: "delegated result for an older run", usage: null },
-        },
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-      } as any);
-
-      expect(process.store.messages.getMessages()).toEqual([
-        expect.objectContaining({
-          role: "system",
-          content: expect.stringContaining("delegated result for an older run"),
-        }),
-      ]);
-      expect(process.runs.active).toMatchObject({
-        runId: "run-active",
+      const delivery = ipcAnswer("ipc.reply", {
+        callId: "call-other-run",
+        sourceRunId: "run-waiting",
+        targetPid: "target-process",
+        deadlineAt: Date.now() + 30_000,
+        response: { text: "delegated result for an older run", usage: null },
       });
-      expect(process.runs.active).not.toHaveProperty("pendingRuntimeEvents");
+      expect(await instance.deliverEvent(delivery)).toEqual({ eventId: delivery.eventId, runId: delivery.eventId, queued: true });
+
+      // The active run never sees it; the answer waits for its own run.
+      expect(process.store.messages.getMessages()).toEqual([]);
+      expect(process.runs.active).toEqual({ runId: "run-active" });
       const queued = drainProcessQueue(process.store);
       expect(queued).toHaveLength(1);
       expect(queued[0]).toMatchObject({
-        type: "continuation",
+        type: "message",
+        runId: delivery.eventId,
+        role: "system",
+        message: expect.stringContaining("delegated result for an older run"),
+        record: { kind: "event", payload: delivery.event },
       });
-      expect(queued[0]).not.toHaveProperty("message");
       expect(process.sendSignal).toHaveBeenCalledWith(
         "proc.changed",
         expect.objectContaining({ changes: ["queue"] }),
@@ -632,32 +559,25 @@ describe("proc.ipc.*", () => {
       };
     });
 
-    await source.recvFrame({
-      type: "sig",
-      signal: "ipc.reply",
-      payload: {
-        callId: "busy-call",
-        sourcePid,
-        targetPid,
-        runId: "target-run",
-        deadlineAt: Date.now() + 30_000,
-        status: "completed",
-        response: {
-          text: "busy result",
-          usage: null,
-          media: [
-            {
-              type: "video",
-              mimeType: "video/mp4",
-              key: `home/worker/.gsv/media/archived-media:${"a".repeat(64)}`,
-              path: `/home/worker/.gsv/media/archived-media:${"a".repeat(64)}`,
-              filename: "clip.mp4",
-              size: 1234,
-            },
-          ],
-        },
+    await source.deliverEvent(ipcAnswer("ipc.reply", {
+      callId: "busy-call",
+      targetPid,
+      deadlineAt: Date.now() + 30_000,
+      response: {
+        text: "busy result",
+        usage: null,
+        media: [
+          {
+            type: "video",
+            mimeType: "video/mp4",
+            key: `home/worker/.gsv/media/archived-media:${"a".repeat(64)}`,
+            path: `/home/worker/.gsv/media/archived-media:${"a".repeat(64)}`,
+            filename: "clip.mp4",
+            size: 1234,
+          },
+        ],
       },
-    });
+    }));
 
     await runInProcess(source, (process) => {
       const messages = process.store.messages.getMessages();
@@ -755,19 +675,12 @@ describe("proc.ipc.*", () => {
         mcpServers: []
       });
 
-      await process.recvFrame({
-        type: "sig",
-        signal: "ipc.reply",
-        payload: {
-          callId: "next-turn-call",
-          sourcePid,
-          targetPid,
-          runId: "target-run",
-          deadlineAt: Date.now() + 30_000,
-          status: "completed",
-          response: { text: "next-turn result", usage: null },
-        },
-      });
+      await process.deliverEvent(ipcAnswer("ipc.reply", {
+        callId: "next-turn-call",
+        targetPid,
+        deadlineAt: Date.now() + 30_000,
+        response: { text: "next-turn result", usage: null },
+      }));
 
       expect(process.runs.active).toMatchObject({
         runId: "active-source-turn",
@@ -907,13 +820,11 @@ describe("proc.ipc.*", () => {
     // SAFETY: test fixture is constructed with the asserted domain shape.
 
     await runInDurableObject(kernel, async (instance: Kernel) => {
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      const k = instance as any;
-      const timedOut = k.ipcCalls.timeout(data.callId, data.deadlineAt + 1);
-      expect(timedOut).toBeTruthy();
-      await k.ipc.deliverIpcCall(data.callId);
+      instance.ctx.storage.sql.exec("UPDATE ipc_calls SET deadline_at = 0 WHERE call_id = ?", data.callId);
+      await instance.ipc.onIpcCallTimeout(data.callId);
     });
 
+    await waitForStoredMessage(source, (message) => message.content.includes("timed out"));
     await runInProcess(source, (process) => {
       const messages = process.store.messages.getMessages();
       expect(messages).toHaveLength(1);
@@ -941,13 +852,11 @@ describe("proc.ipc.*", () => {
         }
       });
 
-      const delivering = process.controller.handleProcIpcDeliver({
-        runId: "ipc-run",
+      const delivering = process.deliverEvent(ipcMessage({
         sourcePid: "source-process",
         source: ROOT_IDENTITY,
         message: "slow IPC admission",
-        sentAt: Date.now(),
-      });
+      }, "ipc-run"));
       await scheduleStarted;
 
       const successor = await process.controller.handleProcSend({
@@ -973,21 +882,16 @@ describe("proc.ipc.*", () => {
       process.run.scheduleTick = vi.fn(async () => {});
       process.sendSignal = vi.fn(async () => {});
       const releaseAdmission = await process.controller.acquireQueuedSendAdmission();
-      const delivering = process.controller.handleProcIpcDeliver({
-        runId: "ipc-ordered-run",
+      const delivering = process.deliverEvent(ipcMessage({
         sourcePid: "source-process",
         source: ROOT_IDENTITY,
         message: "ordered IPC",
-        sentAt: Date.now(),
-      });
+      }, "ipc-ordered-run"));
       await Promise.resolve();
       expect(process.runs.active).toBeNull();
 
       releaseAdmission();
-      await expect(delivering).resolves.toMatchObject({
-        ok: true,
-        runId: "ipc-ordered-run",
-      });
+      await expect(delivering).resolves.toEqual({ eventId: "ipc-ordered-run", runId: "ipc-ordered-run", queued: false });
       expect(process.runs.active).toMatchObject({ runId: "ipc-ordered-run" });
       process.runs.active = null;
     });
@@ -1003,14 +907,12 @@ describe("proc.ipc.*", () => {
       process.sendSignal = vi.fn(async () => {});
 
       await expect(
-        process.controller.handleProcIpcDeliver({
-          runId: "ipc-unscheduled-run",
+        process.deliverEvent(ipcMessage({
           sourcePid: "source-process",
           source: ROOT_IDENTITY,
           message: "must not strand",
-          sentAt: Date.now(),
-        }),
-      ).resolves.toMatchObject({ ok: true, runId: "ipc-unscheduled-run" });
+        }, "ipc-unscheduled-run")),
+      ).resolves.toMatchObject({ runId: "ipc-unscheduled-run" });
 
       await vi.waitFor(() => expect(process.runs.active).toBeNull());
       expect(process.sendSignal).toHaveBeenCalledWith(

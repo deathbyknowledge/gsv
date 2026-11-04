@@ -3858,6 +3858,18 @@ describe("Kernel process runtime projection", () => {
   });
 });
 
+/** The bare Kernel's log: transactions run in place, and IPC's appends and kicks are recorded. */
+function fakeEventLog(kernel: any) {
+  kernel.events = { transaction: vi.fn(<T,>(operation: () => T): T => operation()) };
+  kernel.ctx = { ...kernel.ctx, waitUntil: vi.fn() };
+  return {
+    append: vi.spyOn(kernel.eventRuntime, "append").mockImplementation(() => ({})),
+    pending: vi.spyOn(kernel.eventRuntime, "pending").mockReturnValue([]),
+    withdraw: vi.spyOn(kernel.eventRuntime, "withdraw").mockImplementation(() => {}),
+    kick: vi.spyOn(kernel.eventRuntime, "kick").mockResolvedValue(undefined),
+  };
+}
+
 describe("Kernel IPC completion", () => {
   beforeEach(() => {
     sendFrameToProcessMock.mockReset();
@@ -3899,20 +3911,29 @@ describe("Kernel IPC completion", () => {
   });
 
   it("expires an ordinary IPC call without terminating its target", async () => {
-    const call = { callId: "regular-call", targetPid: "worker" };
+    const call = { callId: "regular-call", ownerUid: 1000, sourcePid: "ship", targetPid: "worker" };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
+    const log = fakeEventLog(kernel);
     kernel.ipcCalls = {
       get: vi.fn(() => call),
       timeout: vi.fn(() => true),
     };
-    kernel.ipc.queueIpcCallDelivery = vi.fn();
+    kernel.procs = { kill: vi.fn() };
     kernel.ipc.returnDelegatedResponsibility = vi.fn();
 
     await kernel.ipc.onIpcCallTimeout(call.callId);
 
-    expect(kernel.ipc.queueIpcCallDelivery).toHaveBeenCalledWith(call.callId);
+    expect(log.append).toHaveBeenCalledWith({
+      type: "ipc.timeout",
+      ownerUid: 1000,
+      subject: "ipc:regular-call",
+      actor: { kind: "kernel" },
+      key: "regular-call",
+      body: { callId: "regular-call", sourcePid: "ship" },
+    });
     expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith(call);
+    expect(kernel.procs.kill).not.toHaveBeenCalled();
   });
 
   it("converts legacy delegated kill deadlines into supervision checkpoints", async () => {
@@ -3976,6 +3997,9 @@ describe("Kernel IPC completion", () => {
         deadlineAt,
       })),
     };
+    const log = fakeEventLog(kernel);
+    const older = { event: { seq: 4 }, consumer: "proc:ship" };
+    log.pending.mockReturnValue([older]);
 
     try {
       await kernel.ipc.onIpcCallTimeout({
@@ -4002,19 +4026,25 @@ describe("Kernel IPC completion", () => {
       checkedAt + 60_000,
     );
     expect(kernel.ipcCalls.timeout).not.toHaveBeenCalled();
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      call.sourcePid,
-      expect.objectContaining({
-        type: "sig",
-        signal: "ipc.overdue",
-        payload: expect.objectContaining({
-          callId: call.callId,
-          targetPid: call.targetPid,
-          nextCheckAt: checkedAt + 60_000,
-        }),
-      }),
-    );
+    // The caller hears the latest check-in; one still waiting gives way to it.
+    expect(log.pending).toHaveBeenCalledWith("ipc.overdue", "ipc:delegated-call");
+    expect(log.withdraw).toHaveBeenCalledWith(older, "a newer check-in replaced it");
+    expect(log.append).toHaveBeenCalledWith({
+      type: "ipc.overdue",
+      ownerUid: 1000,
+      subject: "ipc:delegated-call",
+      actor: { kind: "kernel" },
+      key: "delegated-call:1",
+      body: {
+        callId: "delegated-call",
+        sourcePid: "ship",
+        checkedAt,
+        nextCheckAt: checkedAt + 60_000,
+        checkInCount: 1,
+      },
+    });
+    expect(log.kick).toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
   it("defers supervision without admitting Process work while restricted", async () => {
@@ -4081,71 +4111,6 @@ describe("Kernel IPC completion", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
-  it("retries a failed overdue-checkpoint delivery", async () => {
-    const checkedAt = 10_000;
-    const call = {
-      callId: "delegated-call",
-      ownerUid: 1000,
-      sourcePid: "ship",
-      sourceRunId: "ship-run",
-      targetPid: "worker",
-      targetRunId: "worker-run",
-      status: "pending",
-      deadlineAt: checkedAt,
-      createdAt: 1_000,
-      response: null,
-      error: null,
-      responsibilityId: null,
-    };
-    const now = vi.spyOn(Date, "now").mockReturnValue(checkedAt);
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = bareKernel();
-    kernel.installationId = TEST_INSTALLATION_ID;
-    kernel.onboarding.managedWorkGate = vi.fn(async () => ({ allowed: true }));
-    kernel.ipc.scheduleIpcCallTimeoutTask = vi.fn(async () => ({
-      id: "next-check",
-      time: (checkedAt + 60_000) / 1_000,
-    }));
-    kernel.ipc.recordDelegationCheckIn = vi.fn();
-    kernel.ipcCalls = {
-      get: vi.fn(() => call),
-      timeout: vi.fn(),
-      renewDeadline: vi.fn((_callId: string, deadlineAt: number) => ({
-        ...call,
-        deadlineAt,
-      })),
-    };
-    sendFrameToProcessMock.mockRejectedValueOnce(new Error("process unavailable"));
-
-    try {
-      await expect(kernel.ipc.onIpcCallTimeout(
-        {
-          callId: call.callId,
-          mode: "supervise",
-          intervalMs: 60_000,
-          checkInCount: 0,
-        },
-        { id: "current-supervision-task", time: checkedAt / 1_000 },
-      )).rejects.toThrow("process unavailable");
-    } finally {
-      now.mockRestore();
-    }
-
-    expect(kernel.ipc.scheduleIpcCallTimeoutTask).toHaveBeenCalledWith(
-      call.callId,
-      checkedAt + 60_000,
-      {
-        mode: "supervise",
-        intervalMs: 60_000,
-        checkInCount: 1,
-      },
-    );
-    expect(kernel.ipcCalls.renewDeadline).toHaveBeenCalledWith(
-      call.callId,
-      checkedAt + 60_000,
-    );
-  });
-
   it("schedules a delayed supervision successor from the callback time", async () => {
     const originalDeadlineAt = 10_000;
     const invokedAt = 100_000;
@@ -4183,6 +4148,7 @@ describe("Kernel IPC completion", () => {
         deadlineAt,
       })),
     };
+    const log = fakeEventLog(kernel);
 
     try {
       await kernel.ipc.onIpcCallTimeout(
@@ -4217,6 +4183,10 @@ describe("Kernel IPC completion", () => {
       nextCheckAt,
       1,
     );
+    expect(log.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: "ipc.overdue",
+      body: expect.objectContaining({ checkedAt: invokedAt, nextCheckAt }),
+    }));
   });
 
   it("keeps delegated responsibility assigned during a supervision check-in", () => {
@@ -4305,6 +4275,7 @@ describe("Kernel IPC completion", () => {
     const completeByRun = vi.fn(() => []);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
+    fakeEventLog(kernel);
     kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
     kernel.ipcCalls = { cancelBySourceRun, completeByRun };
 
@@ -4349,15 +4320,16 @@ describe("Kernel IPC completion", () => {
 
   it("completes a call from the Process result independently of human delivery", async () => {
     const completeByRun = vi.fn(() => ["call-1"]);
+    const call = { callId: "call-1", ownerUid: 1000, sourcePid: "proc-ship" };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
+    const log = fakeEventLog(kernel);
     kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
     kernel.ipcCalls = {
       cancelBySourceRun: vi.fn(),
       completeByRun,
-      get: vi.fn(() => ({ callId: "call-1" })),
+      get: vi.fn(() => call),
     };
-    kernel.ipc.queueIpcCallDelivery = vi.fn();
     kernel.ipc.returnDelegatedResponsibility = vi.fn();
 
     await kernel.ipc.completeIpcCallsForProcessSignal("proc-worker", {
@@ -4383,8 +4355,16 @@ describe("Kernel IPC completion", () => {
       },
       error: null,
     });
-    expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith({ callId: "call-1" });
-    expect(kernel.ipc.queueIpcCallDelivery).toHaveBeenCalledWith("call-1");
+    expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith(call);
+    expect(log.append).toHaveBeenCalledWith({
+      type: "ipc.reply",
+      ownerUid: 1000,
+      subject: "ipc:call-1",
+      actor: { kind: "process", pid: "proc-worker" },
+      key: "call-1",
+      body: { callId: "call-1", sourcePid: "proc-ship" },
+    });
+    expect(kernel.ctx.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
   });
 
   it.each([
@@ -4552,138 +4532,4 @@ describe("Kernel IPC completion", () => {
       expect(reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
     },
   );
-
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  it.each(["ipc.reply", "ipc.timeout"] as const)(
-    "includes source-run correlation in %s payloads",
-    async (signal) => {
-      sendFrameToProcessMock.mockResolvedValue(null);
-      const kernel = createRoutedKernel();
-      const call = {
-        callId: "call-1",
-        sourcePid: "proc-source",
-        sourceRunId: "run-source",
-        targetPid: "proc-target",
-        targetRunId: "run-target",
-        status: signal === "ipc.reply" ? "completed" : "timed_out",
-        deadlineAt: 1234,
-        createdAt: 1000,
-        response: signal === "ipc.reply" ? { text: "done" } : null,
-        error: signal === "ipc.timeout" ? "IPC call timed out" : null,
-      };
-
-      await kernel.ipc.deliverIpcCallSignal(call);
-
-      expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, "proc-source", {
-        type: "sig",
-        signal,
-        payload: {
-          callId: "call-1",
-          sourcePid: "proc-source",
-          sourceRunId: "run-source",
-          targetPid: "proc-target",
-          runId: "run-target",
-          deadlineAt: 1234,
-          createdAt: 1000,
-          status: call.status,
-          ...(signal === "ipc.reply" ? { response: call.response } : undefined),
-          ...(call.error ? { error: call.error } : undefined),
-        },
-      });
-    },
-  );
-
-  it("releases failed outbox deliveries and durably requeues them", async () => {
-    const call = {
-      callId: "call-retry",
-      sourcePid: "proc-source",
-      sourceRunId: "run-source",
-      targetPid: "proc-target",
-      targetRunId: "run-target",
-      status: "completed",
-      deadlineAt: 1234,
-      createdAt: 1000,
-      response: { text: "done" },
-      error: null,
-    };
-    const releaseDelivery = vi.fn();
-    const remove = vi.fn();
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = bareKernel();
-    kernel.ipcCalls = {
-      claimDelivery: vi.fn(() => call),
-      releaseDelivery,
-      remove,
-    };
-    kernel.ipc.returnDelegatedResponsibility = vi.fn();
-    kernel.schedule = vi.fn(async () => ({ id: "ipc-delivery-retry" }));
-    sendFrameToProcessMock.mockRejectedValue(new Error("source unavailable"));
-
-    await kernel.ipc.deliverIpcCall(call.callId);
-
-    expect(releaseDelivery).toHaveBeenCalledWith(call.callId);
-    expect(remove).not.toHaveBeenCalled();
-    expect(kernel.schedule).toHaveBeenCalledWith(
-      5,
-      "onIpcCallDelivery",
-      call.callId,
-      {
-        idempotent: false,
-        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-      },
-    );
-  });
-
-  it("returns delegated work without signaling a replaced Ship process", async () => {
-    const call = {
-      callId: "call-orphaned-source",
-      ownerUid: 1000,
-      sourcePid: "proc:old-ship",
-      sourceRunId: "run:old-ship",
-      targetPid: "proc:worker",
-      targetRunId: "run:worker",
-      status: "completed",
-      deadlineAt: 1234,
-      createdAt: 1000,
-      response: { text: "done" },
-      error: null,
-      responsibilityId: "r12y:11111111-1111-4111-8111-111111111111",
-    };
-    const remove = vi.fn();
-    // SAFETY: this focused Kernel fixture supplies every field used by IPC delivery.
-    const kernel = bareKernel();
-    kernel.ipcCalls = {
-      claimDelivery: vi.fn(() => call),
-      remove,
-    };
-    kernel.procs = { get: vi.fn(() => null) };
-    kernel.ipc.returnDelegatedResponsibility = vi.fn();
-
-    await kernel.ipc.deliverIpcCall(call.callId);
-
-    expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith(call);
-    expect(remove).toHaveBeenCalledWith(call.callId);
-    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
-  });
-
-  // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-  it("queues terminal IPC delivery as an idempotent retrying job", () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = bareKernel();
-    kernel.ctx = { waitUntil: vi.fn() };
-    kernel.schedule = vi.fn(async () => ({ id: "ipc-delivery" }));
-
-    kernel.ipc.queueIpcCallDelivery("call-queued");
-
-    expect(kernel.schedule).toHaveBeenCalledWith(
-      expect.any(Date),
-      "onIpcCallDelivery",
-      "call-queued",
-      {
-        idempotent: true,
-        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-      },
-    );
-    expect(kernel.ctx.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
-  });
 });

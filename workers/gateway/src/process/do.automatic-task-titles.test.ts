@@ -1,7 +1,7 @@
 import { getProcessByPid } from "../shared/utils";
 import { describe, expect, it, vi } from "vitest";
 import {
-  captureSignals, deferred, okProcessResponse, runInProcess, ROOT_IDENTITY, initProcess, makeReq,
+  captureSignals, deferred, okProcessResponse, runInProcess, ROOT_IDENTITY, initProcess, ipcMessage, makeReq,
   registerInKernel, waitForTaskTitle, type ProcessTestValue,
 } from "./do-test-harness";
 
@@ -84,18 +84,13 @@ describe("automatic task titles", () => {
       };
     });
 
-    const response = await okProcessResponse(
-      stub,
-      makeReq("proc.ipc.deliver", {
-        runId: "run-auto-task-title-ipc",
-        sourcePid: "source-process",
-        source: ROOT_IDENTITY,
-        message: "Review the delegated build.",
-        sentAt: Date.now(),
-      }),
-    );
+    const delivered = await stub.deliverEvent(ipcMessage({
+      sourcePid: "source-process",
+      source: ROOT_IDENTITY,
+      message: "Review the delegated build.",
+    }, "run-auto-task-title-ipc"));
 
-    expect(response.data).toMatchObject({ ok: true, status: "started", pid });
+    expect(delivered).toEqual({ eventId: "run-auto-task-title-ipc", runId: "run-auto-task-title-ipc", queued: false });
     await waitForTaskTitle(stub, "Review delegated build");
   });
 

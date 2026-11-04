@@ -57,12 +57,21 @@ or `Message from…` text rather than pretending the source was a human.
 `proc.ipc.send` provides asynchronous same-owner process delivery.
 `proc.ipc.call` adds a bounded request with a call id and deadline. Both require a
 registered source process, an existing target pid, and matching owners. The
-Kernel validates those invariants and sends kernel-only `proc.ipc.deliver` to the
-target Process Durable Object.
+Kernel validates those invariants, appends an `ipc.message` or `ipc.call` event to
+its event log, and delivers it to the target Process in the same syscall. The
+target runs the work under the delivery's id, `evt_<seq>:proc:<pid>`.
 
-IPC acceptance is not completion. A successful send or call means the event was
-started or queued by the target. A call result is delivered later to the source
-process as `ipc.reply` or `ipc.timeout`.
+IPC acceptance is not completion. A successful send or call means the target
+started the work or queued it behind its active run. When the target can't take
+it right now, for example while it is being replaced, the syscall still succeeds
+with `queued: true` and the log retries delivery. A message and its metadata are
+limited to 64 KiB together; larger content travels as a file path.
+
+A call's result reaches the source process later as an `ipc.reply` or
+`ipc.timeout` event through the same log. The deadline counts from the call: a
+call its target has not received by then is withdrawn, and the caller hears
+`ipc.timeout`. The log reads the answer from the call's record when it delivers,
+and removes the record once that delivery ends.
 
 A bounded call is a worker run rather than a human conversation. The worker returns ordinary
 assistant text; it does not need `message send` or `yield`. The Process finish record
@@ -71,16 +80,17 @@ stores two independent projections:
 - `result` is the durable text and media returned to the calling Process;
 - `delivery` records a canonical human message, an explicit silence, or no human delivery.
 
-The Kernel completes `proc.ipc.call` only from `result`. When the reply reaches a caller that is
-already running, the Process persists the event immediately and includes it in the next model
-context; if no provider request is in flight, the current loop can react without waiting for a
-separate queued run.
+The Kernel completes `proc.ipc.call` only from `result`. When the reply reaches the run that
+asked while it is still active, the Process persists the event immediately and includes it in the
+next model context; if no provider request is in flight, the current loop can react without
+waiting for a separate queued run. A reply for another run of the caller waits as a run of its
+own behind the active one, leaving the active run alone. Replies for an aborted run, or made
+before the caller's last reset, are dropped.
 
 If the active run finishes before its model context includes an admitted event, a durable
 continuation starts another run from the existing history. It uses the same FIFO queue as
 ordinary input but adds no message or synthetic event to history. Already-queued input can
-provide that next turn, so finishing does not add a redundant continuation behind it. A reply
-for a different source run queues its continuation without changing the active run.
+provide that next turn, so finishing does not add a redundant continuation behind it.
 If the last historical input named another reply destination, model context ends
 with the continuation's current destination annotation. This runtime metadata is
 not a stored history event and does not change the frozen system prompt.
@@ -132,11 +142,12 @@ or explicit termination returns a still-active assignment to Ship once, with the
 IPC call and child run ids recorded as evidence. The default 10-minute interval is
 a supervision checkpoint, not a work deadline. At each checkpoint the Kernel renews
 the pending result route, records a responsibility check-in, and tells the caller
-that the child is still running without cancelling it. The result itself still re-enters the
+that the child is still running without cancelling it, with an `ipc.overdue` event
+that replaces a check-in the caller has not taken yet. The result itself still re-enters the
 caller as a Process event while that caller still exists; it is not copied into
 the responsibility record. If the personal Process is replaced before delivery,
-the Kernel returns the assignment to Ship and discards the obsolete Process
-signal. The durable responsibility remains the recovery path.
+the Kernel returns the assignment to Ship and withdraws the answer's delivery to
+the old pid. The durable responsibility remains the recovery path.
 Managed deployments defer supervision checkpoints while the installation is inactive;
 reactivation resumes the same pending result route without admitting Process work during
 the restriction.

@@ -1,11 +1,11 @@
 /** Owns model-facing text for typed Process events and run-control results. */
 
 import type {
-  JsonValue, ProcHistoryEvent, ProcHistoryEventPayload, ProcIpcDeliverArgs,
+  JsonValue, ProcHistoryEvent, ProcHistoryEventPayload,
 } from "@humansandmachines/gsv/protocol";
 import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
 import type {
-  ProcessAdapterWorkReturnedRuntimeEvent,
+  ProcessAdapterWorkReturnedRuntimeEvent, ProcessIpcMessage,
 } from "../../protocol/process-frames";
 import {
   CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_COMMAND_FAILURES, MAX_TERMINAL_DELIVERY_FAILURES,
@@ -145,10 +145,8 @@ export function formatWatchedSignalMessage(
   return lines.join("\n");
 }
 
-export function formatIpcMessage(args: ProcIpcDeliverArgs): string {
-  const sentAt = Number.isFinite(args.sentAt)
-    ? new Date(args.sentAt).toISOString()
-    : new Date().toISOString();
+export function formatIpcMessage(args: ProcessIpcMessage): string {
+  const sentAt = new Date(args.sentAt).toISOString();
   const source = `${args.source.username} (${args.sourcePid})`;
   const lines = args.call
     ? [

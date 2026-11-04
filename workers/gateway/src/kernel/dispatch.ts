@@ -590,8 +590,6 @@ async function dispatchKernel(
           ok: true,
           ...await forwardToProcess(frame, ctx),
         };
-      case "proc.ipc.deliver":
-        return errFrame(frame.id, 403, "proc.ipc.deliver is kernel-only");
       case "proc.setidentity":
         return errFrame(frame.id, 403, "proc.setidentity is kernel-only");
       case "proc.history.export":

@@ -1,12 +1,14 @@
 import { z } from "zod";
 import type {
   AdapterInteractionOrigin,
+  InteractionOrigin,
   JsonObject,
   ProcMediaInput,
   ProcSendResult,
   ProcHistoryEvent,
   ProcHistoryEventPayload,
   ProcHistoryMessageQuote,
+  ProcessIdentity,
   ResourceBlock,
   ResponseErrEnvelope,
   TypedRequest,
@@ -75,18 +77,39 @@ export type ProcessEventAdmission = {
   idle: "start" | "record";
   /** During a run: join it, take its own run once it ends, or only record the event. */
   busy: "join" | "after" | "record";
+  /** Joins only this run; during another, the event takes its own run after it. */
+  joinRun?: string;
 };
 
-/** Kernel-derived registered events; this call is never available to public peers. */
-export type ProcessEventDeliverArgs = {
-  eventId: string;
-  event: Extract<ProcHistoryEvent, { kind: "target.connection" | "owner.notified" | "contact.message" | "responsibility.ready" | "schedule.fired" }>;
-  admission: ProcessEventAdmission;
-  /** Responsibilities the event hands its run, which the run settles before it yields. */
-  responsibilities?: { ledgerRevision: number; ids: string[] };
-  /** Resources the event carries, retained as this Process's own media before admission. */
-  attachments?: ResourceBlock[];
+/** Another process's message or call, as its target records it. */
+export type ProcessIpcMessage = {
+  sourcePid: string;
+  source: ProcessIdentity;
+  message: string;
+  metadata?: JsonObject;
+  origin: Extract<InteractionOrigin, { kind: "process" }>;
+  sentAt: number;
+  /** A call's final answer returns to its caller. */
+  call?: { callId: string; deadlineAt: number; supervised?: boolean };
 };
+
+/** What a Kernel event hands its Process: a history event, or another process's message. */
+export type ProcessEventDelivery =
+  | {
+      event: Extract<ProcHistoryEvent, {
+        kind: "target.connection" | "owner.notified" | "contact.message" | "responsibility.ready" | "schedule.fired"
+          | "ipc.reply" | "ipc.overdue" | "ipc.timeout";
+      }>;
+      admission: ProcessEventAdmission;
+      /** Responsibilities the event hands its run, which the run settles before it yields. */
+      responsibilities?: { ledgerRevision: number; ids: string[] };
+      /** Resources the event carries, retained as this Process's own media before admission. */
+      attachments?: ResourceBlock[];
+    }
+  | { message: ProcessIpcMessage; admission: ProcessEventAdmission };
+
+/** Kernel-derived registered events; this call is never available to public peers. */
+export type ProcessEventDeliverArgs = ProcessEventDelivery & { eventId: string };
 
 export type ProcessEventDeliverResult = {
   eventId: string;

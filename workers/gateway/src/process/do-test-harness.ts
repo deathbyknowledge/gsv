@@ -7,13 +7,14 @@ import type {
   ProcessAdapterDeliverArgs,
   ProcessEventDeliverArgs,
   ProcessInboundFrame,
+  ProcessIpcMessage,
   ProcessScheduleDeliverArgs,
 } from "../protocol/process-frames";
 import { getKernelPtr, getProcessByPid } from "../shared/utils";
 import { resolveToolSyscall } from "../syscalls/constants";
 import { takePurpose, type ToolApprovalPolicy } from "./approval";
 import type { Process } from "./do";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { ProcHistoryEventPayload, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { expect, vi } from "vitest";
 
@@ -95,6 +96,31 @@ export function scheduleFired(
       payload: { ...args, runId, firedAtMs: args.firedAtMs ?? Date.now() },
     },
     admission: { idle: "start", busy: args.replyTo ? "after" : "join" },
+  };
+}
+
+/** A call's answer as the Kernel delivers it to the process that asked. */
+export function ipcAnswer(
+  kind: "ipc.reply" | "ipc.overdue" | "ipc.timeout",
+  payload: ProcHistoryEventPayload<"ipc.reply">,
+  eventId = `evt_${crypto.randomUUID()}:proc:test`,
+): ProcessEventDeliverArgs {
+  return {
+    eventId,
+    event: { kind, payload, severity: kind === "ipc.timeout" || payload.error ? "error" : "info", audience: "model" },
+    admission: { idle: "start", busy: "join", ...(payload.sourceRunId ? { joinRun: payload.sourceRunId } : undefined) },
+  };
+}
+
+/** Another process's message or call, as the Kernel delivers it. */
+export function ipcMessage(
+  message: Omit<ProcessIpcMessage, "origin" | "sentAt"> & Partial<Pick<ProcessIpcMessage, "origin" | "sentAt">>,
+  eventId = `evt_${crypto.randomUUID()}:proc:test`,
+): ProcessEventDeliverArgs {
+  return {
+    eventId,
+    message: { origin: { kind: "process", sourcePid: message.sourcePid, uid: message.source.uid }, sentAt: Date.now(), ...message },
+    admission: { idle: "start", busy: "after" },
   };
 }
 

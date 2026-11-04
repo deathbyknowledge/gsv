@@ -4,7 +4,7 @@ import { z } from "zod";
 import {
   ABORTED_RUN_IDS_KEY, IPC_TOMBSTONE_LIMIT, MEDIA_PREPARATION_TIMEOUT_MS, TOOL_EXECUTION_DENIED_BY_USER_MESSAGE,
   USER_INTERRUPTED_TOOL_MESSAGE, USER_SUPERSEDED_TOOL_MESSAGE, PROCESS_KILLED_TOMBSTONE_KEY, PROCESS_RESET_AT_KEY,
-  tombstoneKilledProcessStorage, type ProcessKilledTombstone, HANDLED_IPC_CALLS_KEY, RUNTIME_EVENT_IDS_KEY,
+  tombstoneKilledProcessStorage, type ProcessKilledTombstone, RUNTIME_EVENT_IDS_KEY,
   RUNTIME_EVENT_TOMBSTONE_LIMIT, type RuntimeEventAdmission, DELIVERY_NOTICE_IDS_KEY,
   DELIVERY_NOTICE_TOMBSTONE_LIMIT, MAX_CANCELLED_REQUESTS,
 } from "../internal/lifecycle";
@@ -16,16 +16,16 @@ import {
 import type { RunState, ResponsibilityBatchState } from "../run/state";
 import type { RunFinishReason } from "../run/finish";
 import {
-  abortedRunIdsSchema, archivedToolResultMetadataSchema, type IpcReplyPayload,
-  cancelRequestPayloadSchema, deliveryNoticePayloadSchema, identityChangedPayloadSchema, ipcReplyPayloadSchema,
+  abortedRunIdsSchema, archivedToolResultMetadataSchema,
+  cancelRequestPayloadSchema, deliveryNoticePayloadSchema, identityChangedPayloadSchema,
   type CancelRequestPayload,
 } from "../internal/schemas";
 import { conversationRunState } from "../run/helpers";
 import { errorMessageFromUnknown } from "../../inference/errors";
 import {
   type ProcAbortArgs, type ProcAbortResult, type ProcHilArgs, type ProcHilResult, type ProcHistoryArgs,
-  type ProcHistoryMessage, type ProcHistoryResult, type ProcHistoryToolResultContent, type ProcIpcDeliverArgs,
-  type ProcIpcDeliverResult, type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
+  type ProcHistoryMessage, type ProcHistoryResult, type ProcHistoryToolResultContent,
+  type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
   type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type ProcRunToolStartedSignal,
   type InteractionOrigin, type JsonObject,
   type ProcHistoryEvent, type ProcHistoryMessageQuote, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
@@ -35,7 +35,7 @@ import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive
 import { historyCursor, parseHistoryCursor } from "../history/cursor";
 import { storeIncomingProcessMedia, stringifyStoredProcessMedia, parseStoredProcessMedia, deleteProcessMedia } from "../media";
 import { appendResponsibilityBatch, normalizeProcessRuntimeEvent } from "../internal/events";
-import { formatIpcMessage, formatIpcReplyMessage, renderHistoryEvent } from "../history/event-renderer";
+import { formatIpcMessage, renderHistoryEvent } from "../history/event-renderer";
 import type { AssistantHistoryContent, AsyncCleanupTask, CodeModeApprovalWaiter } from "../internal/contracts";
 import { extractStoredFsReadResource } from "../tool-result-media";
 import {
@@ -46,6 +46,7 @@ import { syscallToolName } from "../../syscalls/constants";
 import { cancelProcessRequests } from "../../shared/utils";
 import type {
   InternalResponseFrame,
+  ProcessIpcMessage,
   ProcessUnavailable,
 } from "../../protocol/process-frames";
 import type {
@@ -873,50 +874,23 @@ export class ProcessController {
     };
   }
 
-  async handleProcIpcDeliver(args: ProcIpcDeliverArgs): Promise<ProcIpcDeliverResult> {
-    const runId = args.runId.trim();
-    if (!runId) {
-      return { ok: false, error: "proc.ipc.deliver requires runId" };
-    }
-
-    const sourcePid = args.sourcePid.trim();
-    if (!sourcePid) {
-      return { ok: false, error: "proc.ipc.deliver requires sourcePid" };
-    }
-
-    const message = args.message.trim();
-    if (!message) {
-      return { ok: false, error: "proc.ipc.deliver requires message" };
-    }
-
-    const deliveredArgs: ProcIpcDeliverArgs = {
-      runId,
-      sourcePid,
-      source: args.source,
-      message,
-      metadata: args.metadata,
-      origin: args.origin ?? {
-        kind: "process",
-        sourcePid,
-        uid: args.source.uid,
-      },
-      sentAt: Number.isFinite(args.sentAt) ? args.sentAt : Date.now(),
-    };
-    if (args.call) {
-      deliveredArgs.call = args.call;
-    }
-    const renderedMessage = formatIpcMessage(deliveredArgs);
-    const origin = serializeInteractionOrigin(deliveredArgs.origin);
+  /**
+   * Another process's message or call, delivered from the Kernel's log under its delivery id.
+   * It takes a run of its own, now or after the active one; a redelivery answers with its first admission.
+   */
+  async admitIpcMessage(runId: string, ipc: ProcessIpcMessage): Promise<{ runId: string; queued: boolean }> {
+    const eventType = ipc.call ? "ipc.call" : "ipc.message";
+    const renderedMessage = formatIpcMessage(ipc);
+    const origin = serializeInteractionOrigin(ipc.origin);
     const provenance = jsonObjectSchema.parse({
       source: "process",
-      eventType: args.call ? "ipc.call" : "ipc.message",
-      delivery: JSON.parse(JSON.stringify(deliveredArgs)),
+      eventType,
+      delivery: JSON.parse(JSON.stringify({ runId, ...ipc })),
     });
     const releaseAdmission = await this.acquireQueuedSendAdmission();
     try {
-      if (!this.host.isInitialized()) {
-        return { ok: false, error: "Target process no longer exists" };
-      }
+      const existing = this.existingRunAdmission(runId);
+      if (existing) return { runId, queued: existing.queued === true };
       const queued = this.host.ctx.storage.transactionSync(() => {
         if (!this.host.isInitialized()) return null;
         if (this.host.runs.active) {
@@ -924,51 +898,32 @@ export class ProcessController {
             origin: origin ?? undefined,
             provenance: JSON.stringify(provenance),
           };
-          if (args.call) enqueueOptions.kind = "ipc.call";
+          if (ipc.call) enqueueOptions.kind = "ipc.call";
           this.host.store.queue.enqueue(runId, renderedMessage, enqueueOptions);
           return true;
         }
         this.host.store.messages.appendMessage("user", renderedMessage, {
           runId,
           origin: origin ?? undefined,
-          queueKind: args.call ? "ipc.call" : "message",
+          queueKind: ipc.call ? "ipc.call" : "message",
           provenance,
         });
-        const nextRun: RunState = { runId };
-        if (args.call) {
-          nextRun.returnToCaller = true;
-        }
-        this.host.runs.active = nextRun;
+        this.host.runs.active = ipc.call ? { runId, returnToCaller: true } : { runId };
         return false;
       });
-      if (queued === null) {
-        return { ok: false, error: "Target process no longer exists" };
-      }
+      if (queued === null) throw new Error("Process no longer exists");
 
-      this.host.maybeStartTaskTitleGeneration(message);
+      this.host.maybeStartTaskTitleGeneration(ipc.message);
       if (queued) {
         this.host.startBackground(
           `IPC queue notification for ${runId}`,
           this.host.signals.changed(["queue"], { enqueuedRunId: runId }),
         );
-        return {
-          ok: true,
-          status: "started",
-          pid: this.host.pid,
-          sourcePid,
-          runId,
-          queued: true,
-        };
+        return { runId, queued: true };
       }
       await this.scheduleRunOrFinish(runId, "Failed to schedule delegated task");
-      this.announceRun(runId, "proc.ipc.deliver");
-      return {
-        ok: true,
-        status: "started",
-        pid: this.host.pid,
-        sourcePid,
-        runId,
-      };
+      this.announceRun(runId, eventType);
+      return { runId, queued: false };
     } finally {
       releaseAdmission();
     }
@@ -1500,111 +1455,6 @@ export class ProcessController {
     await this.host.signals.changed(["messages"], change);
   }
 
-  async handleIpcSignal(signal: string, payload: IpcReplyPayload): Promise<void> {
-    const content = formatIpcReplyMessage(signal, payload);
-    const callId = normalizeOptionalString(payload.callId);
-    const sourceRunId = normalizeOptionalString(payload.sourceRunId);
-    const createdAt = payload.createdAt ?? null;
-    const handledId =
-      signal === "ipc.overdue" && callId
-        ? `overdue:${callId}:${payload.checkInCount ?? payload.deadlineAt ?? "unknown"}`
-        : callId;
-    const timestamp = Date.now();
-    if (this.host.killed || this.host.lifecyclePhase !== "ready") {
-      return;
-    }
-    const pid = this.host.pid;
-    if (!this.host.store.state.getValue("identity")) {
-      return;
-    }
-    const resetAt = Number(this.host.store.state.getValue(PROCESS_RESET_AT_KEY) ?? 0);
-    const handled = abortedRunIdsSchema.parse(
-      JSON.parse(this.host.store.state.getValue(HANDLED_IPC_CALLS_KEY) ?? "[]"),
-    );
-    if (
-      (handledId && handled.includes(handledId)) ||
-      (sourceRunId && this.isAbortedRun(sourceRunId)) ||
-      (createdAt !== null && createdAt <= resetAt)
-    ) {
-      return;
-    }
-
-    const currentRun = this.host.runs.active;
-    const nextRunId = currentRun ? null : crypto.randomUUID();
-    const { messageId, wakeRunId } = this.host.ctx.storage.transactionSync(() => {
-      if (handledId) {
-        handled.push(handledId);
-        this.host.store.state.setValue(
-          HANDLED_IPC_CALLS_KEY,
-          JSON.stringify(handled.slice(-IPC_TOMBSTONE_LIMIT)),
-        );
-      }
-      const messageOptions: Parameters<ProcessStore["messages"]["appendMessage"]>[2] = {
-        createdAt: timestamp,
-        record: {
-          kind: "event",
-          payload: {
-            kind: signal === "ipc.overdue" ? "ipc.overdue" : signal === "ipc.timeout" ? "ipc.timeout" : "ipc.reply",
-            payload: {
-              callId: payload.callId,
-              targetPid: payload.targetPid,
-              sourceRunId: payload.sourceRunId,
-              createdAt: payload.createdAt,
-              deadlineAt: payload.deadlineAt,
-              nextCheckAt: payload.nextCheckAt,
-              checkInCount: payload.checkInCount,
-              error: payload.error,
-              response: payload.response,
-            },
-            severity: signal === "ipc.timeout" || payload.error ? "error" : "info",
-            audience: "model",
-          },
-        },
-      };
-      if (nextRunId) {
-        messageOptions.runId = nextRunId;
-      }
-      const messageId = this.host.store.messages.appendMessage("system", content, messageOptions);
-
-      let wakeRunId: string | null = null;
-      if (!currentRun) {
-        if (!nextRunId) {
-          throw new Error("Runtime event run id was not allocated");
-        }
-        this.host.runs.active = { runId: nextRunId };
-      } else if (sourceRunId && sourceRunId !== currentRun.runId) {
-        wakeRunId = crypto.randomUUID();
-        this.host.store.queue.enqueueContinuation(wakeRunId);
-      } else {
-        currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
-        this.host.runs.active = currentRun;
-      }
-      return { messageId, wakeRunId };
-    });
-
-    this.host.startBackground(
-      `IPC message notification for ${pid}`,
-      this.host.signals.changed(["messages"], {
-        messageId,
-        role: "system",
-        content,
-        timestamp,
-      }),
-    );
-    if (wakeRunId) {
-      this.host.startBackground(
-        `IPC queue notification for ${pid}`,
-        this.host.signals.changed(["queue"], { enqueuedRunId: wakeRunId }),
-      );
-    } else if (nextRunId) {
-      const scheduled = await this.scheduleRunOrFinish(
-        nextRunId,
-        "Failed to schedule delegated task",
-      );
-      if (scheduled) this.announceRun(nextRunId, "delegated-task");
-    }
-  }
-
   async handleProcessRuntimeEventDeliver(
     args: ProcessRuntimeEventDeliverArgs,
   ): Promise<ProcessRuntimeEventDeliverResult> {
@@ -2000,9 +1850,6 @@ export class ProcessController {
             frame.args.interaction ? `run:${frame.args.interaction.messageId}` : undefined,
           );
           break;
-        case "proc.ipc.deliver":
-          data = await this.handleProcIpcDeliver(frame.args);
-          break;
         case "proc.abort":
           data = await this.handleProcAbort(frame.args);
           break;
@@ -2052,13 +1899,6 @@ export class ProcessController {
         if (parsed.success) {
           this.host.store.state.setValue("identity", JSON.stringify(parsed.data.identity));
         }
-        break;
-      }
-      case "ipc.reply":
-      case "ipc.overdue":
-      case "ipc.timeout": {
-        const parsed = ipcReplyPayloadSchema.safeParse(frame.payload);
-        await this.handleIpcSignal(frame.signal, parsed.success ? parsed.data : {});
         break;
       }
       case "proc.delivery.notice": {

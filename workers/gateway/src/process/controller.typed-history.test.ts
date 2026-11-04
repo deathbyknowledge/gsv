@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  procHistoryRecordDataSchema, type ProcHistoryRecordData, type ProcIpcDeliverArgs, type ResourceBlock,
+  procHistoryRecordDataSchema, type ProcHistoryRecordData, type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../shared/message-media-limits";
 import type { Process } from "./do";
 import type { ProcessEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
 import { evictDurableObject } from "cloudflare:test";
 import {
-  initProcess, ROOT_IDENTITY, runInProcess, scheduleFired,
+  initProcess, ipcAnswer, ipcMessage, ROOT_IDENTITY, runInProcess, scheduleFired,
 } from "./do-test-harness";
 
 function storedRecords(process: Process): ProcHistoryRecordData[] {
@@ -237,16 +237,15 @@ describe("typed controller history producers", () => {
     const stub = await initProcess("typed-ipc-origin", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
-      const delivery: ProcIpcDeliverArgs = {
-        runId: "ipc-run-1",
+      const delivery = {
         sourcePid: "parent-1",
         source: ROOT_IDENTITY,
         message: "Research the queue contract",
         metadata: { priority: "normal" },
         sentAt: 1_000,
       };
-      await process.controller.handleProcIpcDeliver(delivery);
-      await process.controller.handleProcIpcDeliver({ ...delivery, runId: "ipc-run-2" });
+      await process.deliverEvent(ipcMessage(delivery, "ipc-run-1"));
+      await process.deliverEvent(ipcMessage(delivery, "ipc-run-2"));
       process.runs.active = null;
       process.controller.claimNextQueuedRun();
       const records = storedRecords(process);
@@ -361,8 +360,8 @@ describe("typed controller history producers", () => {
     });
   });
 
-  it.each(["ipc.reply", "ipc.overdue", "ipc.timeout"])(
-    "persists %s data and queues a continuation without another history event",
+  it.each(["ipc.reply", "ipc.overdue", "ipc.timeout"] as const)(
+    "queues %s for another run as its own run, once, with its data",
     async (signal) => {
       const stub = await initProcess(`typed-${signal}`, ROOT_IDENTITY);
       await runInProcess(stub, async (process: Process) => {
@@ -375,11 +374,13 @@ describe("typed controller history producers", () => {
           checkInCount: 2,
           response: { text: "Work complete", artifact: { path: "/result.txt" } },
         };
-        await process.controller.handleIpcSignal(signal, payload);
-        await process.controller.handleIpcSignal(signal, payload);
+        const delivery = ipcAnswer(signal, payload);
+        await process.deliverEvent(delivery);
+        await process.deliverEvent(delivery);
         expect(process.store.queue.queueSize()).toBe(1);
+        expect(storedRecords(process)).toEqual([]);
         process.runs.active = null;
-        expect(process.controller.claimNextQueuedRun()).toMatchObject({ type: "continuation" });
+        expect(process.controller.claimNextQueuedRun()).toMatchObject({ type: "message", runId: delivery.eventId });
         expect(storedRecords(process)).toEqual([
           {
             kind: "event",

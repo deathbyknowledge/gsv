@@ -227,6 +227,16 @@ export class EventStore {
     return row && row.next_attempt_at <= now ? pendingFromRow(row) : null;
   }
 
+  /** One event's delivery to a consumer while it may go now: pending, due and its lane's oldest. */
+  dueDelivery(seq: number, consumer: string, now: number): PendingDelivery | null {
+    const row = this.sql.exec<PendingRow>(
+      `SELECT ${PENDING_COLUMNS} FROM deliveries d JOIN events e ON e.seq = d.seq
+       WHERE d.seq = ? AND d.consumer = ? AND d.state = 'pending' AND d.next_attempt_at <= ? AND ${LANE_HEAD}`,
+      seq, consumer, now,
+    ).toArray()[0];
+    return row ? pendingFromRow(row) : null;
+  }
+
   /** Pending deliveries of one type about one subject, oldest first. */
   pending(type: string, subject: string): PendingDelivery[] {
     return this.sql.exec<PendingRow>(

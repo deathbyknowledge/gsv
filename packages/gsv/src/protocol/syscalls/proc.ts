@@ -198,21 +198,6 @@ export type ProcIpcSendArgs = {
   metadata?: ProcIpcMetadata;
 };
 
-export type ProcIpcDeliverArgs = {
-  runId: string;
-  sourcePid: string;
-  source: ProcessIdentity;
-  message: string;
-  metadata?: ProcIpcMetadata;
-  origin?: InteractionOrigin;
-  sentAt: number;
-  call?: {
-    callId: string;
-    deadlineAt: number;
-    supervised?: boolean;
-  };
-};
-
 export type ProcIpcSendResult =
   | {
       ok: true;
@@ -223,8 +208,6 @@ export type ProcIpcSendResult =
       queued?: boolean;
     }
   | { ok: false; error: string };
-
-export type ProcIpcDeliverResult = ProcIpcSendResult;
 
 export type ProcIpcCallArgs = ProcIpcSendArgs & {
   timeoutMs?: number;

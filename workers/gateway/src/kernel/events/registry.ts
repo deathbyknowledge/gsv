@@ -1,14 +1,14 @@
-import type { ProcessEventDeliverArgs } from "../../protocol/process-frames";
+import type { ProcessEventDelivery } from "../../protocol/process-frames";
 import type { KernelContext } from "../context";
 import { contactMessageEvent } from "../federation/attention";
+import { ipcEventDefinitions } from "../ipc-events";
 import { ownerNotifiedEvent } from "../owner-notice-runtime";
 import { responsibilityReadyEvent } from "../responsibility-runtime";
 import { scheduleFiredEvent } from "../schedule-events";
 import { sourceEventDefinition } from "../source-events";
 import type { EventInput, EventRoute, LoggedEvent } from "./store";
 
-/** What a receiving Process records for an event, and whether it starts or joins a run. */
-export type ProcessEventDelivery = Omit<ProcessEventDeliverArgs, "eventId">;
+export type { ProcessEventDelivery } from "../../protocol/process-frames";
 
 /** A delivery that should not go, and why. */
 export type Withdrawn = { withdrawn: string };
@@ -37,6 +37,7 @@ export type EventRegistry = Readonly<Record<string, EventDefinition<object | und
 /** Event types the Kernel appends. Each type is defined beside the producer that appends it. */
 export const EVENT_REGISTRY = {
   "contact.message": contactMessageEvent,
+  ...ipcEventDefinitions,
   "owner.notified": ownerNotifiedEvent,
   "responsibility.ready": responsibilityReadyEvent,
   "schedule.fired": scheduleFiredEvent,

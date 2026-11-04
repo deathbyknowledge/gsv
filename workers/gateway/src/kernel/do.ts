@@ -251,7 +251,6 @@ type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 type KernelTask =
   | { callback: "onMemoryReview"; payload: number }
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
-  | { callback: "onIpcCallDelivery"; payload: string }
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
   | { callback: "onManagedOutboundEnqueue"; payload: string }
   | { callback: "onFederationDelivery"; payload: string }
@@ -304,7 +303,6 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       attempt: z.number().int().positive(),
     }),
   }),
-  z.object({ callback: z.literal("onIpcCallDelivery"), payload: z.string() }),
   z.object({
     callback: z.literal("onIpcCallTimeout"),
     payload: ipcCallTimeoutPayloadSchema,
@@ -599,9 +597,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.mcp.restoreConnectionsFromStorage();
 
     this.connectionRuntime.rehydrateConnections();
-    for (const callId of this.ipcCalls.recoverDeliveryIds()) {
-      this.ipc.queueIpcCallDelivery(callId);
-    }
     ctx.waitUntil(this.responsibilityRuntime.recoverResponsibilityWakes().catch((error) => {
       console.warn(
         "[Kernel] Failed to recover responsibility wakes:",
@@ -1011,9 +1006,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
         return;
       case "onAdapterRouteDelivery":
         await this.adapterDelivery.onAdapterRouteDelivery(task.payload);
-        return;
-      case "onIpcCallDelivery":
-        await this.ipc.onIpcCallDelivery(task.payload);
         return;
       case "onIpcCallTimeout":
         await this.ipc.onIpcCallTimeout(task.payload, task);

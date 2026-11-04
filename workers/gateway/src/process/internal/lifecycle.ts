@@ -77,8 +77,6 @@ export type RuntimeEventAdmission =
 
 export const MAX_KILL_ARCHIVE_ATTEMPTS = 3;
 
-export const HANDLED_IPC_CALLS_KEY = "handledIpcCalls";
-
 export const ABORTED_RUN_IDS_KEY = "abortedRunIds";
 
 export const DELIVERY_NOTICE_IDS_KEY = "deliveryNoticeIds";

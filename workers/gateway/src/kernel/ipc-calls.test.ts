@@ -7,7 +7,7 @@ import {
 } from "./schema/v036_supervise_delegated_ipc_calls";
 
 describe("IpcCallStore", () => {
-  it("retains an aborted run's status through delivery recovery", async () => {
+  it("keeps an aborted run's status on its call, which the answer's delivery reads after a restart", async () => {
     await runWithRealKernelSql((sql) => {
       const calls = new IpcCallStore(sql);
       calls.create({
@@ -19,12 +19,7 @@ describe("IpcCallStore", () => {
         uid: 1000, targetPid: "proc:worker", runId: "run:worker", runStatus: "aborted",
         response: null, error: "A custom interruption reason",
       });
-      expect(calls.claimDelivery("ipc:aborted")).toMatchObject({
-        status: "completed", runStatus: "aborted", error: "A custom interruption reason",
-      });
-      const recovered = new IpcCallStore(sql);
-      expect(recovered.recoverDeliveryIds()).toEqual(["ipc:aborted"]);
-      expect(recovered.claimDelivery("ipc:aborted")).toMatchObject({
+      expect(new IpcCallStore(sql).get("ipc:aborted")).toMatchObject({
         status: "completed", runStatus: "aborted", error: "A custom interruption reason",
       });
     });

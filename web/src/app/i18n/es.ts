@@ -2585,7 +2585,6 @@ export const es = {
   "fleet.ledger.procSend": "se envió una entrada a Ship o a un ayudante",
   "fleet.ledger.procIpcSend": "se envió un mensaje a Ship o a un ayudante",
   "fleet.ledger.procIpcCall": "se pidió un resultado a Ship o a un ayudante",
-  "fleet.ledger.procIpcDeliver": "se entregó un resultado a Ship o a un ayudante",
   "fleet.ledger.procAbort": "se detuvo una ejecución",
   "fleet.ledger.procHil": "se respondió a una solicitud de aprobación",
   "fleet.ledger.procHistory": "se leyó el historial de Ship o de un ayudante",

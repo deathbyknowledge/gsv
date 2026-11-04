@@ -339,7 +339,6 @@ const SYSCALL_NAMES = [
   "proc.send",
   "proc.ipc.send",
   "proc.ipc.call",
-  "proc.ipc.deliver",
   "proc.abort",
   "proc.hil",
   "proc.history",

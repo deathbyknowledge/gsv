@@ -6,7 +6,7 @@ import type { KernelContext } from "../context";
 import type { Kernel } from "../do";
 import { ensurePersonalController } from "../personal-controller";
 import { deliveryId, parseConsumer, type EventConsumer } from "./consumers";
-import { EVENT_REGISTRY, isWithdrawn, type EventDefinition, type EventRegistry, type ProcessEventDelivery } from "./registry";
+import { EVENT_REGISTRY, isWithdrawn, type EventDefinition, type EventRegistry } from "./registry";
 import { EVENT_BODY_RETENTION_MS, type EventInput, type LoggedEvent, type PendingDelivery } from "./store";
 
 /** What the runtime reaches on its Kernel. */
@@ -17,7 +17,16 @@ export type EventRuntimeHost = Pick<
 >;
 
 /** What producers reach through their Kernel context. */
-export type KernelEvents = Pick<EventRuntime, "append" | "kick" | "pending" | "withdraw" | "keyed" | "countSince" | "recent" | "forget">;
+export type KernelEvents = Pick<
+  EventRuntime,
+  "append" | "kick" | "deliverNow" | "transaction" | "pending" | "withdraw" | "keyed" | "countSince" | "recent" | "forget"
+>;
+
+/** How a delivery made in its producer's call went; a pending one is the runner's to retry. */
+export type InlineDelivery =
+  | { state: "delivered"; runId: string | null; queued: boolean }
+  | { state: "withdrawn"; reason: string }
+  | { state: "pending" };
 
 /** A Process delivery retries without limit: 2 s, doubling to 256 s. */
 const PROCESS_RETRY = { baseMs: 2_000, capMs: 256_000 };
@@ -27,7 +36,7 @@ const FAILED_PASS_RETRY_MS = 60_000;
 const PRUNE_SPACING_MS = 60 * 60_000;
 
 type AttemptResult =
-  | { kind: "delivered"; runId: string | null; outcome: JsonObject; responsibilities?: ProcessEventDelivery["responsibilities"] }
+  | { kind: "delivered"; runId: string | null; outcome: JsonObject; responsibilities?: { ledgerRevision: number; ids: string[] } }
   | { kind: "withdrawn"; reason: string };
 
 /** Appends Kernel events and delivers them: one task, one gate check, one retry rule per consumer. */
@@ -53,6 +62,26 @@ export class EventRuntime {
   /** Arms the runner for whatever the log has due next; call after the producer's transaction commits. */
   async kick(): Promise<void> {
     await this.arm(this.nextRunAt());
+  }
+
+  /** Runs a producer's domain write and its append as one transaction. */
+  transaction<T>(operation: () => T): T {
+    return this.host.events.transaction(operation);
+  }
+
+  /**
+   * Delivers an event to one consumer in its producer's call, as a request path needs, then
+   * kicks the runner. Call after the append commits. A delivery behind an older one in its
+   * lane, or one the gate holds, waits for the runner, which also retries a failed attempt.
+   */
+  async deliverNow(event: LoggedEvent, consumer: string): Promise<InlineDelivery> {
+    const due = this.host.events.dueDelivery(event.seq, consumer, Date.now());
+    if (due && (await this.host.onboarding.managedWorkGate()).allowed) await this.attempt(due);
+    await this.kick();
+    const record = this.host.events.delivery(event.seq, consumer);
+    if (record?.state === "delivered") return { state: "delivered", runId: record.runId, queued: record.outcome?.queued === true };
+    if (record?.state === "withdrawn" || record?.state === "failed") return { state: "withdrawn", reason: record.lastError ?? "withdrawn" };
+    return { state: "pending" };
   }
 
   /** Pending deliveries of one type about one subject, oldest first. */
@@ -193,11 +222,12 @@ export class EventRuntime {
       ...admitted,
     });
     if ("unavailable" in result) throw new Error(result.message);
+    const responsibilities = "event" in admitted ? admitted.responsibilities : undefined;
     return {
       kind: "delivered",
       runId: result.runId,
       outcome: { pid, queued: result.queued, ...(result.ignored ? { ignored: true } : undefined) },
-      ...(admitted.responsibilities ? { responsibilities: admitted.responsibilities } : undefined),
+      ...(responsibilities ? { responsibilities } : undefined),
     };
   }
 

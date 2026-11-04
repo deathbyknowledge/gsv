@@ -1463,8 +1463,8 @@ Runtime behavior:
 | `proc.unobserve` | Kernel | Removes an owned Process from the current connection's observation set. |
 | `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity (the personal agent for a parentless default, the parent for an inherited child, or explicit `runAs`), registers a process, sends kernel-only `proc.setidentity`, and optionally admits the initial prompt. |
 | `proc.send` | Process DO `handleProcSend` | Admits work into the target process history. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Attachments are revision-bound resource blocks. The Process validates and retains any non-owned source before generation. Kernel-owned paths can preallocate a run id, which the Process reconciles against active, queued, and recorded admissions. |
-| `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
-| `proc.ipc.call` | `handleProcIpcCall` | Process-callable same-owner IPC. Ordinary calls are bounded: they create a call id and deadline, then later send either `ipc.reply` or `ipc.timeout` to the source process. Kernel-owned delegation may supervise the call instead: each checkpoint renews the result route and sends `ipc.overdue` without cancelling the worker. The worker's ordinary final assistant output is its durable caller result and does not require human-facing message or yield commands. The syscall returns after acceptance, not after the target replies. |
+| `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then appends an `ipc.message` event to the Kernel event log and delivers it in the same call. The target receives a visible user message envelope and starts or queues a run under the delivery's id, `evt_<seq>:proc:<pid>`, which the result returns as `runId`. When the target can't take the message right now, the call still succeeds with `queued: true` and the log retries delivery. The message and its metadata are limited to 64 KiB together; larger content travels as a file path. |
+| `proc.ipc.call` | `handleProcIpcCall` | Process-callable same-owner IPC, delivered as an `ipc.call` event in the same way as `proc.ipc.send`. Ordinary calls are bounded: they create a call id and deadline, then later answer the source process with an `ipc.reply` or `ipc.timeout` event through the log. The deadline counts from the call; a call its target has not received by then is withdrawn and the caller gets `ipc.timeout`. An answer joins the asking run while it is active and otherwise takes a run of its own; answers for an aborted run, or made before the caller's last reset, are dropped. Kernel-owned delegation may supervise the call instead: each checkpoint renews the result route and sends an `ipc.overdue` check-in, which replaces one the caller has not taken yet, without cancelling the worker. A bounded call marks the target run as returning to its caller and omits terminal human-delivery instructions; the worker's ordinary final assistant output is its durable caller result, taken from `proc.run.finished.result` rather than `delivery`, and does not require human-facing message or yield commands. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` adds an allow rule for the syscall and its target to the owner's approval policy, which every process of that owner follows; `remembered` reports whether the rule was added. A request without one target adds none. |
 | `proc.kill` | Process DO | Optionally archives the process history under the run-as agent's home, promotes referenced media into immutable archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry. |
@@ -1477,7 +1477,6 @@ Runtime behavior:
 | `proc.history.segments` | Process DO | Lists compacted segments and context epochs, including immutable archive paths for closed records. |
 | `proc.fork` | `handleProcFork` | Creates a new process from committed source history through a raw `throughMessageId`, a canonical Conversation message's `throughRunId`, or a compacted `segmentId`. Run selection resolves to the corresponding Process input boundary. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
 | `proc.reset` | Process DO | Archives the non-empty history, clears active execution state, queues, process media, and messages, then increments the history generation. |
-| `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers a Kernel-validated IPC envelope to the target process. A bounded call marks the run as returning to its caller, omits terminal human-delivery instructions, and completes the Kernel call from `proc.run.finished.result` rather than `delivery`. |
 | `proc.history.export` | Process DO direct path | Kernel-only syscall used by `proc.fork` to materialize committed history as archive paths. |
 | `proc.history.import` | Process DO direct path | Kernel-only syscall used by `proc.fork` to initialize an empty target process from exported archives. |
 | `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, initial label, and auto-title policy. |
@@ -1563,19 +1562,6 @@ type ProcIpcSendArgs = {
   metadata?: Record<string, unknown>;
 };
 
-type ProcIpcDeliverArgs = {
-  runId: string;
-  sourcePid: string;
-  source: ProcessIdentity;
-  message: string;
-  metadata?: Record<string, unknown>;
-  sentAt: number;
-  call?: {
-    callId: string;
-    deadlineAt: number;
-  };
-};
-
 type ProcIpcSendResult =
   | { ok: true; status: "started"; pid: string; sourcePid: string; runId: string; queued?: boolean }
   | OperationError;
@@ -1622,11 +1608,6 @@ type ProcessSyscalls = {
   "proc.ipc.call": {
     args: ProcIpcCallArgs;
     result: ProcIpcCallResult;
-  };
-
-  "proc.ipc.deliver": {
-    args: ProcIpcDeliverArgs;
-    result: ProcIpcSendResult;
   };
 
   "proc.abort": {
@@ -1728,8 +1709,8 @@ an unknown model is still rejected.
 stored with the Process identity before an initial prompt can start. Omitting
 `ai` inherits account defaults and does not copy a parent's process-local choices.
 
-`proc.ipc.deliver`, `proc.history.export`, `proc.history.import`, and
-`proc.setidentity` are kernel-only. User and device callers receive a forbidden
+`proc.history.export`, `proc.history.import`, and `proc.setidentity` are
+kernel-only. User and device callers receive a forbidden
 response. Export and import use normal syscall frames; their Process Durable
 Object methods are routing details rather than a second semantic API.
 

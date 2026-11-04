@@ -35,6 +35,14 @@ export async function deliverProcessEvent(
 ): Promise<ProcessEventDeliverResult> {
   if (!host.isInitialized()) throw new Error("Process no longer exists");
   const eventId = z.string().regex(/^[a-zA-Z0-9._:-]{1,200}$/).parse(args.eventId);
+  if ("message" in args) {
+    // Another process's message or call takes a run of its own.
+    const { idle, busy, joinRun } = args.admission;
+    if (idle !== "start" || busy !== "after" || joinRun !== undefined) {
+      throw new Error("Process event is not registered for this delivery path");
+    }
+    return { eventId, ...await host.controller.admitIpcMessage(eventId, args.message) };
+  }
   const event = procHistoryEventSchema.parse(args.event);
   const carried: Carried = {
     ...(args.responsibilities === undefined ? undefined : { responsibilities: responsibilitiesSchema.parse(args.responsibilities) }),
@@ -63,6 +71,17 @@ export async function deliverProcessEvent(
     if (event.severity !== "info" || event.audience !== "model") {
       throw new Error("Process event is not registered for this delivery path");
     }
+  } else if (event.kind === "ipc.reply" || event.kind === "ipc.overdue" || event.kind === "ipc.timeout") {
+    // A call's end or check-in is for the run that asked, unless that run was aborted or this process reset since.
+    const failed = event.kind === "ipc.timeout" || event.payload.error !== undefined;
+    if (event.severity !== (failed ? "error" : "info") || event.audience !== "model") {
+      throw new Error("Process event is not registered for this delivery path");
+    }
+    const { createdAt, sourceRunId } = event.payload;
+    const resetAt = Number(host.store.state.getValue(PROCESS_RESET_AT_KEY) ?? 0);
+    if ((createdAt !== undefined && createdAt <= resetAt) || (sourceRunId !== undefined && host.controller.isAbortedRun(sourceRunId))) {
+      return { eventId, runId: null, queued: false, ignored: true };
+    }
   } else {
     const definition = procHistoryTargetEventRegistry["target.status"];
     if (event.kind !== definition.kind || event.severity !== definition.severity ||
@@ -74,8 +93,12 @@ export async function deliverProcessEvent(
       return { eventId, runId: null, queued: false, ignored: true };
     }
   }
-  // An event only the person sees gives a run nothing to read.
-  const action = event.audience === "person" ? "record" : host.runs.active ? args.admission.busy : args.admission.idle;
+  // An event only the person sees gives a run nothing to read; one for a given run waits for its own run during another.
+  const { idle, busy, joinRun } = args.admission;
+  const active = host.runs.active;
+  const action = event.audience === "person"
+    ? "record"
+    : !active ? idle : busy === "join" && joinRun !== undefined && active.runId !== joinRun ? "after" : busy;
   return action === "record" ? appendNotice(host, eventId, event) : admitRuntimeEvent(host, eventId, event, carried, action === "after");
 }
 

@@ -87,7 +87,6 @@ const labels = {
   "proc.send": "fleet.ledger.procSend",
   "proc.ipc.send": "fleet.ledger.procIpcSend",
   "proc.ipc.call": "fleet.ledger.procIpcCall",
-  "proc.ipc.deliver": "fleet.ledger.procIpcDeliver",
   "proc.abort": "fleet.ledger.procAbort",
   "proc.hil": "fleet.ledger.procHil",
   "proc.history": "fleet.ledger.procHistory",

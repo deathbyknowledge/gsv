@@ -30,6 +30,7 @@ import { KERNEL_V094_RESPONSIBILITY_WAKES_TO_LOG } from "./v094_responsibility_w
 import { KERNEL_V095_RESPONSIBILITY_READY_UNLANED } from "./v095_responsibility_ready_unlaned";
 import { KERNEL_V096_SHIP_SCHEDULE_TARGETS } from "./v096_ship_schedule_targets";
 import { KERNEL_V097_SOURCE_EVENTS_TO_LOG } from "./v097_source_events_to_log";
+import { KERNEL_V098_IPC_ANSWERS_TO_LOG } from "./v098_ipc_answers_to_log";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -244,6 +245,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V095_RESPONSIBILITY_READY_UNLANED,
   KERNEL_V096_SHIP_SCHEDULE_TARGETS,
   KERNEL_V097_SOURCE_EVENTS_TO_LOG,
+  KERNEL_V098_IPC_ANSWERS_TO_LOG,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {
