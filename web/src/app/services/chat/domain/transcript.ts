@@ -99,6 +99,8 @@ export type ChatTranscriptRow = {
   time: string;
   timestamp: number | null;
   media?: unknown[];
+  /** Replies the Ship offered with this message, for the person to tap. */
+  choices?: string[];
   messageId?: number | string | null;
   processId?: string;
   delivery?: "directed" | "sync";

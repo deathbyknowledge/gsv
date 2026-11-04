@@ -2019,6 +2019,7 @@ export const en = {
   "chat.message.attachments": "Message attachments",
   "chat.message.cancelUpload": "cancel upload",
   "chat.message.dismiss": "dismiss",
+  "chat.choices.label": "Replies you can send",
   "chat.history.failed": "Could not load your conversation: {error}",
   "chat.history.helperEmpty": "This helper has no messages yet.",
   "chat.firstOpenPrivacy": "We don't use your data to train AI.\nYour conversations stay private.\nYour information belongs to you!",

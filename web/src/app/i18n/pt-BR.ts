@@ -2025,6 +2025,7 @@ export const ptBR = {
   "chat.message.attachments": "Anexos da mensagem",
   "chat.message.cancelUpload": "cancelar envio",
   "chat.message.dismiss": "descartar",
+  "chat.choices.label": "Respostas que você pode enviar",
   "chat.history.failed": "Não foi possível carregar sua conversa: {error}",
   "chat.history.helperEmpty": "Este ajudante ainda não tem mensagens.",
   "chat.firstOpenPrivacy": "Não usamos seus dados para treinar IA.\nSuas conversas são privadas.\nSuas informações pertencem a você!",
