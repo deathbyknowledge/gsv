@@ -48,12 +48,12 @@ export type ProcessToolAuthorizeArgs = ProcessToolOwner & {
   target?: ProcessApprovalTarget;
 };
 
-/** What a delivered event does to its Process, declared once per event type. */
+/** What a delivered history event does to its Process, declared once per event type. */
 export type ProcessEventAdmission = {
   /** With no active run: start one, or only record the event in history. */
   idle: "start" | "record";
-  /** During a run: join it, take its own run once it ends, stop it and start this one, or only record the event. */
-  busy: "join" | "after" | "interrupt" | "record";
+  /** During a run: join it, take its own run once it ends, or only record the event. */
+  busy: "join" | "after" | "record";
   /** Joins only this run; during another, the event takes its own run after it. */
   joinRun?: string;
 };
@@ -84,7 +84,7 @@ export type ProcessIpcMessage = {
   call?: { callId: string; deadlineAt: number; supervised?: boolean };
 };
 
-/** What a Kernel event hands its Process: a history event, or another process's message. */
+/** What a Kernel event hands its Process: a history event, a message to act on, or another process's message or call. */
 export type ProcessEventDelivery =
   | {
       event: Extract<ProcHistoryEvent, {
@@ -99,8 +99,10 @@ export type ProcessEventDelivery =
       /** The approval request a failed delivery carried, which the failure concerns only while it is pending. */
       approvalRequestId?: string;
     }
-  | { message: ProcessIpcMessage; admission: ProcessEventAdmission }
-  | { input: ProcessInput; admission: ProcessEventAdmission };
+  // Another process's message or call takes a run of its own.
+  | { message: ProcessIpcMessage; admission: { idle: "start"; busy: "after" } }
+  // A person's message stops the active run; another process's waits its turn.
+  | { input: ProcessInput; admission: { idle: "start"; busy: "interrupt" | "after" } };
 
 /** Kernel-derived registered events; this call is never available to public peers. */
 export type ProcessEventDeliverArgs = ProcessEventDelivery & { eventId: string };

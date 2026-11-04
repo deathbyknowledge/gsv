@@ -1,6 +1,6 @@
 import { evictDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { procHistoryEventSchema, type ProcHistoryEvent } from "@humansandmachines/gsv/protocol";
+import type { ProcHistoryEvent } from "@humansandmachines/gsv/protocol";
 import type { Process } from "./do";
 import type { ProcessEventDeliverArgs } from "../protocol/process-frames";
 import { deliverProcessEvent } from "./controller/events";
@@ -52,7 +52,7 @@ function deliveryFailure(eventId: string, approvalRequestId?: string): Extract<P
 }
 
 describe("registered Process events", () => {
-  it("rejects retired approval delivery and keeps staged records inspectable outside model context", async () => {
+  it("keeps a retired approval record inspectable outside model context", async () => {
     const stub = await initProcess("history-events-retired-approval", ROOT_IDENTITY);
     const event: ProcHistoryEvent = {
       kind: "process.approval", severity: "warn", audience: "model",
@@ -60,13 +60,6 @@ describe("registered Process events", () => {
         sourceRunId: "parent-run", sourceCreatedAt: 100, observedAt: 300 },
     };
     await runInProcess(stub, async (process: Process) => {
-      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish");
-      // SAFETY: simulate an internal call already in flight from the staged implementation.
-      const args = { eventId: "approval:request:call", event } as ProcessEventDeliverArgs;
-      await expect(process.deliverEvent(args)).rejects.toThrow("Process event is not registered for this delivery path");
-      expect(process.store.messages.messageCount()).toBe(0);
-      expect(process.runs.active).toBeNull();
-      expect(schedule).not.toHaveBeenCalled();
       process.store.messages.appendMessage("system", "retired approval notice", { record: { kind: "event", payload: event } });
       expect(await process.history.buildContextMessages()).toEqual([]);
       const messages = [...renderCompactionTranscriptChunks(process.store.messages.getMessages(), 24_000)].join("");
@@ -293,20 +286,6 @@ describe("registered Process events", () => {
     });
   });
 
-  it.each([
-    ["for a person only", { audience: "person" }],
-    ["for the model only", { audience: "model" }],
-    ["as a warning", { severity: "warn" }],
-  ] as const)("refuses an owner notice addressed %s", async (_name, change) => {
-    const stub = await initProcess(`history-events-owner-notice-${change.audience ?? change.severity}`, ROOT_IDENTITY);
-    const args = ownerNotice("owner.notified:invalid");
-    // SAFETY: a malformed internal call deliberately tests the Process admission boundary.
-    const invalid = { ...args, event: { ...args.event, ...change } } as ProcessEventDeliverArgs;
-    // expect() probes its argument's properties, which an RPC promise turns into pipelined calls.
-    await expect(Promise.resolve(stub.deliverEvent(invalid))).rejects.toThrow("Process event is not registered for this delivery path");
-    await runInProcess(stub, (process: Process) => expect(process.store.messages.messageCount()).toBe(0));
-  });
-
   it("notes a failed delivery in the history of the run that wrote it, once, without starting or joining a run", async () => {
     const stub = await initProcess("history-events-delivery-failed", ROOT_IDENTITY);
     const args = deliveryFailure("evt_1:proc:history-events-delivery-failed");
@@ -345,19 +324,6 @@ describe("registered Process events", () => {
     });
   });
 
-  it.each([
-    ["a failed delivery for the model only", { ...deliveryFailure("evt_1:proc:invalid"), event: { ...deliveryFailure("evt_1:proc:invalid").event, audience: "model" } }],
-    ["a failed delivery that would start a run", { ...deliveryFailure("evt_1:proc:invalid"), admission: { idle: "start", busy: "after" } }],
-    ["an approval request id beside another event", { ...ownerNotice("owner.notified:approval"), approvalRequestId: "approval-1" }],
-  ] as const)("refuses %s", async (name, args) => {
-    const stub = await initProcess(`history-events-refused-${name.replaceAll(" ", "-")}`, ROOT_IDENTITY);
-    // SAFETY: a malformed internal call deliberately tests the Process admission boundary.
-    const invalid = args as ProcessEventDeliverArgs;
-    // expect() probes its argument's properties, which an RPC promise turns into pipelined calls.
-    await expect(Promise.resolve(stub.deliverEvent(invalid))).rejects.toThrow("Process event is not registered for this delivery path");
-    await runInProcess(stub, (process: Process) => expect(process.store.messages.messageCount()).toBe(0));
-  });
-
   it("rejects stale transitions after reset and preserves killed-process terminal state", async () => {
     const stub = await initProcess("history-events-reset", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
@@ -374,14 +340,8 @@ describe("registered Process events", () => {
     expect(await stub.deliverEvent(request("event:killed"))).toEqual({ unavailable: "killed", message: "Process no longer exists" });
   });
 
-  it("validates registered payloads and keeps event delivery off the public wire", async () => {
+  it("keeps event delivery off the public wire", () => {
     const args = request("event:private");
     expect(() => decodeWireFrameJson(JSON.stringify({ type: "req", id: "request:event:private", call: "proc.event.deliver", args }))).toThrow();
-    expect(() => procHistoryEventSchema.parse({ ...args.event, payload: { targetId: "spoofed" } })).toThrow();
-    const stub = await initProcess("history-events-invalid", ROOT_IDENTITY);
-    // SAFETY: a malformed internal call deliberately tests the Process admission boundary.
-    const invalid = { ...args, event: { ...args.event, severity: "error" } } as ProcessEventDeliverArgs;
-    await expect(Promise.resolve(stub.deliverEvent(invalid))).rejects.toThrow();
-    await runInProcess(stub, (process: Process) => expect(process.store.messages.messageCount()).toBe(0));
   });
 });

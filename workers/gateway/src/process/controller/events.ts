@@ -1,11 +1,8 @@
 import { z } from "zod";
-import {
-  procHistoryEventSchema, procHistoryTargetEventRegistry, resourceBlockSchema,
-  type InteractionOrigin, type ProcHistoryEvent, type ProcHistoryEventPayload, type ProcMediaInput, type ResourceBlock,
-} from "@humansandmachines/gsv/protocol";
+import type { InteractionOrigin, ProcHistoryEventPayload, ProcMediaInput, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import { errorMessageFromUnknown } from "../../inference/errors";
 import type { ProcessEventDeliverArgs, ProcessEventDeliverResult } from "../../protocol/process-frames";
-import { MAX_MESSAGE_MEDIA_ITEMS, MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../../shared/message-media-limits";
+import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../../shared/message-media-limits";
 import type { Process } from "../do";
 import { renderHistoryEvent } from "../history/event-renderer";
 import { PROCESS_RESET_AT_KEY, RUNTIME_EVENT_TOMBSTONE_LIMIT } from "../internal/lifecycle";
@@ -16,125 +13,50 @@ const noticeReceiptsSchema = z.array(z.strictObject({
   eventId: z.string(), messageId: z.number().int().positive(), generation: z.number().int().nonnegative(),
 }));
 
-const responsibilitiesSchema = z.strictObject({
-  ledgerRevision: z.number().int().nonnegative().safe(),
-  ids: z.array(z.string().trim().regex(/^r12y:[0-9a-f-]{36}$/u)).min(1).max(100),
-});
-const attachmentsSchema = z.array(z.custom<ResourceBlock>((value) => resourceBlockSchema.safeParse(value).success))
-  .max(MAX_MESSAGE_MEDIA_ITEMS);
+type EventDelivery = Extract<ProcessEventDeliverArgs, { event: unknown }>;
+type DeliveredEvent = EventDelivery["event"];
 
-type Carried = {
-  responsibilities?: z.infer<typeof responsibilitiesSchema>;
-  attachments?: ResourceBlock[];
-};
-
-/** Records a Kernel event, or admits it to a run when its declared admission says so. */
+/**
+ * Records a Kernel event, or admits it to a run as its declared admission says. The Kernel
+ * decides what each event is and does; the Process decides only what its own state settles.
+ */
 export async function deliverProcessEvent(
   host: Process,
   args: ProcessEventDeliverArgs,
 ): Promise<ProcessEventDeliverResult> {
   if (!host.isInitialized()) throw new Error("Process no longer exists");
-  const eventId = z.string().regex(/^[a-zA-Z0-9._:-]{1,200}$/).parse(args.eventId);
-  if ("message" in args) {
-    // Another process's message or call takes a run of its own.
-    const { idle, busy, joinRun } = args.admission;
-    if (idle !== "start" || busy !== "after" || joinRun !== undefined) {
-      throw new Error("Process event is not registered for this delivery path");
-    }
-    return { eventId, ...await host.controller.admitIpcMessage(eventId, args.message) };
-  }
+  const { eventId } = args;
+  if ("message" in args) return { eventId, ...await host.controller.admitIpcMessage(eventId, args.message) };
   if ("input" in args) {
-    // A person's message stops the active run; another process's waits its turn.
-    const { idle, busy, joinRun } = args.admission;
-    if (idle !== "start" || (busy !== "interrupt" && busy !== "after") || joinRun !== undefined) {
-      throw new Error("Process event is not registered for this delivery path");
-    }
-    const admitted = await host.controller.admitInput(args.input, args.input.runId ?? eventId, busy);
+    const admitted = await host.controller.admitInput(args.input, args.input.runId ?? eventId, args.admission.busy);
     if (!admitted.ok) return { eventId, runId: null, queued: false, refused: admitted.error };
     return { eventId, runId: admitted.runId, queued: admitted.queued === true };
   }
-  const event = procHistoryEventSchema.parse(args.event);
-  if (event.kind === "delivery.failed") return await noteDeliveryFailure(host, eventId, event, args);
-  if (args.approvalRequestId !== undefined) throw new Error("Process event is not registered for this delivery path");
-  const carried: Carried = {
-    ...(args.responsibilities === undefined ? undefined : { responsibilities: responsibilitiesSchema.parse(args.responsibilities) }),
-    ...(args.attachments === undefined ? undefined : { attachments: attachmentsSchema.parse(args.attachments) }),
-  };
-  if (event.kind === "contact.message") {
-    // Ship handles a contact's message as the work it was handed; the person reads it in People.
-    if (event.severity !== "info" || event.audience !== "model" || !carried.responsibilities) {
-      throw new Error("Process event is not registered for this delivery path");
-    }
-  } else if (event.kind === "responsibility.ready") {
-    // Work that came due is handed to Ship alone; the person sees it on the ledger.
-    if (event.severity !== "info" || event.audience !== "model" || !carried.responsibilities || carried.attachments) {
-      throw new Error("Process event is not registered for this delivery path");
-    }
-  } else if (carried.responsibilities || carried.attachments) {
-    throw new Error("Process event is not registered for this delivery path");
-  } else if (event.kind === "owner.notified") {
-    // The person sees a notice they were sent; one recorded only for Ship stays out of their chat.
-    const expected = event.payload.shownInClient ? ["person", "both"] : [event.payload.adapter ? "both" : "model"];
-    if (event.severity !== "info" || !expected.includes(event.audience)) {
-      throw new Error("Process event is not registered for this delivery path");
-    }
-  } else if (event.kind === "schedule.fired") {
-    // A schedule's message is work for the process it names.
-    if (event.severity !== "info" || event.audience !== "model") {
-      throw new Error("Process event is not registered for this delivery path");
-    }
-  } else if (event.kind === "adapter.work.returned") {
-    // The person came back to Ship from a work process on a messenger, which Ship hears.
-    if (event.severity !== "info" || event.audience !== "model") {
-      throw new Error("Process event is not registered for this delivery path");
-    }
-  } else if (event.kind === "ipc.reply" || event.kind === "ipc.overdue" || event.kind === "ipc.timeout") {
-    // A call's end or check-in is for the run that asked, unless that run was aborted or this process reset since.
-    const failed = event.kind === "ipc.timeout" || event.payload.error !== undefined;
-    if (event.severity !== (failed ? "error" : "info") || event.audience !== "model") {
-      throw new Error("Process event is not registered for this delivery path");
-    }
-    const { createdAt, sourceRunId } = event.payload;
-    const resetAt = Number(host.store.state.getValue(PROCESS_RESET_AT_KEY) ?? 0);
-    if ((createdAt !== undefined && createdAt <= resetAt) || (sourceRunId !== undefined && host.controller.isAbortedRun(sourceRunId))) {
+  const { event, admission: { idle, busy, joinRun } } = args;
+  if (event.kind === "delivery.failed") {
+    // Noted under the run that wrote it; a failed approval request only while that request is pending.
+    const { runId } = event.payload;
+    if (args.approvalRequestId !== undefined && host.store.tools.getPendingHil(args.approvalRequestId)?.runId !== runId) {
       return { eventId, runId: null, queued: false, ignored: true };
     }
-  } else {
-    const definition = procHistoryTargetEventRegistry["target.status"];
-    if (event.kind !== definition.kind || event.severity !== definition.severity ||
-        !definition.allowedAudiences.includes(event.audience)) {
-      throw new Error("Process event is not registered for this delivery path");
-    }
-    const resetAt = Number(host.store.state.getValue(PROCESS_RESET_AT_KEY) ?? 0);
-    if (event.payload.observedAt <= resetAt) {
-      return { eventId, runId: null, queued: false, ignored: true };
-    }
+    return await appendNotice(host, eventId, event, runId);
   }
+  if (outlived(host, event)) return { eventId, runId: null, queued: false, ignored: true };
   // An event only the person sees gives a run nothing to read; one for a given run waits for its own run during another.
-  const { idle, busy, joinRun } = args.admission;
   const active = host.runs.active;
   const action = event.audience === "person"
     ? "record"
     : !active ? idle : busy === "join" && joinRun !== undefined && active.runId !== joinRun ? "after" : busy;
-  return action === "record" ? appendNotice(host, eventId, event) : admitRuntimeEvent(host, eventId, event, carried, action === "after");
+  return action === "record" ? appendNotice(host, eventId, event) : admitRuntimeEvent(host, eventId, args, action === "after");
 }
 
-/** A reply or approval request its messenger couldn't deliver is noted under the run that wrote it, while that approval is pending. */
-async function noteDeliveryFailure(
-  host: Process,
-  eventId: string,
-  event: Extract<ProcHistoryEvent, { kind: "delivery.failed" }>,
-  { admission, responsibilities, attachments, approvalRequestId }: Extract<ProcessEventDeliverArgs, { event: unknown }>,
-): Promise<ProcessEventDeliverResult> {
-  if (event.severity !== "error" || event.audience !== "both" || event.payload.phase !== "message"
-      || admission.idle !== "record" || admission.busy !== "record" || responsibilities || attachments) {
-    throw new Error("Process event is not registered for this delivery path");
-  }
-  const { runId } = event.payload;
-  if (approvalRequestId !== undefined && host.store.tools.getPendingHil(approvalRequestId)?.runId !== runId) {
-    return { eventId, runId: null, queued: false, ignored: true };
-  }
-  return await appendNotice(host, eventId, event, runId);
+/** A call's end or check-in for a run that was aborted, or what was observed before this process last reset. */
+function outlived(host: Process, event: DeliveredEvent): boolean {
+  const resetAt = Number(host.store.state.getValue(PROCESS_RESET_AT_KEY) ?? 0);
+  if (event.kind === "target.connection") return event.payload.observedAt <= resetAt;
+  if (event.kind !== "ipc.reply" && event.kind !== "ipc.overdue" && event.kind !== "ipc.timeout") return false;
+  const { createdAt, sourceRunId } = event.payload;
+  return (createdAt !== undefined && createdAt <= resetAt) || (sourceRunId !== undefined && host.controller.isAbortedRun(sourceRunId));
 }
 
 /** A scheduled run answers to its schedule and, when it has one, its reply destination. */
@@ -145,15 +67,14 @@ function scheduleOrigin({ scheduleId, replyTo }: ProcHistoryEventPayload<"schedu
 async function admitRuntimeEvent(
   host: Process,
   eventId: string,
-  event: ProcHistoryEvent,
-  { responsibilities, attachments }: Carried,
+  { event, responsibilities, attachments }: EventDelivery,
   /** Queue the event as its own run after the active one, instead of joining it. */
   distinctRun: boolean,
 ): Promise<ProcessEventDeliverResult> {
   // A redelivery answers with its first admission before any attachment is fetched again.
   const existing = host.controller.runtimeEventAdmission(eventId);
   if (existing) return { eventId, runId: existing.runId, queued: existing.queued };
-  let recorded = event;
+  let recorded: DeliveredEvent = event;
   let media: string | undefined;
   if (attachments?.length && recorded.kind === "contact.message") {
     const retained = await retainAttachments(host, attachments);
@@ -215,7 +136,7 @@ async function retainAttachments(host: Process, blocks: ResourceBlock[]): Promis
 async function appendNotice(
   host: Process,
   eventId: string,
-  event: ProcHistoryEvent,
+  event: DeliveredEvent,
   runId?: string,
 ): Promise<ProcessEventDeliverResult> {
   const content = renderHistoryEvent(event);

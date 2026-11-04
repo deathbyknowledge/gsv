@@ -149,23 +149,6 @@ describe("typed controller history producers", () => {
     });
   });
 
-  it("refuses attachments on an event that is not a contact message", async () => {
-    const stub = await initProcess("typed-event-attachments", ROOT_IDENTITY);
-    await runInProcess(stub, async (process: Process) => {
-      isolateAdmission(process);
-      const resolve = vi.spyOn(process.resources, "resolveIncomingMedia");
-      await expect(process.deliverEvent({
-        eventId: "evt_3:personal:0",
-        event: { kind: "owner.notified", severity: "info", audience: "model",
-          payload: { noticeId: "n", topic: "event.received", from: "Backups", preview: "x" } },
-        admission: { idle: "record", busy: "join" },
-        attachments: [contactResource("selfie.png", 10)],
-      })).rejects.toThrow("Process event is not registered for this delivery path");
-      expect(resolve).not.toHaveBeenCalled();
-      expect(process.store.messages.messageCount()).toBe(0);
-    });
-  });
-
   it("retains canonical interaction identity on direct and queued input", async () => {
     const stub = await initProcess("typed-input-origin", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {

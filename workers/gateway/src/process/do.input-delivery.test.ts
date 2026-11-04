@@ -83,10 +83,5 @@ describe("messages delivered from the event log", () => {
     await runInProcess(stub, (process) => {
       expect(process.store.messages.getMessages()).toEqual([]);
     });
-    await runInProcess(stub, async (process) => {
-      await expect(process.deliverEvent({
-        eventId: "evt_1:proc:mech-input-frames", input: { message: "Hello." }, admission: { idle: "start", busy: "join" },
-      })).rejects.toThrow("Process event is not registered for this delivery path");
-    });
   });
 });
