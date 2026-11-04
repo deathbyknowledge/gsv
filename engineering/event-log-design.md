@@ -5,7 +5,7 @@ Decided. Typed internal calls (#645) are merged into `refactor/event-log`. The
 substrate is in #646, an open draft, where producers convert one commit at a
 time: contact messages, owner notices, responsibility wakes, schedules, source
 events, IPC, target connections, memory reviews, chat, direct `proc.send`,
-spawn prompts, messengers and `/ship` work returns so far.
+spawn prompts, messengers, `/ship` work returns and failed deliveries so far.
 
 ## Problem
 
@@ -223,8 +223,9 @@ private async pass(taskId: string): Promise<void> {
   queued before a reset still reaches the reset Ship.
 - **Chained events.** An outbox may append an event in the transaction that
   records its outcome. A notice round the messenger accepted, or left to a
-  client, appends `owner.notified` for the Ship. An adapter delivery out of
-  attempts appends `delivery.failed` for its pid.
+  client, appends `owner.notified` for the Ship. An adapter delivery that
+  can't go, refused, ambiguous or out of attempts, appends `delivery.failed`
+  for its pid.
 - **Retention.** Deliveries keep their outcome for inspection. A settled
   event keeps its body and outcomes in SQLite for 30 days; an event with a
   pending delivery keeps both. Retention runs once something falls due, at
@@ -293,7 +294,7 @@ state machine.
 | Memory review | none: the queue admits a low-priority Ship responsibility, `memory.review:<pid>:<segment>`, which Ship delegates to Crew | — | — | — | Ship, through `responsibility.ready` | `onMemoryReview`'s 60 s successor: settling a review admits the next in the same transaction, and a Kernel start admits one left waiting, done in step 8 |
 | Welcome | none: sign-in, or the owner's first Ship message, creates the welcome responsibility | — | — | — | Ship, through `responsibility.ready` | nothing of its own |
 | Target connection | `target.status`, one per watch, since each watch has its own audience | `target:<id>` | transition id + watch id | inline: the watch, its revision and pid, and the change | the watching pid · join, or record when only the person sees it | the in-memory chain, which gains retry; a newer transition withdraws an older one still pending, done in step 8 |
-| Failed delivery | `delivery.failed` | `proc:<pid>` | the hash of run, kind, delivery id and state | inline | `proc:<pid>` · record | `onProcessDeliveryNotice` |
+| Failed delivery | `delivery.failed`, appended by the adapter route outbox once a delivery can't go | `proc:<pid>` | the hash of run, kind, delivery id and state | inline: the pid, run and message, and an approval request's id | `proc:<pid>` · record; an approval's only while it is pending | `onProcessDeliveryNotice`, `proc.delivery.notice`, the Kernel's history read before a notice and the Process's notice tombstones, done in step 10 |
 
 Responsibilities stay as state: what is owed and when. A producer that also
 appends an event for the work marks its responsibility `announced`, so the
@@ -323,7 +324,7 @@ state machine, that consumer stays as it is.
 | `onScheduleDue` | 5 s→5 min, 10 attempts for one-shot | timer that appends `schedule.fired`, done in step 5; one-shot attempts stay for `adapter.send` |
 | `onIpcCallTimeout` | default task retry: 3 attempts, in-alarm | timer that appends `ipc.timeout` or a check-in, done in step 7 |
 | `onIpcCallDelivery` | re-queue every 5 s, no limit, plus in-alarm 1 s→30 s ×10 | runner, done in step 7 |
-| `onProcessDeliveryNotice` | in-alarm 1 s→30 s ×10 | runner |
+| `onProcessDeliveryNotice` | in-alarm 1 s→30 s ×10 | runner, done in step 10 |
 | `onAdapterRouteDelivery` | ×10 1 s→30 s, plus in-alarm ×10 | stays: the adapter route outbox |
 | `onFederationDelivery` | ×12 2 s→2048 s, plus in-alarm retry | stays: the federation outbox |
 | `onFederationInbox` | fixed 30 s | stays: the inbox's own intake |
@@ -556,3 +557,14 @@ Reviewed with the maintainer on 2026-11-03:
     its own after the active one, and it is withdrawn once a newer private
     message follows in that chat. v099 lets a `/ship` an older Kernel left
     checkpointed start afresh.
+16. **Settled while converting failed deliveries.** A reply, approval request
+    or run failure notice its messenger can't deliver, refused, ambiguous or
+    out of attempts, is `delivery.failed` for the run's process. It is keyed
+    as the notice was, by run, kind, what it carried and how it failed, so one
+    failure appends once. The process records it under that run without
+    starting or joining one. A failed approval request carries the request's
+    id beside the event, and the Process records it only while that request
+    is still pending, so the Kernel no longer reads the Process's history
+    first. A process that is gone has no one to tell, and nothing is appended.
+    v100 moves notices still on their way onto the log, and Process v020 drops
+    the notice tombstones.

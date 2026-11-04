@@ -89,13 +89,15 @@ export type ProcessEventDelivery =
   | {
       event: Extract<ProcHistoryEvent, {
         kind: "target.connection" | "owner.notified" | "contact.message" | "responsibility.ready" | "schedule.fired"
-          | "ipc.reply" | "ipc.overdue" | "ipc.timeout" | "adapter.work.returned";
+          | "ipc.reply" | "ipc.overdue" | "ipc.timeout" | "adapter.work.returned" | "delivery.failed";
       }>;
       admission: ProcessEventAdmission;
       /** Responsibilities the event hands its run, which the run settles before it yields. */
       responsibilities?: { ledgerRevision: number; ids: string[] };
       /** Resources the event carries, retained as this Process's own media before admission. */
       attachments?: ResourceBlock[];
+      /** The approval request a failed delivery carried, which the failure concerns only while it is pending. */
+      approvalRequestId?: string;
     }
   | { message: ProcessIpcMessage; admission: ProcessEventAdmission }
   | { input: ProcessInput; admission: ProcessEventAdmission };

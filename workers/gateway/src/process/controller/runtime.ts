@@ -5,8 +5,7 @@ import {
   ABORTED_RUN_IDS_KEY, IPC_TOMBSTONE_LIMIT, MEDIA_PREPARATION_TIMEOUT_MS, TOOL_EXECUTION_DENIED_BY_USER_MESSAGE,
   USER_INTERRUPTED_TOOL_MESSAGE, USER_SUPERSEDED_TOOL_MESSAGE, PROCESS_KILLED_TOMBSTONE_KEY, PROCESS_RESET_AT_KEY,
   tombstoneKilledProcessStorage, type ProcessKilledTombstone, RUNTIME_EVENT_IDS_KEY,
-  RUNTIME_EVENT_TOMBSTONE_LIMIT, type RuntimeEventAdmission, DELIVERY_NOTICE_IDS_KEY,
-  DELIVERY_NOTICE_TOMBSTONE_LIMIT, MAX_CANCELLED_REQUESTS,
+  RUNTIME_EVENT_TOMBSTONE_LIMIT, type RuntimeEventAdmission, MAX_CANCELLED_REQUESTS,
 } from "../internal/lifecycle";
 import type { Process } from "../do";
 import {
@@ -17,7 +16,7 @@ import type { RunState, ResponsibilityBatchState } from "../run/state";
 import type { RunFinishReason } from "../run/finish";
 import {
   abortedRunIdsSchema, archivedToolResultMetadataSchema,
-  cancelRequestPayloadSchema, deliveryNoticePayloadSchema, identityChangedPayloadSchema,
+  cancelRequestPayloadSchema, identityChangedPayloadSchema,
   type CancelRequestPayload,
 } from "../internal/schemas";
 import { conversationRunState } from "../run/helpers";
@@ -1813,52 +1812,6 @@ export class ProcessController {
         const parsed = identityChangedPayloadSchema.safeParse(frame.payload);
         if (parsed.success) {
           this.host.store.state.setValue("identity", JSON.stringify(parsed.data.identity));
-        }
-        break;
-      }
-      case "proc.delivery.notice": {
-        const parsed = deliveryNoticePayloadSchema.safeParse(frame.payload);
-        if (parsed.success) {
-          const { message, noticeId, runId } = parsed.data;
-          const noticeKey = `deliveryNotice:${noticeId}`;
-          const messageId = this.host.ctx.storage.transactionSync(() => {
-            if (this.host.store.state.getValue(noticeKey)) return null;
-            const id = this.host.store.messages.appendMessage("system", message, {
-              runId,
-              record: {
-                kind: "event",
-                payload: {
-                  kind: "delivery.failed",
-                  payload: { phase: "message", noticeId, runId, error: message },
-                  severity: "error",
-                  audience: "both",
-                },
-              },
-            });
-            this.host.store.state.setValue(noticeKey, String(id));
-            const noticeIds = abortedRunIdsSchema.parse(
-              JSON.parse(this.host.store.state.getValue(DELIVERY_NOTICE_IDS_KEY) ?? "[]"),
-            );
-            noticeIds.push(noticeId);
-            const expired = noticeIds.splice(
-              0,
-              Math.max(0, noticeIds.length - DELIVERY_NOTICE_TOMBSTONE_LIMIT),
-            );
-            for (const expiredId of expired) {
-              this.host.store.state.deleteValue(`deliveryNotice:${expiredId}`);
-            }
-            this.host.store.state.setValue(DELIVERY_NOTICE_IDS_KEY, JSON.stringify(noticeIds));
-            return id;
-          });
-          if (messageId !== null) {
-            const change: JsonObject = {
-              messageId,
-            };
-            if (runId) {
-              change.runId = runId;
-            }
-            await this.host.signals.changed(["messages"], change);
-          }
         }
         break;
       }

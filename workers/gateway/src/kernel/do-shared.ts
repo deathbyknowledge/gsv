@@ -155,22 +155,6 @@ export type AdapterRouteDeliveryRetry = {
 };
 
 
-export type ProcessDeliveryNoticeRetry = {
-  noticeId: string;
-  runId: string;
-  processId: string;
-  /** `final` is accepted only for durable tasks created by older gateways. */
-  deliveryKind: "hil" | "message" | "final";
-  deliveryId?: string;
-  requestId?: string;
-  state: "permanent" | "ambiguous" | "exhausted";
-  message: string;
-  /** Owned destination snapshot; absent only on tasks created before this field shipped. */
-  route?: AdapterDeliveryRoute;
-  /** Legacy field ignored because terminal run handling owns route cleanup. */
-  cleanupRunRoute?: boolean;
-};
-
 export function sameRouteOrigin(left: RouteOrigin, right: RouteOrigin): boolean {
   return left.type === right.type && left.id === right.id;
 }

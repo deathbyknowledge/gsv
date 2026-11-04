@@ -39,6 +39,18 @@ function ownerNotice(eventId: string): ProcessEventDeliverArgs {
   };
 }
 
+/** A reply or approval request the run's messenger could not deliver, as the Kernel's log delivers it. */
+function deliveryFailure(eventId: string, approvalRequestId?: string): Extract<ProcessEventDeliverArgs, { event: unknown }> {
+  return {
+    eventId, event: {
+      kind: "delivery.failed", severity: "error", audience: "both",
+      payload: { phase: "message", noticeId: "notice-1", runId: "run-1", error: "The message could not be delivered: chat closed" },
+    },
+    admission: { idle: "record", busy: "record" },
+    ...(approvalRequestId === undefined ? undefined : { approvalRequestId }),
+  };
+}
+
 describe("registered Process events", () => {
   it("rejects retired approval delivery and keeps staged records inspectable outside model context", async () => {
     const stub = await initProcess("history-events-retired-approval", ROOT_IDENTITY);
@@ -290,6 +302,57 @@ describe("registered Process events", () => {
     const args = ownerNotice("owner.notified:invalid");
     // SAFETY: a malformed internal call deliberately tests the Process admission boundary.
     const invalid = { ...args, event: { ...args.event, ...change } } as ProcessEventDeliverArgs;
+    // expect() probes its argument's properties, which an RPC promise turns into pipelined calls.
+    await expect(Promise.resolve(stub.deliverEvent(invalid))).rejects.toThrow("Process event is not registered for this delivery path");
+    await runInProcess(stub, (process: Process) => expect(process.store.messages.messageCount()).toBe(0));
+  });
+
+  it("notes a failed delivery in the history of the run that wrote it, once, without starting or joining a run", async () => {
+    const stub = await initProcess("history-events-delivery-failed", ROOT_IDENTITY);
+    const args = deliveryFailure("evt_1:proc:history-events-delivery-failed");
+    const first = await stub.deliverEvent(args);
+    expect(first).toEqual({ eventId: args.eventId, runId: null, queued: false, messageId: 1 });
+    await evictDurableObject(stub);
+    expect(await stub.deliverEvent(args)).toEqual(first);
+    await runInProcess(stub, async (process: Process) => {
+      expect(process.runs.active).toBeNull();
+      expect(process.store.queue.queueSize()).toBe(0);
+      expect(process.store.messages.getRecords()).toMatchObject([{ kind: "event", payload: args.event, runId: "run-1" }]);
+      expect(process.store.messages.getMessages()).toMatchObject([
+        { role: "system", runId: "run-1", content: "The message could not be delivered: chat closed" },
+      ]);
+      process.runs.active = { runId: "active" };
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish");
+      const busy = deliveryFailure("evt_2:proc:history-events-delivery-failed");
+      expect(await process.deliverEvent(busy)).toEqual({ eventId: busy.eventId, runId: null, queued: false, messageId: 2 });
+      expect(process.runs.active).toEqual({ runId: "active" });
+      expect(schedule).not.toHaveBeenCalled();
+    });
+  });
+
+  it("notes an approval request's failed delivery only while that request is pending", async () => {
+    const stub = await initProcess("history-events-approval-delivery-failed", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      process.store.tools.setPendingHil({
+        requestId: "approval-2", runId: "run-1", toolCallId: "call-2", toolName: "Shell",
+        syscall: "shell.exec", args: { input: "date" }, createdAt: Date.now(),
+      });
+      const answered = deliveryFailure("evt_1:proc:approval", "approval-1");
+      expect(await process.deliverEvent(answered)).toEqual({ eventId: answered.eventId, runId: null, queued: false, ignored: true });
+      const pending = deliveryFailure("evt_2:proc:approval", "approval-2");
+      expect(await process.deliverEvent(pending)).toEqual({ eventId: pending.eventId, runId: null, queued: false, messageId: 1 });
+      expect(process.store.messages.getRecords()).toMatchObject([{ kind: "event", payload: pending.event, runId: "run-1" }]);
+    });
+  });
+
+  it.each([
+    ["a failed delivery for the model only", { ...deliveryFailure("evt_1:proc:invalid"), event: { ...deliveryFailure("evt_1:proc:invalid").event, audience: "model" } }],
+    ["a failed delivery that would start a run", { ...deliveryFailure("evt_1:proc:invalid"), admission: { idle: "start", busy: "after" } }],
+    ["an approval request id beside another event", { ...ownerNotice("owner.notified:approval"), approvalRequestId: "approval-1" }],
+  ] as const)("refuses %s", async (name, args) => {
+    const stub = await initProcess(`history-events-refused-${name.replaceAll(" ", "-")}`, ROOT_IDENTITY);
+    // SAFETY: a malformed internal call deliberately tests the Process admission boundary.
+    const invalid = args as ProcessEventDeliverArgs;
     // expect() probes its argument's properties, which an RPC promise turns into pipelined calls.
     await expect(Promise.resolve(stub.deliverEvent(invalid))).rejects.toThrow("Process event is not registered for this delivery path");
     await runInProcess(stub, (process: Process) => expect(process.store.messages.messageCount()).toBe(0));

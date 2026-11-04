@@ -54,6 +54,8 @@ export async function deliverProcessEvent(
     return { eventId, runId: admitted.runId, queued: admitted.queued === true };
   }
   const event = procHistoryEventSchema.parse(args.event);
+  if (event.kind === "delivery.failed") return await noteDeliveryFailure(host, eventId, event, args);
+  if (args.approvalRequestId !== undefined) throw new Error("Process event is not registered for this delivery path");
   const carried: Carried = {
     ...(args.responsibilities === undefined ? undefined : { responsibilities: responsibilitiesSchema.parse(args.responsibilities) }),
     ...(args.attachments === undefined ? undefined : { attachments: attachmentsSchema.parse(args.attachments) }),
@@ -115,6 +117,24 @@ export async function deliverProcessEvent(
     ? "record"
     : !active ? idle : busy === "join" && joinRun !== undefined && active.runId !== joinRun ? "after" : busy;
   return action === "record" ? appendNotice(host, eventId, event) : admitRuntimeEvent(host, eventId, event, carried, action === "after");
+}
+
+/** A reply or approval request its messenger couldn't deliver is noted under the run that wrote it, while that approval is pending. */
+async function noteDeliveryFailure(
+  host: Process,
+  eventId: string,
+  event: Extract<ProcHistoryEvent, { kind: "delivery.failed" }>,
+  { admission, responsibilities, attachments, approvalRequestId }: Extract<ProcessEventDeliverArgs, { event: unknown }>,
+): Promise<ProcessEventDeliverResult> {
+  if (event.severity !== "error" || event.audience !== "both" || event.payload.phase !== "message"
+      || admission.idle !== "record" || admission.busy !== "record" || responsibilities || attachments) {
+    throw new Error("Process event is not registered for this delivery path");
+  }
+  const { runId } = event.payload;
+  if (approvalRequestId !== undefined && host.store.tools.getPendingHil(approvalRequestId)?.runId !== runId) {
+    return { eventId, runId: null, queued: false, ignored: true };
+  }
+  return await appendNotice(host, eventId, event, runId);
 }
 
 /** A scheduled run answers to its schedule and, when it has one, its reply destination. */
@@ -191,11 +211,12 @@ async function retainAttachments(host: Process, blocks: ResourceBlock[]): Promis
   }
 }
 
-/** Appends a history event outside any run, once per history generation. */
+/** Appends a history event without admitting it to a run, once per history generation; one about a run is filed under it. */
 async function appendNotice(
   host: Process,
   eventId: string,
   event: ProcHistoryEvent,
+  runId?: string,
 ): Promise<ProcessEventDeliverResult> {
   const content = renderHistoryEvent(event);
   const timestamp = Date.now();
@@ -205,12 +226,14 @@ async function appendNotice(
     const existing = receipts.find((receipt) => receipt.eventId === eventId && receipt.generation === generation);
     if (existing) return existing.messageId;
     const id = host.store.messages.appendMessage("system", content, {
-      createdAt: timestamp, record: { kind: "event", payload: event },
+      createdAt: timestamp, record: { kind: "event", payload: event }, ...(runId === undefined ? undefined : { runId }),
     });
     receipts.push({ eventId, messageId: id, generation });
     host.store.state.setValue(NOTICE_RECEIPTS_KEY, JSON.stringify(receipts.slice(-RUNTIME_EVENT_TOMBSTONE_LIMIT)));
     return id;
   });
-  await host.signals.changed(["messages"], { messageId, timestamp, recordKind: "event", audience: event.audience });
+  await host.signals.changed(["messages"], {
+    messageId, timestamp, recordKind: "event", audience: event.audience, ...(runId === undefined ? undefined : { runId }),
+  });
   return { eventId, runId: null, queued: false, messageId };
 }

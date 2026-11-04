@@ -47,6 +47,7 @@ import {
 import {
   deliverAdapterDestination,
 } from "./adapter-send";
+import { deliveryFailed } from "./delivery-events";
 import {
   logAdapterBoundaryFailure,
   setAdapterRouteActivity,
@@ -70,7 +71,6 @@ import type {
 import type { Kernel } from "./do";
 import type {
   AdapterRouteDeliveryRetry,
-  ProcessDeliveryNoticeRetry,
 } from "./do-shared";
 
 const MAX_ADAPTER_ROUTE_DELIVERY_ATTEMPTS = 10;
@@ -80,12 +80,6 @@ type AdapterRouteDeliveryOutcome =
   | { state: "delivered" }
   | { state: "skipped" }
   | { state: "retryable" | "permanent" | "ambiguous"; error: string; stage: "route" | "media" | "adapter"; diagnostics?: ExceptionDiagnostics };
-
-
-type ProcessDeliveryNoticePayload = Omit<
-  ProcessDeliveryNoticeRetry,
-  "processId" | "deliveryId" | "route" | "cleanupRunRoute"
->;
 
 
 class AdapterReplyMediaError extends Error {
@@ -187,14 +181,12 @@ async attemptAdapterRouteDelivery(
     frame: SignalFrame,
     attempt: number,
   ): Promise<void> {
+    // An approval request goes only while it is pending, and a failure to deliver it names it.
+    const hilRequestId = frame.signal === "proc.run.hil.requested"
+      ? procHilRequestSchema.safeParse(frame.payload).data?.requestId
+      : undefined;
     let outcome: AdapterRouteDeliveryOutcome;
     try {
-      const parsedHilRequest = frame.signal === "proc.run.hil.requested"
-        ? procHilRequestSchema.safeParse(frame.payload)
-        : null;
-      const hilRequestId = parsedHilRequest?.success
-        ? parsedHilRequest.data.requestId
-        : undefined;
       if (
         hilRequestId
         && !await this.isAdapterHilRequestPending(
@@ -228,7 +220,7 @@ async attemptAdapterRouteDelivery(
     const approval = frame.signal === "proc.run.hil.requested";
     const label = approval ? "approval notification"
       : frame.signal === "proc.run.finished" ? "run failure notice" : "message";
-    await this.queueProcessDeliveryNotice(route, frame, {
+    await this.noteDeliveryFailure(route, frame, hilRequestId, {
       state: terminalState,
       message: terminalState === "ambiguous"
         ? `The ${label} reached the adapter, but provider delivery is ambiguous. It was not retried to avoid a duplicate.`
@@ -315,100 +307,32 @@ async isAdapterHilRequestPending(
     return pending?.requestId === requestId && pending.runId === runId;
   }
 
-async queueProcessDeliveryNotice(
+  /** Tells the run's process that a reply or approval request didn't reach the person: one event per failure. */
+  private async noteDeliveryFailure(
     route: AdapterDeliveryRoute,
     frame: SignalFrame,
+    requestId: string | undefined,
     outcome: { state: "permanent" | "ambiguous" | "exhausted"; message: string },
   ): Promise<void> {
-    const deliveryKind = frame.signal === "proc.run.hil.requested" ? "hil" : "message";
-    const parsedHilRequest = deliveryKind === "hil"
-      ? procHilRequestSchema.safeParse(frame.payload)
-      : null;
-    const requestId = parsedHilRequest?.success
-      ? parsedHilRequest.data.requestId
-      : undefined;
-    if (deliveryKind === "hil" && !requestId) {
-      return;
-    }
-    const parsedMessage = deliveryKind === "message"
-      ? z.object({ message: z.object({ id: z.string().min(1) }) }).safeParse(frame.payload)
-      : null;
-    const deliveryId = parsedMessage?.success ? parsedMessage.data.message.id : undefined;
-    await this.queueProcessDeliveryNoticeRecord(route, {
-      deliveryKind,
-      deliveryId,
-      requestId,
-      ...outcome,
-    });
-  }
-
-async queueProcessDeliveryNoticeRecord(
-    route: AdapterDeliveryRoute,
-    input: {
-      deliveryKind: "hil" | "message";
-      deliveryId?: string;
-      requestId?: string;
-      state: "permanent" | "ambiguous" | "exhausted";
-      message: string;
-    },
-  ): Promise<void> {
-    const { deliveryKind, requestId } = input;
+    // The run's process may be gone by now, leaving no one to tell.
+    const ownerUid = this.host.procs.getOwnerUid(route.processId);
+    if (ownerUid === null) return;
+    const deliveryId = z.object({ message: z.object({ id: z.string().min(1) }) }).safeParse(frame.payload).data?.message.id;
     const noticeId = await stableOpaqueId("process-delivery-notice", [
       route.runId,
-      deliveryKind,
-      input.deliveryId ?? requestId ?? "",
-      input.state,
+      requestId ? "hil" : "message",
+      deliveryId ?? requestId ?? "",
+      outcome.state,
     ]);
-    const notice: ProcessDeliveryNoticeRetry = {
-      noticeId,
+    this.host.eventRuntime.append(deliveryFailed({
+      ownerUid,
+      pid: route.processId,
       runId: route.runId,
-      processId: route.processId,
-      deliveryKind,
-      route,
-      state: input.state,
-      message: input.message,
-    };
-    if (input.deliveryId) notice.deliveryId = input.deliveryId;
-    if (requestId) notice.requestId = requestId;
-    await this.host.schedule(
-      new Date(Date.now() + 10),
-      "onProcessDeliveryNotice",
-      notice,
-      {
-        idempotent: true,
-        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-      },
-    );
-  }
-
-async onProcessDeliveryNotice(input: ProcessDeliveryNoticeRetry): Promise<void> {
-    const route = input.route ?? this.host.runRoutes.get(input.runId);
-    if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
-      return;
-    }
-    const requestId = input.requestId;
-    if (input.deliveryKind === "hil") {
-      if (!requestId || !await this.isAdapterHilRequestPending(
-        input.processId,
-        input.runId,
-        requestId,
-      )) {
-        return;
-      }
-    }
-    const payload: ProcessDeliveryNoticePayload = {
-      noticeId: input.noticeId,
-      runId: input.runId,
-      deliveryKind: input.deliveryKind,
-      state: input.state,
-      message: input.message,
-    };
-    if (requestId) payload.requestId = requestId;
-    await sendFrameToProcess(this.host.installationId, input.processId, {
-      type: "sig",
-      signal: "proc.delivery.notice",
-      payload,
-    });
+      noticeId,
+      ...(requestId === undefined ? undefined : { requestId }),
+      message: outcome.message,
+    }));
+    await this.host.eventRuntime.kick();
   }
 
 async deliverAdapterRouteEvent(

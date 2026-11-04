@@ -154,12 +154,6 @@ export const identityChangedPayloadSchema = z.object({
   identity: processIdentitySchema,
 });
 
-export const deliveryNoticePayloadSchema = z.object({
-  message: nonEmptyStringSchema,
-  noticeId: z.string().trim().regex(/^[a-zA-Z0-9._:-]{1,200}$/u),
-  runId: z.string().optional(),
-});
-
 export const assistantMessageDiagnosticsSchema = z.array(z.object({
   type: z.string(),
   timestamp: z.number(),

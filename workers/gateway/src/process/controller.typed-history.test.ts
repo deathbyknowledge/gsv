@@ -397,18 +397,16 @@ describe("typed controller history producers", () => {
     const stub = await initProcess("typed-delivery-failure", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
-      const notice = { noticeId: "notice-1", runId: "run-1", message: "Provider rejected delivery" };
-      await process.controller.handleSig({ type: "sig", signal: "proc.delivery.notice", payload: notice });
-      await process.controller.handleSig({ type: "sig", signal: "proc.delivery.notice", payload: notice });
-      expect(storedRecords(process)).toEqual([{
-        kind: "event",
-        payload: {
-          kind: "delivery.failed",
-          payload: { phase: "message", noticeId: notice.noticeId, runId: notice.runId, error: notice.message },
-          severity: "error",
-          audience: "both",
-        },
-      }]);
+      const event = {
+        kind: "delivery.failed",
+        payload: { phase: "message", noticeId: "notice-1", runId: "run-1", error: "Provider rejected delivery" },
+        severity: "error",
+        audience: "both",
+      } as const;
+      const delivery = { eventId: "evt_1:proc:typed-delivery-failure", event, admission: { idle: "record", busy: "record" } } as const;
+      await process.deliverEvent(delivery);
+      await process.deliverEvent(delivery);
+      expect(storedRecords(process)).toEqual([{ kind: "event", payload: event }]);
     });
   });
 

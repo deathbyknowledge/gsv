@@ -79,15 +79,11 @@ export const MAX_KILL_ARCHIVE_ATTEMPTS = 3;
 
 export const ABORTED_RUN_IDS_KEY = "abortedRunIds";
 
-export const DELIVERY_NOTICE_IDS_KEY = "deliveryNoticeIds";
-
 export const RUNTIME_EVENT_IDS_KEY = "runtimeEventIds";
 
 export const PROCESS_RESET_AT_KEY = "processResetAt";
 
 export const IPC_TOMBSTONE_LIMIT = 256;
-
-export const DELIVERY_NOTICE_TOMBSTONE_LIMIT = 256;
 
 export const RUNTIME_EVENT_TOMBSTONE_LIMIT = 512;
 

@@ -18,6 +18,7 @@ import { PROCESS_V016_CALL_PURPOSE } from "./v016_call_purpose";
 import { PROCESS_V017_APPROVAL_TARGET } from "./v017_approval_target";
 import { PROCESS_V018_OWNER_APPROVAL_POLICY } from "./v018_owner_approval_policy";
 import { PROCESS_V019_REMOVE_HANDLED_IPC_CALLS } from "./v019_remove_handled_ipc_calls";
+import { PROCESS_V020_REMOVE_DELIVERY_NOTICE_TOMBSTONES } from "./v020_remove_delivery_notice_tombstones";
 
 // Used by Process DO startup before ProcessStore reads or writes rows.
 export const PROCESS_SCHEMA_COMPONENT = "process";
@@ -42,6 +43,7 @@ export const PROCESS_MIGRATIONS: readonly SqlMigration[] = [
   PROCESS_V017_APPROVAL_TARGET,
   PROCESS_V018_OWNER_APPROVAL_POLICY,
   PROCESS_V019_REMOVE_HANDLED_IPC_CALLS,
+  PROCESS_V020_REMOVE_DELIVERY_NOTICE_TOMBSTONES,
 ];
 
 export function runProcessSqlMigrations(storage: DurableObjectStorage): void {

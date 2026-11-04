@@ -404,8 +404,10 @@ Outcomes that may already have reached a provider are reported as
 ambiguous and are not replayed; Discord can additionally reuse an
 enforced deterministic nonce, while Telegram conservatively uses at-most-once
 delivery for ambiguous outcomes. The Kernel retains retry-safe delivery as scheduled work,
-shows typing before each attempt and ends the run's acknowledgement after it, and removes the reply route after success or
-after a terminal delivery notice is accepted by the Process. The canonical
+shows typing before each attempt and ends the run's acknowledgement after it, and keeps the run's reply route until the
+run ends. A delivery that can't go, refused, ambiguous or out of attempts, reaches the run's Process through the Kernel's
+event log as `delivery.failed`, which the Process records in that run's history; a failed approval request is recorded
+only while the approval is still pending. The canonical
 Message remains in conversation history and its delivery outcome remains
 inspectable in Process activity. Approval attempt one is durably scheduled
 before Process acknowledges the HIL signal; provider notification failure

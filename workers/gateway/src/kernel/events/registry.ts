@@ -1,5 +1,6 @@
 import type { ProcessEventDelivery } from "../../protocol/process-frames";
 import type { KernelContext } from "../context";
+import { DELIVERY_FAILED, deliveryFailedEvent } from "../delivery-events";
 import { contactMessageEvent } from "../federation/attention";
 import { ipcEventDefinitions } from "../ipc-events";
 import { messageEventDefinitions } from "../message-events";
@@ -46,6 +47,7 @@ export type EventRegistry = Readonly<Record<string, EventDefinition<object | und
 /** Event types the Kernel appends. Each type is defined beside the producer that appends it. */
 export const EVENT_REGISTRY = {
   "contact.message": contactMessageEvent,
+  [DELIVERY_FAILED]: deliveryFailedEvent,
   ...ipcEventDefinitions,
   ...messageEventDefinitions,
   "owner.notified": ownerNotifiedEvent,

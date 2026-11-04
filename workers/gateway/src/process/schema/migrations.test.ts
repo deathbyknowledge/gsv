@@ -42,7 +42,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(19);
+    expect(PROCESS_MIGRATIONS).toHaveLength(20);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -185,8 +185,15 @@ describe("process schema migrations", () => {
   });
 
   it("drops the list of handled IPC calls in v19, since the Kernel's log delivers each answer once", () => {
-    expect(PROCESS_MIGRATIONS.at(-1)).toMatchObject({ id: 19, name: "remove_handled_ipc_calls" });
+    expect(PROCESS_MIGRATIONS[18]).toMatchObject({ id: 19, name: "remove_handled_ipc_calls" });
     expect(normalizedStatements()).toContain("DELETE FROM process_kv WHERE key = 'handledIpcCalls'");
+  });
+
+  it("drops the failed-delivery notice tombstones in v20, since the Kernel's log delivers each failure once", () => {
+    expect(PROCESS_MIGRATIONS.at(-1)).toMatchObject({ id: 20, name: "remove_delivery_notice_tombstones" });
+    expect(normalizedStatements()).toContain(
+      "DELETE FROM process_kv WHERE key = 'deliveryNoticeIds' OR key LIKE 'deliveryNotice:%'",
+    );
   });
 
   it("moves the default conversation into process-scoped history in v8", () => {

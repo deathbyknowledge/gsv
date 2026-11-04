@@ -210,7 +210,6 @@ import { ProcessOutput } from "./process-output";
 import { AdapterDelivery } from "./adapter-delivery";
 import type {
   AdapterRouteDeliveryRetry,
-  ProcessDeliveryNoticeRetry,
 } from "./do-shared";
 import { ConnectionRuntime } from "./connection-runtime";
 import { Transport } from "./transport";
@@ -258,7 +257,6 @@ type KernelTask =
       callback: "onFederationInbox";
       payload: { contactId: string; contactGeneration: string; deliveryId: string };
     }
-  | { callback: "onProcessDeliveryNotice"; payload: ProcessDeliveryNoticeRetry }
   | { callback: "onRouteExpired"; payload: string }
   | { callback: "onScheduleDue"; payload: string }
   | {
@@ -314,21 +312,6 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       contactId: z.string(),
       contactGeneration: z.string(),
       deliveryId: z.string(),
-    }),
-  }),
-  z.object({
-    callback: z.literal("onProcessDeliveryNotice"),
-    payload: z.object({
-      noticeId: z.string(),
-      runId: z.string(),
-      processId: z.string(),
-      deliveryKind: z.enum(["hil", "message", "final"]),
-      deliveryId: z.string().optional(),
-      requestId: z.string().optional(),
-      state: z.enum(["permanent", "ambiguous", "exhausted"]),
-      message: z.string(),
-      route: adapterDeliveryRouteSchema.optional(),
-      cleanupRunRoute: z.boolean().optional(),
     }),
   }),
   z.object({ callback: z.literal("onRouteExpired"), payload: z.string() }),
@@ -1035,9 +1018,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       }
       case "onFederationInbox":
         await this.federationRuntime.onFederationInbox(task.payload);
-        return;
-      case "onProcessDeliveryNotice":
-        await this.adapterDelivery.onProcessDeliveryNotice(task.payload);
         return;
       case "onRouteExpired":
         await this.transport.onRouteExpired(task.payload);

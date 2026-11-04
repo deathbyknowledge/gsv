@@ -2309,6 +2309,7 @@ describe("Kernel process signal routing", () => {
   it("delivers the system failure notice with a stable identity and fences a relink before retry", async () => {
     const route = { ...adapterRoute("run-failed-delivery"), replyToId: "original-message", routeGeneration: "generation-1" };
     const kernel = buildKernel(null);
+    const log = fakeEventLog(kernel);
     let generation = route.routeGeneration;
     const adapterFrame = vi.fn<NonNullable<AdapterService["adapterFrame"]>>(
       async (_installation, context, frame) => ({
@@ -2379,11 +2380,10 @@ describe("Kernel process signal routing", () => {
     generation = "generation-2";
     await kernel.adapterDelivery.onAdapterRouteDelivery({ ...retry, attempt: 3 });
     expect(adapterFrame).toHaveBeenCalledTimes(2);
-    expect(kernel.schedule).toHaveBeenCalledWith(
-      expect.any(Date), "onProcessDeliveryNotice",
-      expect.objectContaining({ state: "permanent", message: expect.stringContaining("run failure notice") }),
-      expect.any(Object),
-    );
+    expect(log.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: "delivery.failed", subject: `proc:${route.processId}`,
+      body: expect.objectContaining({ message: expect.stringContaining("run failure notice") }),
+    }));
   });
 
   it("materializes a background child's inherited approval route", async () => {
@@ -2668,7 +2668,7 @@ describe("Kernel process signal routing", () => {
     );
   });
 
-  it("uses request-specific delivery notice identities for approvals in one run", async () => {
+  it("keys each approval's failed delivery by its request, so two in one run are noted apart", async () => {
     const route = {
       kind: "adapter",
       runId: "run-multiple-hil",
@@ -2683,31 +2683,22 @@ describe("Kernel process signal routing", () => {
       },
     };
     const kernel = buildKernel(route);
+    const log = fakeEventLog(kernel);
+    kernel.adapterDelivery.isAdapterHilRequestPending = vi.fn(async () => true);
+    kernel.adapterDelivery.deliverAdapterRouteEvent.mockResolvedValue({ state: "permanent", stage: "adapter", error: "chat closed" });
 
-    await kernel.adapterDelivery.queueProcessDeliveryNotice(
-      route,
-      {
+    for (const requestId of ["hil-first", "hil-second"]) {
+      await kernel.adapterDelivery.attemptAdapterRouteDelivery(route, {
         type: "sig",
         signal: "proc.run.hil.requested",
-        payload: hilPayload(route.runId, "hil-first"),
-      },
-      { state: "permanent", message: "First approval delivery failed." },
-    );
-    await kernel.adapterDelivery.queueProcessDeliveryNotice(
-      route,
-      {
-        type: "sig",
-        signal: "proc.run.hil.requested",
-        payload: hilPayload(route.runId, "hil-second"),
-      },
-      { state: "permanent", message: "Second approval delivery failed." },
-    );
+        payload: hilPayload(route.runId, requestId),
+      }, 1);
+    }
 
-    const first = kernel.schedule.mock.calls[0][2];
-    const second = kernel.schedule.mock.calls[1][2];
-    expect(first).toMatchObject({ deliveryKind: "hil", requestId: "hil-first" });
-    expect(second).toMatchObject({ deliveryKind: "hil", requestId: "hil-second" });
-    expect(first.noticeId).not.toBe(second.noticeId);
+    const [first, second] = log.append.mock.calls.map(([input]) => input);
+    expect(first).toMatchObject({ type: "delivery.failed", body: { requestId: "hil-first" } });
+    expect(second).toMatchObject({ type: "delivery.failed", body: { requestId: "hil-second" } });
+    expect(first.key).not.toBe(second.key);
   });
 
   it("broadcasts ordinary run signals once instead of duplicating the origin route", async () => {
@@ -2790,7 +2781,7 @@ describe("Kernel process signal routing", () => {
       stage: "adapter",
       diagnostics: { exceptionName: "APIError", exceptionMessage: "Rate limited token=private-provider-token", errorCode: "130429", providerStatusCode: 429, providerRequestId: "meta-trace" },
     });
-    kernel.adapterDelivery.queueProcessDeliveryNotice = vi.fn(async () => {});
+    fakeEventLog(kernel);
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
@@ -2878,7 +2869,7 @@ describe("Kernel process signal routing", () => {
     });
   });
 
-  it("keeps a committed-message route until its ambiguous delivery notice is acknowledged", async () => {
+  it("keeps a committed-message route when its delivery is ambiguous, noting the failure for its process", async () => {
     const route = {
       kind: "adapter",
       runId: "run-ambiguous",
@@ -2897,7 +2888,7 @@ describe("Kernel process signal routing", () => {
       state: "ambiguous",
       error: "provider acknowledgement was lost",
     });
-    kernel.adapterDelivery.queueProcessDeliveryNotice = vi.fn(async () => {});
+    const log = fakeEventLog(kernel);
     const frame = {
       type: "sig",
       signal: "message.committed",
@@ -2919,137 +2910,10 @@ describe("Kernel process signal routing", () => {
     await kernel.adapterDelivery.attemptAdapterRouteDelivery(route, frame, 1);
 
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
-    expect(kernel.adapterDelivery.queueProcessDeliveryNotice).toHaveBeenCalledWith(
-      route,
-      frame,
-      expect.objectContaining({
-        state: "ambiguous",
-        message: expect.stringContaining("not retried"),
-      }),
-    );
-  });
-
-  it("suppresses stale delivery notices after their run route is cleared", async () => {
-    sendFrameToProcessMock.mockReset();
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const kernel = bareKernel();
-    kernel.runRoutes = { get: vi.fn(() => null), delete: vi.fn() };
-
-    await kernel.adapterDelivery.onProcessDeliveryNotice({
-      noticeId: "notice:stale",
-      runId: "run-stale",
-      processId: "proc-1",
-      deliveryKind: "final",
-      state: "exhausted",
-      message: "Delivery stopped.",
-      cleanupRunRoute: true,
-    });
-
-    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
-    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
-  });
-
-  it("suppresses a HIL delivery notice after its approval is resolved", async () => {
-    sendFrameToProcessMock.mockReset();
-    sendFrameToProcessMock.mockResolvedValueOnce(historyResponse(null));
-    const route = {
-      kind: "adapter",
-      runId: "run-hil-notice-stale",
-      processId: "proc-1",
-    };
-    const kernel = createRoutedKernel();
-    kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
-
-    await kernel.adapterDelivery.onProcessDeliveryNotice({
-      noticeId: "notice:hil:stale",
-      runId: route.runId,
-      processId: route.processId,
-      deliveryKind: "hil",
-      requestId: "hil-stale",
-      state: "exhausted",
-      message: "Approval delivery stopped.",
-      cleanupRunRoute: false,
-    });
-
-    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      route.processId,
-      expect.objectContaining({
-        type: "req",
-        call: "proc.history",
-      }),
-    );
-    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
-  });
-
-  it("records a request-specific HIL delivery notice while its approval is pending", async () => {
-    sendFrameToProcessMock.mockReset();
-    const route = {
-      kind: "adapter",
-      runId: "run-hil-notice-current",
-      processId: "proc-1",
-    };
-    const pending = hilPayload(route.runId, "hil-current");
-    sendFrameToProcessMock
-      .mockResolvedValueOnce(historyResponse(pending))
-      .mockResolvedValueOnce(null);
-    const kernel = createRoutedKernel();
-    kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
-
-    await kernel.adapterDelivery.onProcessDeliveryNotice({
-      noticeId: "notice:hil:current",
-      runId: route.runId,
-      processId: route.processId,
-      deliveryKind: "hil",
-      requestId: pending.requestId,
-      state: "ambiguous",
-      message: "Approval delivery is ambiguous.",
-      cleanupRunRoute: false,
-    });
-
-    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
-      TEST_INSTALLATION_ID,
-      route.processId,
-      expect.objectContaining({
-        type: "sig",
-        signal: "proc.delivery.notice",
-        payload: expect.objectContaining({
-          noticeId: "notice:hil:current",
-          requestId: pending.requestId,
-        }),
-      }),
-    );
-    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
-  });
-
-  it("delivers an owned message notice after the terminal run route is cleared", async () => {
-    sendFrameToProcessMock.mockReset();
-    sendFrameToProcessMock.mockResolvedValueOnce(null);
-    const route = adapterRoute("run-notice");
-    const kernel = createRoutedKernel();
-    kernel.runRoutes = { get: vi.fn(() => null), delete: vi.fn() };
-
-    await kernel.adapterDelivery.onProcessDeliveryNotice({
-      noticeId: "notice:accepted",
-      runId: route.runId,
-      processId: route.processId,
-      deliveryKind: "message",
-      deliveryId: "msg:notice",
-      state: "ambiguous",
-      message: "Delivery is ambiguous.",
-      route,
-    });
-
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      route.processId,
-      expect.objectContaining({
-        signal: "proc.delivery.notice",
-        payload: expect.objectContaining({ noticeId: "notice:accepted" }),
-      }),
-    );
-    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+    expect(log.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: "delivery.failed", subject: "proc:proc-1",
+      body: { pid: "proc-1", runId: route.runId, message: expect.stringContaining("not retried") },
+    }));
   });
 });
 
