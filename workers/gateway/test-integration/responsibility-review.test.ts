@@ -104,10 +104,9 @@ describe("waiting responsibility reviews", () => {
       expect(Date.now()).toBeGreaterThanOrEqual(checkAt);
       expect((await runtime.client.r12y.get({ id: responsibilityId })).responsibility.revision).toBe(scheduled.responsibility.revision);
       const reviewContext = JSON.stringify(runtime.ai.requests.at(-1)?.messages);
-      expect(reviewContext).toContain("Responsibility review requested at");
-      expect(reviewContext).toContain(responsibilityId);
-      expect(reviewContext).toContain("use Send to remind them of the specific question or decision");
-      expect(reviewContext).toContain("not by itself a reason to silently move the check forward again");
+      // The wake names the due record; standing context says to follow up rather than push the check back.
+      expect(reviewContext).toContain(`Responsibilities due: \`${responsibilityId}\`.`);
+      expect(reviewContext).toContain("an unanswered question is a reason to follow up, not to push the check back");
       const dueRequestIndex = runtime.ai.requests.length;
       runtime.ai.enqueue(
         { kind: "tool-calls", calls: [{ id: "resolve-reviewed-question", name: "Shell", arguments: { input: `r12y update ${responsibilityId} --json '{"state":"resolved"}'` } }] },
