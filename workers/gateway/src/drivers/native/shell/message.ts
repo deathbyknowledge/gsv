@@ -167,8 +167,9 @@ async function showMessageHistory(args: string[], ctx: KernelContext): Promise<E
       throw new Error(`unexpected history option: ${option}`);
     }
   }
-  if (!target) throw new Error("message history requires --with CONTACT_OR_CONVERSATION");
-  let conversationId = target.trim();
+  // Like search, history defaults to the caller's Ship conversation, which holds every private surface.
+  let conversationId = target?.trim() ?? ctx.conversations.getShip(resolveCallerOwnerUid(ctx))?.id;
+  if (!conversationId) throw new Error("message history requires --with CONTACT_OR_CONVERSATION");
   if (conversationId.startsWith("contact:")) {
     requireCommandCapability(ctx, "contact.list");
     const contact = (await handleContactList({ includeRevoked: true }, ctx)).contacts
@@ -1018,7 +1019,7 @@ function messageUsage(): string {
     "  message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]",
     "  message route clear [--to here|DESTINATION] [--json]",
     "  message attach PATH... [--mime TYPE]",
-    "  message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]",
+    "  message history [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]",
     "  message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]",
     "  message delivery show DELIVERY_ID [--json]",
     "  message send [--message TEXT]",

@@ -48,7 +48,8 @@ export function syncFederationRequestResponsibility(input: {
     revision: input.request.revision,
     exchangeState: input.request.exchange?.state ?? "unconfirmed",
     remoteDisplayName: input.contact.remoteName,
-    contentTrust: input.remoteInput ? "untrusted" : "local",
+    // The contact's name, and an incoming request's title, came from outside however the latest change arrived.
+    contentTrust: "untrusted",
     ...(input.deliveryId ? { latestDeliveryId: input.deliveryId } : undefined),
   };
   if (!existing) {

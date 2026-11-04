@@ -1530,42 +1530,12 @@ async function appendContactSystemMessage(
   if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
 }
 
-function createFederationResponsibility(input: {
-  ownerUid: number;
-  title: string;
-  details: JsonObject;
-  dedupeKey: string;
-  deliveryId: string;
-  conversationId?: string;
-}, ctx: KernelContext): void {
-  ctx.responsibilities.create({
-    ownerUid: input.ownerUid,
-    title: input.title,
-    details: input.details,
-    source: {
-      kind: "event",
-      eventType: String(input.details.eventType),
-      eventId: input.deliveryId,
-    },
-    ...(input.conversationId
-      ? { audience: { conversationIds: [input.conversationId] } }
-      : undefined),
-    assignee: { kind: "ship" },
-    state: "open",
-    priority: "normal",
-    dedupeKey: input.dedupeKey,
-    actor: { kind: "system", component: "federation" },
-    observedByShip: false,
-    now: Date.now(),
-  });
-}
-
 function createDeliveryDebtResponsibility(
   outbox: FederationOutboxRecord,
   error: string,
   ctx: KernelContext,
 ): void {
-  createFederationResponsibility({
+  ctx.responsibilities.create({
     ownerUid: outbox.ownerUid,
     title: `Resolve contact delivery ${outbox.deliveryId}`,
     details: {
@@ -1574,10 +1544,18 @@ function createDeliveryDebtResponsibility(
       contactId: outbox.contactId,
       attemptCount: outbox.attemptCount + 1,
       error: boundedText(error, "Delivery error", 2_048, false),
+      // The contact's Ship can word its refusal, so the error may be its text.
+      contentTrust: "untrusted",
     },
+    source: { kind: "event", eventType: "federation.delivery.failed", eventId: outbox.deliveryId },
+    assignee: { kind: "ship" },
+    state: "open",
+    priority: "normal",
     dedupeKey: `federation.delivery.failed:${outbox.deliveryId}`,
-    deliveryId: outbox.deliveryId,
-  }, ctx);
+    actor: { kind: "system", component: "federation" },
+    observedByShip: false,
+    now: Date.now(),
+  });
 }
 
 function localOutboundMessage(input: {
