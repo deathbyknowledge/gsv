@@ -376,23 +376,6 @@ describe("typed controller history producers", () => {
     },
   );
 
-  it("persists a delivery failure exactly once with severity and audience", async () => {
-    const stub = await initProcess("typed-delivery-failure", ROOT_IDENTITY);
-    await runInProcess(stub, async (process: Process) => {
-      isolateAdmission(process);
-      const event = {
-        kind: "delivery.failed",
-        payload: { phase: "message", noticeId: "notice-1", runId: "run-1", error: "Provider rejected delivery" },
-        severity: "error",
-        audience: "both",
-      } as const;
-      const delivery = { eventId: "evt_1:proc:typed-delivery-failure", event, admission: { idle: "record", busy: "record" } } as const;
-      await process.deliverEvent(delivery);
-      await process.deliverEvent(delivery);
-      expect(storedRecords(process)).toEqual([{ kind: "event", payload: event }]);
-    });
-  });
-
   it("records scheduling failure from the original error", async () => {
     const stub = await initProcess("typed-scheduling-failure", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {

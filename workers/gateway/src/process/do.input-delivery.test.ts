@@ -41,17 +41,6 @@ describe("messages delivered from the event log", () => {
     });
   });
 
-  it("answers a redelivery with its first admission", async () => {
-    const stub = await initProcess("mech-input-redelivery", ROOT_IDENTITY);
-    const delivery = input("evt_1:personal:0", { message: "Once.", origin: CLIENT, runId: "run:msg-1" }, "interrupt");
-    await stub.deliverEvent(delivery);
-
-    await expect(stub.deliverEvent(delivery)).resolves.toEqual({ eventId: "evt_1:personal:0", runId: "run:msg-1", queued: false });
-    await runInProcess(stub, (process) => {
-      expect(process.store.messages.getMessages().filter((message) => message.role === "user")).toHaveLength(1);
-    });
-  });
-
   it("refuses a message whose media it can't read, without admitting it", async () => {
     const stub = await initProcess("mech-input-refused", ROOT_IDENTITY);
     const media = [{

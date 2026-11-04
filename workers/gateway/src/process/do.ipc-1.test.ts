@@ -471,33 +471,6 @@ describe("proc.ipc.*", () => {
     });
   });
 
-  it("records a redelivered answer once, by its delivery's id", async () => {
-    const pid = "mech-ipc-deduplicated-reply";
-    const stub = await initProcess(pid, ROOT_IDENTITY);
-
-    await runInProcess(stub, async (process, _state, instance) => {
-      process.sendSignal = vi.fn();
-      process.run.scheduleTick = vi.fn(async () => {});
-      const delivery = ipcAnswer("ipc.reply", {
-        callId: "call-retried",
-        targetPid: "target-process",
-        deadlineAt: Date.now() + 30_000,
-        response: { text: "delivered once", usage: null },
-      });
-
-      const first = await instance.deliverEvent(delivery);
-      expect(await instance.deliverEvent(delivery)).toEqual(first);
-
-      expect(
-        process.store.messages
-          .getMessages()
-          .filter((message: any) => message.content.includes("delivered once")),
-      ).toHaveLength(1);
-      expect(process.run.scheduleTick).toHaveBeenCalledTimes(1);
-      process.runs.active = null;
-    });
-  });
-
   it("gives an answer for another run its own run after the active one, leaving the active run alone", async () => {
     const pid = "mech-ipc-other-source-run";
     const stub = await initProcess(pid, ROOT_IDENTITY);

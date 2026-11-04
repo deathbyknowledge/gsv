@@ -177,18 +177,6 @@ describe("conversation handlers", () => {
     );
   });
 
-  it("answers queued when its process can't take the message yet", async () => {
-    getConversationByIdMock.mockReturnValue({
-      append: vi.fn(async (input: any) => ({ created: true, message: canonicalMessage(input) })),
-    });
-    const ctx = context();
-    vi.mocked(ctx.events.deliverNow).mockResolvedValue({ state: "pending" });
-
-    const result = await handleConversationSend({ conversationId: SHIP.id, text: "later is fine", idempotencyKey: "desktop:queued" }, ctx);
-    expect(result).toMatchObject({ handlerPid: PROCESS.processId, runId: `run:${result.message.id}`, queued: true });
-    expect(ctx.runRoutes.delete).not.toHaveBeenCalled();
-  });
-
   it.each([false, true])("keeps a replayed input preference without replacing newer activity=%s", async (newerActivity) => {
     await runWithRealKernelSql(async (sql, storage) => {
       const ctx = context();

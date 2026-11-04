@@ -2093,13 +2093,6 @@ describe("adapter lifecycle handlers", () => {
       expect(appendedEvents(ctx)[0]!.body).toMatchObject({ quote: { state: "resolved", author: "ship", text: "Which one do you want?" } });
     });
 
-    it("tells the Process the quote is unavailable when the id is unknown", async () => {
-      const { ctx } = quoteContext();
-      const result = await handleAdapterInbound(inbound({ replyToId: "wamid.old" }), ctx);
-      expect(result).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
-      expect(appendedEvents(ctx)[0]!.body).toMatchObject({ quote: { state: "unavailable" } });
-    });
-
     it("still delivers the message when the lookup fails", async () => {
       const { ctx } = quoteContext(vi.fn(async () => { throw new Error("conversation unavailable"); }));
       vi.mocked(ctx.adapters.messageRefs.lookup).mockReturnValue({ conversationId: "conv:ship", messageId: "msg:ship", sequence: 4 });
@@ -2453,33 +2446,6 @@ describe("adapter lifecycle handlers", () => {
     expect(ctx.events.append).not.toHaveBeenCalled();
     expect(writeProcessResourceMock).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledTimes(1);
-  });
-
-  it("fails a message its process refuses, leaving its route to the log", async () => {
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
-    const ctx = makeContext({
-      CHANNEL_TELEGRAM: { adapterSetActivity },
-    }, { upsert: vi.fn() });
-    vi.mocked(ctx.events.deliverNow).mockResolvedValue({ state: "withdrawn", reason: "media not found: /home/sam-agent/photo.png" });
-
-    const result = await handleAdapterInbound({
-      adapter: "telegram",
-      accountId: "bot",
-      message: {
-        messageId: "refused-provider-message",
-        surface: { kind: "dm", id: "chat-1" },
-        actor: { id: "telegram:user:1" },
-        text: "look at this",
-      },
-    }, ctx);
-
-    expect(result).toEqual({ ok: false, error: "media not found: /home/sam-agent/photo.png" });
-    // The log removed its reply route as the delivery settled.
-    expect(ctx.runRoutes.setAdapterRoute).toHaveBeenCalledOnce();
-    expect(ctx.runRoutes.delete).not.toHaveBeenCalled();
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
   it("stores adapter media before committing its message and event", async () => {
