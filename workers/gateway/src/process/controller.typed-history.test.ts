@@ -7,7 +7,7 @@ import type { Process } from "./do";
 import type { ProcessEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
 import { evictDurableObject } from "cloudflare:test";
 import {
-  initProcess, ROOT_IDENTITY, runInProcess,
+  initProcess, ROOT_IDENTITY, runInProcess, scheduleFired,
 } from "./do-test-harness";
 
 function storedRecords(process: Process): ProcHistoryRecordData[] {
@@ -289,7 +289,7 @@ describe("typed controller history producers", () => {
         scheduledAtMs: 1_000,
         firedAtMs: 2_000,
       };
-      await process.controller.handleProcScheduleDeliver(event);
+      await process.deliverEvent(scheduleFired(event));
       const queuedEvent: ProcessScheduleDeliverArgs = {
         ...event,
         runId: "schedule-run-2",
@@ -301,7 +301,7 @@ describe("typed controller history producers", () => {
           actorId: "actor-1",
         },
       };
-      await process.controller.handleProcScheduleDeliver(queuedEvent);
+      await process.deliverEvent(scheduleFired(queuedEvent));
       expect(process.store.queue.queueSize()).toBe(1);
       process.runs.active = null;
       process.controller.claimNextQueuedRun();

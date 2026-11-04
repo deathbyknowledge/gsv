@@ -1258,12 +1258,18 @@ describe("scheduler", () => {
     });
 
     await runInDurableObject(kernel, (instance: Kernel) => instance.scheduleRuntime.onScheduleDue(scheduleId));
+    // The timer appended the firing; the runner it kicked delivers it on the Kernel alarm,
+    // which may already be running by itself.
+    await runDurableObjectAlarm(kernel);
 
-    const messages = await runInDurableObject(process, (instance: Process) => {
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      return instance.store.messages.getMessages();
+    const messages = await vi.waitFor(async () => {
+      const stored = await runInDurableObject(process, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        return instance.store.messages.getMessages();
+      });
+      expect(stored).toHaveLength(1);
+      return stored;
     });
-    expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe("system");
     expect(messages[0].content).toContain("Schedule `ops pulse` fired.");
     expect(messages[0].content).toContain("Run the scheduled ops pulse.");
@@ -2127,11 +2133,15 @@ describe("scheduler", () => {
     expect(schedule?.state.nextRunAtMs).toBe(nextRunAtMs);
     expect(schedule?.enabled).toBe(true);
 
-    const messages = await runInDurableObject(process, (instance: Process) =>
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      instance.store.messages.getMessages(),
-    );
-    expect(messages[0].content).toContain("Run early.");
+    // The Kernel alarm delivers the firing; it may already be running by itself.
+    await runDurableObjectAlarm(kernel);
+    await vi.waitFor(async () => {
+      const messages = await runInDurableObject(process, (instance: Process) =>
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        instance.store.messages.getMessages(),
+      );
+      expect(messages[0]?.content).toContain("Run early.");
+    });
   });
 
   it("skips a due schedule that is already running", async () => {

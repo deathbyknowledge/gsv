@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   captureSignals, mockGeneration, processTestConfig, generationRun, assistantResponse,
   okProcessResponse, runInProcess, ROOT_IDENTITY, drainProcessQueue, initProcess, makeReq,
-  makeScheduleDeliverReq, messageAction, setHistoryPolicy, terminalTestConfig, terminalTestResponse,
+  scheduleFired, messageAction, setHistoryPolicy, terminalTestConfig, terminalTestResponse,
   yieldAction,
 } from "./do-test-harness";
 
@@ -110,15 +110,14 @@ describe("model context", () => {
     const result = await runInProcess(stub, async (process, _state, instance) => {
       const emitted = captureSignals(process);
 
-      const request = makeScheduleDeliverReq({
+      const delivery = scheduleFired({
         scheduleId: "sched-1",
         scheduleName: "nightly",
         message: "run the nightly check",
         scheduledAtMs: 1_000,
         firedAtMs: 2_000,
       });
-      const response = await instance.recvFrame(request);
-      expect(response).toMatchObject({ type: "res", id: request.id, ok: true });
+      expect(await instance.deliverEvent(delivery)).toEqual({ eventId: delivery.eventId, runId: delivery.eventId, queued: false });
 
       const messages = process.store.messages.getMessages();
       const contextMessages = await process.history.buildContextMessages("default");
@@ -152,7 +151,7 @@ describe("model context", () => {
       signal: "proc.run.started",
       payload: expect.objectContaining({
         pid,
-        reason: "schedule.event",
+        reason: "schedule.fired",
       }),
     });
   });
@@ -165,10 +164,8 @@ describe("model context", () => {
       message: "run this scheduled check once",
     };
 
-    const firstRequest = makeScheduleDeliverReq(args);
-    const first = await stub.recvFrame(firstRequest);
-    const activeRepeatRequest = makeScheduleDeliverReq(args);
-    const activeRepeat = await stub.recvFrame(activeRepeatRequest);
+    const first = await stub.deliverEvent(scheduleFired(args));
+    const activeRepeat = await stub.deliverEvent(scheduleFired(args));
     const activeState = await runInProcess(stub, (process) => {
       return {
         messages: process.store.messages.getMessages(),
@@ -180,8 +177,7 @@ describe("model context", () => {
     await runInProcess(stub, (process) => {
       process.runs.active = null;
     });
-    const recordedRepeatRequest = makeScheduleDeliverReq(args);
-    const recordedRepeat = await stub.recvFrame(recordedRepeatRequest);
+    const recordedRepeat = await stub.deliverEvent(scheduleFired(args));
     const recordedState = await runInProcess(stub, (process) => {
       return {
         messages: process.store.messages.getMessages(),
@@ -190,16 +186,9 @@ describe("model context", () => {
       };
     });
 
-    expect(first).toMatchObject({
-      type: "res",
-      id: firstRequest.id,
-      ok: true,
-      data: { runId: args.runId, queued: false },
-    });
-    // SAFETY: test fixture is constructed with the asserted domain shape.
-    expect((activeRepeat as any).data).toEqual((first as any).data);
-    // SAFETY: test fixture is constructed with the asserted domain shape.
-    expect((recordedRepeat as any).data).toEqual((first as any).data);
+    expect(first).toEqual({ eventId: args.runId, runId: args.runId, queued: false });
+    expect(activeRepeat).toEqual(first);
+    expect(recordedRepeat).toEqual(first);
     expect(activeState).toMatchObject({
       messages: [expect.objectContaining({ runId: args.runId })],
       queueSize: 0,
@@ -235,19 +224,11 @@ describe("model context", () => {
         runId: "run-busy",
       };
     });
-    const firstRequest = makeScheduleDeliverReq(args);
-    const first = await stub.recvFrame(firstRequest);
-    const repeatedRequest = makeScheduleDeliverReq(args);
-    const repeated = await stub.recvFrame(repeatedRequest);
+    const first = await stub.deliverEvent(scheduleFired(args));
+    const repeated = await stub.deliverEvent(scheduleFired(args));
 
-    expect(first).toMatchObject({
-      type: "res",
-      id: firstRequest.id,
-      ok: true,
-      data: { runId: args.runId, queued: true },
-    });
-    // SAFETY: test fixture is constructed with the asserted domain shape.
-    expect((repeated as any).data).toEqual((first as any).data);
+    expect(first).toEqual({ eventId: args.runId, runId: args.runId, queued: true });
+    expect(repeated).toEqual(first);
     await runInProcess(stub, (process) => {
       expect(process.runs.active).toMatchObject({ runId: "run-busy" });
       expect(process.store.messages.getMessages()).toEqual([]);
@@ -256,7 +237,7 @@ describe("model context", () => {
         expect.objectContaining({
           runId: args.runId,
           role: "system",
-          kind: "schedule.event",
+          kind: "schedule.fired",
           message: expect.stringContaining(args.message),
         }),
       ]);
@@ -266,27 +247,16 @@ describe("model context", () => {
   it("rejects a scheduled runtime event after teardown commits", async () => {
     const stub = await initProcess("mech-schedule-teardown-race", ROOT_IDENTITY);
 
-    const result = await runInProcess(stub, async (process, _state, instance) => {
-      const request = makeScheduleDeliverReq({
+    const messages = await runInProcess(stub, async (process, _state, instance) => {
+      process.store.state.deleteValue("identity");
+      await expect(instance.deliverEvent(scheduleFired({
         scheduleId: "sched-teardown-race",
         message: "do not run",
-      });
-      process.store.state.deleteValue("identity");
-      const response = await instance.recvFrame(request);
-      return {
-        requestId: request.id,
-        response,
-        messages: process.store.messages.getMessages(),
-      };
+      }))).rejects.toThrow("Process no longer exists");
+      return process.store.messages.getMessages();
     });
 
-    expect(result.response).toMatchObject({
-      type: "res",
-      id: result.requestId,
-      ok: false,
-      error: { message: "Process no longer exists" },
-    });
-    expect(result.messages).toEqual([]);
+    expect(messages).toEqual([]);
   });
 
   it("wakes a busy process for a scheduled runtime event", async () => {
@@ -297,12 +267,10 @@ describe("model context", () => {
       process.run.scheduleTick = vi.fn(async () => {});
       process.runs.active = { runId: "run-busy" };
 
-      await instance.recvFrame(
-        makeScheduleDeliverReq({
-          scheduleId: "sched-busy",
-          message: "check now",
-        }),
-      );
+      await instance.deliverEvent(scheduleFired({
+        scheduleId: "sched-busy",
+        message: "check now",
+      }));
       expect(process.runs.active).toMatchObject({
         runId: "run-busy",
         pendingRuntimeEvents: 1,
@@ -340,7 +308,7 @@ describe("model context", () => {
         return "scheduled reply";
       });
 
-      const request = makeScheduleDeliverReq({
+      const delivery = scheduleFired({
         runId: "run-scheduled-reply",
         scheduleId: "sched-adapter-reply",
         message: "send the reminder",
@@ -352,13 +320,7 @@ describe("model context", () => {
           surface: { kind: "dm", id: "telegram-chat-1" },
         },
       });
-      const response = await instance.recvFrame(request);
-      expect(response).toMatchObject({
-        type: "res",
-        id: request.id,
-        ok: true,
-        data: { runId: "run-scheduled-reply", queued: true },
-      });
+      expect(await instance.deliverEvent(delivery)).toEqual({ eventId: "run-scheduled-reply", runId: "run-scheduled-reply", queued: true });
       expect(process.runs.active).toMatchObject({ runId: "run-busy" });
       expect(process.store.queue.queueSize()).toBe(1);
 
@@ -399,12 +361,10 @@ describe("model context", () => {
         throw new Error("scheduler unavailable");
       });
 
-      await instance.recvFrame(
-        makeScheduleDeliverReq({
-          scheduleId: "sched-failure",
-          message: "check now",
-        }),
-      );
+      await instance.deliverEvent(scheduleFired({
+        scheduleId: "sched-failure",
+        message: "check now",
+      }));
       await vi.waitFor(() => {
         expect(process.runs.active).toBeNull();
         expect(process.sendSignal).toHaveBeenCalledWith(

@@ -35,7 +35,7 @@ import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive
 import { historyCursor, parseHistoryCursor } from "../history/cursor";
 import { storeIncomingProcessMedia, stringifyStoredProcessMedia, parseStoredProcessMedia, deleteProcessMedia } from "../media";
 import { appendResponsibilityBatch, normalizeProcessRuntimeEvent } from "../internal/events";
-import { formatIpcMessage, formatIpcReplyMessage, formatScheduleEventMessage, renderHistoryEvent } from "../history/event-renderer";
+import { formatIpcMessage, formatIpcReplyMessage, renderHistoryEvent } from "../history/event-renderer";
 import type { AssistantHistoryContent, AsyncCleanupTask, CodeModeApprovalWaiter } from "../internal/contracts";
 import { extractStoredFsReadResource } from "../tool-result-media";
 import {
@@ -51,7 +51,6 @@ import type {
 import type {
   ProcessRuntimeEventDeliverArgs,
   ProcessRuntimeEventDeliverResult,
-  ProcessScheduleDeliverArgs,
   ProcessInboundFrame,
   ProcessRequestFrame,
 } from "../../protocol/process-frames";
@@ -1637,53 +1636,6 @@ export class ProcessController {
     };
   }
 
-  async handleProcScheduleDeliver(
-    args: ProcessScheduleDeliverArgs,
-  ): Promise<{ runId: string; queued: boolean }> {
-    const origin: InteractionOrigin = {
-      kind: "scheduler",
-      scheduleId: args.scheduleId,
-    };
-    if (args.replyTo) {
-      origin.replyTo = args.replyTo;
-    }
-    const admission = await this.handleRuntimeEvent(
-      formatScheduleEventMessage(args),
-      "schedule.event",
-      {
-        origin,
-        distinctRun: args.replyTo !== undefined,
-        runId: args.runId,
-        kind: "schedule.event",
-        provenance: JSON.stringify({
-          source: "kernel",
-          eventId: args.runId,
-          eventType: "schedule.event",
-        }),
-        event: {
-          kind: "schedule.fired",
-          payload: {
-            runId: args.runId,
-            scheduleId: args.scheduleId,
-            scheduleName: args.scheduleName,
-            message: args.message,
-            data: args.data,
-            replyTo: args.replyTo,
-            scheduledAtMs: args.scheduledAtMs,
-            firedAtMs: args.firedAtMs,
-          },
-          severity: "info",
-          audience: "model",
-        },
-      },
-    );
-    if (!admission.ok) {
-      throw new Error(admission.error);
-    }
-    this.host.maybeStartTaskTitleGeneration(args.message);
-    return { runId: admission.runId, queued: admission.queued };
-  }
-
   async handleRuntimeEvent(
     content: string | null,
     reason: string,
@@ -2033,10 +1985,6 @@ export class ProcessController {
       if (frame.call === "proc.adapter.deliver") {
         const { runId, ...args } = frame.args;
         const result = await this.handleProcSend(args, runId);
-        return { type: "res", id: frame.id, ok: true, data: result };
-      }
-      if (frame.call === "proc.schedule.deliver") {
-        const result = await this.handleProcScheduleDeliver(frame.args);
         return { type: "res", id: frame.id, ok: true, data: result };
       }
       let data: ResultOf<SyscallName>;

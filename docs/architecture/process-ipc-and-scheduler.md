@@ -255,8 +255,14 @@ type ScheduleTarget =
 
 Schedule success reports target dispatch, not model-run completion. A successful
 `responsibility` occurrence means the Kernel durably created or recovered the
-deduplicated `schedule.due` record. A successful `process.event` means the target
-process admitted the transport-bound event. A successful `process.spawn` means the
+deduplicated `schedule.due` record. A successful `process.event` means the Kernel
+appended the occurrence's `schedule.fired` event to its log, which delivers it to
+the target process and retries until the process takes it. The process gets the
+schedule as it stands at delivery. A firing is withdrawn once its schedule is
+removed or goes to another process, or its reply destination is no longer allowed,
+and a newer firing replaces one still waiting. Without `replyTo`, a firing joins
+an active run. With `replyTo`, it takes its own run after any active one, and that
+run replies there. A successful `process.spawn` means the
 new process was created and accepted its initial prompt. Child answers remain in
 the child history unless another mechanism consumes them.
 

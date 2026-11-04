@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InteractionOrigin } from "@humansandmachines/gsv/protocol";
 import type { ProcessEventDeliverArgs } from "../protocol/process-frames";
 import type { Process } from "./do";
-import { deferred, initProcess, ROOT_IDENTITY, runInProcess, terminalTestConfig } from "./do-test-harness";
+import { deferred, initProcess, ROOT_IDENTITY, runInProcess, scheduleFired, terminalTestConfig } from "./do-test-harness";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -76,13 +76,13 @@ describe("durable runtime continuations", () => {
       });
       process.runs.active = { runId: "slack-run" };
       if (source === "schedule") {
-        await process.controller.handleProcScheduleDeliver({
+        await process.deliverEvent(scheduleFired({
           scheduleId: "schedule:queued", runId: "queued-input", firedAtMs: Date.now(), message: "Send the reminder.",
           replyTo: {
             kind: "adapter", adapter: "telegram", accountId: "fixture", actorId: "fixture-user",
             surface: { kind: "dm", id: "fixture-chat" },
           },
-        });
+        }));
       } else {
         process.store.queue.enqueue("queued-input", "Continue from the client.", {
           origin: JSON.stringify({ kind: "client", connectionId: "fixture-client", clientId: "gsv-ui" }),

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
   procHistoryEventSchema, procHistoryTargetEventRegistry, resourceBlockSchema,
-  type ProcHistoryEvent, type ProcMediaInput, type ResourceBlock,
+  type InteractionOrigin, type ProcHistoryEvent, type ProcHistoryEventPayload, type ProcMediaInput, type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import { errorMessageFromUnknown } from "../../inference/errors";
 import type { ProcessEventDeliverArgs, ProcessEventDeliverResult } from "../../protocol/process-frames";
@@ -58,6 +58,11 @@ export async function deliverProcessEvent(
     if (event.severity !== "info" || !expected.includes(event.audience)) {
       throw new Error("Process event is not registered for this delivery path");
     }
+  } else if (event.kind === "schedule.fired") {
+    // A schedule's message is work for the process it names.
+    if (event.severity !== "info" || event.audience !== "model") {
+      throw new Error("Process event is not registered for this delivery path");
+    }
   } else {
     const definition = procHistoryTargetEventRegistry["target.status"];
     if (event.kind !== definition.kind || event.severity !== definition.severity ||
@@ -71,7 +76,12 @@ export async function deliverProcessEvent(
   }
   // An event only the person sees gives a run nothing to read.
   const action = event.audience === "person" ? "record" : host.runs.active ? args.admission.busy : args.admission.idle;
-  return action === "record" ? appendNotice(host, eventId, event) : admitRuntimeEvent(host, eventId, event, carried);
+  return action === "record" ? appendNotice(host, eventId, event) : admitRuntimeEvent(host, eventId, event, carried, action === "after");
+}
+
+/** A scheduled run answers to its schedule and, when it has one, its reply destination. */
+function scheduleOrigin({ scheduleId, replyTo }: ProcHistoryEventPayload<"schedule.fired">): InteractionOrigin {
+  return { kind: "scheduler", scheduleId, ...(replyTo ? { replyTo } : undefined) };
 }
 
 async function admitRuntimeEvent(
@@ -79,6 +89,8 @@ async function admitRuntimeEvent(
   eventId: string,
   event: ProcHistoryEvent,
   { responsibilities, attachments }: Carried,
+  /** Queue the event as its own run after the active one, instead of joining it. */
+  distinctRun: boolean,
 ): Promise<ProcessEventDeliverResult> {
   // A redelivery answers with its first admission before any attachment is fetched again.
   const existing = host.controller.runtimeEventAdmission(eventId);
@@ -94,6 +106,8 @@ async function admitRuntimeEvent(
     runId: eventId,
     dedupeId: eventId,
     kind: recorded.kind,
+    ...(distinctRun ? { distinctRun } : undefined),
+    ...(recorded.kind === "schedule.fired" ? { origin: scheduleOrigin(recorded.payload) } : undefined),
     provenance: JSON.stringify({
       source: "kernel", eventId, eventType: recorded.kind,
       ...(recorded.kind === "contact.message" ? { contactId: recorded.payload.contactId } : undefined),
@@ -106,6 +120,8 @@ async function admitRuntimeEvent(
     ...(media === undefined ? undefined : { media }),
   });
   if (!admitted.ok) throw new Error(admitted.error);
+  // A schedule's message names its work, as a first prompt does.
+  if (recorded.kind === "schedule.fired") host.maybeStartTaskTitleGeneration(recorded.payload.message);
   return { eventId, runId: admitted.runId, queued: admitted.queued };
 }
 

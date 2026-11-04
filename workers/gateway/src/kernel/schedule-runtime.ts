@@ -22,9 +22,6 @@ import {
   kernelPeerContext,
 } from "./peer";
 import {
-  sendFrameToProcess,
-} from "../shared/utils";
-import {
   stableOpaqueId,
 } from "../shared/stable-id";
 import {
@@ -32,12 +29,12 @@ import {
 } from "./adapter-send";
 import {
   assertAdapterMessageDestinationAccess,
-  identityLinkRouteGeneration,
 } from "./adapter-destinations";
-import type {
-  InternalRequestFrame,
-  InternalResponseFrame,
-} from "../protocol/process-frames";
+import {
+  SCHEDULE_FIRED,
+  scheduleSubject,
+  type ScheduleFiring,
+} from "./schedule-events";
 import {
   handleProcSpawn,
 } from "./proc-handlers";
@@ -73,7 +70,7 @@ type ScheduleExecutionResult = {
   stderr?: string;
   truncated?: boolean;
   pid?: string;
-  runId?: string;
+  eventId?: string;
   adapter?: string;
   accountId?: string;
   surfaceId?: string;
@@ -93,10 +90,7 @@ function scheduleResultSummary(record: ScheduleRecord, result: ScheduleExecution
     return `spawned process ${result.pid}`;
   }
   if (record.target.kind === "process.event") {
-    if (result.responsibilityId && result.kind === "responsibility") {
-      return `created responsibility ${result.responsibilityId}`;
-    }
-    return `delivered event to process ${record.target.pid}`;
+    return `queued event for process ${record.target.pid}`;
   }
   if (record.target.kind === "responsibility" && result.responsibilityId) {
     return `created responsibility ${result.responsibilityId}`;
@@ -440,95 +434,31 @@ async dispatchScheduleTarget(
       if (proc.ownerUid !== record.ownerUid && record.ownerUid !== 0) {
         throw new Error(`Permission denied: schedule ${record.id} cannot access process ${target.pid}`);
       }
-      if (proc.isPersonalController) {
-        if (!hasCapability(principalOf(ctx)?.calls ?? [], "r12y.create")) {
-          throw new Error("Permission denied: r12y.create");
-        }
-        return {
-          kind: "responsibility",
-          responsibilityId: this.createScheduleResponsibility(
-            record,
-            target,
-            scheduledAtMs,
-            firedAtMs,
-            occurrenceKey,
-          ),
-        };
-      }
       if (target.replyTo) {
         assertAdapterMessageDestinationAccess(target.replyTo, record.ownerUid, ctx);
       }
-
-      const runId = await stableOpaqueId("schedule-run", [record.id, occurrenceKey]);
-      const delivery = target.replyTo;
-      if (delivery) {
-        const link = ctx.adapters.identityLinks.get(
-          delivery.adapter,
-          delivery.accountId,
-          delivery.actorId,
-        );
-        const routeGeneration = link
-          ? identityLinkRouteGeneration(link, delivery.surface)
-          : undefined;
-        this.host.runRoutes.setAdapterRoute({
-          runId,
-          processId: target.pid,
-          uid: record.ownerUid,
-          destination: delivery,
-          ...(routeGeneration === undefined ? undefined : { routeGeneration }),
+      // The log delivers the firing, retrying until the process takes it. A newer
+      // firing replaces one still waiting, so a busy process gets one, not a backlog.
+      const firing: ScheduleFiring = { scheduleId: record.id, pid: target.pid, scheduledAtMs, firedAtMs };
+      const subject = scheduleSubject(record.id);
+      const event = this.host.ctx.storage.transactionSync(() => {
+        const appended = this.host.eventRuntime.append({
+          type: SCHEDULE_FIRED,
+          ownerUid: record.ownerUid,
+          subject,
+          actor: { kind: "schedule", scheduleId: record.id },
+          key: `${record.id}:${occurrenceKey}`,
+          body: firing,
         });
-      }
-      const request: InternalRequestFrame<"proc.schedule.deliver"> = {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.schedule.deliver",
-        args: {
-          runId,
-          scheduleId: record.id,
-          scheduleName: record.name,
-          message: target.message,
-          data: target.data,
-          replyTo: target.replyTo,
-          scheduledAtMs,
-          firedAtMs,
-        },
-      };
-      let admittedRunId = runId;
-      let response: InternalResponseFrame<"proc.schedule.deliver"> | null;
-      try {
-        response = await sendFrameToProcess(this.host.installationId, target.pid, request);
-      } catch (error) {
-        // As with adapter ingress, a thrown DO transport may have lost the
-        // response after admission. Preserve a preallocated reply route so an
-        // actually admitted run can still complete its delivery.
-        throw new ScheduleTargetDispatchError(
-          error instanceof Error ? error.message : String(error),
-          true,
-        );
-      }
-      if (!response || response.type !== "res" || response.id !== request.id) {
-        throw new ScheduleTargetDispatchError(
-          "proc.schedule.deliver did not return a response",
-          true,
-        );
-      }
-      if (!response.ok) {
-        throw new ScheduleTargetDispatchError(response.error.message, true);
-      }
-      admittedRunId = response.data.runId;
-      if (delivery && response.data.runId !== runId) {
-        this.host.runRoutes.delete(runId);
-        throw new ScheduleTargetDispatchError(
-          "proc.schedule.deliver admitted an unexpected reply run",
-          false,
-        );
-      }
-      const result: ScheduleExecutionResult = {
-        kind: "process.event",
-        pid: target.pid,
-        runId: admittedRunId,
-      };
-      return result;
+        for (const waiting of this.host.eventRuntime.pending(SCHEDULE_FIRED, subject)) {
+          if (waiting.event.seq < appended.seq) {
+            this.host.eventRuntime.withdraw(waiting, "a newer firing of its schedule replaced it");
+          }
+        }
+        return appended;
+      });
+      await this.host.eventRuntime.kick();
+      return { kind: "process.event", pid: target.pid, eventId: event.id };
     }
 
     return { kind: "unknown" };
@@ -536,7 +466,7 @@ async dispatchScheduleTarget(
 
 createScheduleResponsibility(
     record: ScheduleRecord,
-    target: Extract<ScheduleRecord["target"], { kind: "responsibility" | "process.event" }>,
+    target: Extract<ScheduleRecord["target"], { kind: "responsibility" }>,
     scheduledAtMs: number | null,
     firedAtMs: number,
     occurrenceKey: string,
@@ -557,9 +487,7 @@ createScheduleResponsibility(
       source: { kind: "schedule", scheduleId: record.id },
       assignee: { kind: "ship" },
       state: "open",
-      priority: target.kind === "responsibility"
-        ? target.priority ?? "normal"
-        : "normal",
+      priority: target.priority ?? "normal",
       dedupeKey: `schedule.due:${record.id}:${occurrenceKey}`,
       actor: { kind: "system", component: "scheduler" },
       observedByShip: false,

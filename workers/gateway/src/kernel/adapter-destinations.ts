@@ -80,6 +80,17 @@ export function assertAdapterMessageDestinationAccess(
   ownerUid: number,
   ctx: KernelContext,
 ): void {
+  if (!adapterMessageDestinationAllowed(destination, ownerUid, ctx)) {
+    throw new Error("Adapter destination is not authorized");
+  }
+}
+
+/** Whether the owner may send there: their own identity link, on a surface it or the owner's surface route allows. */
+export function adapterMessageDestinationAllowed(
+  destination: AdapterMessageDestination,
+  ownerUid: number,
+  ctx: KernelContext,
+): boolean {
   const link = ctx.adapters.identityLinks.get(
     destination.adapter,
     destination.accountId,
@@ -95,12 +106,8 @@ export function assertAdapterMessageDestinationAccess(
       threadId: destination.surface.threadId,
     },
   );
-  if (
-    link?.uid !== ownerUid
-    || (!identityLinkAllowsSurface(link, destination.surface) && route?.uid !== ownerUid)
-  ) {
-    throw new Error("Adapter destination is not authorized");
-  }
+  return link?.uid === ownerUid
+    && (identityLinkAllowsSurface(link, destination.surface) || route?.uid === ownerUid);
 }
 
 export async function listVisibleAdapterMessageDestinations(

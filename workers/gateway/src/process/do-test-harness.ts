@@ -80,21 +80,21 @@ export function drainProcessQueue(store: any) {
   return queued;
 }
 
-export function makeScheduleDeliverReq(
+/** A schedule's firing as the Kernel's event log delivers it to a process: with a reply destination, its own run. */
+export function scheduleFired(
   args: Omit<ProcessScheduleDeliverArgs, "runId" | "firedAtMs"> & {
     runId?: string;
     firedAtMs?: number;
   },
-): InternalRequestFrame<"proc.schedule.deliver"> {
+): ProcessEventDeliverArgs {
+  const runId = args.runId ?? `evt_${crypto.randomUUID()}:proc:test`;
   return {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.schedule.deliver",
-    args: {
-      ...args,
-      runId: args.runId ?? crypto.randomUUID(),
-      firedAtMs: args.firedAtMs ?? Date.now(),
+    eventId: runId,
+    event: {
+      kind: "schedule.fired", severity: "info", audience: "model",
+      payload: { ...args, runId, firedAtMs: args.firedAtMs ?? Date.now() },
     },
+    admission: { idle: "start", busy: args.replyTo ? "after" : "join" },
   };
 }
 

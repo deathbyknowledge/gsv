@@ -1,11 +1,11 @@
 import { z } from "zod";
 import type {
   AdapterInteractionOrigin,
-  EventReplyTarget,
   JsonObject,
   ProcMediaInput,
   ProcSendResult,
   ProcHistoryEvent,
+  ProcHistoryEventPayload,
   ProcHistoryMessageQuote,
   ResourceBlock,
   ResponseErrEnvelope,
@@ -73,14 +73,14 @@ export type ProcessRuntimeEventDeliverResult = {
 export type ProcessEventAdmission = {
   /** With no active run: start one, or only record the event in history. */
   idle: "start" | "record";
-  /** During a run: join it, or only record the event. */
-  busy: "join" | "record";
+  /** During a run: join it, take its own run once it ends, or only record the event. */
+  busy: "join" | "after" | "record";
 };
 
 /** Kernel-derived registered events; this call is never available to public peers. */
 export type ProcessEventDeliverArgs = {
   eventId: string;
-  event: Extract<ProcHistoryEvent, { kind: "target.connection" | "owner.notified" | "contact.message" | "responsibility.ready" }>;
+  event: Extract<ProcHistoryEvent, { kind: "target.connection" | "owner.notified" | "contact.message" | "responsibility.ready" | "schedule.fired" }>;
   admission: ProcessEventAdmission;
   /** Responsibilities the event hands its run, which the run settles before it yields. */
   responsibilities?: { ledgerRevision: number; ids: string[] };
@@ -96,33 +96,8 @@ export type ProcessEventDeliverResult = {
   ignored?: boolean;
 };
 
-type ProcessScheduleDataValue =
-  | string
-  | number
-  | boolean
-  | null
-  | ProcessScheduleDataValue[]
-  | { [key: string]: ProcessScheduleDataValue };
-
-export type ProcessScheduleData = {
-  [key: string]: ProcessScheduleDataValue;
-};
-
-export type ProcessScheduleDeliverArgs = {
-  runId: string;
-  scheduleId: string;
-  scheduleName?: string;
-  message: string;
-  data?: ProcessScheduleData;
-  replyTo?: EventReplyTarget;
-  scheduledAtMs?: number | null;
-  firedAtMs: number;
-};
-
-export type ProcessScheduleDeliverResult = {
-  runId: string;
-  queued: boolean;
-};
+/** What a schedule's firing tells its process: the `schedule.fired` payload, which `prompts/schedule-events.ts` formats. */
+export type ProcessScheduleDeliverArgs = ProcHistoryEventPayload<"schedule.fired">;
 
 export type ProcessAdapterDeliverArgs = {
   runId: string;
@@ -196,10 +171,6 @@ export type InternalSyscallDomains = {
   "proc.runtime.event.deliver": {
     args: ProcessRuntimeEventDeliverArgs;
     result: ProcessRuntimeEventDeliverResult;
-  };
-  "proc.schedule.deliver": {
-    args: ProcessScheduleDeliverArgs;
-    result: ProcessScheduleDeliverResult;
   };
   "proc.adapter.deliver": { args: ProcessAdapterDeliverArgs; result: ProcSendResult };
 };

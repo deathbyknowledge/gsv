@@ -2,8 +2,8 @@
 
 Status: reviewed 2026-11-03; the decisions are folded in and listed under
 Decided. Typed internal calls are in #645 and the substrate in #646, where
-producers convert one commit at a time: contact messages, owner notices and
-responsibility wakes so far. Both are open drafts.
+producers convert one commit at a time: contact messages, owner notices,
+responsibility wakes and schedules so far. Both are open drafts.
 
 ## Problem
 
@@ -275,7 +275,7 @@ state machine.
 | Responsibility wake | `responsibility.ready`, appended by the wake timer for a batch of up to 25 records; none while one is still pending, so bursts merge as today | `owner:<uid>` | a fresh id per batch | inline: record ids and ledger revision | Ship · join | `responsibility_wake_batches`, `onResponsibilityWake`'s delivery, `r12y.ready`; the timer and the ledger's recovery wakes stay |
 | Inbound mail | `mail.received` | `mail:<id>` | message id | ref: `mail_messages` row | Ship · join; notices when a rule says | the wake through r12y and the parallel notice |
 | Hook, `event.emit` | `source.event` | `source:<id>` | source id + source event id, which is unique only per source | inline | Ship · join or record; notices when the source says | `event_log`, `onEventUpkeep`'s retention, the wake through r12y, the double delivery |
-| Schedule | `schedule.fired` | `schedule:<id>` | schedule id + fire time | inline | Ship or `proc:<pid>` · join, or own run with `replyTo` | the ledger route for Ship schedules, `proc.schedule.deliver`, the one-shot attempt loop |
+| Schedule | `schedule.fired`; a Ship's schedule stays a `responsibility` target | `schedule:<id>` | schedule id + occurrence: due time, forced run or one-shot | inline: schedule id, pid, due and fire times; the message and data are read from the schedule at delivery | `proc:<pid>` · join, or own run after with `replyTo` | `proc.schedule.deliver` and the fire-time turn of a Ship-pid schedule into a responsibility; the one-shot attempt loop stays for `adapter.send` |
 | IPC send, call | `ipc.message`, `ipc.call` | `proc:<target>` | call id | inline | `proc:<target>` · own run after | `onIpcCallDelivery` and its in-alarm retry |
 | IPC answer | `ipc.replied`, `ipc.timed_out`, `ipc.overdue` | `proc:<caller>` | call id + outcome | inline | `proc:<caller>` · settles | the signal path, the timeout task's delivery |
 | Chat | `message.received` | `conversation:<id>` | message id | ref: Conversation message | Ship · interrupt, inline | `proc.send`'s interaction branch |
@@ -312,7 +312,7 @@ state machine, that consumer stays as it is.
 | `onShipEvents` | 2 s doubling to 256 s, no limit | runner, done in step 3 |
 | `onOwnerNotices` | the same formula | stays: it sends to the person's messenger |
 | `onResponsibilityWake` | the same formula, plus recovery wakes at 5 m, 15 m, 1 h, then every 6 h, armed at delivery | timer that appends `responsibility.ready`, done in step 4; recovery wakes stay in the ledger |
-| `onScheduleDue` | 5 s→5 min, 10 attempts for one-shot | timer that appends `schedule.fired` |
+| `onScheduleDue` | 5 s→5 min, 10 attempts for one-shot | timer that appends `schedule.fired`, done in step 5; one-shot attempts stay for `adapter.send` |
 | `onIpcCallTimeout` | default task retry: 3 attempts, in-alarm | timer that appends `ipc.timed_out` |
 | `onIpcCallDelivery` | re-queue every 5 s, no limit, plus in-alarm 1 s→30 s ×10 | runner |
 | `onProcessDeliveryNotice` | in-alarm 1 s→30 s ×10 | runner |
@@ -466,3 +466,12 @@ Reviewed with the maintainer on 2026-11-03:
    due tasks once more before re-arming, so a timer's kick delivers in the same
    alarm. The Process keeps one read, since it checks kill and reset once per
    alarm.
+10. **Settled while converting schedules.** A firing names its schedule
+    instead of copying the message and data, which have no size limit, so the
+    process gets the schedule as it stands. A firing is withdrawn once its
+    schedule is removed or goes to another process, or its reply destination
+    is no longer allowed. A newer firing replaces one still waiting, so a
+    process that can't take firings for a while gets the latest, not a
+    backlog. A schedule aimed at a Ship's pid is stored as a `responsibility`;
+    v095 converts older rows still aimed at one, and the fire-time fallback is
+    gone.
