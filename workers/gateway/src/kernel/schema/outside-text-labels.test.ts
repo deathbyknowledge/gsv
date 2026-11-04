@@ -24,6 +24,9 @@ describe("outside text labels upgrade", () => {
       const request = record("Track contact request request:1", "federation.request:contact:1:request:1", {
         eventType: "federation.request", remoteDisplayName: "Mallory", contentTrust: "local",
       });
+      const debt = record("Resolve contact delivery delivery:1", "federation.delivery.failed:delivery:1", {
+        eventType: "federation.delivery.failed", error: "Refused by the contact",
+      });
       const owned = record("Renew the passport", "owner:passport", { note: "Book an appointment" });
 
       runKernelSqlMigrations(storage);
@@ -33,6 +36,7 @@ describe("outside text labels upgrade", () => {
       expect(details(handoff)).toEqual({ contactId: "contact:1", contentTrust: "untrusted" });
       expect(details(bare)).toEqual({ contentTrust: "untrusted" });
       expect(details(request)).toEqual({ eventType: "federation.request", remoteDisplayName: "Mallory", contentTrust: "untrusted" });
+      expect(details(debt)).toEqual({ eventType: "federation.delivery.failed", error: "Refused by the contact", contentTrust: "untrusted" });
       expect(details(owned)).toEqual({ note: "Book an appointment" });
     });
   });
