@@ -69,7 +69,7 @@ describe("Kernel lifecycle responsibilities", () => {
         includeTerminal: true,
       }).records).toEqual([
         expect.objectContaining({
-          title: "Confirm that a new machine is connected",
+          title: "Tell the owner their new machine is connected",
           source: {
             kind: "event",
             eventType: "machine.added",

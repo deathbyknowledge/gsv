@@ -15,6 +15,7 @@ Talk
 Look after things
   work               What your Ship and its helpers are doing
   routines           Things your Ship does on a schedule
+  event              Tell your Ship something happened, from a script
   memory             Your wiki, and the notes your Ship always reads
   activity           What ran, where, and how it went
 
@@ -236,6 +237,20 @@ app or on a messenger.
 archives the history and tears the work down for good with `proc.kill`; your
 Ship itself can't be ended. Both ask first and report how many messages were
 archived. Without a terminal they refuse unless `--yes` is given.
+
+### Events
+
+```bash
+gsv event emit SOURCE --title TEXT [--id ID] [--preview TEXT] [--body TEXT]
+gsv event emit SOURCE --stdin
+```
+
+Lets a script on any computer tell you something happened, without a public address. Add the
+source first, in Work or with `gsv run event source add NAME`, and read what arrived there or with
+`gsv run event list`. A new source tells you and leaves your Ship out; change that under
+Settings → When things happen.
+With `--stdin`, each line is one JSON object with a `title` and optionally `id`, `preview` and `body`.
+Repeating an `id` is ignored, so a script can re-read the same items.
 
 ### Routines
 
@@ -663,7 +678,7 @@ message route list [--json]
 message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
 message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
-message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]
+message history [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]
 message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]
 message delivery show DELIVERY_ID [--json]
 message send [--message TEXT]
@@ -688,7 +703,7 @@ atproto delete COLLECTION RKEY
 atproto apply (--json WRITES | --file PATH)
 atproto blob PATH [--mime TYPE]
 r12y list [--all] [--json]
-r12y show ID
+r12y show ID [--json]
 r12y create --title TITLE [--details JSON] [--parent ID] [--priority PRIORITY] [--due ISO] [--check ISO] [--blocker TEXT] [--dedupe KEY]
 r12y update ID --json PATCH
 r12y start ID
@@ -801,6 +816,7 @@ Search returns newest matches first, with literal word prefixes combined with AN
 A signed-in user or their Ship may search;
 delegated work does not inherit conversation access. Use `message history` with
 the match's sequence plus one as `--before` and `--limit 1` to read it in full.
+`message history` without `--with` reads the Ship conversation too.
 
 `message current` reports the current run's directed endpoint and exact reply
 commands. For an adapter run, text and JSON also include an opaque destination

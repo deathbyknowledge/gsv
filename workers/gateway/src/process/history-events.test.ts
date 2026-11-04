@@ -245,6 +245,21 @@ describe("registered Process events", () => {
     });
   });
 
+  it("keeps a card only for the person out of an active run and the model's context", async () => {
+    const stub = await initProcess("history-events-owner-notice-card", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      process.runs.active = { runId: "active" };
+      const frame = ownerNotice("owner.notified:card");
+      const event = { ...frame.args.event, audience: "person" as const, payload: {
+        noticeId: "event.received:src:0", topic: "event.received" as const, from: "Backups", preview: "Nightly backup failed", shownInClient: true, sentAtMs: 1000,
+      } };
+      const response = await process.controller.handleReq({ ...frame, args: { ...frame.args, event } });
+      expect(response).toMatchObject({ ok: true, data: { runId: null } });
+      expect(process.runs.active).not.toMatchObject({ pendingRuntimeEvents: 1 });
+      expect(process.store.messages.getRecords()).toMatchObject([{ kind: "event", payload: { audience: "person" } }]);
+    });
+  });
+
   it.each([
     ["for a person only", { audience: "person" }],
     ["for the model only", { audience: "model" }],

@@ -11,15 +11,21 @@ another username. Continue to review the early-access disclosure and confirm the
 age, Terms of Service and Privacy Policy
 agreement before creating your account. **Back** lets you revise your credentials.
 Creating your account signs you in and opens Chat, your conversation with your Ship.
-The first time you open the web app, a welcome card from Kawah appears with the
-heading "Welcome to your Ship!" and large, readable text. Close it
-or choose **Try it out!** to dismiss it for your account across web and Desktop.
-If the welcome cannot be loaded, choose **Retry** to check again.
-Ship then greets you in a language detected from your browser. You can write first,
+The first time you sign in, Ship wakes and greets you in a language detected
+from your browser; the chat reads "Ship is waking up" until its first message
+lands. In front of the chat, the web app asks once where you want to message
+Ship: **WhatsApp**, **Telegram**, the **Desktop app**, or right here. A
+messenger pairs right there, through the same steps as **Settings →
+Messengers**, and Ship says hello on it once it connects; from then on Ship
+replies wherever you last wrote to it. If your device's language points to a
+country the Ship's WhatsApp number cannot reach, the WhatsApp steps say so, and
+a (?) note explains that connecting a messenger gives Ship only the messages you
+send it. The screen shows once per account, so Desktop and later visits go
+straight to the chat. You can write first,
 ask Ship to switch languages, or change **Settings → Preferences → Language**.
-The welcome stays in your conversation across devices.
-The card links to the community Discord; the **Feedback** button in the header
-is available when your operator offers it.
+The greeting stays in your conversation across devices.
+The **Feedback** button in the header is available when your operator offers
+it, and **Help** links to the community Discord.
 Start with what you want to do. You can connect computers and browsers from **Work** and
 configure models and other connections from **Settings** when you need them.
 
@@ -142,7 +148,7 @@ Unsaved preferences trigger a warning when leaving; if you leave, the draft stay
 available when you return. **Discard changes** resets it.
 
 To request account deletion, open **Settings → Account** and email
-[hello@humansandmachin.es](mailto:hello@humansandmachin.es). During early access,
+[privacy@humansandmachin.es](mailto:privacy@humansandmachin.es). During early access,
 the team handles deletion manually; there is no self-service deletion button yet.
 
 Under **Settings → Preferences → Appearance**, turn off **Show stars** for a
@@ -196,7 +202,7 @@ Press `Ctrl+K` from any view to open the same search. In Chat, `/` opens search 
 mode, and `Ctrl/Cmd+F` also works while typing. Open a match to read the
 surrounding conversation. Closing search returns you to where you were, with your draft.
 
-On your first visit, after dismissing the welcome card, the empty chat shows a
+On your first visit, once you have chosen where to message Ship and while it wakes, the empty chat shows a
 quiet, centered privacy message. It clears as soon as you or Ship starts the
 conversation.
 

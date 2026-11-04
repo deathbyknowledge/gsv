@@ -797,6 +797,16 @@ describe("federation inbound boundary", () => {
     ]);
   });
 
+  it("labels a request record untrusted even when the owner made the latest change", async () => {
+    await seedOutgoingRequest("request:owner-made", true);
+    const details = await runInDurableObject(kernel, (instance: Kernel) => (
+      kernelInternals(instance).responsibilities.list({ ownerUid: OWNER.uid, includeTerminal: true })
+        .records.find((record) => record.details?.requestId === "request:owner-made")?.details
+    ));
+    // The record always carries the contact's chosen name, so it always holds outside text.
+    expect(details).toMatchObject({ remoteDisplayName: expect.any(String), contentTrust: "untrusted" });
+  });
+
   it.each([false, true])("does not infer a local commitment from remote updates after removal=%s", async (removed) => {
     const requestId = "request:source-toggle";
     await seedOutgoingRequest(requestId, false);

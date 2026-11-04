@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { IconButton } from "./IconButton";
+import { Glyph, IconButton } from "./IconButton";
 import { useT, type TextKey } from "../../i18n/locale";
 import "./Alert.css";
 
@@ -54,8 +54,8 @@ export function Alert({ variant = "info", title, text, icon, children, onDismiss
   let iconNode: ComponentChildren = null;
   if (resolved === "info" || resolved === "attention") {
     iconNode = (
-      <span class="gsv-alert-icon">
-        <IconButton glyph={ICON_GLYPH[resolved]} ghost size={20} title={t(ICON_LABEL[resolved])} />
+      <span class="gsv-alert-icon" role="img" aria-label={t(ICON_LABEL[resolved])}>
+        <Glyph glyph={ICON_GLYPH[resolved]} size={20} />
       </span>
     );
   } else if (resolved && resolved !== "none") {

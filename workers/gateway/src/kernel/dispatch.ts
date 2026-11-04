@@ -167,6 +167,15 @@ import { handleMailList, handleMailRead, handleMailSearch } from "./inbound-mail
 import { handleMailStatus } from "./outbound-status";
 import { handleNotifyRuleList, handleNotifyRuleReset, handleNotifyRuleSet } from "./notice-rules";
 import {
+  handleEventEmit,
+  handleEventList,
+  handleEventSourceAdd,
+  handleEventSourceList,
+  handleEventSourceRemove,
+  handleEventSourceRotate,
+  handleEventSourceUpdate,
+} from "./event-sources";
+import {
   handleConversationForProcess,
   handleConversationHistory,
   handleConversationSearch,
@@ -484,6 +493,28 @@ async function dispatchKernel(
         break;
       case "notify.rule.reset":
         data = handleNotifyRuleReset(frame.args, ctx);
+        break;
+
+      case "event.source.list":
+        data = handleEventSourceList(ctx);
+        break;
+      case "event.source.add":
+        data = await handleEventSourceAdd(frame.args, ctx);
+        break;
+      case "event.source.update":
+        data = await handleEventSourceUpdate(frame.args, ctx);
+        break;
+      case "event.source.rotate":
+        data = await handleEventSourceRotate(frame.args, ctx);
+        break;
+      case "event.source.remove":
+        data = handleEventSourceRemove(frame.args, ctx);
+        break;
+      case "event.emit":
+        data = handleEventEmit(frame.args, ctx);
+        break;
+      case "event.list":
+        data = handleEventList(frame.args, ctx);
         break;
 
       case "conversation.ship":

@@ -29,7 +29,7 @@ export async function recordMachineAddedResponsibility(
 
   const outcome = ctx.responsibilities.create({
     ownerUid,
-    title: "Confirm that a new machine is connected",
+    title: "Tell the owner their new machine is connected",
     details: {
       eventType: "machine.added",
       deviceId: boundedUntrustedText(machine.target_id, 512),
@@ -118,7 +118,7 @@ export function recordAdapterStatusTransition(
       const dedupeKey = `adapter.connected:${identity}`;
       const outcome = ctx.responsibilities.create({
         ownerUid,
-        title: "Confirm that a messaging adapter is connected",
+        title: "Tell the owner their messenger is connected",
         details: {
           eventType: "adapter.connected",
           adapter: boundedUntrustedText(current.adapter, 128),

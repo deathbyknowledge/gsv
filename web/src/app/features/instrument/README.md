@@ -58,12 +58,20 @@ actions and Help open in a vertical menu with touch-sized rows.
 Choosing a view, tapping outside or pressing Escape closes the menu.
 The menu button retains the unread People indicator while navigation is closed.
 
-On first sign-in, a spacious, nonmodal welcome card with large text appears above the web app's
-views for a personal human account. Closing it or choosing Try it out saves a
-per-user UI config flag, so the card stays dismissed across web and Desktop
-sessions. It never appears during activation or for the administrator. The Discord link opens
-separately, and the existing Feedback control remains in the header when available.
-If its saved state cannot be loaded, the card offers Retry without requiring a new session.
+On a personal human account's first sign-in, a full screen in front of the chat, over the
+instrument's star field with the chat kept out of sight beneath it, asks where the person
+wants to message Ship: WhatsApp, Telegram, the Desktop app, or here. Ship's welcome has
+already started at sign-in; the screen only helps connect a messenger. Continuing here
+completes at once; the Desktop app choice links to the release download and continues in the
+web; a messenger pairs inline through the Settings pairing flow, and the Kernel's
+`adapter.connected` wake then says hello on it. Messenger
+sections appear only when the deployment offers that adapter, with no "nothing connected" line;
+the embedded WhatsApp flow names the countries the Ship number cannot reach when the device's languages point there, and a (?) note says
+Ship only sees the messages sent to it. "continue here" is a text action at the end, with its note as a small label. Finishing writes the
+per-user `ui/welcome_card_seen` flag, which only this screen reads, so the screen follows the account across web and Desktop
+and never shows again; inside Desktop the Desktop section is hidden.
+It never applies during activation or for the administrator. If the flag cannot be loaded, a
+small notice over the chat offers Retry; a failed save keeps the screen with an error.
 
 Chat, Work, Memory and Settings mount on their first visit and retain their local
 state until the signed-in session ends. Moving between them keeps drafts,
@@ -153,9 +161,9 @@ state, so a replaced Ship asks again while a reset keeps it. A hover/focus toolt
 explains that scope; it never changes another Process's policy or
 remembers a denial.
 
-Chat owns the conversation. Dismissing the welcome card records the owner's choice and wakes Ship through its initial onboarding responsibility; a failed request leaves the card available to retry. Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
+Chat owns the conversation. The Kernel wakes Ship through its initial onboarding responsibility when a new owner first signs in; until Ship's first message lands, the empty chat reads "Ship is waking up". Ship sends a welcome in the owner's language, initially detected from the browser. Chat renders it as an ordinary canonical Message, shared across clients. The composer remains available, and Ship responds to a user who writes first. Helpers keep a simple empty conversation state.
 
-After the first welcome card is dismissed, the empty Ship chat shows a centered,
+On a new owner's first visit, the empty Ship chat shows a centered,
 muted privacy message until either person starts the conversation. It never
 appears in helper conversations, over existing messages, or while history is
 loading or unavailable. The notice sits behind the transcript without intercepting

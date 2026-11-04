@@ -41,7 +41,7 @@ async function mount(account = OWNER) {
   const root = createTestRoot("When things happen");
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   let tree: ComponentChildren;
-  function Harness() { tree = WhenThingsHappen({ account }); return null; }
+  function Harness() { tree = WhenThingsHappen({ account, onOpenSource: () => {} }); return null; }
   await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness /></QueryClientProvider></GatewayProvider>);
   const control = (name: string) => {
     // SAFETY: this section labels each Tell me input by its aria-label.

@@ -49,6 +49,7 @@ export const DEFAULT_TOOL_APPROVAL_POLICY: ToolApprovalPolicy = {
     { match: "fs.*", target: { route: "instance", platform: "linux" }, action: "auto" },
     { match: "shell.exec", target: { route: "instance", platform: "linux" }, action: "auto" },
     { match: "net.fetch", target: { route: "instance", platform: "linux" }, action: "auto" },
+    { match: "event.source.update", action: "ask" },
     { match: "shell.exec", target: "targets/*", action: "ask" },
     { match: "net.fetch", target: "targets/*", action: "ask" },
     { match: "fs.*", target: "targets/*", action: "ask" },

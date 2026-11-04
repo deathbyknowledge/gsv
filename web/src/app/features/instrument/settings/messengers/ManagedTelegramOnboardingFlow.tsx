@@ -20,6 +20,9 @@ import { useT, type Translate } from "../../../../i18n/locale";
 type ManagedTelegramOnboardingFlowProps = {
   onBack: () => void;
   onConnected: (detailId: string) => void;
+  /** The host has suspended pairing (gateway offline, no permission): the launch
+   *  link renders disabled, since a disabled fieldset does not reach anchors. */
+  disabled?: boolean;
   dependencies?: ManagedTelegramDependencies;
 };
 
@@ -56,6 +59,7 @@ const fieldStyle = { maxWidth: "520px" };
 export function ManagedTelegramOnboardingFlow({
   onBack,
   onConnected,
+  disabled,
   dependencies = defaultDependencies,
 }: ManagedTelegramOnboardingFlowProps): JSX.Element {
   return (
@@ -63,6 +67,7 @@ export function ManagedTelegramOnboardingFlow({
       adapterId="telegram"
       onBack={onBack}
       onConnected={onConnected}
+      disabled={disabled}
       dependencies={dependencies}
     />
   );
@@ -71,6 +76,7 @@ export function ManagedTelegramOnboardingFlow({
 export function ManagedSlackOnboardingFlow({
   onBack,
   onConnected,
+  disabled,
   dependencies = defaultDependencies,
 }: ManagedTelegramOnboardingFlowProps): JSX.Element {
   return (
@@ -78,21 +84,41 @@ export function ManagedSlackOnboardingFlow({
       adapterId="slack"
       onBack={onBack}
       onConnected={onConnected}
+      disabled={disabled}
       dependencies={dependencies}
     />
   );
 }
 
-export function SharedDiscordOnboardingFlow({ onBack, onConnected, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
-  return <ManagedMessengerOnboardingFlow adapterId="discord" onBack={onBack} onConnected={onConnected} dependencies={dependencies} />;
+export function SharedDiscordOnboardingFlow({ onBack, onConnected, disabled, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
+  return <ManagedMessengerOnboardingFlow adapterId="discord" onBack={onBack} onConnected={onConnected} disabled={disabled} dependencies={dependencies} />;
 }
 
-export function ManagedWhatsAppOnboardingFlow({ onBack, onConnected, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
-  return <ManagedMessengerOnboardingFlow adapterId="whatsapp" onBack={onBack} onConnected={onConnected} dependencies={dependencies} />;
+export function ManagedWhatsAppOnboardingFlow({ onBack, onConnected, disabled, dependencies = defaultDependencies }: ManagedTelegramOnboardingFlowProps): JSX.Element {
+  return <ManagedMessengerOnboardingFlow adapterId="whatsapp" onBack={onBack} onConnected={onConnected} disabled={disabled} dependencies={dependencies} />;
+}
+
+/** The countries Meta blocks across, by calling code, as the region a language tag names. */
+const WHATSAPP_CALLING_CODE_REGIONS = new Map([["55", "BR"], ["62", "ID"]]);
+
+/**
+ * The unreachable codes this device's languages place it in, such as pt-BR or Indonesian, so the warning reaches
+ * only the people it concerns. A bare tag names its likeliest region: pt is Brazil, id is Indonesia.
+ */
+export function whatsAppReachForDevice(codes: readonly string[], languages: readonly string[]): string[] {
+  const regions = new Set(languages.flatMap((tag) => {
+    try {
+      const region = new Intl.Locale(tag).maximize().region;
+      return region ? [region] : [];
+    } catch {
+      return [];
+    }
+  }));
+  return codes.filter((code) => regions.has(WHATSAPP_CALLING_CODE_REGIONS.get(code) ?? ""));
 }
 
 /** Names the countries the operator's WhatsApp number cannot reach, as the adapter reports them. */
-function whatsAppCountryList(codes: readonly string[], t: Translate): string {
+export function whatsAppCountryList(codes: readonly string[], t: Translate): string {
   const sorted = [...codes].sort();
   if (sorted.join(",") === "55,62") return t("settings.pairing.whatsappCountries.both");
   return sorted
@@ -118,6 +144,7 @@ function ManagedMessengerOnboardingFlow({
   adapterId,
   onBack,
   onConnected,
+  disabled = false,
   dependencies,
 }: ManagedMessengerOnboardingFlowProps): JSX.Element {
   const t = useT();
@@ -138,7 +165,7 @@ function ManagedMessengerOnboardingFlow({
   const platform = isSlack ? "Slack" : isDiscord ? "Discord" : isWhatsApp ? "WhatsApp" : "Telegram";
   const botUsername = info.data?.botUsername?.replace(/^@/, "") ?? "";
   const chatNumber = isWhatsApp ? whatsAppNumberFromChatUrl(info.data?.installUrl) : "";
-  const unreachable = isWhatsApp ? info.data?.unreachableCallingCodes ?? [] : [];
+  const unreachable = isWhatsApp ? whatsAppReachForDevice(info.data?.unreachableCallingCodes ?? [], navigator.languages) : [];
   const launchUrl = installsApp || isWhatsApp
     ? info.data?.installUrl ?? adapterDocUrl(adapterId)
     : botUsername ? `https://t.me/${botUsername}` : "https://telegram.org/";
@@ -157,8 +184,15 @@ function ManagedMessengerOnboardingFlow({
   const firstStepText = installsApp
     ? t(isDiscord ? "settings.pairing.installDiscord" : "settings.pairing.installSlack")
     : isWhatsApp
-      ? chatNumber ? t("settings.pairing.whatsappStartNumber", { number: chatNumber }) : t("settings.pairing.whatsappStart")
+      ? t("settings.pairing.whatsappStart")
       : t("settings.pairing.telegramStart");
+  const launchLabel = installsApp
+    ? info.data?.installUrl ? t("settings.pairing.installIn", { platform: platform.toUpperCase() }) : t("settings.pairing.viewSetup", { platform: platform.toUpperCase() })
+    : isWhatsApp
+      ? info.data?.installUrl ? t("settings.pairing.connect") : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
+      : botUsername ? t("settings.pairing.connect") : t("settings.pairing.viewSetup", { platform: "TELEGRAM" });
+  // Opening the messenger is the step, so the launch control leads whenever the link is real.
+  const launchLeads = installsApp || isWhatsApp ? Boolean(info.data?.installUrl) : Boolean(botUsername);
 
   const inspectCode = async () => {
     if (!code.trim() || inspect.isPending) return;
@@ -211,6 +245,8 @@ function ManagedMessengerOnboardingFlow({
               title={t("settings.pairing.startIn", { platform: platform.toUpperCase() })}
               text={firstStepText}
             />
+            {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{chatNumber ? t("settings.pairing.whatsappManual", { number: chatNumber }) : t("settings.pairing.whatsappManualNoNumber")}</p> : null}
+            {!installsApp && !isWhatsApp && botUsername ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.telegramManual", { bot: `@${botUsername}` })}</p> : null}
             {info.isError ? (
               <Alert variant="error" text={info.error?.message ?? t("settings.pairing.loadFailed", { platform })} />
             ) : !info.data?.configured ? (
@@ -224,13 +260,11 @@ function ManagedMessengerOnboardingFlow({
             <div class="gsv-cf-footer">
               <Button variant="secondary" label={t("settings.pairing.back")} onClick={onBack} />
               <span class="gsv-cf-footer-spacer" />
-              <Link href={launchUrl}>{installsApp
-                ? info.data?.installUrl ? t("settings.pairing.installIn", { platform: platform.toUpperCase() }) : t("settings.pairing.viewSetup", { platform: platform.toUpperCase() })
-                : isWhatsApp
-                  ? info.data?.installUrl ? t("settings.pairing.open", { name: "WHATSAPP" }) : t("settings.pairing.viewSetup", { platform: "WHATSAPP" })
-                  : t("settings.pairing.open", { name: botUsername ? `@${botUsername}` : "TELEGRAM" })}</Link>
+              {launchLeads
+                ? <Button variant="primary" href={launchUrl} label={launchLabel} disabled={disabled} />
+                : <Link href={launchUrl}>{launchLabel}</Link>}
               <Button
-                variant="primary"
+                variant={launchLeads ? "secondary" : "primary"}
                 label={t("settings.pairing.haveCode")}
                 disabled={!info.data?.configured}
                 onClick={() => setStep(STEP_CODE)}
@@ -249,6 +283,8 @@ function ManagedMessengerOnboardingFlow({
         render: () => (
           <>
             <p class="gsv-cf-desc">{t("settings.pairing.codeHint", { platform })}</p>
+            {/* activating a code moves the number's route, so the warning sits where the code is submitted */}
+            {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.whatsappRelink")}</p> : null}
             <div style={fieldStyle}>
               <TextInput
                 label={t("settings.pairing.codeField")}

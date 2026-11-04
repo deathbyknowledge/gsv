@@ -578,7 +578,7 @@ function makeContext(
     noticeRules: { wantsNotice: vi.fn(() => false) },
     reconcileResponsibilityWake: vi.fn(async () => undefined),
     welcome: { activate: vi.fn(() => false) },
-    shipReplies: { reserveOrder: vi.fn(() => 1), recordAdapter: vi.fn() },
+    shipReplies: { reserveOrder: vi.fn(() => 1), recordAdapter: vi.fn(), recordAdapterPairing: vi.fn() },
     runRoutes: {
       setAdapterRoute: vi.fn(),
       get: vi.fn(() => options.runRoute ?? null),
@@ -4952,6 +4952,7 @@ describe("managed adapter pairing", () => {
     expect(ctx.adapters.identityLinks.get("telegram", "managed", "12345")).toBeNull();
     expect(service.adapterPairingActivate).not.toHaveBeenCalled();
     expect(service.adapterPairingFinalize).not.toHaveBeenCalled();
+    expect(ctx.shipReplies.recordAdapterPairing).not.toHaveBeenCalled();
   });
 
   it("discovers the platform bot and confirms the displayed Telegram identity", async () => {
@@ -5055,6 +5056,15 @@ describe("managed adapter pairing", () => {
       adapter: "telegram",
       accountId: "managed",
     });
+    // The person just wrote from this chat to get the code, so Ship's next private reply goes there.
+    expect(ctx.shipReplies.recordAdapterPairing).toHaveBeenCalledWith(1000, expect.any(String), {
+      kind: "adapter",
+      adapter: "telegram",
+      accountId: "managed",
+      actorId: "12345",
+      surface: { kind: "dm", id: "12345" },
+    }, ctx.adapters.privateDestinations, ctx.runRoutes);
+    expect(ctx.shipReplies.recordAdapterPairing).toHaveBeenCalledAfter(service.adapterPairingFinalize);
 
     await expect(handleAdapterPairDisconnect({
       adapter: "telegram",
