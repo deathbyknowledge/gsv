@@ -3,7 +3,7 @@ import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
   deferred, runInProcess, ROOT_IDENTITY, initProcess, responsibilityReady,
-  makeRuntimeEventReq, responsibilityKernelResult, terminalTestConfig,
+  responsibilityKernelResult, terminalTestConfig, workReturned,
 } from "./do-test-harness";
 
 describe("model context", () => {
@@ -637,40 +637,38 @@ describe("model context", () => {
 
   it("admits a typed work-return event exactly once", async () => {
     const stub = await initProcess("mech-work-return-event", ROOT_IDENTITY);
-    const firstRequest = makeRuntimeEventReq("adapter-home:event-1", "proc:work-1");
-    const first = await stub.recvFrame(firstRequest);
+    const delivery = workReturned("evt_1:personal:0", "proc:work-1");
+    await expect(stub.deliverEvent(delivery)).resolves.toEqual({ eventId: "evt_1:personal:0", runId: "evt_1:personal:0", queued: false });
     await evictDurableObject(stub);
-    const replayRequest = makeRuntimeEventReq("adapter-home:event-1", "proc:work-1");
-    const replay = await stub.recvFrame(replayRequest);
-
-    expect(first).toMatchObject({
-      type: "res",
-      id: firstRequest.id,
-      ok: true,
-      data: { runId: "adapter-home:event-1", queued: false },
-    });
-    expect(replay).toMatchObject({
-      type: "res",
-      id: replayRequest.id,
-      ok: true,
-      data: { runId: "adapter-home:event-1", queued: false },
-    });
+    await expect(stub.deliverEvent(delivery)).resolves.toEqual({ eventId: "evt_1:personal:0", runId: "evt_1:personal:0", queued: false });
 
     const messages = await runInProcess(stub, (process) =>
       process.store.messages.getMessages(),
     );
     const admitted = messages.filter(
       (message: any) =>
-        message.runId === "adapter-home:event-1" &&
+        message.runId === "evt_1:personal:0" &&
         message.content.includes("returned from work process"),
     );
     expect(admitted).toHaveLength(1);
     expect(admitted[0]).toMatchObject({
       role: "system",
-      runId: "adapter-home:event-1",
+      runId: "evt_1:personal:0",
     });
     expect(admitted[0].content).toContain("returned from work process `proc:work-1`");
     expect(admitted[0].content).toContain("No work-session transcript was attached");
+  });
+
+  it("gives a work return its own run after the active one", async () => {
+    const stub = await initProcess("mech-work-return-after", ROOT_IDENTITY);
+    await stub.deliverEvent({ eventId: "evt_1:personal:0", input: { message: "Still on it?" }, admission: { idle: "start", busy: "interrupt" } });
+
+    await expect(stub.deliverEvent(workReturned("evt_2:personal:0", "proc:work-1")))
+      .resolves.toEqual({ eventId: "evt_2:personal:0", runId: "evt_2:personal:0", queued: true });
+    await runInProcess(stub, (process) => {
+      expect(process.runs.active).toMatchObject({ runId: "evt_1:personal:0" });
+      expect(process.store.queue.queueSize()).toBe(1);
+    });
   });
 
   // SAFETY: test fixture is constructed with the asserted domain shape.

@@ -184,9 +184,8 @@ export type ProcSendResult =
       ok: true;
       status: "started";
       runId: string;
+      /** The message waits: behind the active run, or on the Kernel's log until the process can take it. */
       queued?: boolean;
-      /** Existing admission reconciled for the caller-provided run id. */
-      replayed?: "active" | "queued" | "recorded";
     }
   | { ok: false; error: string };
 

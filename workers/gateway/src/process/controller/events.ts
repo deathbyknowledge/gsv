@@ -81,6 +81,11 @@ export async function deliverProcessEvent(
     if (event.severity !== "info" || event.audience !== "model") {
       throw new Error("Process event is not registered for this delivery path");
     }
+  } else if (event.kind === "adapter.work.returned") {
+    // The person came back to Ship from a work process on a messenger, which Ship hears.
+    if (event.severity !== "info" || event.audience !== "model") {
+      throw new Error("Process event is not registered for this delivery path");
+    }
   } else if (event.kind === "ipc.reply" || event.kind === "ipc.overdue" || event.kind === "ipc.timeout") {
     // A call's end or check-in is for the run that asked, unless that run was aborted or this process reset since.
     const failed = event.kind === "ipc.timeout" || event.payload.error !== undefined;

@@ -4,8 +4,8 @@ Status: reviewed 2026-11-03; the decisions are folded in and listed under
 Decided. Typed internal calls (#645) are merged into `refactor/event-log`. The
 substrate is in #646, an open draft, where producers convert one commit at a
 time: contact messages, owner notices, responsibility wakes, schedules, source
-events, IPC, target connections, memory reviews, chat, direct `proc.send` and
-spawn prompts so far.
+events, IPC, target connections, memory reviews, chat, direct `proc.send`,
+spawn prompts, messengers and `/ship` work returns so far.
 
 ## Problem
 
@@ -288,8 +288,8 @@ state machine.
 | IPC answer | `ipc.reply`, `ipc.timeout`, `ipc.overdue` | `ipc:<call id>` | call id; a check-in's adds its count | names the call; the answer is read from the call's row at delivery, so it has no size limit | `proc:<caller>` · join the run that asked, or own run after | the three answer signals, `onIpcCallDelivery` and its retry, the row's delivery claim, the Process's 256-entry list of handled calls |
 | Chat | `message.received`, appended after the Conversation's own append | `conversation:<id>` | message id | ref: Conversation message, read at delivery | Ship, or the work's pid · interrupt, inline | `proc.send`'s interaction branch, done in step 9 |
 | Direct `proc.send`, spawn prompt | `message.received` from a person, `process.message` from a process or schedule | `proc:<pid>` | a fresh id per send | inline, up to 64 KiB | `proc:<pid>` · interrupt from a person, own run after from a process | the Process's `proc.send` command and its choice by origin, done in step 9 |
-| Messenger | `message.received` | `route:<surface>` | adapter + account + delivery id | ref: Conversation message | routed pid or Ship · interrupt, inline | `proc.adapter.deliver`; `adapter_ingress_receipts` once the key and row cover its checkpoint |
-| `/ship` work return | `work.returned` | `proc:<work pid>` | work pid + return id | inline | Ship · own run after | the `work_return` checkpoint, `adapter.work.returned` |
+| Messenger | `message.received`, appended after the Conversation's own append, with its reply route only when the event is new | `conversation:<id>` | message id, derived from the ingress receipt | ref: Conversation message, read at delivery | Ship, or the routed pid · interrupt, inline | `proc.adapter.deliver` and its Process handler, done in step 9; `adapter_ingress_receipts` stays the messenger's inbox |
+| `/ship` work return | `work.returned`, appended with the route it clears | `proc:<work pid>` | ingress receipt id | inline: the work pid and the private message it came in | Ship · own run after, inline; withdrawn once a newer private message follows | the `work_return` checkpoint and `proc.runtime.event.deliver`, done in step 9 |
 | Memory review | none: the queue admits a low-priority Ship responsibility, `memory.review:<pid>:<segment>`, which Ship delegates to Crew | — | — | — | Ship, through `responsibility.ready` | `onMemoryReview`'s 60 s successor: settling a review admits the next in the same transaction, and a Kernel start admits one left waiting, done in step 8 |
 | Welcome | none: sign-in, or the owner's first Ship message, creates the welcome responsibility | — | — | — | Ship, through `responsibility.ready` | nothing of its own |
 | Target connection | `target.status`, one per watch, since each watch has its own audience | `target:<id>` | transition id + watch id | inline: the watch, its revision and pid, and the change | the watching pid · join, or record when only the person sees it | the in-memory chain, which gains retry; a newer transition withdraws an older one still pending, done in step 8 |
@@ -366,9 +366,9 @@ They become typed Durable Object methods, or go away with their producer:
 | `proc.resource.write` | Kernel → Process | a typed method; the bytes stay a stream |
 | `proc.run.attach`, `proc.run.staged` | gsv shell `message` → Process | typed methods |
 | `proc.message.commit` | Process → Kernel | a typed method |
-| `proc.runtime.event.deliver` | Kernel → Process | loses contact messages to `deliverEvent`; deleted with responsibility wakes and work returns |
+| `proc.runtime.event.deliver` | Kernel → Process | loses contact messages to `deliverEvent`; deleted with responsibility wakes and work returns, done in step 9 |
 | `proc.schedule.deliver` | Kernel → Process | deleted with schedules |
-| `proc.adapter.deliver` | Kernel → Process | deleted with messengers |
+| `proc.adapter.deliver` | Kernel → Process | deleted with messengers, done in step 9 |
 
 The calls that wait, `proc.tool.authorize` and `proc.resources.retain`, keep
 a request id so the Kernel can still cancel them.
@@ -543,3 +543,16 @@ Reviewed with the maintainer on 2026-11-03:
     the send reports the error. A direct `proc.send` or spawn prompt is
     limited to 64 KiB; larger content travels as a file path. The Process
     takes messages only from the log, not as a `proc.send` command.
+15. **Settled while converting messengers and work returns.** A messenger
+    message is `message.received`, appended after its Conversation append and
+    delivered in the ingress call, as chat is. Its reply route is pinned in
+    the same transaction as the event, and only when the event is new: an
+    adapter's retry after the append may find the run already ended, and a
+    second pin would outlive it. A refusal fails the ingress; one its process
+    can't take right now answers `queued` and the log retries. The ingress
+    receipt stays the messenger's inbox. A `/ship` return is `work.returned`,
+    appended with the route it clears and keyed by its receipt, so a retried
+    command finds it and answers as the first did. Ship hears it as a run of
+    its own after the active one, and it is withdrawn once a newer private
+    message follows in that chat. v099 lets a `/ship` an older Kernel left
+    checkpointed start afresh.

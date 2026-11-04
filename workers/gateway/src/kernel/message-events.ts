@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { resourceBlockSchema, type InteractionOrigin, type ResourceBlock } from "@humansandmachines/gsv/protocol";
+import {
+  procHistoryMessageQuoteSchema, resourceBlockSchema,
+  type InteractionOrigin, type ProcHistoryMessageQuote, type ResourceBlock,
+} from "@humansandmachines/gsv/protocol";
 import { interactionOriginSchema } from "../process/internal/schemas";
 import type { ProcessInput } from "../protocol/process-frames";
 import { getConversationById } from "../shared/utils";
@@ -18,6 +21,8 @@ const bodySchema = z.strictObject({
   /** The run a Conversation recorded before delivery; otherwise the run takes the delivery's id. */
   runId: z.string().optional(),
   origin: z.custom<InteractionOrigin>((value) => interactionOriginSchema.safeParse(value).success).optional(),
+  /** What a messenger message quoted, as its Conversation could show it then; capped well within the body. */
+  quote: z.custom<ProcHistoryMessageQuote>((value) => procHistoryMessageQuoteSchema.safeParse(value).success).optional(),
   content: z.discriminatedUnion("kind", [
     // A committed message, read from its Conversation: chat text has no size limit.
     z.strictObject({
@@ -52,9 +57,10 @@ export function messageRunId(event: LoggedEvent): string {
 }
 
 /**
- * A message committed to a Conversation, for the process that handles it: the owner's Ship, or
- * the process a work conversation belongs to. Its key is the message's id, so a client's resend
- * appends nothing. The Conversation recorded the run first, and replies are matched by it.
+ * A message committed to a Conversation, from a client or a messenger, for the process that
+ * handles it: the owner's Ship, or the process a work or group conversation belongs to. Its key
+ * is the message's id, so a resend or an adapter's retry appends nothing. The Conversation
+ * recorded the run first, and replies are matched by it.
  */
 export function conversationMessage(input: {
   ownerUid: number;
@@ -65,6 +71,7 @@ export function conversationMessage(input: {
   sequence: number;
   runId: string;
   origin?: InteractionOrigin;
+  quote?: ProcHistoryMessageQuote;
   actor: EventActor;
 }): EventInput {
   return {
@@ -77,6 +84,7 @@ export function conversationMessage(input: {
       ...(input.pid === undefined ? undefined : { pid: input.pid }),
       runId: input.runId,
       ...(input.origin === undefined ? undefined : { origin: input.origin }),
+      ...(input.quote === undefined ? undefined : { quote: input.quote }),
       content: { kind: "conversation", conversationId: input.conversationId, messageId: input.messageId, sequence: input.sequence },
     },
   };
@@ -146,6 +154,7 @@ function messageDefinition(busy: "interrupt" | "after"): EventDefinition<Content
           ...(body.content.kind === "conversation"
             ? { interaction: { conversationId: body.content.conversationId, messageId: body.content.messageId } }
             : undefined),
+          ...(body.quote === undefined ? undefined : { quote: body.quote }),
           ...(body.runId === undefined ? undefined : { runId: body.runId }),
         },
         admission: { idle: "start", busy },

@@ -72,6 +72,17 @@ describe("messages delivered from the event log", () => {
     await expect(stub.recvFrame(makeReq("proc.send", { message: "Hello." }))).resolves.toMatchObject({
       type: "res", ok: false, error: { code: 400, message: "Unknown process command: proc.send" },
     });
+    // Messengers and work returns came as commands of their own.
+    await expect(stub.recvFrame(makeReq("proc.adapter.deliver", { runId: "run-1", pid: "mech-input-frames", message: "Hello." })))
+      .resolves.toMatchObject({ type: "res", ok: false, error: { code: 400, message: "Unknown process command: proc.adapter.deliver" } });
+    await expect(stub.recvFrame(makeReq("proc.runtime.event.deliver", {
+      eventId: "adapter-home:receipt-1", event: { type: "adapter.work.returned", workPid: "proc:work-1" },
+    }))).resolves.toMatchObject({
+      type: "res", ok: false, error: { code: 400, message: "Unknown process command: proc.runtime.event.deliver" },
+    });
+    await runInProcess(stub, (process) => {
+      expect(process.store.messages.getMessages()).toEqual([]);
+    });
     await runInProcess(stub, async (process) => {
       await expect(process.deliverEvent({
         eventId: "evt_1:proc:mech-input-frames", input: { message: "Hello." }, admission: { idle: "start", busy: "join" },

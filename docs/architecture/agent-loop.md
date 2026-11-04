@@ -63,11 +63,10 @@ A normal user message follows this path:
 1. The Kernel authorizes the direct client or adapter, appends the canonical user
    message, and selects the conversation's handler Process.
 2. Before Process admission, the Kernel installs the run's directed client or
-   adapter endpoint. A client's message then goes on the Kernel's event log,
-   which delivers it in the same call and retries while the Process can't take
-   it; an adapter's goes through `proc.adapter.deliver`. Both carry the
-   conversation and input-message identities, and the Process reads a client's
-   text from its Conversation.
+   adapter endpoint. The message then goes on the Kernel's event log, which
+   delivers it in the same call and retries while the Process can't take it.
+   It carries the conversation and input-message identities, and the Process
+   reads its text and media from the Conversation.
 3. The Process appends its raw user-input activity immediately. Media preparation proceeds
    in the background and generation waits for it.
 4. If no run is active, the Process creates `currentRun` and schedules a

@@ -106,11 +106,6 @@ export const storedHistoryPolicySchema = z.object({
   updatedAt: z.number().finite().optional().catch(undefined),
 });
 
-export const workReturnedRuntimeEventSchema = z.strictObject({
-  type: z.literal("adapter.work.returned"),
-  workPid: z.string().trim().regex(/^[a-zA-Z0-9._:-]{1,200}$/u),
-});
-
 const federationResponsibilityBaseSchema = {
   contactId: z.string(),
   contactGeneration: z.string(),

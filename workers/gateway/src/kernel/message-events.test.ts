@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import * as processTransport from "../shared/utils";
 import { testPeer } from "../test-support/peers";
+import { handleAdapterInbound } from "./adapter-ingress";
 import type { KernelContext } from "./context";
 import { handleConversationSend } from "./conversation-handlers";
 import type { Kernel } from "./do";
@@ -11,6 +12,7 @@ import * as personalController from "./personal-controller";
 import { handleProcSend, handleProcSpawn } from "./proc-handlers";
 
 const OWNER: ProcessIdentity = { uid: 1000, gid: 1000, gids: [1000, 100], username: "sam", home: "/home/sam", cwd: "/home/sam" };
+const ROOT: ProcessIdentity = { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" };
 const SHIP = "ship";
 const WORKER = "worker";
 const CLIENT = { kind: "client", connectionId: "connection-1", clientId: "desktop-1", platform: "macos" };
@@ -80,7 +82,7 @@ function retryNow(kernel: Kernel) {
   kernel.ctx.storage.sql.exec("UPDATE deliveries SET next_attempt_at = 0 WHERE state = 'pending'");
 }
 
-function messageEvents(kernel: Kernel) {
+function messageEvents(kernel: Kernel, types = ["message.received", "process.message"]) {
   return kernel.ctx.storage.sql.exec<{
     seq: number; type: string; subject: string; idempotency_key: string; actor_json: string; body_json: string;
     consumer: string; lane: string | null; state: string; attempt_count: number; last_error: string | null; run_id: string | null;
@@ -88,8 +90,27 @@ function messageEvents(kernel: Kernel) {
     `SELECT e.seq, e.type, e.subject, e.idempotency_key, e.actor_json, e.body_json,
        d.consumer, d.lane, d.state, d.attempt_count, d.last_error, d.run_id
      FROM events e JOIN deliveries d ON d.seq = e.seq
-     WHERE e.type IN ('message.received', 'process.message') ORDER BY e.seq`,
+     WHERE e.type IN (SELECT value FROM json_each(?)) ORDER BY e.seq`,
+    JSON.stringify(types),
   ).toArray().map(({ actor_json, body_json, ...row }) => ({ ...row, actor: JSON.parse(actor_json), body: JSON.parse(body_json) }));
+}
+
+const WHATSAPP = { adapter: "whatsapp", accountId: "primary", actorId: "wa:+123" };
+const DM = { kind: "dm", id: "dm-1" } as const;
+const DM_ROUTE = { ...WHATSAPP, surfaceKind: "dm", surfaceId: DM.id, uid: OWNER.uid } as const;
+
+/** The person's WhatsApp, linked to their account. */
+function linkMessenger(kernel: Kernel) {
+  kernel.adapters.identityLinks.link(WHATSAPP.adapter, WHATSAPP.accountId, WHATSAPP.actorId, OWNER.uid, OWNER.uid);
+}
+
+/** The person's private WhatsApp message, as their adapter delivers it. */
+function privateMessage(kernel: Kernel, messageId: string, text: string, replyToId?: string) {
+  const adapter = kernel.buildKernelContext({ peer: testPeer({ kind: "service", account: ROOT, calls: ["adapter.inbound"] }) });
+  return handleAdapterInbound({
+    adapter: WHATSAPP.adapter, accountId: WHATSAPP.accountId, deliveryId: messageId,
+    message: { messageId, surface: DM, actor: { id: WHATSAPP.actorId }, text, ...(replyToId ? { replyToId } : undefined) },
+  }, adapter);
 }
 
 describe("chat on the event log", () => {
@@ -288,6 +309,140 @@ describe("spawn prompts on the event log", () => {
       expect(kernel.procs.list(OWNER.uid)).toHaveLength(before);
       expect(messageEvents(kernel)).toEqual([]);
       expect(framed(kernel)).toEqual([]);
+    });
+  });
+});
+
+describe("messengers on the event log", () => {
+  it("delivers a private message in its ingress, on Ship's person lane, with its reply route pinned", async () => {
+    const { delivered, framed } = processes();
+    await fixture(async (kernel) => {
+      linkMessenger(kernel);
+      const result = await privateMessage(kernel, "wamid-1", "yes, that one", "wamid-unknown");
+
+      const conversation = kernel.conversations.getShip(OWNER.uid)!;
+      const [event] = messageEvents(kernel);
+      const runId = event!.body.runId;
+      const origin = { kind: "adapter", ...WHATSAPP, surface: DM, messageId: "wamid-1" };
+      expect(result).toEqual({ ok: true, delivered: { uid: OWNER.uid, pid: SHIP, runId, queued: false } });
+      expect(runId).toMatch(/^adapter-run:/);
+      expect(messageEvents(kernel)).toEqual([{
+        seq: event!.seq, type: "message.received", subject: `conversation:${conversation.id}`, idempotency_key: event!.body.content.messageId,
+        actor: { kind: "person", uid: OWNER.uid },
+        body: {
+          runId, origin, quote: { state: "unavailable" },
+          content: { kind: "conversation", conversationId: conversation.id, messageId: event!.body.content.messageId, sequence: 1 },
+        },
+        consumer: `personal:${OWNER.uid}`, lane: "person", state: "delivered", attempt_count: 0, last_error: null, run_id: runId,
+      }]);
+      expect(delivered(kernel)).toEqual([[kernel.installationId, SHIP, {
+        eventId: `evt_${event!.seq}:personal:${OWNER.uid}`,
+        input: {
+          message: "yes, that one", origin, quote: { state: "unavailable" }, runId,
+          interaction: { conversationId: conversation.id, messageId: event!.body.content.messageId },
+        },
+        admission: { idle: "start", busy: "interrupt" },
+      }]]);
+      expect(kernel.runRoutes.get(runId)).toMatchObject({
+        kind: "adapter", processId: SHIP, replyToId: "wamid-1",
+        destination: { kind: "adapter", ...WHATSAPP, surface: DM },
+      });
+      expect(framed(kernel)).toEqual([]);
+    });
+  });
+
+  it("pins the reply route only with the event, so a retry after its run ended leaves none behind", async () => {
+    const { delivered } = processes();
+    await fixture(async (kernel) => {
+      linkMessenger(kernel);
+      vi.spyOn(kernel.eventRuntime, "deliverNow").mockRejectedValueOnce(new Error("Kernel request reset"));
+      await expect(privateMessage(kernel, "wamid-2", "Book it.")).rejects.toThrow("Kernel request reset");
+      const [event] = messageEvents(kernel);
+      const runId = event!.body.runId;
+      expect(kernel.runRoutes.get(runId)).toMatchObject({ kind: "adapter" });
+
+      // The runner delivers it, and its run ends, taking its route along.
+      await runEvents(kernel);
+      kernel.runRoutes.delete(runId);
+
+      await expect(privateMessage(kernel, "wamid-2", "Book it."))
+        .resolves.toEqual({ ok: true, delivered: { uid: OWNER.uid, pid: SHIP, runId, queued: false } });
+      expect(messageEvents(kernel)).toEqual([expect.objectContaining({ seq: event!.seq, state: "delivered", run_id: runId })]);
+      expect(delivered(kernel)).toHaveLength(1);
+      expect(kernel.runRoutes.get(runId)).toBeNull();
+    });
+  });
+
+  it("fails a message Ship refuses, leaving no reply route", async () => {
+    const { deliver } = processes();
+    await fixture(async (kernel) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      linkMessenger(kernel);
+      deliver.mockImplementationOnce(async (_installation, _pid, args) => ({ eventId: args.eventId, runId: null, queued: false, refused: "media not found: photo" }));
+
+      await expect(privateMessage(kernel, "wamid-3", "Look.")).resolves.toEqual({ ok: false, error: "media not found: photo" });
+      const [event] = messageEvents(kernel);
+      expect(event).toMatchObject({ state: "failed", last_error: "media not found: photo" });
+      expect(kernel.runRoutes.get(event!.body.runId)).toBeNull();
+    });
+  });
+
+  it("sends a message on a work line to that process's person lane", async () => {
+    const { delivered } = processes();
+    await fixture(async (kernel) => {
+      linkMessenger(kernel);
+      kernel.adapters.surfaceRoutes.setRoute({ ...DM_ROUTE, pid: WORKER, mode: "work", updatedByUid: OWNER.uid });
+
+      await expect(privateMessage(kernel, "wamid-4", "Try again.")).resolves.toMatchObject({ ok: true, delivered: { pid: WORKER, queued: false } });
+      expect(messageEvents(kernel)).toEqual([expect.objectContaining({ consumer: `proc:${WORKER}`, lane: "person", state: "delivered" })]);
+      expect(messageEvents(kernel)[0]!.body).toMatchObject({ pid: WORKER });
+      expect(delivered(kernel).map(([, pid]) => pid)).toEqual([WORKER]);
+    });
+  });
+});
+
+describe("work returns on the event log", () => {
+  it("records a /ship return with the route it clears, and Ship hears it as a run of its own", async () => {
+    const { delivered, framed } = processes();
+    await fixture(async (kernel) => {
+      linkMessenger(kernel);
+      kernel.adapters.surfaceRoutes.setRoute({ ...DM_ROUTE, pid: WORKER, mode: "work", updatedByUid: OWNER.uid });
+
+      await expect(privateMessage(kernel, "wamid-ship", "/ship")).resolves.toMatchObject({ ok: true, reply: { text: "[SHIP] Returned to ship Ship." } });
+      expect(kernel.adapters.surfaceRoutes.resolveRoute(DM_ROUTE)).toBeNull();
+      const [event] = messageEvents(kernel, ["work.returned"]);
+      expect(messageEvents(kernel, ["work.returned"])).toEqual([{
+        seq: event!.seq, type: "work.returned", subject: `proc:${WORKER}`, idempotency_key: expect.stringMatching(/^adapter-ingress:/),
+        actor: { kind: "person", uid: OWNER.uid },
+        body: { workPid: WORKER, ...WHATSAPP, surfaceId: DM.id, messageId: "wamid-ship" },
+        consumer: `personal:${OWNER.uid}`, lane: "person", state: "delivered", attempt_count: 0, last_error: null,
+        run_id: `evt_${event!.seq}:personal:${OWNER.uid}`,
+      }]);
+      expect(delivered(kernel)).toEqual([[kernel.installationId, SHIP, {
+        eventId: `evt_${event!.seq}:personal:${OWNER.uid}`,
+        event: { kind: "adapter.work.returned", severity: "info", audience: "model", payload: { eventId: `evt_${event!.seq}`, workPid: WORKER } },
+        admission: { idle: "start", busy: "after" },
+      }]]);
+      expect(framed(kernel)).toEqual([]);
+    });
+  });
+
+  it("withdraws a return that a newer private message overtook while Ship couldn't take it", async () => {
+    const { deliver, delivered } = processes();
+    await fixture(async (kernel) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      linkMessenger(kernel);
+      kernel.adapters.surfaceRoutes.setRoute({ ...DM_ROUTE, pid: WORKER, mode: "work", updatedByUid: OWNER.uid });
+      deliver.mockResolvedValueOnce(REPLACED);
+
+      await expect(privateMessage(kernel, "wamid-ship", "/ship")).resolves.toMatchObject({ reply: { text: "[SHIP] Returned to ship Ship." } });
+      expect(messageEvents(kernel, ["work.returned"])[0]).toMatchObject({ state: "pending", attempt_count: 1 });
+
+      await privateMessage(kernel, "wamid-help", "/help");
+      retryNow(kernel);
+      await runEvents(kernel);
+      expect(messageEvents(kernel, ["work.returned"])[0]).toMatchObject({ state: "withdrawn", last_error: "a newer private message followed the return" });
+      expect(delivered(kernel)).toHaveLength(1);
     });
   });
 });

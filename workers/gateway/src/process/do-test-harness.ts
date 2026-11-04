@@ -2,9 +2,8 @@
 
 import { Kernel } from "../kernel/do";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
-import type { InternalRequestFrame, ProcessInput } from "../protocol/process-frames";
+import type { ProcessInput } from "../protocol/process-frames";
 import type {
-  ProcessAdapterDeliverArgs,
   ProcessEventDeliverArgs,
   ProcessInboundFrame,
   ProcessIpcMessage,
@@ -143,17 +142,6 @@ export function ipcMessage(
   };
 }
 
-export function makeAdapterDeliverReq(
-  args: ProcessAdapterDeliverArgs,
-): InternalRequestFrame<"proc.adapter.deliver"> {
-  return {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.adapter.deliver",
-    args,
-  };
-}
-
 /** A batch of responsibilities as the Kernel's event log delivers it to Ship. */
 export function responsibilityReady(eventId: string, ids: string[], ledgerRevision: number): ProcessEventDeliverArgs {
   return {
@@ -167,21 +155,12 @@ export function responsibilityReady(eventId: string, ids: string[], ledgerRevisi
   };
 }
 
-export function makeRuntimeEventReq(
-  eventId: string,
-  workPid: string,
-): InternalRequestFrame<"proc.runtime.event.deliver"> {
+/** A person's return to Ship from a work process, as the Kernel's log delivers it: a run of its own. */
+export function workReturned(eventId: string, workPid: string): ProcessEventDeliverArgs {
   return {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.runtime.event.deliver",
-    args: {
-      eventId,
-      event: {
-        type: "adapter.work.returned",
-        workPid,
-      },
-    },
+    eventId,
+    event: { kind: "adapter.work.returned", severity: "info", audience: "model", payload: { eventId, workPid } },
+    admission: { idle: "start", busy: "after" },
   };
 }
 

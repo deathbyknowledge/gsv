@@ -1,6 +1,7 @@
 function isString<T>(value: T): value is T & string { return String(value) === value; }
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { z } from "zod";
 import type { PeerContext } from "./peer";
 import { testPeer } from "../test-support/peers";
 import type { KernelContext } from "./context";
@@ -51,6 +52,10 @@ import { AuthStore } from "./auth-store";
 import { makeShadowEntry } from "../auth/shadow";
 import { IdentityLinkStore } from "./identity-links";
 import type { AdapterStatusRecord } from "./adapter-status";
+import { deliveryId } from "./events/consumers";
+import type { InlineDelivery } from "./events/runtime";
+import type { EventInput, LoggedEvent } from "./events/store";
+import { MESSAGE_RECEIVED, messageRunId } from "./message-events";
 
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 const getConversationByIdMock = vi.spyOn(sharedUtils, "getConversationById");
@@ -435,6 +440,25 @@ function makeContext(
     surfaceRoute = null;
     return true;
   });
+  // A log that keeps each event once per type and key, and delivers it in the call.
+  const logged = new Map<string, LoggedEvent>();
+  const events = {
+    append: vi.fn((input: EventInput): LoggedEvent => {
+      const key = JSON.stringify([input.type, input.key]);
+      const seq = logged.size + 1;
+      const event = logged.get(key) ?? { ...input, seq, id: `evt_${seq}`, body: input.body ?? null, createdAt: Date.now() };
+      logged.set(key, event);
+      return event;
+    }),
+    keyed: vi.fn((type: string, key: string) => logged.get(JSON.stringify([type, key])) ?? null),
+    transaction: vi.fn(<T,>(operation: () => T): T => operation()),
+    deliverNow: vi.fn(async (event: LoggedEvent, consumer: string): Promise<InlineDelivery> => ({
+      state: "delivered",
+      runId: event.type === MESSAGE_RECEIVED ? messageRunId(event) : deliveryId(event.id, consumer),
+      queued: false,
+    })),
+    kick: vi.fn(async () => undefined),
+  };
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const configuredIdentityLinkGet = options.identityLinks?.get != null
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -583,6 +607,7 @@ function makeContext(
       void promise;
     }),
     broadcastToUserUid: vi.fn(),
+    events,
     request: options.request ?? vi.fn(async (frame) => {
       if (frame.call !== "proc.list") {
         return {
@@ -621,6 +646,19 @@ function makeContext(
   } as KernelContext;
 }
 
+/** What adapter ingress appended to a fake context's log, oldest first. */
+function appendedEvents(ctx: KernelContext): EventInput[] {
+  return vi.mocked(ctx.events.append).mock.calls.map(([input]) => input);
+}
+
+/** The Conversation message the first appended event names. */
+function messageContent(ctx: KernelContext) {
+  return z.object({ content: z.object({ conversationId: z.string(), messageId: z.string() }) })
+    .parse(appendedEvents(ctx)[0]?.body).content;
+}
+
+/** The messages adapter ingress committed to Conversations in this test, oldest first. */
+const committedMessages: Array<{ id: string; conversationId: string; text: string; media: unknown[] }> = [];
 
 describe("adapter lifecycle handlers", () => {
   beforeEach(() => {
@@ -629,6 +667,7 @@ describe("adapter lifecycle handlers", () => {
     ensurePersonalControllerMock.mockReset();
     ensurePersonalControllerMock.mockResolvedValue("pid-1");
     getConversationByIdMock.mockReset();
+    committedMessages.length = 0;
     const appended = new Map<string, any>();
     let sequence = 0;
     getConversationByIdMock.mockImplementation((_installationId: string, conversationId: string) => ({
@@ -650,6 +689,7 @@ describe("adapter lifecycle handlers", () => {
           createdAt: input.createdAt,
         };
         appended.set(input.idempotencyKey, message);
+        committedMessages.push(message);
         return { created: true, message };
       }),
     }));
@@ -1901,43 +1941,28 @@ describe("adapter lifecycle handlers", () => {
       },
     });
     let admittedRunId = "";
-    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
-      if (frame.call === "proc.history") {
-        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        admittedRunId = frame.args.runId;
-        expect(ctx.runRoutes.setAdapterRoute).toHaveBeenCalledWith({
-          runId: admittedRunId,
-          followsShip: false,
-          processId: "pid-1",
-          uid: 1000,
-          destination: {
-            kind: "adapter",
-            adapter: "discord",
-            accountId: "primary",
-            actorId: "discord:user:42",
-            surface: {
-              kind: "group",
-              id: "shared-channel",
-              threadId: undefined,
-            },
+    vi.mocked(ctx.events.deliverNow).mockImplementation(async (event, consumer) => {
+      admittedRunId = messageRunId(event);
+      expect(consumer).toBe("proc:pid-1");
+      expect(ctx.runRoutes.setAdapterRoute).toHaveBeenCalledWith({
+        runId: admittedRunId,
+        followsShip: false,
+        processId: "pid-1",
+        uid: 1000,
+        destination: {
+          kind: "adapter",
+          adapter: "discord",
+          accountId: "primary",
+          actorId: "discord:user:42",
+          surface: {
+            kind: "group",
+            id: "shared-channel",
+            threadId: undefined,
           },
-          replyToId: "group-mentioned",
-        });
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            status: "started",
-            runId: admittedRunId,
-            queued: false,
-          },
-        };
-      }
-      throw new Error(`Unexpected call: ${frame.call}`);
+        },
+        replyToId: "group-mentioned",
+      });
+      return { state: "delivered", runId: admittedRunId, queued: false };
     });
 
     const result = await handleAdapterInbound({
@@ -1967,6 +1992,13 @@ describe("adapter lifecycle handlers", () => {
       surfaceId: "shared-channel",
       pid: "pid-1",
     }));
+    // The group's process takes it, under the run the Conversation recorded.
+    expect(appendedEvents(ctx)).toEqual([expect.objectContaining({
+      type: "message.received",
+      ownerUid: 1000,
+      actor: { kind: "person", uid: 1000 },
+      body: expect.objectContaining({ pid: "pid-1", runId: admittedRunId }),
+    })]);
   });
 
   it("reports a person's messenger message once, by adapter and presence only", async () => {
@@ -2019,40 +2051,35 @@ describe("adapter lifecycle handlers", () => {
       const ctx = makeContext({}, { upsert: vi.fn() }, {
         identityLinks: { get: vi.fn(() => ({ uid: 1000 })), resolveUid: vi.fn(() => 1000) },
       });
-      const delivered: any[] = [];
-      sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
-        delivered.push(frame.args);
-        return { type: "res", id: frame.id, ok: true, data: { ok: true, status: "started", runId: frame.args.runId, queued: false } };
-      });
       const conversation = getConversationByIdMock.getMockImplementation()!;
       // SAFETY: the quote path adds only this method to the shared Conversation fixture.
       getConversationByIdMock.mockImplementation((installationId: string, conversationId: string) => ({
         ...conversation(installationId, conversationId),
         readMessage,
       }) as ReturnType<typeof sharedUtils.getConversationById>);
-      return { ctx, delivered, readMessage };
+      return { ctx, readMessage };
     }
 
     it("pays nothing on the read side for an ordinary message", async () => {
-      const { ctx, delivered, readMessage } = quoteContext();
+      const { ctx, readMessage } = quoteContext();
       await handleAdapterInbound(inbound({}), ctx);
       expect(ctx.adapters.messageRefs.lookup).not.toHaveBeenCalled();
       expect(readMessage).not.toHaveBeenCalled();
-      expect(delivered[0]).not.toHaveProperty("quote");
+      expect(appendedEvents(ctx)[0]!.body).not.toHaveProperty("quote");
     });
 
     it("maps the inbound provider id to its canonical message", async () => {
-      const { ctx, delivered } = quoteContext();
+      const { ctx } = quoteContext();
       await handleAdapterInbound(inbound({}), ctx);
       expect(ctx.adapters.messageRefs.record).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ ownerUid: 1000, adapter: "whatsapp", accountId: "managed", surface: expect.objectContaining(WHATSAPP_DM) }),
-        expect.objectContaining({ conversationId: delivered[0].interaction.conversationId, messageId: delivered[0].interaction.messageId, sequence: expect.any(Number) }),
+        { ...messageContent(ctx), sequence: expect.any(Number) },
         ["wamid.reply"],
       );
     });
 
     it("resolves the quote for the model and leaves the canonical text alone", async () => {
-      const { ctx, delivered } = quoteContext();
+      const { ctx } = quoteContext();
       vi.mocked(ctx.adapters.messageRefs.lookup).mockReturnValue({ conversationId: "conv:ship", messageId: "msg:ship", sequence: 4 });
       // SAFETY: the resolver reads only these fields of the conversation record.
       vi.mocked(ctx.conversations.get).mockImplementation((id: string) => ({ id, ownerUid: 1000, kind: "ship" }) as ReturnType<typeof ctx.conversations.get>);
@@ -2062,33 +2089,34 @@ describe("adapter lifecycle handlers", () => {
         expect.objectContaining({ ownerUid: 1000, adapter: "whatsapp", accountId: "managed" }),
         "wamid.ship",
       );
-      expect(delivered[0].message).toBe("yes, that one");
-      expect(delivered[0].quote).toEqual({ state: "resolved", author: "ship", text: "Which one do you want?" });
+      expect(committedMessages[0]!.text).toBe("yes, that one");
+      expect(appendedEvents(ctx)[0]!.body).toMatchObject({ quote: { state: "resolved", author: "ship", text: "Which one do you want?" } });
     });
 
     it("tells the Process the quote is unavailable when the id is unknown", async () => {
-      const { ctx, delivered } = quoteContext();
+      const { ctx } = quoteContext();
       const result = await handleAdapterInbound(inbound({ replyToId: "wamid.old" }), ctx);
       expect(result).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
-      expect(delivered[0].quote).toEqual({ state: "unavailable" });
+      expect(appendedEvents(ctx)[0]!.body).toMatchObject({ quote: { state: "unavailable" } });
     });
 
     it("still delivers the message when the lookup fails", async () => {
-      const { ctx, delivered } = quoteContext(vi.fn(async () => { throw new Error("conversation unavailable"); }));
+      const { ctx } = quoteContext(vi.fn(async () => { throw new Error("conversation unavailable"); }));
       vi.mocked(ctx.adapters.messageRefs.lookup).mockReturnValue({ conversationId: "conv:ship", messageId: "msg:ship", sequence: 4 });
       // SAFETY: the resolver reads only these fields of the conversation record.
       vi.mocked(ctx.conversations.get).mockImplementation((id: string) => ({ id, ownerUid: 1000, kind: "ship" }) as ReturnType<typeof ctx.conversations.get>);
       const result = await handleAdapterInbound(inbound({ replyToId: "wamid.ship" }), ctx);
       expect(result).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
-      expect(delivered[0]).toMatchObject({ message: "yes, that one", quote: { state: "unavailable" } });
+      expect(committedMessages[0]!.text).toBe("yes, that one");
+      expect(appendedEvents(ctx)[0]!.body).toMatchObject({ quote: { state: "unavailable" } });
     });
 
     it("still delivers the message when mapping its provider id fails", async () => {
-      const { ctx, delivered } = quoteContext();
+      const { ctx } = quoteContext();
       vi.mocked(ctx.adapters.messageRefs.record).mockImplementation(() => { throw new Error("sql"); });
       const result = await handleAdapterInbound(inbound({}), ctx);
       expect(result).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
-      expect(delivered).toHaveLength(1);
+      expect(ctx.events.deliverNow).toHaveBeenCalledOnce();
     });
   });
 
@@ -2100,27 +2128,6 @@ describe("adapter lifecycle handlers", () => {
         adapterSetActivity,
       },
     }, { upsert: vi.fn() });
-    const deliveredRunIds: string[] = [];
-    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
-      if (frame.call === "proc.history") {
-        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        deliveredRunIds.push(frame.args.runId);
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            status: "started",
-            runId: frame.args.runId,
-            queued: false,
-          },
-        };
-      }
-      throw new Error(`Unexpected call: ${frame.call}`);
-    });
     const inbound = {
       adapter: "telegram",
       accountId: "bot",
@@ -2156,6 +2163,7 @@ describe("adapter lifecycle handlers", () => {
       } as ReadableStream<Uint8Array>,
     });
 
+    const deliveredRunIds = vi.mocked(ctx.events.deliverNow).mock.calls.map(([event]) => messageRunId(event));
     expect(deliveredRunIds).toHaveLength(1);
     expect(deliveredRunIds[0]).toMatch(/^adapter-run:[0-9a-f]{64}$/);
     expect(first.delivered?.runId).toBe(deliveredRunIds[0]);
@@ -2250,22 +2258,6 @@ describe("adapter lifecycle handlers", () => {
         abandon: vi.fn(),
       },
     });
-    sendFrameToProcessMock.mockImplementation(async (
-      _installationId: string,
-      _pid: string,
-      frame: any,
-    ) => ({
-      type: "res",
-      id: frame.id,
-      ok: true,
-      data: {
-        ok: true,
-        status: "started",
-        runId: legacyRecovery.runId,
-        queued: false,
-      },
-    }));
-
     const result = await handleAdapterInbound({
       adapter: "telegram",
       accountId: "bot",
@@ -2292,19 +2284,16 @@ describe("adapter lifecycle handlers", () => {
         messageCreatedAt: expect.any(Number),
       }),
     );
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      "pid-1",
-      expect.objectContaining({
-        call: "proc.adapter.deliver",
-        args: expect.objectContaining({
-          interaction: expect.objectContaining({
-            conversationId: expect.stringMatching(/^conv:/),
-            messageId: expect.stringMatching(/^msg:/),
-          }),
+    expect(appendedEvents(ctx)).toEqual([expect.objectContaining({
+      type: "message.received",
+      body: expect.objectContaining({
+        runId: legacyRecovery.runId,
+        content: expect.objectContaining({
+          conversationId: expect.stringMatching(/^conv:/),
+          messageId: expect.stringMatching(/^msg:/),
         }),
       }),
-    );
+    })]);
   });
 
   it("replays completed commands across actor alias normalization", async () => {
@@ -2333,7 +2322,7 @@ describe("adapter lifecycle handlers", () => {
     expect(first.reply?.deliveryId).toMatch(/^adapter-ingress:[0-9a-f]{64}:reply$/);
     expect(replay).toEqual({ ...first, replayed: "completed" });
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
-    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    expect(ctx.events.append).not.toHaveBeenCalled();
   });
 
   it("keeps equal WhatsApp stanza ids distinct across group participants", async () => {
@@ -2350,29 +2339,6 @@ describe("adapter lifecycle handlers", () => {
         updatedAt: 1,
         updatedByUid: 1000,
       },
-    });
-    sendFrameToProcessMock.mockImplementation(async (
-      _installationId: string,
-      _pid: string,
-      frame: any,
-    ) => {
-      if (frame.call === "proc.history") {
-        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            status: "started",
-            runId: frame.args.runId,
-            queued: false,
-          },
-        };
-      }
-      throw new Error(`Unexpected call: ${frame.call}`);
     });
     const base = {
       adapter: "whatsapp",
@@ -2398,9 +2364,8 @@ describe("adapter lifecycle handlers", () => {
     }, ctx);
 
     expect(first.delivered?.runId).not.toBe(second.delivered?.runId);
-    expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) =>
-      frame.call === "proc.adapter.deliver"
-    )).toHaveLength(2);
+    expect(appendedEvents(ctx)).toHaveLength(2);
+    expect(ctx.events.deliverNow).toHaveBeenCalledTimes(2);
   });
 
   it("reclaims a prepared command reply after completion is interrupted", async () => {
@@ -2485,65 +2450,39 @@ describe("adapter lifecycle handlers", () => {
     expect(ctx.adapters.identityLinks.resolveUid).not.toHaveBeenCalled();
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
     expect(ctx.runRoutes.setAdapterRoute).not.toHaveBeenCalled();
-    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    expect(ctx.events.append).not.toHaveBeenCalled();
     expect(writeProcessResourceMock).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
-  it("removes the route without re-entering the adapter for an already-recorded run", async () => {
+  it("fails a message its process refuses, leaving its route to the log", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     const ctx = makeContext({
       CHANNEL_TELEGRAM: { adapterSetActivity },
     }, { upsert: vi.fn() });
-    writeProcessResourceMock.mockImplementation(async (_installationId, _pid, _args, body) => {
-      await bodyToBytes(body);
-      return retainedAdapterResource();
-    });
-    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
-      if (frame.call === "proc.history") {
-        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            status: "started",
-            runId: frame.args.runId,
-            replayed: "recorded",
-          },
-        };
-      }
-      throw new Error(`Unexpected call: ${frame.call}`);
-    });
+    vi.mocked(ctx.events.deliverNow).mockResolvedValue({ state: "withdrawn", reason: "media not found: /home/sam-agent/photo.png" });
 
     const result = await handleAdapterInbound({
       adapter: "telegram",
       accountId: "bot",
       message: {
-        messageId: "old-provider-message",
+        messageId: "refused-provider-message",
         surface: { kind: "dm", id: "chat-1" },
         actor: { id: "telegram:user:1" },
-        text: "old message",
-        media: [{
-          type: "image",
-          mimeType: "image/png",
-          body: { offset: 0, length: 1 },
-        }],
+        text: "look at this",
       },
-    }, ctx, bodyFromBytes(new Uint8Array([1])));
+    }, ctx);
 
-    expect(result.ok).toBe(true);
-    const runId = result.delivered?.runId;
-    expect(ctx.runRoutes.delete).toHaveBeenCalledWith(runId);
+    expect(result).toEqual({ ok: false, error: "media not found: /home/sam-agent/photo.png" });
+    // The log removed its reply route as the delivery settled.
+    expect(ctx.runRoutes.setAdapterRoute).toHaveBeenCalledOnce();
+    expect(ctx.runRoutes.delete).not.toHaveBeenCalled();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
-  it("stores adapter media before delivering proc.send", async () => {
+  it("stores adapter media before committing its message and event", async () => {
     let uploadedBytes: number[] = [];
     let receivedByteStream = false;
     writeProcessResourceMock.mockImplementation(async (_installationId, _pid, _args, body) => {
@@ -2555,20 +2494,6 @@ describe("adapter lifecycle handlers", () => {
       expect(end.done).toBe(true);
       reader.releaseLock();
       return retainedAdapterResource({ size: 3 });
-    });
-    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
-      if (frame.call === "proc.history") {
-        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: { ok: true, status: "started", runId: frame.args.runId },
-        };
-      }
-      throw new Error(`Unexpected call: ${frame.call}`);
     });
     const ctx = makeContext({
       CHANNEL_WHATSAPP: {
@@ -2600,21 +2525,20 @@ describe("adapter lifecycle handlers", () => {
     expect(receivedByteStream).toBe(true);
     expect(uploadedBytes).toEqual([1, 2, 3]);
     expect(writeProcessResourceMock.mock.invocationCallOrder[0])
-      .toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0] ?? 0);
-    expect(sendFrameToProcessMock.mock.calls[0]?.[2]).toMatchObject({
-      call: "proc.adapter.deliver",
-      args: {
-        media: [{
-          type: "resource",
-          ref: expect.objectContaining({
-            type: "file",
-            contentType: "image/png",
-            size: 3,
-          }),
-          mediaType: "image",
-        }],
-      },
+      .toBeLessThan(vi.mocked(ctx.events.append).mock.invocationCallOrder[0] ?? 0);
+    // The Process reads the message, media and all, from its Conversation.
+    expect(committedMessages[0]).toMatchObject({
+      media: [{
+        type: "resource",
+        ref: expect.objectContaining({
+          type: "file",
+          contentType: "image/png",
+          size: 3,
+        }),
+        mediaType: "image",
+      }],
     });
+    expect(messageContent(ctx)).toEqual({ conversationId: committedMessages[0]!.conversationId, messageId: committedMessages[0]!.id });
   });
 
   it("stops adapter delivery when a later resource upload fails", async () => {
@@ -2663,22 +2587,13 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx, bodyFromBytes(new Uint8Array([1, 2])))).rejects.toThrow("upload failed");
 
-    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) => frame.call === "proc.adapter.deliver")).toBe(false);
+    expect(ctx.events.append).not.toHaveBeenCalled();
   });
 
-  it("preserves adapter uploads when a Process error response leaves admission ambiguous", async () => {
+  it("answers queued, keeping uploads and the reply route, when the process can't take the message yet", async () => {
     writeProcessResourceMock.mockImplementation(async (_installationId, _pid, _args, body) => {
       await bodyToBytes(body);
       return retainedAdapterResource();
-    });
-    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
-      if (frame.call === "proc.history") {
-        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        return { type: "res", id: frame.id, ok: false, error: { code: 500, message: "delivery failed" } };
-      }
-      throw new Error(`Unexpected call: ${frame.call}`);
     });
     const ctx = makeContext({
       CHANNEL_WHATSAPP: {
@@ -2686,8 +2601,10 @@ describe("adapter lifecycle handlers", () => {
         adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
       },
     }, { upsert: vi.fn() });
+    // The Process failed to answer, so the log retries it.
+    vi.mocked(ctx.events.deliverNow).mockResolvedValue({ state: "pending" });
 
-    await expect(handleAdapterInbound({
+    const result = await handleAdapterInbound({
       adapter: "whatsapp",
       accountId: "primary",
       message: {
@@ -2702,48 +2619,26 @@ describe("adapter lifecycle handlers", () => {
           body: { offset: 0, length: 1 },
         }],
       },
-    }, ctx, bodyFromBytes(new Uint8Array([1])))).rejects.toThrow("delivery failed");
+    }, ctx, bodyFromBytes(new Uint8Array([1])));
 
     const preallocatedRunId = vi.mocked(ctx.runRoutes.setAdapterRoute).mock.calls[0]?.[0]?.runId;
-    expect(preallocatedRunId).toEqual(expect.any(String));
+    expect(result).toEqual({ ok: true, delivered: { uid: 1000, pid: "pid-1", runId: preallocatedRunId, queued: true } });
     expect(ctx.runRoutes.delete).not.toHaveBeenCalled();
+    expect(writeProcessResourceMock).toHaveBeenCalledTimes(1);
   });
 
-  it("reclaims and reconciles an ambiguous Process admission without re-uploading media", async () => {
+  it("retries a message whose event was appended without re-uploading media or pinning its route again", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
-    let deliveryAttempts = 0;
     writeProcessResourceMock.mockImplementation(async (_installationId, _pid, _args, body) => {
       await bodyToBytes(body);
       return retainedAdapterResource();
     });
-    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
-      if (frame.call === "proc.history") {
-        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        deliveryAttempts++;
-        if (deliveryAttempts === 1) {
-          throw new Error("Process RPC transport lost");
-        }
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            status: "started",
-            runId: frame.args.runId,
-            queued: false,
-            replayed: "active",
-          },
-        };
-      }
-      throw new Error(`Unexpected call: ${frame.call}`);
-    });
     const ctx = makeContext({
       CHANNEL_WHATSAPP: { adapterSetActivity },
     }, { upsert: vi.fn() });
+    // The Kernel lost the call after the event committed; its run may since have ended and taken its route.
+    vi.mocked(ctx.events.deliverNow).mockRejectedValueOnce(new Error("Kernel request reset"));
     const inbound = {
       adapter: "whatsapp",
       accountId: "primary",
@@ -2768,7 +2663,7 @@ describe("adapter lifecycle handlers", () => {
       ctx,
       bodyFromBytes(new Uint8Array([1])),
     )).rejects.toThrow(
-      "Process RPC transport lost",
+      "Kernel request reset",
     );
 
     const replay = await handleAdapterInbound(inbound, ctx);
@@ -2777,12 +2672,11 @@ describe("adapter lifecycle handlers", () => {
       delivered: { pid: "pid-1", queued: false },
     });
 
-    const preallocatedRunId = vi.mocked(ctx.runRoutes.setAdapterRoute).mock.calls[0]?.[0]?.runId;
-    expect(preallocatedRunId).toEqual(expect.any(String));
+    expect(ctx.runRoutes.setAdapterRoute).toHaveBeenCalledOnce();
     expect(ctx.runRoutes.delete).not.toHaveBeenCalled();
-    expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) => (
-      frame.call === "proc.adapter.deliver"
-    ))).toHaveLength(2);
+    expect(ctx.events.append).toHaveBeenCalledOnce();
+    const [[first], [retried]] = vi.mocked(ctx.events.deliverNow).mock.calls;
+    expect(retried).toBe(first);
     expect(writeProcessResourceMock).toHaveBeenCalledTimes(1);
     expect(ctx.adapters.surfaceRoutes.setRoute).not.toHaveBeenCalled();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -2792,23 +2686,6 @@ describe("adapter lifecycle handlers", () => {
   it("delivers approval-looking text as ordinary adapter input", async () => {
     const text = "approve hil[not-a-capability]";
     const ctx = makeContext({}, { upsert: vi.fn() }, { processState: "waiting_hil" });
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame: any) => {
-      if (frame.call !== "proc.adapter.deliver") {
-        throw new Error(`Unexpected call: ${frame.call}`);
-      }
-      expect(frame.args.message).toBe(text);
-      return {
-        type: "res",
-        id: frame.id,
-        ok: true,
-        data: {
-          ok: true,
-          status: "started",
-          runId: frame.args.runId,
-          queued: false,
-        },
-      };
-    });
 
     const result = await handleAdapterInbound({
       adapter: "telegram",
@@ -2822,10 +2699,9 @@ describe("adapter lifecycle handlers", () => {
     }, ctx);
 
     expect(result).toMatchObject({ ok: true, delivered: { pid: "pid-1" } });
-    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
-    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) => (
-      frame.call === "proc.hil"
-    ))).toBe(false);
+    expect(committedMessages.map((message) => message.text)).toEqual([text]);
+    expect(appendedEvents(ctx)).toEqual([expect.objectContaining({ type: "message.received" })]);
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
@@ -2941,20 +2817,6 @@ describe("adapter lifecycle handlers", () => {
       pid === personal.processId ? personal : pid === work.processId ? work : null
     ));
     vi.mocked(ctx.procs.list).mockReturnValue([personal, work]);
-    sendFrameToProcessMock.mockImplementation(async (
-      _installationId: string,
-      _pid: string,
-      frame: any,
-    ) => ({
-      type: "res",
-      id: frame.id,
-      ok: true,
-      data: {
-        eventId: frame.args.eventId,
-        runId: frame.args.eventId,
-        queued: false,
-      },
-    }));
 
     const result = await handleAdapterInbound({
       adapter: "whatsapp",
@@ -2967,24 +2829,7 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx);
 
-    expect(result.reply?.text).toContain("[SHIP]");
-    expect(ctx.adapters.ingressReceipts.checkpoint).toHaveBeenCalledWith(
-      expect.stringMatching(/^adapter-ingress:/),
-      expect.stringMatching(/^claim:adapter-ingress:/),
-      expect.objectContaining({
-        kind: "work_return",
-        uid: 1000,
-        workPid: work.processId,
-        route: expect.objectContaining({
-          adapter: "whatsapp",
-          accountId: "primary",
-          actorId: "wa:+123",
-          surfaceKind: "dm",
-          surfaceId: "dm-1",
-          mode: "work",
-        }),
-      }),
-    );
+    expect(result.reply?.text).toBe("[SHIP] Returned to pid-1 sam-agent (sam).");
     expect(ctx.adapters.surfaceRoutes.clearRouteIfMatches).toHaveBeenCalledWith(
       expect.objectContaining({
         pid: work.processId,
@@ -2992,26 +2837,31 @@ describe("adapter lifecycle handlers", () => {
       }),
     );
     expect(ctx.adapters.surfaceRoutes.resolveRoute(expect.anything())).toBeNull();
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      personal.processId,
-      expect.objectContaining({
-        call: "proc.runtime.event.deliver",
-        args: {
-          eventId: expect.stringMatching(/^adapter-home:adapter-ingress:/),
-          event: {
-            type: "adapter.work.returned",
-            workPid: work.processId,
-          },
-        },
-      }),
+    const [returned] = appendedEvents(ctx);
+    expect(appendedEvents(ctx)).toEqual([{
+      type: "work.returned",
+      ownerUid: 1000,
+      subject: `proc:${work.processId}`,
+      actor: { kind: "person", uid: 1000 },
+      key: expect.stringMatching(/^adapter-ingress:/),
+      body: {
+        workPid: work.processId, adapter: "whatsapp", accountId: "primary", actorId: "wa:+123", surfaceId: "dm-1",
+        messageId: "leave-running-work",
+      },
+    }]);
+    // The route clears with the return's append, and Ship hears of it in the command.
+    expect(ctx.events.transaction).toHaveBeenCalledOnce();
+    expect(vi.mocked(ctx.adapters.surfaceRoutes.clearRouteIfMatches).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(ctx.events.append).mock.invocationCallOrder[0]!);
+    expect(ctx.events.deliverNow).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ key: returned!.key }), "personal:1000");
+    expect(ctx.adapters.ingressReceipts.checkpoint).not.toHaveBeenCalledWith(
+      expect.any(String), expect.any(String), expect.objectContaining({ kind: "work_return" }),
     );
-    expect(vi.mocked(ctx.adapters.ingressReceipts.checkpoint).mock.invocationCallOrder[0])
-      .toBeLessThan(vi.mocked(ctx.adapters.surfaceRoutes.clearRouteIfMatches).mock.invocationCallOrder[0]!);
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
     expect(ctx.defer).not.toHaveBeenCalled();
   });
 
-  it("retries a failed work-return event against the current personal controller", async () => {
+  it("answers a retried /ship from the return it recorded, naming the current Ship", async () => {
     const ctx = makeContext({}, { upsert: vi.fn() }, {
       surfaceRoute: {
         adapter: "whatsapp",
@@ -3039,26 +2889,8 @@ describe("adapter lifecycle handlers", () => {
           ? replacementPersonal
           : null
     ));
-    ensurePersonalControllerMock
-      .mockResolvedValueOnce(originalPersonal.processId)
-      .mockResolvedValueOnce(replacementPersonal.processId);
-    // SAFETY: The mocked response is the exact process frame contract consumed by this test.
-    sendFrameToProcessMock
-      .mockRejectedValueOnce(new Error("process unavailable"))
-      .mockImplementationOnce(async (
-        _installationId: string,
-        _pid: string,
-        frame: any,
-      ) => ({
-        type: "res",
-        id: frame.id,
-        ok: true,
-        data: {
-          eventId: frame.args.eventId,
-          runId: frame.args.eventId,
-          queued: false,
-        },
-      }));
+    // The Kernel lost the call after the return committed.
+    vi.mocked(ctx.events.deliverNow).mockRejectedValueOnce(new Error("Kernel request reset"));
 
     const inbound = {
       adapter: "whatsapp",
@@ -3073,47 +2905,24 @@ describe("adapter lifecycle handlers", () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as const;
 
-    await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow("process unavailable");
+    await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow("Kernel request reset");
     expect(ctx.adapters.surfaceRoutes.resolveRoute(expect.anything())).toBeNull();
 
+    // Ship was replaced meanwhile; the log delivers the return to whichever pid it has.
+    ensurePersonalControllerMock.mockResolvedValue(replacementPersonal.processId);
     const recovered = await handleAdapterInbound(inbound, ctx);
-    expect(recovered.reply?.text).toContain("[SHIP]");
-    expect(recovered.reply?.text).toContain(replacementPersonal.processId.slice(0, 13));
-    expect(ctx.adapters.ingressReceipts.checkpoint).toHaveBeenCalledTimes(2);
-    expect(ctx.adapters.ingressReceipts.checkpoint).toHaveBeenLastCalledWith(
-      expect.any(String), expect.any(String), expect.objectContaining({ kind: "work_return" }),
-    );
-    expect(ctx.adapters.surfaceRoutes.clearRouteIfMatches).toHaveBeenCalledTimes(2);
-    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
-      1,
-      TEST_INSTALLATION_ID,
-      originalPersonal.processId,
-      expect.objectContaining({
-        call: "proc.runtime.event.deliver",
-        args: expect.objectContaining({
-          eventId: expect.stringMatching(/^adapter-home:adapter-ingress:/),
-        }),
-      }),
-    );
-    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
-      2,
-      TEST_INSTALLATION_ID,
-      replacementPersonal.processId,
-      expect.objectContaining({
-        call: "proc.runtime.event.deliver",
-        args: expect.objectContaining({
-          eventId: expect.stringMatching(/^adapter-home:adapter-ingress:/),
-        }),
-      }),
-    );
-    expect(sendFrameToProcessMock.mock.calls[1]?.[2].args.eventId)
-      .toBe(sendFrameToProcessMock.mock.calls[0]?.[2].args.eventId);
+    expect(recovered.reply?.text).toBe("[SHIP] Returned to pid-2 sam-agent (sam).");
+    expect(ctx.adapters.surfaceRoutes.clearRouteIfMatches).toHaveBeenCalledOnce();
+    expect(ctx.events.append).toHaveBeenCalledOnce();
+    const [[first, consumer], [retried]] = vi.mocked(ctx.events.deliverNow).mock.calls;
+    expect(consumer).toBe("personal:1000");
+    expect(retried).toBe(first);
 
     expect(await handleAdapterInbound(inbound, ctx)).toEqual({
       ...recovered,
       replayed: "completed",
     });
-    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(2);
+    expect(ctx.events.deliverNow).toHaveBeenCalledTimes(2);
   });
 
   it("does not let a recovered home command clear a newer direct line to the same work", async () => {
@@ -3144,7 +2953,7 @@ describe("adapter lifecycle handlers", () => {
       pid === personal.processId ? personal : pid === work.processId ? work : null
     ));
     vi.mocked(ctx.procs.list).mockReturnValue([personal, work]);
-    sendFrameToProcessMock.mockRejectedValueOnce(new Error("personal process unavailable"));
+    vi.mocked(ctx.events.deliverNow).mockRejectedValueOnce(new Error("Kernel request reset"));
 
     const home = {
       adapter: "whatsapp",
@@ -3160,7 +2969,7 @@ describe("adapter lifecycle handlers", () => {
     } as const;
 
     await expect(handleAdapterInbound(home, ctx)).rejects.toThrow(
-      "personal process unavailable",
+      "Kernel request reset",
     );
     await handleAdapterInbound({
       adapter: "whatsapp",
@@ -3185,15 +2994,15 @@ describe("adapter lifecycle handlers", () => {
       updatedByUid: 1000,
     });
 
-    await expect(handleAdapterInbound(home, ctx)).resolves.toMatchObject({
-      ok: true,
-      droppedReason: "superseded_work_return",
-    });
+    // The newer message withdraws the return the retry finds, so it says nothing.
+    vi.mocked(ctx.events.deliverNow).mockResolvedValueOnce({ state: "withdrawn", reason: "a newer private message followed the return" });
+    await expect(handleAdapterInbound(home, ctx)).resolves.toEqual({ ok: true });
     expect(ctx.adapters.surfaceRoutes.resolveRoute({ uid: 1000 })).toMatchObject({
       pid: work.processId,
       mode: "work",
     });
-    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
+    expect(ctx.adapters.surfaceRoutes.clearRouteIfMatches).toHaveBeenCalledOnce();
+    expect(ctx.events.append).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -3260,22 +3069,7 @@ describe("adapter lifecycle handlers", () => {
       vi.mocked(ctx.procs.list).mockReturnValue([personal, work]);
       let now = initialNow;
       const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
-      sendFrameToProcessMock
-        .mockRejectedValueOnce(new Error("personal process unavailable"))
-        .mockImplementationOnce(async (
-          _installationId: string,
-          _pid: string,
-          frame: any,
-        ) => ({
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            eventId: frame.args.eventId,
-            runId: frame.args.eventId,
-            queued: false,
-          },
-        }));
+      vi.mocked(ctx.events.deliverNow).mockRejectedValueOnce(new Error("Kernel request reset"));
 
       const home = {
         adapter: "whatsapp",
@@ -3293,7 +3087,7 @@ describe("adapter lifecycle handlers", () => {
 
       try {
         await expect(handleAdapterInbound(home, ctx)).rejects.toThrow(
-          "personal process unavailable",
+          "Kernel request reset",
         );
         now = newerNow;
         await handleAdapterInbound({
@@ -3367,14 +3161,6 @@ describe("adapter lifecycle handlers", () => {
           id: frame.id,
           ok: true,
           data: { ok: true, pendingHil: null },
-        };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: { ok: true, runId: frame.args.runId, queued: false },
         };
       }
       throw new Error(`Unexpected call: ${frame.call}`);
@@ -3478,14 +3264,6 @@ describe("adapter lifecycle handlers", () => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
-      if (frame.call === "proc.adapter.deliver") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: { ok: true, runId: frame.args.runId, queued: false },
-        };
-      }
       throw new Error(`Unexpected call: ${frame.call}`);
     });
 
@@ -3521,29 +3299,6 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("converges unrouted private surfaces on the personal controller without persisting routes", async () => {
-    sendFrameToProcessMock.mockImplementation(async (
-      _installationId: string,
-      _pid: string,
-      frame: any,
-    ) => {
-      if (frame.call === "proc.history") {
-        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            status: "started",
-            runId: frame.args.runId,
-            queued: false,
-          },
-        };
-      }
-      throw new Error(`Unexpected call: ${frame.call}`);
-    });
     const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: null });
     vi.mocked(ctx.welcome.activate).mockReturnValueOnce(true);
 
@@ -3575,10 +3330,10 @@ describe("adapter lifecycle handlers", () => {
     expect(ensurePersonalControllerMock).toHaveBeenCalledTimes(2);
     expect(ctx.welcome.activate).toHaveBeenCalledWith(1000);
     expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
-    expect(vi.mocked(ctx.welcome.activate).mock.invocationCallOrder[0]).toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);
-    expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) => (
-      frame.call === "proc.adapter.deliver"
-    ))).toHaveLength(2);
+    // The welcome starts before the first message reaches Ship.
+    expect(vi.mocked(ctx.welcome.activate).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(ctx.events.deliverNow).mock.invocationCallOrder[0]!);
+    expect(vi.mocked(ctx.events.deliverNow).mock.calls.map(([, consumer]) => consumer)).toEqual(["personal:1000", "personal:1000"]);
   });
 
   it("binds managed ingress to its exact peer-route generation", async () => {
@@ -3607,14 +3362,6 @@ describe("adapter lifecycle handlers", () => {
     ) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: { ok: true, runId: frame.args.runId, queued: false },
-        };
       }
       throw new Error(`Unexpected call: ${frame.call}`);
     });
@@ -3760,14 +3507,6 @@ describe("adapter lifecycle handlers", () => {
     ) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: { ok: true, runId: frame.args.runId, queued: false },
-        };
       }
       throw new Error(`Unexpected call: ${frame.call}`);
     });

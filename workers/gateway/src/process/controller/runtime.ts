@@ -34,25 +34,22 @@ import { agentArchiveMediaPath } from "../../shared/process-media-path";
 import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive } from "../history/helpers";
 import { historyCursor, parseHistoryCursor } from "../history/cursor";
 import { storeIncomingProcessMedia, stringifyStoredProcessMedia, parseStoredProcessMedia, deleteProcessMedia } from "../media";
-import { appendResponsibilityBatch, normalizeProcessRuntimeEvent } from "../internal/events";
-import { formatIpcMessage, renderHistoryEvent } from "../history/event-renderer";
+import { appendResponsibilityBatch } from "../internal/events";
+import { formatIpcMessage } from "../history/event-renderer";
 import type { AssistantHistoryContent, AsyncCleanupTask, CodeModeApprovalWaiter } from "../internal/contracts";
 import { extractStoredFsReadResource } from "../tool-result-media";
 import {
-  isNonNegativeInteger, isPositiveInteger, normalizeToolResultOutcome, normalizeOptionalString,
+  isNonNegativeInteger, isPositiveInteger, normalizeToolResultOutcome,
   parseStoredStringArray, cancelResponseBody,
 } from "../internal/messages";
 import { syscallToolName } from "../../syscalls/constants";
 import { cancelProcessRequests } from "../../shared/utils";
 import type {
-  InternalResponseFrame,
   ProcessInput,
   ProcessIpcMessage,
   ProcessUnavailable,
 } from "../../protocol/process-frames";
 import type {
-  ProcessRuntimeEventDeliverArgs,
-  ProcessRuntimeEventDeliverResult,
   ProcessInboundFrame,
   ProcessRequestFrame,
 } from "../../protocol/process-frames";
@@ -830,20 +827,12 @@ export class ProcessController {
     return busy === "interrupt" ? admitInterruptingSend(this.host, admission) : admitQueuedSend(this.host, admission);
   }
 
+  /** The admission a run already has, for a redelivery of the message that started it. */
   existingRunAdmission(runId: string): Extract<ProcSendResult, { ok: true }> | null {
-    if (this.host.runs.active?.runId === runId) {
-      return { ok: true, status: "started", runId, replayed: "active" };
-    }
+    if (this.host.runs.active?.runId === runId) return { ok: true, status: "started", runId };
     const located = this.host.store.queue.locateRunAdmission(runId);
     if (!located) return null;
-    return {
-      ok: true,
-      status: "started",
-      runId,
-      ...(located === "queued"
-        ? { queued: true, replayed: "queued" as const }
-        : { replayed: "recorded" as const }),
-    };
+    return { ok: true, status: "started", runId, ...(located === "queued" ? { queued: true } : undefined) };
   }
 
   /**
@@ -1427,37 +1416,6 @@ export class ProcessController {
     await this.host.signals.changed(["messages"], change);
   }
 
-  async handleProcessRuntimeEventDeliver(
-    args: ProcessRuntimeEventDeliverArgs,
-  ): Promise<ProcessRuntimeEventDeliverResult> {
-    const event = normalizeProcessRuntimeEvent(args?.event);
-    const eventId = normalizeOptionalString(args?.eventId);
-    if (!eventId || !/^[a-zA-Z0-9._:-]{1,200}$/.test(eventId)) {
-      throw new Error("Runtime event id is invalid");
-    }
-    const admitted = this.runtimeEventAdmission(eventId);
-    if (admitted) return { eventId, runId: admitted.runId, queued: admitted.queued };
-    const historyEvent: ProcHistoryEvent = {
-      kind: "adapter.work.returned",
-      payload: { eventId, workPid: event.workPid },
-      severity: "info",
-      audience: "model",
-    };
-    const admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
-      distinctRun: true,
-      runId: eventId,
-      event: historyEvent,
-    });
-    if (!admission.ok) {
-      throw new Error(admission.error);
-    }
-    return {
-      eventId,
-      runId: admission.runId,
-      queued: admission.queued,
-    };
-  }
-
   async handleRuntimeEvent(
     content: string | null,
     reason: string,
@@ -1798,17 +1756,8 @@ export class ProcessController {
 
   async handleReq(
     frame: ProcessRequestFrame,
-  ): Promise<ResponseFrame | InternalResponseFrame | null> {
+  ): Promise<ResponseFrame | null> {
     try {
-      if (frame.call === "proc.runtime.event.deliver") {
-        const result = await this.handleProcessRuntimeEventDeliver(frame.args);
-        return { type: "res", id: frame.id, ok: true, data: result };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        const { runId, pid: _pid, ...input } = frame.args;
-        const result = await this.admitInput(input, runId, "interrupt");
-        return { type: "res", id: frame.id, ok: true, data: result };
-      }
       let data: ResultOf<SyscallName>;
 
       switch (frame.call) {

@@ -1,85 +1,53 @@
 import { createInstallationStorage } from "../installation/storage";
-import type { ProcessAdapterDeliverArgs, ProcessResourcesRetainArgs } from "../protocol/process-frames";
+import type { ProcessEventDeliverArgs, ProcessResourcesRetainArgs } from "../protocol/process-frames";
 import { REQUEST_CANCEL_SIGNAL, bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { runDurableObjectAlarm } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import {
   generationRun, processTestConfig, assistantResponse, deferred, runInProcess,
-  ROOT_IDENTITY, drainProcessQueue, initProcess, makeAdapterDeliverReq, offeredTools,
+  ROOT_IDENTITY, drainProcessQueue, initProcess, offeredTools,
   testUsage, waitForRunComplete, type ProcessTestValue, sendMessage,
 } from "./do-test-harness";
 
 describe("proc.send", () => {
-  it("reconciles repeated adapter deliveries without duplicating admission", async () => {
+  it("answers a redelivered messenger message with its first admission, during and after its run", async () => {
     const pid = "mech-adapter-delivery-idempotent";
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const args: ProcessAdapterDeliverArgs = {
-      runId: "run-adapter-idempotent",
-      pid,
-      message: "retry-safe inbound message",
-      origin: {
-        kind: "adapter",
-        adapter: "telegram",
-        accountId: "primary",
-        surface: { kind: "dm", id: "telegram-chat-1" },
-        actorId: "telegram-user-1",
-        messageId: "telegram-message-1",
+    const delivery: ProcessEventDeliverArgs = {
+      eventId: `evt_1:proc:${pid}`,
+      input: {
+        runId: "run-adapter-idempotent",
+        message: "retry-safe inbound message",
+        origin: {
+          kind: "adapter",
+          adapter: "telegram",
+          accountId: "primary",
+          surface: { kind: "dm", id: "telegram-chat-1" },
+          actorId: "telegram-user-1",
+          messageId: "telegram-message-1",
+        },
       },
+      admission: { idle: "start", busy: "interrupt" },
     };
+    const admitted = { eventId: delivery.eventId, runId: "run-adapter-idempotent", queued: false };
 
-    const firstRequest = makeAdapterDeliverReq(args);
-    const first = await stub.recvFrame(firstRequest);
-    expect(first).toMatchObject({
-      type: "res",
-      id: firstRequest.id,
-      ok: true,
-      data: {
-        ok: true,
-        status: "started",
-        runId: args.runId,
-      },
-    });
-
-    const repeatedRequest = makeAdapterDeliverReq(args);
-    const repeated = await stub.recvFrame(repeatedRequest);
-    expect(repeated).toMatchObject({
-      type: "res",
-      id: repeatedRequest.id,
-      ok: true,
-      data: {
-        replayed: "active",
-      },
-    });
-    // SAFETY: test fixture is constructed with the asserted domain shape.
-    expect((first as any).data).not.toHaveProperty("replayed");
-
+    await expect(stub.deliverEvent(delivery)).resolves.toEqual(admitted);
+    await expect(stub.deliverEvent(delivery)).resolves.toEqual(admitted);
     await runInProcess(stub, (process) => {
       expect(process.store.messages.getMessages()).toEqual([
-        expect.objectContaining({
-          role: "user",
-          content: args.message,
-          runId: args.runId,
-        }),
+        expect.objectContaining({ role: "user", content: "retry-safe inbound message", runId: "run-adapter-idempotent" }),
       ]);
       expect(process.store.queue.queueSize()).toBe(0);
-      expect(process.runs.active).toMatchObject({ runId: args.runId });
-    });
-
-    await runInProcess(stub, (process) => {
+      expect(process.runs.active).toMatchObject({ runId: "run-adapter-idempotent" });
       process.runs.active = null;
     });
-    const recordedRequest = makeAdapterDeliverReq(args);
-    const recorded = await stub.recvFrame(recordedRequest);
-    expect(recorded).toMatchObject({
-      type: "res",
-      id: recordedRequest.id,
-      ok: true,
-      data: {
-        ok: true,
-        runId: args.runId,
-        replayed: "recorded",
-      },
+
+    // Once its run has ended, a redelivery admits nothing more.
+    await expect(stub.deliverEvent(delivery)).resolves.toEqual(admitted);
+    await runInProcess(stub, (process) => {
+      expect(process.store.messages.getMessages()).toHaveLength(1);
+      expect(process.runs.active).toBeNull();
     });
   });
 

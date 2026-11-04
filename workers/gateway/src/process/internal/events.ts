@@ -3,28 +3,8 @@
 import {
   type ResponsibilityRecord, responsibilityRequiresAction,
 } from "@humansandmachines/gsv/protocol";
-import type { ProcessRuntimeEvent } from "../../protocol/process-frames";
 import type { ResponsibilityBatchState, RunState } from "../run/state";
 import type { TerminalResponsibilitySnapshot } from "./contracts";
-import { workReturnedRuntimeEventSchema } from "./schemas";
-import { z } from "zod";
-
-export function normalizeProcessRuntimeEvent(
-  value: Parameters<typeof workReturnedRuntimeEventSchema.safeParse>[0],
-): ProcessRuntimeEvent {
-  const discriminator = z.object({ type: z.string() }).safeParse(value);
-  if (!discriminator.success) {
-    throw new Error("proc.runtime.event.deliver requires an event");
-  }
-  if (discriminator.data.type !== "adapter.work.returned") {
-    throw new Error("Unsupported process runtime event type");
-  }
-  const result = workReturnedRuntimeEventSchema.safeParse(value);
-  if (!result.success) {
-    throw new Error("adapter.work.returned fields are invalid");
-  }
-  return result.data;
-}
 
 export function appendResponsibilityBatch(
   run: RunState,

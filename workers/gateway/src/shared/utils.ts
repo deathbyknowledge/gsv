@@ -10,8 +10,6 @@ import type {
 } from "../protocol/frames";
 import type { SyscallName } from "../syscalls";
 import type {
-  InternalResponseFrame,
-  InternalSyscallName,
   ProcessEventDeliverArgs,
   ProcessEventDeliverResult,
   ProcessInboundFrame,
@@ -77,9 +75,7 @@ export async function getProcessByPid(
 export type ResponseTo<F> = F extends { type: "req"; call: infer C }
   ? C extends SyscallName
     ? ResponseFrame<C>
-    : C extends InternalSyscallName
-      ? InternalResponseFrame<C>
-      : never
+    : never
   : Frame;
 
 export function sendFrameToKernel<S extends SyscallName>(
@@ -157,7 +153,7 @@ export async function sendFrameToProcess(
   installationId: string,
   pid: string,
   frame: ProcessInboundFrame,
-): Promise<Frame | InternalResponseFrame | null> {
+): Promise<Frame | null> {
   const proc = await getProcessByPid(pid, installationId);
   return await proc.recvFrame(frame);
 }

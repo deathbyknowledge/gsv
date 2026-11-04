@@ -8,6 +8,7 @@ import { responsibilityReadyEvent } from "../responsibility-runtime";
 import { scheduleFiredEvent } from "../schedule-events";
 import { sourceEventDefinition } from "../source-events";
 import { TARGET_STATUS, targetStatusEvent } from "../target-events";
+import { WORK_RETURNED, workReturnedEvent } from "../work-return-events";
 import type { EventInput, EventRoute, LoggedEvent } from "./store";
 
 export type { ProcessEventDelivery } from "../../protocol/process-frames";
@@ -52,6 +53,7 @@ export const EVENT_REGISTRY = {
   "schedule.fired": scheduleFiredEvent,
   "source.event": sourceEventDefinition,
   [TARGET_STATUS]: targetStatusEvent,
+  [WORK_RETURNED]: workReturnedEvent,
 } satisfies EventRegistry;
 
 export function isWithdrawn<Value extends object | undefined>(value: Value | Withdrawn): value is Withdrawn {

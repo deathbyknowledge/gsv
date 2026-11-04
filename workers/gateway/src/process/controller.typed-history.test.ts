@@ -7,7 +7,7 @@ import type { Process } from "./do";
 import type { ProcessEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
 import { evictDurableObject } from "cloudflare:test";
 import {
-  initProcess, ipcAnswer, ipcMessage, ROOT_IDENTITY, runInProcess, scheduleFired,
+  initProcess, ipcAnswer, ipcMessage, ROOT_IDENTITY, runInProcess, scheduleFired, workReturned,
 } from "./do-test-harness";
 
 function storedRecords(process: Process): ProcHistoryRecordData[] {
@@ -317,10 +317,7 @@ describe("typed controller history producers", () => {
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
       process.runs.active = { runId: "busy-run" };
-      await process.controller.handleProcessRuntimeEventDeliver({
-        eventId: "work-return-1",
-        event: { type: "adapter.work.returned", workPid: "work-1" },
-      });
+      await process.deliverEvent(workReturned("work-return-1", "work-1"));
       process.runs.active = null;
       process.controller.claimNextQueuedRun();
       expect(storedRecords(process)).toEqual([{
