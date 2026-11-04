@@ -3775,13 +3775,16 @@ describe("Kernel IPC completion", () => {
   });
 
   it("expires an ordinary IPC call without terminating its target", async () => {
-    const call = { callId: "regular-call", ownerUid: 1000, sourcePid: "ship", targetPid: "worker" };
+    const call = {
+      callId: "regular-call", ownerUid: 1000, sourcePid: "ship", sourceRunId: null, targetPid: "worker", targetRunId: "worker-run",
+      supervised: false, deadlineAt: 9_000, createdAt: 1_000, responsibilityId: null,
+    };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     const log = fakeEventLog(kernel);
     kernel.ipcCalls = {
       get: vi.fn(() => call),
-      timeout: vi.fn(() => true),
+      endOverdue: vi.fn(() => call),
     };
     kernel.procs = { kill: vi.fn() };
     kernel.ipc.returnDelegatedResponsibility = vi.fn();
@@ -3794,9 +3797,9 @@ describe("Kernel IPC completion", () => {
       subject: "ipc:regular-call",
       actor: { kind: "kernel" },
       key: "regular-call",
-      body: { callId: "regular-call", sourcePid: "ship" },
+      body: { sourcePid: "ship", callId: "regular-call", targetPid: "worker", createdAt: 1_000, deadlineAt: 9_000, error: "IPC call timed out" },
     });
-    expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith(call);
+    expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith(call, { type: "ipc.timeout", error: "IPC call timed out" });
     expect(kernel.procs.kill).not.toHaveBeenCalled();
   });
 
@@ -3804,13 +3807,12 @@ describe("Kernel IPC completion", () => {
     const call = {
       callId: "delegated-call",
       targetPid: "worker",
-      status: "pending",
     };
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     kernel.ipcCalls = {
       get: vi.fn(() => call),
-      timeout: vi.fn(),
+      endOverdue: vi.fn(),
     };
     kernel.ipc.continueSupervisedIpcCall = vi.fn(async () => {});
 
@@ -3824,7 +3826,7 @@ describe("Kernel IPC completion", () => {
       call,
       undefined,
     );
-    expect(kernel.ipcCalls.timeout).not.toHaveBeenCalled();
+    expect(kernel.ipcCalls.endOverdue).not.toHaveBeenCalled();
   });
 
   it("renews supervised calls and reports that work is still running", async () => {
@@ -3836,11 +3838,9 @@ describe("Kernel IPC completion", () => {
       sourceRunId: "ship-run",
       targetPid: "worker",
       targetRunId: "worker-run",
-      status: "pending",
+      supervised: true,
       deadlineAt: checkedAt,
       createdAt: 1_000,
-      response: null,
-      error: null,
       responsibilityId: null,
     };
     const now = vi.spyOn(Date, "now").mockReturnValue(checkedAt);
@@ -3855,7 +3855,7 @@ describe("Kernel IPC completion", () => {
     kernel.ipc.recordDelegationCheckIn = vi.fn();
     kernel.ipcCalls = {
       get: vi.fn(() => call),
-      timeout: vi.fn(),
+      endOverdue: vi.fn(),
       renewDeadline: vi.fn((_callId: string, deadlineAt: number) => ({
         ...call,
         deadlineAt,
@@ -3889,7 +3889,7 @@ describe("Kernel IPC completion", () => {
       call.callId,
       checkedAt + 60_000,
     );
-    expect(kernel.ipcCalls.timeout).not.toHaveBeenCalled();
+    expect(kernel.ipcCalls.endOverdue).not.toHaveBeenCalled();
     // The caller hears the latest check-in; one still waiting gives way to it.
     expect(log.pending).toHaveBeenCalledWith("ipc.overdue", "ipc:delegated-call");
     expect(log.withdraw).toHaveBeenCalledWith(older, "a newer check-in replaced it");
@@ -3920,11 +3920,9 @@ describe("Kernel IPC completion", () => {
       sourceRunId: "ship-run",
       targetPid: "worker",
       targetRunId: "worker-run",
-      status: "pending",
+      supervised: true,
       deadlineAt: checkedAt,
       createdAt: 1_000,
-      response: null,
-      error: null,
       responsibilityId: null,
     };
     const now = vi.spyOn(Date, "now").mockReturnValue(checkedAt);
@@ -3942,7 +3940,7 @@ describe("Kernel IPC completion", () => {
     kernel.ipc.recordDelegationCheckIn = vi.fn();
     kernel.ipcCalls = {
       get: vi.fn(() => call),
-      timeout: vi.fn(),
+      endOverdue: vi.fn(),
       renewDeadline: vi.fn(),
     };
 
@@ -3987,11 +3985,9 @@ describe("Kernel IPC completion", () => {
       sourceRunId: "ship-run",
       targetPid: "worker",
       targetRunId: "worker-run",
-      status: "pending",
+      supervised: true,
       deadlineAt: originalDeadlineAt,
       createdAt: 1_000,
-      response: null,
-      error: null,
       responsibilityId: null,
     };
     const now = vi.spyOn(Date, "now").mockReturnValue(invokedAt);
@@ -4006,7 +4002,7 @@ describe("Kernel IPC completion", () => {
     kernel.ipc.recordDelegationCheckIn = vi.fn();
     kernel.ipcCalls = {
       get: vi.fn(() => call),
-      timeout: vi.fn(),
+      endOverdue: vi.fn(),
       renewDeadline: vi.fn((_callId: string, deadlineAt: number) => ({
         ...call,
         deadlineAt,
@@ -4090,11 +4086,9 @@ describe("Kernel IPC completion", () => {
       sourceRunId: "run:ship",
       targetPid: "proc:worker",
       targetRunId: "run:worker",
-      status: "pending",
+      supervised: true,
       deadlineAt: 10_000,
       createdAt: 1_000,
-      response: null,
-      error: null,
       responsibilityId,
     };
 
@@ -4134,14 +4128,26 @@ describe("Kernel IPC completion", () => {
     expect(reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
   });
 
-  it("cancels pending calls owned by an aborted source run", async () => {
+  it("cancels the calls an aborted run made before answering the call it ran for", async () => {
+    const media = [{
+      type: "document",
+      mimeType: "application/pdf",
+      key: `home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
+      path: `/home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
+      size: 42,
+    }];
+    const call = {
+      callId: "call-1", ownerUid: 1000, sourcePid: "proc-ship", sourceRunId: null, targetPid: "proc-source", targetRunId: "run-source",
+      supervised: false, deadlineAt: Date.now() + 60_000, createdAt: 1_000, responsibilityId: null,
+    };
     const cancelBySourceRun = vi.fn();
-    const completeByRun = vi.fn(() => []);
+    const findPendingByTargetRun = vi.fn(() => call);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
-    fakeEventLog(kernel);
+    const log = fakeEventLog(kernel);
     kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
-    kernel.ipcCalls = { cancelBySourceRun, completeByRun };
+    kernel.ipcCalls = { cancelBySourceRun, findPendingByTargetRun, endByRun: vi.fn(() => [call]) };
+    kernel.ipc.returnDelegatedResponsibility = vi.fn();
 
     await kernel.ipc.completeIpcCallsForProcessSignal("proc-source", {
       type: "sig",
@@ -4150,16 +4156,7 @@ describe("Kernel IPC completion", () => {
         runId: "run-source",
         status: "aborted",
         reason: "user.superseded",
-        result: {
-          text: null,
-          media: [{
-            type: "document",
-            mimeType: "application/pdf",
-            key: `home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
-            path: `/home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
-            size: 42,
-          }],
-        },
+        result: { text: null, media },
         delivery: { kind: "none" },
       },
     });
@@ -4170,29 +4167,31 @@ describe("Kernel IPC completion", () => {
       sourceRunId: "run-source",
     });
     expect(cancelBySourceRun.mock.invocationCallOrder[0]).toBeLessThan(
-      completeByRun.mock.invocationCallOrder[0],
+      findPendingByTargetRun.mock.invocationCallOrder[0],
     );
-    expect(completeByRun).toHaveBeenCalledWith(expect.objectContaining({
-      runStatus: "aborted",
-      response: expect.objectContaining({
-        media: [expect.objectContaining({
-          path: `/home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
-        })],
+    expect(log.append).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({
+        response: { text: null, usage: null, media },
+        error: "Target run was aborted: user.superseded",
       }),
     }));
+    expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith(call, expect.objectContaining({ runStatus: "aborted" }));
   });
 
   it("completes a call from the Process result independently of human delivery", async () => {
-    const completeByRun = vi.fn(() => ["call-1"]);
-    const call = { callId: "call-1", ownerUid: 1000, sourcePid: "proc-ship" };
+    const call = {
+      callId: "call-1", ownerUid: 1000, sourcePid: "proc-ship", sourceRunId: "run-ship", targetPid: "proc-worker", targetRunId: "run-worker",
+      supervised: false, deadlineAt: Date.now() + 60_000, createdAt: 1_000, responsibilityId: null,
+    };
+    const endByRun = vi.fn(() => [call]);
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const kernel = bareKernel();
     const log = fakeEventLog(kernel);
     kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
     kernel.ipcCalls = {
       cancelBySourceRun: vi.fn(),
-      completeByRun,
-      get: vi.fn(() => call),
+      findPendingByTargetRun: vi.fn(() => call),
+      endByRun,
     };
     kernel.ipc.returnDelegatedResponsibility = vi.fn();
 
@@ -4208,25 +4207,19 @@ describe("Kernel IPC completion", () => {
       },
     });
 
-    expect(completeByRun).toHaveBeenCalledWith({
-      uid: 1000,
-      targetPid: "proc-worker",
-      runId: "run-worker",
-      runStatus: "ok",
-      response: {
-        text: "Private worker result.",
-        usage: null,
-      },
-      error: null,
-    });
-    expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith(call);
+    const response = { text: "Private worker result.", usage: null };
+    expect(endByRun).toHaveBeenCalledWith({ uid: 1000, targetPid: "proc-worker", runId: "run-worker" });
+    expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith(call, { type: "ipc.reply", runStatus: "ok", response });
     expect(log.append).toHaveBeenCalledWith({
       type: "ipc.reply",
       ownerUid: 1000,
       subject: "ipc:call-1",
       actor: { kind: "process", pid: "proc-worker" },
       key: "call-1",
-      body: { callId: "call-1", sourcePid: "proc-ship" },
+      body: {
+        sourcePid: "proc-ship", callId: "call-1", targetPid: "proc-worker", sourceRunId: "run-ship",
+        createdAt: 1_000, deadlineAt: call.deadlineAt, response,
+      },
     });
     expect(kernel.ctx.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
   });
@@ -4329,20 +4322,23 @@ describe("Kernel IPC completion", () => {
         sourceRunId: "run:ship",
         targetPid: "proc:worker",
         targetRunId: "run:worker",
-        status,
-        runStatus: "runStatus" in scenario ? scenario.runStatus : null,
+        supervised: true,
         deadlineAt: 9_000,
         createdAt: 1_000,
-        response: status === "completed" && error === null ? { text: "done" } : null,
-        error,
         responsibilityId,
       };
+      const end = {
+        type: status === "timed_out" ? "ipc.timeout" : "ipc.reply",
+        ...("runStatus" in scenario ? { runStatus: scenario.runStatus } : undefined),
+        ...(status === "completed" && error === null ? { response: { text: "done" } } : undefined),
+        ...(error ? { error } : undefined),
+      } as const;
 
       const emitted: unknown[] = [];
       const log = vi.spyOn(console, "log").mockImplementation((record) => { emitted.push(record); });
       try {
-        kernel.ipc.returnDelegatedResponsibility(call);
-        kernel.ipc.returnDelegatedResponsibility(call);
+        kernel.ipc.returnDelegatedResponsibility(call, end);
+        kernel.ipc.returnDelegatedResponsibility(call, end);
       } finally {
         log.mockRestore();
       }

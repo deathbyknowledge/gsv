@@ -47,7 +47,7 @@ import { notifyProcessChanged, unregisterProcess } from "./process-notifications
 import { resolveSelectedMessageTarget } from "./targets";
 import { deliveryId, processConsumer } from "./events/consumers";
 import { eventBodyBytes, MAX_EVENT_BODY_BYTES, type EventActor, type EventInput } from "./events/store";
-import { ipcForward, type IpcForward } from "./ipc-events";
+import { IPC_TIMED_OUT, IPC_TIMEOUT, ipcForward, withdrawIpcAnswer, type IpcForward } from "./ipc-events";
 import { directMessage } from "./message-events";
 import { nestedToolOwner } from "./tool-approval";
 
@@ -708,17 +708,16 @@ export async function handleProcIpcCall(
     return appended;
   });
   const sent = await ctx.events.deliverNow(event, consumer);
-  const call = ctx.ipcCalls.get(callId);
   if (sent.state === "withdrawn") {
-    // Its target never took it, so the caller hears here and nowhere else; a call that timed out first says so.
-    ctx.ipcCalls.remove(callId);
-    return { ok: false, error: call?.status === "timed_out" ? call.error ?? "IPC call timed out" : sent.reason };
+    // Its target never took it, so the caller hears here and nowhere else; a call that ended first says why.
+    const error = ctx.events.transaction(() => {
+      ctx.ipcCalls.remove(callId);
+      return withdrawIpcAnswer(ctx, callId);
+    });
+    return { ok: false, error: error ?? sent.reason };
   }
-  if (call?.status === "timed_out" || (!supervised && Date.now() >= deadlineAt)) {
-    return {
-      ok: false,
-      error: call?.error ?? "IPC call timed out",
-    };
+  if (ctx.events.keyed(IPC_TIMEOUT, callId) || (!supervised && Date.now() >= deadlineAt)) {
+    return { ok: false, error: IPC_TIMED_OUT };
   }
   return {
     ok: true,

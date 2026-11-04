@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { jsonValueSchema, type JsonObject, type ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import {
+  jsonValueSchema, resourceBlockSchema, type JsonObject, type JsonValue, type ProcessIdentity, type ResourceBlock,
+} from "@humansandmachines/gsv/protocol";
 import type { ProcessEventAdmission } from "../protocol/process-frames";
 import { processIdentitySchema } from "../protocol/peer-schemas";
 import type { KernelContext } from "./context";
@@ -13,6 +15,9 @@ export const IPC_CALL = "ipc.call";
 export const IPC_REPLY = "ipc.reply";
 export const IPC_TIMEOUT = "ipc.timeout";
 export const IPC_OVERDUE = "ipc.overdue";
+
+/** What a caller hears when its call's deadline passes before its target answers. */
+export const IPC_TIMED_OUT = "IPC call timed out";
 
 /** One exchange's events share a subject: a message, or a call with its check-ins and its end. */
 export function ipcSubject(id: string): string {
@@ -38,7 +43,17 @@ export type IpcForward = {
   call?: { callId: string; deadlineAt: number; supervised?: true };
 };
 
-const answerSchema = z.strictObject({ callId: z.string(), sourcePid: z.string() });
+const answerSchema = z.strictObject({
+  sourcePid: z.string(),
+  callId: z.string(),
+  targetPid: z.string(),
+  sourceRunId: z.string().optional(),
+  createdAt: z.number(),
+  deadlineAt: z.number(),
+  response: z.optional(jsonValueSchema),
+  error: z.string().optional(),
+  attachments: z.optional(z.array(resourceBlockSchema)),
+});
 const checkInSchema = z.strictObject({
   callId: z.string(),
   sourcePid: z.string(),
@@ -63,16 +78,43 @@ export function ipcForward(ownerUid: number, forward: IpcForward): EventInput {
   };
 }
 
-/** A call's end for the process that asked. The body names the call; its row holds the answer, which has no size limit. */
-export function ipcAnswer(type: typeof IPC_REPLY | typeof IPC_TIMEOUT, call: IpcCallRecord, actor: EventActor): EventInput {
+/** How a call ended: its target's answer, or why there is none. */
+export type IpcCallEnd = {
+  type: typeof IPC_REPLY | typeof IPC_TIMEOUT;
+  /** How the target's run ended, when its run answered. */
+  runStatus?: "ok" | "error" | "aborted";
+  response?: JsonValue;
+  error?: string;
+  /** The file that holds an answer too large for its event. */
+  attachments?: ResourceBlock[];
+};
+
+/** A call's end for the process that asked, carrying the whole answer. */
+export function ipcAnswer(call: IpcCallRecord, end: IpcCallEnd, actor: EventActor): EventInput {
+  const { type, response, error, attachments } = end;
   return {
     type,
     ownerUid: call.ownerUid,
     subject: ipcSubject(call.callId),
     actor,
     key: call.callId,
-    body: { callId: call.callId, sourcePid: call.sourcePid },
+    body: {
+      sourcePid: call.sourcePid,
+      ...callPayload(call),
+      deadlineAt: call.deadlineAt,
+      ...(response === undefined ? undefined : { response }),
+      ...(error ? { error } : undefined),
+      ...(attachments ? { attachments } : undefined),
+    } satisfies z.input<typeof answerSchema>,
   };
+}
+
+/** Withdraws the answer of a call whose caller hears in the call itself, and returns the error it carried. */
+export function withdrawIpcAnswer(ctx: Pick<KernelContext, "events">, callId: string): string | null {
+  const [answer] = [IPC_TIMEOUT, IPC_REPLY].flatMap((type) => ctx.events.pending(type, ipcSubject(callId)));
+  if (!answer) return null;
+  ctx.events.withdraw(answer, "its caller heard when it asked");
+  return answerSchema.parse(answer.event.body).error ?? null;
 }
 
 /** A supervised call's check-in for the process that asked. */
@@ -87,15 +129,9 @@ export function ipcCheckIn(call: IpcCallRecord, checkIn: IpcCheckIn): EventInput
   };
 }
 
-/** The call an event is about while it still wants one, or why it doesn't. */
+/** The call an event is about while it is still in flight, or why the event no longer goes. */
 function pendingCall(callId: string, ctx: KernelContext): IpcCallRecord | Withdrawn {
-  const call = ctx.ipcCalls.get(callId);
-  if (!call) return { withdrawn: "the call was cancelled" };
-  return call.status === "pending" ? call : { withdrawn: "the call already ended" };
-}
-
-function endedCall(callId: string, ctx: KernelContext): IpcCallRecord | Withdrawn {
-  return ctx.ipcCalls.get(callId) ?? { withdrawn: "the call was cancelled" };
+  return ctx.ipcCalls.get(callId) ?? { withdrawn: "the call already ended" };
 }
 
 function reason(found: IpcCallRecord | Withdrawn): string | null {
@@ -103,8 +139,8 @@ function reason(found: IpcCallRecord | Withdrawn): string | null {
 }
 
 /** An answer joins the run that asked, or takes a run of its own after another one. */
-function answerAdmission(call: IpcCallRecord): ProcessEventAdmission {
-  return { idle: "start", busy: "join", ...(call.sourceRunId ? { joinRun: call.sourceRunId } : undefined) };
+function answerAdmission(sourceRunId: string | null | undefined): ProcessEventAdmission {
+  return { idle: "start", busy: "join", ...(sourceRunId ? { joinRun: sourceRunId } : undefined) };
 }
 
 /** What the asking process records about its call. */
@@ -143,30 +179,18 @@ const forwardDefinition: EventDefinition = {
   },
 };
 
-/** A call's end, read from its row when it goes. Once the delivery ends, the row goes too. */
+/** A call's end, which carries its answer. A caller that was reset or whose asking run was aborted drops it. */
 function answerDefinition(type: typeof IPC_REPLY | typeof IPC_TIMEOUT): EventDefinition {
   return {
     routes: (event) => [{ consumer: processConsumer(answerSchema.parse(event.body).sourcePid), lane: "background" }],
-    withdrawal: (event, ctx) => reason(endedCall(answerSchema.parse(event.body).callId, ctx)),
-    admit(event, _prepared, ctx) {
-      const call = endedCall(answerSchema.parse(event.body).callId, ctx);
-      if ("withdrawn" in call) return call;
+    admit(event) {
+      const { sourcePid: _sourcePid, attachments, ...payload } = answerSchema.parse(event.body);
       return {
-        event: {
-          kind: type,
-          severity: type === IPC_TIMEOUT || call.error ? "error" : "info",
-          audience: "model",
-          payload: {
-            ...callPayload(call),
-            deadlineAt: call.deadlineAt,
-            ...(call.status === "completed" ? { response: jsonValueSchema.parse(call.response) } : undefined),
-            ...(call.error ? { error: call.error } : undefined),
-          },
-        },
-        admission: answerAdmission(call),
+        event: { kind: type, severity: type === IPC_TIMEOUT || payload.error ? "error" : "info", audience: "model", payload },
+        admission: answerAdmission(payload.sourceRunId),
+        ...(attachments ? { attachments } : undefined),
       };
     },
-    settled: async (event, ctx) => ctx.ipcCalls.remove(answerSchema.parse(event.body).callId),
   };
 }
 
@@ -185,7 +209,7 @@ const checkInDefinition: EventDefinition = {
         audience: "model",
         payload: { ...callPayload(call), deadlineAt: checkedAt, nextCheckAt, checkInCount },
       },
-      admission: answerAdmission(call),
+      admission: answerAdmission(call.sourceRunId),
     };
   },
 };

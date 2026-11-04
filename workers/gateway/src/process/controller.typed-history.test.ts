@@ -149,6 +149,38 @@ describe("typed controller history producers", () => {
     });
   });
 
+  it("keeps an answer's file as this process's own media beside the answer, trying again while it can't be read", async () => {
+    const stub = await initProcess("typed-answer-file", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      const key = `root/.gsv/media/archived-media:${"a".repeat(64)}`;
+      const file: ResourceBlock = {
+        type: "resource", mediaType: "document", filename: "answer.md",
+        ref: { type: "file", target: "gsv", path: `/${key}`, revision: "r1", contentType: "text/markdown", size: 70_000 },
+      };
+      const owned = { type: "document" as const, mimeType: "text/markdown", key, size: 70_000, filename: "answer.md" };
+      const resolve = vi.spyOn(process.resources, "resolveIncomingMedia")
+        .mockRejectedValueOnce(new Error("storage is unavailable"))
+        .mockResolvedValue([owned]);
+      vi.spyOn(process.resources, "prepareEventMedia").mockImplementation(async (media) => JSON.stringify(media));
+      const delivery: ProcessEventDeliverArgs = {
+        ...ipcAnswer("ipc.reply", { callId: "call-1", targetPid: "worker", createdAt: 1, deadlineAt: 2 }), attachments: [file],
+      };
+
+      await expect(process.deliverEvent(delivery)).rejects.toThrow("storage is unavailable");
+      expect(storedRecords(process)).toEqual([]);
+      await process.deliverEvent(delivery);
+
+      expect(resolve).toHaveBeenLastCalledWith([file]);
+      expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: { kind: "ipc.reply", media: [owned] } }]);
+      const [answer] = await process.history.buildContextMessages();
+      expect(answer?.content).toEqual([
+        { type: "text", text: expect.stringContaining("Process `worker` finished task `call-1`.") },
+        { type: "text", text: `Attached document "answer.md" [text/markdown] 68.4 KB\nPath: /${key}` },
+      ]);
+    });
+  });
+
   it("retains canonical interaction identity on direct and queued input", async () => {
     const stub = await initProcess("typed-input-origin", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {

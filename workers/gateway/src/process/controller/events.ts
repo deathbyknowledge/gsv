@@ -76,10 +76,15 @@ async function admitRuntimeEvent(
   if (existing) return { eventId, runId: existing.runId, queued: existing.queued };
   let recorded: DeliveredEvent = event;
   let media: string | undefined;
-  if (attachments?.length && recorded.kind === "contact.message") {
+  if (attachments?.length) {
     const retained = await retainAttachments(host, attachments);
+    // A call's file is its whole answer, so its delivery tries again until the file is kept.
+    if (recorded.kind !== "contact.message" && retained.media === undefined) throw new Error(retained.errors.join("; "));
     media = retained.media;
-    if (retained.errors.length > 0) recorded = { ...recorded, payload: { ...recorded.payload, attachmentErrors: retained.errors } };
+    // A contact's message goes without what it couldn't fetch, and says so.
+    if (recorded.kind === "contact.message" && retained.errors.length > 0) {
+      recorded = { ...recorded, payload: { ...recorded.payload, attachmentErrors: retained.errors } };
+    }
   }
   const admitted = await host.controller.handleRuntimeEvent(renderHistoryEvent(recorded), recorded.kind, {
     runId: eventId,
@@ -104,7 +109,7 @@ async function admitRuntimeEvent(
   return { eventId, runId: admitted.runId, queued: admitted.queued };
 }
 
-/** Contact attachments become this Process's own media, as messenger attachments do. */
+/** Files the Kernel hands with an event become this Process's own media, as messenger attachments do. */
 async function retainAttachments(host: Process, blocks: ResourceBlock[]): Promise<{ media?: string; errors: string[] }> {
   const media: ProcMediaInput[] = [];
   const errors: string[] = [];

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runSqlMigrations } from "../../schema/runner";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
-import { IpcCallStore } from "../ipc-calls";
 import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT, runKernelSqlMigrations } from "./migrations";
 
 const NOTICE_ID = "contact.message:contact:remote:5:0";
@@ -45,17 +44,20 @@ describe("event log cutover", () => {
       // The old limit counted characters, so a stored body can be past 64 KiB.
       sql.exec(arrived, "huge", "Huge", null, "x".repeat(65_536), "client", 20);
 
-      const calls = new IpcCallStore(sql);
-      for (const [callId, status, runStatus, updatedAt] of [
+      for (const [callId, status, runStatus, response, error, updatedAt] of [
         // Answered by the target's run, and in flight to the caller when the Kernel stopped.
-        ["replied", "completed", "ok", 30],
+        ["replied", "completed", "ok", { text: "The oven is off.", usage: null }, null, 30],
         // Ended by the Kernel when the target was reset.
-        ["reset", "completed", null, 20],
-        ["late", "timed_out", null, 10],
-        ["pending", "pending", null, 5],
+        ["reset", "completed", null, null, "Target process was reset", 20],
+        ["late", "timed_out", null, null, "IPC call timed out", 10],
+        ["pending", "pending", null, null, null, 5],
       ] as const) {
-        calls.create({ callId, uid: 1000, sourcePid: "ship", sourceRunId: "run:ship", targetPid: "worker", targetRunId: `run:${callId}`, deadlineAt: 100 });
-        sql.exec("UPDATE ipc_calls SET status = ?, run_status = ?, updated_at = ?, delivery_started_at = 25 WHERE call_id = ?", status, runStatus, updatedAt, callId);
+        sql.exec(
+          `INSERT INTO ipc_calls (call_id, uid, source_pid, source_run_id, target_pid, target_run_id, status, run_status,
+             supervised, deadline_at, created_at, updated_at, response_json, error, delivery_started_at)
+           VALUES (?, 1000, 'ship', 'run:ship', 'worker', ?, ?, ?, 0, 100, 1, ?, ?, ?, 25)`,
+          callId, `run:${callId}`, status, runStatus, updatedAt, JSON.stringify(response), error,
+        );
       }
 
       const task = "INSERT INTO cf_agents_schedules (id, callback, payload, type, time, created_at) VALUES (?, ?, ?, 'scheduled', ?, ?)";
@@ -99,8 +101,10 @@ describe("event log cutover", () => {
         FROM events e LEFT JOIN deliveries d USING (seq) ORDER BY e.seq
       `).toArray().map(({ actor_json, body_json, ...row }) => ({ ...row, actor: JSON.parse(actor_json), body: JSON.parse(body_json) }));
       const source = { type: "source.event", subject: "source:src_a", actor: { kind: "source", sourceId: "src_a" }, ...UNDELIVERED };
-      const answer = (type: string, callId: string, at: number, actor: { kind: string; pid?: string }) => ({
-        type, subject: `ipc:${callId}`, actor, idempotency_key: callId, body: { callId, sourcePid: "ship" }, created_at: at, ...pending("proc:ship", "background", at),
+      const answer = (type: string, callId: string, at: number, actor: { kind: string; pid?: string }, ended: { response?: { text: string; usage: null }; error?: string }) => ({
+        type, subject: `ipc:${callId}`, actor, idempotency_key: callId,
+        body: { sourcePid: "ship", callId, targetPid: "worker", sourceRunId: "run:ship", createdAt: 1, deadlineAt: 100, ...ended },
+        created_at: at, ...pending("proc:ship", "background", at),
       });
       expect(log).toEqual([
         {
@@ -124,10 +128,10 @@ describe("event log cutover", () => {
           ...source, idempotency_key: "src_a:full",
           body: { eventId: "full", title: "Full", preview: "seen", body: "private", emittedBy: "webhook" }, created_at: 30,
         },
-        // The log reads each answer from its call's row when it delivers, so the body only names the call.
-        answer("ipc.timeout", "late", 10, KERNEL),
-        answer("ipc.reply", "reset", 20, KERNEL),
-        answer("ipc.reply", "replied", 30, { kind: "process", pid: "worker" }),
+        // Each answer moves into its event, which carries it from now on.
+        answer("ipc.timeout", "late", 10, KERNEL, { error: "IPC call timed out" }),
+        answer("ipc.reply", "reset", 20, KERNEL, { error: "Target process was reset" }),
+        answer("ipc.reply", "replied", 30, { kind: "process", pid: "worker" }, { response: { text: "The oven is off.", usage: null } }),
         {
           type: "delivery.failed", subject: "proc:worker", actor: KERNEL, idempotency_key: "notice-approval",
           body: { pid: "worker", runId: "run-1", requestId: "approval-1", message: "timeout" }, created_at: 10_000,
@@ -143,13 +147,14 @@ describe("event log cutover", () => {
       expect(sql.exec("SELECT DISTINCT owner_uid FROM events").toArray()).toEqual([{ owner_uid: 1000 }]);
 
       expect(sql.exec("SELECT name FROM sqlite_master WHERE name IN ('ship_events', 'responsibility_wake_batches', 'event_log')").toArray()).toEqual([]);
-      expect(sql.exec("SELECT name FROM pragma_table_info('ipc_calls') WHERE name = 'delivery_started_at'").toArray()).toEqual([]);
-      // Every call keeps its row until its answer's delivery ends; the pending one is still with its target.
-      expect(sql.exec("SELECT call_id, status FROM ipc_calls ORDER BY call_id").toArray()).toEqual([
-        { call_id: "late", status: "timed_out" },
-        { call_id: "pending", status: "pending" },
-        { call_id: "replied", status: "completed" },
-        { call_id: "reset", status: "completed" },
+      // Only the call still with its target keeps a row, and the row no longer holds an answer.
+      expect(sql.exec("SELECT call_id FROM ipc_calls").toArray()).toEqual([{ call_id: "pending" }]);
+      expect(sql.exec("SELECT name FROM pragma_table_info('ipc_calls') ORDER BY cid").toArray().map(({ name }) => name)).toEqual([
+        "call_id", "uid", "source_pid", "target_pid", "target_run_id", "deadline_at", "created_at", "updated_at",
+        "source_run_id", "responsibility_id", "supervised",
+      ]);
+      expect(sql.exec("SELECT name FROM pragma_index_list('ipc_calls') WHERE origin = 'c' ORDER BY name").toArray()).toEqual([
+        { name: "idx_ipc_calls_source_run" }, { name: "idx_ipc_calls_target_run" },
       ]);
       expect(sql.exec("SELECT id FROM cf_agents_schedules ORDER BY id").toArray()).toEqual([
         { id: "task:route" }, { id: "task:timeout" }, { id: "task:wake" },

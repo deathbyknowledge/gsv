@@ -1,7 +1,8 @@
-import type {
-  JsonObject,
-  JsonValue,
-  MessageAttachment,
+import {
+  bodyFromBytes,
+  type JsonObject,
+  type JsonValue,
+  type MessageAttachment,
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
@@ -12,9 +13,10 @@ import {
 import {
   MANAGED_LIFECYCLE_RECHECK_MS,
 } from "../installation/lifecycle";
-import type { EventActor } from "./events/store";
+import { writeProcessResource } from "../shared/utils";
+import { eventBodyBytes, MAX_EVENT_BODY_BYTES, type EventActor } from "./events/store";
 import {
-  IPC_OVERDUE, IPC_REPLY, IPC_TIMEOUT, ipcAnswer, ipcCheckIn, ipcSubject,
+  IPC_OVERDUE, IPC_REPLY, IPC_TIMED_OUT, IPC_TIMEOUT, ipcAnswer, ipcCheckIn, ipcSubject, type IpcCallEnd,
 } from "./ipc-events";
 import type { Kernel } from "./do";
 import {
@@ -76,7 +78,7 @@ async scheduleIpcCallTimeoutTask(
   }
 
 failIpcCallsByTarget(uid: number, targetPid: string, error: string): void {
-    this.answer(() => this.host.ipcCalls.failByTargetPid({ uid, targetPid, error }), IPC_REPLY, { kind: "kernel" });
+    this.answer(() => this.host.ipcCalls.endByTarget({ uid, targetPid }), { type: IPC_REPLY, error }, { kind: "kernel" });
   }
 
 async onIpcCallTimeout(
@@ -86,31 +88,27 @@ async onIpcCallTimeout(
     const timeout = ipcCallTimeoutPayloadSchema.parse(input);
     const callId = timeout.callId;
     const call = this.host.ipcCalls.get(callId);
-    if (
-      call
-      && call.status === "pending"
-      && (timeout.mode === "supervise" || timeout.terminateTargetOnTimeout === true)
-    ) {
+    if (call && (timeout.mode === "supervise" || timeout.terminateTargetOnTimeout === true)) {
       await this.continueSupervisedIpcCall(timeout, call, task);
       return;
     }
-    this.answer(() => this.host.ipcCalls.timeout(callId) ? [callId] : [], IPC_TIMEOUT, { kind: "kernel" });
+    this.answer(() => {
+      const overdue = this.host.ipcCalls.endOverdue(callId);
+      return overdue ? [overdue] : [];
+    }, { type: IPC_TIMEOUT, error: IPC_TIMED_OUT }, { kind: "kernel" });
   }
 
   /**
-   * Ends calls and appends each one's answer for its caller in one transaction; the log
-   * reads the answer from the call's row when it delivers. The ledger then takes back
-   * delegated work.
+   * Ends calls and appends each one's answer for its caller in one transaction, so a
+   * call's row and its answer never both exist. The ledger then takes back delegated work.
    */
-  private answer(end: () => string[], type: typeof IPC_REPLY | typeof IPC_TIMEOUT, actor: EventActor): void {
-    const ended = this.host.events.transaction(() => end().flatMap((callId) => {
-      const call = this.host.ipcCalls.get(callId);
-      if (!call) return [];
-      this.host.eventRuntime.append(ipcAnswer(type, call, actor));
-      return [call];
+  private answer(end: () => IpcCallRecord[], how: IpcCallEnd, actor: EventActor): void {
+    const ended = this.host.events.transaction(() => end().map((call) => {
+      this.host.eventRuntime.append(ipcAnswer(call, how, actor));
+      return call;
     }));
     if (ended.length === 0) return;
-    for (const call of ended) this.returnDelegatedResponsibility(call);
+    for (const call of ended) this.returnDelegatedResponsibility(call, how);
     this.host.ctx.waitUntil(this.host.eventRuntime.kick().catch((error) => {
       console.warn("[Kernel] Failed to arm IPC answer delivery:", error);
     }));
@@ -226,10 +224,10 @@ recordDelegationCheckIn(
     }));
   }
 
-completeIpcCallsForProcessSignal(
+async completeIpcCallsForProcessSignal(
     processId: string,
     frame: UserProcessSignalFrame,
-  ): void {
+  ): Promise<void> {
     if (frame.signal !== "proc.run.finished") {
       return;
     }
@@ -267,17 +265,45 @@ completeIpcCallsForProcessSignal(
         sourceRunId: runId,
       });
     }
-    this.answer(() => this.host.ipcCalls.completeByRun({
-      uid: ownerUid,
-      targetPid: processId,
-      runId,
+    const call = this.host.ipcCalls.findPendingByTargetRun({ uid: ownerUid, targetPid: processId, targetRunId: runId });
+    if (!call) return;
+    const end = await this.fitAnswer(call, {
+      type: IPC_REPLY,
       runStatus: status,
       response,
-      error,
-    }), IPC_REPLY, { kind: "process", pid: processId });
+      ...(error ? { error } : undefined),
+    });
+    this.answer(
+      () => this.host.ipcCalls.endByRun({ uid: ownerUid, targetPid: processId, runId }),
+      end,
+      { kind: "process", pid: processId },
+    );
   }
 
-returnDelegatedResponsibility(call: IpcCallRecord): void {
+  /**
+   * Fits an answer in its event. Text too large for one moves into a file in the caller's
+   * own home, which reaches the caller as an attachment; the worker's own files stay in
+   * the response.
+   */
+  private async fitAnswer(call: IpcCallRecord, end: IpcCallEnd & { response: IpcCompletionResponse }): Promise<IpcCallEnd> {
+    const answer = ipcAnswer(call, end, { kind: "kernel" });
+    const { text, media } = end.response;
+    if (text === null || eventBodyBytes(answer.body ?? null) <= MAX_EVENT_BODY_BYTES) return end;
+    const written = await writeProcessResource(this.host.installationId, call.sourcePid, {
+      resourceId: `${call.callId}:answer`,
+      mediaType: "document",
+      contentType: "text/markdown",
+      filename: "answer.md",
+    }, bodyFromBytes(new TextEncoder().encode(text)));
+    if ("unavailable" in written) {
+      // A caller that is gone hears nothing; its answer's delivery is withdrawn with it.
+      if (written.unavailable === "killed") return { ...end, response: undefined };
+      throw new Error(written.message);
+    }
+    return { ...end, response: media ? { media } : undefined, attachments: [written.resource] };
+  }
+
+returnDelegatedResponsibility(call: IpcCallRecord, end: IpcCallEnd): void {
     if (!call.responsibilityId) return;
     const current = this.host.responsibilities.get(call.ownerUid, call.responsibilityId);
     if (
@@ -290,13 +316,14 @@ returnDelegatedResponsibility(call: IpcCallRecord): void {
       return;
     }
 
-    const outcome = call.status === "timed_out"
+    const { runStatus, error } = end;
+    const outcome = end.type === IPC_TIMEOUT
       ? "timed_out"
-      : call.runStatus === "aborted"
+      : runStatus === "aborted"
         ? "aborted"
-        : call.error?.toLowerCase().includes("killed")
+        : error?.toLowerCase().includes("killed")
           ? "killed"
-          : call.error
+          : error
             ? "failed"
             : "completed";
     const eventType = `process.delegation.${outcome}`;
@@ -306,12 +333,12 @@ returnDelegatedResponsibility(call: IpcCallRecord): void {
       callId: call.callId,
       processId: call.targetPid,
       runId: call.targetRunId,
-      status: call.status,
+      status: end.type === IPC_TIMEOUT ? "timed_out" : "completed",
       completedAtMs,
     };
-    if (call.runStatus) delegation.runStatus = call.runStatus;
+    if (runStatus) delegation.runStatus = runStatus;
     if (call.sourceRunId) delegation.sourceRunId = call.sourceRunId;
-    if (call.error) delegation.error = call.error.slice(0, 2_000);
+    if (error) delegation.error = error.slice(0, 2_000);
     const updated = this.host.responsibilities.update({
       ownerUid: call.ownerUid,
       id: current.id,
@@ -323,7 +350,7 @@ returnDelegatedResponsibility(call: IpcCallRecord): void {
         },
         assignee: { kind: "ship" },
         state: "open",
-        blocker: call.error ? call.error.slice(0, 2_000) : null,
+        blocker: error ? error.slice(0, 2_000) : null,
         nextCheckAtMs: null,
         leaseExpiresAtMs: null,
       },

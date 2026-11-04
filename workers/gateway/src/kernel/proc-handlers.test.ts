@@ -8,7 +8,7 @@ import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { KernelContext } from "./context";
 import { requiredTestBindings } from "../test-support/required-bindings";
 import type { InlineDelivery } from "./events/runtime";
-import type { EventInput, LoggedEvent } from "./events/store";
+import type { EventInput, LoggedEvent, PendingDelivery } from "./events/store";
 
 import * as utils from "../shared/utils";
 import { forwardToProcess, handleProcFork, handleProcIpcCall, handleProcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
@@ -240,12 +240,20 @@ describe("proc handlers", () => {
   });
 
   it.each([
-    { case: "its target is gone", call: { status: "pending", error: null }, error: "Process no longer exists" },
-    { case: "it timed out first", call: { status: "timed_out", error: "IPC call timed out" }, error: "IPC call timed out" },
-  ])("removes a call its target never took because $case, answering only through the call's result", async ({ call, error }) => {
+    { case: "its target is gone", timedOut: false, reason: "Process no longer exists", error: "Process no longer exists" },
+    { case: "it timed out first", timedOut: true, reason: "the call already ended", error: "IPC call timed out" },
+  ])("removes a call its target never took because $case, answering only through the call's result", async ({ timedOut, reason, error }) => {
     const { ctx, ipcCalls, events, scheduleIpcCallTimeout } = makeIpcCallContext();
-    ipcCalls.get.mockReturnValue(call);
-    events.deliverNow.mockResolvedValue({ state: "withdrawn", reason: error === "IPC call timed out" ? "the call already ended" : error });
+    // A timeout that came first left its answer on the log, which the call's result replaces.
+    const answer = (callId: string): PendingDelivery => ({
+      event: {
+        type: "ipc.timeout", ownerUid: IDENTITY.uid, subject: `ipc:${callId}`, actor: { kind: "kernel" }, key: callId, seq: 8, id: "evt_8", createdAt: 2,
+        body: { sourcePid: "source-process", callId, targetPid: "target-process", createdAt: 1, deadlineAt: 2, error: "IPC call timed out" },
+      },
+      consumer: "proc:source-process", lane: "background", attemptCount: 0,
+    });
+    events.pending.mockImplementation((type, subject) => timedOut && type === "ipc.timeout" ? [answer(subject.slice("ipc:".length))] : []);
+    events.deliverNow.mockResolvedValue({ state: "withdrawn", reason });
 
     await expect(handleProcIpcCall({ pid: "target-process", message: "bounded work" }, ctx))
       .resolves.toEqual({ ok: false, error });
@@ -253,6 +261,7 @@ describe("proc handlers", () => {
     const created = ipcCalls.create.mock.calls[0]?.[0];
     expect(created).toMatchObject({ sourceRunId: "source-run", targetRunId: TARGET_DELIVERY });
     expect(ipcCalls.remove).toHaveBeenCalledWith(created?.callId);
+    expect(events.withdraw.mock.calls).toEqual(timedOut ? [[answer(created!.callId), "its caller heard when it asked"]] : []);
     expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(created?.callId, created?.deadlineAt);
   });
 
@@ -342,20 +351,24 @@ describe("proc handlers", () => {
     expect(ipcCalls.create).not.toHaveBeenCalled();
   });
 
-  it("does not report started after a delivered timeout row was removed", async () => {
-    const { ctx, ipcCalls } = makeIpcCallContext();
-    ipcCalls.get.mockReturnValue(null);
-    const now = vi.spyOn(Date, "now")
-      .mockReturnValueOnce(1_000)
-      .mockReturnValue(61_000);
+  it.each([
+    { case: "its deadline passed", late: true, timedOut: false },
+    { case: "its timeout already answered it", late: false, timedOut: true },
+  ])("reports a timeout, not a start, for a call its target took after $case", async ({ late, timedOut }) => {
+    const { ctx, events } = makeIpcCallContext();
+    events.keyed.mockImplementation((type: string, key: string) => (
+      timedOut && type === "ipc.timeout"
+        ? { type, ownerUid: IDENTITY.uid, subject: `ipc:${key}`, actor: { kind: "kernel" }, key, seq: 8, id: "evt_8", body: null, createdAt: 2 }
+        : null
+    ));
+    const now = late ? vi.spyOn(Date, "now").mockReturnValueOnce(1_000).mockReturnValue(61_000) : null;
     try {
       await expect(handleProcIpcCall({
         pid: "target-process",
         message: "bounded work",
       }, ctx)).resolves.toEqual({ ok: false, error: "IPC call timed out" });
-      expect(ipcCalls.get).toHaveReturnedWith(null);
     } finally {
-      now.mockRestore();
+      now?.mockRestore();
     }
   });
 
@@ -1447,7 +1460,6 @@ function makeIpcCallContext(options: {
   const target = options.target ?? { uid: identity.uid, ownerUid: identity.uid };
   const ipcCalls = {
     create: vi.fn(),
-    get: vi.fn((): { status: string; error: string | null } | null => ({ status: "pending", error: null })),
     remove: vi.fn(),
   };
   // The log appends every event as evt_7, and its target takes it at once.
@@ -1455,6 +1467,9 @@ function makeIpcCallContext(options: {
     append: vi.fn((input: EventInput): LoggedEvent => ({ ...input, seq: 7, id: "evt_7", body: input.body ?? null, createdAt: 1 })),
     transaction: vi.fn(<T,>(operation: () => T): T => operation()),
     deliverNow: vi.fn(async (): Promise<InlineDelivery> => ({ state: "delivered", runId: TARGET_DELIVERY, queued: false })),
+    pending: vi.fn((_type: string, _subject: string): PendingDelivery[] => []),
+    withdraw: vi.fn(),
+    keyed: vi.fn((_type: string, _key: string): LoggedEvent | null => null),
   };
   const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.

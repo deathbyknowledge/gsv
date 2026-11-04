@@ -28,7 +28,7 @@ import type { InferenceExecutor, InferenceMediaRequest } from "@humansandmachine
 import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { InlineDelivery } from "../../kernel/events/runtime";
-import type { EventInput, LoggedEvent } from "../../kernel/events/store";
+import type { EventInput, LoggedEvent, PendingDelivery } from "../../kernel/events/store";
 import type { TargetRecord } from "../../kernel/target-registry";
 import type { ProcessRecord } from "../../kernel/processes";
 import type { FederationContactRecord } from "../../kernel/federation-store";
@@ -102,6 +102,9 @@ function fakeEventLog(deliver?: (event: LoggedEvent, consumer: string) => Promis
     deliverNow: vi.fn(deliver ?? (async (event: LoggedEvent, consumer: string): Promise<InlineDelivery> => (
       { state: "delivered", runId: `${event.id}:${consumer}`, queued: false }
     ))),
+    pending: vi.fn((): PendingDelivery[] => []),
+    withdraw: vi.fn(),
+    keyed: vi.fn((): LoggedEvent | null => null),
   };
 }
 
@@ -2209,7 +2212,6 @@ describe("proc native command", () => {
     });
     const ipcCalls = {
       create: vi.fn(),
-      get: vi.fn(() => ({ status: "pending", error: null })),
       remove: vi.fn(),
     };
     const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
@@ -2332,7 +2334,6 @@ describe("proc native command", () => {
     });
     const ipcCalls = {
       create: vi.fn(),
-      get: vi.fn(() => ({ status: "pending", error: null })),
       remove: vi.fn(),
     };
     const ctx = makeContext({
@@ -2493,7 +2494,6 @@ describe("proc native command", () => {
       reconcileResponsibilityWake: vi.fn(async () => undefined),
       ipcCalls: {
         create: vi.fn(),
-        get: vi.fn(() => ({ status: "pending", error: null })),
         remove: vi.fn(),
         cancelBySourcePid: vi.fn(),
       },
@@ -2604,7 +2604,6 @@ describe("proc native command", () => {
       create: throws
         ? vi.fn(() => { throw new Error(error); })
         : vi.fn(),
-      get: vi.fn(() => ({ status: "pending", error: null })),
       remove: vi.fn(),
       cancelBySourcePid: vi.fn(),
     };

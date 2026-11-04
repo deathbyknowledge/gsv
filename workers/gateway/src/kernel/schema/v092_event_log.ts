@@ -12,7 +12,7 @@ const ANSWERED_BY_TARGET = "c.status = 'completed' AND c.run_status IS NOT NULL"
  * What an older Kernel still had on its way joins the log in the order each producer kept,
  * with the retry state it had: Ship events, wake batches, call answers and failed-delivery
  * notices. What arrived from each event source moves in too, going to no one. The tables,
- * column and task kinds the log replaces go.
+ * columns and task kinds the log replaces go.
  */
 export const KERNEL_V092_EVENT_LOG: SqlMigration = {
   id: 92,
@@ -124,8 +124,9 @@ export const KERNEL_V092_EVENT_LOG: SqlMigration = {
     `,
     "DROP TABLE event_log",
 
-    // Answers their callers haven't heard yet. The log reads each answer from its call's row
-    // when it delivers, and removes the row once that ends.
+    // Answers their callers haven't heard yet move into their events, which carry them from
+    // now on, and their calls' rows go: a call's row lasts only while the call is in flight.
+    // An answer an older Kernel held keeps its whole text, as its row did.
     `
       INSERT INTO events (type, owner_uid, subject, actor_json, idempotency_key, body_json, created_at)
       SELECT
@@ -134,7 +135,15 @@ export const KERNEL_V092_EVENT_LOG: SqlMigration = {
         'ipc:' || c.call_id,
         CASE WHEN ${ANSWERED_BY_TARGET} THEN json_object('kind', 'process', 'pid', c.target_pid) ELSE json_object('kind', 'kernel') END,
         c.call_id,
-        json_object('callId', c.call_id, 'sourcePid', c.source_pid),
+        json_remove(
+          json_object(
+            'sourcePid', c.source_pid, 'callId', c.call_id, 'targetPid', c.target_pid, 'sourceRunId', c.source_run_id,
+            'createdAt', c.created_at, 'deadlineAt', c.deadline_at, 'response', json(c.response_json), 'error', c.error
+          ),
+          CASE WHEN c.source_run_id IS NULL THEN '$.sourceRunId' ELSE '$.absent' END,
+          CASE WHEN c.response_json = 'null' THEN '$.response' ELSE '$.absent' END,
+          CASE WHEN c.error IS NULL THEN '$.error' ELSE '$.absent' END
+        ),
         c.updated_at
       FROM ipc_calls c
       WHERE c.status IN ('completed', 'timed_out')
@@ -145,7 +154,15 @@ export const KERNEL_V092_EVENT_LOG: SqlMigration = {
       SELECT seq, 'proc:' || json_extract(body_json, '$.sourcePid'), 'background', 'pending', 0, created_at, created_at
       FROM events WHERE type IN ('ipc.reply', 'ipc.timeout')
     `,
+    "DELETE FROM ipc_calls WHERE status <> 'pending'",
+    "DROP INDEX idx_ipc_calls_target_run",
+    "DROP INDEX idx_ipc_calls_deadline",
+    "ALTER TABLE ipc_calls DROP COLUMN status",
+    "ALTER TABLE ipc_calls DROP COLUMN run_status",
+    "ALTER TABLE ipc_calls DROP COLUMN response_json",
+    "ALTER TABLE ipc_calls DROP COLUMN error",
     "ALTER TABLE ipc_calls DROP COLUMN delivery_started_at",
+    "CREATE INDEX idx_ipc_calls_target_run ON ipc_calls (uid, target_pid, target_run_id)",
 
     // Failed-delivery notices for processes that are still there; one whose process is gone
     // has no one to tell. Each is keyed as before, so two tasks for one failure append once.

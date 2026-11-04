@@ -170,7 +170,7 @@ describe("process IPC on the event log", () => {
     });
   });
 
-  it("starts a call in the call that makes it, then answers the asking run from the call's row", async () => {
+  it("starts a call in the call that makes it, then ends it with an answer that carries what its target said", async () => {
     const { delivered } = processes();
     await fixture(async (kernel) => {
       const called = await call(kernel);
@@ -188,29 +188,59 @@ describe("process IPC on the event log", () => {
         message: expect.objectContaining({ message: "Check the oven.", call: { callId, deadlineAt: called.deadlineAt } }),
         admission: { idle: "start", busy: "after" },
       });
-      expect(kernel.ipcCalls.get(callId)).toMatchObject({ status: "pending", sourceRunId: CALLER_RUN, targetRunId: runId });
+      expect(kernel.ipcCalls.get(callId)).toMatchObject({ sourceRunId: CALLER_RUN, targetRunId: runId });
 
-      // The target's run ends, and its answer goes to the caller through the log.
+      // The target's run ends: its call goes, and its answer goes on the log for the caller.
       await kernel.ipc.completeIpcCallsForProcessSignal(TARGET, finished(runId, "ok", "The oven is off."));
+      expect(kernel.ipcCalls.get(callId)).toBeNull();
+      const answer = {
+        callId, targetPid: TARGET, sourceRunId: CALLER_RUN, createdAt: expect.any(Number), deadlineAt: called.deadlineAt,
+        response: { text: "The oven is off.", usage: null },
+      };
       const reply = ipcEvents(kernel)[1];
       expect(reply).toMatchObject({
         type: "ipc.reply", subject: `ipc:${callId}`, idempotency_key: callId, actor: { kind: "process", pid: TARGET },
-        body: { callId, sourcePid: CALLER }, consumer: `proc:${CALLER}`, lane: "background", state: "pending",
+        body: { sourcePid: CALLER, ...answer }, consumer: `proc:${CALLER}`, lane: "background", state: "pending",
       });
       await runEvents(kernel);
       expect(delivered(kernel, CALLER)).toEqual([[kernel.installationId, CALLER, {
         eventId: `evt_${reply!.seq}:proc:${CALLER}`,
-        event: {
-          kind: "ipc.reply", severity: "info", audience: "model",
-          payload: {
-            callId, targetPid: TARGET, sourceRunId: CALLER_RUN, createdAt: expect.any(Number), deadlineAt: called.deadlineAt,
-            response: { text: "The oven is off.", usage: null },
-          },
-        },
+        event: { kind: "ipc.reply", severity: "info", audience: "model", payload: answer },
         admission: { idle: "start", busy: "join", joinRun: CALLER_RUN },
       }]]);
-      // The caller's Process holds the answer now, so the call's row is gone.
-      expect(kernel.ipcCalls.get(callId)).toBeNull();
+    });
+  });
+
+  it("sends an answer too large for its event as a file in the caller's own home", async () => {
+    const { delivered } = processes();
+    await fixture(async (kernel) => {
+      const file = {
+        type: "resource", mediaType: "document", filename: "answer.md",
+        ref: { type: "file", target: "gsv", path: "/home/sam/.gsv/media/archived-media:answer", revision: "\"r1\"", contentType: "text/markdown", size: 70_000 },
+      } as const;
+      const written: string[] = [];
+      const write = vi.spyOn(processTransport, "writeProcessResource").mockImplementation(async (_installation, _pid, _args, body) => {
+        written.push(await new Response(body.stream).text());
+        return { resource: file };
+      });
+      const called = await call(kernel);
+      const text = "Every recipe in the book. ".repeat(2_700);
+      await kernel.ipc.completeIpcCallsForProcessSignal(TARGET, finished(called.runId, "ok", text));
+
+      expect(write).toHaveBeenCalledWith(kernel.installationId, CALLER, {
+        resourceId: `${called.callId}:answer`, mediaType: "document", contentType: "text/markdown", filename: "answer.md",
+      }, expect.anything());
+      expect(written).toEqual([text]);
+      await runEvents(kernel);
+      expect(delivered(kernel, CALLER)[0]![2]).toEqual({
+        eventId: expect.any(String),
+        event: {
+          kind: "ipc.reply", severity: "info", audience: "model",
+          payload: { callId: called.callId, targetPid: TARGET, sourceRunId: CALLER_RUN, createdAt: expect.any(Number), deadlineAt: called.deadlineAt },
+        },
+        admission: { idle: "start", busy: "join", joinRun: CALLER_RUN },
+        attachments: [file],
+      });
     });
   });
 
@@ -269,7 +299,7 @@ describe("process IPC on the event log", () => {
         },
         admission: { idle: "start", busy: "join", joinRun: CALLER_RUN },
       });
-      expect(kernel.ipcCalls.get(called.callId)).toMatchObject({ status: "pending", deadlineAt: checkIn!.body.nextCheckAt });
+      expect(kernel.ipcCalls.get(called.callId)).toMatchObject({ deadlineAt: checkIn!.body.nextCheckAt });
       expect(framed(kernel)).toEqual([]);
     });
   });
@@ -298,15 +328,16 @@ describe("process IPC on the event log", () => {
     });
   });
 
-  it("withdraws an answer once the asking run was aborted", async () => {
+  it("cancels the calls an aborted run still waits on, so their targets' answers never go", async () => {
     const { delivered } = processes();
     await fixture(async (kernel) => {
       const called = await call(kernel);
-      await kernel.ipc.completeIpcCallsForProcessSignal(TARGET, finished(called.runId, "ok", "The oven is off."));
       await kernel.ipc.completeIpcCallsForProcessSignal(CALLER, finished(CALLER_RUN, "aborted"));
+      expect(kernel.ipcCalls.get(called.callId)).toBeNull();
+      await kernel.ipc.completeIpcCallsForProcessSignal(TARGET, finished(called.runId, "ok", "The oven is off."));
       await runEvents(kernel);
 
-      expect(ipcEvents(kernel).find(({ type }) => type === "ipc.reply")).toMatchObject({ state: "withdrawn", last_error: "the call was cancelled" });
+      expect(ipcEvents(kernel).map(({ type }) => type)).toEqual(["ipc.call"]);
       expect(delivered(kernel, CALLER)).toEqual([]);
     });
   });
@@ -321,7 +352,7 @@ describe("process IPC on the event log", () => {
       await kernel.ipc.completeIpcCallsForProcessSignal(TARGET, finished(called.runId, "ok", "The oven is off."));
       await runEvents(kernel);
 
-      expect(returned).toHaveBeenCalledWith(expect.objectContaining({ callId: called.callId, status: "completed" }));
+      expect(returned).toHaveBeenCalledWith(expect.objectContaining({ callId: called.callId }), expect.objectContaining({ type: "ipc.reply", runStatus: "ok" }));
       expect(ipcEvents(kernel).find(({ type }) => type === "ipc.reply")).toMatchObject({ state: "withdrawn", last_error: "the process is gone" });
       expect(delivered(kernel, CALLER)).toEqual([]);
       expect(kernel.ipcCalls.get(called.callId)).toBeNull();
@@ -336,8 +367,9 @@ describe("process IPC on the event log", () => {
       await runEvents(kernel);
 
       expect(delivered(kernel, CALLER)[0]![2]).toMatchObject({
-        event: { kind: "ipc.reply", severity: "error", payload: { callId: called.callId, error: "Target process was reset", response: null } },
+        event: { kind: "ipc.reply", severity: "error", payload: { callId: called.callId, error: "Target process was reset" } },
       });
+      expect(delivered(kernel, CALLER)[0]![2]).not.toHaveProperty("event.payload.response");
       expect(kernel.ipcCalls.get(called.callId)).toBeNull();
     });
   });

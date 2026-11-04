@@ -1097,7 +1097,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       }
       const delivered = this.processOutput.enqueueProcessSignal(processId, processFrame, typedUserFrame);
       if (typedUserFrame) {
-        this.ipc.completeIpcCallsForProcessSignal(processId, typedUserFrame);
+        await this.ipc.completeIpcCallsForProcessSignal(processId, typedUserFrame);
       }
       if (
         frame.signal === "proc.run.finished"

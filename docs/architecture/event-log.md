@@ -33,9 +33,11 @@ runner        one durable task, one retry rule, one gate check
 | `idempotency_key` | The producer's key. A repeat of the same type and key appends nothing and returns the first event. |
 | `body` | Up to 64 KiB of JSON, or a reference into the store that owns the content. |
 
-An event never owns bytes. A message's text and media stay in its
-Conversation and a call's answer stays in its call row. The delivery reads
-them when it goes, so they have no size limit on the log.
+A message's text and media stay in its Conversation, and its delivery reads
+them when it goes. A call's answer travels in its event. The call's row lasts
+only while the call is in flight. An answer too large for its event goes to
+the caller as a file in the caller's own home, and it arrives as an
+attachment, the way a contact's attachments do.
 
 ## Delivery
 
