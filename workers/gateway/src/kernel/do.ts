@@ -25,7 +25,7 @@ import { DurableObject } from "cloudflare:workers";
 import { ModelMetadataResolver } from "../inference/model-metadata";
 import { z } from "zod";
 import { processMemoryReviewSchema, type ProcessMemoryReview } from "../protocol/process-frames";
-import { queueMemoryReview, runMemoryReview } from "./memory-review";
+import { memoryReviewSettled, queueMemoryReview, recoverMemoryReviews } from "./memory-review";
 import { McpClientManager, SqlMcpServerRows } from "./mcp-client";
 import type {
   Frame,
@@ -249,7 +249,6 @@ type AuthorizeGitHttpResult =
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
 type KernelTask =
-  | { callback: "onMemoryReview"; payload: number }
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
   | { callback: "onManagedOutboundEnqueue"; payload: string }
@@ -291,7 +290,6 @@ const adapterDeliveryRouteSchema = z.object({
 });
 
 const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
-  z.object({ callback: z.literal("onMemoryReview"), payload: z.number().int().nonnegative() }),
   z.object({
     callback: z.literal("onAdapterRouteDelivery"),
     payload: z.object({
@@ -557,7 +555,10 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.mailboxes = new MailboxStore(sql);
 
-    this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
+    this.responsibilities = new ResponsibilityStore(ctx.storage, {
+      changed: (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"),
+      settled: (record) => memoryReviewSettled(this, record),
+    });
     this.events = new EventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
     // Fires once per owner, when their first sign-in (or an earlier first message) opens the welcome.
@@ -612,6 +613,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     ctx.waitUntil(this.ownerNoticeRuntime.recover().catch((error) => {
       console.warn(
         "[Kernel] Failed to recover owner notices:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }));
+    ctx.waitUntil(recoverMemoryReviews(this).catch((error) => {
+      console.warn(
+        "[Kernel] Failed to recover memory reviews:",
         error instanceof Error ? error.message : String(error),
       );
     }));
@@ -1001,9 +1008,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
     task: DurableTask<KernelTask>,
   ): Promise<void> {
     switch (task.callback) {
-      case "onMemoryReview":
-        await runMemoryReview(this, task.payload, task.id);
-        return;
       case "onAdapterRouteDelivery":
         await this.adapterDelivery.onAdapterRouteDelivery(task.payload);
         return;

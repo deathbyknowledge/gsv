@@ -1,13 +1,13 @@
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import { getDurableObjectByName } from "../shared/durable-object";
 import * as utils from "../shared/utils";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import { SignalWatchStore } from "./signal-watches";
-import { deliverTargetConnectionEvent } from "./target-events";
 import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT } from "./schema/migrations";
 import { runSqlMigrations } from "../schema/runner";
 
@@ -28,13 +28,68 @@ function setup(kernel: Kernel) {
   return ctx;
 }
 
-function acknowledgeEvents() {
-  return vi.spyOn(utils, "deliverEventToProcess").mockImplementation(async (_installationId, _pid, args) => (
+afterEach(() => vi.restoreAllMocks());
+
+/** A Kernel with the fixture's processes and targets; the test runs each event pass itself. */
+async function fixture(work: (kernel: Kernel, ctx: KernelContext) => Promise<void>) {
+  const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
+  await runInDurableObject(stub, async (kernel: Kernel) => {
+    vi.spyOn(kernel.ctx.storage, "setAlarm").mockResolvedValue(undefined);
+    try {
+      await work(kernel, setup(kernel));
+    } finally {
+      // Test files share modules, so nothing this Kernel scheduled may run during a later test.
+      kernel.ctx.storage.sql.exec("DELETE FROM cf_agents_schedules");
+      await kernel.ctx.storage.deleteAlarm();
+    }
+  });
+}
+
+/** A spy that answers every Kernel; tests read only the calls their own Kernel made. */
+function processes() {
+  const deliver = vi.spyOn(utils, "deliverEventToProcess").mockImplementation(async (_installationId, _pid, args) => (
     { eventId: args.eventId, runId: null, queued: false, messageId: 1 }
   ));
+  return {
+    deliver,
+    delivered: (kernel: Kernel) => deliver.mock.calls
+      .filter(([installationId]) => installationId === kernel.installationId)
+      .map(([, pid, args]) => ({ pid, ...args })),
+  };
+}
+
+/** One runner pass, as the kick's alarm would run it. */
+async function runEvents(kernel: Kernel) {
+  await kernel.eventRuntime.onEvents({ id: `task:${crypto.randomUUID()}` });
+}
+
+/** Lets every waiting delivery go on the next pass, as its retry would. */
+function retryNow(kernel: Kernel) {
+  kernel.ctx.storage.sql.exec("UPDATE deliveries SET next_attempt_at = 0 WHERE state = 'pending'");
+}
+
+function change(kernel: Kernel, connection: "connected" | "disconnected" = "connected") {
+  kernel.connectionRuntime.broadcastTargetStatus(event.targetId, connection);
+}
+
+function targetEvents(kernel: Kernel) {
+  return kernel.ctx.storage.sql.exec<{
+    seq: number; subject: string; owner_uid: number; body_json: string;
+    consumer: string; lane: string | null; state: string; attempt_count: number; last_error: string | null;
+  }>(
+    `SELECT e.seq, e.subject, e.owner_uid, e.body_json, d.consumer, d.lane, d.state, d.attempt_count, d.last_error
+     FROM events e JOIN deliveries d ON d.seq = e.seq WHERE e.type = 'target.status' ORDER BY e.seq`,
+  ).toArray().map(({ body_json, ...row }) => ({ ...row, body: JSON.parse(body_json) }));
+}
+
+function watchState(kernel: Kernel, watchId: string) {
+  return kernel.ctx.storage.sql.exec<{ revision: number; status: string; error: string | null }>(
+    "SELECT revision, status, error FROM signal_watches WHERE watch_id = ?", watchId,
+  ).toArray()[0] ?? null;
 }
 
 const event = { targetId: "machine:visible", event: "connected", platform: "linux", observedAt: 100 } as const;
+const UNAUTHORIZED = "target watch authorization no longer permits delivery";
 
 function deferred() {
   let resolve!: () => void;
@@ -129,267 +184,261 @@ describe("registered target event watches", () => {
     });
   });
 
-  it("retains target watches across eviction until a delivery is acknowledged", async () => {
-    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
-    await runInDurableObject(stub, (kernel: Kernel) => {
-      const ctx = setup(kernel);
-      handleSignalWatch({ signal: "target.status", targetId: "machine:visible" }, ctx);
-      kernel.targets.setOnline("machine:visible", false);
+  it("appends one event per watch for its process, from Kernel target state, and delivers it on the runner's pass", async () => {
+    await fixture(async (kernel, ctx) => {
+      const { delivered } = processes();
+      const watch = handleSignalWatch({
+        signal: "target.status", targetId: event.targetId, once: false, audience: "model", state: { targetId: "spoof", event: "spoof" },
+      }, ctx);
+      change(kernel);
+      const connection = {
+        targetId: "machine:visible", event: "connected", platform: "linux", label: "Fixture machine", version: "fixture-version",
+        observedAt: expect.any(Number),
+      };
+      const [appended] = targetEvents(kernel);
+      expect(targetEvents(kernel)).toEqual([{
+        seq: appended!.seq, subject: "target:machine:visible", owner_uid: 7000,
+        consumer: "proc:proc:observer", lane: "background", state: "pending", attempt_count: 0, last_error: null,
+        body: { watchId: watch.watchId, revision: 1, pid: "proc:observer", connection },
+      }]);
+      expect(delivered(kernel)).toEqual([]);
+
+      await runEvents(kernel);
+      expect(delivered(kernel)).toEqual([{
+        pid: "proc:observer",
+        eventId: `evt_${appended!.seq}:proc:proc:observer`,
+        event: { kind: "target.connection", payload: connection, audience: "model", severity: "info" },
+        admission: { idle: "start", busy: "join" },
+      }]);
+      expect(JSON.stringify(delivered(kernel))).not.toContain("spoof");
+      expect(targetEvents(kernel)).toMatchObject([{ state: "delivered" }]);
+      await runEvents(kernel);
+      expect(delivered(kernel)).toHaveLength(1);
+      expect(watchState(kernel, watch.watchId)).toEqual({ revision: 1, status: "active", error: null });
     });
-    await evictDurableObject(stub);
-    const send = acknowledgeEvents();
-    try {
-      await runInDurableObject(stub, async (kernel: Kernel) => {
-        await deliverTargetConnectionEvent(kernel, event, "transition:one", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-        expect(send).toHaveBeenCalledWith(kernel.installationId, "proc:observer", {
-          eventId: expect.stringMatching(/^transition:one:/),
-          event: { kind: "target.connection", payload: event, audience: "person", severity: "info" },
-          admission: { idle: "start", busy: "join" },
-        });
-        expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toEqual([]);
-      });
-    } finally { send.mockRestore(); }
   });
 
-  it("rechecks target access and the watching process capability before every delivery", async () => {
+  it("replaces a change still waiting, so each watching process hears how the target is now", async () => {
+    await fixture(async (kernel, ctx) => {
+      const { delivered } = processes();
+      const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId, once: false }, ctx);
+      const removed = handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "removed", once: false }, ctx);
+      change(kernel, "connected");
+      expect(handleSignalUnwatch({ key: "removed" }, ctx)).toEqual({ removed: 1 });
+      change(kernel, "disconnected");
+      const replaced = { state: "withdrawn", last_error: "a newer connection change replaced it", body: { connection: { event: "connected" } } };
+      expect(targetEvents(kernel).filter(({ state }) => state === "withdrawn")).toHaveLength(2);
+      expect(targetEvents(kernel)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ...replaced, body: expect.objectContaining({ watchId: watch.watchId }) }),
+        expect.objectContaining({ ...replaced, body: expect.objectContaining({ watchId: removed.watchId }) }),
+      ]));
+      expect(targetEvents(kernel).filter(({ state }) => state === "pending")).toMatchObject([
+        { body: { watchId: watch.watchId, connection: { event: "disconnected" } } },
+      ]);
+      await runEvents(kernel);
+      expect(delivered(kernel)).toHaveLength(1);
+      expect(delivered(kernel)).toMatchObject([{ event: { payload: { event: "disconnected" } } }]);
+      expect(watchState(kernel, watch.watchId)).toMatchObject({ status: "active" });
+    });
+  });
+
+  it("keeps a change and its watch across eviction until the change goes", async () => {
     const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
-    const send = acknowledgeEvents();
-    try {
-      await runInDurableObject(stub, async (kernel: Kernel) => {
-        const ctx = setup(kernel);
-        handleSignalWatch({ signal: "target.status", targetId: event.targetId }, ctx);
-        kernel.targets.revokeAccess(event.targetId, identity.gid);
-        await deliverTargetConnectionEvent(kernel, event, "transition:revoked-access", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-        expect(send).not.toHaveBeenCalled();
-        kernel.targets.grantAccess(event.targetId, identity.gid);
-        handleSignalWatch({ signal: "target.status", targetId: event.targetId }, ctx);
-        kernel.caps.revoke(identity.gid, "signal.watch");
-        await deliverTargetConnectionEvent(kernel, event, "transition:revoked-capability", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-        expect(send).not.toHaveBeenCalled();
-      });
-    } finally { send.mockRestore(); }
+    let watchId = "";
+    await runInDurableObject(stub, (kernel: Kernel) => {
+      vi.spyOn(kernel.ctx.storage, "setAlarm").mockResolvedValue(undefined);
+      watchId = handleSignalWatch({ signal: "target.status", targetId: event.targetId }, setup(kernel)).watchId;
+      change(kernel);
+      // Offline already, so the restarted Kernel has no newer change to append.
+      kernel.targets.setOnline(event.targetId, false);
+    });
+    await evictDurableObject(stub);
+    const { delivered } = processes();
+    await runInDurableObject(stub, async (kernel: Kernel) => {
+      vi.spyOn(kernel.ctx.storage, "setAlarm").mockResolvedValue(undefined);
+      try {
+        expect(watchState(kernel, watchId)).toMatchObject({ status: "active" });
+        await runEvents(kernel);
+        expect(delivered(kernel)).toMatchObject([{ pid: "proc:observer", event: { payload: { event: "connected" } } }]);
+        // A one-time watch ends with the change it waited for.
+        expect(watchState(kernel, watchId)).toBeNull();
+      } finally {
+        kernel.ctx.storage.sql.exec("DELETE FROM cf_agents_schedules");
+        await kernel.ctx.storage.deleteAlarm();
+      }
+    });
   });
 
   it.each([
     ["resetting", true], ["resetting", false],
     ["error", true], ["error", false],
-    ["ignored", true], ["ignored", false],
-  ] as const)("retains a watch after %s with once=%s and handles the next connection transition", async (failure, once) => {
-    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
-    const entered = deferred();
-    const release = deferred();
-    const send = acknowledgeEvents();
-    send.mockImplementationOnce(async (_installationId, _pid, args) => {
-      entered.resolve();
-      await release.promise;
-      if (failure === "ignored") return { eventId: args.eventId, runId: null, queued: false, ignored: true };
-      if (failure === "error") throw new Error("Fixture Process temporarily unavailable");
-      return { unavailable: "transitioning", message: "Process lifecycle is resetting" };
+  ] as const)("retries a change whose process was %s with once=%s, keeping the watch until the change goes", async (failure, once) => {
+    await fixture(async (kernel, ctx) => {
+      const { deliver, delivered } = processes();
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      deliver.mockImplementationOnce(async () => {
+        if (failure === "error") throw new Error("Fixture Process temporarily unavailable");
+        return { unavailable: "transitioning", message: "Process lifecycle is resetting" };
+      });
+      const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId, once }, ctx);
+      change(kernel);
+      await runEvents(kernel);
+      expect(targetEvents(kernel)).toMatchObject([{ state: "pending", attempt_count: 1 }]);
+      expect(watchState(kernel, watch.watchId)).toEqual({ revision: 1, status: "active", error: null });
+
+      retryNow(kernel);
+      await runEvents(kernel);
+      const [first, retried] = delivered(kernel);
+      expect(retried?.eventId).toBe(first?.eventId);
+      expect(targetEvents(kernel)).toMatchObject([{ state: "delivered" }]);
+      expect(watchState(kernel, watch.watchId)).toEqual(once ? null : { revision: 1, status: "active", error: null });
     });
-    try {
-      await runInDurableObject(stub, async (kernel: Kernel) => {
-        const ctx = setup(kernel);
-        const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId, once }, ctx);
-        const waits: Promise<unknown>[] = [];
-        const waiting = vi.spyOn(kernel.ctx, "waitUntil").mockImplementation((promise) => { waits.push(promise); });
-        try {
-          kernel.connectionRuntime.broadcastTargetStatus(event.targetId, "connected");
-          await entered.promise;
-          release.resolve();
-          await Promise.all(waits);
-          expect(send).toHaveBeenCalledTimes(1);
-          expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toMatchObject([
-            { watchId: watch.watchId, revision: 1, once, status: "active", error: null },
-          ]);
-
-          kernel.connectionRuntime.broadcastTargetStatus(event.targetId, "disconnected");
-          await Promise.all(waits);
-          expect(send).toHaveBeenCalledTimes(2);
-          const delivered = send.mock.calls.map(([, , args]) => args.event.payload.event);
-          expect(delivered).toEqual(["connected", "disconnected"]);
-          const remaining = kernel.signalWatches.matchTarget(event.targetId, "target.status");
-          if (once) expect(remaining).toEqual([]);
-          else expect(remaining).toMatchObject([{ watchId: watch.watchId, status: "active", error: null }]);
-        } finally { release.resolve(); waiting.mockRestore(); }
-      });
-    } finally { release.resolve(); send.mockRestore(); }
   });
 
-  it("keeps a watch whose Process throws on delivery, and says why", async () => {
-    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
-    const send = acknowledgeEvents();
-    send.mockRejectedValueOnce(new Error("Process event is not registered for this delivery path"));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      await runInDurableObject(stub, async (kernel: Kernel) => {
-        const ctx = setup(kernel);
-        const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId, once: true }, ctx);
-        await deliverTargetConnectionEvent(kernel, event, "transition:refused", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-        expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toMatchObject([
-          { watchId: watch.watchId, status: "active", error: null },
-        ]);
-        expect(warn).toHaveBeenCalledWith(
-          `[Kernel] Target event transition:refused:${watch.watchId} was not delivered; its watch stays: Process event is not registered for this delivery path`,
-        );
-      });
-    } finally { warn.mockRestore(); send.mockRestore(); }
-  });
-
-  it("marks a watch failed when its Process permanently rejects the delivery", async () => {
-    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
-    const send = acknowledgeEvents();
-    send.mockResolvedValueOnce({ unavailable: "killed", message: "Process no longer exists" });
-    try {
-      await runInDurableObject(stub, async (kernel: Kernel) => {
-        const ctx = setup(kernel);
-        const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId, once: false }, ctx);
-        await deliverTargetConnectionEvent(kernel, event, "transition:gone", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-        expect(kernel.ctx.storage.sql.exec<{ status: string }>("SELECT status FROM signal_watches WHERE watch_id = ?", watch.watchId).toArray())
-          .toEqual([{ status: "failed" }]);
-        expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toEqual([]);
-      });
-    } finally { send.mockRestore(); }
-  });
-
-  it.each(["acknowledged", "failed", "resetting", "ignored"] as const)("preserves a replacement watch when the previous delivery is %s", async (outcome) => {
-    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
-    const entered = deferred();
-    const release = deferred();
-    const send = acknowledgeEvents();
-    send.mockImplementationOnce(async (_installationId, _pid, args) => {
-      entered.resolve();
-      await release.promise;
-      if (outcome === "failed") return { unavailable: "killed", message: "Process no longer exists" };
-      if (outcome === "resetting") return { unavailable: "transitioning", message: "Process lifecycle is resetting" };
-      return { eventId: args.eventId, runId: null, queued: false, ignored: outcome === "ignored" };
+  it("keeps a one-time watch whose process ignored the change, for the next one", async () => {
+    await fixture(async (kernel, ctx) => {
+      const { deliver, delivered } = processes();
+      deliver.mockImplementationOnce(async (_installationId, _pid, args) => ({ eventId: args.eventId, runId: null, queued: false, ignored: true }));
+      const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId, once: true }, ctx);
+      change(kernel, "connected");
+      await runEvents(kernel);
+      expect(watchState(kernel, watch.watchId)).toEqual({ revision: 1, status: "active", error: null });
+      change(kernel, "disconnected");
+      await runEvents(kernel);
+      expect(delivered(kernel)).toHaveLength(2);
+      expect(delivered(kernel)).toMatchObject([{ event: { payload: { event: "connected" } } }, { event: { payload: { event: "disconnected" } } }]);
+      expect(watchState(kernel, watch.watchId)).toBeNull();
     });
-    try {
-      await runInDurableObject(stub, async (kernel: Kernel) => {
-        const ctx = setup(kernel);
-        const original = handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "replacement" }, ctx);
-        const delivery = deliverTargetConnectionEvent(kernel, event, "transition:old", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-        await entered.promise;
-        const replacement = handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "replacement", audience: "both" }, ctx);
-        expect(replacement.watchId).toBe(original.watchId);
-        release.resolve();
-        await delivery;
-        expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toMatchObject([
-          { watchId: original.watchId, revision: 2, audience: "both", status: "active", error: null },
-        ]);
-        await deliverTargetConnectionEvent(kernel, event, "transition:new", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-        expect(send).toHaveBeenCalledTimes(2);
-        expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toEqual([]);
-      });
-    } finally { release.resolve(); send.mockRestore(); }
   });
 
-  it("does not deliver a queued past transition to watches registered after it occurred", async () => {
-    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
-    const entered = deferred();
-    const release = deferred();
-    const send = acknowledgeEvents();
-    send.mockImplementationOnce(async (_installationId, _pid, args) => {
-      entered.resolve();
-      await release.promise;
-      return { eventId: args.eventId, runId: null, queued: false };
+  it("rechecks target access and the watching process's capability at every delivery, and fails a watch that lost them", async () => {
+    await fixture(async (kernel, ctx) => {
+      const { delivered } = processes();
+      const access = handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "access" }, ctx);
+      change(kernel);
+      kernel.targets.revokeAccess(event.targetId, identity.gid);
+      await runEvents(kernel);
+      expect(delivered(kernel)).toEqual([]);
+      expect(targetEvents(kernel)).toMatchObject([{ state: "withdrawn", last_error: UNAUTHORIZED }]);
+      expect(watchState(kernel, access.watchId)).toEqual({ revision: 1, status: "failed", error: UNAUTHORIZED });
+
+      kernel.targets.grantAccess(event.targetId, identity.gid);
+      const capability = handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "capability" }, ctx);
+      change(kernel);
+      kernel.caps.revoke(identity.gid, "signal.watch");
+      await runEvents(kernel);
+      expect(delivered(kernel)).toEqual([]);
+      expect(watchState(kernel, capability.watchId)).toEqual({ revision: 1, status: "failed", error: UNAUTHORIZED });
     });
-    try {
-      await runInDurableObject(stub, async (kernel: Kernel) => {
-        const ctx = setup(kernel);
-        const original = handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "original", once: false }, ctx);
-        const waits: Promise<unknown>[] = [];
-        const waiting = vi.spyOn(kernel.ctx, "waitUntil").mockImplementation((promise) => { waits.push(promise); });
-        try {
-          kernel.connectionRuntime.broadcastTargetStatus(event.targetId, "connected");
-          await entered.promise;
-          kernel.connectionRuntime.broadcastTargetStatus(event.targetId, "disconnected");
-          handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "later", once: false }, ctx);
-          release.resolve();
-          await Promise.all(waits);
-          expect(send).toHaveBeenCalledTimes(2);
-          for (const [, , args] of send.mock.calls) expect(args.eventId.endsWith(`:${original.watchId}`)).toBe(true);
-        } finally { release.resolve(); waiting.mockRestore(); }
-      });
-    } finally { release.resolve(); send.mockRestore(); }
   });
 
-  it("retains active watches without admitting events while the installation is restricted", async () => {
-    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
-    const send = acknowledgeEvents();
-    try {
-      await runInDurableObject(stub, async (kernel: Kernel) => {
-        const ctx = setup(kernel);
-        const watched = handleSignalWatch({ signal: "target.status", targetId: event.targetId, audience: "both" }, ctx);
-        const gate = vi.spyOn(kernel.onboarding, "managedWorkGate").mockResolvedValue({ allowed: false, code: 423, message: "Managed installation is restricted" });
-        try {
-          await deliverTargetConnectionEvent(kernel, event, "transition:restricted", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-          expect(send).not.toHaveBeenCalled();
-          expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toMatchObject([
-            { watchId: watched.watchId, status: "active", error: null },
-          ]);
-          gate.mockResolvedValue({ allowed: true });
-          await deliverTargetConnectionEvent(kernel, event, "transition:reactivated", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-          expect(send).toHaveBeenCalledTimes(1);
-        } finally { gate.mockRestore(); }
-      });
-    } finally { send.mockRestore(); }
+  it("fails a watch whose process is gone", async () => {
+    await fixture(async (kernel, ctx) => {
+      const { delivered } = processes();
+      const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId, once: false }, ctx);
+      change(kernel);
+      kernel.procs.kill("proc:observer");
+      await runEvents(kernel);
+      expect(delivered(kernel)).toEqual([]);
+      expect(targetEvents(kernel)).toMatchObject([{ state: "withdrawn", last_error: "the process is gone" }]);
+      expect(watchState(kernel, watch.watchId)).toEqual({ revision: 1, status: "failed", error: "the process is gone" });
+    });
   });
 
-  it.each(["replacement", "access-revocation"] as const)("rechecks %s after asynchronous installation admission", async (mutation) => {
-    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
-    const send = acknowledgeEvents();
-    const entered = deferred();
-    const release = deferred();
-    try {
-      await runInDurableObject(stub, async (kernel: Kernel) => {
-        const ctx = setup(kernel);
-        handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "gate" }, ctx);
-        const gate = vi.spyOn(kernel.onboarding, "managedWorkGate").mockImplementation(async () => {
-          entered.resolve();
-          await release.promise;
-          return { allowed: true };
-        });
-        try {
-          const delivery = deliverTargetConnectionEvent(kernel, event, "transition:before-gate", kernel.signalWatches.matchTarget(event.targetId, "target.status"));
-          await entered.promise;
-          if (mutation === "replacement") {
-            handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "gate", audience: "both" }, ctx);
-          } else {
-            kernel.targets.revokeAccess(event.targetId, identity.gid);
-          }
-          release.resolve();
-          await delivery;
-          expect(send).not.toHaveBeenCalled();
-          if (mutation === "replacement") {
-            expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toMatchObject([{ revision: 2, status: "active" }]);
-          }
-        } finally { release.resolve(); gate.mockRestore(); }
+  it.each(["acknowledged", "failed", "resetting", "ignored"] as const)("keeps a watch replaced while its change was %s on the way", async (outcome) => {
+    await fixture(async (kernel, ctx) => {
+      const { deliver, delivered } = processes();
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const entered = deferred();
+      const release = deferred();
+      deliver.mockImplementationOnce(async (_installationId, _pid, args) => {
+        entered.resolve();
+        await release.promise;
+        if (outcome === "failed") throw new Error("Process no longer exists");
+        if (outcome === "resetting") return { unavailable: "transitioning", message: "Process lifecycle is resetting" };
+        return { eventId: args.eventId, runId: null, queued: false, ignored: outcome === "ignored" };
       });
-    } finally { release.resolve(); send.mockRestore(); }
+      const original = handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "replacement" }, ctx);
+      change(kernel, "connected");
+      const pass = runEvents(kernel);
+      await entered.promise;
+      const replacement = handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "replacement", audience: "both" }, ctx);
+      expect(replacement.watchId).toBe(original.watchId);
+      release.resolve();
+      await pass;
+      expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toMatchObject([
+        { watchId: original.watchId, revision: 2, audience: "both", status: "active", error: null },
+      ]);
+      // A retry of the earlier change is withdrawn: the watch it was for changed.
+      retryNow(kernel);
+      await runEvents(kernel);
+      expect(delivered(kernel)).toHaveLength(1);
+
+      change(kernel, "disconnected");
+      await runEvents(kernel);
+      expect(delivered(kernel)).toHaveLength(2);
+      expect(delivered(kernel)[1]).toMatchObject({ event: { audience: "both", payload: { event: "disconnected" } } });
+      expect(kernel.signalWatches.matchTarget(event.targetId, "target.status")).toEqual([]);
+    });
   });
 
-  it("derives lifecycle payloads from Kernel targets and preserves connected/disconnected order", async () => {
-    const stub = await getDurableObjectByName(env.KERNEL, crypto.randomUUID());
-    const send = acknowledgeEvents();
-    try {
-      await runInDurableObject(stub, async (kernel: Kernel) => {
-        const ctx = setup(kernel);
-        handleSignalWatch({ signal: "target.status", targetId: event.targetId, once: false, audience: "model", state: { targetId: "spoof", event: "spoof" } }, ctx);
-        const waits: Promise<unknown>[] = [];
-        const waiting = vi.spyOn(kernel.ctx, "waitUntil").mockImplementation((promise) => { waits.push(promise); });
-        try {
-          kernel.connectionRuntime.broadcastTargetStatus(event.targetId, "connected");
-          kernel.connectionRuntime.broadcastTargetStatus(event.targetId, "disconnected");
-          await Promise.all(waits);
-        } finally { waiting.mockRestore(); }
-        const delivered = send.mock.calls.map(([, , args]) => args);
-        expect(delivered.map(({ event }) => event.payload.event)).toEqual(["connected", "disconnected"]);
-        expect(delivered[0]).toMatchObject({ event: {
-          audience: "model", payload: { targetId: "machine:visible", platform: "linux", label: "Fixture machine", version: "fixture-version", observedAt: expect.any(Number) },
-        } });
-        expect(delivered[0]?.eventId).not.toBe(delivered[1]?.eventId);
-        expect(JSON.stringify(delivered)).not.toContain("spoof");
+  it("does not hand a past change to a watch made after it", async () => {
+    await fixture(async (kernel, ctx) => {
+      const { delivered } = processes();
+      const original = handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "original", once: false }, ctx);
+      change(kernel, "connected");
+      const later = handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "later", once: false }, ctx);
+      await runEvents(kernel);
+      expect(targetEvents(kernel).map(({ body }) => body.watchId)).toEqual([original.watchId]);
+      expect(delivered(kernel)).toHaveLength(1);
+      change(kernel, "disconnected");
+      await runEvents(kernel);
+      expect(targetEvents(kernel).map(({ body }) => body.watchId).sort()).toEqual([original.watchId, original.watchId, later.watchId].sort());
+      expect(delivered(kernel)).toHaveLength(3);
+    });
+  });
+
+  it("holds changes while the installation is restricted, keeping their watches", async () => {
+    await fixture(async (kernel, ctx) => {
+      const { delivered } = processes();
+      const watched = handleSignalWatch({ signal: "target.status", targetId: event.targetId, audience: "both" }, ctx);
+      const gate = vi.spyOn(kernel.onboarding, "managedWorkGate").mockResolvedValue({ allowed: false, code: 423, message: "Managed installation is restricted" });
+      change(kernel);
+      await runEvents(kernel);
+      expect(delivered(kernel)).toEqual([]);
+      expect(targetEvents(kernel)).toMatchObject([{ state: "pending", attempt_count: 0 }]);
+      expect(watchState(kernel, watched.watchId)).toEqual({ revision: 1, status: "active", error: null });
+      gate.mockResolvedValue({ allowed: true });
+      await runEvents(kernel);
+      expect(delivered(kernel)).toHaveLength(1);
+    });
+  });
+
+  it.each(["replacement", "access-revocation"] as const)("reads the watch again after the installation gate, as after a %s", async (mutation) => {
+    await fixture(async (kernel, ctx) => {
+      const { delivered } = processes();
+      const entered = deferred();
+      const release = deferred();
+      const watch = handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "gate" }, ctx);
+      change(kernel);
+      vi.spyOn(kernel.onboarding, "managedWorkGate").mockImplementation(async () => {
+        entered.resolve();
+        await release.promise;
+        return { allowed: true };
       });
-    } finally { send.mockRestore(); }
+      const pass = runEvents(kernel);
+      await entered.promise;
+      if (mutation === "replacement") {
+        handleSignalWatch({ signal: "target.status", targetId: event.targetId, key: "gate", audience: "both" }, ctx);
+      } else {
+        kernel.targets.revokeAccess(event.targetId, identity.gid);
+      }
+      release.resolve();
+      await pass;
+      expect(delivered(kernel)).toEqual([]);
+      expect(watchState(kernel, watch.watchId)).toEqual(mutation === "replacement"
+        ? { revision: 2, status: "active", error: null }
+        : { revision: 1, status: "failed", error: UNAUTHORIZED });
+    });
   });
 });

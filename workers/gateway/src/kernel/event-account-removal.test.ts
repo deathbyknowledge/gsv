@@ -8,11 +8,12 @@ import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import * as personalController from "./personal-controller";
 import { handleSignalWatch } from "./signals";
-import { deliverTargetConnectionEvent } from "./target-events";
 
 async function fixture(work: (kernel: Kernel, root: KernelContext) => Promise<void>) {
   const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
   await runInDurableObject(stub, async (kernel: Kernel) => {
+    // The tests run each event pass themselves; no alarm runs one behind them.
+    vi.spyOn(kernel.ctx.storage, "setAlarm").mockResolvedValue(undefined);
     const password = await hashPassword("event-fixture-password");
     kernel.auth.setShadow(makeShadowEntry("root", password));
     for (const [uid, username] of [[1000, "removed"], [1001, "survivor"], [2000, "agent"]] as const) {
@@ -24,7 +25,13 @@ async function fixture(work: (kernel: Kernel, root: KernelContext) => Promise<vo
     const root = kernel.buildKernelContext({
       peer: testPeer({ account: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, calls: ["*"] }),
     });
-    await work(kernel, root);
+    try {
+      await work(kernel, root);
+    } finally {
+      kernel.ctx.storage.sql.exec("DELETE FROM cf_agents_schedules");
+      await kernel.ctx.storage.deleteAlarm();
+      vi.restoreAllMocks();
+    }
   });
 }
 
@@ -61,6 +68,17 @@ function removeAccount(kernel: Kernel, uid: number) {
 }
 
 const targetEvent = { targetId: "machine:shared", event: "connected", platform: "linux", observedAt: Date.now() } as const;
+
+/** Each target event's watch, and how its delivery stands. */
+function targetDeliveries(kernel: Kernel) {
+  return Object.fromEntries(kernel.ctx.storage.sql.exec<{ state: string; body_json: string }>(
+    "SELECT d.state, e.body_json FROM events e JOIN deliveries d ON d.seq = e.seq WHERE e.type = 'target.status' ORDER BY e.seq",
+  ).toArray().map(({ state, body_json }) => [JSON.parse(body_json).watchId, state]));
+}
+
+function watchStatus(kernel: Kernel, watchId: string) {
+  return kernel.ctx.storage.sql.exec<{ status: string }>("SELECT status FROM signal_watches WHERE watch_id = ?", watchId).one().status;
+}
 
 function targetWatch(kernel: Kernel, ownerUid: number, runAsUid: number, audience: "person" | "both") {
   const account = kernel.auth.getPasswdByUid(runAsUid)!;
@@ -151,36 +169,35 @@ describe("new Kernel event admission after account removal", () => {
 
   it.each(["person", "both"] as const)("fences a fresh %s watch event after owner removal during admission", async (audience) => {
     const send = processDelivery();
-    try {
-      await fixture(async (kernel) => {
-        const removed = targetWatch(kernel, 1000, 2000, audience);
-        const control = targetWatch(kernel, 1001, 1001, audience);
-        const gate = Promise.withResolvers<Awaited<ReturnType<typeof kernel.onboarding.managedWorkGate>>>();
-        const admission = vi.spyOn(kernel.onboarding, "managedWorkGate").mockImplementationOnce(() => gate.promise);
-        const pending = deliverTargetConnectionEvent(kernel, targetEvent, "transition:removal", kernel.signalWatches.matchTarget(targetEvent.targetId, "target.status"));
-        expect(admission).toHaveBeenCalledTimes(1);
-        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
-        gate.resolve({ allowed: true });
-        await pending;
-        expect(send).toHaveBeenCalledTimes(1);
-        expect(send.mock.calls[0]?.[2]).toMatchObject({ eventId: `transition:removal:${control.watchId}` });
-        expect(kernel.ctx.storage.sql.exec<{ status: string }>("SELECT status FROM signal_watches WHERE watch_id = ?", removed.watchId).one().status).toBe("failed");
-        admission.mockRestore();
-      });
-    } finally { send.mockRestore(); }
+    await fixture(async (kernel) => {
+      const removed = targetWatch(kernel, 1000, 2000, audience);
+      const control = targetWatch(kernel, 1001, 1001, audience);
+      kernel.connectionRuntime.broadcastTargetStatus(targetEvent.targetId, "connected");
+      const gate = Promise.withResolvers<Awaited<ReturnType<typeof kernel.onboarding.managedWorkGate>>>();
+      const admission = vi.spyOn(kernel.onboarding, "managedWorkGate").mockImplementationOnce(() => gate.promise);
+      const pass = kernel.eventRuntime.onEvents({ id: "task:removal" });
+      expect(admission).toHaveBeenCalledTimes(1);
+      removeAccount(kernel, 1000);
+      gate.resolve({ allowed: true });
+      await pass;
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(targetDeliveries(kernel)).toEqual({ [removed.watchId]: "withdrawn", [control.watchId]: "delivered" });
+      expect(watchStatus(kernel, removed.watchId)).toBe("failed");
+      expect(watchStatus(kernel, control.watchId)).toBe("active");
+    });
   });
 
   it("fences a watch whose run-as account was removed while its owner remains active", async () => {
     const send = processDelivery();
-    try {
-      await fixture(async (kernel) => {
-        targetWatch(kernel, 1001, 1000, "both");
-        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
-        await deliverTargetConnectionEvent(kernel, targetEvent, "transition:run-as", kernel.signalWatches.matchTarget(targetEvent.targetId, "target.status"));
-        expect(send).not.toHaveBeenCalled();
-        expect(kernel.auth.isAccountDisabled(1001)).toBe(false);
-      });
-    } finally { send.mockRestore(); }
+    await fixture(async (kernel) => {
+      const watch = targetWatch(kernel, 1001, 1000, "both");
+      removeAccount(kernel, 1000);
+      kernel.connectionRuntime.broadcastTargetStatus(targetEvent.targetId, "connected");
+      await kernel.eventRuntime.onEvents({ id: "task:run-as" });
+      expect(send).not.toHaveBeenCalled();
+      expect(targetDeliveries(kernel)).toEqual({ [watch.watchId]: "withdrawn" });
+      expect(kernel.auth.isAccountDisabled(1001)).toBe(false);
+    });
   });
 
   it("keeps an admitted watch delivery's late acknowledgment after removal", async () => {
@@ -195,16 +212,19 @@ describe("new Kernel event admission after account removal", () => {
     try {
       await fixture(async (kernel) => {
         const watch = targetWatch(kernel, 1000, 2000, "both");
-        const pending = deliverTargetConnectionEvent(kernel, targetEvent, "transition:admitted", kernel.signalWatches.matchTarget(targetEvent.targetId, "target.status"));
+        kernel.connectionRuntime.broadcastTargetStatus(targetEvent.targetId, "connected");
+        const pass = kernel.eventRuntime.onEvents({ id: "task:admitted" });
         await entered.promise;
-        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
+        removeAccount(kernel, 1000);
         release.resolve();
-        await pending;
+        await pass;
         expect(send).toHaveBeenCalledTimes(1);
-        expect(kernel.ctx.storage.sql.exec<{ status: string }>("SELECT status FROM signal_watches WHERE watch_id = ?", watch.watchId).one().status).toBe("active");
-        await deliverTargetConnectionEvent(kernel, targetEvent, "transition:later", kernel.signalWatches.matchTarget(targetEvent.targetId, "target.status"));
+        expect(targetDeliveries(kernel)).toEqual({ [watch.watchId]: "delivered" });
+        expect(watchStatus(kernel, watch.watchId)).toBe("active");
+        kernel.connectionRuntime.broadcastTargetStatus(targetEvent.targetId, "disconnected");
+        await kernel.eventRuntime.onEvents({ id: "task:later" });
         expect(send).toHaveBeenCalledTimes(1);
       });
-    } finally { release.resolve(); send.mockRestore(); }
+    } finally { release.resolve(); }
   });
 });

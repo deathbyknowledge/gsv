@@ -6,12 +6,16 @@ import { ownerNotifiedEvent } from "../owner-notice-runtime";
 import { responsibilityReadyEvent } from "../responsibility-runtime";
 import { scheduleFiredEvent } from "../schedule-events";
 import { sourceEventDefinition } from "../source-events";
+import { TARGET_STATUS, targetStatusEvent } from "../target-events";
 import type { EventInput, EventRoute, LoggedEvent } from "./store";
 
 export type { ProcessEventDelivery } from "../../protocol/process-frames";
 
 /** A delivery that should not go, and why. */
 export type Withdrawn = { withdrawn: string };
+
+/** How a delivery ended: taken, though its Process may have ignored it, or withdrawn and why. */
+export type DeliveryEnd = { state: "delivered"; ignored: boolean } | { state: "withdrawn"; reason: string };
 
 /**
  * One registered event type: where it goes and what it hands the Process there.
@@ -29,7 +33,7 @@ export type EventDefinition<Prepared extends object | undefined = undefined> = {
   /** Builds the delivery from current state, which it may rebind: the call follows at once. */
   admit(event: LoggedEvent, prepared: Prepared, ctx: KernelContext): ProcessEventDelivery | Withdrawn;
   /** Runs after the delivery has ended, such as to let work that waited on it go. It can't undo the delivery. */
-  settled?(event: LoggedEvent, ctx: KernelContext): Promise<void>;
+  settled?(event: LoggedEvent, ctx: KernelContext, end: DeliveryEnd): Promise<void>;
 };
 
 export type EventRegistry = Readonly<Record<string, EventDefinition<object | undefined>>>;
@@ -42,6 +46,7 @@ export const EVENT_REGISTRY = {
   "responsibility.ready": responsibilityReadyEvent,
   "schedule.fired": scheduleFiredEvent,
   "source.event": sourceEventDefinition,
+  [TARGET_STATUS]: targetStatusEvent,
 } satisfies EventRegistry;
 
 export function isWithdrawn<Value extends object | undefined>(value: Value | Withdrawn): value is Withdrawn {

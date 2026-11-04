@@ -285,9 +285,9 @@ state machine.
 | Direct `proc.send`, spawn prompt | `message.received` from a person, `process.message` from a process | `proc:<pid>` | the caller's request id; none today | inline | `proc:<pid>` · interrupt from a person, own run after from a process | `handleProcSend`'s choice by origin |
 | Messenger | `message.received` | `route:<surface>` | adapter + account + delivery id | ref: Conversation message | routed pid or Ship · interrupt, inline | `proc.adapter.deliver`; `adapter_ingress_receipts` once the key and row cover its checkpoint |
 | `/ship` work return | `work.returned` | `proc:<work pid>` | work pid + return id | inline | Ship · own run after | the `work_return` checkpoint, `adapter.work.returned` |
-| Memory review | none: the queue admits a low-priority Ship responsibility, `memory.review:<pid>:<segment>`, which Ship delegates to Crew | — | — | — | Ship, through `responsibility.ready` | `onMemoryReview`'s 60 s successor: settling a review admits the next in the same transaction |
+| Memory review | none: the queue admits a low-priority Ship responsibility, `memory.review:<pid>:<segment>`, which Ship delegates to Crew | — | — | — | Ship, through `responsibility.ready` | `onMemoryReview`'s 60 s successor: settling a review admits the next in the same transaction, and a Kernel start admits one left waiting, done in step 8 |
 | Welcome | none: sign-in, or the owner's first Ship message, creates the welcome responsibility | — | — | — | Ship, through `responsibility.ready` | nothing of its own |
-| Target connection | `target.status`, one per watch, since each watch has its own audience | `target:<id>` | transition id + watch id | inline | the watching pid · join, or record when only the person sees it | the in-memory chain, which gains retry; a newer transition withdraws an older one still pending |
+| Target connection | `target.status`, one per watch, since each watch has its own audience | `target:<id>` | transition id + watch id | inline: the watch, its revision and pid, and the change | the watching pid · join, or record when only the person sees it | the in-memory chain, which gains retry; a newer transition withdraws an older one still pending, done in step 8 |
 | Failed delivery | `delivery.failed` | `proc:<pid>` | the hash of run, kind, delivery id and state | inline | `proc:<pid>` · record | `onProcessDeliveryNotice` |
 
 Responsibilities stay as state: what is owed and when. A producer that also
@@ -323,7 +323,7 @@ state machine, that consumer stays as it is.
 | `onFederationDelivery` | ×12 2 s→2048 s, plus in-alarm retry | stays: the federation outbox |
 | `onFederationInbox` | fixed 30 s | stays: the inbox's own intake |
 | `onManagedOutboundEnqueue` | 5 s→1 h, republishing until completion, plus in-alarm retry | stays: the outbound mail outbox |
-| `onMemoryReview` | fixed 60 s successor | delete: settling a review admits the next |
+| `onMemoryReview` | fixed 60 s successor | delete: settling a review admits the next, done in step 8 |
 | `onEventUpkeep` | none | timer for silent sources; its retention moved to the log in step 6 |
 | `onProcessApprovalNotice` | none: it already returns at once | delete, done in step 2 |
 | `onRouteExpired` | none | stays: request route expiry |

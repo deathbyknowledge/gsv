@@ -6,7 +6,7 @@ import type { KernelContext } from "../context";
 import type { Kernel } from "../do";
 import { ensurePersonalController } from "../personal-controller";
 import { deliveryId, parseConsumer, type EventConsumer } from "./consumers";
-import { EVENT_REGISTRY, isWithdrawn, type EventDefinition, type EventRegistry } from "./registry";
+import { EVENT_REGISTRY, isWithdrawn, type DeliveryEnd, type EventDefinition, type EventRegistry } from "./registry";
 import { EVENT_BODY_RETENTION_MS, type EventInput, type LoggedEvent, type PendingDelivery } from "./store";
 
 /** What the runtime reaches on its Kernel. */
@@ -192,8 +192,11 @@ export class EventRuntime {
     }
     this.retainUntil(event);
     if (definition.settled) {
+      const end: DeliveryEnd = result.kind === "withdrawn"
+        ? { state: "withdrawn", reason: result.reason }
+        : { state: "delivered", ignored: result.outcome.ignored === true };
       try {
-        await definition.settled(event, ctx);
+        await definition.settled(event, ctx, end);
       } catch (error) {
         // The delivery stands; the producer's own recovery, at the latest the next start-up, catches up.
         console.warn(`[Kernel] Event ${event.id} settled, but its producer could not follow up:`, error instanceof Error ? error.message : String(error));

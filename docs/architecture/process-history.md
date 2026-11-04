@@ -174,6 +174,8 @@ use its existing `signal.watch` capability to watch an accessible target:
 The source is an explicit `targetId`, and the only registered signal is
 `target.status`. Watches default to audience `person`; `model` and `both`
 explicitly admit model work. Existing watch TTL and one-shot semantics apply.
+Each connection change goes through the Kernel's event log, one event per watch,
+retried until the Process takes it; a newer change replaces one still waiting.
 Generic process signal watches are retired: upgrade removes their registrations,
 and delayed watched-signal frames are ignored. Historical `signal.watched`
 records and their original model rendering remain supported.

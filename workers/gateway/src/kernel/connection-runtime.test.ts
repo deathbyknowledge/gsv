@@ -40,7 +40,10 @@ function targetRuntimeWith(sockets: ReturnType<typeof fakeSocket>[]) {
   Object.assign(fixture.host.ctx, { waitUntil: (promise: Promise<unknown>) => { waits.push(promise); } });
   const canAccess = vi.fn((_targetId: string, uid: number) => uid === 1000);
   Object.assign(fixture.host.targets, { get: () => ({ target_id: "macbook", owner_uid: 1000 }), canAccess });
-  Object.assign(fixture.host, { signalWatches: { matchTarget: () => [] } });
+  Object.assign(fixture.host, {
+    signalWatches: { matchTarget: () => [] },
+    eventRuntime: { transaction: <T,>(operation: () => T): T => operation(), pending: () => [] },
+  });
   return { ...fixture, waits, canAccess };
 }
 

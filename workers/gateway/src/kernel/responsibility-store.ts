@@ -155,8 +155,16 @@ export type ResponsibilityChangesOutcome = {
   hasMore: boolean;
 };
 
+/** What the ledger's owner follows as records change. */
+export type ResponsibilityStoreHooks = {
+  /** After a change commits, such as to tell the owner's clients. */
+  changed?(ownerUid: number): void;
+  /** Inside the transaction that resolves or cancels a record, such as to admit work that waited on it. */
+  settled?(record: ResponsibilityRecord): void;
+};
+
 export class ResponsibilityStore {
-  constructor(private readonly storage: DurableObjectStorage, private readonly onChange?: (ownerUid: number) => void) {}
+  constructor(private readonly storage: DurableObjectStorage, private readonly hooks: ResponsibilityStoreHooks = {}) {}
 
   get(ownerUid: number, id: string): ResponsibilityRecord | null {
     const row = this.getRow(ownerUid, id);
@@ -468,7 +476,7 @@ export class ResponsibilityStore {
       outcome = { record, created: true, revision };
     });
     if (!outcome) throw new Error("Responsibility creation did not produce a result");
-    if (outcome.created) this.onChange?.(input.ownerUid);
+    if (outcome.created) this.hooks.changed?.(input.ownerUid);
     return outcome;
   }
 
@@ -577,10 +585,11 @@ export class ResponsibilityStore {
         record,
         now: input.now,
       });
+      if (terminal && current.state !== record.state) this.hooks.settled?.(record);
       outcome = { record, revision, changed: true };
     });
     if (!outcome) throw new Error("Responsibility update did not produce a result");
-    if (outcome.changed) this.onChange?.(input.ownerUid);
+    if (outcome.changed) this.hooks.changed?.(input.ownerUid);
     return outcome;
   }
 

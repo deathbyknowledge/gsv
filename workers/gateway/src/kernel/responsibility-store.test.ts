@@ -6,6 +6,7 @@ import { Kernel } from "./do";
 import {
   ResponsibilityStore,
   type ResponsibilityCreateInput,
+  type ResponsibilityStoreHooks,
 } from "./responsibility-store";
 
 const OWNER_UID = 1000;
@@ -40,14 +41,14 @@ function createInput(
 
 async function withStore<Result>(
   callback: (store: ResponsibilityStore) => Result | Promise<Result>,
-  onChange?: (uid: number) => void,
+  hooks?: ResponsibilityStoreHooks,
 ): Promise<Result> {
   const kernel = await getDurableObjectByName<Env, Kernel>(
     env.KERNEL,
     `responsibility-store-${crypto.randomUUID()}`,
   );
   return await runInDurableObject(kernel, async (_instance: Kernel, state) => {
-    return await callback(new ResponsibilityStore(state.storage, onChange));
+    return await callback(new ResponsibilityStore(state.storage, hooks));
   });
 }
 
@@ -164,6 +165,35 @@ describe("ResponsibilityStore", () => {
     });
   });
 
+  it("tells its owner inside the transaction when a record settles, once, so a throw undoes the settle", async () => {
+    const settled: string[] = [];
+    let failNext = false;
+    await withStore((store) => {
+      const resolved = store.create(createInput({ dedupeKey: "resolved" })).record;
+      const cancelled = store.create(createInput({ dedupeKey: "cancelled" })).record;
+      const input = { ownerUid: OWNER_UID, actor: USER_ACTOR, observedByShip: false, now: 2000 };
+      store.update({ ...input, id: resolved.id, patch: { state: "waiting", blocker: "An answer" } });
+      expect(settled).toEqual([]);
+      store.update({ ...input, id: resolved.id, patch: { state: "resolved" } });
+      store.update({ ...input, id: resolved.id, patch: { title: "Renamed after it settled" } });
+      expect(settled).toEqual([resolved.id]);
+
+      failNext = true;
+      expect(() => store.update({ ...input, id: cancelled.id, patch: { state: "cancelled" } })).toThrow("Synthetic hook failure");
+      expect(store.get(OWNER_UID, cancelled.id)).toMatchObject({ state: "open" });
+      store.update({ ...input, id: cancelled.id, patch: { state: "cancelled" } });
+      expect(settled).toEqual([resolved.id, cancelled.id]);
+    }, {
+      settled: (record) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("Synthetic hook failure");
+        }
+        settled.push(record.id);
+      },
+    });
+  });
+
   it("announces committed owner changes but not no-ops, deduplication or revision conflicts", async () => {
     const changes: { uid: number; revision: number }[] = [];
     let observed: ResponsibilityStore;
@@ -175,7 +205,7 @@ describe("ResponsibilityStore", () => {
       store.update({ ...input, patch: { state: "open" } });
       expect(() => store.update({ ...input, expectedRevision: 0, patch: { state: "active" } })).toThrow();
       store.update({ ...input, expectedRevision: first.record.revision, patch: { state: "waiting", blocker: "An answer" } });
-    }, (uid) => changes.push({ uid, revision: observed.list({ ownerUid: uid }).revision }));
+    }, { changed: (uid) => changes.push({ uid, revision: observed.list({ ownerUid: uid }).revision }) });
     expect(changes).toEqual([{ uid: OWNER_UID, revision: 1 }, { uid: OWNER_UID, revision: 2 }]);
   });
   it("records one deduplicated responsibility and an ordered transition", async () => {

@@ -182,8 +182,9 @@ under its owner's control.
 Archive installation atomically queues a memory-review source containing the
 immutable segment and the new message range. The Process delivers these ranges in
 order, with durable retry, and transfers any remainder before teardown deletes its
-state. Kernel acceptance persists the source and a task together, independently of
-the replaceable pid and of restricted work admission. An ambiguous handoff reuses
+state. Kernel acceptance persists the source independently of the replaceable pid
+and of restricted work admission, and admits it in the same transaction while no
+review is active. An ambiguous handoff reuses
 the queued source or the segment's responsibility receipt. Only canonical Ship can
 submit sources; the Kernel's ordered owner queue survives Ship replacement and
 admits at most one unresolved review per owner. Each review is an ordinary low-priority responsibility, whose
@@ -200,7 +201,9 @@ live Process's segment registry. Filtered output is paged with `--offset` and
 The review reads current memory and the new archived slice, ignores prior
 summaries and routine noise, and merges useful facts with revision-checked
 repository writes. Its resolution records the reviewed boundary; failures remain
-unresolved. Later ranges wait until that review is resolved or cancelled. Workers
+unresolved. Later ranges wait until that review is resolved or cancelled, and the
+transaction that settles it admits the next. A Kernel start admits one an older
+Kernel left waiting. Workers
 do not recursively schedule reviews of their own compactions. No historical
 backfill or periodic inference scan is introduced. Owners can disable new review
 admissions through the `memory.review` responsibility source; existing work stays

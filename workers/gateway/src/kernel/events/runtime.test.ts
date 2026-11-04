@@ -14,7 +14,8 @@ const OWNER = 1000;
 const WATCHER = "proc:watcher";
 let subjectWanted = true;
 let prepared: { text: string } | Withdrawn = { text: "prepared" };
-const settledKeys: string[] = [];
+/** Each settled delivery's key and how it ended. */
+const settledEnds: [string, unknown][] = [];
 
 const NOTICE_ADMISSION = { idle: "record", busy: "join" } as const;
 const WATCH_ADMISSION = { idle: "start", busy: "join" } as const;
@@ -59,8 +60,8 @@ const REGISTRY = {
       },
       admission: NOTICE_ADMISSION,
     }),
-    settled: async (event) => {
-      settledKeys.push(event.key);
+    settled: async (event, _ctx, end) => {
+      settledEnds.push([event.key, end]);
       if (event.key === "unheard") throw new Error("The producer could not follow up");
     },
   },
@@ -85,7 +86,7 @@ function noticed(key: string, subject = "fixture:background"): EventInput {
 
 afterEach(() => {
   subjectWanted = true;
-  settledKeys.length = 0;
+  settledEnds.length = 0;
   prepared = { text: "prepared" };
   vi.restoreAllMocks();
 });
@@ -267,7 +268,7 @@ describe("event runtime", () => {
     });
   });
 
-  it("tells the producer once each delivery ends, delivered or withdrawn, and keeps a delivery its producer couldn't follow up", async () => {
+  it("tells the producer once each delivery ends, and how, and keeps a delivery its producer couldn't follow up", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, events } = fixture(storage);
       vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
@@ -275,21 +276,26 @@ describe("event runtime", () => {
       deliver.mockRejectedValueOnce(new Error("Process is restarting"));
       const retried = runtime.append({ ...noticed("retried"), type: "fixture.settled" });
       await runtime.onEvents({ id: "task:retried" });
-      expect(settledKeys).toEqual([]);
+      expect(settledEnds).toEqual([]);
       storage.sql.exec("UPDATE deliveries SET next_attempt_at = 0 WHERE seq = ?", retried.seq);
       await runtime.onEvents({ id: "task:retry" });
-      expect(settledKeys).toEqual(["retried"]);
+      expect(settledEnds).toEqual([["retried", { state: "delivered", ignored: false }]]);
+
+      deliver.mockImplementationOnce(async (_installationId, _pid, args) => ({ eventId: args.eventId, runId: null, queued: false, ignored: true }));
+      runtime.append({ ...noticed("ignored"), type: "fixture.settled" });
+      await runtime.onEvents({ id: "task:ignored" });
+      expect(settledEnds.at(-1)).toEqual(["ignored", { state: "delivered", ignored: true }]);
 
       subjectWanted = false;
       runtime.append({ ...noticed("withdrawn"), type: "fixture.settled" });
       await runtime.onEvents({ id: "task:withdrawn" });
-      expect(settledKeys).toEqual(["retried", "withdrawn"]);
+      expect(settledEnds.at(-1)).toEqual(["withdrawn", { state: "withdrawn", reason: "its subject no longer wants it" }]);
 
       subjectWanted = true;
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const unheard = runtime.append({ ...noticed("unheard"), type: "fixture.settled" });
       await runtime.onEvents({ id: "task:unheard" });
-      expect(settledKeys).toEqual(["retried", "withdrawn", "unheard"]);
+      expect(settledEnds.map(([key]) => key)).toEqual(["retried", "ignored", "withdrawn", "unheard"]);
       expect(events.delivery(unheard.seq, shipConsumer(OWNER))).toMatchObject({ state: "delivered" });
       expect(warn).toHaveBeenCalledWith(expect.stringContaining(unheard.id), "The producer could not follow up");
     });
