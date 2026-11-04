@@ -27,7 +27,7 @@ import { emitTelemetry, shipPlatformFromPeer } from "@humansandmachines/gsv/tele
 import { resolveCallerOwnerUid } from "./context";
 import { processConsumer, shipConsumer } from "./events/consumers";
 import { checkContactWhenOpened } from "./federation/gone-ships";
-import { conversationMessage } from "./message-events";
+import { committedContent, conversationMessage } from "./message-events";
 import { ensurePersonalController } from "./personal-controller";
 import { withInitialOnboarding } from "./onboarding-responsibility";
 import { resolveSelectedMessageTarget } from "./targets";
@@ -223,7 +223,7 @@ export async function handleConversationSend(
   const sent = await withInitialOnboarding(
     ship && sender === ownerUid ? ownerUid : undefined,
     ctx,
-    () => ctx.events.deliverNow(event, ship ? shipConsumer(ownerUid) : processConsumer(conversation.handlerPid)),
+    () => ctx.events.deliverNow(event, ship ? shipConsumer(ownerUid) : processConsumer(conversation.handlerPid), committedContent(message)),
   );
   // A message its handler can never take, or one that is gone, fails the send as before.
   if (sent.state === "withdrawn") throw new Error(sent.reason);

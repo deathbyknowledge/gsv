@@ -80,7 +80,7 @@ import { resolveAdapterQuote } from "./adapter-quotes";
 import { logAdapterBoundaryFailure } from "./adapter-service";
 import { processConsumer, shipConsumer } from "./events/consumers";
 import type { InlineDelivery } from "./events/runtime";
-import { conversationMessage } from "./message-events";
+import { committedContent, conversationMessage } from "./message-events";
 import { WORK_RETURNED, workReturned } from "./work-return-events";
 
 /** Inbound adapter messages: replay claims, media retention, command handling, and Process delivery. */
@@ -683,7 +683,7 @@ async function deliverAdapterInboundToProcess(input: {
   const sent = await withInitialOnboarding(
     ship ? uid : undefined,
     ctx,
-    () => ctx.events.deliverNow(event, ship ? shipConsumer(uid) : processConsumer(pid)),
+    () => ctx.events.deliverNow(event, ship ? shipConsumer(uid) : processConsumer(pid), committedContent(appended.message)),
   );
   // A message its process can never take, or one that is gone, fails; its route went as it settled.
   if (sent.state === "withdrawn") return { ok: false, error: sent.reason };

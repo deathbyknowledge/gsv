@@ -294,7 +294,7 @@ describe("conversation handlers", () => {
     }, ctx);
 
     expect(result).toMatchObject({ handlerPid: PROCESS.processId, runId: `run:${result.message.id}`, queued: false });
-    // The event names the committed message; its text is read from the Conversation at delivery.
+    // The event names the committed message. The send's own attempt is handed its text; a retry reads it from the Conversation.
     expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toEqual({
       type: "message.received",
       ownerUid: 1000,
@@ -307,7 +307,7 @@ describe("conversation handlers", () => {
         content: { kind: "conversation", conversationId: SHIP.id, messageId: result.message.id, sequence: 1 },
       },
     });
-    expect(ctx.events.deliverNow).toHaveBeenCalledWith(expect.objectContaining({ id: "evt_7" }), "personal:1000");
+    expect(ctx.events.deliverNow).toHaveBeenCalledWith(expect.objectContaining({ id: "evt_7" }), "personal:1000", { message: "hello" });
     expect(ctx.runRoutes.setConnectionRoute).toHaveBeenCalledWith({
       followsShip: true,
       runId: result.runId,

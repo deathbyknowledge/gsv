@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
   procHistoryMessageQuoteSchema, resourceBlockSchema,
-  type InteractionOrigin, type ProcHistoryMessageQuote, type ResourceBlock,
+  type ConversationMessage, type InteractionOrigin, type ProcHistoryMessageQuote, type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import { interactionOriginSchema } from "../process/internal/schemas";
 import type { ProcessInput } from "../protocol/process-frames";
@@ -41,6 +41,18 @@ const bodySchema = z.strictObject({
 });
 
 type Content = Pick<ProcessInput, "message" | "media" | "selectedTarget">;
+
+/**
+ * What a committed message hands its process. Its producer passes this to the delivery it
+ * makes in its own call, so that attempt needn't read the message back.
+ */
+export function committedContent(message: Pick<ConversationMessage, "text" | "media" | "selectedTarget">): Content {
+  return {
+    message: message.text,
+    ...(message.media?.length ? { media: message.media } : undefined),
+    ...(message.selectedTarget === undefined ? undefined : { selectedTarget: message.selectedTarget }),
+  };
+}
 
 function messageBody(event: Pick<EventInput, "body">) {
   return bodySchema.parse(event.body);
@@ -139,11 +151,7 @@ function messageDefinition(busy: "interrupt" | "after"): EventDefinition<Content
       const message = await getConversationById(ctx.installationId, content.conversationId)
         .readMessage({ sequence: content.sequence, messageId: content.messageId });
       if (!message) return { withdrawn: "the message is no longer in its conversation" };
-      return {
-        message: message.text,
-        ...(message.media?.length ? { media: message.media } : undefined),
-        ...(message.selectedTarget === undefined ? undefined : { selectedTarget: message.selectedTarget }),
-      };
+      return committedContent(message);
     },
     admit(event, content) {
       const body = messageBody(event);

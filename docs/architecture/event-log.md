@@ -34,7 +34,9 @@ runner        one durable task, one retry rule, one gate check
 | `body` | Up to 64 KiB of JSON, or a reference into the store that owns the content. |
 
 A message's text and media stay in its Conversation, and its delivery reads
-them when it goes. A call's answer travels in its event. The call's row lasts
+them when it goes. The send that commits a message already holds them, so its
+own attempt is handed them and only a retry reads them back. A call's answer
+travels in its event. The call's row lasts
 only while the call is in flight. The files the target's run attached go with
 the answer as attachments, and the caller keeps its own copy, the way it keeps
 a contact's attachments. An answer too large for its event goes to the caller

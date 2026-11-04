@@ -268,6 +268,27 @@ describe("event runtime", () => {
     });
   });
 
+  it("hands the first attempt what its producer already holds, and reads it again for a retry", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime } = fixture(storage);
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      const deliver = acknowledge();
+      deliver.mockRejectedValueOnce(new Error("Process is restarting"));
+      prepared = { text: "read back" };
+      const event = runtime.append({ ...noticed("held"), type: "fixture.prepared", body: "r12y:held" });
+
+      await runtime.deliverNow(event, shipConsumer(OWNER), { text: "held" });
+      storage.sql.exec("UPDATE deliveries SET next_attempt_at = 0 WHERE seq = ?", event.seq);
+      await runtime.onEvents({ id: "task:retry" });
+
+      for (const [call, preview] of [[1, "held"], [2, "read back"]] as const) {
+        expect(deliver).toHaveBeenNthCalledWith(call, "installation:test", "proc:ship", expect.objectContaining({
+          event: expect.objectContaining({ payload: expect.objectContaining({ preview }) }),
+        }));
+      }
+    });
+  });
+
   it("tells the producer once each delivery ends, and how, and keeps a delivery its producer couldn't follow up", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, events } = fixture(storage);

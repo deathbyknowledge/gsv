@@ -6,7 +6,7 @@ import type { KernelContext } from "../context";
 import type { Kernel } from "../do";
 import { ensurePersonalController } from "../personal-controller";
 import { deliveryId, parseConsumer, type EventConsumer } from "./consumers";
-import { EVENT_REGISTRY, isWithdrawn, type DeliveryEnd, type EventDefinition, type EventRegistry } from "./registry";
+import { EVENT_REGISTRY, isWithdrawn, type DeliveryEnd, type EventDefinition, type EventRegistry, type PreparedContent } from "./registry";
 import { EVENT_BODY_RETENTION_MS, type EventInput, type LoggedEvent, type PendingDelivery } from "./store";
 
 /** What the runtime reaches on its Kernel. */
@@ -74,10 +74,12 @@ export class EventRuntime {
    * Delivers an event to one consumer in its producer's call, as a request path needs, then
    * kicks the runner. Call after the append commits. A delivery behind an older one in its
    * lane, or one the gate holds, waits for the runner, which also retries a failed attempt.
+   * A producer that already holds what the delivery's `prepare` reads hands it over as
+   * `held`, so this attempt skips the read; a retry reads it again.
    */
-  async deliverNow(event: LoggedEvent, consumer: string): Promise<InlineDelivery> {
+  async deliverNow(event: LoggedEvent, consumer: string, held?: PreparedContent): Promise<InlineDelivery> {
     const due = this.host.events.dueDelivery(event.seq, consumer, Date.now());
-    if (due && (await this.host.onboarding.managedWorkGate()).allowed) await this.attempt(due);
+    if (due && (await this.host.onboarding.managedWorkGate()).allowed) await this.attempt(due, held);
     await this.kick();
     const record = this.host.events.delivery(event.seq, consumer);
     if (record?.state === "delivered") return { state: "delivered", runId: record.runId, queued: record.outcome?.queued === true };
@@ -158,7 +160,7 @@ export class EventRuntime {
   }
 
   /** Makes one attempt; true once the delivery has ended and its lane may move on. */
-  private async attempt(delivery: PendingDelivery): Promise<boolean> {
+  private async attempt(delivery: PendingDelivery, held?: PreparedContent): Promise<boolean> {
     const { event, consumer } = delivery;
     const definition = this.registry[event.type];
     const target = parseConsumer(consumer);
@@ -172,7 +174,7 @@ export class EventRuntime {
     const ctx = this.host.buildKernelContext({ callerOwnerUid: event.ownerUid });
     let result: AttemptResult;
     try {
-      result = await this.deliver(definition, delivery, target, ctx);
+      result = await this.deliver(definition, delivery, target, ctx, held);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const retryAt = Date.now() + Math.min(PROCESS_RETRY.capMs, PROCESS_RETRY.baseMs * 2 ** delivery.attemptCount);
@@ -212,13 +214,14 @@ export class EventRuntime {
 
   /** Delivers once; the Process call is made synchronously after the last withdrawal check. */
   private async deliver(
-    definition: EventDefinition<object | undefined>, delivery: PendingDelivery, target: EventConsumer, ctx: KernelContext,
+    definition: EventDefinition<PreparedContent | undefined>, delivery: PendingDelivery, target: EventConsumer, ctx: KernelContext,
+    held?: PreparedContent,
   ): Promise<AttemptResult> {
     const { event } = delivery;
     const early = this.withdrawal(definition, delivery, target, ctx);
     if (early) return { kind: "withdrawn", reason: early };
     // Read before finding the Ship, so content that is gone never starts one.
-    const prepared = definition.prepare ? await definition.prepare(event, ctx) : undefined;
+    const prepared = held ?? (definition.prepare ? await definition.prepare(event, ctx) : undefined);
     if (isWithdrawn(prepared)) return { kind: "withdrawn", reason: prepared.withdrawn };
     const pid = target.kind === "process" ? target.pid : await ensurePersonalController(target.ownerUid, ctx);
     const late = this.withdrawal(definition, delivery, target, ctx);
@@ -247,7 +250,7 @@ export class EventRuntime {
    * cut off before it recorded anything counts as fresh.
    */
   private withdrawal(
-    definition: EventDefinition<object | undefined>, { event, attemptCount }: PendingDelivery, target: EventConsumer, ctx: KernelContext,
+    definition: EventDefinition<PreparedContent | undefined>, { event, attemptCount }: PendingDelivery, target: EventConsumer, ctx: KernelContext,
   ): string | null {
     const fresh = attemptCount === 0;
     if (fresh && this.host.auth.isAccountDisabled(event.ownerUid)) return "the owner's account was removed";

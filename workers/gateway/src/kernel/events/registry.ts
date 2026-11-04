@@ -29,7 +29,10 @@ export type DeliveryEnd =
  * `withdrawal` again and runs `admit`, then calls the Process without another await.
  * Once the delivery ends, delivered or withdrawn, `settled` lets its producer follow up.
  */
-export type EventDefinition<Prepared extends object | undefined = undefined> = {
+/** What a definition's `prepare` reads for a delivery; a producer that already holds it may hand it over. */
+export type PreparedContent = object;
+
+export type EventDefinition<Prepared extends PreparedContent | undefined = undefined> = {
   /** The consumers an event goes to, each with the lane that orders it there; read once, at append. */
   routes(event: EventInput): readonly EventRoute[];
   /** Why the event's subject no longer wants it, read from current state; null while it does. */
@@ -42,7 +45,7 @@ export type EventDefinition<Prepared extends object | undefined = undefined> = {
   settled?(event: LoggedEvent, ctx: KernelContext, end: DeliveryEnd): Promise<void>;
 };
 
-export type EventRegistry = Readonly<Record<string, EventDefinition<object | undefined>>>;
+export type EventRegistry = Readonly<Record<string, EventDefinition<PreparedContent | undefined>>>;
 
 /** Event types the Kernel appends. Each type is defined beside the producer that appends it. */
 export const EVENT_REGISTRY = {
