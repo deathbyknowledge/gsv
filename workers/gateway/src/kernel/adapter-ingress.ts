@@ -110,9 +110,9 @@ type AdapterIngressProcessRecovery = {
   media: ResourceBlock[];
   origin: Extract<InteractionOrigin, { kind: "adapter" }>;
   routeGeneration?: string;
-  conversationId?: string;
-  inputMessageId?: string;
-  messageCreatedAt?: number;
+  conversationId: string;
+  inputMessageId: string;
+  messageCreatedAt: number;
   replyPreferenceOrder?: number;
 };
 
@@ -161,9 +161,9 @@ const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
     media: z.array(resourceBlockRecoverySchema),
     origin: adapterInteractionOriginSchema,
     routeGeneration: z.optional(z.string()),
-    conversationId: z.optional(z.string()),
-    inputMessageId: z.optional(z.string()),
-    messageCreatedAt: z.optional(z.number().check(z.int(), z.positive())),
+    conversationId: z.string(),
+    inputMessageId: z.string(),
+    messageCreatedAt: z.number().check(z.int(), z.positive()),
     replyPreferenceOrder: z.optional(z.number()),
   }),
 ]);
@@ -555,42 +555,6 @@ async function deliverAdapterInboundToProcess(input: {
     throw new Error("Adapter ingress process delivery is missing recovery state");
   }
 
-  if (!hasConversationRecovery(recovery)) {
-    if (!input.checkpoint) {
-      throw new Error("Legacy adapter ingress recovery is missing claim state");
-    }
-    const conversation = conversationForAdapterInbound(
-      recovery.uid,
-      recovery.pid,
-      adapter,
-      accountId,
-      message,
-      ctx,
-    );
-    await getConversationById(ctx.installationId, conversation.id).initialize({
-      ownerUid: conversation.ownerUid,
-      kind: conversation.kind,
-    });
-    recovery = {
-      ...recovery,
-      conversationId: conversation.id,
-      inputMessageId: await stableOpaqueId("msg", [
-        conversation.id,
-        input.checkpoint.receiptId,
-        "input",
-      ]),
-      messageCreatedAt: normalizeAdapterMessageCreatedAt(message.timestamp),
-    };
-    ctx.adapters.ingressReceipts.checkpoint(
-      input.checkpoint.receiptId,
-      input.checkpoint.claimToken,
-      recovery,
-    );
-  }
-  if (!hasConversationRecovery(recovery)) {
-    throw new Error("Adapter ingress recovery is missing conversation state");
-  }
-
   const { uid, pid, runId, origin } = recovery;
   const media = recovery.media.length > 0 ? recovery.media : undefined;
   const conversation = ctx.conversations.get(recovery.conversationId);
@@ -736,30 +700,7 @@ function normalizeAdapterIngressRecovery(value: JsonValue | undefined): AdapterI
   if (!parsed.success) {
     throw new Error("Invalid adapter ingress recovery checkpoint");
   }
-  const recovery: AdapterIngressRecovery = parsed.data;
-  if (recovery.kind === "process_delivery") {
-    const present = [
-      recovery.conversationId,
-      recovery.inputMessageId,
-      recovery.messageCreatedAt,
-    ].filter((field) => field !== undefined).length;
-    if (present !== 0 && present !== 3) {
-      throw new Error("Invalid adapter ingress recovery checkpoint");
-    }
-  }
-  return recovery;
-}
-
-function hasConversationRecovery(
-  recovery: AdapterIngressProcessRecovery,
-): recovery is AdapterIngressProcessRecovery & {
-  conversationId: string;
-  inputMessageId: string;
-  messageCreatedAt: number;
-} {
-  return recovery.conversationId !== undefined
-    && recovery.inputMessageId !== undefined
-    && recovery.messageCreatedAt !== undefined;
+  return parsed.data;
 }
 
 function conversationForAdapterInbound(

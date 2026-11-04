@@ -2221,72 +2221,44 @@ describe("adapter lifecycle handlers", () => {
     });
   });
 
-  it("upgrades an in-flight legacy Process delivery checkpoint", async () => {
-    const legacyRecovery = {
-      kind: "process_delivery",
-      uid: 1000,
-      pid: "pid-1",
-      runId: "adapter-run:legacy",
-      media: [],
-      origin: {
-        kind: "adapter",
-        adapter: "telegram",
-        accountId: "bot",
-        actorId: "telegram:user:42",
-        surface: { kind: "dm", id: "chat-42" },
-      },
-    };
+  it("refuses a Process delivery checkpoint that lacks its conversation", async () => {
     const checkpoint = vi.fn();
+    const abandon = vi.fn();
     const ctx = makeContext({}, { upsert: vi.fn() }, {
       ingressReceipts: {
         claim: vi.fn(() => ({
           state: "claimed",
-          receiptId: "adapter-ingress:legacy",
-          claimToken: "claim:legacy",
-          recovery: legacyRecovery,
+          receiptId: "adapter-ingress:old",
+          claimToken: "claim:old",
+          recovery: {
+            kind: "process_delivery", uid: 1000, pid: "pid-1", runId: "adapter-run:old", media: [],
+            origin: {
+              kind: "adapter", adapter: "telegram", accountId: "bot", actorId: "telegram:user:42",
+              surface: { kind: "dm", id: "chat-42" },
+            },
+          },
         })),
         checkpoint,
         prepare: vi.fn(),
         complete: vi.fn(),
-        abandon: vi.fn(),
+        abandon,
       },
     });
-    const result = await handleAdapterInbound({
+
+    await expect(handleAdapterInbound({
       adapter: "telegram",
       accountId: "bot",
-      deliveryId: "legacy-provider-delivery",
+      deliveryId: "old-provider-delivery",
       message: {
-        messageId: "legacy-provider-message",
+        messageId: "old-provider-message",
         surface: { kind: "dm", id: "chat-42" },
         actor: { id: "telegram:user:42" },
         text: "resume after deploy",
       },
-    }, ctx);
-
-    expect(result).toMatchObject({
-      ok: true,
-      delivered: { uid: 1000, pid: "pid-1", runId: legacyRecovery.runId },
-    });
-    expect(checkpoint).toHaveBeenCalledWith(
-      "adapter-ingress:legacy",
-      "claim:legacy",
-      expect.objectContaining({
-        ...legacyRecovery,
-        conversationId: expect.stringMatching(/^conv:/),
-        inputMessageId: expect.stringMatching(/^msg:/),
-        messageCreatedAt: expect.any(Number),
-      }),
-    );
-    expect(appendedEvents(ctx)).toEqual([expect.objectContaining({
-      type: "message.received",
-      body: expect.objectContaining({
-        runId: legacyRecovery.runId,
-        content: expect.objectContaining({
-          conversationId: expect.stringMatching(/^conv:/),
-          messageId: expect.stringMatching(/^msg:/),
-        }),
-      }),
-    })]);
+    }, ctx)).rejects.toThrow("Invalid adapter ingress recovery checkpoint");
+    expect(checkpoint).not.toHaveBeenCalled();
+    expect(abandon).toHaveBeenCalledWith("adapter-ingress:old", "claim:old");
+    expect(appendedEvents(ctx)).toEqual([]);
   });
 
   it("replays completed commands across actor alias normalization", async () => {
