@@ -69,7 +69,8 @@ describe("contact attention admission", () => {
       const caption = receive(contact, ctx, "human");
       expect(admitContactMessage(contact, photo.inbox, photo.message, ctx)).toBe(true);
       const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
-      expect(work).toMatchObject({ title: "Pending messages from Remote", state: "open", assignee: { kind: "ship" } });
+      // The title carries the contact's own display name, so the record is marked as outside text.
+      expect(work).toMatchObject({ title: "Pending messages from Remote", state: "open", assignee: { kind: "ship" }, details: { contentTrust: "untrusted" } });
       expect(admitContactMessage(contact, caption.inbox, caption.message, ctx)).toBe(true);
       expect(ctx.responsibilities.get(OWNER.uid, work.id)?.revision).toBe(work.revision);
       expect(ctx.responsibilities.createReadyBatch(OWNER.uid, Date.now())).toBeNull();

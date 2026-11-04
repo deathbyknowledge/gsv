@@ -145,17 +145,24 @@ export async function attachWhatsAppApprovalMessage(
   await attachAdapterHilApprovalMessage(storage, PROVIDER, token, providerMessageId);
 }
 
+/** What the adapter does after a button: a reaction on the person's tap, or a reply quoting the prompt. */
+export type WhatsAppApprovalAnswer = { kind: "acknowledge"; emoji: string } | { kind: "reply"; text: string };
+
+/** Each decision's reaction, so the tap shows what Ship did without another message. */
+const ACKNOWLEDGEMENTS = { approve: "✅", approve_always: "♾️", deny: "🚫" } as const;
+
 /**
- * Resolve a reply button through the ordinary linked-human proc.hil path and
- * return the status text to send back. WhatsApp cannot edit a sent message,
- * so the decision is delivered as a reply quoting the prompt.
+ * Resolve a reply button through the ordinary linked-human proc.hil path. When
+ * Ship decided what the person tapped, their tap already says it, so the answer
+ * is only an acknowledgement. Anything else is explained in a reply quoting the
+ * prompt, as WhatsApp cannot edit a sent message.
  */
 export async function handleWhatsAppApprovalReply(
   storage: DurableObjectStorage,
   gateway: AdapterGatewayBinding,
   installation: AdapterInstallationContext,
   reply: WhatsAppApprovalReply,
-): Promise<string | null> {
+): Promise<WhatsAppApprovalAnswer | null> {
   const parsed = parseReplyButtonId(reply.data);
   if (!parsed) return null;
   const submission = await submitAdapterHilApproval(
@@ -173,11 +180,13 @@ export async function handleWhatsAppApprovalReply(
       remember: parsed.decision.remember,
     },
   );
-  if (submission.kind === "invalid") return "This approval is no longer available.";
+  if (submission.kind === "invalid") return { kind: "reply", text: "This approval is no longer available." };
   if (submission.kind === "processing") {
-    return renderAdapterHilResolution(submission.presentation, "This approval is already being handled.");
+    return { kind: "reply", text: renderAdapterHilResolution(submission.presentation, "This approval is already being handled.") };
   }
-  return renderAdapterHilResolution(submission.presentation, resolutionText(submission.resolution));
+  const tapped = parsed.decision.decision === "deny" ? "deny" : parsed.decision.remember ? "approve_always" : "approve";
+  if (submission.resolution === tapped) return { kind: "acknowledge", emoji: ACKNOWLEDGEMENTS[tapped] };
+  return { kind: "reply", text: renderAdapterHilResolution(submission.presentation, resolutionText(submission.resolution)) };
 }
 
 function resolutionText(resolution: AdapterHilResolution | undefined): string {

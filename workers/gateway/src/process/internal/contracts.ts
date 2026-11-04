@@ -8,7 +8,7 @@ import type { AssistantMessage, Context, ThinkingContent, Tool, ToolCall } from 
 import type { AssistantTurnClassification } from "../run-tick-policy";
 import type { FrameBody, ResponseFrame } from "../../protocol/frames";
 import type { MessageMetadata, QueuedRun } from "../store";
-import type { RunDelivery, RunFinishOptions, RunFinishPayload } from "../run/finish";
+import type { RunDelivery, RunFinishOptions, RunFinishPayload, RunFinishReason } from "../run/finish";
 import type { RunOutputMedia, RunState } from "../run/state";
 import type { SyscallName } from "../../syscalls";
 import type { TelemetryEvent } from "@humansandmachines/gsv/telemetry";
@@ -154,6 +154,8 @@ export type StreamSeqCounter = {
 
 export type RunFinishEffects = {
   run: RunState;
+  /** The typed reason the payload was built from; the payload keeps it as a stored string. */
+  reason: RunFinishReason;
   payload: RunFinishPayload;
   startedAt: number | null;
   newlyFinished: boolean;

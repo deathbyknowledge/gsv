@@ -100,9 +100,11 @@ When work becomes actionable, the Kernel creates a batch containing the relevant
 responsibility ids and admits a typed `r12y.ready` control event to the existing
 personal Process. An idle Ship starts a run; a busy Ship attaches the batch to its
 current run. Admission atomically records a model-visible `responsibility.ready`
-history event with the batch identity, affected ids, and receipt time. This explains
-why Ship has been woken even when a deadline or recovery retry leaves the ledger
-revision unchanged. Replayed admission does not append another event. The baseline
+history event with the batch identity, affected ids, and receipt time. Its prompt
+names only the due records; standing context says how Ship handles a wake: send
+whatever the person is owed, and resolve, cancel, delegate or wait on each record
+before yielding. The event explains why Ship has been woken even when a deadline or recovery
+retry leaves the ledger revision unchanged. Replayed admission does not append another event. The baseline
 and revisioned transitions continue to supply the responsibility state without
 duplicating it in the wake event or changing the frozen system prompt.
 
@@ -176,8 +178,12 @@ At epoch creation, Process renders current responsibility names, ids, and initia
 states through the `{{ r12y }}` system context template. It also includes structured
 `details` for Ship assignments and assignments to the current Process. Assignments
 to other Processes remain compact summaries. Kernel visibility still limits a child
-to its assignments and their ancestors. Record text, including contact-supplied
-details, is explicitly labeled as data rather than authority or instructions.
+to its assignments and their ancestors. No record grants permissions or overrides
+standing instructions. A record built from outside input, such as mail, a webhook
+event, a contact's message or display name, or a device label, carries
+`contentTrust: "untrusted"`; its snapshot line and its events are labeled as data
+rather than authority or instructions. Records that GSV, the owner or Ship wrote
+carry their task without that label.
 
 The snapshot includes up to 32 KiB of rendered detail bodies in ledger order,
 counting every copy when custom system context repeats the `{{ r12y }}` template.
@@ -209,9 +215,8 @@ Responsibility `r12y:beta` was resolved.
 The model's current view is the frozen baseline plus ordered deltas. These events sit
 after the previously cached prompt and history, preserving provider prefix/KV cache
 reuse. New records include their details in these events, and changes to details
-appear in later updates. Agents can use the snapshot and subsequent events directly;
-`r12y list` and `r12y show ID` remain available to inspect records or retrieve omitted
-content.
+appear in later updates. Agents use the snapshot and subsequent events directly;
+`r12y list` and `r12y show ID` retrieve records or details the snapshot omitted.
 
 The same epoch owns a normalized availability projection for accessible online
 targets, ready MCP servers, current date, timezone, owner language preference, the visible skill catalog, the
@@ -279,10 +284,10 @@ System-owned producers use the same ledger contract:
   details like any Ship assignment. Those details
   carry the onboarding brief, the Markdown prompt file
   `workers/gateway/src/prompts/onboarding/welcome.md` with the goal, acceptance
-  criteria, outcomes and step-by-step instructions. The system responsibilities
-  context puts an unresolved onboarding record ahead of everything else: other
-  responsibilities are parked or delegated until the Ship resolves it, once the user
-  has completed one small task. The brief is copied when the responsibility is
+  criteria, outcomes and step-by-step instructions. The brief puts onboarding ahead of other work, which Ship
+  tracks or delegates until the user has completed one small task. The welcome starts at sign-in, while the
+  first-run screen asks where to message Ship; if a messenger connects there before the
+  user replies, Ship repeats the welcome in that chat rather than referring to it. The brief is copied when the responsibility is
   prepared; existing records retain their saved instructions across releases. A home
   that finished the earlier boot-file flow and has no record is never onboarded
   again. This replaces the generated boot context file.
@@ -306,9 +311,11 @@ System-owned producers use the same ledger contract:
 - Structured work requests retain their own participant-authorized lifecycle. A remote
   offer alone creates no local commitment; accepting work locally records that commitment.
 - The first registration of a physical machine creates one `machine.added`
-  responsibility. Browser-backed targets and later reconnects do not create another.
+  responsibility, titled for its occasion: tell the owner their new machine is
+  connected. Browser-backed targets and later reconnects do not create another.
 - An owned messaging account first becoming connected and authenticated creates one
-  `adapter.connected` responsibility. A later authentication loss creates a recurring,
+  `adapter.connected` responsibility, titled to tell the owner their messenger is
+  connected. Pairing routes that hello to the newly paired chat. A later authentication loss creates a recurring,
   deduplicated `adapter.auth_required` responsibility that resolves automatically when
   authentication returns. The adapter status persists which owner has already observed
   readiness, and upgrades backfill ready owned accounts, so transport-only reconnects
