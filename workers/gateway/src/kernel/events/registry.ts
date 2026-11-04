@@ -2,6 +2,7 @@ import type { ProcessEventDelivery } from "../../protocol/process-frames";
 import type { KernelContext } from "../context";
 import { contactMessageEvent } from "../federation/attention";
 import { ipcEventDefinitions } from "../ipc-events";
+import { messageEventDefinitions } from "../message-events";
 import { ownerNotifiedEvent } from "../owner-notice-runtime";
 import { responsibilityReadyEvent } from "../responsibility-runtime";
 import { scheduleFiredEvent } from "../schedule-events";
@@ -14,8 +15,11 @@ export type { ProcessEventDelivery } from "../../protocol/process-frames";
 /** A delivery that should not go, and why. */
 export type Withdrawn = { withdrawn: string };
 
-/** How a delivery ended: taken, though its Process may have ignored it, or withdrawn and why. */
-export type DeliveryEnd = { state: "delivered"; ignored: boolean } | { state: "withdrawn"; reason: string };
+/** How a delivery ended: taken, though its Process may have ignored it; withdrawn; or refused by its Process. */
+export type DeliveryEnd =
+  | { state: "delivered"; ignored: boolean }
+  | { state: "withdrawn"; reason: string }
+  | { state: "failed"; reason: string };
 
 /**
  * One registered event type: where it goes and what it hands the Process there.
@@ -42,6 +46,7 @@ export type EventRegistry = Readonly<Record<string, EventDefinition<object | und
 export const EVENT_REGISTRY = {
   "contact.message": contactMessageEvent,
   ...ipcEventDefinitions,
+  ...messageEventDefinitions,
   "owner.notified": ownerNotifiedEvent,
   "responsibility.ready": responsibilityReadyEvent,
   "schedule.fired": scheduleFiredEvent,

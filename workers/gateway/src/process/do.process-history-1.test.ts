@@ -163,10 +163,10 @@ describe("process history", () => {
 
       process.run.scheduleTick = vi.fn(async () => {});
       process.sendSignal = vi.fn(async () => {});
-      const sending = process.controller.handleProcSend({
+      const sending = process.controller.admitInput({
         message: "Continue while exporting.",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       await expect(sending).resolves.toMatchObject({ ok: true, status: "started" });
 
       releaseArchive();

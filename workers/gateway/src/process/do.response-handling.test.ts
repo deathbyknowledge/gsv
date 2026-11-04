@@ -1,11 +1,11 @@
 import { Kernel } from "../kernel/do";
-import type { ResponseFrame, ResponseOkFrame } from "../protocol/frames";
+import type { ResponseFrame } from "../protocol/frames";
 import { bodyFromText } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
   generationRun, approvedRun, processTestConfig, assistantResponse, deferred, runInProcess,
-  ROOT_IDENTITY, initProcess, makeReq, offeredTools, registerToolBlock, testUsage,
-  type ProcessTestValue,
+  ROOT_IDENTITY, initProcess, offeredTools, registerToolBlock, testUsage,
+  type ProcessTestValue, sendMessage,
 } from "./do-test-harness";
 
 describe("response handling", () => {
@@ -386,25 +386,19 @@ describe("response handling", () => {
 
         const ticking = process.run.tick({ runId: "run-direct-old", generation: 0 });
         await requestStarted;
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-        const response = (await Promise.race([
-          instance.recvFrame(
-            makeReq("proc.send", {
-              message: "stop waiting",
-              origin: { kind: "client", connectionId: "client-1" },
-            }),
-          ),
+        const response = await Promise.race([
+          sendMessage(instance, {
+            message: "stop waiting",
+            origin: { kind: "client", connectionId: "client-1" },
+          }),
           new Promise<never>((_resolve, reject) => {
             setTimeout(
-              () => reject(new Error("proc.send was blocked by the shell syscall")),
+              () => reject(new Error("the message was blocked by the shell syscall")),
               250,
             );
-            // SAFETY: test fixture is constructed with the asserted domain shape.
           }),
-          // SAFETY: test fixture is constructed with the asserted domain shape.
-        ])) as ResponseOkFrame;
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-        const takeoverRunId = (response.data as any).runId;
+        ]);
+        const takeoverRunId = response.runId;
         expect(process.runs.active).toMatchObject({ runId: takeoverRunId });
         const { promise: successorStarted, resolve: markSuccessorStarted } = deferred();
         process.run.runTick = vi.fn(async (runId: string) => {
@@ -478,10 +472,10 @@ describe("response handling", () => {
         );
         await requestStarted;
 
-        const takeover = await process.controller.handleProcSend({
+        const takeover = await process.controller.admitInput({
           message: "stop waiting",
           origin: { kind: "client", connectionId: "client-1" },
-        });
+        }, crypto.randomUUID(), "interrupt");
         releaseResponse();
 
         await expect(dispatching).rejects.toThrow("Run stopped before shell.exec completed");

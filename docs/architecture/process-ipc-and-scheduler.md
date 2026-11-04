@@ -274,7 +274,8 @@ removed or goes to another process, or its reply destination is no longer allowe
 and a newer firing replaces one still waiting. Without `replyTo`, a firing joins
 an active run. With `replyTo`, it takes its own run after any active one, and that
 run replies there. A successful `process.spawn` means the
-new process was created and accepted its initial prompt. Child answers remain in
+new process was created and its initial prompt is on the Kernel's log, which
+delivers it and retries until the process takes it. Child answers remain in
 the child history unless another mechanism consumes them.
 
 ### Chat delivery contracts

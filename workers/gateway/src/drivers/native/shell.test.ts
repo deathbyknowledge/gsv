@@ -2019,6 +2019,7 @@ describe("proc native command", () => {
       identity: rootIdentity,
       capabilities: ["proc.spawn"],
       procs: { spawn },
+      events: fakeEventLog(),
     });
     ctx.processId = undefined;
 
@@ -2037,11 +2038,9 @@ describe("proc native command", () => {
         label: "manual-child",
       }),
     );
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      expect.stringMatching(/^proc:/),
-      expect.objectContaining({ call: "proc.send", args: expect.objectContaining({ message: "do work" }) }),
-    );
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      subject: expect.stringMatching(/^proc:proc:/), body: { content: { kind: "inline", message: "do work" } },
+    });
 
     const jsonResult = await handleShellExec(
       { input: `proc spawn --json '{"label":"json-child","ai":{"reasoning":"low"}}'` },
@@ -2094,28 +2093,22 @@ describe("proc native command", () => {
       createdAt: 1,
     };
     const spawn = vi.fn();
-    const result = await handleShellExec(
-      { input: "proc spawn -- --timeout 1m" },
-      makeContext({
-        capabilities: ["proc.spawn"],
-        procs: {
-          get: vi.fn((pid: string) => pid === parent.processId ? parent : null),
-          getOwnerUid: vi.fn(() => IDENTITY.uid),
-          spawn,
-        },
-      }),
-    );
+    const ctx = makeContext({
+      capabilities: ["proc.spawn"],
+      procs: {
+        get: vi.fn((pid: string) => pid === parent.processId ? parent : null),
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+        spawn,
+      },
+      events: fakeEventLog(),
+    });
+    const result = await handleShellExec({ input: "proc spawn -- --timeout 1m" }, ctx);
 
     expect(result.ok).toBe(true);
     expect(spawn).toHaveBeenCalledOnce();
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      expect.stringMatching(/^proc:/),
-      expect.objectContaining({
-        call: "proc.send",
-        args: expect.objectContaining({ message: "--timeout 1m" }),
-      }),
-    );
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      subject: expect.stringMatching(/^proc:proc:/), body: { content: { kind: "inline", message: "--timeout 1m" } },
+    });
   });
 
   it("resets a process through the kernel lifecycle path", async () => {

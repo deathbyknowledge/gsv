@@ -75,10 +75,24 @@ export type ProcessRuntimeEventDeliverResult = {
 export type ProcessEventAdmission = {
   /** With no active run: start one, or only record the event in history. */
   idle: "start" | "record";
-  /** During a run: join it, take its own run once it ends, or only record the event. */
-  busy: "join" | "after" | "record";
+  /** During a run: join it, take its own run once it ends, stop it and start this one, or only record the event. */
+  busy: "join" | "after" | "interrupt" | "record";
   /** Joins only this run; during another, the event takes its own run after it. */
   joinRun?: string;
+};
+
+/** A message for a process to act on, from a person or from another process. */
+export type ProcessInput = {
+  message: string;
+  media?: Array<ResourceBlock | ProcMediaInput>;
+  origin?: InteractionOrigin;
+  /** The Conversation message it was committed as, when it has one. */
+  interaction?: { conversationId: string; messageId: string };
+  selectedTarget?: string;
+  /** Present only when the person quoted a message. */
+  quote?: ProcHistoryMessageQuote;
+  /** The run it takes when its producer recorded one first, as a Conversation does; otherwise the delivery's id. */
+  runId?: string;
 };
 
 /** Another process's message or call, as its target records it. */
@@ -106,7 +120,8 @@ export type ProcessEventDelivery =
       /** Resources the event carries, retained as this Process's own media before admission. */
       attachments?: ResourceBlock[];
     }
-  | { message: ProcessIpcMessage; admission: ProcessEventAdmission };
+  | { message: ProcessIpcMessage; admission: ProcessEventAdmission }
+  | { input: ProcessInput; admission: ProcessEventAdmission };
 
 /** Kernel-derived registered events; this call is never available to public peers. */
 export type ProcessEventDeliverArgs = ProcessEventDelivery & { eventId: string };
@@ -117,6 +132,8 @@ export type ProcessEventDeliverResult = {
   queued: boolean;
   messageId?: number;
   ignored?: boolean;
+  /** Why the Process can never take this delivery, such as media that is gone; it is not retried. */
+  refused?: string;
 };
 
 /** What a schedule's firing tells its process: the `schedule.fired` payload, which `prompts/schedule-events.ts` formats. */

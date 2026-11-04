@@ -2,7 +2,7 @@
 
 import { Kernel } from "../kernel/do";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
-import type { InternalRequestFrame } from "../protocol/process-frames";
+import type { InternalRequestFrame, ProcessInput } from "../protocol/process-frames";
 import type {
   ProcessAdapterDeliverArgs,
   ProcessEventDeliverArgs,
@@ -14,7 +14,7 @@ import { getKernelPtr, getProcessByPid } from "../shared/utils";
 import { resolveToolSyscall } from "../syscalls/constants";
 import { takePurpose, type ToolApprovalPolicy } from "./approval";
 import type { Process } from "./do";
-import type { ProcHistoryEventPayload, ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { ProcHistoryEventPayload, ProcSendResult, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { expect, vi } from "vitest";
 
@@ -63,6 +63,25 @@ export async function okProcessResponse(
     throw new Error("Process did not return a successful response");
   }
   return response;
+}
+
+/**
+ * A message as the Kernel's log delivers it: a person's stops the active run, one from a process
+ * or a schedule waits its turn. Answers as `proc.send` does, and throws on a refusal.
+ */
+export async function sendMessage(
+  target: DurableObjectStub<Process> | Process,
+  input: ProcessInput,
+  runId = `evt_${crypto.randomUUID()}:proc:test`,
+): Promise<Extract<ProcSendResult, { ok: true }>> {
+  const fromProcess = input.origin?.kind === "process" || input.origin?.kind === "scheduler";
+  // SAFETY: a Process and its stub expose the same typed method.
+  const result = await (target as Process).deliverEvent({
+    eventId: runId, input, admission: { idle: "start", busy: fromProcess ? "after" : "interrupt" },
+  });
+  if ("unavailable" in result) throw new Error(result.message);
+  if (result.refused !== undefined || result.runId === null) throw new Error(result.refused ?? "the message took no run");
+  return { ok: true, status: "started", runId: result.runId, ...(result.queued ? { queued: true } : undefined) };
 }
 
 // SAFETY: test fixture is constructed with the asserted domain shape.

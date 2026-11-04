@@ -25,10 +25,10 @@ import { errorMessageFromUnknown } from "../../inference/errors";
 import {
   type ProcAbortArgs, type ProcAbortResult, type ProcHilArgs, type ProcHilResult, type ProcHistoryArgs,
   type ProcHistoryMessage, type ProcHistoryResult, type ProcHistoryToolResultContent,
-  type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
+  type ProcMediaInput, type ProcSendResult,
   type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type ProcRunToolStartedSignal,
   type InteractionOrigin, type JsonObject,
-  type ProcHistoryEvent, type ProcHistoryMessageQuote, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
+  type ProcHistoryEvent, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import { agentArchiveMediaPath } from "../../shared/process-media-path";
 import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive } from "../history/helpers";
@@ -46,6 +46,7 @@ import { syscallToolName } from "../../syscalls/constants";
 import { cancelProcessRequests } from "../../shared/utils";
 import type {
   InternalResponseFrame,
+  ProcessInput,
   ProcessIpcMessage,
   ProcessUnavailable,
 } from "../../protocol/process-frames";
@@ -64,11 +65,7 @@ import { handOffMemoryReviews } from "../memory-review";
 const retiredWatchedSignalEnvelopeSchema = z.object({ watched: z.literal(true) });
 
 type SendAdmissionInput = {
-  args: Omit<ProcSendArgs, "media"> & {
-    media?: Array<ResourceBlock | ProcMediaInput>;
-    quote?: ProcHistoryMessageQuote;
-  };
-  admittedRunId?: string;
+  args: ProcessInput;
   identity: Process["identity"];
   incomingMedia: ProcMediaInput[];
   mediaKeys: string[];
@@ -148,17 +145,13 @@ async function admitQueuedSend(
   host: Process,
   input: SendAdmissionInput,
 ): Promise<ProcSendResult> {
-  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
+  const { args, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
   const releaseMedia = await host.resources.acquireMediaKeyAdmissions(mediaKeys);
   const releaseAdmission = await host.controller.acquireQueuedSendAdmission();
   try {
-    if (!sameAdmissionIdentity(host, identity)) {
-      return { ok: false, error: "Process no longer exists" };
-    }
-    if (admittedRunId) {
-      const existing = host.controller.existingRunAdmission(runId);
-      if (existing) return existing;
-    }
+    assertSameAdmissionIdentity(host, identity);
+    const existing = host.controller.existingRunAdmission(runId);
+    if (existing) return existing;
     const media = await storeIncomingProcessMedia(
       host.storage,
       identity.uid,
@@ -177,13 +170,9 @@ async function admitQueuedSend(
     }
 
     const admission = host.ctx.storage.transactionSync((): InstalledSend => {
-      if (!sameAdmissionIdentity(host, identity)) {
-        return { result: { ok: false, error: "Process no longer exists" }, installed: false };
-      }
-      if (admittedRunId) {
-        const existing = host.controller.existingRunAdmission(runId);
-        if (existing) return { result: existing, installed: false };
-      }
+      assertSameAdmissionIdentity(host, identity);
+      const admitted = host.controller.existingRunAdmission(runId);
+      if (admitted) return { result: admitted, installed: false };
       if (host.runs.active) {
         const enqueueOptions: EnqueueMessageOptions = {
           media: media ?? undefined,
@@ -240,7 +229,7 @@ async function admitInterruptingSend(
   host: Process,
   input: SendAdmissionInput,
 ): Promise<ProcSendResult> {
-  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
+  const { args, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
   const releaseMedia = await host.resources.acquireMediaKeyAdmissions(mediaKeys);
   try {
     const missingMediaKey = await host.resources.firstMissingMediaKey(mediaKeys);
@@ -251,13 +240,9 @@ async function admitInterruptingSend(
     if (committingRunId) {
       await host.run.awaitRunControlCommit(committingRunId);
     }
-    if (!sameAdmissionIdentity(host, identity)) {
-      return { ok: false, error: "Process no longer exists" };
-    }
-    if (admittedRunId) {
-      const existing = host.controller.existingRunAdmission(runId);
-      if (existing) return existing;
-    }
+    assertSameAdmissionIdentity(host, identity);
+    const existing = host.controller.existingRunAdmission(runId);
+    if (existing) return existing;
 
     // a reply the person watched being typed is withdrawn while its run can still reach them
     const activeRun = host.runs.active;
@@ -270,7 +255,7 @@ async function admitInterruptingSend(
     const admission = host.ctx.storage.transactionSync(() => {
       if (!sameAdmissionIdentity(host, identity)) return null;
       if (activeRun && host.runs.active?.runId !== activeRun.runId) return null;
-      if (admittedRunId && host.controller.existingRunAdmission(runId)) return null;
+      if (host.controller.existingRunAdmission(runId)) return null;
 
       const effects: InterruptSendEffects = { interrupted: null, finish: null };
       if (activeRun) {
@@ -311,8 +296,10 @@ async function admitInterruptingSend(
 
     await streamAbort;
     if (!admission) {
-      const existing = admittedRunId ? host.controller.existingRunAdmission(runId) : null;
-      return existing ?? { ok: false, error: "Process no longer exists" };
+      // Another admission won the race; the log tries this one again unless it was this message's.
+      const admitted = host.controller.existingRunAdmission(runId);
+      if (admitted) return admitted;
+      throw new Error("The process changed while the message was admitted");
     }
     const { effects, messageId } = admission;
     if (activeRun) {
@@ -363,6 +350,11 @@ async function admitInterruptingSend(
   } finally {
     releaseMedia();
   }
+}
+
+/** A Process killed or re-identified during admission throws, so the log tries again or withdraws the message. */
+function assertSameAdmissionIdentity(host: Process, identity: Process["identity"]): void {
+  if (!sameAdmissionIdentity(host, identity)) throw new Error("Process no longer exists");
 }
 
 function sameAdmissionIdentity(
@@ -805,57 +797,37 @@ export class ProcessController {
     return runIds.includes(runId);
   }
 
-  async handleProcSend(
-    args: Omit<ProcSendArgs, "media"> & {
-      media?: Array<ResourceBlock | ProcMediaInput>;
-      quote?: ProcHistoryMessageQuote;
-    },
-    admittedRunId?: string,
+  /**
+   * A message for this process, delivered from the Kernel's log under its run id. A person's
+   * stops the active run and starts its own; another process's takes a run of its own after it.
+   * A redelivery answers with its first admission. Media that can't be read refuses the message;
+   * a Process that changes during admission throws, so the log tries again.
+   */
+  async admitInput(
+    input: ProcessInput,
+    runId: string,
+    busy: "interrupt" | "after",
   ): Promise<ProcSendResult> {
-    if (!this.host.isInitialized()) {
-      return { ok: false, error: "Process no longer exists" };
-    }
+    const existing = this.existingRunAdmission(runId);
+    if (existing) return existing;
     const receivedAt = Date.now();
     const identity = this.host.identity;
-    const runId = admittedRunId ?? crypto.randomUUID();
-    if (admittedRunId) {
-      const existing = this.existingRunAdmission(runId);
-      if (existing) return existing;
-    }
-
     let incomingMedia: ProcMediaInput[];
     try {
-      incomingMedia = await this.host.resources.resolveIncomingMedia(args.media);
+      incomingMedia = await this.host.resources.resolveIncomingMedia(input.media);
     } catch (error) {
       return { ok: false, error: errorMessageFromUnknown(error) };
     }
-    const mediaKeys = [
-      ...new Set(incomingMedia.flatMap((item) => (item.key === undefined ? [] : [item.key]))),
-    ].sort();
-    const origin = serializeInteractionOrigin(args.origin);
-    const userCanInterrupt = args.origin?.kind !== "process" && args.origin?.kind !== "scheduler";
-
-    return userCanInterrupt
-      ? admitInterruptingSend(this.host, {
-          args,
-          admittedRunId,
-          identity,
-          incomingMedia,
-          mediaKeys,
-          origin,
-          runId,
-          receivedAt,
-        })
-      : admitQueuedSend(this.host, {
-          args,
-          admittedRunId,
-          identity,
-          incomingMedia,
-          mediaKeys,
-          origin,
-          runId,
-          receivedAt,
-        });
+    const admission: SendAdmissionInput = {
+      args: input,
+      identity,
+      incomingMedia,
+      mediaKeys: [...new Set(incomingMedia.flatMap((item) => (item.key === undefined ? [] : [item.key])))].sort(),
+      origin: serializeInteractionOrigin(input.origin),
+      runId,
+      receivedAt,
+    };
+    return busy === "interrupt" ? admitInterruptingSend(this.host, admission) : admitQueuedSend(this.host, admission);
   }
 
   existingRunAdmission(runId: string): Extract<ProcSendResult, { ok: true }> | null {
@@ -1833,8 +1805,8 @@ export class ProcessController {
         return { type: "res", id: frame.id, ok: true, data: result };
       }
       if (frame.call === "proc.adapter.deliver") {
-        const { runId, ...args } = frame.args;
-        const result = await this.handleProcSend(args, runId);
+        const { runId, pid: _pid, ...input } = frame.args;
+        const result = await this.admitInput(input, runId, "interrupt");
         return { type: "res", id: frame.id, ok: true, data: result };
       }
       let data: ResultOf<SyscallName>;
@@ -1844,12 +1816,6 @@ export class ProcessController {
           data = this.host.settings.initialize(frame.args);
           break;
         }
-        case "proc.send":
-          data = await this.handleProcSend(
-            frame.args,
-            frame.args.interaction ? `run:${frame.args.interaction.messageId}` : undefined,
-          );
-          break;
         case "proc.abort":
           data = await this.handleProcAbort(frame.args);
           break;

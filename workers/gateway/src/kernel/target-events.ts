@@ -101,7 +101,7 @@ export const targetStatusEvent: EventDefinition = {
   async settled(event, ctx, end) {
     const watch = standingWatch(event, ctx);
     if (!watch) return;
-    if (end.state === "withdrawn") ctx.signalWatches.markFailed(watch.watchId, end.reason, watch.revision);
+    if (end.state !== "delivered") ctx.signalWatches.markFailed(watch.watchId, end.reason, watch.revision);
     else if (watch.once && !end.ignored) ctx.signalWatches.deleteHandled(watch.watchId, watch.revision);
   },
 };

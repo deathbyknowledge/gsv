@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../test-support/peers";
 import type {
+  ProcSendArgs,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
@@ -10,7 +11,7 @@ import type { InlineDelivery } from "./events/runtime";
 import type { EventInput, LoggedEvent } from "./events/store";
 
 import * as utils from "../shared/utils";
-import { forwardToProcess, handleProcFork, handleProcIpcCall, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
+import { forwardToProcess, handleProcFork, handleProcIpcCall, handleProcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
 import { resolveCallerOwnerUid } from "./context";
 import { dispatch, type DispatchDeps } from "./dispatch";
 
@@ -201,18 +202,23 @@ describe("proc handlers", () => {
       broadcastToUserUid: vi.fn(),
       runRoutes: { inheritProcessApprovalRoute: vi.fn() },
       config: { getExplicit: vi.fn((key: string) => entries.get(key) ?? null) },
+      events: logEvents(),
       env: {},
     } as KernelContext;
     const result = await handleProcSpawn({ ai: { modelId: ` ${modelId.toUpperCase()} `, reasoning: " HIGH " }, prompt: "Start with these settings." }, ctx);
-    expect(result.ok).toBe(true);
-    expect(sendFrameToProcessMock.mock.calls.map(([, , frame]) => frame.call)).toEqual(["proc.setidentity", "proc.send"]);
+    if (!result.ok) throw new Error(result.error);
+    expect(sendFrameToProcessMock.mock.calls.map(([, , frame]) => frame.call)).toEqual(["proc.setidentity"]);
     expect(sendFrameToProcessMock.mock.calls[0][2].args).toMatchObject({
       identity: { uid: 2000 }, ai: { modelId, reasoning: "high" },
     });
-    expect(sendFrameToProcessMock.mock.calls[1][2].args).toMatchObject({ message: "Start with these settings." });
+    // The prompt goes through the log once the process is initialized and announced.
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      type: "process.message", subject: `proc:${result.pid}`, body: { pid: result.pid, content: { kind: "inline", message: "Start with these settings." } },
+    });
+    expect(ctx.events.deliverNow).toHaveBeenCalledWith(expect.objectContaining({ id: "evt_7" }), `proc:${result.pid}`);
     expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(IDENTITY.uid, "proc.changed", expect.objectContaining({ changes: ["created"] }));
     expect(vi.mocked(ctx.broadcastToUserUid).mock.invocationCallOrder[0]).toBeGreaterThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);
-    expect(vi.mocked(ctx.broadcastToUserUid).mock.invocationCallOrder[0]).toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[1]);
+    expect(vi.mocked(ctx.broadcastToUserUid).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(ctx.events.deliverNow).mock.invocationCallOrder[0]!);
   });
 
   it.each([
@@ -419,13 +425,26 @@ describe("proc handlers", () => {
     }
   });
 
-  it("routes proc.send results by the target process owner", async () => {
-    sendFrameToProcessMock.mockResolvedValue({
-      type: "res",
-      id: "send-root",
-      ok: true,
-      data: { ok: true, status: "started", runId: "run-1" },
-    } satisfies ResponseFrame);
+  it("refuses proc.send media that isn't resource blocks before appending it", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      installationId: TEST_INSTALLATION_ID,
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.send"] }),
+      procs: { get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })) },
+      runRoutes: { setConnectionRoute: vi.fn() },
+      events: logEvents(),
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+
+    for (const media of [[{ key: "proc/other/media/1" }], "not a list"]) {
+      // Arguments arrive as the model wrote them.
+      const args: ProcSendArgs = JSON.parse(JSON.stringify({ pid: "proc-1", message: "Look.", media }));
+      await expect(handleProcSend(args, ctx)).resolves.toEqual({ ok: false, error: "proc.send media must be resource blocks" });
+    }
+    expect(ctx.events.append).not.toHaveBeenCalled();
+  });
+
+  it("appends proc.send for the target process's owner and pins its reply route first", async () => {
     const setConnectionRoute = vi.fn();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
@@ -436,29 +455,30 @@ describe("proc handlers", () => {
         get: vi.fn(() => ({ uid: 2000, ownerUid: 1000 })),
       },
       runRoutes: { setConnectionRoute },
+      events: logEvents(),
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    await forwardToProcess({
-      type: "req",
-      id: "send-root",
-      call: "proc.send",
-      args: { pid: "proc-1", message: "hello", selectedTarget: "gsv" },
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    } as RequestFrame, ctx);
+    await expect(handleProcSend({ pid: "proc-1", message: "hello", selectedTarget: "gsv" }, ctx))
+      .resolves.toEqual({ ok: true, status: "started", runId: "evt_7:proc:proc-1" });
 
-    expect(sendFrameToProcessMock.mock.calls[0][2]).toMatchObject({ args: { message: "hello", selectedTarget: "gsv" } });
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      type: "message.received", ownerUid: 1000, actor: { kind: "person", uid: 0 },
+      body: { pid: "proc-1", content: { kind: "inline", message: "hello", selectedTarget: "gsv" } },
+    });
     expect(setConnectionRoute).toHaveBeenCalledWith({
-      runId: "run-1",
+      runId: "evt_7:proc:proc-1",
       processId: "proc-1",
       uid: 1000,
       connectionId: "conn-root",
     });
+    expect(setConnectionRoute.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(ctx.events.deliverNow).mock.invocationCallOrder[0]!);
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
   it.each(["owner", "root", "process", "work"])("activates onboarding only for the owner's direct Ship input: %s", async (caller) => {
     const ctx = makeForwardContext();
+    ctx.events = logEvents();
     ctx.peer = testPeer({ kind: "human", account: { ...IDENTITY, uid: caller === "root" ? 0 : IDENTITY.uid }, calls: ["proc.send"] });
     // SAFETY: this fixture supplies the process ownership and controller fields inspected by proc.send.
     vi.mocked(ctx.procs.get).mockReturnValue({
@@ -469,11 +489,12 @@ describe("proc handlers", () => {
       ctx.processId = "proc:source";
       ctx.callerOwnerUid = IDENTITY.uid;
     }
-    await forwardToProcess({ type: "req", id: "first", call: "proc.send", args: { pid: "proc:ship", message: "Hello" } }, ctx);
+    await handleProcSend({ pid: "proc:ship", message: "Hello" }, ctx);
     if (caller === "owner") {
       expect(ctx.welcome.activate).toHaveBeenCalledWith(IDENTITY.uid);
       expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(IDENTITY.uid);
-      expect(vi.mocked(ctx.welcome.activate).mock.invocationCallOrder[0]).toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);
+      expect(vi.mocked(ctx.welcome.activate).mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(ctx.events.deliverNow).mock.invocationCallOrder[0]!);
     } else {
       expect(ctx.welcome.activate).not.toHaveBeenCalled();
       expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
@@ -914,6 +935,7 @@ describe("proc handlers", () => {
         get: vi.fn(() => null),
         spawn: vi.fn(),
       },
+      events: logEvents(),
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 
@@ -957,14 +979,9 @@ describe("proc handlers", () => {
     )?.[2] as RequestFrame | undefined;
     expect(identityFrame?.args).not.toHaveProperty("installationId");
     expect(identityFrame?.args).not.toHaveProperty("pid");
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      expect.any(String),
-      expect.objectContaining({
-        call: "proc.send",
-        args: expect.objectContaining({ message: "Review this project." }),
-      }),
-    );
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      type: "message.received", body: { content: { kind: "inline", message: "Review this project." } },
+    });
   });
 
   it("spawns a fresh top-level process when requested without explicit cwd", async () => {
@@ -1407,6 +1424,15 @@ describe("proc handlers", () => {
   });
 
 });
+
+/** A log that appends every event as evt_7 and delivers it at once. */
+function logEvents(runId: string | null = null) {
+  return {
+    append: vi.fn((input: EventInput): LoggedEvent => ({ ...input, seq: 7, id: "evt_7", body: input.body ?? null, createdAt: 1 })),
+    transaction: vi.fn(<T,>(operation: () => T): T => operation()),
+    deliverNow: vi.fn(async (): Promise<InlineDelivery> => ({ state: "delivered", runId, queued: false })),
+  };
+}
 
 function makeIpcCallContext(options: {
   identity?: ProcessIdentity;

@@ -43,6 +43,16 @@ export async function deliverProcessEvent(
     }
     return { eventId, ...await host.controller.admitIpcMessage(eventId, args.message) };
   }
+  if ("input" in args) {
+    // A person's message stops the active run; another process's waits its turn.
+    const { idle, busy, joinRun } = args.admission;
+    if (idle !== "start" || (busy !== "interrupt" && busy !== "after") || joinRun !== undefined) {
+      throw new Error("Process event is not registered for this delivery path");
+    }
+    const admitted = await host.controller.admitInput(args.input, args.input.runId ?? eventId, busy);
+    if (!admitted.ok) return { eventId, runId: null, queued: false, refused: admitted.error };
+    return { eventId, runId: admitted.runId, queued: admitted.queued === true };
+  }
   const event = procHistoryEventSchema.parse(args.event);
   const carried: Carried = {
     ...(args.responsibilities === undefined ? undefined : { responsibilities: responsibilitiesSchema.parse(args.responsibilities) }),

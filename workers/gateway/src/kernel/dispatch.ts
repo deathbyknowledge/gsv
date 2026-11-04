@@ -44,6 +44,7 @@ import {
 import {
   handleProcList,
   handleProcIpcCall,
+  handleProcSend,
   handleProcIpcSend,
   handleProcFork,
   handleProcObserve,
@@ -571,6 +572,8 @@ async function dispatchKernel(
         data = await handleProcIpcCall(frame.args, ctx);
         break;
       case "proc.send":
+        data = await handleProcSend(frame.args, ctx);
+        break;
       case "proc.abort":
       case "proc.hil":
       case "proc.kill":

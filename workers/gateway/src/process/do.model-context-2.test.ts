@@ -884,10 +884,10 @@ describe("model context", () => {
 
       const ticking = process.run.runTick(runId);
       await streamCleanupStarted;
-      const takeover = await process.controller.handleProcSend({
+      const takeover = await process.controller.admitInput({
         message: "Replace the old run.",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       expect(process.runs.active).toMatchObject({ runId: takeover.runId });
 
       releaseStreamCleanup();
@@ -942,10 +942,10 @@ describe("model context", () => {
 
       const ticking = process.run.runTick(runId);
       await actionStarted;
-      const takeover = await process.controller.handleProcSend({
+      const takeover = await process.controller.admitInput({
         message: "Replace the run while it is yielding.",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       releaseAction();
       await ticking;
 

@@ -444,19 +444,17 @@ describe("proc.kill", () => {
         return await acquireQueuedSendAdmission();
       });
 
-      const sending = process.controller.handleProcSend({
+      const sending = process.controller.admitInput({
         message: "queued scheduler work",
         origin: { kind: "scheduler", scheduleId: "schedule-after-kill" },
-      });
+      }, crypto.randomUUID(), "after");
       await admissionStarted;
       await expect(
         process.recvFrame(makeReq("proc.kill", { archive: false })),
       ).resolves.toMatchObject({ ok: true, data: { ok: true, pid } });
       releaseAdmission();
-      await expect(sending).resolves.toEqual({
-        ok: false,
-        error: "Process no longer exists",
-      });
+      // The log tries again, or withdraws the message once the Kernel knows the process is gone.
+      await expect(sending).rejects.toThrow("Process no longer exists");
     });
   });
 
@@ -624,10 +622,10 @@ describe("proc.kill", () => {
       process.sendSignal = vi.fn(async () => {});
       const finishRun = vi.spyOn(process.run, "finishRun");
 
-      const sending = process.controller.handleProcSend({
+      const sending = process.controller.admitInput({
         message: "schedule after kill",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       await scheduleStarted;
       await expect(
         process.recvFrame(makeReq("proc.kill", { archive: false })),

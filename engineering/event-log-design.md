@@ -4,7 +4,8 @@ Status: reviewed 2026-11-03; the decisions are folded in and listed under
 Decided. Typed internal calls (#645) are merged into `refactor/event-log`. The
 substrate is in #646, an open draft, where producers convert one commit at a
 time: contact messages, owner notices, responsibility wakes, schedules, source
-events and IPC so far.
+events, IPC, target connections, memory reviews, chat, direct `proc.send` and
+spawn prompts so far.
 
 ## Problem
 
@@ -162,13 +163,15 @@ private async pass(taskId: string): Promise<void> {
   domain write. The state never changes without its event, and an event never
   exists without its state. The runner is kicked after commit and re-arms
   from `deliveries` on start-up.
-- **Inline first.** A producer on a request path (chat, messengers, IPC) asks
-  the runner to deliver its row in the same call, so latency stays where it
-  is today. The task only carries retries.
-- **Lanes.** A lane is the order key within one consumer. The Ship has two.
-  `person` carries chat and messengers. `background` carries everything else,
-  in per-owner order. A person's message never waits behind background
-  events. A process is one lane. A wake batch has no lane: only one waits per
+- **Inline first.** A producer on a request path (chat, messengers, `proc.send`,
+  IPC) asks the runner to deliver its row in the same call, so latency stays
+  where it is today. The task only carries retries. When the consumer can't
+  take the row right now, the call still succeeds with `queued: true`.
+- **Lanes.** A lane is the order key within one consumer, and every consumer
+  has two. `person` carries a person's messages: chat, messengers, and a
+  person's `proc.send` or spawn prompt. `background` carries everything else,
+  in order. A person's message never waits behind background events, for the
+  Ship or any other process. A wake batch has no lane: only one waits per
   owner, and a contact message or notice that keeps failing never holds the
   ledger's wakes.
 - **At least once.** A delivery is done when its consumer answers. A lost
@@ -197,7 +200,9 @@ private async pass(taskId: string): Promise<void> {
 - **Retry.** The delay is `min(cap, base × 2^(attempt − 1))`. Each consumer
   declares its base, cap, attempt limit and terminal action. Ship and process
   deliveries retry from 2 s, doubling to 256 s, without a limit. The runner
-  re-arms; it never waits inside the alarm.
+  re-arms; it never waits inside the alarm. A Process that refuses a delivery,
+  as when a message's media can no longer be read, ends it as `failed` at once:
+  a retry would be refused the same way.
 - **Gate.** While the managed gate is closed, the runner parks both consumers
   and checks again in 60 s, and the wake timer takes nothing from the ledger.
   Everything resumes if the space is reactivated.
@@ -247,8 +252,8 @@ Today each entry handler decides for itself.
 
 | Event | Idle | Busy | Today |
 |---|---|---|---|
-| `message.received`: chat or messenger | start | interrupt the run | `proc.send`, `proc.adapter.deliver` |
-| `process.message`: `proc.send` from a process or schedule | start | own run after | `admitQueuedSend` |
+| `message.received`: chat, messenger, or a person's `proc.send` or spawn prompt | start | interrupt the run | `proc.send`, `proc.adapter.deliver` |
+| `process.message`: `proc.send` or a spawn prompt from a process or schedule | start | own run after | `admitQueuedSend` |
 | `ipc.message`, `ipc.call` | start | own run after | `proc.ipc.deliver` |
 | `work.returned` | start | own run after | `adapter.work.returned` with `distinctRun` |
 | `contact.message` | start | join | `proc.runtime.event.deliver` |
@@ -281,8 +286,8 @@ state machine.
 | Schedule | `schedule.fired`; a Ship's schedule stays a `responsibility` target | `schedule:<id>` | schedule id + occurrence: due time, forced run or one-shot | inline: schedule id, pid, due and fire times; the message and data are read from the schedule at delivery | `proc:<pid>` · join, or own run after with `replyTo` | `proc.schedule.deliver` and the fire-time turn of a Ship-pid schedule into a responsibility; the one-shot attempt loop stays for `adapter.send` |
 | IPC send, call | `ipc.message`, `ipc.call` | `ipc:<id>`: the exchange, shared by a call's check-ins and its end | a fresh id for a message, the call id for a call | inline: the message and metadata, up to 64 KiB | `proc:<target>` · own run after, inline | `proc.ipc.deliver` |
 | IPC answer | `ipc.reply`, `ipc.timeout`, `ipc.overdue` | `ipc:<call id>` | call id; a check-in's adds its count | names the call; the answer is read from the call's row at delivery, so it has no size limit | `proc:<caller>` · join the run that asked, or own run after | the three answer signals, `onIpcCallDelivery` and its retry, the row's delivery claim, the Process's 256-entry list of handled calls |
-| Chat | `message.received` | `conversation:<id>` | message id | ref: Conversation message | Ship · interrupt, inline | `proc.send`'s interaction branch |
-| Direct `proc.send`, spawn prompt | `message.received` from a person, `process.message` from a process | `proc:<pid>` | the caller's request id; none today | inline | `proc:<pid>` · interrupt from a person, own run after from a process | `handleProcSend`'s choice by origin |
+| Chat | `message.received`, appended after the Conversation's own append | `conversation:<id>` | message id | ref: Conversation message, read at delivery | Ship, or the work's pid · interrupt, inline | `proc.send`'s interaction branch, done in step 9 |
+| Direct `proc.send`, spawn prompt | `message.received` from a person, `process.message` from a process or schedule | `proc:<pid>` | a fresh id per send | inline, up to 64 KiB | `proc:<pid>` · interrupt from a person, own run after from a process | the Process's `proc.send` command and its choice by origin, done in step 9 |
 | Messenger | `message.received` | `route:<surface>` | adapter + account + delivery id | ref: Conversation message | routed pid or Ship · interrupt, inline | `proc.adapter.deliver`; `adapter_ingress_receipts` once the key and row cover its checkpoint |
 | `/ship` work return | `work.returned` | `proc:<work pid>` | work pid + return id | inline | Ship · own run after | the `work_return` checkpoint, `adapter.work.returned` |
 | Memory review | none: the queue admits a low-priority Ship responsibility, `memory.review:<pid>:<segment>`, which Ship delegates to Crew | — | — | — | Ship, through `responsibility.ready` | `onMemoryReview`'s 60 s successor: settling a review admits the next in the same transaction, and a Kernel start admits one left waiting, done in step 8 |
@@ -415,8 +420,9 @@ a clean instance and finds each in the log. Each conversion narrows the
    `onIpcCallDelivery`.
 8. Target connections and memory reviews. Deletes the in-memory chain and
    `onMemoryReview`.
-9. Chat, messengers and `/ship` work returns: inline, on the person lane.
-   Deletes `proc.adapter.deliver` and `proc.runtime.event.deliver`.
+9. Chat, direct `proc.send`, spawn prompts, messengers and `/ship` work
+   returns: inline, on the person lane. Deletes the Process's `proc.send`
+   command, `proc.adapter.deliver` and `proc.runtime.event.deliver`.
 10. Failed deliveries. Deletes `onProcessDeliveryNotice`.
 11. Outbound, only where moving it makes its owner smaller: adapter routes,
     the federation outbox and outbound mail.
@@ -510,3 +516,30 @@ Reviewed with the maintainer on 2026-11-03:
     limited to 64 KiB together; larger content travels as a file path. v097
     moves answers still on their way onto the log, and Process v019 drops
     the list of handled calls.
+13. **Settled while converting target connections and memory reviews.** A
+    connection change goes to each watch on its target as an event of its
+    own, since each watch has its own audience, and now retries. A newer change
+    withdraws one still waiting, whichever watch it was for, so a watching
+    process hears how the target is now. A change is withdrawn once its watch
+    is removed, changed or expired; one that ends withdrawn, as when its
+    process is gone or lost its authorization, marks the watch failed. A
+    one-time watch ends once its change goes, unless its process ignored it.
+    Settling a memory review admits the next one waiting in the same
+    transaction, and a Kernel start admits one an older Kernel left waiting;
+    v098 removes the per-owner poll.
+14. **Settled while converting chat and direct sends.** Every process has a
+    `person` lane beside `background`, so a person's message to any process
+    never waits behind its background events. A person's message stops the
+    run its process is in; one from a process or schedule waits as a run of
+    its own. A chat message's event follows its Conversation append, since
+    that Durable Object can't share the Kernel's transaction. The message id
+    is the key, so a resend after a lost answer appends nothing and redelivers
+    what is still waiting, and the text is read from the Conversation at
+    delivery, so it has no size limit. Its run stays `run:<message id>`; a
+    direct send's run takes its delivery's id, so the reply route is pinned
+    before the run starts. When a message's process can't take it right now,
+    `conversation.send` and `proc.send` succeed with `queued: true` and the
+    log retries. A refusal, as when its media is gone, fails the delivery and
+    the send reports the error. A direct `proc.send` or spawn prompt is
+    limited to 64 KiB; larger content travels as a file path. The Process
+    takes messages only from the log, not as a `proc.send` command.

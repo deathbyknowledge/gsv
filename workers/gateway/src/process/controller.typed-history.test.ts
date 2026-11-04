@@ -171,19 +171,19 @@ describe("typed controller history producers", () => {
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
       const directInteraction = { conversationId: "conversation-1", messageId: "message-1" };
-      await process.controller.handleProcSend({
+      await process.controller.admitInput({
         message: "Direct input",
         selectedTarget: "macbook",
         origin: { kind: "client", connectionId: "client-1" },
         interaction: directInteraction,
-      }, "direct-run");
+      }, "direct-run", "interrupt");
       const queuedInteraction = { conversationId: "conversation-2", messageId: "message-2" };
-      await process.controller.handleProcSend({
+      await process.controller.admitInput({
         message: "Queued input",
         selectedTarget: "gsv",
         origin: { kind: "process", sourcePid: "parent-1" },
         interaction: queuedInteraction,
-      }, "queued-run");
+      }, "queued-run", "after");
 
       expect(process.store.queue.queueSize()).toBe(1);
       process.runs.active = null;
@@ -221,11 +221,11 @@ describe("typed controller history producers", () => {
         },
       ]);
       process.runs.active = null;
-      await process.controller.handleProcSend({
+      await process.controller.admitInput({
         message: "Immediate background input",
         origin: { kind: "process", sourcePid: "parent-1" },
         interaction: { conversationId: "conversation-3", messageId: "message-3" },
-      }, "immediate-background-run");
+      }, "immediate-background-run", "after");
       expect(storedRecords(process).at(-1)).toMatchObject({
         kind: "message",
         payload: { conversationId: "conversation-3", conversationMessageId: "message-3" },

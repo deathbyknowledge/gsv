@@ -5,9 +5,9 @@ import { runDurableObjectAlarm } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import {
-  generationRun, processTestConfig, assistantResponse, deferred, okProcessResponse, runInProcess,
-  ROOT_IDENTITY, drainProcessQueue, initProcess, makeAdapterDeliverReq, makeReq, offeredTools,
-  testUsage, waitForRunComplete, type ProcessTestValue,
+  generationRun, processTestConfig, assistantResponse, deferred, runInProcess,
+  ROOT_IDENTITY, drainProcessQueue, initProcess, makeAdapterDeliverReq, offeredTools,
+  testUsage, waitForRunComplete, type ProcessTestValue, sendMessage,
 } from "./do-test-harness";
 
 describe("proc.send", () => {
@@ -90,22 +90,15 @@ describe("proc.send", () => {
     // SAFETY: test fixture is constructed with the asserted domain shape.
 
     // Start first run
-    const res1 = await okProcessResponse(
-      stub,
-      makeReq("proc.send", { message: "First message" }),
-    );
+    const res1 = await sendMessage(stub, { message: "First message" });
     expect(res1.ok).toBe(true);
 
     // Send second message while run is active — should be queued
-    const res2 = await okProcessResponse(
-      stub,
-      makeReq("proc.send", {
-        message: "Second message",
-        origin: { kind: "process", sourcePid: "child" },
-      }),
-    );
-    // SAFETY: test fixture is constructed with the asserted domain shape.
-    expect((res2.data as any).queued).toBe(true);
+    const res2 = await sendMessage(stub, {
+      message: "Second message",
+      origin: { kind: "process", sourcePid: "child" },
+    });
+    expect(res2.queued).toBe(true);
 
     // Fire alarm for run 1 — fails (no AI binding in tests), finishRun dequeues
     // "Second message" and starts run 2
@@ -123,10 +116,8 @@ describe("proc.send", () => {
       expect(userMsgs).toHaveLength(2);
       expect(userMsgs[0].content).toBe("First message");
       expect(userMsgs[1].content).toBe("Second message");
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect(userMsgs[0].runId).toBe((res1.data as any).runId);
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect(userMsgs[1].runId).toBe((res2.data as any).runId);
+      expect(userMsgs[0].runId).toBe(res1.runId);
+      expect(userMsgs[1].runId).toBe(res2.runId);
       expect(store.queue.queueSize()).toBe(0);
       expect(store.state.getValue("currentRun")).toBeNull();
     });
@@ -212,10 +203,10 @@ describe("proc.send", () => {
       });
       process.runs.active = { runId: "run-old" };
 
-      const result = await process.controller.handleProcSend({
+      const result = await process.controller.admitInput({
         message: "new direction",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       expect(result).toMatchObject({ ok: true, status: "started" });
       await vi.waitFor(() => expect(process.runs.active).toBeNull());
 
@@ -248,18 +239,16 @@ describe("proc.send", () => {
         await preparationBlocked;
         return [];
       });
-      const sending = process.controller.handleProcSend({
+      const sending = process.controller.admitInput({
         message: "too late",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       await preparationStarted;
       process.store.state.deleteValue("identity");
       releasePreparation();
 
-      await expect(sending).resolves.toEqual({
-        ok: false,
-        error: "Process no longer exists",
-      });
+      // The log tries again, or withdraws the message once the Kernel knows the process is gone.
+      await expect(sending).rejects.toThrow("Process no longer exists");
       expect(process.runs.active).toBeNull();
     });
   });
@@ -319,10 +308,10 @@ describe("proc.send", () => {
         { id: "call-live-2", status: "registered" },
       ]);
 
-      const takeover = await process.controller.handleProcSend({
+      const takeover = await process.controller.admitInput({
         message: "stop and do this instead",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       const nextRunId = takeover.runId;
       expect(
         process.store.messages
@@ -375,14 +364,14 @@ describe("proc.send", () => {
       });
       process.runs.active = { runId: "run-original" };
 
-      const first = process.controller.handleProcSend({
+      const first = process.controller.admitInput({
         message: "first takeover",
         origin: { kind: "client", connectionId: "client-1" },
-      });
-      const second = process.controller.handleProcSend({
+      }, crypto.randomUUID(), "interrupt");
+      const second = process.controller.admitInput({
         message: "second takeover",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       const [firstResult, secondResult] = await Promise.all([first, second]);
       expect(finishedRuns).toEqual(["run-original", firstResult.runId]);
       expect(process.runs.active.runId).toBe(secondResult.runId);
@@ -399,11 +388,11 @@ describe("proc.send", () => {
     try {
       const result = await runInProcess(stub, async (process) => {
         process.runs.active = { runId: "run-existing" };
-        const response = await process.controller.handleProcSend({
+        const response = await process.controller.admitInput({
           message: "read this",
           media: [{ type: "image", mimeType: "image/png", key: foreignKey }],
           origin: { kind: "client", connectionId: "client-1" },
-        });
+        }, crypto.randomUUID(), "interrupt");
         return {
           response,
           currentRun: process.runs.active,
@@ -447,21 +436,21 @@ describe("proc.send", () => {
           httpMetadata: { contentType: "image/png" },
         });
 
-        const first = await process.controller.handleProcSend({
+        const first = await process.controller.admitInput({
           message: "first with media",
           media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
           origin: { kind: "client", connectionId: "client-1" },
-        });
+        }, crypto.randomUUID(), "interrupt");
         await mediaStarted;
         expect(process.runs.active).toMatchObject({
           runId: first.runId,
           pendingMediaMessageId: expect.any(Number),
         });
 
-        const second = await process.controller.handleProcSend({
+        const second = await process.controller.admitInput({
           message: "new user direction",
           origin: { kind: "client", connectionId: "client-1" },
-        });
+        }, crypto.randomUUID(), "interrupt");
         releaseMedia();
         // SAFETY: test fixture is constructed with the asserted domain shape.
         await (prepareMedia.mock.results[0]?.value as Promise<void>);
@@ -506,11 +495,11 @@ describe("proc.send", () => {
         httpMetadata: { contentType: "image/png" },
       });
 
-      const result = await process.controller.handleProcSend({
+      const result = await process.controller.admitInput({
         message: "attachment",
         media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       // SAFETY: test fixture is constructed with the asserted domain shape.
       await (prepareMedia.mock.results[0]?.value as Promise<void>);
 
@@ -558,16 +547,16 @@ describe("proc.send", () => {
         httpMetadata: { contentType: "image/png" },
       });
 
-      const first = process.controller.handleProcSend({
+      const first = process.controller.admitInput({
         message: "first process message",
         media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
         origin: { kind: "process", sourcePid: "child-1" },
-      });
+      }, crypto.randomUUID(), "after");
       await mediaStarted;
-      const second = process.controller.handleProcSend({
+      const second = process.controller.admitInput({
         message: "second process message",
         origin: { kind: "process", sourcePid: "child-2" },
-      });
+      }, crypto.randomUUID(), "after");
 
       releaseMedia();
       await Promise.all([first, second]);
@@ -600,13 +589,10 @@ describe("proc.send", () => {
     });
     const uploadedMedia = upload.resource;
 
-    const res = await okProcessResponse(
-      stub,
-      makeReq("proc.send", {
-        message: "Describe this image.",
-        media: [uploadedMedia],
-      }),
-    );
+    const res = await sendMessage(stub, {
+      message: "Describe this image.",
+      media: [uploadedMedia],
+    });
 
     expect(res.ok).toBe(true);
 

@@ -2,7 +2,7 @@ import { getProcessByPid } from "../shared/utils";
 import { describe, expect, it, vi } from "vitest";
 import {
   captureSignals, deferred, okProcessResponse, runInProcess, ROOT_IDENTITY, initProcess, ipcMessage, makeReq,
-  registerInKernel, waitForTaskTitle, type ProcessTestValue,
+  registerInKernel, waitForTaskTitle, type ProcessTestValue, sendMessage,
 } from "./do-test-harness";
 
 describe("automatic task titles", () => {
@@ -33,14 +33,8 @@ describe("automatic task titles", () => {
       };
     });
 
-    const first = await okProcessResponse(
-      stub,
-      makeReq("proc.send", {
-        message: "Please plan a careful database migration.",
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-      }),
-    );
-    expect(first.data).toMatchObject({ ok: true, status: "started" });
+    const first = await sendMessage(stub, { message: "Please plan a careful database migration." });
+    expect(first).toMatchObject({ ok: true, status: "started" });
     await waitForTaskTitle(stub, "Plan Database Migration");
 
     expect(kernelCalls).toHaveLength(1);
@@ -59,7 +53,7 @@ describe("automatic task titles", () => {
         .map((entry) => entry.payload.title),
     ).toEqual(["Please plan a careful database migration", "Plan Database Migration"]);
 
-    await stub.recvFrame(makeReq("proc.send", { message: "Add rollback steps too." }));
+    await sendMessage(stub, { message: "Add rollback steps too." });
     expect(kernelCalls).toHaveLength(1);
   });
 
@@ -116,11 +110,7 @@ describe("automatic task titles", () => {
       };
     });
 
-    await stub.recvFrame(
-      makeReq("proc.send", {
-        message: "Investigate flaky checkout tests.",
-      }),
-    );
+    await sendMessage(stub, { message: "Investigate flaky checkout tests." });
     await waitForTaskTitle(stub, "Investigate flaky checkout tests");
     await vi.waitFor(() =>
       expect(
@@ -173,14 +163,8 @@ describe("automatic task titles", () => {
         return { text: "Diagnose Checkout Flakiness" };
       };
 
-      const send = await okProcessResponse(
-        process,
-        makeReq("proc.send", {
-          message: "Investigate flaky checkout tests.",
-          // SAFETY: test fixture is constructed with the asserted domain shape.
-        }),
-      );
-      expect(send.data).toMatchObject({ ok: true, status: "started" });
+      const send = await sendMessage(process, { message: "Investigate flaky checkout tests." });
+      expect(send).toMatchObject({ ok: true, status: "started" });
       await generationStarted;
       expect(generationSignal?.aborted).toBe(false);
       expect(process.store.state.getValue("taskTitle")).toBe("Investigate flaky checkout tests");

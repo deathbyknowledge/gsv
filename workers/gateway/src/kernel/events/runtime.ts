@@ -37,7 +37,8 @@ const PRUNE_SPACING_MS = 60 * 60_000;
 
 type AttemptResult =
   | { kind: "delivered"; runId: string | null; outcome: JsonObject; responsibilities?: { ledgerRevision: number; ids: string[] } }
-  | { kind: "withdrawn"; reason: string };
+  | { kind: "withdrawn"; reason: string }
+  | { kind: "refused"; reason: string };
 
 /** Appends Kernel events and delivers them: one task, one gate check, one retry rule per consumer. */
 export class EventRuntime {
@@ -181,6 +182,10 @@ export class EventRuntime {
     }
     if (result.kind === "withdrawn") {
       this.host.events.withdrawn(event.seq, consumer, result.reason, Date.now());
+    } else if (result.kind === "refused") {
+      // Its Process can never take it, so another attempt would only be refused again.
+      this.host.events.failed(event.seq, consumer, result.reason, null, Date.now());
+      console.warn(`[Kernel] Event delivery ${event.id} to ${consumer} was refused:`, result.reason);
     } else {
       const { responsibilities } = result;
       const now = Date.now();
@@ -192,9 +197,9 @@ export class EventRuntime {
     }
     this.retainUntil(event);
     if (definition.settled) {
-      const end: DeliveryEnd = result.kind === "withdrawn"
-        ? { state: "withdrawn", reason: result.reason }
-        : { state: "delivered", ignored: result.outcome.ignored === true };
+      const end: DeliveryEnd = result.kind === "delivered"
+        ? { state: "delivered", ignored: result.outcome.ignored === true }
+        : { state: result.kind === "withdrawn" ? "withdrawn" : "failed", reason: result.reason };
       try {
         await definition.settled(event, ctx, end);
       } catch (error) {
@@ -225,6 +230,7 @@ export class EventRuntime {
       ...admitted,
     });
     if ("unavailable" in result) throw new Error(result.message);
+    if (result.refused !== undefined) return { kind: "refused", reason: result.refused };
     const responsibilities = "event" in admitted ? admitted.responsibilities : undefined;
     return {
       kind: "delivered",

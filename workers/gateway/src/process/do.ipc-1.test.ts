@@ -5,9 +5,9 @@ import type { ProcHistoryRecord, ProcessIdentity } from "@humansandmachines/gsv/
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
-  mockGeneration, generationRun, assistantResponse, deferred, okProcessResponse, runInProcess,
+  mockGeneration, generationRun, assistantResponse, deferred, runInProcess,
   ROOT_IDENTITY, drainProcessQueue, driveProcessUntilIdle, initProcess, ipcAnswer, ipcMessage, makeReq, messageAction,
-  registerInKernel, stubGeneration, terminalTestConfig, waitForStoredMessage,
+  registerInKernel, stubGeneration, terminalTestConfig, waitForStoredMessage, sendMessage,
 } from "./do-test-harness";
 
 describe("proc.ipc.*", () => {
@@ -288,16 +288,11 @@ describe("proc.ipc.*", () => {
       process.runs.active = { runId: "target-busy-run" };
     });
 
-    const firstSend = await okProcessResponse(
-      source,
-      makeReq("proc.send", {
-        message: "delegate a slow task",
-        origin: { kind: "client", connectionId: "client-1" },
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-      }),
-    );
-    // SAFETY: test fixture is constructed with the asserted domain shape.
-    const sourceRunId = (firstSend.data as any).runId as string;
+    const firstSend = await sendMessage(source, {
+      message: "delegate a slow task",
+      origin: { kind: "client", connectionId: "client-1" },
+    });
+    const sourceRunId = firstSend.runId;
 
     const kernel = await getKernelPtr("inst_test");
     // SAFETY: test fixture is constructed with the asserted domain shape.
@@ -318,16 +313,11 @@ describe("proc.ipc.*", () => {
     const ipc = ipcResponse.data as any;
     expect(ipc).toMatchObject({ ok: true, queued: true });
 
-    const secondSend = await okProcessResponse(
-      source,
-      makeReq("proc.send", {
-        message: "stop waiting and do this instead",
-        origin: { kind: "client", connectionId: "client-1" },
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-      }),
-    );
-    // SAFETY: test fixture is constructed with the asserted domain shape.
-    const successorRunId = (secondSend.data as any).runId as string;
+    const secondSend = await sendMessage(source, {
+      message: "stop waiting and do this instead",
+      origin: { kind: "client", connectionId: "client-1" },
+    });
+    const successorRunId = secondSend.runId;
 
     await vi.waitFor(async () => {
       expect(
@@ -859,10 +849,10 @@ describe("proc.ipc.*", () => {
       }, "ipc-run"));
       await scheduleStarted;
 
-      const successor = await process.controller.handleProcSend({
+      const successor = await process.controller.admitInput({
         message: "new user direction",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       releaseSchedule();
       await delivering;
 
