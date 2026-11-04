@@ -31,8 +31,10 @@ eligibility. The adapter does not enforce or assume a geographic exception.
   the same binary body path the Telegram adapter uses.
 - Reply buttons on approval prompts arrive as interactive replies and are
   correlated to the prompt through the adapter-owned token.
-- Reactions, contact cards, list replies, and other message types receive a
-  short reply explaining they are not relayed.
+- A tapped choice, a reply button or list row whose id starts with `gsvc:`,
+  is relayed as an ordinary message carrying the reply's title.
+- Reactions, contact cards, other list replies, and other message types
+  receive a short reply explaining they are not relayed.
 - Each accepted message is marked read.
 
 ## Outbound
@@ -46,6 +48,11 @@ eligibility. The adapter does not enforce or assume a geographic exception.
   limit by splitting the Markdown further and rendering again. Only the first
   message quotes the inbound message; the typing indicator is refreshed between
   messages; an approval prompt keeps its reply buttons on the last message.
+- A message offering choices sends its last paragraph as an interactive
+  message: reply buttons for up to three choices of at most 20 characters, or
+  a list behind a **Choose one** button for up to ten of at most 24. Longer
+  choices, choices beside media or an action, and the out-of-window template
+  list them in the text.
 - Every accepted message is recorded in the delivery ledger before the next
   one is sent, so a retry after a retryable rejection resumes at the first
   message the person has not received; an interrupted delivery stays ambiguous

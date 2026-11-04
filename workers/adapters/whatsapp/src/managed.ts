@@ -129,6 +129,7 @@ export class ManagedWhatsAppChannel extends WorkerEntrypoint<Env> implements Ada
         context,
       ),
       actions: true,
+      choices: true,
     });
   }
 

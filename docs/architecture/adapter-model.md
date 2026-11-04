@@ -262,6 +262,16 @@ content. Whatever the person answers, a tap or a typed reply such as "2",
 arrives as an ordinary inbound message; choices never carry identity, authority
 or a callback.
 
+WhatsApp and Telegram declare native choices. Inside the 24-hour window,
+WhatsApp offers up to three choices of at most 20 characters as reply buttons
+and up to ten of at most 24 as a list, on an interactive message carrying the
+last paragraph; the webhook relays a tap as an inbound message with the reply's
+title. Telegram offers them as a one-time reply keyboard, whose tap Telegram
+itself sends as the person's message, and the next text message without
+controls removes that keyboard, so only the latest message offers replies, as
+in Chat. Choices WhatsApp's limits don't fit, choices beside media or an
+action, and WhatsApp's out-of-window template list them in the text instead.
+
 An approval for a deleted or inaccessible Process is terminal. The Kernel
 preserves the protocol error code, so the adapter resolves the callback as stale
 and continues delivering later messages. Temporary transport or service failures
