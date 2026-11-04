@@ -102,8 +102,8 @@ personal Process. An idle Ship starts a run; a busy Ship attaches the batch to i
 current run. Admission atomically records a model-visible `responsibility.ready`
 history event with the batch identity, affected ids, and receipt time. Its prompt
 names only the due records; standing context says how Ship handles a wake: send
-whatever the person is owed first, then resolve, cancel, delegate or wait on each
-record. The event explains why Ship has been woken even when a deadline or recovery
+whatever the person is owed, and resolve, cancel, delegate or wait on each record
+before yielding. The event explains why Ship has been woken even when a deadline or recovery
 retry leaves the ledger revision unchanged. Replayed admission does not append another event. The baseline
 and revisioned transitions continue to supply the responsibility state without
 duplicating it in the wake event or changing the frozen system prompt.
@@ -284,8 +284,7 @@ System-owned producers use the same ledger contract:
   details like any Ship assignment. Those details
   carry the onboarding brief, the Markdown prompt file
   `workers/gateway/src/prompts/onboarding/welcome.md` with the goal, acceptance
-  criteria, outcomes and step-by-step instructions. Its first line makes the welcome
-  Ship's first action. The brief puts onboarding ahead of other work, which Ship
+  criteria, outcomes and step-by-step instructions. The brief puts onboarding ahead of other work, which Ship
   tracks or delegates until the user has completed one small task, and it welcomes
   the user only once, including after compaction. The brief is copied when the responsibility is
   prepared; existing records retain their saved instructions across releases. A home
