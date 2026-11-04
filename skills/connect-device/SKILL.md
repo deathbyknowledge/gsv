@@ -25,7 +25,7 @@ Connections opens the same invitation with copy buttons.
 that lasts ten minutes. Share it only with the owner, in this conversation.
 
 For a computer, the result has `installCommand` and `pairCommand`. Tell the
-owner to open PowerShell on Windows, or Terminal otherwise, then give each
+owner to open PowerShell on Windows (works best if opened with Administrator privileges), or Terminal otherwise, then give each
 command in its own fenced code block, `powershell` on Windows and `sh`
 otherwise, exactly as returned: never inline, shortened or reworded, so it
 copies cleanly. The first installs the `gsv` app; the second connects the
