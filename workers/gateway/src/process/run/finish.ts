@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@humansandmachines/gsv/services/inference-context";
 import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
+import type { ConversationReplyFailure } from "@humansandmachines/gsv/telemetry";
 import { runOutputMediaSchema } from "./state";
 
 const assistantUsageSchema: z.ZodType<AssistantMessage["usage"]> = z.object({
@@ -57,7 +58,7 @@ type RunFinishStatus = z.infer<typeof runFinishStatusSchema>;
 export type RunFinishPayload = z.infer<typeof pendingRunFinishSchema>;
 
 export type RunFinishOptions = {
-  reason: string;
+  reason: RunFinishReason;
   status?: RunFinishStatus;
   resultText?: string | null;
   delivery?: RunDelivery;
@@ -100,3 +101,45 @@ export const pendingRunFinishesSchema = z.array(z.union([
   }
   return normalized;
 }));
+
+/**
+ * Every reason a run finishes with, and the closed category it reports when a
+ * person's message started the run and it ended in `error` or `aborted`.
+ * Reasons that only end a run normally report nothing and map to null. A new
+ * reason must be added here, with its category, before any producer can use it.
+ */
+const RUN_FINISH_REPLY_FAILURES = {
+  "run.yielded": null,
+  "ipc.returned": null,
+  "generation.error": "generation",
+  "generation.empty": "generation",
+  "context.provider_overflow": "context",
+  "context.checkpoint.failed": "context",
+  "context.policy.fail": "context",
+  "context.auto_compact.empty": "context",
+  "context.auto_compact.failed": "context",
+  "context.auto_compact.insufficient": "context",
+  "media.error": "media",
+  "media.timeout": "media",
+  "message.action.missing": "no_send",
+  "message.command.failed": "command",
+  "message.delivery.failed": "delivery",
+  "schedule.error": "runtime",
+  "tick.error": "runtime",
+  "recovery.schedule.error": "runtime",
+  "user.superseded": "superseded",
+  "user": "cancelled",
+  "process.reset": "cancelled",
+  "process.kill": "killed",
+} as const satisfies Record<string, ConversationReplyFailure | null>;
+
+export type RunFinishReason = keyof typeof RUN_FINISH_REPLY_FAILURES;
+
+/**
+ * Classify how a run that a person's message started ended, as a closed
+ * category. The finish reason and error text stay in Process history.
+ */
+export function replyFailureFromFinish(reason: RunFinishReason): ConversationReplyFailure {
+  // A completion reason never ends a failed run; keep the record valid if one ever does.
+  return RUN_FINISH_REPLY_FAILURES[reason] ?? "other";
+}
