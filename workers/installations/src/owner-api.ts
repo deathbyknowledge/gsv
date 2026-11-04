@@ -33,6 +33,9 @@ export class InstallationOwnerApi {
     if (url.origin !== this.origin) return json({ error: "Not found" }, 404);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     try {
+      if (request.method === "GET" && url.pathname === "/owner/api/handle") {
+        return json({ available: await this.signup.available(handle.parse(url.searchParams.get("value") ?? "")) });
+      }
       if (request.method === "POST" && url.pathname === "/owner/api/code") {
         const input = challenge.parse(await readJsonObject(request));
         const result = await sendOwnerVerification(this.auth, this.mail, this.sender, {
@@ -58,9 +61,6 @@ export class InstallationOwnerApi {
       }
       // Older Desktop releases can still sign in; signup requires the new code-free client.
       if (url.pathname.startsWith("/owner/api/invites/")) return json({ error: "Update Ship to create your Ship." }, 410);
-      if (request.method === "GET" && url.pathname === "/owner/api/handle") {
-        return json({ available: await this.signup.available(handle.parse(url.searchParams.get("value") ?? "")) });
-      }
       if (request.method === "POST" && url.pathname === "/owner/api/spaces") {
         const input = z.strictObject({ operationId: z.string().min(1).max(128), handle }).parse(await readJsonObject(request));
         return json(await this.signup.prepare(input.operationId, session.principalId, input.handle));
