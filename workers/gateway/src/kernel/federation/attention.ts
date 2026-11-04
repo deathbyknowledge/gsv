@@ -127,7 +127,7 @@ function pendingMessages(contact: FederationContactRecord, ctx: KernelContext): 
   if (existing) return attend(existing, ctx);
   return ctx.responsibilities.create({
     ownerUid: contact.ownerUid, title: `Pending messages from ${contactDisplayName(contact)}`,
-    details: { contactId: contact.id, conversationId: contact.conversationId, contactGeneration: contact.generation },
+    details: { contactId: contact.id, conversationId: contact.conversationId, contactGeneration: contact.generation, contentTrust: "untrusted" },
     source: actor, audience: { conversationIds: [contact.conversationId] }, assignee: { kind: "ship" },
     state: "open", priority: "normal", dedupeKey: `${handoffPrefix(contact)}${crypto.randomUUID()}`,
     actor, observedByShip: false, announced: true, now: Date.now(),

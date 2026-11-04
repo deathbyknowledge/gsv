@@ -101,7 +101,7 @@ describe("typed controller history producers", () => {
         },
       }]);
       expect(await process.history.buildContextMessages()).toEqual([
-        expect.objectContaining({ role: "user", content: expect.stringContaining("Responsibility review requested at") }),
+        expect.objectContaining({ role: "user", content: expect.stringContaining("Responsibilities due: ") }),
       ]);
       return records;
     });
