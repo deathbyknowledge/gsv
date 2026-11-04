@@ -19,6 +19,13 @@ function storedRecords(process: Process): ProcHistoryRecordData[] {
   }));
 }
 
+/** A file a target's run attached, in the target's home, and the copy this Process keeps of it. */
+const WEEK: ResourceBlock = {
+  type: "resource", mediaType: "document", filename: "week.csv",
+  ref: { type: "file", target: "gsv", path: `/home/crew/.gsv/media/archived-media:${"b".repeat(64)}`, revision: "w1", contentType: "text/csv", size: 2_048 },
+};
+const WEEK_COPY = { type: "document" as const, mimeType: "text/csv", key: `root/.gsv/media/archived-media:${"c".repeat(64)}`, size: 2_048, filename: "week.csv" };
+
 function isolateAdmission(process: Process): void {
   vi.spyOn(process.run, "scheduleTick").mockResolvedValue(undefined);
   vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
@@ -149,7 +156,7 @@ describe("typed controller history producers", () => {
     });
   });
 
-  it("keeps an answer's file as this process's own media beside the answer, trying again while it can't be read", async () => {
+  it("keeps an answer's file and its target's files as this process's own media, trying again while its own file can't be read", async () => {
     const stub = await initProcess("typed-answer-file", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
@@ -159,24 +166,58 @@ describe("typed controller history producers", () => {
         ref: { type: "file", target: "gsv", path: `/${key}`, revision: "r1", contentType: "text/markdown", size: 70_000 },
       };
       const owned = { type: "document" as const, mimeType: "text/markdown", key, size: 70_000, filename: "answer.md" };
-      const resolve = vi.spyOn(process.resources, "resolveIncomingMedia")
-        .mockRejectedValueOnce(new Error("storage is unavailable"))
-        .mockResolvedValue([owned]);
+      let unread = 1;
+      const resolve = vi.spyOn(process.resources, "resolveIncomingMedia").mockImplementation(async (input) => {
+        if (input?.[0] !== file) return [WEEK_COPY];
+        if (unread-- > 0) throw new Error("storage is unavailable");
+        return [owned];
+      });
       vi.spyOn(process.resources, "prepareEventMedia").mockImplementation(async (media) => JSON.stringify(media));
       const delivery: ProcessEventDeliverArgs = {
-        ...ipcAnswer("ipc.reply", { callId: "call-1", targetPid: "worker", createdAt: 1, deadlineAt: 2 }), attachments: [file],
+        ...ipcAnswer("ipc.reply", { callId: "call-1", targetPid: "worker", createdAt: 1, deadlineAt: 2 }), attachments: [file, WEEK],
       };
 
       await expect(process.deliverEvent(delivery)).rejects.toThrow("storage is unavailable");
       expect(storedRecords(process)).toEqual([]);
       await process.deliverEvent(delivery);
 
-      expect(resolve).toHaveBeenLastCalledWith([file]);
-      expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: { kind: "ipc.reply", media: [owned] } }]);
+      expect(resolve).toHaveBeenLastCalledWith([WEEK]);
+      expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: { kind: "ipc.reply", media: [owned, WEEK_COPY] } }]);
       const [answer] = await process.history.buildContextMessages();
       expect(answer?.content).toEqual([
         { type: "text", text: expect.stringContaining("Process `worker` finished task `call-1`.") },
         { type: "text", text: `Attached document "answer.md" [text/markdown] 68.4 KB\nPath: /${key}` },
+        { type: "text", text: `Attached document "week.csv" [text/csv] 2.0 KB\nPath: /${WEEK_COPY.key}` },
+      ]);
+    });
+  });
+
+  it("answers without a target's file it can't copy, as a contact's message goes without one, and logs why", async () => {
+    const stub = await initProcess("typed-answer-lost-file", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const gone: ResourceBlock = { ...WEEK, filename: "gone.csv", ref: { ...WEEK.ref, path: `/home/crew/.gsv/media/archived-media:${"d".repeat(64)}` } };
+      vi.spyOn(process.resources, "resolveIncomingMedia").mockImplementation(async (input) => {
+        if (input?.[0] === gone) throw new Error("resource not found");
+        return [WEEK_COPY];
+      });
+      vi.spyOn(process.resources, "prepareEventMedia").mockImplementation(async (media) => JSON.stringify(media));
+      const answer = (callId: string, attachments: ResourceBlock[]): ProcessEventDeliverArgs => ({
+        ...ipcAnswer("ipc.reply", { callId, targetPid: "worker", createdAt: 1, deadlineAt: 2, response: { text: "The week.", usage: null } }),
+        attachments,
+      });
+
+      await process.deliverEvent(answer("call-1", [WEEK, gone]));
+      await process.deliverEvent(answer("call-2", [gone]));
+
+      const [kept, bare] = storedRecords(process);
+      expect(kept).toMatchObject({ kind: "event", payload: { kind: "ipc.reply", payload: { callId: "call-1" }, media: [WEEK_COPY] } });
+      expect(bare).toMatchObject({ kind: "event", payload: { kind: "ipc.reply", payload: { callId: "call-2" } } });
+      expect(bare?.payload).not.toHaveProperty("media");
+      expect(warn.mock.calls).toEqual([
+        [expect.stringContaining("goes without attachments"), "resource not found"],
+        [expect.stringContaining("goes without attachments"), "resource not found"],
       ]);
     });
   });

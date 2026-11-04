@@ -78,12 +78,18 @@ async function admitRuntimeEvent(
   let media: string | undefined;
   if (attachments?.length) {
     const retained = await retainAttachments(host, attachments);
-    // A call's file is its whole answer, so its delivery tries again until the file is kept.
-    if (recorded.kind !== "contact.message" && retained.media === undefined) throw new Error(retained.errors.join("; "));
+    // A file already in this Process's home, such as an answer too long for its event, is
+    // only late, so the delivery tries again until it can be read.
+    if (retained.unread.length > 0) throw new Error(retained.unread.join("; "));
     media = retained.media;
-    // A contact's message goes without what it couldn't fetch, and says so.
-    if (recorded.kind === "contact.message" && retained.errors.length > 0) {
-      recorded = { ...recorded, payload: { ...recorded.payload, attachmentErrors: retained.errors } };
+    // What couldn't be copied from elsewhere stays out, so a file that is gone can't hold up
+    // the events queued behind this one. A contact's message says so.
+    if (retained.errors.length > 0) {
+      if (recorded.kind === "contact.message") {
+        recorded = { ...recorded, payload: { ...recorded.payload, attachmentErrors: retained.errors } };
+      } else {
+        console.warn(`[Process] Event ${eventId} goes without attachments it couldn't keep:`, retained.errors.join("; "));
+      }
     }
   }
   const admitted = await host.controller.handleRuntimeEvent(renderHistoryEvent(recorded), recorded.kind, {
@@ -109,10 +115,18 @@ async function admitRuntimeEvent(
   return { eventId, runId: admitted.runId, queued: admitted.queued };
 }
 
-/** Files the Kernel hands with an event become this Process's own media, as messenger attachments do. */
-async function retainAttachments(host: Process, blocks: ResourceBlock[]): Promise<{ media?: string; errors: string[] }> {
+/**
+ * Files the Kernel hands with an event become this Process's own media, as messenger attachments do.
+ * A file already in this Process's home that can't be read is `unread`; one that can't be copied
+ * from elsewhere is an error.
+ */
+async function retainAttachments(
+  host: Process,
+  blocks: ResourceBlock[],
+): Promise<{ media?: string; errors: string[]; unread: string[] }> {
   const media: ProcMediaInput[] = [];
   const errors: string[] = [];
+  const unread: string[] = [];
   // The message's byte budget is checked against declared sizes before any bytes are fetched.
   let remainingBytes = MAX_MESSAGE_MEDIA_TOTAL_BYTES;
   for (const block of blocks) {
@@ -124,16 +138,18 @@ async function retainAttachments(host: Process, blocks: ResourceBlock[]): Promis
       media.push(...await host.resources.resolveIncomingMedia([block]));
       remainingBytes -= block.ref.size;
     } catch (error) {
-      errors.push(errorMessageFromUnknown(error));
+      const { target, path } = block.ref;
+      const own = target === "gsv" && host.resources.ownedMediaPath(path.replace(/^\/+/, "")) === path;
+      (own ? unread : errors).push(errorMessageFromUnknown(error));
     }
   }
-  if (media.length === 0) return { errors };
+  if (media.length === 0 || unread.length > 0) return { errors, unread };
   try {
-    return { media: await host.resources.prepareEventMedia(media) ?? undefined, errors };
+    return { media: await host.resources.prepareEventMedia(media) ?? undefined, errors, unread };
   } catch (error) {
     // Only enrichment failed: keep the retained attachments themselves.
     errors.push(`attachments could not be prepared: ${errorMessageFromUnknown(error)}`);
-    return { media: stringifyStoredProcessMedia(media) ?? undefined, errors };
+    return { media: stringifyStoredProcessMedia(media) ?? undefined, errors, unread };
   }
 }
 

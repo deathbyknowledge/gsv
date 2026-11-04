@@ -1,8 +1,10 @@
+import { z } from "zod";
 import {
   bodyFromBytes,
+  resourceBlockSchema,
   type JsonObject,
   type JsonValue,
-  type MessageAttachment,
+  type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
@@ -43,7 +45,6 @@ type IpcCallSupervisionOptions = {
 type IpcCompletionResponse = {
   text: string | null;
   usage: JsonValue;
-  media?: MessageAttachment[];
 };
 
 
@@ -245,7 +246,8 @@ async completeIpcCallsForProcessSignal(
       text: payload?.result?.text ?? null,
       usage: payload?.usage ?? null,
     };
-    if (payload?.result?.media?.length) response.media = payload.result.media;
+    // A run's files are references to its home's archive, which its caller copies.
+    const files = z.array(resourceBlockSchema).parse(payload?.result?.media ?? []);
     const status = payload?.status ?? "ok";
     if (status !== "ok" && status !== "error" && status !== "aborted") {
       throw new Error("Invalid process run completion status");
@@ -272,7 +274,7 @@ async completeIpcCallsForProcessSignal(
       runStatus: status,
       response,
       ...(error ? { error } : undefined),
-    });
+    }, files);
     this.answer(
       () => this.host.ipcCalls.endByRun({ uid: ownerUid, targetPid: processId, runId }),
       end,
@@ -281,14 +283,25 @@ async completeIpcCallsForProcessSignal(
   }
 
   /**
-   * Fits an answer in its event. Text too large for one moves into a file in the caller's
-   * own home, which reaches the caller as an attachment; the worker's own files stay in
-   * the response.
+   * Fits an answer in its event. The files its target attached go as the answer's
+   * attachments, and text too large for the event moves into a file in the caller's own
+   * home, which goes ahead of them.
    */
-  private async fitAnswer(call: IpcCallRecord, end: IpcCallEnd & { response: IpcCompletionResponse }): Promise<IpcCallEnd> {
-    const answer = ipcAnswer(call, end, { kind: "kernel" });
-    const { text, media } = end.response;
-    if (text === null || eventBodyBytes(answer.body ?? null) <= MAX_EVENT_BODY_BYTES) return end;
+  private async fitAnswer(
+    call: IpcCallRecord,
+    end: IpcCallEnd & { response: IpcCompletionResponse },
+    files: ResourceBlock[],
+  ): Promise<IpcCallEnd> {
+    const { text } = end.response;
+    const attached: IpcCallEnd = files.length === 0 ? end : {
+      ...end,
+      // An answer that is only files has nothing else to show beside them.
+      response: text === null ? undefined : end.response,
+      attachments: files,
+    };
+    if (text === null || eventBodyBytes(ipcAnswer(call, attached, { kind: "kernel" }).body ?? null) <= MAX_EVENT_BODY_BYTES) {
+      return attached;
+    }
     const written = await writeProcessResource(this.host.installationId, call.sourcePid, {
       resourceId: `${call.callId}:answer`,
       mediaType: "document",
@@ -300,7 +313,7 @@ async completeIpcCallsForProcessSignal(
       if (written.unavailable === "killed") return { ...end, response: undefined };
       throw new Error(written.message);
     }
-    return { ...end, response: media ? { media } : undefined, attachments: [written.resource] };
+    return { ...end, response: undefined, attachments: [written.resource, ...files] };
   }
 
 returnDelegatedResponsibility(call: IpcCallRecord, end: IpcCallEnd): void {

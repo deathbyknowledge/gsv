@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { ProcessIdentity, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import * as processTransport from "../shared/utils";
 import type { Kernel } from "./do";
 import { handleProcIpcCall, handleProcIpcSend } from "./proc-handlers";
@@ -77,10 +77,16 @@ function ipcEvents(kernel: Kernel) {
   ).toArray().map(({ actor_json, body_json, ...row }) => ({ ...row, actor: JSON.parse(actor_json), body: JSON.parse(body_json) }));
 }
 
-/** A run's end, as its Process signals it. */
-function finished(runId: string, status: "ok" | "error" | "aborted", text: string | null = null) {
-  return { type: "sig", signal: "proc.run.finished", payload: { runId, status, result: { text } } } as const;
+/** A run's end, as its Process signals it, with the files the run attached. */
+function finished(runId: string, status: "ok" | "error" | "aborted", text: string | null = null, media?: ResourceBlock[]) {
+  return { type: "sig", signal: "proc.run.finished", payload: { runId, status, result: { text, ...(media ? { media } : undefined) } } } as const;
 }
+
+/** A file the target's run attached, kept in the target's own home. */
+const CHART: ResourceBlock = {
+  type: "resource", mediaType: "image", filename: "chart.png",
+  ref: { type: "file", target: "gsv", path: "/home/crew/.gsv/media/archived-media:chart", revision: "\"c1\"", contentType: "image/png", size: 2_048 },
+};
 
 async function call(kernel: Kernel, options: Parameters<typeof handleProcIpcCall>[2] = {}, timeoutMs = 60_000) {
   const called = await handleProcIpcCall({ pid: TARGET, message: "Check the oven.", timeoutMs }, caller(kernel), options);
@@ -211,7 +217,32 @@ describe("process IPC on the event log", () => {
     });
   });
 
-  it("sends an answer too large for its event as a file in the caller's own home", async () => {
+  it.each<{ case: string; text: string | null; response?: { text: string; usage: null } }>([
+    { case: "beside its text", text: "The week, charted.", response: { text: "The week, charted.", usage: null } },
+    { case: "as its whole answer", text: null },
+  ])("sends the files a target attached $case as the answer's attachments", async ({ text, response }) => {
+    const { delivered } = processes();
+    await fixture(async (kernel) => {
+      const called = await call(kernel);
+      await kernel.ipc.completeIpcCallsForProcessSignal(TARGET, finished(called.runId, "ok", text, [CHART]));
+      await runEvents(kernel);
+
+      expect(delivered(kernel, CALLER)[0]![2]).toEqual({
+        eventId: expect.any(String),
+        event: {
+          kind: "ipc.reply", severity: "info", audience: "model",
+          payload: {
+            callId: called.callId, targetPid: TARGET, sourceRunId: CALLER_RUN, createdAt: expect.any(Number), deadlineAt: called.deadlineAt,
+            ...(response ? { response } : undefined),
+          },
+        },
+        admission: { idle: "start", busy: "join", joinRun: CALLER_RUN },
+        attachments: [CHART],
+      });
+    });
+  });
+
+  it("sends an answer too large for its event as a file in the caller's own home, ahead of the target's files", async () => {
     const { delivered } = processes();
     await fixture(async (kernel) => {
       const file = {
@@ -225,7 +256,7 @@ describe("process IPC on the event log", () => {
       });
       const called = await call(kernel);
       const text = "Every recipe in the book. ".repeat(2_700);
-      await kernel.ipc.completeIpcCallsForProcessSignal(TARGET, finished(called.runId, "ok", text));
+      await kernel.ipc.completeIpcCallsForProcessSignal(TARGET, finished(called.runId, "ok", text, [CHART]));
 
       expect(write).toHaveBeenCalledWith(kernel.installationId, CALLER, {
         resourceId: `${called.callId}:answer`, mediaType: "document", contentType: "text/markdown", filename: "answer.md",
@@ -239,7 +270,7 @@ describe("process IPC on the event log", () => {
           payload: { callId: called.callId, targetPid: TARGET, sourceRunId: CALLER_RUN, createdAt: expect.any(Number), deadlineAt: called.deadlineAt },
         },
         admission: { idle: "start", busy: "join", joinRun: CALLER_RUN },
-        attachments: [file],
+        attachments: [file, CHART],
       });
     });
   });

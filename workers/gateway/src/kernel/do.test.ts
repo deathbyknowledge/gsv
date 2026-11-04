@@ -4130,11 +4130,13 @@ describe("Kernel IPC completion", () => {
 
   it("cancels the calls an aborted run made before answering the call it ran for", async () => {
     const media = [{
-      type: "document",
-      mimeType: "application/pdf",
-      key: `home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
-      path: `/home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
-      size: 42,
+      type: "resource",
+      mediaType: "document",
+      filename: "report.pdf",
+      ref: {
+        type: "file", target: "gsv", path: `/home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
+        revision: "\"r1\"", contentType: "application/pdf", size: 42,
+      },
     }];
     const call = {
       callId: "call-1", ownerUid: 1000, sourcePid: "proc-ship", sourceRunId: null, targetPid: "proc-source", targetRunId: "run-source",
@@ -4169,12 +4171,11 @@ describe("Kernel IPC completion", () => {
     expect(cancelBySourceRun.mock.invocationCallOrder[0]).toBeLessThan(
       findPendingByTargetRun.mock.invocationCallOrder[0],
     );
+    // Its file goes as the answer's attachment, with no empty response beside it.
     expect(log.append).toHaveBeenCalledWith(expect.objectContaining({
-      body: expect.objectContaining({
-        response: { text: null, usage: null, media },
-        error: "Target run was aborted: user.superseded",
-      }),
+      body: expect.objectContaining({ error: "Target run was aborted: user.superseded", attachments: media }),
     }));
+    expect(log.append.mock.calls[0]![0].body).not.toHaveProperty("response");
     expect(kernel.ipc.returnDelegatedResponsibility).toHaveBeenCalledWith(call, expect.objectContaining({ runStatus: "aborted" }));
   });
 

@@ -35,9 +35,15 @@ runner        one durable task, one retry rule, one gate check
 
 A message's text and media stay in its Conversation, and its delivery reads
 them when it goes. A call's answer travels in its event. The call's row lasts
-only while the call is in flight. An answer too large for its event goes to
-the caller as a file in the caller's own home, and it arrives as an
-attachment, the way a contact's attachments do.
+only while the call is in flight. The files the target's run attached go with
+the answer as attachments, and the caller keeps its own copy, the way it keeps
+a contact's attachments. An answer too large for its event goes to the caller
+as a file in the caller's own home, ahead of them.
+
+A file the caller can't copy is left out and logged, so a file that is gone
+can't hold up the deliveries queued behind its answer. A file already in the
+caller's own home, such as a long answer's, is only late, so its delivery is
+tried again until the file can be read.
 
 ## Delivery
 
