@@ -41,6 +41,7 @@ export * from "./approaches";
 export * from "./ship-methods";
 export type * from "./syscalls/map";
 export * from "./adapters";
+export * from "./message-choices";
 export * from "./adapter-media-body";
 export * from "./body";
 export * from "./binary-frame";

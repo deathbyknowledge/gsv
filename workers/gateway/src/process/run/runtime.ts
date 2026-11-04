@@ -197,6 +197,7 @@ export class ProcessRun {
       text: command.text,
       finish: command.finish,
       media,
+      ...(command.choices ? { choices: command.choices } : undefined),
     });
     if (!sent.ok || !command.finish) return sent;
     const responsibilityCheck = await this.verifyTerminalResponsibilities(runId);
@@ -293,6 +294,7 @@ export class ProcessRun {
     text: string;
     finish: boolean;
     media: RunOutputMedia[];
+    choices?: string[];
   }): Promise<RunControlResult> {
     try {
       await this.host.streams.complete(options.runId, options.actionId, options.text);
@@ -320,6 +322,7 @@ export class ProcessRun {
     text: string;
     finish: boolean;
     media: RunOutputMedia[];
+    choices?: string[];
   }): Promise<RunControlResult> {
     const releaseCommit = this.beginRunControlCommit(options.runId);
     try {
@@ -420,6 +423,7 @@ export class ProcessRun {
       actionId: string;
       text: string;
       media: RunOutputMedia[];
+      choices?: string[];
     },
   ): InternalRequestFrame<"proc.message.commit"> {
     const args: InternalRequestFrame<"proc.message.commit">["args"] = {
@@ -431,6 +435,7 @@ export class ProcessRun {
     if (options.media.length > 0) {
       args.media = options.media.map((item) => this.host.resources.runOutputMediaResource(item));
     }
+    if (options.choices?.length) args.choices = options.choices;
     return {
       type: "req",
       id: crypto.randomUUID(),

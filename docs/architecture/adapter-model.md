@@ -254,6 +254,14 @@ a line of text under the message, and adapters without native actions always
 receive it that way from the shared frame handler. The action is part of the
 delivery's content, so a replay with a different action is a different delivery.
 
+An `adapter.send` may also carry `choices`, the replies its message offers: up
+to ten short lines. Adapters that declare native choices receive them as such;
+every other adapter receives them from the shared frame handler as a numbered
+list under the text. Like an action, the choices are part of the delivery's
+content. Whatever the person answers, a tap or a typed reply such as "2",
+arrives as an ordinary inbound message; choices never carry identity, authority
+or a callback.
+
 An approval for a deleted or inaccessible Process is terminal. The Kernel
 preserves the protocol error code, so the adapter resolves the callback as stale
 and continues delivering later messages. Temporary transport or service failures

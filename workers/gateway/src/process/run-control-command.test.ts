@@ -108,6 +108,7 @@ This block never closes.`,
     "message send --to message-destination:opaque --message hello && yield",
     "message send --to \"$DESTINATION\" --message hello",
     "message send --to",
+    "message send --message 'Coming?' --choice --to --to telegram --also",
   ])("leaves an explicit destination to the ordinary shell: %s", (input) => {
     expect(parseRunControlCommand(input)).toBeNull();
   });
@@ -144,6 +145,45 @@ This block never closes.`,
         text: "$(cat /root/secret)",
         finish: false,
       },
+    });
+  });
+
+  it("offers choices from either current-conversation form", () => {
+    expect(parseRunControlCommand(
+      "message send --message 'Mornings or nights?' --choice Mornings --choice 'Night  owl ' --choice Mornings",
+    )).toEqual({
+      ok: true,
+      command: { action: "message", text: "Mornings or nights?", finish: false, choices: ["Mornings", "Night owl"] },
+    });
+    expect(parseRunControlCommand(`message send --choice Yes --choice 'Somewhere else' <<'GSV_MESSAGE' && yield
+Is Lisbon home?
+GSV_MESSAGE`)).toEqual({
+      ok: true,
+      command: { action: "message", text: "Is Lisbon home?", finish: true, choices: ["Yes", "Somewhere else"] },
+    });
+  });
+
+  it("refuses choices it cannot offer rather than sending the command as text", () => {
+    expect(parseRunControlCommand("message send --choice Yes")).toEqual({
+      ok: false,
+      action: "message",
+      error: "choices answer a question: send them with the message that asks it",
+    });
+    const eleven = Array.from({ length: 11 }, (_, index) => `--choice ${index}`).join(" ");
+    expect(parseRunControlCommand(`message send --message Pick ${eleven}`)).toEqual({
+      ok: false,
+      action: "message",
+      error: "offer at most 10 choices",
+    });
+    expect(parseRunControlCommand(`message send --message Pick --choice '${"x".repeat(81)}'`)).toEqual({
+      ok: false,
+      action: "message",
+      error: "each choice is at most 80 characters; keep it to a few words",
+    });
+    expect(parseRunControlCommand("message send --message Pick --choice")).toEqual({
+      ok: false,
+      action: "message",
+      error: "message send requires a value after --choice",
     });
   });
 });
