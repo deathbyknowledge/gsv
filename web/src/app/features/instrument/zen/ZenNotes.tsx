@@ -5,6 +5,7 @@ import { useT, type TextKey, type Translate } from "../../../i18n/locale";
 import { Hint } from "../../../components/ui/Tooltip";
 import { AppLink } from "../../../services/navigation/appNavigation";
 import { peoplePath } from "../people/peopleNavigation";
+import { NOTICE_ICONS, NoticeIcon } from "../shared/noticeIcons";
 import { memo } from "preact/compat";
 import { momentTime, noteSummary, type Moment } from "./zenModel";
 
@@ -106,9 +107,12 @@ function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { f
   // A record the person wasn't told about went only to Ship, so it has no card for them.
   if (payload.sentAtMs === undefined) return null;
   const messenger = payload.adapter ? adapterDisplayName(payload.adapter) : null;
-  const count = payload.messages !== undefined && payload.messages > 1 ? t(payload.topic === "event.received" ? "chat.notice.events" : "chat.notice.messages", { count: String(payload.messages) }) : null;
+  const count = payload.messages !== undefined && payload.messages > 1
+    ? t(payload.topic === "event.received" ? "chat.notice.events" : payload.topic === "mail.received" ? "chat.notice.mails" : "chat.notice.messages", { count: String(payload.messages) })
+    : null;
   const content = <>
     <div class="notice-head">
+      <span class="notice-icon"><NoticeIcon path={NOTICE_ICONS[payload.topic]} size={14} /></span>
       <span class="notice-from">{payload.from}</span>
       {payload.handle ? <span class="notice-handle">{`@${payload.handle}`}</span> : null}
     </div>
@@ -116,6 +120,13 @@ function ownerNoticeCard(t: Translate, moment: Moment, event: OwnerNotified, { f
       <p class="notice-body">
         {count ? <span class="notice-count">{count}</span> : null}
         {payload.preview ? <q>{payload.preview}</q> : <span class="notice-quiet">{t("chat.notice.attachment")}</span>}
+      </p>
+    ) : payload.topic === "mail.received" && payload.title ? (
+      // The subject is the sender's words; the summary beneath is the Ship's reading of the email.
+      <p class="notice-body">
+        {count ? <span class="notice-count">{count}</span> : null}
+        <span class="notice-title">{payload.title}</span>
+        {payload.preview ? <span class="notice-summary">{payload.preview}</span> : null}
       </p>
     ) : (
       <p class="notice-body">{t(NOTICE_BODY[payload.topic])}</p>

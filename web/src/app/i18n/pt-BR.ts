@@ -1892,6 +1892,7 @@ export const ptBR = {
   "chat.notice.sentOn": "Chegou pelo {channel}",
   "chat.notice.messages": "{count} mensagens · a última",
   "chat.notice.events": "{count} eventos · o mais recente",
+  "chat.notice.mails": "{count} e-mails · o mais recente",
   "chat.notice.attachment": "Enviou um anexo",
   "chat.notice.request": "Quer falar com você.",
   "chat.notice.accepted": "Aceitou seu convite.",

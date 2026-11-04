@@ -28,6 +28,7 @@ export type TestNodeProps = {
   disabled?: boolean;
   hidden?: boolean;
   href?: string;
+  path?: string;
   id?: string;
   label?: string;
   labelInfo?: string;

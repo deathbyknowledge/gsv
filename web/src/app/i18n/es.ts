@@ -1887,6 +1887,7 @@ export const es = {
   "chat.notice.sentOn": "Te llegó por {channel}",
   "chat.notice.messages": "{count} mensajes · el último",
   "chat.notice.events": "{count} eventos · el último",
+  "chat.notice.mails": "{count} correos · el último",
   "chat.notice.attachment": "Envió un adjunto",
   "chat.notice.request": "Quiere escribirte.",
   "chat.notice.accepted": "Ha aceptado tu invitación.",

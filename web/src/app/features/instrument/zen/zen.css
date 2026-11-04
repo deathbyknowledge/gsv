@@ -631,11 +631,14 @@
 .zen-moment.is-owner-notice div.notice-open { padding-bottom: 10px; }
 .zen-moment.is-owner-notice .notice-open:focus-visible { outline: none; }
 .zen-moment.is-owner-notice .notice-head { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; padding-right: 20px; }
+.zen-moment.is-owner-notice .notice-icon { display: inline-flex; align-self: center; color: var(--faint); }
 .zen-moment.is-owner-notice .notice-from { color: var(--label); }
 .zen-moment.is-owner-notice .notice-handle { color: var(--faint); font-size: 12px; }
 .zen-moment.is-owner-notice .notice-body { margin: 6px 0 0; color: var(--text-dim); overflow-wrap: anywhere; }
 .zen-moment.is-owner-notice .notice-count { display: block; color: var(--faint); font-size: 12px; }
 .zen-moment.is-owner-notice .notice-quiet { font-style: italic; }
+.zen-moment.is-owner-notice .notice-title { display: block; color: var(--text); }
+.zen-moment.is-owner-notice .notice-summary { display: block; margin-top: 2px; font-size: 12px; }
 .zen-moment.is-owner-notice .notice-go { position: absolute; right: 12px; bottom: 8px; font-size: 12px; color: var(--faint); }
 .zen-moment.is-owner-notice .notice-open:hover .notice-go,
 .zen-moment.is-owner-notice .notice-open:focus-visible .notice-go { color: var(--accent); }

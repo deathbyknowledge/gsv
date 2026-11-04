@@ -230,6 +230,7 @@ export const procHistoryEventPayloadSchemas = {
     from: z.string(),
     handle: z.optional(z.string()),
     preview: z.optional(z.string()),
+    title: z.optional(z.string()),
     contactId: z.optional(z.string()),
     conversationId: z.optional(z.string()),
     messages: z.optional(nonNegativeIntegerSchema),
@@ -362,6 +363,8 @@ export type ProcHistoryEventPayloadMap = {
     handle?: string;
     /** The start of the newest message, on one line; absent when it carries no text. It is the contact's untrusted words. */
     preview?: string;
+    /** An email's subject line, as its sender wrote it; untrusted. */
+    title?: string;
     contactId?: string;
     conversationId?: string;
     /** How many contact messages the notice covered. */

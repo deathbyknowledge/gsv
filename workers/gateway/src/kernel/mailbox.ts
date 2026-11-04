@@ -182,6 +182,7 @@ export async function completeManagedInboundMail(
       ctx.ownerNotices.noteMail(mailbox.ownerUid, mailbox.mailboxId, {
         from: summarized.displayFrom ?? summarized.envelopeFrom,
         preview: completion.summary.summary,
+        ...(summarized.subject ? { title: summarized.subject } : undefined),
       }, Date.now());
       ctx.defer(ctx.queueOwnerNotices(mailbox.ownerUid));
     }
