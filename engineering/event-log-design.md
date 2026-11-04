@@ -3,7 +3,7 @@
 Status: reviewed 2026-11-03; the decisions are folded in and listed under
 Decided. Typed internal calls are in #645 and the substrate in #646, where
 producers convert one commit at a time: contact messages, owner notices,
-responsibility wakes and schedules so far. Both are open drafts.
+responsibility wakes, schedules and source events so far. Both are open drafts.
 
 ## Problem
 
@@ -27,9 +27,6 @@ today
 
 What that costs:
 
-- A source can reach the Ship twice. A hook that both wakes the Ship and
-  notifies the person arrives as a responsibility and as `owner.notified`.
-  Inbound mail arrives as a `mail.received` responsibility and as a notice.
 - Retry follows eleven different rules (see Kernel tasks). One of them is
   pasted into three runtimes.
 - "One pending task per owner, moved earlier when something is due sooner" is
@@ -207,10 +204,10 @@ private async pass(taskId: string): Promise<void> {
   rules: the federation outbox parks for 60 s, outbound mail fails for a
   retained, deleting or deleted installation and skips other inactive states,
   and adapter route delivery has no gate.
-- **Bodies.** An event carries up to 64 KiB of serialized JSON inline. The
-  custom-source limit today covers a hook's body alone, so the hooks step
-  either lowers it by the size of the event's other fields or keeps larger
-  bodies by reference. Anything larger stays in the store that accepted it:
+- **Bodies.** An event carries up to 64 KiB of serialized JSON inline. A
+  source event's limit covers its title, preview and body as stored, and a
+  webhook payload that doesn't fit leaves its event without it. Anything
+  larger stays in the store that accepted it:
   Conversation, mailbox, federation inbox or R2 media. The event carries an
   immutable reference. It never owns bytes; the accepting store still owns
   cleanup.
@@ -226,14 +223,17 @@ private async pass(taskId: string): Promise<void> {
   event keeps its body and outcomes in SQLite for 30 days; an event with a
   pending delivery keeps both. Retention runs once something falls due, at
   most hourly: the runner reads the next due time from the log at start-up
-  and after each run, and an append or a settle only brings it forward. The row then keeps only its type and key until
+  and after each run, and an append or a settle only brings it forward. A
+  producer's kick arms the runner for whatever is due next, so an event that
+  goes to no one, such as a source event, still meets its retention. The row
+  then keeps only its type and key until
   day 180, so a duplicate that arrives late, such as a resent mail or
   webhook, still appends nothing. A key is about 100 bytes; an event can
   carry 64 KiB. The log stays Kernel-internal until a later owner- or
   root-scoped list syscall, which brings the R2 archive with it; a source's
-  listing is its first owner-scoped read. v091 has no index on owner or
-  subject, so the hooks step adds the one that listing needs, and a source's
-  removal deletes its events.
+  listing is its first owner-scoped read. v096 adds the indexes that listing
+  and the owner's rate limit read, by type with subject or owner, and a
+  source's removal deletes its events.
 
 Not converted: answers inside a run (`proc.hil`, tool `res` frames, the tick,
 queue promotion). They resume work that was already admitted; none of them is
@@ -252,13 +252,15 @@ Today each entry handler decides for itself.
 | `work.returned` | start | own run after | `adapter.work.returned` with `distinctRun` |
 | `contact.message` | start | join | `proc.runtime.event.deliver` |
 | `responsibility.ready`: a batch of up to 25 records | start | join | `r12y.ready` |
-| `mail.received` | start, or record when its rule says `context` | join | via r12y |
-| `source.event`: hook, `event.emit` | start, or record when the source says `context` | join | via r12y or a notice |
 | `schedule.fired` | start | join; own run after with `replyTo` | `proc.schedule.deliver` |
 | `target.status` | start, or record when only the person sees it | join | `proc.event.deliver` |
 | `owner.notified` | record | join | `proc.event.deliver` |
 | `delivery.failed` | record | record | `proc.delivery.notice` |
 | `ipc.replied`, `ipc.timed_out`, `ipc.overdue` | settles the call | settles the call | signals |
+
+Mail and source events have no row: a wake is a responsibility, which
+arrives as `responsibility.ready`, and a notice reaches the Ship as
+`owner.notified`, its note of what the person was told.
 
 One Kernel → Process call replaces the seven calls and the IPC answer signals
 in the last column: the typed Durable Object method `deliverEvent(delivery)`,
@@ -273,8 +275,8 @@ state machine.
 | Contact message | `contact.message`, appended by the inbox's projection beside the responsibility it owes | `contact:<id>` | the Conversation message id, derived from contact, generation and delivery id | ref: Conversation message | Ship · join | `ship_events`, `onShipEvents`, `ship-event-runtime.ts`, the contact branch of `proc.runtime.event.deliver`; the inbox keeps its own intake and `onFederationInbox` |
 | Owner notice | `owner.notified`, appended when a round is sent or left to a client | `notice:<round id>` | round id | inline | Ship · record or join | Ship's half of `ship_events`; `onOwnerNotices` still sends to the messenger |
 | Responsibility wake | `responsibility.ready`, appended by the wake timer for a batch of up to 25 records; none while one is still pending, so bursts merge as today | `owner:<uid>` | a fresh id per batch | inline: record ids and ledger revision | Ship · join | `responsibility_wake_batches`, `onResponsibilityWake`'s delivery, `r12y.ready`; the timer and the ledger's recovery wakes stay |
-| Inbound mail | `mail.received` | `mail:<id>` | message id | ref: `mail_messages` row | Ship · join; notices when a rule says | the wake through r12y and the parallel notice |
-| Hook, `event.emit` | `source.event` | `source:<id>` | source id + source event id, which is unique only per source | inline | Ship · join or record; notices when the source says | `event_log`, `onEventUpkeep`'s retention, the wake through r12y, the double delivery |
+| Inbound mail | none: a wake is a `mail.received` responsibility, and a notice is a notice | — | — | — | Ship, through `responsibility.ready` and `owner.notified` | nothing of its own; both are on the log since steps 3 and 4 |
+| Hook, `event.emit` | `source.event`, kept for the source's list and to refuse a repeat | `source:<id>` | source id + source event id, which is unique only per source | inline: up to 64 KiB with title and preview | none; a wake stays a responsibility and a notice a notice | `event_log` and `onEventUpkeep`'s retention, done in step 6 |
 | Schedule | `schedule.fired`; a Ship's schedule stays a `responsibility` target | `schedule:<id>` | schedule id + occurrence: due time, forced run or one-shot | inline: schedule id, pid, due and fire times; the message and data are read from the schedule at delivery | `proc:<pid>` · join, or own run after with `replyTo` | `proc.schedule.deliver` and the fire-time turn of a Ship-pid schedule into a responsibility; the one-shot attempt loop stays for `adapter.send` |
 | IPC send, call | `ipc.message`, `ipc.call` | `proc:<target>` | call id | inline | `proc:<target>` · own run after | `onIpcCallDelivery` and its in-alarm retry |
 | IPC answer | `ipc.replied`, `ipc.timed_out`, `ipc.overdue` | `proc:<caller>` | call id + outcome | inline | `proc:<caller>` · settles | the signal path, the timeout task's delivery |
@@ -321,7 +323,7 @@ state machine, that consumer stays as it is.
 | `onFederationInbox` | fixed 30 s | stays: the inbox's own intake |
 | `onManagedOutboundEnqueue` | 5 s→1 h, republishing until completion, plus in-alarm retry | stays: the outbound mail outbox |
 | `onMemoryReview` | fixed 60 s successor | delete: settling a review admits the next |
-| `onEventUpkeep` | none | timer for silent sources; its retention moves to the log |
+| `onEventUpkeep` | none | timer for silent sources; its retention moved to the log in step 6 |
 | `onProcessApprovalNotice` | none: it already returns at once | delete, done in step 2 |
 | `onRouteExpired` | none | stays: request route expiry |
 | `onLedgerRotate` | none | stays: syscall ledger rotation |
@@ -377,10 +379,11 @@ which come from the model.
 ids kept 180 days, a rate bucket and `onEventUpkeep`. It is a small version of
 this log.
 
-It folds in. Source events become `source.event` rows, a source's listing
-reads the log by subject `source:<id>`, and its retention becomes the log's,
-so the listing shows 30 days instead of 180. `event_log` and `onEventUpkeep`
-go away. The new tables are `events` and `deliveries`.
+It folds in, done in step 6. Source events are `source.event` rows, a
+source's listing reads the log by subject `source:<id>`, and its retention is
+the log's, so the listing shows 30 days instead of 180. `event_log` is gone;
+`onEventUpkeep` stays for silent sources. The new tables are `events` and
+`deliveries`.
 
 `ship_events` goes away with contact messages and owner notices. The internal
 `proc.event.deliver` call becomes `deliverEvent`, the one Process entry for
@@ -405,7 +408,8 @@ a clean instance and finds each in the log. Each conversion narrows the
 4. Responsibility wakes and the welcome. r12y goes back to being state.
    Deletes wake batches and `r12y.ready`.
 5. Schedules. Deletes `proc.schedule.deliver`.
-6. Mail and hooks. `event_log` folds in.
+6. Mail and hooks. `event_log` folds in; mail is already on the log through
+   its responsibility and its notice.
 7. IPC.
 8. Target connections and memory reviews. Deletes the in-memory chain and
    `onMemoryReview`.
@@ -420,7 +424,8 @@ a clean instance and finds each in the log. Each conversion narrows the
 Before and after each step, on a clean instance:
 
 - **Deliveries per message:** Kernel → Process calls per inbound message, by
-  source. A hook that both wakes and notifies costs 2 today.
+  source. A hook that both wakes and notifies costs 2: the wake, and the
+  note of what the person was told.
 - **Accounts calls per message:** directory lookups per inbound message. #642
   already cut adapter and mail calls to one per installation per minute.
 - **Kernel CPU per turn:** Kernel CPU ms per Ship turn, from the clean-instance
@@ -475,3 +480,14 @@ Reviewed with the maintainer on 2026-11-03:
     backlog. A schedule aimed at a Ship's pid is stored as a `responsibility`;
     v095 converts older rows still aimed at one, and the fire-time fallback is
     gone.
+11. **Settled while converting mail and hooks.** Mail needs no event of its
+    own: a wake is a `mail.received` responsibility and a notice is a notice,
+    and both reach the Ship through the log already. Ship keeps its note of a
+    notice even when a wake covers the same mail or hook, so it can answer
+    when the person asks about what they were told; the note never starts a
+    run. A source's events go to no one: its list and its check for repeats
+    read them from the log, which forgets them on its own schedule, so the
+    list shows 30 days. An event's 64 KiB covers its title, preview and body
+    as stored. `event.emit` refuses a call holding a bigger one before taking
+    any of it, and a webhook's event arrives without a payload that doesn't
+    fit. v096 moves existing rows and drops `event_log`.

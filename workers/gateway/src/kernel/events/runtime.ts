@@ -17,7 +17,7 @@ export type EventRuntimeHost = Pick<
 >;
 
 /** What producers reach through their Kernel context. */
-export type KernelEvents = Pick<EventRuntime, "append" | "kick" | "pending" | "withdraw">;
+export type KernelEvents = Pick<EventRuntime, "append" | "kick" | "pending" | "withdraw" | "keyed" | "countSince" | "recent" | "forget">;
 
 /** A Process delivery retries without limit: 2 s, doubling to 256 s. */
 const PROCESS_RETRY = { baseMs: 2_000, capMs: 256_000 };
@@ -50,9 +50,9 @@ export class EventRuntime {
     return event;
   }
 
-  /** Runs due deliveries soon; call after the producer's transaction commits. */
+  /** Arms the runner for whatever the log has due next; call after the producer's transaction commits. */
   async kick(): Promise<void> {
-    await this.arm(Date.now());
+    await this.arm(this.nextRunAt());
   }
 
   /** Pending deliveries of one type about one subject, oldest first. */
@@ -64,6 +64,26 @@ export class EventRuntime {
   withdraw(delivery: PendingDelivery, reason: string): void {
     this.host.events.withdrawn(delivery.event.seq, delivery.consumer, reason, Date.now());
     this.retainUntil(delivery.event);
+  }
+
+  /** The event a producer appended under one key, while the log keeps it. */
+  keyed(type: string, key: string): LoggedEvent | null {
+    return this.host.events.keyed(type, key);
+  }
+
+  /** How many events of one type an owner's producers appended after a time. */
+  countSince(type: string, ownerUid: number, since: number): number {
+    return this.host.events.countSince(type, ownerUid, since);
+  }
+
+  /** The newest events of one type that still have their bodies, about one subject or for one owner. */
+  recent(type: string, of: { subject: string } | { ownerUid: number }, limit: number): LoggedEvent[] {
+    return this.host.events.recent(type, of, limit);
+  }
+
+  /** Deletes one subject's events of a type with their deliveries, as when what they came from is removed. */
+  forget(type: string, subject: string): void {
+    this.host.events.forget(type, subject);
   }
 
   /** Re-arms the runner from the stored deliveries when the Kernel starts. */

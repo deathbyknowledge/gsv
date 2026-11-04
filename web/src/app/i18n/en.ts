@@ -342,6 +342,7 @@ export const en = {
   "fleet.sources.confirmRemove": "Delete {name}? Its address stops working, and what it received is deleted.",
   "fleet.sources.arrived": "What arrived",
   "fleet.sources.nothingArrived": "Nothing has arrived yet.",
+  "fleet.sources.nothingRecent": "Nothing in the last 30 days.",
   "fleet.sources.body": "Full text",
   "fleet.sources.gone": "This source no longer exists.",
   "fleet.sources.sender.client": "from a command",

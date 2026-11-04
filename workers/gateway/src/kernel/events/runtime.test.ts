@@ -8,7 +8,7 @@ import { ResponsibilityStore } from "../responsibility-store";
 import { processConsumer, shipConsumer } from "./consumers";
 import type { EventRegistry, Withdrawn } from "./registry";
 import { EventRuntime, type EventRuntimeHost } from "./runtime";
-import { EventStore, type EventInput } from "./store";
+import { EVENT_BODY_RETENTION_MS, EventStore, type EventInput } from "./store";
 
 const OWNER = 1000;
 const WATCHER = "proc:watcher";
@@ -42,6 +42,11 @@ const REGISTRY = {
       },
       admission: WATCH_ADMISSION,
     }),
+  },
+  /** Kept for its producer to read back; it goes to no one. */
+  "fixture.recorded": {
+    routes: () => [],
+    admit: () => ({ withdrawn: "a recorded event goes to no one" }),
   },
   /** Tells its producer when each delivery ends, as the ledger's events do. */
   "fixture.settled": {
@@ -86,6 +91,18 @@ afterEach(() => {
 });
 
 describe("event runtime", () => {
+  it("arms for what the log has due next, so a kick for an event no one receives waits for its retention", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, schedule } = fixture(storage);
+      const event = storage.transactionSync(() => runtime.append({
+        type: "fixture.recorded", ownerUid: OWNER, subject: "fixture:recorded", actor: { kind: "kernel" }, key: "kept", body: { kept: true },
+      }));
+      await runtime.kick();
+      expect(schedule).toHaveBeenCalledTimes(1);
+      expect(schedule.mock.calls[0]?.[0].getTime()).toBe(event.createdAt + EVENT_BODY_RETENTION_MS);
+    });
+  });
+
   it("delivers an event to the owner's current Ship with its declared admission", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { host, runtime, events, schedule } = fixture(storage);

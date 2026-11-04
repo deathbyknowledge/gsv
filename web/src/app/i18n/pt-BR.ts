@@ -348,6 +348,7 @@ export const ptBR = {
   "fleet.sources.confirmRemove": "Excluir {name}? O endereço dela para de funcionar e o que ela recebeu é excluído.",
   "fleet.sources.arrived": "O que chegou",
   "fleet.sources.nothingArrived": "Nada chegou ainda.",
+  "fleet.sources.nothingRecent": "Nada nos últimos 30 dias.",
   "fleet.sources.body": "Texto completo",
   "fleet.sources.gone": "Esta fonte não existe mais.",
   "fleet.sources.sender.client": "de um comando",

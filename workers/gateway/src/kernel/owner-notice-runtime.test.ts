@@ -120,7 +120,7 @@ describe("event source notices", () => {
       const { runtime, notices, eventSources } = fixture(storage);
       const send = sent();
       const resumed = goQuiet(eventSources, notices, "backups");
-      eventSources.record(resumed, { id: "late", title: "Backup finished" }, "schedule", Date.now());
+      eventSources.arrived(resumed, Date.now());
       const relaxed = goQuiet(eventSources, notices, "nightly");
       eventSources.update(relaxed, { name: relaxed.name, expectEveryMs: null }, "person", Date.now());
       await runtime.onOwnerNotices(OWNER, { id: "task:one" });

@@ -3,7 +3,8 @@ import type { JsonObject, JsonValue } from "@humansandmachines/gsv/protocol";
 /** An event stays whole for 30 days; its key then refuses a late duplicate until day 180. */
 export const EVENT_BODY_RETENTION_MS = 30 * 24 * 60 * 60_000;
 export const EVENT_KEY_RETENTION_MS = 180 * 24 * 60 * 60_000;
-const MAX_INLINE_BODY_BYTES = 64 * 1024;
+/** The most an inline body may take, measured as the log stores it. */
+export const MAX_EVENT_BODY_BYTES = 64 * 1024;
 const MAX_ERROR_LENGTH = 1_000;
 
 /** Who caused an event. */
@@ -97,6 +98,11 @@ const LANE_HEAD = `(d.lane IS NULL OR d.seq = (
 /** An event none of whose deliveries is still pending. */
 const SETTLED = "NOT EXISTS (SELECT 1 FROM deliveries p WHERE p.seq = e.seq AND p.state = 'pending')";
 
+/** A body's size as the log stores it: the UTF-8 bytes of its JSON. */
+export function eventBodyBytes(body: JsonValue): number {
+  return new TextEncoder().encode(JSON.stringify(body)).byteLength;
+}
+
 /** The Kernel's event log and the delivery rows its consumers work through. */
 export class EventStore {
   private readonly sql: SqlStorage;
@@ -107,10 +113,10 @@ export class EventStore {
 
   /** Appends an event and one delivery per route, once per type and key. Call inside the producer's transaction. */
   append(input: EventInput, routes: readonly EventRoute[], now: number): { event: LoggedEvent; appended: boolean } {
-    const bodyJson = input.body === undefined ? null : JSON.stringify(input.body);
-    if (bodyJson !== null && new TextEncoder().encode(bodyJson).byteLength > MAX_INLINE_BODY_BYTES) {
-      throw new Error(`Event body exceeds ${MAX_INLINE_BODY_BYTES} bytes`);
+    if (input.body !== undefined && eventBodyBytes(input.body) > MAX_EVENT_BODY_BYTES) {
+      throw new Error(`Event body exceeds ${MAX_EVENT_BODY_BYTES} bytes`);
     }
+    const bodyJson = input.body === undefined ? null : JSON.stringify(input.body);
     return this.storage.transactionSync(() => {
       const existing = this.sql.exec<EventRow>(
         "SELECT * FROM events WHERE type = ? AND idempotency_key = ?",
@@ -135,6 +141,45 @@ export class EventStore {
 
   transaction<T>(operation: () => T): T {
     return this.storage.transactionSync(operation);
+  }
+
+  /** The event a producer appended under one key, while the log keeps it. */
+  keyed(type: string, key: string): LoggedEvent | null {
+    const row = this.sql.exec<EventRow>(
+      "SELECT * FROM events WHERE type = ? AND idempotency_key = ?", type, key,
+    ).toArray()[0];
+    return row ? eventFromRow(row) : null;
+  }
+
+  /** How many events of one type an owner's producers appended after a time. */
+  countSince(type: string, ownerUid: number, since: number): number {
+    return this.sql.exec<{ count: number }>(
+      "SELECT count(*) AS count FROM events WHERE type = ? AND owner_uid = ? AND created_at > ?", type, ownerUid, since,
+    ).one().count;
+  }
+
+  /** The newest events of one type that still have their bodies, about one subject or for one owner. */
+  recent(type: string, of: { subject: string } | { ownerUid: number }, limit: number): LoggedEvent[] {
+    const rows = "subject" in of
+      ? this.sql.exec<EventRow>(
+        "SELECT * FROM events WHERE type = ? AND subject = ? AND body_json IS NOT NULL ORDER BY created_at DESC, seq DESC LIMIT ?",
+        type, of.subject, limit,
+      )
+      : this.sql.exec<EventRow>(
+        "SELECT * FROM events WHERE type = ? AND owner_uid = ? AND body_json IS NOT NULL ORDER BY created_at DESC, seq DESC LIMIT ?",
+        type, of.ownerUid, limit,
+      );
+    return rows.toArray().map(eventFromRow);
+  }
+
+  /** Deletes one subject's events of a type with their deliveries, as when what they came from is removed. */
+  forget(type: string, subject: string): void {
+    this.storage.transactionSync(() => {
+      this.sql.exec(
+        "DELETE FROM deliveries WHERE seq IN (SELECT seq FROM events WHERE type = ? AND subject = ?)", type, subject,
+      );
+      this.sql.exec("DELETE FROM events WHERE type = ? AND subject = ?", type, subject);
+    });
   }
 
   event(seq: number): LoggedEvent | null {

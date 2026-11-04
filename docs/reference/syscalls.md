@@ -573,15 +573,18 @@ to act tells its owner.
 While the owner is active in a client, or has no messenger, an event appears as a card in their
 conversation rather than on the messenger, and stays out of model context unless the source's `ship` says otherwise. A source going quiet still goes to the messenger.
 
-An `id` already seen for a source is a duplicate and does nothing, for 180 days, and doesn't count against the source's rate limit. Bodies are
-kept for 30 days. Each source accepts 60 events a minute with bursts of 120, and each
-owner 600 a minute. With `expectEveryMs`, the owner is told once when that long passes
-without an event.
+An event takes at most 64 KiB once stored, its title of up to 200 characters and preview
+of up to 1,000 included; `event.emit` refuses a call holding a bigger one before taking any
+of it. An `id` already seen for a source is a duplicate and does nothing, for 180 days, and
+doesn't count against the source's rate limit. `event.list` shows the last 30 days. Each
+source accepts 60 events a minute with bursts of 120, and each owner 600 a minute. With
+`expectEveryMs`, the owner is told once when that long passes without an event.
 
 An event's words are untrusted wherever they end up. An event from a running process
 never wakes Ship.
 
-A source with a webhook takes a `POST` at `/hooks/<sourceId>`, with a body of up to 256 KiB.
+A source with a webhook takes a `POST` at `/hooks/<sourceId>`, with a body of up to 256 KiB
+that becomes the event's body; an event too big to store with it arrives without it.
 A webhook names how a delivery proves its sender, never who the sender is. `standard` checks
 the [Standard Webhooks](https://www.standardwebhooks.com/) signature. `hmac` checks an
 HMAC-SHA256 with the source's secret, in `hmac.header`, encoded as `hmac.encoding` after an

@@ -4,6 +4,7 @@ import { contactMessageEvent } from "../federation/attention";
 import { ownerNotifiedEvent } from "../owner-notice-runtime";
 import { responsibilityReadyEvent } from "../responsibility-runtime";
 import { scheduleFiredEvent } from "../schedule-events";
+import { sourceEventDefinition } from "../source-events";
 import type { EventInput, EventRoute, LoggedEvent } from "./store";
 
 /** What a receiving Process records for an event, and whether it starts or joins a run. */
@@ -39,6 +40,7 @@ export const EVENT_REGISTRY = {
   "owner.notified": ownerNotifiedEvent,
   "responsibility.ready": responsibilityReadyEvent,
   "schedule.fired": scheduleFiredEvent,
+  "source.event": sourceEventDefinition,
 } satisfies EventRegistry;
 
 export function isWithdrawn<Value extends object | undefined>(value: Value | Withdrawn): value is Withdrawn {

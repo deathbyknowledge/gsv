@@ -343,6 +343,7 @@ export const es = {
   "fleet.sources.confirmRemove": "¿Eliminar {name}? Su dirección dejará de funcionar y se borrará lo que ha recibido.",
   "fleet.sources.arrived": "Lo que ha llegado",
   "fleet.sources.nothingArrived": "Todavía no ha llegado nada.",
+  "fleet.sources.nothingRecent": "Nada en los últimos 30 días.",
   "fleet.sources.body": "Texto completo",
   "fleet.sources.gone": "Esta fuente ya no existe.",
   "fleet.sources.sender.client": "desde un comando",

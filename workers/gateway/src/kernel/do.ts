@@ -768,7 +768,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return receiveWebhook(sourceId, token, new Headers(headers), body, this.buildKernelContext({ callerOwnerUid: row.owner_uid }));
   }
 
-  /** One pending task, moved earlier when a source would go quiet or a body expire sooner. */
+  /** One pending task, moved earlier when a source would go quiet sooner. */
   private async queueEventUpkeep(excludeTaskId?: string): Promise<void> {
     const next = this.eventSources.nextUpkeepAt();
     if (next === null) return;
@@ -787,7 +787,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onEventUpkeep", null, { idempotent: true, excludeTaskId: taskId });
       return;
     }
-    this.eventSources.prune(Date.now());
     const owners = noteSilentSources(this.eventSources, this.ownerNotices, this.auth, Date.now());
     for (const ownerUid of owners) await this.ownerNoticeRuntime.queue(ownerUid);
     await this.queueEventUpkeep(taskId);
