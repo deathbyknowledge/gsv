@@ -27,7 +27,7 @@ describe("IPC run status migration", () => {
       }
       const before = sql.exec("SELECT * FROM ipc_calls ORDER BY call_id").toArray();
 
-      // v097 later moves calls' answers onto the event log; this checks v068 on its own.
+      // v092 later moves calls' answers onto the event log; this checks v068 on its own.
       const throughV068 = KERNEL_MIGRATIONS.filter((migration) => migration.id <= 68);
       runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, throughV068);
       runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, throughV068);

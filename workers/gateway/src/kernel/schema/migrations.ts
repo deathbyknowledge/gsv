@@ -24,16 +24,7 @@ import { KERNEL_V088_PERSONAL_RECOVERY_CLAIMS } from "./v088_personal_recovery_c
 import { KERNEL_V089_HAPPENING_RULES } from "./v089_happening_rules";
 import { KERNEL_V090_EVENT_SOURCES } from "./v090_event_sources";
 import { KERNEL_V091_OUTSIDE_TEXT_LABELS } from "./v091_outside_text_labels";
-import { KERNEL_V092_EVENTS } from "./v092_events";
-import { KERNEL_V093_SHIP_EVENTS_TO_LOG } from "./v093_ship_events_to_log";
-import { KERNEL_V094_RESPONSIBILITY_WAKES_TO_LOG } from "./v094_responsibility_wakes_to_log";
-import { KERNEL_V095_RESPONSIBILITY_READY_UNLANED } from "./v095_responsibility_ready_unlaned";
-import { KERNEL_V096_SHIP_SCHEDULE_TARGETS } from "./v096_ship_schedule_targets";
-import { KERNEL_V097_SOURCE_EVENTS_TO_LOG } from "./v097_source_events_to_log";
-import { KERNEL_V098_IPC_ANSWERS_TO_LOG } from "./v098_ipc_answers_to_log";
-import { KERNEL_V099_REMOVE_MEMORY_REVIEW_POLL } from "./v099_remove_memory_review_poll";
-import { KERNEL_V100_DROP_WORK_RETURN_CHECKPOINTS } from "./v100_drop_work_return_checkpoints";
-import { KERNEL_V101_DELIVERY_NOTICES_TO_LOG } from "./v101_delivery_notices_to_log";
+import { KERNEL_V092_EVENT_LOG } from "./v092_event_log";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -242,16 +233,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V089_HAPPENING_RULES,
   KERNEL_V090_EVENT_SOURCES,
   KERNEL_V091_OUTSIDE_TEXT_LABELS,
-  KERNEL_V092_EVENTS,
-  KERNEL_V093_SHIP_EVENTS_TO_LOG,
-  KERNEL_V094_RESPONSIBILITY_WAKES_TO_LOG,
-  KERNEL_V095_RESPONSIBILITY_READY_UNLANED,
-  KERNEL_V096_SHIP_SCHEDULE_TARGETS,
-  KERNEL_V097_SOURCE_EVENTS_TO_LOG,
-  KERNEL_V098_IPC_ANSWERS_TO_LOG,
-  KERNEL_V099_REMOVE_MEMORY_REVIEW_POLL,
-  KERNEL_V100_DROP_WORK_RETURN_CHECKPOINTS,
-  KERNEL_V101_DELIVERY_NOTICES_TO_LOG,
+  KERNEL_V092_EVENT_LOG,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {
