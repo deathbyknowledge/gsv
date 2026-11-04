@@ -302,6 +302,7 @@ export function renderManualPage(topic: string): string | null {
         "  instead of staging them; the block form is for people and scripts.",
         "  Repeat --choice TEXT on either form to offer up to 10 short replies the",
         "  person can tap, as Send's choices do; a tap arrives as their next message.",
+        "  A choice is offered word for word: single-quote one with $ or backticks.",
         "  This works for native clients and adapter conversations. Do not pass --to or",
         "  --also when replying to the current conversation. An explicit destination send",
         "  requires --also during an active run, acknowledging that the extra message is",

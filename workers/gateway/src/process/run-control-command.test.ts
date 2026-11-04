@@ -161,6 +161,24 @@ GSV_MESSAGE`)).toEqual({
       ok: true,
       command: { action: "message", text: "Is Lisbon home?", finish: true, choices: ["Yes", "Somewhere else"] },
     });
+    expect(parseRunControlCommand("message send --message 'Your budget?' --choice 'Under $100'")).toEqual({
+      ok: true,
+      command: { action: "message", text: "Your budget?", finish: false, choices: ["Under $100"] },
+    });
+  });
+
+  it.each([
+    'message send --message "What\'s your budget?" --choice "Under $100"',
+    "message send --message What's your budget? --choice Low",
+    "message send --message 'Pick one' --choice A; echo B",
+    "message send --choice \"Under $100\" <<'GSV_MESSAGE'\nYour budget?\nGSV_MESSAGE",
+  ])("never sends a command offering choices as its text: %s", (input) => {
+    expect(parseRunControlCommand(input)).toEqual({
+      ok: false,
+      action: "message",
+      error: "quote the message and each choice on their own, as in --message 'Your budget?' "
+        + "--choice 'Under $100'; single quotes keep $ and backticks as written",
+    });
   });
 
   it("refuses choices it cannot offer rather than sending the command as text", () => {

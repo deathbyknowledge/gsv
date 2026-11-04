@@ -54,6 +54,17 @@ export function normalizeMessageChoices(
   return { ok: true, choices };
 }
 
+/**
+ * A choice is offered word for word, so a send offering choices is never read
+ * as one opaque message, which would show the person its quoting and flags.
+ */
+const UNREADABLE_CHOICES: RunControlCommandParseResult = {
+  ok: false,
+  action: "message",
+  error: "quote the message and each choice on their own, as in --message 'Your budget?' "
+    + "--choice 'Under $100'; single quotes keep $ and backticks as written",
+};
+
 export type RunControlCommandParseResult =
   | { ok: true; command: RunControlCommand }
   | { ok: false; action: RunControlCommand["action"]; error: string };
@@ -131,6 +142,7 @@ function parseMessageCommand(
 ): RunControlCommandParseResult | null {
   const args = command.args.map(literalWord);
   if (hasExplicitSendOption(args.slice(1))) return null;
+  if (args.includes("--choice") && args.includes(null)) return UNREADABLE_CHOICES;
   if (command.redirections.length > 0) {
     return parseMessageHeredoc(input, command, finish);
   }
@@ -227,6 +239,7 @@ function parseOpaqueMessageSend(
       error: "message send requires a value after --message",
     };
   }
+  if (/(?:^|\s)--choice(?:[\s=]|$)/u.test(rawText)) return UNREADABLE_CHOICES;
   const text = rawText.trim();
   const quote = text[0];
   const unwrapped =
