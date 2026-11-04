@@ -309,6 +309,69 @@ const shipMessageCommittedSchema = z.strictObject({
     hasMedia: z.boolean(),
     // Optional only for compatibility with producers during rolling upgrades.
     platform: z.optional(shipPlatformSchema),
+    // Present only on the first message a run commits after the person's own
+    // message: the time from Process receipt to that commit.
+    replyMs: z.optional(nonNegativeIntegerSchema),
+  }),
+});
+
+// The person's own message to Ship, reported when the Conversation accepts
+// it. Text and media never leave the Kernel; only their presence does.
+const shipMessageReceivedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("ship.message.received"),
+  properties: z.strictObject({
+    source: z.enum(["client", "adapter"]),
+    platform: shipPlatformSchema,
+    hasText: z.boolean(),
+    hasMedia: z.boolean(),
+  }),
+});
+
+// Closed categories for a run that a person's conversation message started
+// and that ended without a normal completion. The cause stays in Process
+// history; the record carries the category only.
+export const conversationReplyFailureSchema = z.enum([
+  "generation",
+  "context",
+  "media",
+  "no_send",
+  "command",
+  "delivery",
+  "runtime",
+  "superseded",
+  "cancelled",
+  "killed",
+  "other",
+]);
+
+const conversationReplyFailedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("conversation.reply.failed"),
+  properties: z.strictObject({
+    outcome: z.enum(["error", "aborted"]),
+    failure: conversationReplyFailureSchema,
+    // Whether the run had already committed a message before it ended.
+    replied: z.boolean(),
+    durationMs: nonNegativeIntegerSchema,
+  }),
+});
+
+const onboardingWelcomeActivatedSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("onboarding.welcome.activated"),
+  properties: z.strictObject({}),
+});
+
+// The first Ship message accepted after the welcome responsibility opened,
+// once per owner, with the time it took to arrive.
+const onboardingWelcomeDeliveredSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("onboarding.welcome.delivered"),
+  properties: z.strictObject({
+    durationMs: nonNegativeIntegerSchema,
+    delivery: z.enum(["client", "adapter", "background"]),
+    platform: shipPlatformSchema,
   }),
 });
 
@@ -495,6 +558,10 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   installationActivatedSchema,
   installationAttributedSchema,
   shipMessageCommittedSchema,
+  shipMessageReceivedSchema,
+  conversationReplyFailedSchema,
+  onboardingWelcomeActivatedSchema,
+  onboardingWelcomeDeliveredSchema,
   targetConnectedSchema,
   adapterConnectedSchema,
   integrationConnectedSchema,
@@ -527,6 +594,10 @@ export const telemetryEventComponents = {
   "installation.activated": ["accounts"],
   "installation.attributed": ["accounts"],
   "ship.message.committed": ["gateway"],
+  "ship.message.received": ["gateway"],
+  "conversation.reply.failed": ["gateway"],
+  "onboarding.welcome.activated": ["gateway"],
+  "onboarding.welcome.delivered": ["gateway"],
   "target.connected": ["gateway"],
   "adapter.connected": ["gateway"],
   "integration.connected": ["gateway"],
@@ -584,6 +655,7 @@ export function signupAttributionFromSlugs(placement: string, example?: string):
   }
   return classified;
 }
+export type ConversationReplyFailure = z.infer<typeof conversationReplyFailureSchema>;
 
 const INTEGRATION_PROVIDER_DOMAINS: ReadonlyArray<
   readonly [Exclude<IntegrationProvider, "other">, ReadonlyArray<string>]
