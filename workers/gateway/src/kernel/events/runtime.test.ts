@@ -127,6 +127,19 @@ describe("event runtime", () => {
     });
   });
 
+  it("delivers a row the cutover moved under the id its Process may already have it by", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const { runtime } = fixture(storage);
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      const deliver = acknowledge();
+      const event = storage.transactionSync(() => runtime.append(noticed("moved")));
+      sql.exec("UPDATE deliveries SET legacy_id = 'owner.notified:moved' WHERE seq = ?", event.seq);
+
+      await runtime.onEvents({ id: "task:moved" });
+      expect(deliver).toHaveBeenCalledWith("installation:test", "proc:ship", expect.objectContaining({ eventId: "owner.notified:moved" }));
+    });
+  });
+
   it("appends once per key and refuses an unregistered type", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const { runtime, events } = fixture(storage);

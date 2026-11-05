@@ -51,6 +51,8 @@ export type PendingDelivery = {
   consumer: string;
   lane: string | null;
   attemptCount: number;
+  /** legacy: the id an older Kernel delivered a row the cutover moved under. Remove one release after it. */
+  legacyId?: string;
 };
 
 export type DeliveryRecord = {
@@ -75,7 +77,9 @@ type EventRow = {
   created_at: number;
 };
 
-type PendingRow = EventRow & { consumer: string; lane: string | null; attempt_count: number; next_attempt_at: number };
+type PendingRow = EventRow & {
+  consumer: string; lane: string | null; attempt_count: number; next_attempt_at: number; legacy_id: string | null;
+};
 
 type DeliveryRow = {
   state: DeliveryRecord["state"];
@@ -87,7 +91,7 @@ type DeliveryRow = {
   outcome_json: string | null;
 };
 
-const PENDING_COLUMNS = "e.*, d.consumer, d.lane, d.attempt_count, d.next_attempt_at";
+const PENDING_COLUMNS = "e.*, d.consumer, d.lane, d.attempt_count, d.next_attempt_at, d.legacy_id";
 
 /** A pending delivery that may go now: unlaned, or the oldest pending row of its lane. */
 const LANE_HEAD = `(d.lane IS NULL OR d.seq = (
@@ -355,5 +359,8 @@ function eventFromRow(row: EventRow): LoggedEvent {
 }
 
 function pendingFromRow(row: PendingRow): PendingDelivery {
-  return { event: eventFromRow(row), consumer: row.consumer, lane: row.lane, attemptCount: row.attempt_count };
+  return {
+    event: eventFromRow(row), consumer: row.consumer, lane: row.lane, attemptCount: row.attempt_count,
+    ...(row.legacy_id === null ? undefined : { legacyId: row.legacy_id }),
+  };
 }

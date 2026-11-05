@@ -271,12 +271,10 @@ export class EventRuntime {
     const late = this.withdrawal(definition, delivery, target, ctx);
     if (late) return { kind: "withdrawn", reason: late };
     if (!definition.admit) return { kind: "refused", reason: `Event type ${event.type} has nothing for a process` };
-    const admitted = definition.admit(event, prepared, ctx);
+    const eventId = delivery.legacyId ?? deliveryId(event.id, delivery.consumer);
+    const admitted = definition.admit(event, prepared, ctx, eventId);
     if (isWithdrawn(admitted)) return { kind: "withdrawn", reason: admitted.withdrawn };
-    const result = await deliverEventToProcess(this.host.installationId, pid, {
-      eventId: deliveryId(event.id, delivery.consumer),
-      ...admitted,
-    });
+    const result = await deliverEventToProcess(this.host.installationId, pid, { eventId, ...admitted });
     if ("unavailable" in result) throw new Error(result.message);
     if (result.refused !== undefined) return { kind: "refused", reason: result.refused };
     const responsibilities = "event" in admitted ? admitted.responsibilities : undefined;

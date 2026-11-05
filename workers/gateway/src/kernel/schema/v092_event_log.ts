@@ -11,8 +11,9 @@ const ANSWERED_BY_TARGET = "c.status = 'completed' AND c.run_status IS NOT NULL"
  *
  * What an older Kernel still had on its way joins the log in the order each producer kept,
  * with the retry state it had: Ship events, wake batches, call answers and failed-delivery
- * notices. What arrived from each event source moves in too, going to no one. The tables,
- * columns and task kinds the log replaces go.
+ * notices. A Ship event or wake batch keeps the id it went under, since its Process may
+ * have it already. What arrived from each event source moves in too, going to no one. The
+ * tables, columns and task kinds the log replaces go.
  */
 export const KERNEL_V092_EVENT_LOG: SqlMigration = {
   id: 92,
@@ -46,6 +47,8 @@ export const KERNEL_V092_EVENT_LOG: SqlMigration = {
         run_id TEXT,
         outcome_json TEXT,
         updated_at INTEGER NOT NULL,
+        -- legacy: the id an older Kernel delivered a moved row under. Drop it one release after this cutover.
+        legacy_id TEXT,
         PRIMARY KEY (seq, consumer)
       )
     `,
@@ -73,8 +76,8 @@ export const KERNEL_V092_EVENT_LOG: SqlMigration = {
       ORDER BY s.created_at, s.rowid
     `,
     `
-      INSERT INTO deliveries (seq, consumer, lane, state, attempt_count, next_attempt_at, last_error, updated_at)
-      SELECT e.seq, 'personal:' || s.owner_uid, 'background', 'pending', s.attempt_count, s.next_attempt_at, s.last_error, s.updated_at
+      INSERT INTO deliveries (seq, consumer, lane, state, attempt_count, next_attempt_at, last_error, updated_at, legacy_id)
+      SELECT e.seq, 'personal:' || s.owner_uid, 'background', 'pending', s.attempt_count, s.next_attempt_at, s.last_error, s.updated_at, s.event_id
       FROM ship_events s
       JOIN events e ON e.type = json_extract(s.event_json, '$.type') AND e.idempotency_key = ${SHIP_EVENT_KEY}
     `,
@@ -96,8 +99,8 @@ export const KERNEL_V092_EVENT_LOG: SqlMigration = {
       ORDER BY b.created_at, b.rowid
     `,
     `
-      INSERT INTO deliveries (seq, consumer, lane, state, attempt_count, next_attempt_at, last_error, updated_at)
-      SELECT e.seq, 'personal:' || b.owner_uid, NULL, 'pending', b.attempt_count, b.updated_at, b.last_error, b.updated_at
+      INSERT INTO deliveries (seq, consumer, lane, state, attempt_count, next_attempt_at, last_error, updated_at, legacy_id)
+      SELECT e.seq, 'personal:' || b.owner_uid, NULL, 'pending', b.attempt_count, b.updated_at, b.last_error, b.updated_at, b.event_id
       FROM responsibility_wake_batches b
       JOIN events e ON e.type = 'responsibility.ready' AND e.idempotency_key = b.batch_id
     `,

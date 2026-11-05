@@ -10,10 +10,12 @@ const REPLY = { kind: "adapter", adapter: "telegram", accountId: "bot", actorId:
 const KERNEL = { kind: "kernel" };
 
 function pending(consumer: string, lane: string | null, at: number) {
-  return { consumer, lane, state: "pending", attempt_count: 0, next_attempt_at: at, last_error: null, updated_at: at };
+  return { consumer, lane, state: "pending", attempt_count: 0, next_attempt_at: at, last_error: null, updated_at: at, legacy_id: null };
 }
 
-const UNDELIVERED = { consumer: null, lane: null, state: null, attempt_count: null, next_attempt_at: null, last_error: null, updated_at: null };
+const UNDELIVERED = {
+  consumer: null, lane: null, state: null, attempt_count: null, next_attempt_at: null, last_error: null, updated_at: null, legacy_id: null,
+};
 
 describe("event log cutover", () => {
   it("moves what an older Kernel had on its way onto the log, and drops the state the log replaces", async () => {
@@ -97,7 +99,7 @@ describe("event log cutover", () => {
 
       const log = sql.exec<{ actor_json: string; body_json: string }>(`
         SELECT e.type, e.subject, e.actor_json, e.idempotency_key, e.body_json, e.created_at,
-          d.consumer, d.lane, d.state, d.attempt_count, d.next_attempt_at, d.last_error, d.updated_at
+          d.consumer, d.lane, d.state, d.attempt_count, d.next_attempt_at, d.last_error, d.updated_at, d.legacy_id
         FROM events e LEFT JOIN deliveries d USING (seq) ORDER BY e.seq
       `).toArray().map(({ actor_json, body_json, ...row }) => ({ ...row, actor: JSON.parse(actor_json), body: JSON.parse(body_json) }));
       const source = { type: "source.event", subject: "source:src_a", actor: { kind: "source", sourceId: "src_a" }, ...UNDELIVERED };
@@ -106,21 +108,25 @@ describe("event log cutover", () => {
         body: { sourcePid: "ship", callId, targetPid: "worker", sourceRunId: "run:ship", createdAt: 1, deadlineAt: 100, ...ended },
         created_at: at, ...pending("proc:ship", "background", at),
       });
+      // A Ship event or wake batch goes under the id its Process deduped it by, in case it already has it.
       expect(log).toEqual([
         {
           type: "owner.notified", subject: `notice:${NOTICE_ID}`, actor: KERNEL, idempotency_key: NOTICE_ID,
           body: { payload: notice.payload, link: notice.link }, created_at: 5, ...pending("personal:1000", "background", 5),
+          legacy_id: `owner.notified:${NOTICE_ID}`,
         },
         {
           type: "contact.message", subject: "contact:remote", actor: { kind: "contact", contactId: "contact:remote" }, idempotency_key: "msg:one",
           body: { contactId: "contact:remote", messageId: "msg:one", text: "hello" }, created_at: 5,
           ...pending("personal:1000", "background", 5), attempt_count: 2, next_attempt_at: 90, last_error: "Process is restarting", updated_at: 30,
+          legacy_id: "contact.message:msg:one",
         },
         // A failed batch retries at once, as the wake timer would have, and no lane holds it.
         {
           type: "responsibility.ready", subject: "owner:1000", actor: KERNEL, idempotency_key: "batch:one",
           body: { responsibilityIds: [R12Y], ledgerRevision: 7 }, created_at: 10,
           ...pending("personal:1000", null, 40), attempt_count: 2, last_error: "Process is restarting",
+          legacy_id: "r12y.ready:batch:one",
         },
         { ...source, idempotency_key: "src_a:bare", body: { eventId: "bare", title: "Bare", emittedBy: "process" }, created_at: 10 },
         { ...source, idempotency_key: "src_a:huge", body: { eventId: "huge", title: "Huge", emittedBy: "client" }, created_at: 20 },

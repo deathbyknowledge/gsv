@@ -103,6 +103,22 @@ describe("responsibility wakes on the event log", () => {
     });
   });
 
+  it("hands Ship a batch the cutover moved under the id it may already have it by", async () => {
+    const { delivered } = ship();
+    await fixture(async (kernel) => {
+      ready(kernel, "Answer the landlord");
+      await wake(kernel);
+      const [batch] = batches(kernel);
+      kernel.ctx.storage.sql.exec("UPDATE deliveries SET legacy_id = 'r12y.ready:batch:old' WHERE seq = ?", batch!.seq);
+
+      await runEvents(kernel);
+      expect(delivered(kernel)).toEqual([[kernel.installationId, "proc:ship", expect.objectContaining({
+        eventId: "r12y.ready:batch:old",
+        event: expect.objectContaining({ payload: expect.objectContaining({ batchId: "r12y.ready:batch:old" }) }),
+      })]]);
+    });
+  });
+
   it("holds work that comes due while a batch waits for the next batch", async () => {
     const { deliver, delivered } = ship();
     await fixture(async (kernel) => {

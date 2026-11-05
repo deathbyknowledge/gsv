@@ -90,7 +90,10 @@ that request is still pending.
   A chat has one `messages` lane, so its replies arrive in the order they were
   written.
 - **At least once.** A lost answer redelivers. The Process dedupes by the
-  delivery's id, `evt_<seq>:<consumer>`.
+  delivery's id, `evt_<seq>:<consumer>`. For one release after the cutover, a
+  contact message, notice or wake batch an older Kernel had on its way keeps
+  the id it went under then. A Process checks a moved call answer or failure
+  notice against the records it kept then, so none arrives twice.
 - **Withdrawal.** The runner withdraws a delivery whose process is gone, one
   whose owner's account was removed before its first attempt, and one its
   definition gives a reason for: a blocked contact, a removed schedule, a newer

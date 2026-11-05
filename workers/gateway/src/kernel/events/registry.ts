@@ -51,8 +51,11 @@ export type EventDefinition<Prepared extends PreparedContent | undefined = undef
   withdrawal?(event: LoggedEvent, ctx: KernelContext): string | null;
   /** Reads what the delivery needs from the store that holds it. */
   prepare?(event: LoggedEvent, ctx: KernelContext): Promise<Prepared | Withdrawn>;
-  /** Builds a process's delivery from current state, which it may rebind: the call follows at once. Required to route to a process or Ship. */
-  admit?(event: LoggedEvent, prepared: Prepared, ctx: KernelContext): ProcessEventDelivery | Withdrawn;
+  /**
+   * Builds a process's delivery from current state, which it may rebind: the call follows at once.
+   * `deliveryId` is the id the Process dedupes it by. Required to route to a process or Ship.
+   */
+  admit?(event: LoggedEvent, prepared: Prepared, ctx: KernelContext, deliveryId: string): ProcessEventDelivery | Withdrawn;
   /** Builds what a messenger chat receives. Required to route to a chat. */
   present?(event: LoggedEvent, prepared: Prepared, ctx: KernelContext): ChatDelivery | Withdrawn;
   /** Runs after the delivery has ended, such as to let work that waited on it go. It can't undo the delivery. */

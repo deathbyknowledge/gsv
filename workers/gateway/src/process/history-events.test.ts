@@ -5,7 +5,7 @@ import type { Process } from "./do";
 import type { ProcessEventDeliverArgs } from "../protocol/process-frames";
 import { deliverProcessEvent } from "./controller/events";
 import { decodeWireFrameJson } from "../protocol/decode-wire-frame";
-import { deferred, generationRun, initProcess, processTestConfig, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
+import { deferred, generationRun, initProcess, ipcAnswer, processTestConfig, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
 import { PROCESS_RESET_AT_KEY } from "./internal/lifecycle";
 import { buildCompactionSummaryContext } from "./history/helpers";
 import { renderCompactionTranscriptChunks } from "./history/compaction-renderer";
@@ -370,6 +370,37 @@ describe("registered Process events", () => {
       const pending = deliveryFailure("evt_2:proc:approval", "approval-2");
       expect(await process.deliverEvent(pending)).toEqual({ eventId: pending.eventId, runId: null, queued: false, messageId: 1 });
       expect(process.store.messages.getRecords()).toMatchObject([{ kind: "event", payload: pending.event, runId: "run-1" }]);
+    });
+  });
+
+  // legacy: what this Process handled before the Kernel's log. Remove with the records they read.
+  it.each(["ipc.reply", "ipc.timeout"] as const)("ignores a moved %s for a call this process handled before the Kernel's log", async (kind) => {
+    const pid = `history-events-handled-${kind}`;
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+      process.store.state.setValue("handledIpcCalls", JSON.stringify(["call-old"]));
+      const answer = (callId: string) => ipcAnswer(
+        kind, { callId, targetPid: "worker", createdAt: Date.now(), deadlineAt: Date.now() + 60_000 }, `evt_${callId}:proc:${pid}`,
+      );
+
+      const handled = answer("call-old");
+      expect(await process.deliverEvent(handled)).toEqual({ eventId: handled.eventId, runId: null, queued: false, ignored: true });
+      expect(process.store.messages.messageCount()).toBe(0);
+      expect(schedule).not.toHaveBeenCalled();
+      const fresh = answer("call-new");
+      expect(await process.deliverEvent(fresh)).toMatchObject({ runId: fresh.eventId, queued: false });
+      expect(schedule).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("ignores a moved failure notice this process recorded before the Kernel's log", async () => {
+    const stub = await initProcess("history-events-handled-notice", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      process.store.state.setValue("deliveryNotice:notice-1", "7");
+      const moved = deliveryFailure("evt_1:proc:history-events-handled-notice");
+      expect(await process.deliverEvent(moved)).toEqual({ eventId: moved.eventId, runId: null, queued: false, ignored: true });
+      expect(process.store.messages.messageCount()).toBe(0);
     });
   });
 

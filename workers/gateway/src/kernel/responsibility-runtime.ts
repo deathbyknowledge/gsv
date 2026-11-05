@@ -2,7 +2,7 @@ import { z } from "zod";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
-import { deliveryId, shipConsumer } from "./events/consumers";
+import { shipConsumer } from "./events/consumers";
 import type { EventDefinition } from "./events/registry";
 import type { LoggedEvent } from "./events/store";
 
@@ -38,13 +38,14 @@ export const responsibilityReadyEvent: EventDefinition = {
   routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: null }],
   // Checked before Ship is found, so a batch with nothing left starts no Ship.
   withdrawal: (event, ctx) => unsettled(event, ctx).ids.length === 0 ? "its work was settled while it waited" : null,
-  admit(event, _prepared, ctx) {
+  // A batch goes by its delivery's id, which a batch an older Kernel had on its way keeps.
+  admit(event, _prepared, ctx, batchId) {
     const { ids, ledgerRevision } = unsettled(event, ctx);
     return {
       event: {
         kind: "responsibility.ready", severity: "info", audience: "model",
         payload: {
-          batchId: deliveryId(event.id, shipConsumer(event.ownerUid)),
+          batchId,
           ledgerRevision,
           responsibilityIds: ids,
           receivedAtMs: Date.now(),

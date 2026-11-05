@@ -33,6 +33,7 @@ export async function deliverProcessEvent(
     return { eventId, runId: admitted.runId, queued: admitted.queued === true };
   }
   const { event, admission: { idle, busy, joinRun } } = args;
+  if (handledBeforeTheLog(host, event)) return { eventId, runId: null, queued: false, ignored: true };
   if (event.kind === "delivery.failed") {
     // A failed approval request matters only while that request is pending.
     const { runId } = event.payload;
@@ -52,6 +53,20 @@ export async function deliverProcessEvent(
     ? "record"
     : !active ? idle : busy === "join" && joinRun !== undefined && active.runId !== joinRun ? "after" : busy;
   return action === "record" ? appendNotice(host, eventId, event) : admitRuntimeEvent(host, eventId, args, action === "after");
+}
+
+/**
+ * legacy: a call answer or failure notice the Kernel's cutover moved onto its log, which this
+ * Process handled before it, by the records it kept then. New calls and notices take new ids,
+ * so only a moved one matches. Remove with those records, one release after the cutover.
+ */
+function handledBeforeTheLog(host: Process, event: DeliveredEvent): boolean {
+  if (event.kind === "ipc.reply" || event.kind === "ipc.timeout") {
+    const handled = z.array(z.string()).parse(JSON.parse(host.store.state.getValue("handledIpcCalls") ?? "[]"));
+    return event.payload.callId !== undefined && handled.includes(event.payload.callId);
+  }
+  return event.kind === "delivery.failed" && event.payload.noticeId !== undefined
+    && host.store.state.getValue(`deliveryNotice:${event.payload.noticeId}`) !== null;
 }
 
 /** A call's end or check-in for a run that was aborted, or what was observed before this process last reset. */
