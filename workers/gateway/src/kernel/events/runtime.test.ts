@@ -100,7 +100,7 @@ describe("event runtime", () => {
       }));
       await runtime.kick();
       expect(schedule).toHaveBeenCalledTimes(1);
-      expect(schedule.mock.calls[0]?.[0].getTime()).toBe(event.createdAt + EVENT_BODY_RETENTION_MS);
+      expect(schedule.mock.calls[0]?.[0].getTime()).toBe(Math.ceil((event.createdAt + EVENT_BODY_RETENTION_MS) / 1_000) * 1_000);
     });
   });
 
@@ -156,7 +156,7 @@ describe("event runtime", () => {
       const retryAt = events.delivery(first.seq, ship)!.nextAttemptAt;
       expect(retryAt).toBeGreaterThanOrEqual(before + 2_000);
       expect(retryAt).toBeLessThanOrEqual(Date.now() + 2_000);
-      expect(schedule).toHaveBeenLastCalledWith(new Date(retryAt), "onEvents", null, { idempotent: true, excludeTaskId: "task:first" });
+      expect(schedule).toHaveBeenLastCalledWith(new Date(Math.ceil(retryAt / 1_000) * 1_000), "onEvents", null, { idempotent: true, excludeTaskId: "task:first" });
 
       storage.sql.exec("UPDATE deliveries SET next_attempt_at = 0 WHERE seq = ?", first.seq);
       await runtime.onEvents({ id: "task:retry" });
@@ -504,7 +504,24 @@ describe("event runtime", () => {
       const event = runtime.append(noticed("stored"));
       events.failed(event.seq, shipConsumer(OWNER), "Process is restarting", Date.now() + 30_000, Date.now());
       await runtime.recover();
-      expect(schedule).toHaveBeenLastCalledWith(new Date(events.nextDueAt()!), "onEvents", null, { idempotent: true });
+      expect(schedule).toHaveBeenLastCalledWith(new Date(Math.ceil(events.nextDueAt()! / 1_000) * 1_000), "onEvents", null, { idempotent: true });
+    });
+  });
+
+  it("arms a later delivery for the whole second after it falls due, and a due one at once", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const { runtime, events, schedule } = fixture(storage);
+      const later = runtime.append(noticed("later"));
+      const dueAt = Math.floor(Date.now() / 1_000) * 1_000 + 30_400;
+      events.failed(later.seq, shipConsumer(OWNER), "Process is restarting", dueAt, Date.now());
+      await runtime.recover();
+      // Task times are whole seconds, rounded down: a task armed for 30.4 s would fire at 30 s and find nothing due.
+      expect(schedule).toHaveBeenLastCalledWith(new Date(dueAt + 600), "onEvents", null, { idempotent: true });
+
+      // One due now, on a lane nothing holds back, goes at once.
+      runtime.append(noticed("now", "fixture:person"));
+      await runtime.kick();
+      expect(schedule.mock.lastCall![0].getTime()).toBeLessThanOrEqual(Date.now());
     });
   });
 });

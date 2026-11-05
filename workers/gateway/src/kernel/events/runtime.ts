@@ -292,7 +292,10 @@ export class EventRuntime {
   /** Keeps one pending task, moved earlier when a delivery falls due sooner. */
   private async arm(at: number | null, excludeTaskId?: string): Promise<void> {
     if (at === null) return;
-    const due = Math.max(Date.now(), at);
+    // Task times are whole seconds, rounded down, so a later deadline is armed for the second after
+    // it: an alarm before the deadline would find nothing due and arm again at once until it passed.
+    const now = Date.now();
+    const due = at <= now ? now : Math.ceil(at / 1_000) * 1_000;
     const options: DurableTaskOptions = excludeTaskId ? { idempotent: true, excludeTaskId } : { idempotent: true };
     const existing = await this.host.schedule(new Date(due), "onEvents", null, options);
     // Task times are whole seconds; a pending task due no later than this one stands.
