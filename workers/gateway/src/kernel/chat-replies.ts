@@ -33,6 +33,8 @@ const replySchema = z.discriminatedUnion("kind", [
     conversationId: z.string(),
     messageId: z.string(),
     sequence: z.number().int().nonnegative(),
+    /** When the message was written, which may be well before this reply was logged. */
+    writtenAt: z.number().int().nonnegative(),
   }),
   // An approval request, read from its process, which goes only while that request is pending.
   z.strictObject({ kind: z.literal("approval"), requestId: z.string() }),
@@ -201,7 +203,7 @@ export const chatReplyEvent: EventDefinition<Prepared> = {
         ...(reply.kind === "approval" ? { requestId: reply.requestId } : undefined),
         message: failureMessage(reply, end.unsent, end.reason),
         wake,
-        ...(wake ? { writtenAt: event.createdAt } : undefined),
+        ...(wake && reply.kind === "message" ? { writtenAt: reply.writtenAt } : undefined),
       }));
     }
     emitTelemetry(ctx.env, {

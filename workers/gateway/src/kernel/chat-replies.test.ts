@@ -123,7 +123,9 @@ describe("messenger replies on the event log", () => {
         lane: "messages", state: "pending",
         body: {
           route: { kind: "adapter", runId: RUN, processId: WORKER, uid: OWNER.uid, destination: CHAT, replyToId: "wamid-in" },
-          reply: { kind: "message", conversationId: message.conversationId, messageId: message.id, sequence: message.sequence },
+          reply: {
+            kind: "message", conversationId: message.conversationId, messageId: message.id, sequence: message.sequence, writtenAt: message.createdAt,
+          },
         },
       });
       // A chat is named by an opaque id, so no provider's id names a consumer.
@@ -176,7 +178,7 @@ describe("messenger replies on the event log", () => {
   it("retries a blip twice, after 2 s and then 8 s, then wakes the process that wrote the reply", async () => {
     await fixture(async (kernel, delivered) => {
       const sent = chat(kernel, BLIP);
-      await send(kernel, "Booked the 9:40.");
+      const written = await send(kernel, "Booked the 9:40.");
 
       for (const delay of [2_000, 8_000]) {
         const before = Date.now();
@@ -194,7 +196,7 @@ describe("messenger replies on the event log", () => {
       const message = `The message stopped after 3 retry-safe delivery attempts: ${BLIP.error}`;
       const [failure] = logged(kernel, "delivery.failed");
       // The process hears when the message was written, so one it has outlived since is only noted.
-      const writtenAt = logged(kernel, "chat.reply")[0]!.created_at;
+      const writtenAt = written.createdAt;
       expect(failure).toMatchObject({ consumer: `proc:${WORKER}`, lane: "background", body: { pid: WORKER, runId: RUN, message, wake: true, writtenAt } });
       await runEvents(kernel);
       expect(delivered()).toEqual([[kernel.installationId, WORKER, {
@@ -212,13 +214,13 @@ describe("messenger replies on the event log", () => {
   it("never retries a reply that may have arrived, and wakes its process to decide", async () => {
     await fixture(async (kernel) => {
       const sent = chat(kernel, { state: "ambiguous", stage: "adapter", error: "Adapter delivery wamid-out is ambiguous" });
-      await send(kernel, "Booked the 9:40.");
+      const written = await send(kernel, "Booked the 9:40.");
       await runEvents(kernel);
 
       expect(sent).toHaveLength(1);
       expect(logged(kernel, "chat.reply")[0]).toMatchObject({ state: "failed", attempt_count: 1 });
       expect(logged(kernel, "delivery.failed")[0]!.body).toEqual({
-        pid: WORKER, runId: RUN, wake: true, writtenAt: logged(kernel, "chat.reply")[0]!.created_at,
+        pid: WORKER, runId: RUN, wake: true, writtenAt: written.createdAt,
         message: "The message reached the adapter, but provider delivery is ambiguous. It was not retried to avoid a duplicate.",
       });
     });
@@ -227,7 +229,7 @@ describe("messenger replies on the event log", () => {
   it("wakes the process for a reply its messenger can never deliver, once", async () => {
     await fixture(async (kernel, delivered) => {
       // The person's WhatsApp isn't linked, so the send refuses the reply for good.
-      await send(kernel, "Booked the 9:40.");
+      const written = await send(kernel, "Booked the 9:40.");
       await runEvents(kernel);
       await runEvents(kernel);
 
@@ -237,7 +239,7 @@ describe("messenger replies on the event log", () => {
       const [failure] = logged(kernel, "delivery.failed");
       expect(logged(kernel, "delivery.failed")).toEqual([{
         seq: failure!.seq, idempotency_key: `evt_${reply!.seq}:${reply!.consumer}`, subject: `proc:${WORKER}`, created_at: failure!.created_at,
-        actor: { kind: "kernel" }, body: { pid: WORKER, runId: RUN, message, wake: true, writtenAt: reply!.created_at },
+        actor: { kind: "kernel" }, body: { pid: WORKER, runId: RUN, message, wake: true, writtenAt: written.createdAt },
         consumer: `proc:${WORKER}`, lane: "background", state: "delivered", attempt_count: 0, next_attempt_at: failure!.next_attempt_at, last_error: null,
       }]);
       expect(delivered()).toEqual([[kernel.installationId, WORKER, expect.objectContaining({ admission: WAKE })]]);
@@ -309,7 +311,7 @@ describe("messenger replies on the event log", () => {
       kernel.runRoutes.delete(RUN);
       const message = await send(kernel, "Booked the 9:40.");
       kernel.eventRuntime.append(await chatReply({ ...ROUTE, runId: "run-2" }, {
-        kind: "message", conversationId: message.conversationId, messageId: message.id, sequence: message.sequence,
+        kind: "message", conversationId: message.conversationId, messageId: message.id, sequence: message.sequence, writtenAt: message.createdAt,
       }));
       await runEvents(kernel);
 
@@ -355,6 +357,24 @@ describe("messenger replies on the event log", () => {
 
       expect(logged(kernel, "chat.reply")).toEqual([expect.objectContaining({ idempotency_key: `message:${message.id}`, state: "delivered" })]);
       expect(sent.map(({ deliveryId, text }) => [deliveryId, text])).toEqual([[message.id, "Booked the 9:40."]]);
+    });
+  });
+
+  it("dates a handed-over message's failure from when the message was written", async () => {
+    await fixture(async (kernel) => {
+      chat(kernel, REFUSED);
+      kernel.runRoutes.delete(RUN);
+      const message = await send(kernel, "Booked the 9:40.");
+      const task = { runId: RUN, processId: WORKER, route: ROUTE, event: "message.committed", payload: { message, directed: true }, attempt: 6 };
+      // The deploy that hands the old task to the log comes a minute after the message was written.
+      vi.spyOn(Date, "now").mockReturnValue(message.createdAt + 60_000);
+
+      await kernel.adapterDelivery.onAdapterRouteDelivery(task);
+      await runEvents(kernel);
+
+      expect(logged(kernel, "chat.reply")[0]).toMatchObject({ state: "failed", created_at: message.createdAt + 60_000 });
+      // So a process reset during that minute only notes the failure.
+      expect(logged(kernel, "delivery.failed")[0]!.body).toMatchObject({ wake: true, writtenAt: message.createdAt });
     });
   });
 

@@ -94,7 +94,9 @@ type ReplyMedia = { media: AdapterMedia[]; body?: BinaryBody };
 
 /** A message, as a retry task queued before replies went through the event log carried it. */
 const legacyCommittedSchema = z.object({
-  message: z.object({ id: z.string(), conversationId: z.string(), sequence: z.number().int().nonnegative() }),
+  message: z.object({
+    id: z.string(), conversationId: z.string(), sequence: z.number().int().nonnegative(), createdAt: z.number().int().nonnegative(),
+  }),
 });
 
 
@@ -119,7 +121,9 @@ function mediaTypeFromContentType(contentType: string): AdapterMedia["type"] {
 function legacyReply(input: AdapterRouteDeliveryRetry): ChatReply | null {
   if (input.event === "message.committed") {
     const message = legacyCommittedSchema.safeParse(input.payload).data?.message;
-    return message ? { kind: "message", conversationId: message.conversationId, messageId: message.id, sequence: message.sequence } : null;
+    return message ? {
+      kind: "message", conversationId: message.conversationId, messageId: message.id, sequence: message.sequence, writtenAt: message.createdAt,
+    } : null;
   }
   if (input.event === "proc.run.hil.requested") {
     const requestId = procHilRequestSchema.safeParse(input.payload).data?.requestId;

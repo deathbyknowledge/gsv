@@ -1620,7 +1620,7 @@ describe("Kernel canonical message commits", () => {
     });
 
     expect(kernel.adapterDelivery.queueReply).toHaveBeenCalledWith(route, {
-      kind: "message", conversationId: message.conversationId, messageId: message.id, sequence: message.sequence,
+      kind: "message", conversationId: message.conversationId, messageId: message.id, sequence: message.sequence, writtenAt: message.createdAt,
     });
     expect(JSON.parse(synced.send.mock.calls[0][0])).toMatchObject({
       signal: "message.committed",
@@ -2550,7 +2550,7 @@ describe("Kernel process signal routing", () => {
 
     expect(kernel.runRoutes.get).not.toHaveBeenCalled();
     expect(kernel.adapterDelivery.queueReply.mock.calls).toEqual([
-      [route, { kind: "message", conversationId: "conv:home", messageId: "msg:owned", sequence: 2 }],
+      [route, { kind: "message", conversationId: "conv:home", messageId: "msg:owned", sequence: 2, writtenAt: 2 }],
       [route, { kind: "approval", requestId: "hil-owned" }],
       [route, { kind: "run.failed" }],
     ]);

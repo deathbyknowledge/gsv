@@ -532,6 +532,7 @@ async commitProcessMessage(
           conversationId: message.conversationId,
           messageId: message.id,
           sequence: message.sequence,
+          writtenAt: message.createdAt,
         });
       }
     }
