@@ -2,9 +2,6 @@ import {
   z,
 } from "zod";
 import type {
-  SignalFrame,
-} from "../protocol/frames";
-import type {
   AdapterActivity,
   AdapterMedia,
   AdapterMediaPart,
@@ -14,27 +11,20 @@ import type {
   ProcHilRequest,
 } from "@humansandmachines/gsv/protocol";
 import {
-  emitTelemetry,
   exceptionDiagnostics,
-  sanitizeExceptionDiagnostics,
   type ExceptionDiagnostics,
 } from "@humansandmachines/gsv/telemetry";
 import {
   bundleAdapterMedia,
   cancelBinaryBody,
   procHilRequestSchema,
-  resourceBlockSchema,
 } from "@humansandmachines/gsv/protocol";
 import {
   type AdapterRunRoute,
 } from "./run-routes";
 import {
   getConversationById,
-  sendFrameToProcess,
 } from "../shared/utils";
-import {
-  stableOpaqueId,
-} from "../shared/stable-id";
 import {
   MAX_MESSAGE_MEDIA_ITEMS,
   MAX_MESSAGE_MEDIA_PART_BYTES,
@@ -47,7 +37,7 @@ import {
 import {
   deliverAdapterDestination,
 } from "./adapter-send";
-import { deliveryFailed } from "./delivery-events";
+import { chatReply, type ChatReply } from "./chat-replies";
 import {
   logAdapterBoundaryFailure,
   setAdapterRouteActivity,
@@ -61,7 +51,6 @@ import {
   identityLinkRouteGeneration,
 } from "./adapter-destinations";
 import {
-  procMediaInputSchema,
   adapterTypingActivity,
   adapterWorkingActivity,
 } from "./do-shared";
@@ -73,13 +62,40 @@ import type {
   AdapterRouteDeliveryRetry,
 } from "./do-shared";
 
-const MAX_ADAPTER_ROUTE_DELIVERY_ATTEMPTS = 10;
+/** Where a chat send failed: on its route, reading its attachments, or at the messenger. */
+export type ChatSendStage = "route" | "media" | "adapter";
 
+/** How a send to a messenger chat went. A retryable failure is safe to send again; an ambiguous one may have arrived. */
+export type ChatSend =
+  | { state: "sent" }
+  | { state: "retryable" | "permanent" | "ambiguous"; error: string; stage: ChatSendStage; diagnostics?: ExceptionDiagnostics };
 
-type AdapterRouteDeliveryOutcome =
-  | { state: "delivered" }
-  | { state: "skipped" }
-  | { state: "retryable" | "permanent" | "ambiguous"; error: string; stage: "route" | "media" | "adapter"; diagnostics?: ExceptionDiagnostics };
+/** What a messenger chat receives for an event: one message on a process's run route. */
+export type ChatDelivery = {
+  route: AdapterDeliveryRoute;
+  /** The messenger dedupes by it, so a retry never shows the message twice. */
+  deliveryId: string;
+  text: string;
+  /** Committed attachments, read and bundled as the send goes. */
+  attachments?: { conversationId: string; authorUid: number; media: MessageAttachment[] };
+  /** Answers the message offers, which its messenger shows its own way. */
+  choices?: string[];
+  hil?: ProcHilRequest;
+  /** The canonical message this delivery carries, for a later quote of it to resolve. */
+  canonical?: AdapterMessageTarget;
+  /** A system notice is the Kernel's, not its process's. */
+  presentation: "process" | "system";
+  /** Shows typing while it goes. */
+  typing: boolean;
+};
+
+/** A reply's attachments as its adapter takes them: described one by one, their bytes in one body. */
+type ReplyMedia = { media: AdapterMedia[]; body?: BinaryBody };
+
+/** A message, as a retry task queued before replies went through the event log carried it. */
+const legacyCommittedSchema = z.object({
+  message: z.object({ id: z.string(), conversationId: z.string(), sequence: z.number().int().nonnegative() }),
+});
 
 
 class AdapterReplyMediaError extends Error {
@@ -99,32 +115,18 @@ function mediaTypeFromContentType(contentType: string): AdapterMedia["type"] {
 }
 
 
-function adapterRouteRetryDelayMs(attempt: number): number {
-  return Math.min(30_000, 1_000 * (2 ** Math.max(0, attempt - 1)));
+/** The reply a retry task queued before replies went through the event log was carrying. */
+function legacyReply(input: AdapterRouteDeliveryRetry): ChatReply | null {
+  if (input.event === "message.committed") {
+    const message = legacyCommittedSchema.safeParse(input.payload).data?.message;
+    return message ? { kind: "message", conversationId: message.conversationId, messageId: message.id, sequence: message.sequence } : null;
+  }
+  if (input.event === "proc.run.hil.requested") {
+    const requestId = procHilRequestSchema.safeParse(input.payload).data?.requestId;
+    return requestId ? { kind: "approval", requestId } : null;
+  }
+  return input.event === "proc.run.finished" ? { kind: "run.failed" } : null;
 }
-
-
-const adapterConversationMessageSchema = z.object({
-  id: z.string(),
-  conversationId: z.string(),
-  sequence: z.number().int().nonnegative(),
-  author: z.object({
-    kind: z.literal("process"),
-    pid: z.string(),
-    uid: z.number().int().nonnegative(),
-  }),
-  text: z.string(),
-  media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
-  choices: z.array(z.string()).optional(),
-  origin: z.object({
-    kind: z.literal("process"),
-    pid: z.string(),
-    runId: z.string(),
-  }),
-  processId: z.string().optional(),
-  runId: z.string().optional(),
-  createdAt: z.number(),
-});
 
 
 export class AdapterDelivery {
@@ -176,237 +178,62 @@ materializePersonalAdapterFallback(
     });
   }
 
-async attemptAdapterRouteDelivery(
-    route: AdapterDeliveryRoute,
-    frame: SignalFrame,
-    attempt: number,
-  ): Promise<void> {
-    // An approval request goes only while it is pending, and a failure to deliver it names it.
-    const hilRequestId = frame.signal === "proc.run.hil.requested"
-      ? procHilRequestSchema.safeParse(frame.payload).data?.requestId
-      : undefined;
-    let outcome: AdapterRouteDeliveryOutcome;
-    try {
-      if (
-        hilRequestId
-        && !await this.isAdapterHilRequestPending(
-          route.processId,
-          route.runId,
-          hilRequestId,
-        )
-      ) {
-        outcome = { state: "skipped" };
-      } else {
-        outcome = await this.deliverAdapterRouteEvent(route, frame);
+/** Logs a run's reply for the chat its route names; the event runner sends it in order with that chat's others. */
+  async queueReply(route: AdapterDeliveryRoute, reply: ChatReply): Promise<void> {
+    this.host.eventRuntime.append(await chatReply(route, reply));
+    await this.host.eventRuntime.kick();
+  }
+
+  /**
+   * A retry task queued before replies went through the event log hands its reply to the log,
+   * which sends it from a fresh first attempt. Remove once no Kernel can still hold one.
+   */
+  async onAdapterRouteDelivery(input: AdapterRouteDeliveryRetry): Promise<void> {
+    const route = input.route ?? this.host.runRoutes.get(input.runId);
+    if (!route || route.kind !== "adapter" || route.processId !== input.processId) return;
+    const reply = legacyReply(input);
+    if (reply) await this.queueReply(route, reply);
+  }
+
+  /** Sends one message to its chat; the event runner owns its retries and its end. */
+  async sendToChat(delivery: ChatDelivery): Promise<ChatSend> {
+    const { route } = delivery;
+    let bundle: ReplyMedia = { media: [] };
+    if (delivery.attachments) {
+      try {
+        const { conversationId, media, authorUid } = delivery.attachments;
+        bundle = await this.bundleConversationReplyMedia(conversationId, media, authorUid);
+      } catch (error) {
+        return {
+          state: error instanceof AdapterReplyMediaError ? "permanent" : "retryable",
+          stage: "media",
+          diagnostics: exceptionDiagnostics(error),
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
+    }
+    if (!delivery.text.trim() && bundle.media.length === 0 && !delivery.hil) {
+      await this.setRouteActivity(route, adapterWorkingActivity(route, false));
+      return { state: "sent" };
+    }
+    const send = () => this.deliverAdapterRouteReply(route, {
+      deliveryId: delivery.deliveryId,
+      text: delivery.text,
+      ...(bundle.media.length > 0 ? { media: bundle.media } : undefined),
+      ...(delivery.choices ? { choices: delivery.choices } : undefined),
+      ...(delivery.hil ? { hil: delivery.hil } : undefined),
+      ...(delivery.canonical ? { canonical: delivery.canonical } : undefined),
+    }, bundle.body, delivery.presentation);
+    try {
+      return delivery.typing ? await this.deliverWithTyping(route, send) : await send();
     } catch (error) {
-      outcome = {
-        state: error instanceof AdapterReplyMediaError ? "permanent" : "retryable",
-        stage: error instanceof AdapterReplyMediaError ? "media" : "adapter",
+      return {
+        state: "retryable",
+        stage: "adapter",
         diagnostics: exceptionDiagnostics(error),
         error: error instanceof Error ? error.message : String(error),
       };
     }
-
-    if (outcome.state === "retryable" && attempt < MAX_ADAPTER_ROUTE_DELIVERY_ATTEMPTS) {
-      await this.queueAdapterRouteDelivery(route, frame, attempt + 1);
-      return;
-    }
-
-    if (outcome.state === "delivered" || outcome.state === "skipped") return;
-
-    const terminalState = outcome.state === "retryable" ? "exhausted" : outcome.state;
-    const deliveryError = outcome.error;
-    const approval = frame.signal === "proc.run.hil.requested";
-    const label = approval ? "approval notification"
-      : frame.signal === "proc.run.finished" ? "run failure notice" : "message";
-    await this.noteDeliveryFailure(route, frame, hilRequestId, {
-      state: terminalState,
-      message: terminalState === "ambiguous"
-        ? `The ${label} reached the adapter, but provider delivery is ambiguous. It was not retried to avoid a duplicate.`
-        : terminalState === "permanent"
-          ? `The ${label} could not be delivered: ${deliveryError}`
-          : `The ${label} stopped after ${attempt} retry-safe delivery attempts: ${deliveryError}`,
-    });
-    emitTelemetry(this.host.bindings, {
-      installationId: this.host.installationId,
-      component: "gateway",
-      event: {
-        stream: "operational",
-        name: "adapter.route_delivery.failed",
-        properties: {
-          adapter: route.destination.adapter.trim().toLowerCase(),
-          deliveryKind: approval ? "approval" : "message",
-          surface: route.destination.surface.kind,
-          outcome: "failed",
-          failureKind: terminalState,
-          attempts: attempt,
-          stage: outcome.stage,
-          ...sanitizeExceptionDiagnostics(outcome.diagnostics ?? exceptionDiagnostics(outcome.error)),
-        },
-      },
-    });
-  }
-
-async queueAdapterRouteDelivery(
-    route: AdapterDeliveryRoute,
-    frame: SignalFrame,
-    attempt: number,
-  ): Promise<void> {
-    const payload = frame.payload === undefined ? undefined : z.json().parse(frame.payload);
-    const retry: AdapterRouteDeliveryRetry = {
-      runId: route.runId,
-      processId: route.processId,
-      route,
-      event: frame.signal,
-      attempt,
-    };
-    if (payload !== undefined) retry.payload = payload;
-    await this.host.schedule(
-      new Date(Date.now() + (attempt === 1 ? 10 : adapterRouteRetryDelayMs(attempt - 1))),
-      "onAdapterRouteDelivery",
-      retry,
-      {
-        idempotent: true,
-        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-      },
-    );
-  }
-
-async onAdapterRouteDelivery(input: AdapterRouteDeliveryRetry): Promise<void> {
-    const route = input.route ?? this.host.runRoutes.get(input.runId);
-    if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
-      return;
-    }
-    await this.attemptAdapterRouteDelivery(route, {
-      type: "sig",
-      signal: input.event,
-      payload: input.payload,
-    }, input.attempt);
-  }
-
-async isAdapterHilRequestPending(
-    processId: string,
-    runId: string,
-    requestId: string,
-  ): Promise<boolean> {
-    const response = await sendFrameToProcess(this.host.installationId, processId, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.history",
-      args: { pid: processId, limit: 1, offset: 0 },
-    });
-    if (!response || response.type !== "res" || !response.ok) {
-      throw new Error(`Unable to verify pending approval ${requestId}`);
-    }
-    const data = response.data;
-    if (!data?.ok) {
-      throw new Error(`Unable to verify pending approval ${requestId}`);
-    }
-    const pending = data.pendingHil;
-    return pending?.requestId === requestId && pending.runId === runId;
-  }
-
-  /** Tells the run's process that a reply or approval request didn't reach the person: one event per failure. */
-  private async noteDeliveryFailure(
-    route: AdapterDeliveryRoute,
-    frame: SignalFrame,
-    requestId: string | undefined,
-    outcome: { state: "permanent" | "ambiguous" | "exhausted"; message: string },
-  ): Promise<void> {
-    // The run's process may be gone by now, leaving no one to tell.
-    const ownerUid = this.host.procs.getOwnerUid(route.processId);
-    if (ownerUid === null) return;
-    const deliveryId = z.object({ message: z.object({ id: z.string().min(1) }) }).safeParse(frame.payload).data?.message.id;
-    const noticeId = await stableOpaqueId("process-delivery-notice", [
-      route.runId,
-      requestId ? "hil" : "message",
-      deliveryId ?? requestId ?? "",
-      outcome.state,
-    ]);
-    this.host.eventRuntime.append(deliveryFailed({
-      ownerUid,
-      pid: route.processId,
-      runId: route.runId,
-      noticeId,
-      ...(requestId === undefined ? undefined : { requestId }),
-      message: outcome.message,
-    }));
-    await this.host.eventRuntime.kick();
-  }
-
-async deliverAdapterRouteEvent(
-    route: AdapterDeliveryRoute,
-    frame: SignalFrame,
-  ): Promise<AdapterRouteDeliveryOutcome> {
-    if (frame.signal === "proc.run.started") {
-      await this.setRouteActivity(route, adapterWorkingActivity(route, true));
-      return { state: "delivered" };
-    }
-
-    if (frame.signal === "proc.run.hil.requested") {
-      const parsedRequest = procHilRequestSchema.safeParse(frame.payload);
-      if (!parsedRequest.success) {
-        await this.setRouteActivity(route, adapterWorkingActivity(route, false));
-        return { state: "skipped" };
-      }
-      const request = parsedRequest.data;
-      return await this.deliverWithTyping(route, () => this.deliverAdapterRouteReply(route, {
-        deliveryId: `${route.runId}:hil:${request.requestId}`,
-        text: "",
-        hil: request,
-      }));
-    }
-
-    if (frame.signal === "message.committed") {
-      const parsed = z.object({ message: adapterConversationMessageSchema }).safeParse(frame.payload);
-      if (!parsed.success) return { state: "skipped" };
-      const message = parsed.data.message;
-      if (message.processId !== route.processId || message.runId !== route.runId) {
-        return { state: "skipped" };
-      }
-      const attachmentBundle = await this.bundleConversationReplyMedia(
-        message.conversationId,
-        message.media,
-        message.author.uid,
-      );
-      if (!message.text.trim() && attachmentBundle.media.length === 0) {
-        await this.setRouteActivity(route, adapterWorkingActivity(route, false));
-        return { state: "delivered" };
-      }
-      const reply = {
-        deliveryId: message.id,
-        text: message.text,
-        media: attachmentBundle.media.length > 0 ? attachmentBundle.media : undefined,
-        choices: message.choices?.length ? message.choices : undefined,
-        canonical: {
-          conversationId: message.conversationId,
-          messageId: message.id,
-          sequence: message.sequence,
-        },
-      };
-      return await this.deliverWithTyping(
-        route,
-        () => this.deliverAdapterRouteReply(route, reply, attachmentBundle.body),
-      );
-    }
-
-    if (frame.signal === "proc.run.finished") {
-      const parsed = z.object({
-        pid: z.string(),
-        runId: z.string(),
-        status: z.literal("error"),
-      }).safeParse(frame.payload);
-      if (!parsed.success || parsed.data.pid !== route.processId || parsed.data.runId !== route.runId) {
-        return { state: "skipped" };
-      }
-      return await this.deliverAdapterRouteReply(route, {
-        deliveryId: await stableOpaqueId("process-run-failure", [route.processId, route.runId]),
-        text: "System notice: Ship couldn’t finish this request. Open Chat for details, or send another message to try again.",
-      }, undefined, "system");
-    }
-
-    return { state: "skipped" };
   }
 
 private async setRouteActivity(route: AdapterDeliveryRoute, activity: AdapterActivity | null): Promise<void> {
@@ -416,8 +243,8 @@ private async setRouteActivity(route: AdapterDeliveryRoute, activity: AdapterAct
   /** Typing precedes a delivery; once the reply or approval request is out, Ship's acknowledgement ends. */
   private async deliverWithTyping(
     route: AdapterDeliveryRoute,
-    deliver: () => Promise<AdapterRouteDeliveryOutcome>,
-  ): Promise<AdapterRouteDeliveryOutcome> {
+    deliver: () => Promise<ChatSend>,
+  ): Promise<ChatSend> {
     await this.setRouteActivity(route, adapterTypingActivity(route));
     try {
       return await deliver();
@@ -440,7 +267,7 @@ async deliverAdapterRouteReply(
     },
     body?: BinaryBody,
     presentationKind: "process" | "system" = "process",
-  ): Promise<AdapterRouteDeliveryOutcome> {
+  ): Promise<ChatSend> {
     const ctx = this.host.buildProcessContext(route.processId, route.runId);
     if (!ctx) {
       await cancelBinaryBody(body, "Reply route references a missing process");
@@ -510,7 +337,7 @@ async deliverAdapterRouteReply(
       };
     }
     if (message.canonical) this.recordMessageRefs(route, message.canonical, result);
-    return { state: "delivered" };
+    return { state: "sent" };
   }
 
   /** The message is out by now, so a failure here costs a later quote and never a retry. */
@@ -536,7 +363,7 @@ async bundleConversationReplyMedia(
     conversationId: string,
     value: MessageAttachment[] | undefined,
     authorUid: number,
-  ): Promise<{ media: AdapterMedia[]; body?: BinaryBody }> {
+  ): Promise<ReplyMedia> {
     if (value === undefined) {
       return { media: [] };
     }

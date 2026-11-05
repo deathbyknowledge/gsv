@@ -309,6 +309,25 @@ describe("registered Process events", () => {
     });
   });
 
+  it("starts a run for a failed delivery that wakes its process, or joins the active one, once", async () => {
+    const stub = await initProcess("history-events-delivery-failed-wake", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+      const idle = { ...deliveryFailure("evt_1:proc:history-events-delivery-failed-wake"), admission: START_OR_JOIN };
+      expect(await process.deliverEvent(idle)).toMatchObject({ runId: idle.eventId, queued: false });
+      expect(await process.deliverEvent(idle)).toMatchObject({ runId: idle.eventId, queued: false });
+      expect(schedule).toHaveBeenCalledTimes(1);
+      const [context] = await process.history.buildContextMessages();
+      expect(context?.content).toContain("The message could not be delivered: chat closed");
+
+      process.runs.active = { runId: "active" };
+      const busy = { ...deliveryFailure("evt_2:proc:history-events-delivery-failed-wake"), admission: START_OR_JOIN };
+      expect(await process.deliverEvent(busy)).toMatchObject({ runId: "active", queued: false });
+      expect(schedule).toHaveBeenCalledTimes(1);
+      expect(process.runs.active).toMatchObject({ runId: "active", pendingRuntimeEvents: 1 });
+    });
+  });
+
   it("notes an approval request's failed delivery only while that request is pending", async () => {
     const stub = await initProcess("history-events-approval-delivery-failed", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {

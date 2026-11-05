@@ -1,7 +1,9 @@
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
+import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../../installation/lifecycle";
 import type { DurableTaskOptions } from "../../shared/durable-tasks";
 import { deliverEventToProcess } from "../../shared/utils";
+import type { ChatSend } from "../adapter-delivery";
 import type { KernelContext } from "../context";
 import type { Kernel } from "../do";
 import { ensurePersonalController } from "../personal-controller";
@@ -13,13 +15,14 @@ import { EVENT_BODY_RETENTION_MS, type EventInput, type LoggedEvent, type Pendin
 export type EventRuntimeHost = Pick<
   Kernel,
   | "installationId" | "events" | "auth" | "procs" | "onboarding" | "buildKernelContext" | "schedule" | "cancelSchedule"
-  | "responsibilities"
+  | "responsibilities" | "adapterDelivery"
 >;
 
 /** What producers reach through their Kernel context. */
 export type KernelEvents = Pick<
   EventRuntime,
-  "append" | "kick" | "deliverNow" | "transaction" | "pending" | "withdraw" | "keyed" | "countSince" | "recent" | "forget"
+  | "append" | "kick" | "deliverNow" | "transaction" | "pending" | "withdraw" | "keyed" | "countSince" | "recent" | "forget"
+  | "failedInARow"
 >;
 
 /** How a delivery made in its producer's call went; a pending one is the runner's to retry. */
@@ -30,6 +33,11 @@ export type InlineDelivery =
 
 /** A Process delivery retries without limit: 2 s, doubling to 256 s. */
 const PROCESS_RETRY = { baseMs: 2_000, capMs: 256_000 };
+/**
+ * A chat send retries a blip twice, after 2 s and then 8 s, and then ends unsent for its producer
+ * to follow up. A send that may have reached the chat never retries, so a message can't arrive twice.
+ */
+const CHAT_RETRY_DELAYS_MS = [2_000, 8_000];
 /** A pass that throws is tried again after this long. */
 const FAILED_PASS_RETRY_MS = 60_000;
 /** Retention runs once something is due, at most this often. */
@@ -38,9 +46,10 @@ const PRUNE_SPACING_MS = 60 * 60_000;
 type AttemptResult =
   | { kind: "delivered"; runId: string | null; outcome: JsonObject; responsibilities?: { ledgerRevision: number; ids: string[] } }
   | { kind: "withdrawn"; reason: string }
-  | { kind: "refused"; reason: string };
+  | { kind: "refused"; reason: string }
+  | { kind: "unsent"; failure: Exclude<ChatSend, { state: "sent" }> };
 
-/** Appends Kernel events and delivers them: one task, one gate check, one retry rule per consumer. */
+/** Appends Kernel events and delivers them: one task, one gate check, one retry rule per kind of consumer. */
 export class EventRuntime {
   private running: Promise<void> | null = null;
   /** When retention next has work, read from the log once; null until then. Events appended or settled since only bring it forward. */
@@ -118,6 +127,11 @@ export class EventRuntime {
     this.host.events.forget(type, subject);
   }
 
+  /** How many of a consumer's latest ended deliveries failed in a row, counting at most `limit`. */
+  failedInARow(consumer: string, limit: number): number {
+    return this.host.events.failedInARow(consumer, limit);
+  }
+
   /** Re-arms the runner from the stored deliveries when the Kernel starts. */
   async recover(): Promise<void> {
     await this.arm(this.nextRunAt());
@@ -177,17 +191,40 @@ export class EventRuntime {
       result = await this.deliver(definition, delivery, target, ctx, held);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const retryAt = Date.now() + Math.min(PROCESS_RETRY.capMs, PROCESS_RETRY.baseMs * 2 ** delivery.attemptCount);
-      this.host.events.failed(event.seq, consumer, message, retryAt, Date.now());
-      console.warn(`[Kernel] Event delivery ${event.id} to ${consumer} failed:`, message);
-      return false;
+      if (target.kind !== "chat") {
+        const retryAt = Date.now() + Math.min(PROCESS_RETRY.capMs, PROCESS_RETRY.baseMs * 2 ** delivery.attemptCount);
+        this.host.events.failed(event.seq, consumer, message, retryAt, Date.now());
+        console.warn(`[Kernel] Event delivery ${event.id} to ${consumer} failed:`, message);
+        return false;
+      }
+      // Nothing was handed to the chat's messenger, so its rule retries this as a blip.
+      result = { kind: "unsent", failure: { state: "retryable", stage: "route", error: message, diagnostics: exceptionDiagnostics(error) } };
     }
-    if (result.kind === "withdrawn") {
+    let end: DeliveryEnd;
+    if (result.kind === "unsent") {
+      const { failure } = result;
+      const retryIn = failure.state === "retryable" ? CHAT_RETRY_DELAYS_MS[delivery.attemptCount] : undefined;
+      const now = Date.now();
+      this.host.events.failed(event.seq, consumer, failure.error, retryIn === undefined ? null : now + retryIn, now);
+      if (retryIn !== undefined) return false;
+      end = {
+        state: "failed",
+        reason: failure.error,
+        unsent: {
+          outcome: failure.state === "retryable" ? "exhausted" : failure.state,
+          attempts: delivery.attemptCount + 1,
+          stage: failure.stage,
+          ...(failure.diagnostics === undefined ? undefined : { diagnostics: failure.diagnostics }),
+        },
+      };
+    } else if (result.kind === "withdrawn") {
       this.host.events.withdrawn(event.seq, consumer, result.reason, Date.now());
+      end = { state: "withdrawn", reason: result.reason };
     } else if (result.kind === "refused") {
       // Its Process can never take it, so another attempt would only be refused again.
       this.host.events.failed(event.seq, consumer, result.reason, null, Date.now());
       console.warn(`[Kernel] Event delivery ${event.id} to ${consumer} was refused:`, result.reason);
+      end = { state: "failed", reason: result.reason };
     } else {
       const { responsibilities } = result;
       const now = Date.now();
@@ -196,12 +233,10 @@ export class EventRuntime {
         // The ledger's recovery wake covers a run that never settles what it was handed.
         if (responsibilities) this.host.responsibilities.markEventDelivered(event.ownerUid, responsibilities.ids, now);
       });
+      end = { state: "delivered", ignored: result.outcome.ignored === true };
     }
     this.retainUntil(event);
     if (definition.settled) {
-      const end: DeliveryEnd = result.kind === "delivered"
-        ? { state: "delivered", ignored: result.outcome.ignored === true }
-        : { state: result.kind === "withdrawn" ? "withdrawn" : "failed", reason: result.reason };
       try {
         await definition.settled(event, ctx, end);
       } catch (error) {
@@ -212,7 +247,7 @@ export class EventRuntime {
     return true;
   }
 
-  /** Delivers once; the Process call is made synchronously after the last withdrawal check. */
+  /** Delivers once; the Process call or chat send is made synchronously after the last withdrawal check. */
   private async deliver(
     definition: EventDefinition<PreparedContent | undefined>, delivery: PendingDelivery, target: EventConsumer, ctx: KernelContext,
     held?: PreparedContent,
@@ -223,9 +258,19 @@ export class EventRuntime {
     // Read before finding the Ship, so content that is gone never starts one.
     const prepared = held ?? (definition.prepare ? await definition.prepare(event, ctx) : undefined);
     if (isWithdrawn(prepared)) return { kind: "withdrawn", reason: prepared.withdrawn };
+    if (target.kind === "chat") {
+      const late = this.withdrawal(definition, delivery, target, ctx);
+      if (late) return { kind: "withdrawn", reason: late };
+      if (!definition.present) return { kind: "refused", reason: `Event type ${event.type} has nothing for a chat` };
+      const message = definition.present(event, prepared, ctx);
+      if (isWithdrawn(message)) return { kind: "withdrawn", reason: message.withdrawn };
+      const sent = await this.host.adapterDelivery.sendToChat(message);
+      return sent.state === "sent" ? { kind: "delivered", runId: null, outcome: {} } : { kind: "unsent", failure: sent };
+    }
     const pid = target.kind === "process" ? target.pid : await ensurePersonalController(target.ownerUid, ctx);
     const late = this.withdrawal(definition, delivery, target, ctx);
     if (late) return { kind: "withdrawn", reason: late };
+    if (!definition.admit) return { kind: "refused", reason: `Event type ${event.type} has nothing for a process` };
     const admitted = definition.admit(event, prepared, ctx);
     if (isWithdrawn(admitted)) return { kind: "withdrawn", reason: admitted.withdrawn };
     const result = await deliverEventToProcess(this.host.installationId, pid, {

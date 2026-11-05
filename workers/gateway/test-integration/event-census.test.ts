@@ -106,7 +106,7 @@ describe("event census", () => {
     }));
   });
 
-  it("routes a messenger's messages to Ship and to work, reports a reply it refuses, and returns to Ship", async () => {
+  it("routes a messenger's messages to Ship and to work, wakes work when its reply is refused, and returns to Ship", async () => {
     await (await kernelStorage()).exec(
       `INSERT INTO identity_links (adapter, account_id, actor_id, uid, created_at, linked_by_uid, metadata_json)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -131,12 +131,18 @@ describe("event census", () => {
     const restored = await runtime.client.proc.ai.config.set({ pid: shipPid, modelId: "background-fixture", reasoning: "off" });
     if (!restored.ok) throw new Error(restored.error);
 
+    // Work's reply never reaches the chat, which wakes work: the run that wrote it, or a new one.
     await runtime.configureAi(work);
-    runtime.ai.enqueue({ kind: "message", text: UNDELIVERABLE_REPLY });
+    runtime.ai.enqueue({ kind: "message", text: UNDELIVERABLE_REPLY }, { kind: "message", text: "Census: the reply didn't arrive." });
     const toWork = await inbound("census-work", "Census: a message for the work process.");
     expect(toWork.delivered).toMatchObject({ pid: work });
     await waitForLog("delivery.failed to the work process", async () => (await rows("delivery.failed")).some(({ consumer, state }) => consumer === `proc:${work}` && state === "delivered"));
     expect(await rows("message.received")).toContainEqual(expect.objectContaining({ consumer: `proc:${work}`, state: "delivered", runId: toWork.delivered?.runId }));
+    expect(await rows("chat.reply")).toContainEqual(expect.objectContaining({ consumer: expect.stringMatching(/^chat:/), lane: "messages", state: "failed" }));
+    const woken = (await rows("delivery.failed")).find(({ consumer }) => consumer === `proc:${work}`);
+    expect(woken).toMatchObject({ pid: work, runId: expect.any(String) });
+    // The wake answers before the next step scripts the model.
+    if (woken?.runId) await waitForRun(work, woken.runId);
 
     await inbound("census-return", "/ship");
     await waitForLog("work.returned to Ship", async () => (await rows("work.returned")).some(({ consumer, lane, state }) => consumer === SHIP && lane === "person" && state === "delivered"));
@@ -242,7 +248,8 @@ describe("event census", () => {
     expect({
       missing: CENSUS_EVENT_TYPES.filter((type) => !logged.has(type)),
       misrouted: log.filter((row) => !routedAsListed(row)).map(({ seq, type, consumer, lane }) => `${type} #${seq} to ${consumer ?? "no one"} on ${lane ?? "no lane"}`),
-      refused: log.filter(({ state }) => state === "failed"),
+      // A chat's reply may end unsent, as work's does above; no process's event may.
+      refused: log.filter(({ state, consumer }) => state === "failed" && !consumer?.startsWith("chat:")),
       outsideTheLog: await runsOutsideTheLog(log),
     }).toEqual({ missing: [], misrouted: [], refused: [], outsideTheLog: [] });
   }, 120_000);
@@ -351,7 +358,9 @@ function routedAsListed({ type, consumer, lane }: LogRow): boolean {
   const route = Object.entries(CENSUS_ROUTES).find(([listed]) => listed === type)?.[1];
   if (!route) return false;
   if (consumer === null) return route.to.length === 0;
-  const to = consumer.startsWith("personal:") ? "ship" : consumer.startsWith("proc:") ? "process" : null;
+  const to = consumer.startsWith("personal:") ? "ship"
+    : consumer.startsWith("proc:") ? "process"
+      : consumer.startsWith("chat:") ? "chat" : null;
   return route.to.some((listed) => listed === to) && route.lane === lane;
 }
 

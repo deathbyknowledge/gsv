@@ -12,9 +12,11 @@ const bodySchema = z.strictObject({
   /** Set when an approval request failed, which matters only while that request is pending. */
   requestId: z.string().optional(),
   message: z.string(),
+  /** Set when the failure starts the process's run, or joins the one it is in, instead of only being noted. */
+  wake: z.literal(true).optional(),
 });
 
-/** One delivery's failure, keyed by its run, its kind, what it carried and how it failed, so it appends once. */
+/** One delivery's failure, keyed by the delivery that failed, so it appends once. */
 export function deliveryFailed(input: {
   ownerUid: number;
   pid: string;
@@ -22,29 +24,39 @@ export function deliveryFailed(input: {
   noticeId: string;
   requestId?: string;
   message: string;
+  wake?: boolean;
 }): EventInput {
-  const { ownerUid, pid, runId, noticeId, requestId, message } = input;
+  const { ownerUid, pid, runId, noticeId, requestId, message, wake } = input;
   return {
     type: DELIVERY_FAILED,
     ownerUid,
     subject: `proc:${pid}`,
     actor: { kind: "kernel" },
     key: noticeId,
-    body: { pid, runId, ...(requestId === undefined ? undefined : { requestId }), message },
+    body: {
+      pid,
+      runId,
+      ...(requestId === undefined ? undefined : { requestId }),
+      message,
+      ...(wake ? { wake: true } : undefined),
+    },
   };
 }
 
-/** The run's process notes the failure for the person and the model in its history; it starts no run. */
+/**
+ * The run's process notes the failure for the person and the model in its history. One that
+ * wakes it also starts a run, or joins the active one, so the process can try another way.
+ */
 export const deliveryFailedEvent: EventDefinition = {
   routes: (event) => [{ consumer: processConsumer(bodySchema.parse(event.body).pid), lane: "background" }],
   admit(event) {
-    const { runId, requestId, message } = bodySchema.parse(event.body);
+    const { runId, requestId, message, wake } = bodySchema.parse(event.body);
     return {
       event: {
         kind: "delivery.failed", severity: "error", audience: "both",
         payload: { phase: "message", noticeId: event.key, runId, error: message },
       },
-      admission: { idle: "record", busy: "record" },
+      admission: wake ? { idle: "start", busy: "join" } : { idle: "record", busy: "record" },
       ...(requestId === undefined ? undefined : { approvalRequestId: requestId }),
     };
   },

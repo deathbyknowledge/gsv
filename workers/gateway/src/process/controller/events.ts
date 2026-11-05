@@ -34,12 +34,13 @@ export async function deliverProcessEvent(
   }
   const { event, admission: { idle, busy, joinRun } } = args;
   if (event.kind === "delivery.failed") {
-    // Noted under the run that wrote it; a failed approval request only while that request is pending.
+    // A failed approval request matters only while that request is pending.
     const { runId } = event.payload;
     if (args.approvalRequestId !== undefined && host.store.tools.getPendingHil(args.approvalRequestId)?.runId !== runId) {
       return { eventId, runId: null, queued: false, ignored: true };
     }
-    return await appendNotice(host, eventId, event, runId);
+    // One only to note goes under the run that wrote it; one that wakes the process is admitted like any other event.
+    if (idle === "record" && busy === "record") return await appendNotice(host, eventId, event, runId);
   }
   if (outlived(host, event)) return { eventId, runId: null, queued: false, ignored: true };
   // An event only the person sees gives a run nothing to read; one for a given run waits for its own run during another.
