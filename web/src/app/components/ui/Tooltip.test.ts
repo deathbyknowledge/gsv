@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnchorRect } from "./Tooltip";
-import { resolvePlacement } from "./Tooltip";
+import { resolvePlacement, resolveZoomedPlacement } from "./Tooltip";
 
 // resolvePlacement reads window.innerWidth/innerHeight. The repo runs tests in a
 // node env with no DOM, so stub a fixed viewport and derive every expected value
@@ -298,5 +298,26 @@ describe("resolvePlacement — degenerate bubbles larger than the viewport", () 
     expect(p).toEqual({ left: 272, top: 8, side: "left", arrowOffset: 292 });
     expect(Number.isNaN(p.top)).toBe(false);
     expect(Number.isNaN(p.arrowOffset)).toBe(false);
+  });
+});
+
+describe("resolveZoomedPlacement — a bubble laid out under CSS zoom", () => {
+  // The bubble inside a zoomed modal dialog measures 100x40 in its own pixels, which is 200x80 in the
+  // viewport at zoom 2. Placement happens in viewport space and is written back in the bubble's pixels.
+  it("resolves in viewport space and writes zoomed coordinates", () => {
+    // viewport: top = 290 - 8 - 80 = 202, left = 400 - 100 = 300, arrowOffset = 100; then each / 2
+    expect(resolveZoomedPlacement(centered, BW, BH, "top", 2)).toEqual({ side: "top", top: 101, left: 150, arrowOffset: 50 });
+  });
+
+  it("flips sides by the bubble's viewport size", () => {
+    // 60px above the anchor fits the plain 40px bubble plus its margin, but not the 80 viewport px of
+    // the zoomed one, so only the zoomed bubble goes below.
+    const near = anchor(400, 70);
+    expect(resolveZoomedPlacement(near, BW, BH, "top", 2).side).toBe("bottom");
+    expect(resolvePlacement(near, BW, BH, "top").side).toBe("top");
+  });
+
+  it("is the plain placement at zoom 1", () => {
+    expect(resolveZoomedPlacement(centered, BW, BH, "left", 1)).toEqual(resolvePlacement(centered, BW, BH, "left"));
   });
 });

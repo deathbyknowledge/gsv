@@ -1,5 +1,6 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useId, useState } from "preact/hooks";
+import { FieldStatus } from "./FieldStatus";
 import { InfoTip } from "./InfoTip";
 import { useT } from "../../i18n/locale";
 import "./TextInput.css";
@@ -173,15 +174,9 @@ export function TextInput(props: TextInputProps) {
         {suffix ? <span class="gsv-ti-affix gsv-label">{suffix}</span> : null}
       </div>
       {hasStatusRow ? (
-        <div class="gsv-fld-stat" style={showCounter ? { justifyContent: "flex-end" } : undefined}>
-          {hasStatusMsg ? (
-            <>
-              <span class="gsv-fld-dot" />
-              <span class="gsv-fld-msg gsv-sublabel" id={`${fieldId}-msg`} role={effectiveStatus === "error" ? "alert" : undefined}>{effectiveMessage}</span>
-            </>
-          ) : null}
+        <FieldStatus status={effectiveStatus} message={hasStatusMsg ? effectiveMessage : ""} id={`${fieldId}-msg`}>
           {showCounter ? <span class="gsv-ti-counter gsv-sublabel">{counterText}</span> : null}
-        </div>
+        </FieldStatus>
       ) : null}
     </div>
   );
