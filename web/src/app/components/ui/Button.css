@@ -175,89 +175,59 @@
 }
 
 /* — link — */
+/* — link — a text action in the product's own register: plain dim text that underlines and takes the
+   accent on hover, with no glyph, so it sits beside remove, cancel and sign out without standing out — */
 .gsv-btn-link {
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  padding: 0 0 1px;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 2px 0;
   background: transparent;
   border: none;
-  border-bottom: 1px solid var(--accent);
-  color: var(--accent);
-  transition: color 0.12s, border-color 0.12s, opacity 0.12s;
+  color: var(--text-dim);
+  text-underline-offset: 5px;
 }
 .gsv-btn-link:not(.is-disabled):hover,
 .gsv-btn-link:not(.is-disabled):focus-visible {
-  color: var(--accent-bright);
-  border-color: var(--accent-bright);
+  color: var(--accent);
+  text-decoration: underline;
   outline: none;
 }
 .gsv-btn-link:not(.is-disabled):active {
   opacity: 0.65;
 }
 .gsv-btn-link.is-disabled {
-  color: var(--text-muted); /* was #565199 (2.9:1); label now 5.8:1 on void */
-  border-color: var(--rule-section); /* was #25224d (1.4:1 vs void); underline now 2.0:1 */
-}
-.gsv-btn-link svg {
-  display: block;
-  filter: var(--gsv-btn-glow-off, drop-shadow(0 0 3px rgba(150, 140, 255, 0.5)));
-}
-.gsv-btn-link.is-disabled svg {
-  filter: none;
+  color: var(--faint);
 }
 
-/* — link tones — action-colour variants; the default stays accent — */
+/* — link tones — action-colour variants; the default stays the dim text — */
 .gsv-btn-link.is-tone-error:not(.is-disabled) {
   color: var(--error);
-  border-color: var(--error);
 }
 .gsv-btn-link.is-tone-error:not(.is-disabled):hover,
 .gsv-btn-link.is-tone-error:not(.is-disabled):focus-visible {
   color: color-mix(in srgb, var(--error) 64%, var(--text-hi));
-  border-color: color-mix(in srgb, var(--error) 64%, var(--text-hi));
-}
-.gsv-btn-link.is-tone-error:not(.is-disabled) svg {
-  filter: var(--gsv-btn-glow-off, drop-shadow(0 0 3px color-mix(in srgb, var(--error) 50%, transparent)));
 }
 .gsv-btn-link.is-tone-neutral:not(.is-disabled) {
-  color: var(--label);
-  border-color: var(--idle);
+  color: var(--text-dim);
 }
 .gsv-btn-link.is-tone-neutral:not(.is-disabled):hover,
 .gsv-btn-link.is-tone-neutral:not(.is-disabled):focus-visible {
-  color: color-mix(in srgb, var(--label) 45%, var(--text-hi));
-  border-color: var(--text-muted);
-}
-.gsv-btn-link.is-tone-neutral:not(.is-disabled) svg {
-  filter: var(--gsv-btn-glow-off, drop-shadow(0 0 3px rgba(154, 149, 207, 0.45)));
+  color: var(--text);
 }
 .gsv-btn-link.is-tone-success:not(.is-disabled) {
   color: var(--online);
-  border-color: var(--online);
 }
 .gsv-btn-link.is-tone-success:not(.is-disabled):hover,
 .gsv-btn-link.is-tone-success:not(.is-disabled):focus-visible {
-  color: color-mix(in srgb, var(--online) 69%, var(--text-hi));
-  border-color: color-mix(in srgb, var(--online) 69%, var(--text-hi));
-}
-.gsv-btn-link.is-tone-success:not(.is-disabled) svg {
-  filter: var(--gsv-btn-glow-off, drop-shadow(0 0 3px color-mix(in srgb, var(--online) 50%, transparent)));
+  color: color-mix(in srgb, var(--online) 64%, var(--text-hi));
 }
 .gsv-btn-link.is-tone-attention:not(.is-disabled) {
-  color: var(--update);
-  border-color: var(--update);
+  color: var(--warn);
 }
 .gsv-btn-link.is-tone-attention:not(.is-disabled):hover,
 .gsv-btn-link.is-tone-attention:not(.is-disabled):focus-visible {
-  color: color-mix(in srgb, var(--update) 62%, var(--text-hi));
-  border-color: color-mix(in srgb, var(--update) 62%, var(--text-hi));
-}
-.gsv-btn-link.is-tone-attention:not(.is-disabled) svg {
-  filter: var(--gsv-btn-glow-off, drop-shadow(0 0 3px color-mix(in srgb, var(--update) 50%, transparent)));
-}
-
-.gsv-btn.is-disabled {
-  cursor: not-allowed;
+  color: color-mix(in srgb, var(--warn) 64%, var(--text-hi));
 }
 
 /* — keyboard focus ring (visible only for keyboard navigation) — */
@@ -305,4 +275,8 @@
   border-color: var(--border-raised);
   background: var(--active);
   color: var(--text-muted);
+}
+
+.gsv-btn.is-disabled {
+  cursor: not-allowed;
 }

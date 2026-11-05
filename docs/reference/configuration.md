@@ -248,6 +248,12 @@ allow is offered only for a request that names one target, never `targets/*` or
 `*`, and a Block rule never reaches a prompt. The rule appears in **Settings →
 Permissions**, where it can be changed or removed.
 
+**Settings → Permissions** lists the rules as one table: tool, target and action
+per row. Search narrows the list by those words. The handle at the start of a row
+drags it, and the move buttons beside it shift it one place, since list order
+breaks ties; the bin icon at the end removes it. On a phone each rule is a block
+with the same three choices and controls.
+
 Every capability tool also accepts a `purpose` argument: one sentence written for the person, shown in the approval prompt and recorded in the ledger. It is stripped before the syscall runs; see [Tool purpose](./syscalls.md#tool-purpose).
 
 ## Runtime Config Keys
