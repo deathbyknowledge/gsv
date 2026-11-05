@@ -136,6 +136,10 @@ export const runStateSchema = z.object({
   returnToCaller: z.boolean().optional(),
   conversationId: z.string().optional(),
   inputMessageId: z.string().optional(),
+  /** When the person's message that started this run reached the Process. */
+  inputAt: z.number().int().nonnegative().optional(),
+  /** Set once the run has committed its first message, so reply timing is measured once. */
+  replied: z.literal(true).optional(),
   tickGeneration: z.number().optional(),
   generationRetryRevision: z.number().int().nonnegative().safe().optional(),
   pendingMediaMessageId: z.number().optional(),

@@ -91,6 +91,18 @@ describe("mock gateway", () => {
       .rejects.toThrow("does not implement sys.config.set");
   });
 
+  it("creates, lists and cancels a place invitation, answering a retried create with the same one", async () => {
+    const client = await connectedClient();
+    const request = { id: "6f1c2e4a-0b3d-4c5e-8f70-9a1b2c3d4e5f", secret: "a".repeat(64), targetId: "studio-pc", label: "Studio PC" };
+    const { pairing } = await client.sys.pair.create(request);
+    expect(pairing).toMatchObject({ id: request.id, username: "esteve", targetId: "studio-pc", label: "Studio PC", state: "pending" });
+    expect(pairing.expiresAt - pairing.createdAt).toBe(10 * 60 * 1000);
+    expect((await client.sys.pair.create(request)).pairing).toEqual(pairing);
+    expect((await client.sys.pair.list({})).pairings).toContainEqual(pairing);
+    expect((await client.sys.pair.cancel({ id: request.id })).pairing.state).toBe("cancelled");
+    expect((await client.sys.pair.list({})).pairings.find((item) => item.id === request.id)?.state).toBe("cancelled");
+  });
+
   it("raises an approval with a purpose on /approve and resolves it with one reply", async () => {
     const client = await connectedClient();
     const signals: Array<[string, JsonValue | undefined]> = [];

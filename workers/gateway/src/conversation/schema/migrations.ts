@@ -8,6 +8,7 @@ import { CONVERSATION_V005_SEARCH } from "./v005_search";
 import { CONVERSATION_V006_MESSAGE_ORIGINS } from "./v006_message_origins";
 import { CONVERSATION_V008_ORIGINS_BY_DID } from "./v008_origins_by_did";
 import { CONVERSATION_V009_DROP_ORIGINS_BEFORE_DIDS } from "./v009_drop_origins_before_dids";
+import { CONVERSATION_V010_MESSAGE_CHOICES } from "./v010_message_choices";
 
 export const CONVERSATION_SCHEMA_COMPONENT = "conversation";
 
@@ -22,6 +23,7 @@ export const CONVERSATION_MIGRATIONS: readonly SqlMigration[] = [
   CONVERSATION_V006_MESSAGE_ORIGINS,
   CONVERSATION_V008_ORIGINS_BY_DID,
   CONVERSATION_V009_DROP_ORIGINS_BEFORE_DIDS,
+  CONVERSATION_V010_MESSAGE_CHOICES,
 ];
 
 export function runConversationSqlMigrations(storage: DurableObjectStorage): void {

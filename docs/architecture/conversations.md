@@ -79,7 +79,7 @@ lavender highlight with contrasting text in both themes.
 Inside the prompt, selected text stays light on a stronger purple highlight. Selecting a range
 restores the native selection tint and handles on iOS; a collapsed selection uses the block cursor.
 
-On a new owner's first visit, the empty Ship chat shows centered,
+On a new owner's first visit, after the surface choice, the empty Ship chat shows centered,
 muted privacy copy behind the transcript. It clears when the owner writes or
 Ship starts replying. The notice is not a conversation message and is not sent
 to the model. It does not appear in helpers, over existing messages, or while
@@ -158,6 +158,11 @@ delivery and run completion are separate operations:
   lives through `fs.read` in its `reference` representation, retained into the process archive, and sent with the message, or the send is
   refused naming the file that could not be read. Those reads obey the person's tool approval rules the
   way a Read does: a file that would need approval is refused until it has been read once.
+- `choices` offers up to ten replies with a message that asks something, each one line of at most 80
+  characters. They are stored with the canonical Message, so every client and messenger sees the
+  same ones. Instrument shows them as buttons under Ship's latest message only; once anything follows,
+  they are gone. Tapping one sends its text as an ordinary message from the person, exactly as if they
+  had typed it. Only a Process message with text can offer choices.
 - The same three actions exist as commands, so a person or a script can do what the model does. A
   literal block sends and leaves the run active, `yield` finishes it, and a final message composes both
   with ordinary shell success semantics:
@@ -211,7 +216,8 @@ contact destinations remain fixed. Personal Ship replies follow the owner's curr
   This preference survives the end of a run and Process replacement.
 - When the selected client disconnects or has been inactive for five minutes, Ship uses the owner's
   last authorized linked private messenger destination. A new messenger message selects that
-  messenger; sending a new message in the app selects that client again. Activity cannot revive an
+  messenger, and so does pairing one: the person has just written from that chat for the code.
+  Sending a new message in the app selects that client again. Activity cannot revive an
   expired selection. Without a usable destination,
   the message remains in canonical history.
 - Idle expiry includes 30 seconds of reporting grace so throttled input cannot cause an early
@@ -403,6 +409,26 @@ Internal compaction handovers remain in Process history and its archives. Chat
 does not present them as “Memory” messages or interrupt the composer when the
 working context changes.
 
+
+## Link previews in the web app
+
+Chat shows a quiet card under a settled Ship message for each web link it contains, in order and
+once per URL and at most ten per message, with the page's image, site name, title and description;
+the card opens the link in a new tab. Links inside code, images and the person's own messages get no
+card, and neither do links to a Ship on the deployment's domains, which need a session the preview
+does not carry. Previews resolve lazily, and only for messages near the viewport, so opening a long
+history fetches nothing for what it scrolled past.
+
+The browser reads the page with an ordinary `net.fetch` on `gsv`, which relays the response as it
+arrives, and parses the preview tags itself: it reads only up to the end of the page's head and then
+cancels the body, which also stops the Kernel's request. The image comes through `net.fetch` too, so
+the browser never contacts the linked site or its image host. A few previews are read at a time.
+The device keeps what it read in IndexedDB for a week, at most 500 entries, so reopening a
+conversation does not read its pages again. A page or image that answered with nothing to show, such as a page with neither a title nor an image, is
+asked again after an hour, and a lost connection is not kept at all. Signing out deletes the store.
+Until a preview resolves, or when it fails or offers neither a title nor an image, the message shows
+no card and takes no extra room. A preview is presentation only: it is never part of the canonical
+message, its history or its search index, and messengers present links in their own way.
 
 ## Contextual requests in the web app
 

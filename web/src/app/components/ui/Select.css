@@ -1,8 +1,6 @@
 /* Ported from Select.dc.html — values transcribed verbatim. */
-/* Colours are theme tokens. Neon glows switch off on the light themes through
-   --gsv-fld-glow (the blur radius), which the light theme roots zero out. */
+/* Colours are theme tokens; FieldStatus.css switches the status-dot glow off on the light themes. */
 :is(.instrument.is-light, .gsv-auth-theme.is-light) {
-  --gsv-fld-glow: 0px;
   --gsv-sel-list-shadow: 0 12px 30px rgba(20, 17, 43, 0.15);
 }
 .gsv-sel {
@@ -179,49 +177,4 @@
   color: var(--text-dim);
   margin-bottom: 10px;
   max-width: 46ch;
-}
-.gsv-fld-stat {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  min-height: 13px;
-}
-.gsv-fld-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 1px;
-}
-.gsv-fld-msg {
-  /* size from .gsv-sublabel (12px) */
-  letter-spacing: 0.1em;
-}
-.gsv-fld.is-error .gsv-fld-msg {
-  color: var(--error);
-}
-.gsv-fld.is-error .gsv-fld-dot {
-  background: var(--error);
-  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--error);
-}
-.gsv-fld.is-success .gsv-fld-msg {
-  color: var(--online);
-}
-.gsv-fld.is-success .gsv-fld-dot {
-  background: var(--online);
-  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--online);
-}
-.gsv-fld.is-info .gsv-fld-msg {
-  color: var(--live);
-}
-.gsv-fld.is-info .gsv-fld-dot {
-  background: var(--live);
-  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--live);
-}
-.gsv-fld.is-warn .gsv-fld-msg {
-  color: var(--warn);
-}
-.gsv-fld.is-warn .gsv-fld-dot {
-  background: var(--warn);
-  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--warn);
 }

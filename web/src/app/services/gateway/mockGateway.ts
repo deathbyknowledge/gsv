@@ -7,6 +7,7 @@
  * session lands straight in Zen signed in; with storage cleared, any username and password sign in.
  * `?fresh=1` is a brand-new space instead: no conversation, and signing in wakes Ship the way the
  * Kernel does, a quiet beat, a long think, then the welcome landing whole.
+ * `?fresh=calibrate` is a fresh space whose welcome is the Calibration sketch (see /calibrate below).
  * `?fresh=0` returns to the seeded conversation.
  * Of the config, this browser keeps only the Language preference, so Settings can switch the
  * interface language; other settings refuse to save.
@@ -27,6 +28,8 @@
  *   /approve, /approve-old   a shell approval, with and without a purpose
  *   /approve-mail, /approve-file   an email or file approval; y/n decides, a new message interrupts
  *   /approve-publish   a publish to the open network carrying a picture; y/n decides
+ *   /calibrate a sketch of a Calibration welcome: each Ship message offers replies to tap, and any
+ *              answer, tapped or typed, moves it to the next step
  *   record     a voice recording transcribes to a fixed sentence after a moment, so send and pause can be tried
  *   anything else is committed as your message and answered briefly a second later
  */
@@ -45,6 +48,7 @@ import {
   type ApproachSummary,
   type ContactSendResult,
   type ContactSummary,
+  type DevicePairing,
   type ConversationInboxEntry,
   type AiThinkingContent,
   type AiToolCall,
@@ -54,7 +58,6 @@ import {
   type JsonObject,
   type JsonValue,
   type ProcContextState,
-  type DevicePairing,
   type ProcHilRequest,
   type ProcHistoryRecord,
   type ProcHistoryRecordData,
@@ -72,6 +75,7 @@ import { z } from "zod";
 
 const MOCK_FLAG = "gsv.ui.mock";
 const FRESH_FLAG = "gsv.ui.mock.fresh";
+const FIRST_RUN_SEEN = "gsv.mock.first_run_seen";
 /** The session service's persisted token (sessionService.ts); seeding one is how the mock signs in without the form. */
 const SESSION_TOKEN_KEY = "gsv.ui.session.token.v1";
 const SEEDED_TOKEN_ID = "mock-session";
@@ -91,15 +95,19 @@ export function mockGatewayRequested(): boolean {
   }
 }
 
-/** A fresh space sticks to the tab like the mock itself. */
-function freshRequested(): boolean {
+/** A fresh space sticks to the tab like the mock itself, and so does the welcome it was asked for. */
+function freshRequested(): "welcome" | "calibrate" | null {
   try {
     const asked = new URLSearchParams(window.location.search).get("fresh");
-    if (asked === "1") window.sessionStorage.setItem(FRESH_FLAG, "1");
+    if (asked === "1" || asked === "calibrate") {
+      window.sessionStorage.setItem(FRESH_FLAG, asked);
+      window.localStorage.removeItem(FIRST_RUN_SEEN);
+    }
     if (asked === "0") window.sessionStorage.removeItem(FRESH_FLAG);
-    return window.sessionStorage.getItem(FRESH_FLAG) === "1";
+    const kept = window.sessionStorage.getItem(FRESH_FLAG);
+    return kept === "calibrate" ? "calibrate" : kept === "1" ? "welcome" : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -133,6 +141,7 @@ const HELPER = { pid: "p-helper", label: "tidy the notes archive" };
 const SHIP_CONVERSATION = "c-ship";
 /** The config this browser keeps for the mock, with its storage key: the owner's language. */
 const STORED_CONFIG = new Map([
+  [`users/${OWNER.uid}/ui/welcome_card_seen`, FIRST_RUN_SEEN],
   [`users/${OWNER.uid}/locale/language`, "gsv.mock.language"],
 ]);
 const mockEventSources: EventSource[] = [
@@ -171,14 +180,75 @@ const WELCOME = "Hi, I'm Ship. I'm here to do the things you'd rather not deal w
 const FIRST_THOUGHT = "A new owner, and the welcome responsibility comes first. I know nothing about them yet, so the brief says to introduce myself briefly, ask them to introduce themselves, then yield and wait for the reply.";
 const SHORT_REPLY = "Done. The action items are in your notes under Mara, and the reminder is set for Wednesday evening.";
 const ECHO_REPLY = "Noted. I will take care of it and let you know when it is done.";
+
+/*
+ * The Calibration sketch: every Ship message offers replies to tap, and each answer, tapped or typed,
+ * shapes the next question. Ship would write these lines itself; its brief would set only the shape.
+ */
+type CalibrationTurn = { text: string; choices?: string[] };
+/** The city the browser's clock is set to, the one thing Ship knows before the first answer. */
+const CALIBRATION_CITY = Intl.DateTimeFormat().resolvedOptions().timeZone.split("/").pop()?.replaceAll("_", " ") ?? "Lisbon";
+/** What an answer to "what eats your week" lets Ship guess and offer; only a named answer carries a trait. */
+type CalibrationWeek = { trait?: string; guess: [text: string, trait: string]; missions: string[] };
+const CALIBRATION_WEEK = new Map<string, CalibrationWeek>([
+  ["Email", { trait: "drowning in email", guess: ["you have more than a thousand unread emails", "a thousand unread"], missions: ["A 9 am digest of what matters", "Clear out the newsletters", "Drafts for the replies I owe"] }],
+  ["Work admin", { trait: "buried in admin", guess: ["there's a form you've been putting off for weeks", "one form behind"], missions: ["Chase my open follow-ups", "Friday: next week's deadlines", "Turn my notes into to-dos"] }],
+  ["Family logistics", { trait: "runs the family logistics", guess: ["you're the one who remembers everyone's birthdays", "remembers every birthday"], missions: ["Sunday 8 pm: the week in 3 lines", "School and activity reminders", "A weekend plan for the kids"] }],
+  ["Money", { trait: "keeps the money straight", guess: ["you pay for a subscription you forgot about", "one forgotten subscription"], missions: ["Bills due this month", "Subscriptions I forgot", "A Sunday spending check"] }],
+  ["Travel", { trait: "always planning a trip", guess: ["you already have the next trip in mind", "next trip in mind"], missions: ["Watch prices for my next trip", "Plan a long weekend", "Everything I need before I fly"] }],
+]);
+const CALIBRATION_ANY_WEEK: CalibrationWeek = { guess: ["there's something you've meant to sort out for weeks", "one thing put off for weeks"], missions: ["A 9 am brief of my day", "Sunday 8 pm: the week in 3 lines", "Remind me what I promise people"] };
+const CALIBRATION_REACTIONS = new Map<string, string>([
+  ["What can you do?", "Errands, plans, reminders, inbox, research. Easier to show than tell, so let's start."],
+  ["Morning person", "Early start. I'll have things ready before you are."],
+  ["Night owl", "Noted. Nothing from me before 9 unless it's urgent."],
+  ["Depends on coffee", "Fair. I'll read the room."],
+  ["Email", "I can get your inbox down to what matters."],
+  ["Work admin", "Forms and follow-ups. That's my kind of work."],
+  ["Family logistics", "The invisible job. I can carry a lot of that."],
+  ["Money", "Bills, renewals, small leaks. I'll keep an eye on them."],
+  ["Travel", "Trips and everything around them. Easy to hand over."],
+  ["Something else", "Tell me in a word or two whenever you like."],
+  ["Yes", `${CALIBRATION_CITY} it is.`],
+  ["Somewhere else", "Tell me the city when it matters."],
+  ["Guilty", "Knew it."],
+  ["Not even close", "Noted. I'll stop guessing."],
+  ["Spot on", "Good."],
+  ["Fix something", "Tell me what's off in your own words, any time."],
+]);
+/** What Ship asks after `answers`, the replies so far in order. */
+function calibrationTurn(answers: readonly string[]): CalibrationTurn {
+  const week = CALIBRATION_WEEK.get(answers[2] ?? "") ?? CALIBRATION_ANY_WEEK;
+  switch (answers.length) {
+    case 0: return { text: "Hi, I'm Ship. Before I start working for you, let me calibrate: five quick taps, about a minute.", choices: ["Let's go", "What can you do?"] };
+    case 1: return { text: "**1 / 5** · Mornings or nights?", choices: ["Morning person", "Night owl", "Depends on coffee"] };
+    case 2: return { text: "**2 / 5** · What eats most of your week?", choices: ["Email", "Work admin", "Family logistics", "Money", "Travel", "Something else"] };
+    case 3: return { text: `**3 / 5** · Your clock says ${CALIBRATION_CITY}. Is that home?`, choices: ["Yes", "Somewhere else"] };
+    case 4: return { text: `**4 / 5** · A guess: ${week.guess[0]}.`, choices: ["Guilty", "Not even close"] };
+    case 5: return { text: "**5 / 5** · Pick one for me to take off your plate this week.", choices: week.missions };
+    case 6: {
+      const traits = [
+        { "Morning person": "morning person", "Night owl": "night owl", "Depends on coffee": "runs on coffee" }[answers[1]],
+        week.trait,
+        answers[3] === "Yes" ? CALIBRATION_CITY : undefined,
+        answers[4] === "Guilty" ? week.guess[1] : undefined,
+      ].filter((trait) => trait !== undefined);
+      return { text: `Good pick. Here's what I've got so far:\n\n> ${traits.length ? traits.join(" · ") : "not much yet, which is fine"}\n\nDid I get you right?`, choices: ["Spot on", "Fix something"] };
+    }
+    case 7: return { text: "Last one. Where should I reach you?", choices: ["WhatsApp", "Telegram", "Right here"] };
+    default: {
+      const there = answers[7] === "WhatsApp" || answers[7] === "Telegram" ? `on ${answers[7]}` : "here";
+      return { text: `Calibrated. First up: **${answers[5]}**. I'll send it ${there}, and you can change anything just by telling me.` };
+    }
+  }
+}
+/** The replies to the mock Calibration so far, or null when none is running. */
+let calibration: string[] | null = null;
 const LONG_REPLY = [
   "Here is where things stand with the studio backup.",
   "The drive filled up because the build caches from the last three releases were never cleared; together they took about 140 GB. I removed the ones older than a week, which brought free space back to a third of the disk, and the overnight run completed in forty minutes.",
   "Two things would keep this from happening again. A weekly clean of caches older than fourteen days, which I can add as a routine, and a warning when free space drops under a tenth of the disk. Say the word and I will set both up.",
 ].join("\n\n");
-
-/** Invitations created from the connect panel; the mock never pairs them. */
-const pairings: DevicePairing[] = [];
 
 const targets: SysTargetSummary[] = [
   { targetId: "studio", ownerUid: OWNER.uid, ownerUsername: OWNER.username, label: "studio", description: "MacBook Pro", implements: ["fs.*", "shell.*"], platform: "darwin", version: "0.6.0", online: true, lastSeenAt: Date.now() },
@@ -213,6 +283,15 @@ const maraView = { readThroughSequence: 0, archived: false, revision: 1 };
 /* a retry with the same idempotency key replays the first answer, as the Kernel replays its outbox record; the
    in-flight promise is stored before the hash resolves so two overlapping retries cannot both append */
 const maraSends = new Map<string, Promise<ContactSendResult>>();
+
+/* Work › connect a place: invitations live for this tab and expire after ten minutes, as the Kernel's do; the
+   pairing code itself is built by the browser from the invitation and its own secret, so nothing here needs one */
+const PAIRING_TTL_MS = 10 * 60 * 1000;
+const pairings = new Map<string, DevicePairing>();
+const pairCreateArgs = z.object({ id: z.string(), secret: z.string(), targetId: z.string(), label: z.string(), replace: z.boolean().optional() });
+function pairingNow(pairing: DevicePairing): DevicePairing {
+  return pairing.state === "pending" && pairing.expiresAt <= Date.now() ? { ...pairing, state: "expired" } : pairing;
+}
 function maraConversation(): ConversationSummary {
   return { id: MARA_CONVERSATION, kind: "contact", ownerUid: OWNER.uid, title: "Mara", latestSequence: maraThread.length, createdAt: at(3, 9, 0), updatedAt: maraThread.at(-1)!.createdAt };
 }
@@ -404,7 +483,7 @@ let messengerLinks: { adapter: string; accountId: string; actorId: string; uid: 
 ];
 let streamSeq = 0;
 
-function record(who: "you" | "ship", text: string, createdAt: number, runId: string): ConversationMessage {
+function record(who: "you" | "ship", text: string, createdAt: number, runId: string, choices?: string[]): ConversationMessage {
   const sequence = ++world.sequence;
   const message: ConversationMessage = {
     id: `m-${sequence}`,
@@ -412,6 +491,7 @@ function record(who: "you" | "ship", text: string, createdAt: number, runId: str
     sequence,
     author: who === "you" ? { kind: "user", uid: OWNER.uid } : { kind: "process", pid: SHIP.pid, uid: SHIP.uid },
     text,
+    ...(choices?.length ? { choices } : undefined),
     origin: who === "you" ? { kind: "client", clientId: "gsv-ui", platform: "browser" } : { kind: "process", pid: SHIP.pid, runId },
     ...(who === "ship" ? { processId: SHIP.pid, runId } : undefined),
     createdAt,
@@ -699,7 +779,7 @@ function interrupt(run: OpenRun): void {
 }
 
 /** The reply is a Send: its text streams to the conversation while the tool call streams to observers; the commit records both. */
-async function send(run: OpenRun, text: string, streamed: boolean, finish = true): Promise<void> {
+async function send(run: OpenRun, text: string, streamed: boolean, finish = true, choices?: string[]): Promise<void> {
   const callId = `call-${run.runId}-send-${world.recordId + 1}`;
   const content: AssistantContent[] = [{ type: "toolCall", id: callId, name: "Send", arguments: {} }];
   stream(run, { type: "toolcall_start", contentIndex: 0, partial: partial(content) });
@@ -722,15 +802,15 @@ async function send(run: OpenRun, text: string, streamed: boolean, finish = true
     broadcast("message.delta", { ...started, delta: text });
   }
   if (!live(run)) return;
-  const call: AiToolCall = { type: "toolCall", id: callId, name: "Send", arguments: { text } };
+  const call: AiToolCall = { type: "toolCall", id: callId, name: "Send", arguments: { text, ...(choices ? { choices } : undefined) } };
   content[0] = call;
   stream(run, { type: "toolcall_end", contentIndex: 0, toolCall: call, partial: partial(content) });
   stream(run, { type: "done", reason: "toolUse", message: { ...partial(content), stopReason: "toolUse" } });
   appendGroup(run.runId, [
     { kind: "note", payload: { text: "", thinking: [{ type: "thinking", thinking: "I have what I need; tell them plainly." }] } },
-    { kind: "call", payload: { callId, tool: "Send", syscall: null, args: { text }, target: null, runId: run.runId } },
+    { kind: "call", payload: { callId, tool: "Send", syscall: null, args: { text, ...(choices ? { choices } : undefined) }, target: null, runId: run.runId } },
   ], { provider: MODEL });
-  const message = record("ship", text, Date.now(), run.runId);
+  const message = record("ship", text, Date.now(), run.runId, choices);
   broadcast("message.committed", { message, directed: true });
   appendGroup(run.runId, [
     { kind: "message", payload: { direction: "out", text, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${callId}` } },
@@ -776,9 +856,25 @@ async function answer(run: OpenRun, trigger: string): Promise<void> {
     if (live(run)) await send(run, long ? RUN_LONG_REPLY : RUN_REPLY, true);
     return;
   }
+  if (trigger === "/calibrate" || calibration !== null) {
+    const answer = question(run);
+    const answers = trigger === "/calibrate" || !calibration ? [] : [...calibration, answer];
+    const next = calibrationTurn(answers);
+    calibration = next.choices ? answers : null;
+    await wait(jitter(900));
+    if (!live(run)) return;
+    const reaction = answers.length > 0 && next.choices ? CALIBRATION_REACTIONS.get(answer) : undefined;
+    await send(run, reaction ? `${reaction}\n\n${next.text}` : next.text, true, true, next.choices);
+    return;
+  }
   await wait(jitter(trigger === "/stream" || trigger === "/reply" ? 600 : 1000));
   if (!live(run)) return;
   await send(run, trigger === "/stream" ? LONG_REPLY : trigger === "/reply" ? SHORT_REPLY : ECHO_REPLY, trigger === "/stream");
+}
+
+/** What the person answered in the message that opened this run, as they wrote or tapped it. */
+function question(run: OpenRun): string {
+  return run.question?.text.trim() ?? "";
 }
 
 /**
@@ -809,10 +905,12 @@ async function wake(): Promise<void> {
   await wait(jitter(800));
   if (!live(run)) return;
   // No routed client, so nothing streams: the welcome lands whole, a plain first message with no receipt under it.
-  const message = record("ship", WELCOME, Date.now(), run.runId);
+  const welcome: CalibrationTurn = fresh === "calibrate" ? calibrationTurn([]) : { text: WELCOME };
+  if (welcome.choices) calibration = [];
+  const message = record("ship", welcome.text, Date.now(), run.runId, welcome.choices);
   broadcast("message.committed", { message, directed: false });
-  appendGroup(run.runId, [{ kind: "message", payload: { direction: "out", text: WELCOME, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${run.runId}` } }]);
-  finishRun(run, WELCOME);
+  appendGroup(run.runId, [{ kind: "message", payload: { direction: "out", text: welcome.text, media: [], origin: { kind: "run-control", provenance: { source: "process" } }, conversationId: SHIP_CONVERSATION, conversationMessageId: message.id, deliveryId: `send-${run.runId}` } }]);
+  finishRun(run, welcome.text);
 }
 
 /** A control trigger while a run is open: the open step finishes and the run replies under the question that opened it. */
@@ -1027,7 +1125,7 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "adapter.pair.info": {
       const { adapter } = z.object({ adapter: z.string() }).parse(args);
       return respond(id, { adapter, accountId: `mock-${adapter}`, configured: true,
-        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink" } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
+        ...(adapter === "whatsapp" ? { installUrl: "https://wa.me/31612345678?text=%2Flink", unreachableCallingCodes: ["55", "62"] } : adapter === "telegram" ? { botUsername: "ShipMockBot" } : { installUrl: "https://example.invalid/install" }) });
     }
     case "adapter.pair.inspect": {
       const { adapter, code } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
@@ -1036,6 +1134,8 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     }
     case "adapter.pair.confirm": {
       const { adapter } = z.object({ adapter: z.string(), code: z.string() }).parse(args);
+      // The link shows up in Settings and on the first-run screen, as the Kernel's identity link would.
+      if (!messengerLinks.some((link) => link.adapter === adapter)) messengerLinks.push({ adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", uid: OWNER.uid, linkedByUid: OWNER.uid, createdAt: Date.now() });
       return respond(id, { paired: true, adapter, accountId: `mock-${adapter}`, actorId: "mock-actor", surfaceId: "mock-surface", uid: OWNER.uid });
     }
     case "contact.list": return respond(id, { contacts: fresh ? [] : [maraContact] });
@@ -1119,20 +1219,22 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
     case "contact.invite.list": return respond(id, { invites: [] });
     case "contact.request.list": return respond(id, { requests: [] });
     case "sys.pair.create": {
-      const { id: pairingId, targetId, label } = z.object({ id: z.string(), targetId: z.string(), label: z.string() }).parse(args);
-      const existing = pairings.find((pairing) => pairing.id === pairingId);
-      if (existing) return respond(id, { pairing: existing });
+      /* the same id answers with the invitation it already made, so the browser's retry and cancel reconcile */
+      const { id: pairingId, targetId, label } = pairCreateArgs.parse(args);
+      const existing = pairings.get(pairingId);
+      if (existing) return respond(id, { pairing: pairingNow(existing) });
       const createdAt = Date.now();
-      const pairing: DevicePairing = { id: pairingId, username: OWNER.username, targetId, label, createdAt, expiresAt: createdAt + 15 * 60_000, state: "pending" };
-      pairings.push(pairing);
+      const pairing: DevicePairing = { id: pairingId, username: OWNER.username, targetId, label: label.trim(), createdAt, expiresAt: createdAt + PAIRING_TTL_MS, state: "pending" };
+      pairings.set(pairingId, pairing);
       return respond(id, { pairing });
     }
-    case "sys.pair.list": return respond(id, { pairings });
+    case "sys.pair.list": return respond(id, { pairings: [...pairings.values()].map(pairingNow).sort((a, b) => b.createdAt - a.createdAt) });
     case "sys.pair.cancel": {
       const { id: pairingId } = z.object({ id: z.string() }).parse(args);
-      const pairing = pairings.find((entry) => entry.id === pairingId);
-      if (!pairing) return refuse(id, 404, "Invitation not found");
-      pairing.state = "cancelled";
+      const current = pairings.get(pairingId);
+      if (!current) return refuse(id, 404, "Pairing invitation not found");
+      const pairing: DevicePairing = pairingNow(current).state === "pending" ? { ...current, state: "cancelled" } : pairingNow(current);
+      pairings.set(pairingId, pairing);
       return respond(id, { pairing });
     }
     case "sys.link.list": return respond(id, { links: messengerLinks });

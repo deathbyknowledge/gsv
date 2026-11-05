@@ -105,6 +105,8 @@ export type Moment = {
   event?: ChatTranscriptRow["event"];
   text: string;
   media?: ChatTranscriptRow["media"];
+  /** Replies the ship offered with this message; the chat shows them while it is the latest. */
+  choices?: string[];
   streaming: boolean;
   thinking: boolean;
   runId: string | null;
@@ -813,6 +815,7 @@ export function momentsFromConversation(
       role: row.role === "user" ? "human" : "ship",
       text: row.text,
       media: row.media,
+      ...(row.choices?.length ? { choices: row.choices } : undefined),
       streaming: row.streaming === true,
       thinking: false,
       runId: row.runId ?? null,

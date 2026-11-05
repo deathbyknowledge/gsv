@@ -1,12 +1,15 @@
 import { h, render } from "preact";
-import { IconButton } from "../../../components/ui/IconButton";
 import { t } from "../../../i18n/locale";
+import { CodeCopyAction } from "./codeCopy";
 import "./codeBlocks.css";
 
-type CopyState = "idle" | "copied" | "failed";
-
-/** Add local controls after Markdown has been sanitized; copying never executes the code. */
-export function enhanceCodeBlocks(container: HTMLElement): void {
+/**
+ * Add local controls after Markdown has been sanitized; copying never executes the code. The copy controls are
+ * Preact roots of their own, so the returned disposer unmounts them: call it before the container's Markdown is
+ * replaced or discarded, or their locale subscriptions keep the orphaned controls and their code alive.
+ */
+export function enhanceCodeBlocks(container: HTMLElement): () => void {
+  const roots: HTMLElement[] = [];
   for (const code of container.querySelectorAll<HTMLElement>("pre > code")) {
     const pre = code.parentElement!;
     if (pre.parentElement?.classList.contains("markdown-code-block")) continue;
@@ -20,43 +23,16 @@ export function enhanceCodeBlocks(container: HTMLElement): void {
     if (language.textContent === "" || language.textContent === "text") block.classList.add("is-plain-text");
     const actions = document.createElement("span");
     actions.className = "markdown-code-actions";
-    const status = document.createElement("span");
-    status.className = "markdown-code-status";
-    status.setAttribute("aria-live", "polite");
-    const mount = document.createElement("span");
-    mount.className = "markdown-code-copy";
-    let state: CopyState = "idle";
-    let settle: ReturnType<typeof setTimeout> | undefined;
-    const paint = () => {
-      render(h(IconButton, {
-        glyph: "copy",
-        size: 36,
-        variant: "floating",
-        className: state === "idle" ? undefined : `is-${state}`,
-        title: state === "copied" ? t("shell.copied") : state === "failed" ? t("shell.code.copyManually") : t("shell.code.copyTitle"),
-        onClick: () => void copyCode(),
-      }), mount);
-    };
-    const copyCode = async () => {
-      try {
-        // Omit Marked's added final newline while preserving the code's internal whitespace.
-        await navigator.clipboard.writeText((code.textContent ?? "").replace(/\n$/, ""));
-        state = "copied";
-        status.textContent = t("shell.copied");
-      } catch {
-        state = "failed";
-        status.textContent = t("shell.code.copyFailed");
-      }
-      paint();
-      clearTimeout(settle);
-      settle = setTimeout(() => { state = "idle"; status.textContent = ""; paint(); }, 2000);
-    };
-    paint();
-    actions.append(status, mount);
+    // Omit Marked's added final newline while preserving the code's internal whitespace.
+    render(h(CodeCopyAction, { read: () => (code.textContent ?? "").replace(/\n$/, "") }), actions);
+    roots.push(actions);
     header.append(language, actions);
     pre.before(block);
     pre.tabIndex = 0;
     pre.setAttribute("aria-label", t("shell.code.label"));
     block.append(header, pre);
   }
+  return () => {
+    for (const root of roots) render(null, root);
+  };
 }

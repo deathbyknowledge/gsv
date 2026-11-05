@@ -2,6 +2,7 @@ import type {
   AssistantMessage, ImageContent, Message, TextContent, ThinkingContent, ToolCall, ToolResultMessage, UserMessage,
 } from "@humansandmachines/gsv/services/inference-context";
 import type { InteractionOrigin, ProcHistoryEvent, ProcHistoryMessageQuote, ProcHistoryRecordData } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import { tagAssistantContextIdentity } from "../context-message-metadata";
 import { type StoredProcessMedia } from "../media";
 import { buildFallbackMediaBlocks, describeStoredProcessMedia } from "./media-renderer";
@@ -244,17 +245,59 @@ function toolResultHistoryMessage(
   result: Extract<ProcHistoryRecordData, { kind: "result" }>["payload"],
 ): ToolResultMessage {
   const { text, media, isError, legacyImageContent } = group.compatibility;
+  const shell = result.tool === "Shell" ? shellResultSchema.safeParse(result.output) : null;
   return {
     role: "toolResult",
     toolCallId: result.callId,
     toolName: result.tool,
     content: legacyImageContent ?? [
-      { type: "text", text },
+      { type: "text", text: shell?.success ? renderShellResult(shell.data) : text },
       ...buildFallbackMediaBlocks(media),
     ],
     isError,
     timestamp: group.createdAt,
   };
+}
+
+/** The `shell.exec` result fields the model reads; drivers may add others. */
+const shellResultSchema = z.object({
+  status: z.enum(["completed", "running", "failed"]),
+  output: z.string(),
+  exitCode: z.number().int().optional(),
+  error: z.string().optional(),
+  sessionId: z.string().optional(),
+  truncated: z.boolean().optional(),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
+});
+
+/**
+ * A shell result as the model reads a terminal: the exit code, then each stream once.
+ * The stored result keeps every field for clients; `output` repeats the two streams
+ * and `error` repeats stderr or the exit code, so they appear only when they add something.
+ */
+function renderShellResult(result: z.infer<typeof shellResultSchema>): string {
+  const lines: string[] = [];
+  const redundantError = result.exitCode !== undefined
+    && (result.error === undefined
+      || result.error === result.stderr?.trim()
+      || result.error === `Command exited with code ${result.exitCode}`);
+  if (result.status === "running") {
+    lines.push(result.sessionId ? `running in session ${result.sessionId}` : "running");
+  } else if (result.exitCode !== undefined) {
+    lines.push(`exit ${result.exitCode}`);
+  }
+  if (result.status === "failed" && !redundantError) {
+    lines.push(result.exitCode === undefined ? `failed: ${result.error ?? "unknown error"}` : `error: ${result.error}`);
+  }
+  if (result.stdout === undefined && result.stderr === undefined) {
+    if (result.output) lines.push(result.output.replace(/\n$/, ""));
+  } else {
+    if (result.stdout) lines.push("stdout:", result.stdout.replace(/\n$/, ""));
+    if (result.stderr) lines.push("stderr:", result.stderr.replace(/\n$/, ""));
+  }
+  if (result.truncated) lines.push("output truncated");
+  return lines.join("\n");
 }
 
 function buildFallbackUserContent(text: string, media: StoredProcessMedia[]): TextContent[] {

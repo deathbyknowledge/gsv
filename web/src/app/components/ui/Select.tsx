@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState, useLayoutEffect } from "preact/hooks";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { FieldStatus } from "./FieldStatus";
 import { InfoTip } from "./InfoTip";
 import { useT } from "../../i18n/locale";
 import "./Select.css";
@@ -370,12 +371,7 @@ export function Select(props: SelectProps) {
           </div>
         ) : null}
       </div>
-      {hasStatus ? (
-        <div class="gsv-fld-stat">
-          <span class="gsv-fld-dot" aria-hidden="true" />
-          <span class="gsv-fld-msg gsv-sublabel" id={msgId} role={rawStatus === "error" ? "alert" : undefined}>{message}</span>
-        </div>
-      ) : null}
+      {hasStatus ? <FieldStatus status={status} message={message} id={msgId} /> : null}
     </div>
   );
 }

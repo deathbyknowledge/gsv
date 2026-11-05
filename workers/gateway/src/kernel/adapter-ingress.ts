@@ -23,6 +23,7 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
+  shipPlatformFromAdapter,
 } from "@humansandmachines/gsv/telemetry";
 import * as z from "zod/mini";
 import { principalOf,
@@ -682,6 +683,22 @@ async function deliverAdapterInboundToProcess(input: {
       conversationId: conversation.id,
       latestSequence: appended.message.sequence,
     });
+    if (conversation.kind === "ship") {
+      emitTelemetry(ctx.env, {
+        installationId: ctx.installationId,
+        component: "gateway",
+        event: {
+          stream: "product",
+          name: "ship.message.received",
+          properties: {
+            source: "adapter",
+            platform: shipPlatformFromAdapter(adapter),
+            hasText: appendRequest.text.length > 0,
+            hasMedia: Boolean(media),
+          },
+        },
+      });
+    }
   }
   if (message.surface.kind !== "dm") {
     ctx.adapters.surfaceRoutes.setRoute({

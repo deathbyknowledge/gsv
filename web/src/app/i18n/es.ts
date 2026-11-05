@@ -1598,6 +1598,29 @@ export const es = {
   // Shell: first run
   "shell.retryButton": "Reintentar",
 
+  // Onboarding: where to message Ship
+  "onboarding.surface.title": "¿Desde dónde quieres escribir a Ship?",
+  "onboarding.surface.failed": "No se ha podido terminar la configuración. Inténtalo de nuevo.",
+  "onboarding.surface.lead": "Siempre puedes encontrar a tu Ship en {address}. Gestiona tus conexiones en Ajustes → Mensajería cuando quieras.",
+  "onboarding.surface.web": "seguir aquí",
+  "onboarding.surface.webSub": "Puedes conectar una app de mensajes más adelante.",
+  "onboarding.surface.desktop": "App de escritorio",
+  "onboarding.surface.desktopSub": "Descarga la beta para macOS, Windows o Linux",
+  "onboarding.surface.desktopAction": "descargar la app",
+  "onboarding.surface.messengerPrivacy": "Conectar una app de mensajes no da a Ship acceso a tu cuenta, tus contactos ni otros chats. Ship solo ve los mensajes que le envías.",
+  "onboarding.surface.whatsappSub": "Escribe a Ship desde WhatsApp en tu móvil",
+  "onboarding.surface.telegramSub": "Escribe a Ship desde Telegram",
+  "onboarding.surface.connectedSub": "Conectado",
+  "onboarding.surface.loading": "Comprobando qué apps de mensajes están disponibles…",
+  "onboarding.surface.loadFailed": "No se pudo comprobar qué apps de mensajes están disponibles. Puedes seguir y conectar una más tarde en Ajustes → Mensajería.",
+  "onboarding.surface.desktopText": "Descarga la app, inicia sesión con el nombre y la contraseña que acabas de elegir, y Ship estará ahí. La web sigue disponible también.",
+  "onboarding.surface.back": "ATRÁS",
+  "onboarding.surface.download": "DESCARGAR LA APP DE ESCRITORIO",
+  "onboarding.surface.continueHere": "SEGUIR EN LA WEB POR AHORA",
+  "onboarding.surface.connectedTitle": "Conectado",
+  "onboarding.surface.connectedText": "Ship te saludará en {platform} en un momento. Tu conversación es la misma aquí y allí.",
+  "onboarding.surface.openChat": "ABRIR EL CHAT",
+
   // Shell: feedback
   "shell.feedback.trigger": "comentarios",
   "shell.feedback.title": "Comentarios",
@@ -2109,6 +2132,7 @@ export const es = {
   "chat.message.attachments": "Archivos adjuntos del mensaje",
   "chat.message.cancelUpload": "cancelar subida",
   "chat.message.dismiss": "descartar",
+  "chat.choices.label": "Respuestas que puedes enviar",
   "chat.history.failed": "No se ha podido cargar tu conversación: {error}",
   "chat.history.helperEmpty": "Este ayudante aún no tiene mensajes.",
   "chat.firstOpenPrivacy": "No usamos tus datos para entrenar IA.\nTus conversaciones son privadas.\n¡Tu información te pertenece!",

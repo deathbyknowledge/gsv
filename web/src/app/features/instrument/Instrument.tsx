@@ -23,6 +23,7 @@ import { WireSync } from "./wire/WireSync";
 import { replaceLegacyChatPath, type MemoryPageRef } from "./shared/navigation";
 import { HelpContent, HELP_MANUAL_PAGE } from "./shared/HelpContent";
 import { InstrumentHeader } from "./shared/InstrumentHeader";
+import { FirstRun } from "./onboarding/FirstRun";
 import { SHELL_KEYS } from "./shared/shellKeys";
 import { useDismissOnOutsideClick } from "./shared/useDismissOnOutsideClick";
 import { useTabAttention } from "./shared/useTabAttention";
@@ -112,6 +113,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const [selectedMemoryPage, setSelectedMemoryPage] = useState<MemoryPageRef | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [zenDirty, setZenDirty] = useState(false);
+  const [firstRunShown, setFirstRunShown] = useState(false);
   const [fleetDirty, setFleetDirty] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
   const [peopleDirty, setPeopleDirty] = useState(false);
@@ -314,6 +316,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           setHelp(false);
           setNavigationOpen((open) => !open);
         }} />
+      <FirstRun active={distance === "zen" && zenPid === null} onShownChange={setFirstRunShown} />
       {help ? (
         <aside id="instrument-help" class="instrument-help" aria-label={t("shell.help.label")} ref={helpRef}>
           <HelpContent distance={distance} connected={status.state === "connected"} onClose={closeHelp} onSearch={openSearch} onFeedback={feedbackAvailable ? () => {
@@ -335,7 +338,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
           }} />
         </aside>
       ) : null}
-      <div class="distance" data-view={distance} ref={scrollEdgesRef}>
+      <div class="distance" data-view={distance} data-first-run={firstRunShown ? "" : undefined} ref={scrollEdgesRef}>
         <BrowserControlOverlay />
         <RetainedView active={distance === "zen"}>
           <Zen key={zenPid ?? "ship"} searchRequested={searchRequested} onSearchRequestHandled={() => setSearchRequested(false)} onDraftChange={setZenDirty} onFleet={(reference) => move("fleet", reference ?? null)} onMemory={(page) => {

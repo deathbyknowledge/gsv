@@ -25,6 +25,7 @@ export const ZenText = memo(function ZenText({ text, markdown, places, progress,
   const ref = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const reveal = useRef<GlyphReveal | null>(null);
+  const controls = useRef<(() => void) | null>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const id = useId();
   const streaming = progress !== null && progress < 0;
@@ -50,8 +51,10 @@ export const ZenText = memo(function ZenText({ text, markdown, places, progress,
       if (last) last.after(caret);
       else element.append(caret);
     }
-    if (markdown) enhanceCodeBlocks(element);
+    if (markdown) controls.current = enhanceCodeBlocks(element);
     return () => {
+      controls.current?.();
+      controls.current = null;
       reveal.current?.dispose();
       reveal.current = null;
     };

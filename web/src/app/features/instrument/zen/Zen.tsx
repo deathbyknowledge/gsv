@@ -54,6 +54,7 @@ import { WakingUp } from "./WakingUp";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
 import { receiptsForMoments, type RunReceipt } from "./runReceipts";
 import { ZenDraftAttachment, ZenDraftPaste, ZenMedia } from "./ZenMedia";
+import { ZenLinkCards } from "./ZenLinkCard";
 import { longPaste, zenAttachment, zenDraftMessage, type ZenAttachment, type ZenPaste } from "./zenAttachments";
 import { FeedbackNote, MomentTime, NoteMoment, zenErrorText, zenFailure, zenNotice, type ZenNote } from "./ZenNotes";
 import type { ChatErrorContext } from "../../../services/chat/domain/errorPresentation";
@@ -768,6 +769,18 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     [attachments, conversation.conversation?.id, outbox.send, pastes, pid, pidProp, speech, scrolling.follow, where],
   );
 
+  /* a reply the ship offered goes out as written, leaving the prompt's draft and attachments where they are */
+  const choose = useCallback(
+    (text: string) => {
+      if (!pid || !connected || outbox.sending) return;
+      const accepted = outbox.send({
+        pid, conversationId: conversation.conversation?.id, message: text, selectedTarget: where ?? defaultPlace(),
+      });
+      if (accepted) scrolling.follow();
+    },
+    [connected, conversation.conversation?.id, outbox.send, outbox.sending, pid, scrolling.follow, where],
+  );
+
   const voiceScope = `${snapshot.url}:${snapshot.username}:${pid ?? ""}:${currentPlace.id}`;
   const voiceInput = useRef<NativeVoiceHandle>(null);
   const nativePanels = useRef<HTMLDivElement>(null);
@@ -973,6 +986,16 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     [onFleet],
   );
 
+  /* the ship's latest message keeps its replies on offer until anyone writes again */
+  const offered = useMemo(() => {
+    for (let index = moments.length - 1; index >= 0; index -= 1) {
+      const moment = moments[index];
+      if (moment.role === "note") continue;
+      return moment.role === "ship" && !moment.streaming && moment.choices?.length ? moment.id : null;
+    }
+    return null;
+  }, [moments]);
+
   // Moving the browse cursor changes row decoration, not the message, receipt or attachment content.
   const messageBodies = useMemo(() => {
     if (!ready) return [];
@@ -1033,7 +1056,20 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         ) : moment.thinking || moment.streaming ? (
           <div class="text">{waking ? <WakingUp /> : null}<ThinkingMark tick={tick} /></div>
         ) : null}
+        {moment.role === "ship" && !moment.streaming && !settling.has(moment.id) && moment.text ? <ZenLinkCards text={moment.text} /> : null}
         {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
+        {moment.id === offered && !settling.has(moment.id) ? (
+          <div class="zen-choices" role="group" aria-label={t("chat.choices.label")}>
+            {moment.choices?.map((choice) => (
+              <button type="button" key={choice} class="zen-choice" disabled={!connected || !pid || outbox.sending || pendingHil !== null}
+                onClick={(event) => {
+                  // A tap answers rather than selects the message, so the transcript keeps following.
+                  event.stopPropagation();
+                  choose(choice);
+                }}>{choice}</button>
+            ))}
+          </div>
+        ) : null}
         {moment.text && <MomentCopyButton text={moment.text} />}
         {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (
           <ul class="zen-draft-attachments" aria-label={t("chat.message.attachments")}>
@@ -1053,7 +1089,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
     receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed, receivedMessages,
-    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t, waking]);
+    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t, waking, offered, choose]);
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data, t]);

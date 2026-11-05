@@ -1,3 +1,4 @@
+import { MESSAGE_CHOICE_LENGTH_LIMIT, MESSAGE_CHOICE_LIMIT } from "@humansandmachines/gsv/protocol";
 import { Bash, type SimpleCommandNode, type StatementNode, type WordNode } from "just-bash";
 
 const runControlBash = new Bash({ commands: [] });
@@ -11,6 +12,8 @@ export type RunControlCommand =
     emptyMeansYield?: true;
     /** Files to send with the message, as the Send tool names them: `path`, `target:path`, or `[target]:path`. */
     attach?: string[];
+    /** Short replies the person can tap instead of writing one. */
+    choices?: string[];
   }
   | { action: "yield" };
 
@@ -28,6 +31,39 @@ export function parseAttachPath(spec: string): AttachPlace {
   if (qualified) return { target: qualified[1], path: qualified[2] };
   return { target: "gsv", path: spec };
 }
+
+/**
+ * The replies a message offers, as the person will see them: one line each,
+ * spacing collapsed, blanks and repeats dropped. They answer the message's
+ * question, so a message offering any has text.
+ */
+export function normalizeMessageChoices(
+  text: string,
+  raw: readonly string[],
+): { ok: true; choices: string[] } | { ok: false; error: string } {
+  const choices = [...new Set(raw.map((choice) => choice.replace(/\s+/gu, " ").trim()).filter((choice) => choice !== ""))];
+  if (choices.length > 0 && !text.trim()) {
+    return { ok: false, error: "choices answer a question: send them with the message that asks it" };
+  }
+  if (choices.length > MESSAGE_CHOICE_LIMIT) {
+    return { ok: false, error: `offer at most ${MESSAGE_CHOICE_LIMIT} choices` };
+  }
+  if (choices.some((choice) => [...choice].length > MESSAGE_CHOICE_LENGTH_LIMIT)) {
+    return { ok: false, error: `each choice is at most ${MESSAGE_CHOICE_LENGTH_LIMIT} characters; keep it to a few words` };
+  }
+  return { ok: true, choices };
+}
+
+/**
+ * A choice is offered word for word, so a send offering choices is never read
+ * as one opaque message, which would show the person its quoting and flags.
+ */
+const UNREADABLE_CHOICES: RunControlCommandParseResult = {
+  ok: false,
+  action: "message",
+  error: "quote the message and each choice on their own, as in --message 'Your budget?' "
+    + "--choice 'Under $100'; single quotes keep $ and backticks as written",
+};
 
 export type RunControlCommandParseResult =
   | { ok: true; command: RunControlCommand }
@@ -106,6 +142,7 @@ function parseMessageCommand(
 ): RunControlCommandParseResult | null {
   const args = command.args.map(literalWord);
   if (hasExplicitSendOption(args.slice(1))) return null;
+  if (args.includes("--choice") && args.includes(null)) return UNREADABLE_CHOICES;
   if (command.redirections.length > 0) {
     return parseMessageHeredoc(input, command, finish);
   }
@@ -113,7 +150,8 @@ function parseMessageCommand(
     return parseOpaqueMessageSend(messageSource(input, finish), finish);
   }
   const parsed = parseMessageSend(args.slice(1), finish);
-  return parsed.ok
+  // Unquoted words after --message are one opaque message, but a send offering choices is never read that way.
+  return parsed.ok || args.includes("--choice")
     ? parsed
     : (parseOpaqueMessageSend(messageSource(input, finish), finish) ?? parsed);
 }
@@ -123,7 +161,8 @@ function parseMessageHeredoc(
   command: SimpleCommandNode,
   finish: boolean,
 ): RunControlCommandParseResult | null {
-  if (command.args.length !== 1 || command.redirections.length !== 1) return null;
+  const raw = choiceOptions(command.args.slice(1).map(literalWord));
+  if (!raw || command.redirections.length !== 1) return null;
   const redirection = command.redirections[0];
   if (
     (redirection.operator !== "<<" && redirection.operator !== "<<-") ||
@@ -148,7 +187,27 @@ function parseMessageHeredoc(
     .slice(1, terminatorIndex)
     .map((line) => (heredoc.stripTabs ? line.replace(/^\t+/, "") : line))
     .join("\n");
-  return { ok: true, command: { action: "message", text, finish } };
+  return messageCommand(text, finish, raw);
+}
+
+/** The `--choice` values of a message block's header, or null when it has another option. */
+function choiceOptions(args: ReadonlyArray<string | null>): string[] | null {
+  const choices: string[] = [];
+  for (let index = 0; index < args.length; index += 2) {
+    const value = args[index + 1];
+    if (args[index] !== "--choice" || value === null || value === undefined) return null;
+    choices.push(value);
+  }
+  return choices;
+}
+
+function messageCommand(text: string, finish: boolean, raw: readonly string[]): RunControlCommandParseResult {
+  const offered = normalizeMessageChoices(text, raw);
+  if (!offered.ok) return { ok: false, action: "message", error: offered.error };
+  return {
+    ok: true,
+    command: { action: "message", text, finish, ...(offered.choices.length > 0 ? { choices: offered.choices } : undefined) },
+  };
 }
 
 function messageSource(input: string, finish: boolean): string {
@@ -180,6 +239,7 @@ function parseOpaqueMessageSend(
       error: "message send requires a value after --message",
     };
   }
+  if (/(?:^|\s)--choice(?:[\s=]|$)/u.test(rawText)) return UNREADABLE_CHOICES;
   const text = rawText.trim();
   const quote = text[0];
   const unwrapped =
@@ -190,7 +250,7 @@ function parseOpaqueMessageSend(
 }
 
 function hasExplicitSendOption(args: Array<string | null>): boolean {
-  const optionsWithValues = new Set(["--message", "--to", "--attach", "--mime", "--delivery-id"]);
+  const optionsWithValues = new Set(["--message", "--choice", "--to", "--attach", "--mime", "--delivery-id"]);
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
     if (current === "--to" || current === "--also") return true;
@@ -200,38 +260,28 @@ function hasExplicitSendOption(args: Array<string | null>): boolean {
 }
 
 function parseMessageSend(args: string[], finish: boolean): RunControlCommandParseResult {
-  if (args.length === 0) {
-    return { ok: true, command: { action: "message", text: "", finish } };
-  }
-  if (args[0] !== "--message") {
-    return {
-      ok: false,
-      action: "message",
-      error: `message send does not accept ${args[0]} for the current conversation; `
-        + "stage files first with `message attach PATH...`, then issue `message send ...` "
-        + "as its own direct Shell tool call without --to or --also",
-    };
-  }
-  if (args.length === 1) {
-    return {
-      ok: false,
-      action: "message",
-      error: "message send requires a value after --message",
-    };
-  }
-  if (args.length > 2) {
-    const repeated = args.slice(2).includes("--message");
-    return {
-      ok: false,
-      action: "message",
-      error: repeated
-        ? "message send accepts --message once"
-        : `message send does not accept ${args[2]} for the current conversation; `
+  let text: string | undefined;
+  const choices: string[] = [];
+  for (let index = 0; index < args.length; index += 2) {
+    const option = args[index];
+    if (option !== "--message" && option !== "--choice") {
+      return {
+        ok: false,
+        action: "message",
+        error: `message send does not accept ${option} for the current conversation; `
           + "stage files first with `message attach PATH...`, then issue `message send ...` "
           + "as its own direct Shell tool call without --to or --also",
-    };
+      };
+    }
+    const value = args[index + 1];
+    if (value === undefined) {
+      return { ok: false, action: "message", error: `message send requires a value after ${option}` };
+    }
+    if (option === "--choice") choices.push(value);
+    else if (text === undefined) text = value;
+    else return { ok: false, action: "message", error: "message send accepts --message once" };
   }
-  return { ok: true, command: { action: "message", text: args[1], finish } };
+  return messageCommand(text ?? "", finish, choices);
 }
 
 function literalWord(word: WordNode | null | undefined): string | null {

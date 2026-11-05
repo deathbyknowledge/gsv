@@ -1597,6 +1597,29 @@ export const en = {
   // Shell: first run
   "shell.retryButton": "Retry",
 
+  // Onboarding: where to message Ship
+  "onboarding.surface.title": "Where do you want to message Ship?",
+  "onboarding.surface.failed": "Couldn't finish setting up. Try again.",
+  "onboarding.surface.lead": "You can always reach your Ship at {address}. Manage your connections on Settings → Messengers at any time.",
+  "onboarding.surface.web": "continue here",
+  "onboarding.surface.webSub": "You can connect a messenger later.",
+  "onboarding.surface.desktop": "Desktop app",
+  "onboarding.surface.desktopSub": "Download the beta for macOS, Windows or Linux",
+  "onboarding.surface.desktopAction": "download the app",
+  "onboarding.surface.messengerPrivacy": "Connecting a messenger doesn't give Ship access to your account, contacts or other chats. Ship only sees the messages you send it.",
+  "onboarding.surface.whatsappSub": "Message Ship from WhatsApp on your phone",
+  "onboarding.surface.telegramSub": "Message Ship from Telegram",
+  "onboarding.surface.connectedSub": "Connected",
+  "onboarding.surface.loading": "Checking which messengers are available…",
+  "onboarding.surface.loadFailed": "Couldn't check which messengers are available. You can still continue and connect one later in Settings → Messengers.",
+  "onboarding.surface.desktopText": "Download the app, sign in with the handle and password you just chose, and Ship is there. The web stays available too.",
+  "onboarding.surface.back": "BACK",
+  "onboarding.surface.download": "DOWNLOAD THE DESKTOP APP",
+  "onboarding.surface.continueHere": "CONTINUE IN THE WEB FOR NOW",
+  "onboarding.surface.connectedTitle": "Connected",
+  "onboarding.surface.connectedText": "Ship will say hello on {platform} in a moment. Your conversation is the same here and there.",
+  "onboarding.surface.openChat": "OPEN CHAT",
+
   // Shell: feedback
   "shell.feedback.trigger": "feedback",
   "shell.feedback.title": "Feedback",
@@ -2108,6 +2131,7 @@ export const en = {
   "chat.message.attachments": "Message attachments",
   "chat.message.cancelUpload": "cancel upload",
   "chat.message.dismiss": "dismiss",
+  "chat.choices.label": "Replies you can send",
   "chat.history.failed": "Could not load your conversation: {error}",
   "chat.history.helperEmpty": "This helper has no messages yet.",
   "chat.firstOpenPrivacy": "We don't use your data to train AI.\nYour conversations stay private.\nYour information belongs to you!",

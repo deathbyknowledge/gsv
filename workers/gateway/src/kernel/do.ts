@@ -3,6 +3,7 @@ import { buildOperatorShipSnapshot } from "./operator-snapshot";
 import { getProcessByPid } from "../shared/utils";
 import { ShipReplies } from "./ship-replies";
 import { InitialOnboarding } from "./onboarding-responsibility";
+import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import {
   cancelUnlockedBody,
 } from "./do-shared";
@@ -576,7 +577,13 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
     this.shipEvents = new ShipEventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
-    this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities);
+    // Fires once per owner, when their first sign-in (or an earlier first message) opens the welcome.
+    this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities, () => {
+      emitTelemetry(this.bindings, {
+        installationId: this.installationId, component: "gateway",
+        event: { stream: "product", name: "onboarding.welcome.activated", properties: {} },
+      });
+    });
     this.responsibilitySources = new ResponsibilitySourcePolicyStore(sql, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.source.changed"));
     this.noticeRules = new NoticeRuleStore(ctx.storage, this.responsibilitySources, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "notify.rule.changed"));
     this.eventSources = new EventSourceStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "event.source.changed"));

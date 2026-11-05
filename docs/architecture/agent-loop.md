@@ -195,6 +195,9 @@ The model response can contain text, thinking blocks, and tool calls:
   assistant text, since that text is Process activity and never a reply. A direct Shell call with a literal
   `message send <<'GSV_MESSAGE'` block, `yield`, or `message send ... && yield` is the same action as a
   command, for people, scripts, and the model alike.
+- A message that asks something can offer `choices`, up to ten short replies, or `--choice TEXT`
+  repeated on `message send`. Tapping one sends its text as the person's next ordinary message, so the
+  run that answers it reads a tap and a typed reply alike; the person can always write anything else.
 - The originating client receives `message.started` and `message.delta` while the model is still
   writing a Send's `text`; a Shell `message send` streams once the Process validates it. Adapters
   wait for `message.committed`.
