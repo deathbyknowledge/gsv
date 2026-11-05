@@ -474,6 +474,33 @@ describe("typed controller history producers", () => {
     },
   );
 
+  it("keeps an answer's files when it waits for its own run after another", async () => {
+    const stub = await initProcess("typed-answer-files-queued", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      process.runs.active = { runId: "another-run" };
+      vi.spyOn(process.resources, "resolveIncomingMedia").mockResolvedValue([WEEK_COPY]);
+      vi.spyOn(process.resources, "prepareEventMedia").mockImplementation(async (media) => JSON.stringify(media));
+      const delivery: ProcessEventDeliverArgs = {
+        ...ipcAnswer("ipc.reply", {
+          callId: "call-1", targetPid: "worker", sourceRunId: "run-asking", createdAt: 1, deadlineAt: 2,
+          response: { text: "The week.", usage: null },
+        }),
+        attachments: [WEEK],
+      };
+
+      expect(await process.deliverEvent(delivery)).toEqual({ eventId: delivery.eventId, runId: delivery.eventId, queued: true });
+      process.runs.active = null;
+      expect(process.controller.claimNextQueuedRun()).toMatchObject({ type: "message", runId: delivery.eventId });
+
+      const [answer] = await process.history.buildContextMessages();
+      expect(answer?.content).toEqual([
+        { type: "text", text: expect.stringContaining("Process `worker` finished task `call-1`.") },
+        { type: "text", text: `Attached document "week.csv" [text/csv] 2.0 KB\nPath: /${WEEK_COPY.key}` },
+      ]);
+    });
+  });
+
   it("records scheduling failure from the original error", async () => {
     const stub = await initProcess("typed-scheduling-failure", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {

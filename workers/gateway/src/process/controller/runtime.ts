@@ -1467,6 +1467,7 @@ export class ProcessController {
           origin: serializeInteractionOrigin(options.origin) ?? undefined,
           provenance: options.provenance,
           record,
+          media: options.media,
         });
         return { messageId: -1, wakeRunId };
       }
