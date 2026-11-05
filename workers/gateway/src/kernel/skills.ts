@@ -98,11 +98,10 @@ export async function collectKernelSkillDocuments(
 ): Promise<SkillDocument[]> {
   const files = await collectSystemSkillFiles(options);
 
-  const ripgit = ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null;
   const runAsIdentity = principalOf(ctx)?.account;
-  if (ripgit && runAsIdentity) {
+  if (runAsIdentity) {
     files.push(...await collectRipgitRuntimeSkillFiles(
-      ripgit,
+      new RipgitClient(ctx.env.RIPGIT),
       resolveSkillHomeLayers(ctx, runAsIdentity),
       options,
     ));

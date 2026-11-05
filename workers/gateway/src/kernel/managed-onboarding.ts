@@ -24,9 +24,6 @@ import {
   resolveManagedInstallationById,
   setupRecoveryDetails,
 } from "../installation/lifecycle";
-import type {
-  GatewayEnv,
-} from "../runtime-env";
 import {
   KernelConnection,
   type KernelConnectionState as ConnectionState,
@@ -199,9 +196,7 @@ async handleManagedSysSetup(
       }
 
       try {
-        const directory = this.managedOnboardingService();
-        if (!directory) throw new Error("Managed onboarding is unavailable");
-        const completion = await directory.completeInstallationOnboarding({
+        const completion = await this.host.env.INSTALLATION_DIRECTORY.completeInstallationOnboarding({
           claimId: authorization.claimId,
           installationId: authorization.installation.installationId,
         });
@@ -262,11 +257,10 @@ async authorizeManagedInstallationOnboarding(
     token: string | undefined,
   ): Promise<InstallationOnboardingAuthorization> {
     if (!token) return { ok: false };
-    const directory = this.managedOnboardingService();
     const installation = this.host.installationIdentity;
-    if (!directory || !installation) return { ok: false };
+    if (!installation) return { ok: false };
 
-    const authorization = await directory.authorizeInstallationOnboarding({
+    const authorization = await this.host.env.INSTALLATION_DIRECTORY.authorizeInstallationOnboarding({
       installationId: installation.installationId,
       token,
     });
@@ -287,12 +281,11 @@ async recoverActivatedManagedSetup(
   ): Promise<SysSetupResult | null> {
     const pending = this.pendingManagedOnboarding;
     const installation = this.host.installationIdentity;
-    const directory = this.managedOnboardingService();
-    if (!pending || !installation || !directory || this.host.auth.isSetupMode()) {
+    if (!pending || !installation || this.host.auth.isSetupMode()) {
       return null;
     }
 
-    const resolved = await directory.resolveHostname(
+    const resolved = await this.host.env.INSTALLATION_DIRECTORY.resolveHostname(
       new URL(installation.canonicalOrigin).hostname,
     );
     if (
@@ -314,10 +307,6 @@ async recoverActivatedManagedSetup(
     this.pendingManagedOnboarding = undefined;
     this.host.ctx.storage.kv.delete(MANAGED_ONBOARDING_COMPLETION_KEY);
     return data;
-  }
-
-managedOnboardingService(): GatewayEnv["INSTALLATION_DIRECTORY"] | null {
-    return this.host.env.INSTALLATION_DIRECTORY ?? null;
   }
 
 /** `fresh` asks Accounts even after a recent confirmation; use it before granting new authority. */

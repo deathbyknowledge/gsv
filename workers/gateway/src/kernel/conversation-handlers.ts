@@ -14,21 +14,20 @@ import type {
   ConversationSendResult,
   ConversationSummary,
   InteractionOrigin,
-  ProcSendResult,
   ResourceBlock,
   BinaryBody,
 } from "@humansandmachines/gsv/protocol";
-import type { InternalRequestFrame } from "../protocol/process-frames";
-import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
-import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import { processResult } from "../protocol/process-frames";
 import { raceWithAbort } from "../shared/abort";
-import { getConversationById, sendFrameToProcess } from "../shared/utils";
+import { cancelProcessCall, getConversationById, retainProcessResources } from "../shared/utils";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import type { KernelContext } from "./context";
 import { principalOf } from "./context";
 import { emitTelemetry, shipPlatformFromPeer } from "@humansandmachines/gsv/telemetry";
 import { resolveCallerOwnerUid } from "./context";
+import { processConsumer, shipConsumer } from "./events/consumers";
 import { checkContactWhenOpened } from "./federation/gone-ships";
+import { committedContent, conversationMessage } from "./message-events";
 import { ensurePersonalController } from "./personal-controller";
 import { withInitialOnboarding } from "./onboarding-responsibility";
 import { resolveSelectedMessageTarget } from "./targets";
@@ -196,64 +195,44 @@ export async function handleConversationSend(
     }
   }
 
-  const request: RequestFrame<"proc.send"> = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.send",
-    args: {
-      pid: conversation.handlerPid,
-      message: text,
-      selectedTarget,
-      media,
-      origin: interactionOrigin,
-      interaction: {
-        conversationId: conversation.id,
-        messageId: message.id,
-      },
-    },
-  };
-  const hasConnectionRoute = Boolean(ctx.connection);
+  const ownerUid = conversation.ownerUid;
+  const ship = conversation.kind === "ship";
+  const sender = principalOf(ctx)?.account.uid;
+  // The Conversation lives in its own Durable Object, so the event follows its append; a resend
+  // after a lost answer appends nothing more and redelivers what is still waiting.
+  const event = ctx.events.append(conversationMessage({
+    ownerUid,
+    ...(ship ? undefined : { pid: conversation.handlerPid }),
+    conversationId: conversation.id,
+    messageId: message.id,
+    sequence: message.sequence,
+    runId,
+    ...(interactionOrigin === undefined ? undefined : { origin: interactionOrigin }),
+    actor: { kind: "person", uid: sender ?? ownerUid },
+  }));
   if (ctx.connection) {
     ctx.runRoutes.setConnectionRoute({
       runId,
       processId: conversation.handlerPid,
-      uid: conversation.ownerUid,
+      uid: ownerUid,
       connectionId: ctx.connection.id,
-      followsShip: conversation.kind === "ship" && principalOf(ctx)?.account.uid === conversation.ownerUid,
+      followsShip: ship && sender === ownerUid,
       clientPlatform: interactionOrigin?.kind === "client" ? interactionOrigin.platform : undefined,
     });
   }
-  let result: Extract<ProcSendResult, { ok: true }>;
-  try {
-    // SAFETY: The process RPC boundary returns a response frame for this request.
-    const response = await withInitialOnboarding(
-      conversation.kind === "ship" && principalOf(ctx)?.account.uid === conversation.ownerUid
-        ? conversation.ownerUid : undefined,
-      ctx,
-      () => sendFrameToProcess(ctx.installationId, conversation.handlerPid, request),
-    ) as ResponseFrame<"proc.send"> | null;
-    if (!response || response.type !== "res" || response.id !== request.id) {
-      throw new Error("Conversation handler returned no valid response");
-    }
-    if (!response.ok) throw new Error(response.error.message);
-    // SAFETY: The proc.send response is validated by the process RPC boundary.
-    const responseResult = response.data as ProcSendResult | undefined;
-    if (!responseResult?.ok) {
-      throw new Error(responseResult?.error ?? "Conversation handler rejected the message");
-    }
-    if (responseResult.runId !== runId) {
-      throw new Error("Conversation handler returned an unexpected run id");
-    }
-    result = responseResult;
-  } catch (error) {
-    if (hasConnectionRoute) ctx.runRoutes.delete(runId);
-    throw error;
-  }
+  const sent = await withInitialOnboarding(
+    ship && sender === ownerUid ? ownerUid : undefined,
+    ctx,
+    () => ctx.events.deliverNow(event, ship ? shipConsumer(ownerUid) : processConsumer(conversation.handlerPid), committedContent(message)),
+  );
+  // A message its handler can never take, or one that is gone, fails the send as before.
+  if (sent.state === "withdrawn") throw new Error(sent.reason);
   return {
     message,
     handlerPid: conversation.handlerPid,
-    runId: result.runId,
-    queued: result.queued,
+    runId,
+    // One its handler can't take right now waits on the log, which retries it.
+    queued: sent.state === "pending" || sent.queued,
   };
 }
 
@@ -265,27 +244,18 @@ export async function retainConversationResources(
 ): Promise<ResourceBlock[] | undefined> {
   if (!resources?.length) return undefined;
   ctx.requestSignal?.throwIfAborted();
-  const request: InternalRequestFrame<"proc.resources.retain"> = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.resources.retain",
-    args: { batchId, resources },
-  };
-  const pending = sendFrameToProcess(ctx.installationId, pid, request);
+  const cancelId = crypto.randomUUID();
+  const pending = retainProcessResources(ctx.installationId, pid, cancelId, { batchId, resources });
   let cancellation: Promise<unknown> | undefined;
-  let response: Awaited<typeof pending>;
+  let result: Awaited<typeof pending>;
   try {
-    response = await raceWithAbort(pending, ctx.requestSignal, {
+    result = await raceWithAbort(pending, ctx.requestSignal, {
       abortReason: () => ctx.requestSignal?.reason ?? new Error("Request cancelled"),
       onAbort: () => {
         const reason = ctx.requestSignal?.reason instanceof Error
           ? ctx.requestSignal.reason.message
           : "Request cancelled";
-        cancellation = sendFrameToProcess(ctx.installationId, pid, {
-          type: "sig",
-          signal: REQUEST_CANCEL_SIGNAL,
-          payload: { id: request.id, reason },
-        });
+        cancellation = cancelProcessCall(ctx.installationId, pid, cancelId, reason);
       },
     });
   } catch (error) {
@@ -293,14 +263,7 @@ export async function retainConversationResources(
     throw error;
   }
   ctx.requestSignal?.throwIfAborted();
-  if (!response || response.type !== "res" || response.id !== request.id) {
-    throw new Error("Conversation handler returned no resource response");
-  }
-  if (!response.ok) throw new Error(response.error.message);
-  if (!("resources" in response.data)) {
-    throw new Error("Conversation handler returned an invalid resource batch");
-  }
-  return response.data.resources;
+  return processResult(result).resources;
 }
 
 export async function handleConversationMediaRead(

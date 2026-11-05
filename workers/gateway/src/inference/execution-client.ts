@@ -85,7 +85,6 @@ async function pump(
   abort.signal.addEventListener("abort", abortGeneration, { once: true });
   try {
     abort.signal.throwIfAborted();
-    if (!env.INFERENCE_EXECUTION) throw new Error("Inference execution service is not configured");
     if (!request.attribution) throw new Error("Inference request attribution is unavailable");
     const acquisition = env.INFERENCE_EXECUTION.getExecutor(request.attribution.installationId);
     let acquisitionDisposed = false;

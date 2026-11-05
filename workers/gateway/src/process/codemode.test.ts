@@ -7,7 +7,6 @@ import {
   buildCodeModeMcpToolBindings,
   executeCodeMode,
 } from "./codemode";
-import { CODE_MODE_UNAVAILABLE_ERROR } from "../codemode/availability";
 
 describe.sequential("CodeMode executor", () => {
   describe("execution limit while a person is asked", () => {
@@ -93,15 +92,6 @@ describe.sequential("CodeMode executor", () => {
       { call: "web.search", args: { query: "more sources", target: "personal-search" } },
       { call: "fs.search", args: { query: "needle", path: "/workspace", target: "laptop" } },
     ]);
-  });
-
-  it("returns a clear error when the Worker Loader binding is unavailable", async () => {
-    const result = await executeCodeMode({}, "return 1;", async () => null);
-
-    expect(result).toEqual({
-      status: "failed",
-      error: CODE_MODE_UNAVAILABLE_ERROR,
-    });
   });
 
   it("runs with the Worker Loader binding and exposes shell and fs wrappers", async () => {

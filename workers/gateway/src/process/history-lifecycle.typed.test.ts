@@ -4,7 +4,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import { procHistoryRecordSchema, type ProcHistoryRecordData } from "@humansandmachines/gsv/protocol";
 import type { Process } from "./do";
-import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
+import { initProcess, ROOT_IDENTITY, runInProcess, scheduleFired } from "./do-test-harness";
 import { procMediaInputSchema } from "../kernel/do-shared";
 
 describe("typed history lifecycle", () => {
@@ -77,13 +77,13 @@ describe("typed history lifecycle", () => {
       vi.spyOn(process.run, "scheduleTick").mockResolvedValue(undefined);
       vi.spyOn(process, "sendSignal").mockResolvedValue(undefined);
       vi.spyOn(process, "maybeStartTaskTitleGeneration").mockImplementation(() => {});
-      await process.controller.handleProcScheduleDeliver({
+      await process.deliverEvent(scheduleFired({
         runId: "schedule-run",
         scheduleId: "schedule-1",
         message: "Keep the image from this scheduled inspection",
         data: { machine: "laptop" },
         firedAtMs: 1_000,
-      });
+      }));
       await process.controller.handleProcAbort();
 
       const messageId = process.store.messages.appendMessage("assistant", "Image ready", {

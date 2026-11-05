@@ -6,6 +6,7 @@ import { Kernel } from "./do";
 import {
   ResponsibilityStore,
   type ResponsibilityCreateInput,
+  type ResponsibilityStoreHooks,
 } from "./responsibility-store";
 
 const OWNER_UID = 1000;
@@ -40,14 +41,14 @@ function createInput(
 
 async function withStore<Result>(
   callback: (store: ResponsibilityStore) => Result | Promise<Result>,
-  onChange?: (uid: number) => void,
+  hooks?: ResponsibilityStoreHooks,
 ): Promise<Result> {
   const kernel = await getDurableObjectByName<Env, Kernel>(
     env.KERNEL,
     `responsibility-store-${crypto.randomUUID()}`,
   );
   return await runInDurableObject(kernel, async (_instance: Kernel, state) => {
-    return await callback(new ResponsibilityStore(state.storage, onChange));
+    return await callback(new ResponsibilityStore(state.storage, hooks));
   });
 }
 
@@ -67,16 +68,18 @@ describe("ResponsibilityStore", () => {
       const noOp = store.update({ ...input, patch: { state: "waiting" }, now: 4_000 });
       expect(noOp.changed).toBe(false);
       expect(store.nextWakeAt(OWNER_UID, 4_000)).toBe(checkAt);
-      expect(store.createReadyBatch(OWNER_UID, checkAt - 1)).toBeNull();
-      const batch = store.createReadyBatch(OWNER_UID, checkAt);
-      expect(batch?.responsibilities.map(({ id }) => id)).toEqual([created.id]);
-      expect(store.createReadyBatch(OWNER_UID, checkAt)).toEqual(batch);
-      store.markBatchDelivered(batch!.id);
-      expect(store.nextWakeAt(OWNER_UID, checkAt)).toBe(checkAt + 5 * 60_000);
-      store.update({ ...input, patch: { state: "waiting" }, now: checkAt + 1 });
-      expect(store.nextWakeAt(OWNER_UID, checkAt + 1)).toBe(checkAt + 1 + DAY_MS);
-      store.update({ ...input, patch: { state: "resolved" }, now: checkAt + 2 });
-      expect(store.nextWakeAt(OWNER_UID, checkAt + 2)).toBeNull();
+      expect(store.takeReadyBatch(OWNER_UID, checkAt - 1)).toBeNull();
+      const batch = store.takeReadyBatch(OWNER_UID, checkAt);
+      expect(batch?.ids).toEqual([created.id]);
+      expect(store.takeReadyBatch(OWNER_UID, checkAt)).toBeNull();
+      // Recovery is measured from the delivery that handed the record over.
+      const deliveredAt = checkAt + 1_000;
+      store.markEventDelivered(OWNER_UID, batch!.ids, deliveredAt);
+      expect(store.nextWakeAt(OWNER_UID, deliveredAt)).toBe(deliveredAt + 5 * 60_000);
+      store.update({ ...input, patch: { state: "waiting" }, now: deliveredAt + 1 });
+      expect(store.nextWakeAt(OWNER_UID, deliveredAt + 1)).toBe(deliveredAt + 1 + DAY_MS);
+      store.update({ ...input, patch: { state: "resolved" }, now: deliveredAt + 2 });
+      expect(store.nextWakeAt(OWNER_UID, deliveredAt + 2)).toBeNull();
     });
   });
 
@@ -84,9 +87,9 @@ describe("ResponsibilityStore", () => {
     await withStore((store) => {
       const created = store.create(createInput()).record;
       const deliver = (now: number) => {
-        const batch = store.createReadyBatch(OWNER_UID, now);
-        expect(batch?.responsibilities.map(({ id }) => id)).toEqual([created.id]);
-        store.markBatchDelivered(batch!.id);
+        const batch = store.takeReadyBatch(OWNER_UID, now);
+        expect(batch?.ids).toEqual([created.id]);
+        store.markEventDelivered(OWNER_UID, batch!.ids, now);
       };
       const retryDelays = (from: number, count: number) => {
         const delays: number[] = [];
@@ -111,6 +114,8 @@ describe("ResponsibilityStore", () => {
       const changed = retryDelays(untouched.now + 1, 3);
       expect(changed.delays).toEqual([5 * 60_000, 15 * 60_000, 60 * 60_000]);
 
+      // New input for the work, such as a contact's message, starts the ladder over at its delivery.
+      store.restartRecovery(OWNER_UID, created.id);
       store.markEventDelivered(OWNER_UID, [created.id], changed.now + 1);
       expect(retryDelays(changed.now + 1, 2).delays).toEqual([5 * 60_000, 15 * 60_000]);
     });
@@ -160,6 +165,35 @@ describe("ResponsibilityStore", () => {
     });
   });
 
+  it("tells its owner inside the transaction when a record settles, once, so a throw undoes the settle", async () => {
+    const settled: string[] = [];
+    let failNext = false;
+    await withStore((store) => {
+      const resolved = store.create(createInput({ dedupeKey: "resolved" })).record;
+      const cancelled = store.create(createInput({ dedupeKey: "cancelled" })).record;
+      const input = { ownerUid: OWNER_UID, actor: USER_ACTOR, observedByShip: false, now: 2000 };
+      store.update({ ...input, id: resolved.id, patch: { state: "waiting", blocker: "An answer" } });
+      expect(settled).toEqual([]);
+      store.update({ ...input, id: resolved.id, patch: { state: "resolved" } });
+      store.update({ ...input, id: resolved.id, patch: { title: "Renamed after it settled" } });
+      expect(settled).toEqual([resolved.id]);
+
+      failNext = true;
+      expect(() => store.update({ ...input, id: cancelled.id, patch: { state: "cancelled" } })).toThrow("Synthetic hook failure");
+      expect(store.get(OWNER_UID, cancelled.id)).toMatchObject({ state: "open" });
+      store.update({ ...input, id: cancelled.id, patch: { state: "cancelled" } });
+      expect(settled).toEqual([resolved.id, cancelled.id]);
+    }, {
+      settled: (record) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error("Synthetic hook failure");
+        }
+        settled.push(record.id);
+      },
+    });
+  });
+
   it("announces committed owner changes but not no-ops, deduplication or revision conflicts", async () => {
     const changes: { uid: number; revision: number }[] = [];
     let observed: ResponsibilityStore;
@@ -171,7 +205,7 @@ describe("ResponsibilityStore", () => {
       store.update({ ...input, patch: { state: "open" } });
       expect(() => store.update({ ...input, expectedRevision: 0, patch: { state: "active" } })).toThrow();
       store.update({ ...input, expectedRevision: first.record.revision, patch: { state: "waiting", blocker: "An answer" } });
-    }, (uid) => changes.push({ uid, revision: observed.list({ ownerUid: uid }).revision }));
+    }, { changed: (uid) => changes.push({ uid, revision: observed.list({ ownerUid: uid }).revision }) });
     expect(changes).toEqual([{ uid: OWNER_UID, revision: 1 }, { uid: OWNER_UID, revision: 2 }]);
   });
   it("records one deduplicated responsibility and an ordered transition", async () => {
@@ -258,28 +292,23 @@ describe("ResponsibilityStore", () => {
     });
   });
 
-  it("batches due work idempotently and retains a later deadline wake", async () => {
+  it("takes due work once through the ledger revision and retains a later deadline wake", async () => {
     await withStore((store) => {
       const dueAtMs = 10_000;
       const responsibility = store.create(createInput({ dueAtMs })).record;
       expect(store.nextWakeAt(OWNER_UID, 2_000)).toBe(2_000);
 
-      const first = store.createReadyBatch(OWNER_UID, 2_000);
-      expect(first?.responsibilities.map((record) => record.id)).toEqual([
-        responsibility.id,
-      ]);
-      expect(store.createReadyBatch(OWNER_UID, 2_000)).toEqual(first);
-      expect(store.nextWakeAt(OWNER_UID, 2_000)).toBe(2_000);
+      const first = store.takeReadyBatch(OWNER_UID, 2_000);
+      expect(first).toEqual({ ids: [responsibility.id], throughRevision: responsibility.revision });
+      expect(store.takeReadyBatch(OWNER_UID, 2_000)).toBeNull();
+      expect(store.nextWakeAt(OWNER_UID, 2_000)).toBe(dueAtMs);
 
-      store.markBatchFailed(first!.id, "temporary failure", 2_500);
-      expect(store.pendingBatch(OWNER_UID)?.attemptCount).toBe(1);
-      store.markBatchDelivered(first!.id);
-      expect(store.pendingBatch(OWNER_UID)).toBeNull();
+      store.markEventDelivered(OWNER_UID, first!.ids, 2_500);
       expect(store.nextWakeAt(OWNER_UID, 3_000)).toBe(dueAtMs);
 
-      const deadline = store.createReadyBatch(OWNER_UID, dueAtMs);
-      expect(deadline?.responsibilities[0]?.id).toBe(responsibility.id);
-      store.markBatchDelivered(deadline!.id);
+      const deadline = store.takeReadyBatch(OWNER_UID, dueAtMs);
+      expect(deadline?.ids).toEqual([responsibility.id]);
+      store.markEventDelivered(OWNER_UID, deadline!.ids, dueAtMs);
       expect(store.nextWakeAt(OWNER_UID, dueAtMs)).toBe(dueAtMs + 5 * 60_000);
       store.update({
         ownerUid: OWNER_UID,
@@ -328,13 +357,11 @@ describe("ResponsibilityStore", () => {
       })).record;
 
       expect(store.nextWakeAt(OWNER_UID, 2_000)).toBe(leaseExpiresAtMs);
-      expect(store.createReadyBatch(OWNER_UID, 2_000)).toBeNull();
-      const expired = store.createReadyBatch(OWNER_UID, leaseExpiresAtMs);
-      expect(expired?.responsibilities.map((record) => record.id)).toEqual([
-        responsibility.id,
-      ]);
+      expect(store.takeReadyBatch(OWNER_UID, 2_000)).toBeNull();
+      const expired = store.takeReadyBatch(OWNER_UID, leaseExpiresAtMs);
+      expect(expired?.ids).toEqual([responsibility.id]);
       if (!expired) throw new Error("Expected expired lease batch");
-      store.markBatchDelivered(expired.id);
+      store.markEventDelivered(OWNER_UID, expired.ids, leaseExpiresAtMs);
       expect(store.nextWakeAt(OWNER_UID, leaseExpiresAtMs))
         .toBe(leaseExpiresAtMs + 5 * 60_000);
       store.update({
@@ -365,8 +392,7 @@ describe("ResponsibilityStore", () => {
       })).record;
 
       expect(store.nextWakeAt(OWNER_UID, 2_000)).toBe(2_000);
-      expect(store.createReadyBatch(OWNER_UID, 2_000)?.responsibilities)
-        .toEqual([expect.objectContaining({ id: responsibility.id })]);
+      expect(store.takeReadyBatch(OWNER_UID, 2_000)?.ids).toEqual([responsibility.id]);
     });
   });
 

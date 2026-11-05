@@ -4,7 +4,7 @@ import type { CodeModeExecArgs } from "../../syscalls/codemode";
 import { RUN_CONTROL_INSTRUCTION, SEND_TOOL_DESCRIPTION, SEND_TOOL_NAME } from "./lifecycle";
 import { MAX_MESSAGE_MEDIA_ITEMS } from "../../shared/message-media-limits";
 import type { Tool } from "@humansandmachines/gsv/services/inference-context";
-import { MESSAGE_CHOICE_LIMIT, jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema, resourceBlockSchema, type ResourceBlock } from "@humansandmachines/gsv/protocol";
+import { MESSAGE_CHOICE_LIMIT, jsonObjectSchema, jsonValueSchema, procHistoryRecordDataSchema } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { processIdentitySchema } from "../../protocol/peer-schemas";
 
@@ -106,43 +106,6 @@ export const storedHistoryPolicySchema = z.object({
   updatedAt: z.number().finite().optional().catch(undefined),
 });
 
-export const workReturnedRuntimeEventSchema = z.strictObject({
-  type: z.literal("adapter.work.returned"),
-  workPid: z.string().trim().regex(/^[a-zA-Z0-9._:-]{1,200}$/u),
-});
-
-export const responsibilityBatchSchema = z.strictObject({
-  batchId: z.string().trim().regex(/^batch:[0-9a-f-]{36}$/u),
-  ledgerRevision: z.number().int().nonnegative().safe(),
-  responsibilityIds: z.array(
-    z.string().trim().regex(/^r12y:[0-9a-f-]{36}$/u),
-  ).min(1).max(100),
-});
-
-export const responsibilityReadyRuntimeEventSchema = responsibilityBatchSchema.extend({
-  type: z.literal("r12y.ready"),
-});
-
-export const contactMessageRuntimeEventSchema = z.strictObject({
-  type: z.literal("contact.message"),
-  contactId: z.string().trim().regex(/^contact:.+$/u),
-  contactGeneration: z.string().trim().min(1),
-  conversationId: z.string().trim().min(1),
-  messageId: z.string().trim().min(1),
-  from: z.string(),
-  text: z.string(),
-  media: z.array(z.custom<ResourceBlock>((value) => resourceBlockSchema.safeParse(value).success))
-    .max(MAX_MESSAGE_MEDIA_ITEMS).optional(),
-  responsibilityId: z.string().trim().regex(/^r12y:[0-9a-f-]{36}$/u),
-  ledgerRevision: z.number().int().nonnegative().safe(),
-});
-
-export const processRuntimeEventSchema = z.discriminatedUnion("type", [
-  workReturnedRuntimeEventSchema,
-  responsibilityReadyRuntimeEventSchema,
-  contactMessageRuntimeEventSchema,
-]);
-
 const federationResponsibilityBaseSchema = {
   contactId: z.string(),
   contactGeneration: z.string(),
@@ -189,12 +152,6 @@ export type IpcReplyPayload = z.infer<typeof ipcReplyPayloadSchema>;
 
 export const identityChangedPayloadSchema = z.object({
   identity: processIdentitySchema,
-});
-
-export const deliveryNoticePayloadSchema = z.object({
-  message: nonEmptyStringSchema,
-  noticeId: z.string().trim().regex(/^[a-zA-Z0-9._:-]{1,200}$/u),
-  runId: z.string().optional(),
 });
 
 export const assistantMessageDiagnosticsSchema = z.array(z.object({

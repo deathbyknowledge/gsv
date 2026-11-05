@@ -88,7 +88,7 @@ describe("native target pairing", () => {
   it("honors nested denial and cancellation before issuing an invitation", async () => {
     await fixture(async (ctx, shell) => {
       ctx.toolOwner = { runId: "run", requestId: "tool" };
-      const authorize = vi.spyOn(utils, "sendFrameToProcess").mockResolvedValue({ type: "res", id: "denied", ok: false, error: { code: 403, message: "Pairing denied by policy" } });
+      const authorize = vi.spyOn(utils, "authorizeProcessTool").mockRejectedValue(new Error("Pairing denied by policy"));
       try {
         const result = await shell.exec("targets pair --name Laptop --platform mac");
         expect(result).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("Pairing denied by policy") });

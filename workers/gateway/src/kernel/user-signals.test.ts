@@ -19,8 +19,6 @@ describe("user-facing signal policy", () => {
   });
 
   it("keeps process-private signals off ambient user connections", () => {
-    expect(isUserProcessSignal("ipc.reply")).toBe(false);
-    expect(isUserProcessSignal("ipc.timeout")).toBe(false);
     expect(isUserProcessSignal("schedule.event")).toBe(false);
     expect(isUserProcessSignal("identity.changed")).toBe(false);
     expect(isUserProcessSignal("exec.status")).toBe(false);

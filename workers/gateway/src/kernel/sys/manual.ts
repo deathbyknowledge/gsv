@@ -36,7 +36,7 @@ export class ManualUpdater {
   }
 
   async ensureCurrent(): Promise<void> {
-    if (this.deletions || !this.ctx.env.RIPGIT || !this.ctx.config.get("repos/root/gsv-manual/created_at")) return;
+    if (this.deletions || !this.ctx.config.get("repos/root/gsv-manual/created_at")) return;
     try {
       const { remoteUrl, ref } = resolveManualUpstream(this.ctx.env);
       const previous = this.status();
@@ -76,7 +76,6 @@ export class ManualUpdater {
   }
 
   private async update(automatic: boolean, generation: number): Promise<SysBootstrapResult> {
-    if (!this.ctx.env.RIPGIT) throw new Error("RIPGIT binding is required for system bootstrap");
     const { remoteUrl, ref } = resolveManualUpstream(this.ctx.env);
     const state: ManualUpdateState = {
       source: this.sourceKey(remoteUrl, ref), status: "updating",

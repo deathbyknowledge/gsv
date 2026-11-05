@@ -1,55 +1,78 @@
-import {
-  sendFrameToProcess,
-} from "../shared/utils";
-import type {
-  InternalRequestFrame,
-} from "../protocol/process-frames";
-import {
-  ensurePersonalController,
-} from "./personal-controller";
-import {
-  type ResponsibilityWakeBatch,
-} from "./responsibility-store";
-import {
-  MANAGED_LIFECYCLE_RECHECK_MS,
-} from "../installation/lifecycle";
+import { z } from "zod";
+import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
+import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
+import { deliveryId, shipConsumer } from "./events/consumers";
+import type { EventDefinition } from "./events/registry";
+import type { LoggedEvent } from "./events/store";
 
-function responsibilityRuntimeEventFrame(
-  batch: ResponsibilityWakeBatch,
-): InternalRequestFrame<"proc.runtime.event.deliver"> {
-  return {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.runtime.event.deliver",
-    args: {
-      eventId: batch.eventId,
-      event: {
-        type: "r12y.ready",
-        batchId: batch.id,
-        ledgerRevision: batch.throughRevision,
-        responsibilityIds: batch.responsibilities.map(({ id }) => id),
-      },
-    },
-  };
+const READY = "responsibility.ready";
+
+const readyBodySchema = z.strictObject({
+  responsibilityIds: z.array(z.string()).min(1).max(100),
+  ledgerRevision: z.number().int().nonnegative(),
+});
+
+/** The ledger a wake batch is about: one per owner. */
+function ledgerSubject(ownerUid: number): string {
+  return `owner:${ownerUid}`;
 }
 
+/**
+ * The records a batch names that still need a run. One settled after the batch was taken
+ * needs none: if Ship settled it, Ship knows, and anyone else's change goes in the next batch.
+ */
+function unsettled(event: LoggedEvent, ctx: KernelContext) {
+  const { responsibilityIds, ledgerRevision } = readyBodySchema.parse(event.body);
+  const ids = responsibilityIds.filter((id) => {
+    const record = ctx.responsibilities.get(event.ownerUid, id);
+    if (!record) return false;
+    return !((record.state === "resolved" || record.state === "cancelled") && record.revision > ledgerRevision);
+  });
+  return { ids, ledgerRevision };
+}
 
+/** Responsibilities that need Ship's attention, taken by the wake timer. */
+export const responsibilityReadyEvent: EventDefinition = {
+  // Unlaned, so a stuck contact message or notice never holds the ledger's wakes; one waits at a time.
+  routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: null }],
+  // Checked before Ship is found, so a batch with nothing left starts no Ship.
+  withdrawal: (event, ctx) => unsettled(event, ctx).ids.length === 0 ? "its work was settled while it waited" : null,
+  admit(event, _prepared, ctx) {
+    const { ids, ledgerRevision } = unsettled(event, ctx);
+    return {
+      event: {
+        kind: "responsibility.ready", severity: "info", audience: "model",
+        payload: {
+          batchId: deliveryId(event.id, shipConsumer(event.ownerUid)),
+          ledgerRevision,
+          responsibilityIds: ids,
+          receivedAtMs: Date.now(),
+        },
+      },
+      admission: { idle: "start", busy: "join" },
+      responsibilities: { ledgerRevision, ids },
+    };
+  },
+  // Work that came due while the batch waited goes in the next one.
+  settled: (event, ctx) => ctx.reconcileResponsibilityWake(event.ownerUid),
+};
 
+/** The owner's wake timer: when ledger work comes due, it appends one batch for Ship. */
 export class ResponsibilityRuntime {
   constructor(readonly host: Kernel) {}
 
-async recoverResponsibilityWakes(): Promise<void> {
+  async recoverResponsibilityWakes(): Promise<void> {
     for (const ownerUid of this.host.responsibilities.ownersWithLedgers()) {
       await this.reconcileResponsibilityWake(ownerUid);
     }
   }
 
-async reconcileResponsibilityWake(ownerUid: number): Promise<void> {
+  async reconcileResponsibilityWake(ownerUid: number): Promise<void> {
     const now = Date.now();
     const state = this.host.responsibilities.wakeState(ownerUid);
-    const pending = this.host.responsibilities.pendingBatch(ownerUid);
-    const nextWakeAt = !pending && this.host.auth.isAccountDisabled(ownerUid)
+    // A batch still on its way holds the next one; its delivery reconciles again.
+    const nextWakeAt = this.host.auth.isAccountDisabled(ownerUid) || this.batchWaiting(ownerUid)
       ? null
       : this.host.responsibilities.nextWakeAt(ownerUid, now);
     if (nextWakeAt === null) {
@@ -71,7 +94,7 @@ async reconcileResponsibilityWake(ownerUid: number): Promise<void> {
     );
   }
 
-async scheduleResponsibilityWakeAt(
+  async scheduleResponsibilityWakeAt(
     ownerUid: number,
     generation: number,
     wakeAtMs: number,
@@ -101,7 +124,8 @@ async scheduleResponsibilityWakeAt(
     }
   }
 
-async onResponsibilityWake(
+  /** Takes the work that needs Ship's attention as one event, which the event log delivers. */
+  async onResponsibilityWake(
     payload: { ownerUid: number; generation: number },
     task?: { id?: string },
   ): Promise<void> {
@@ -112,56 +136,36 @@ async onResponsibilityWake(
     }
     if (task?.id && state.taskId !== task.id) return;
 
-    const gate = await this.host.onboarding.managedWorkGate();
-    const pending = this.host.responsibilities.pendingBatch(payload.ownerUid);
-    // A persisted batch already owns its event id; removal only fences new batches.
-    if (!pending && this.host.auth.isAccountDisabled(payload.ownerUid)) {
-      await this.reconcileResponsibilityWake(payload.ownerUid);
-      return;
+    // A removed account takes no new batch; one already on its way still goes.
+    if (!this.host.auth.isAccountDisabled(payload.ownerUid) && !this.batchWaiting(payload.ownerUid)) {
+      const gate = await this.host.onboarding.managedWorkGate();
+      if (!gate.allowed) {
+        // A restricted space takes nothing from its ledger; the timer looks again shortly.
+        await this.scheduleResponsibilityWakeAt(
+          payload.ownerUid, payload.generation, Date.now() + MANAGED_LIFECYCLE_RECHECK_MS, state.taskId,
+        );
+        return;
+      }
+      const appended = this.host.ctx.storage.transactionSync(() => {
+        if (this.batchWaiting(payload.ownerUid)) return false;
+        const batch = this.host.responsibilities.takeReadyBatch(payload.ownerUid, Date.now());
+        if (!batch) return false;
+        this.host.eventRuntime.append({
+          type: READY,
+          ownerUid: payload.ownerUid,
+          subject: ledgerSubject(payload.ownerUid),
+          actor: { kind: "kernel" },
+          key: crypto.randomUUID(),
+          body: { responsibilityIds: batch.ids, ledgerRevision: batch.throughRevision },
+        });
+        return true;
+      });
+      if (appended) await this.host.eventRuntime.kick();
     }
-    if (!gate.allowed) {
-      await this.scheduleResponsibilityWakeAt(
-        payload.ownerUid,
-        payload.generation,
-        Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
-        state.taskId,
-      );
-      return;
-    }
+    await this.reconcileResponsibilityWake(payload.ownerUid);
+  }
 
-    const batch = pending ?? this.host.responsibilities.createReadyBatch(payload.ownerUid, Date.now());
-    if (!batch) {
-      await this.reconcileResponsibilityWake(payload.ownerUid);
-      return;
-    }
-
-    try {
-      const processId = await ensurePersonalController(
-        payload.ownerUid,
-        this.host.buildKernelContext({ callerOwnerUid: payload.ownerUid }),
-      );
-      const response = await sendFrameToProcess(
-        this.host.installationId,
-        processId,
-        responsibilityRuntimeEventFrame(batch),
-      );
-      if (!response) throw new Error("Responsibility event produced no Process response");
-      if (!response.ok) throw new Error(response.error.message);
-      this.host.responsibilities.markBatchDelivered(batch.id);
-      await this.reconcileResponsibilityWake(payload.ownerUid);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.host.responsibilities.markBatchFailed(batch.id, message, Date.now());
-      const current = this.host.responsibilities.pendingBatch(payload.ownerUid);
-      const attempt = current?.attemptCount ?? batch.attemptCount + 1;
-      const retryAt = Date.now()
-        + Math.min(5 * 60_000, 1_000 * (2 ** Math.min(8, attempt)));
-      await this.scheduleResponsibilityWakeAt(
-        payload.ownerUid,
-        payload.generation,
-        retryAt,
-        state.taskId,
-      );
-    }
+  private batchWaiting(ownerUid: number): boolean {
+    return this.host.eventRuntime.pending(READY, ledgerSubject(ownerUid)).length > 0;
   }
 }

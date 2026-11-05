@@ -44,7 +44,7 @@ export class GatewayDeletion {
     if (await this.host.retirement.abortMultipart(this.host.env.STORAGE)) return this.receipt(input, "quiescing", "progress");
     await this.host.retirement.quiesced();
     const ripgit = await this.ripgit(input, "quiesce");
-    if (ripgit && ripgit.phase === "quiescing") return this.receipt(input, "quiescing", "progress");
+    if (ripgit.phase === "quiescing") return this.receipt(input, "quiescing", "progress");
     if (!this.inventoryComplete()) return this.receipt(input, "quiescing", "missing-inventory");
     return this.receipt(input, "quiesced", "progress");
   }
@@ -60,7 +60,7 @@ export class GatewayDeletion {
     }
     if (this.count("quiesced")) return this.receipt(input, "erasing", "progress");
     const ripgit = await this.ripgit(input, "erase");
-    if (ripgit && ripgit.phase !== "live-erased") return this.receipt(input, "erasing", "progress");
+    if (ripgit.phase !== "live-erased") return this.receipt(input, "erasing", "progress");
     // Always start at the prefix head: deleting a page must not invalidate a saved list cursor.
     const prefix = installationStoragePrefix(input.installationId);
     const page = await this.host.env.STORAGE.list({ prefix, limit: 1000 });
@@ -132,7 +132,6 @@ export class GatewayDeletion {
   }
 
   private async ripgit(input: InstallationDeletionRequest, action: "quiesce" | "erase") {
-    if (!this.host.env.RIPGIT) return null;
     const response = await this.host.env.RIPGIT.fetch(`https://ripgit.invalid/.gsv/installation/${action}`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
     });

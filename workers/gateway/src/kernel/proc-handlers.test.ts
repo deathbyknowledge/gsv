@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../test-support/peers";
 import type {
+  ProcSendArgs,
   ProcessIdentity,
-  ProcIpcSendResult,
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { KernelContext } from "./context";
+import { requiredTestBindings } from "../test-support/required-bindings";
+import type { InlineDelivery } from "./events/runtime";
+import type { EventInput, LoggedEvent, PendingDelivery } from "./events/store";
 
 import * as utils from "../shared/utils";
-import { forwardToProcess, handleProcFork, handleProcIpcCall, handleProcIpcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
+import { forwardToProcess, handleProcFork, handleProcIpcCall, handleProcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
 import { resolveCallerOwnerUid } from "./context";
 import { dispatch, type DispatchDeps } from "./dispatch";
 
@@ -22,6 +25,8 @@ const IDENTITY: ProcessIdentity = {
 };
 // SAFETY: test fixture is constructed with the asserted kernel domain shape.
 const TEST_INSTALLATION_ID = "inst_test" as KernelContext["installationId"];
+/** The target's run for the call the fake log appends as evt_7. */
+const TARGET_DELIVERY = "evt_7:proc:target-process";
 
 const PERSONAL_AGENT_ACCOUNT = {
   username: "sam-agent",
@@ -197,18 +202,23 @@ describe("proc handlers", () => {
       broadcastToUserUid: vi.fn(),
       runRoutes: { inheritProcessApprovalRoute: vi.fn() },
       config: { getExplicit: vi.fn((key: string) => entries.get(key) ?? null) },
+      events: logEvents(),
       env: {},
     } as KernelContext;
     const result = await handleProcSpawn({ ai: { modelId: ` ${modelId.toUpperCase()} `, reasoning: " HIGH " }, prompt: "Start with these settings." }, ctx);
-    expect(result.ok).toBe(true);
-    expect(sendFrameToProcessMock.mock.calls.map(([, , frame]) => frame.call)).toEqual(["proc.setidentity", "proc.send"]);
+    if (!result.ok) throw new Error(result.error);
+    expect(sendFrameToProcessMock.mock.calls.map(([, , frame]) => frame.call)).toEqual(["proc.setidentity"]);
     expect(sendFrameToProcessMock.mock.calls[0][2].args).toMatchObject({
       identity: { uid: 2000 }, ai: { modelId, reasoning: "high" },
     });
-    expect(sendFrameToProcessMock.mock.calls[1][2].args).toMatchObject({ message: "Start with these settings." });
+    // The prompt goes through the log once the process is initialized and announced.
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      type: "process.message", subject: `proc:${result.pid}`, body: { pid: result.pid, content: { kind: "inline", message: "Start with these settings." } },
+    });
+    expect(ctx.events.deliverNow).toHaveBeenCalledWith(expect.objectContaining({ id: "evt_7" }), `proc:${result.pid}`);
     expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(IDENTITY.uid, "proc.changed", expect.objectContaining({ changes: ["created"] }));
     expect(vi.mocked(ctx.broadcastToUserUid).mock.invocationCallOrder[0]).toBeGreaterThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);
-    expect(vi.mocked(ctx.broadcastToUserUid).mock.invocationCallOrder[0]).toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[1]);
+    expect(vi.mocked(ctx.broadcastToUserUid).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(ctx.events.deliverNow).mock.invocationCallOrder[0]!);
   });
 
   it.each([
@@ -229,52 +239,33 @@ describe("proc handlers", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
-  it("cleans up pending IPC call when delivery returns an error response", async () => {
-    sendFrameToProcessMock.mockResolvedValue({
-      type: "res",
-      id: "deliver",
-      ok: false,
-      error: { code: 500, message: "target rejected delivery" },
-    } satisfies ResponseFrame);
+  it.each([
+    { case: "its target is gone", timedOut: false, reason: "Process no longer exists", error: "Process no longer exists" },
+    { case: "it timed out first", timedOut: true, reason: "the call already ended", error: "IPC call timed out" },
+  ])("removes a call its target never took because $case, answering only through the call's result", async ({ timedOut, reason, error }) => {
+    const { ctx, ipcCalls, events, scheduleIpcCallTimeout } = makeIpcCallContext();
+    // A timeout that came first left its answer on the log, which the call's result replaces.
+    const answer = (callId: string): PendingDelivery => ({
+      event: {
+        type: "ipc.timeout", ownerUid: IDENTITY.uid, subject: `ipc:${callId}`, actor: { kind: "kernel" }, key: callId, seq: 8, id: "evt_8", createdAt: 2,
+        body: { sourcePid: "source-process", callId, targetPid: "target-process", createdAt: 1, deadlineAt: 2, error: "IPC call timed out" },
+      },
+      consumer: "proc:source-process", lane: "background", attemptCount: 0,
+    });
+    events.pending.mockImplementation((type, subject) => timedOut && type === "ipc.timeout" ? [answer(subject.slice("ipc:".length))] : []);
+    events.deliverNow.mockResolvedValue({ state: "withdrawn", reason });
 
-    const { ctx, ipcCalls } = makeIpcCallContext();
-    const result = await handleProcIpcCall({
-      pid: "target-process",
-      message: "bounded work",
-    }, ctx);
+    await expect(handleProcIpcCall({ pid: "target-process", message: "bounded work" }, ctx))
+      .resolves.toEqual({ ok: false, error });
 
-    expect(result).toEqual({ ok: false, error: "target rejected delivery" });
-    const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const runId = (sendFrameToProcessMock.mock.calls[0]?.[2] as RequestFrame | undefined)?.args.runId;
-    expect(callId).toBeTruthy();
-    expect(runId).toBeTruthy();
-    expect(ipcCalls.remove).toHaveBeenCalledWith(callId);
-    expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
-      sourceRunId: "source-run",
-      targetRunId: runId,
-    }));
-    expect(ctx.scheduleIpcCallTimeout).toHaveBeenCalledWith(
-      callId,
-      ipcCalls.create.mock.calls[0]?.[0]?.deadlineAt,
-    );
+    const created = ipcCalls.create.mock.calls[0]?.[0];
+    expect(created).toMatchObject({ sourceRunId: "source-run", targetRunId: TARGET_DELIVERY });
+    expect(ipcCalls.remove).toHaveBeenCalledWith(created?.callId);
+    expect(events.withdraw.mock.calls).toEqual(timedOut ? [[answer(created!.callId), "its caller heard when it asked"]] : []);
+    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(created?.callId, created?.deadlineAt);
   });
 
   it("keys same-owner cross-agent IPC calls by owner uid", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
-      type: "res",
-      id: "deliver",
-      ok: true,
-      data: {
-        ok: true,
-        status: "started",
-        pid: "target-process",
-        sourcePid: "source-process",
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        runId: (frame as RequestFrame).args.runId,
-      } satisfies ProcIpcSendResult,
-    } satisfies ResponseFrame));
-
     const ownerUid = 1000;
     const sourceIdentity = {
       ...IDENTITY,
@@ -285,7 +276,7 @@ describe("proc handlers", () => {
       home: "/home/sam-agent",
       cwd: "/home/sam-agent",
     };
-    const { ctx, ipcCalls } = makeIpcCallContext({
+    const { ctx, ipcCalls, events } = makeIpcCallContext({
       identity: sourceIdentity,
       source: { uid: sourceIdentity.uid, ownerUid },
       target: { uid: 3000, ownerUid },
@@ -301,89 +292,35 @@ describe("proc handlers", () => {
       status: "started",
       pid: "target-process",
       sourcePid: "source-process",
+      runId: TARGET_DELIVERY,
     });
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const firstCall = sendFrameToProcessMock.mock.calls[0];
-    if (!firstCall) throw new Error("expected proc.start frame");
-    // SAFETY: The proc.start fixture records a request frame in the third mock argument.
-    const runId = (firstCall[2] as RequestFrame).args.runId;
-    expect(result).toMatchObject({ runId });
+    expect(events.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: "ipc.call",
+      ownerUid,
+      actor: { kind: "process", pid: "source-process" },
+    }));
     expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
       uid: ownerUid,
       sourcePid: "source-process",
       sourceRunId: "source-run",
       targetPid: "target-process",
-      targetRunId: runId,
+      targetRunId: TARGET_DELIVERY,
     }));
   });
 
-  it("rejects an IPC send response for a different run", async () => {
-    sendFrameToProcessMock.mockResolvedValue({
-      type: "res",
-      id: "deliver",
-      ok: true,
-      data: {
-        ok: true,
-        status: "started",
-        pid: "target-process",
-        sourcePid: "source-process",
-        runId: "unexpected-run",
-      } satisfies ProcIpcSendResult,
-    } satisfies ResponseFrame);
-    const { ctx } = makeIpcCallContext();
-
-    await expect(handleProcIpcSend({
-      pid: "target-process",
-      message: "fire and forget",
-    }, ctx)).resolves.toEqual({
-      ok: false,
-      error: "proc.ipc.deliver returned an unexpected runId",
-    });
-  });
-
-  it("schedules IPC timeout before delivering work to the target", async () => {
-    const { ctx, ipcCalls } = makeIpcCallContext();
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
-      const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
-      expect(ctx.scheduleIpcCallTimeout).toHaveBeenCalledWith(
-        callId,
-        ipcCalls.create.mock.calls[0]?.[0]?.deadlineAt,
-      );
-      return {
-        type: "res",
-        id: "deliver",
-        ok: true,
-        data: {
-          ok: true,
-          status: "started",
-          pid: "target-process",
-          sourcePid: "source-process",
-          // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-          runId: (frame as RequestFrame).args.runId,
-        } satisfies ProcIpcSendResult,
-      } satisfies ResponseFrame;
-    });
+  it("schedules a call's timeout before the log holds it", async () => {
+    const { ctx, events, scheduleIpcCallTimeout } = makeIpcCallContext();
 
     await expect(handleProcIpcCall({
       pid: "target-process",
       message: "bounded work",
     }, ctx)).resolves.toMatchObject({ ok: true, status: "started" });
+
+    expect(scheduleIpcCallTimeout.mock.invocationCallOrder[0])
+      .toBeLessThan(events.append.mock.invocationCallOrder[0] ?? 0);
   });
 
   it("correlates IPC with the dispatching run instead of mutable process state", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
-      type: "res",
-      id: "deliver",
-      ok: true,
-      data: {
-        ok: true,
-        status: "started",
-        pid: "target-process",
-        sourcePid: "source-process",
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        runId: (frame as RequestFrame).args.runId,
-      } satisfies ProcIpcSendResult,
-    } satisfies ResponseFrame));
     const { ctx, ipcCalls } = makeIpcCallContext({
       source: { uid: IDENTITY.uid, ownerUid: IDENTITY.uid, activeRunId: "successor-run" },
     });
@@ -399,8 +336,8 @@ describe("proc handlers", () => {
     }));
   });
 
-  it("removes the IPC call when timeout scheduling fails", async () => {
-    const { ctx, ipcCalls } = makeIpcCallContext();
+  it("records no call when its timeout can't be scheduled", async () => {
+    const { ctx, ipcCalls, events } = makeIpcCallContext();
     ctx.scheduleIpcCallTimeout = vi.fn(async () => {
       throw new Error("scheduler unavailable");
     });
@@ -410,38 +347,28 @@ describe("proc handlers", () => {
       message: "bounded work",
     }, ctx)).resolves.toEqual({ ok: false, error: "scheduler unavailable" });
 
-    const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
-    expect(ipcCalls.remove).toHaveBeenCalledWith(callId);
-    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    expect(events.append).not.toHaveBeenCalled();
+    expect(ipcCalls.create).not.toHaveBeenCalled();
   });
 
-  it("does not report started after a delivered timeout row was removed", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
-      type: "res",
-      id: "deliver",
-      ok: true,
-      data: {
-        ok: true,
-        status: "started",
-        pid: "target-process",
-        sourcePid: "source-process",
-        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-        runId: (frame as RequestFrame).args.runId,
-      } satisfies ProcIpcSendResult,
-    } satisfies ResponseFrame));
-    const { ctx, ipcCalls } = makeIpcCallContext();
-    ipcCalls.get.mockReturnValue(null);
-    const now = vi.spyOn(Date, "now")
-      .mockReturnValueOnce(1_000)
-      .mockReturnValue(61_000);
+  it.each([
+    { case: "its deadline passed", late: true, timedOut: false },
+    { case: "its timeout already answered it", late: false, timedOut: true },
+  ])("reports a timeout, not a start, for a call its target took after $case", async ({ late, timedOut }) => {
+    const { ctx, events } = makeIpcCallContext();
+    events.keyed.mockImplementation((type: string, key: string) => (
+      timedOut && type === "ipc.timeout"
+        ? { type, ownerUid: IDENTITY.uid, subject: `ipc:${key}`, actor: { kind: "kernel" }, key, seq: 8, id: "evt_8", body: null, createdAt: 2 }
+        : null
+    ));
+    const now = late ? vi.spyOn(Date, "now").mockReturnValueOnce(1_000).mockReturnValue(61_000) : null;
     try {
       await expect(handleProcIpcCall({
         pid: "target-process",
         message: "bounded work",
       }, ctx)).resolves.toEqual({ ok: false, error: "IPC call timed out" });
-      expect(ipcCalls.get).toHaveReturnedWith(null);
     } finally {
-      now.mockRestore();
+      now?.mockRestore();
     }
   });
 
@@ -511,13 +438,26 @@ describe("proc handlers", () => {
     }
   });
 
-  it("routes proc.send results by the target process owner", async () => {
-    sendFrameToProcessMock.mockResolvedValue({
-      type: "res",
-      id: "send-root",
-      ok: true,
-      data: { ok: true, status: "started", runId: "run-1" },
-    } satisfies ResponseFrame);
+  it("refuses proc.send media that isn't resource blocks before appending it", async () => {
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const ctx = {
+      installationId: TEST_INSTALLATION_ID,
+      peer: testPeer({ kind: "human", account: IDENTITY, calls: ["proc.send"] }),
+      procs: { get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })) },
+      runRoutes: { setConnectionRoute: vi.fn() },
+      events: logEvents(),
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    } as KernelContext;
+
+    for (const media of [[{ key: "proc/other/media/1" }], "not a list"]) {
+      // Arguments arrive as the model wrote them.
+      const args: ProcSendArgs = JSON.parse(JSON.stringify({ pid: "proc-1", message: "Look.", media }));
+      await expect(handleProcSend(args, ctx)).resolves.toEqual({ ok: false, error: "proc.send media must be resource blocks" });
+    }
+    expect(ctx.events.append).not.toHaveBeenCalled();
+  });
+
+  it("appends proc.send for the target process's owner and pins its reply route first", async () => {
     const setConnectionRoute = vi.fn();
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
@@ -528,29 +468,30 @@ describe("proc handlers", () => {
         get: vi.fn(() => ({ uid: 2000, ownerUid: 1000 })),
       },
       runRoutes: { setConnectionRoute },
+      events: logEvents(),
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    await forwardToProcess({
-      type: "req",
-      id: "send-root",
-      call: "proc.send",
-      args: { pid: "proc-1", message: "hello", selectedTarget: "gsv" },
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    } as RequestFrame, ctx);
+    await expect(handleProcSend({ pid: "proc-1", message: "hello", selectedTarget: "gsv" }, ctx))
+      .resolves.toEqual({ ok: true, status: "started", runId: "evt_7:proc:proc-1" });
 
-    expect(sendFrameToProcessMock.mock.calls[0][2]).toMatchObject({ args: { message: "hello", selectedTarget: "gsv" } });
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      type: "message.received", ownerUid: 1000, actor: { kind: "person", uid: 0 },
+      body: { pid: "proc-1", content: { kind: "inline", message: "hello", selectedTarget: "gsv" } },
+    });
     expect(setConnectionRoute).toHaveBeenCalledWith({
-      runId: "run-1",
+      runId: "evt_7:proc:proc-1",
       processId: "proc-1",
       uid: 1000,
       connectionId: "conn-root",
     });
+    expect(setConnectionRoute.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(ctx.events.deliverNow).mock.invocationCallOrder[0]!);
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
   it.each(["owner", "root", "process", "work"])("activates onboarding only for the owner's direct Ship input: %s", async (caller) => {
     const ctx = makeForwardContext();
+    ctx.events = logEvents();
     ctx.peer = testPeer({ kind: "human", account: { ...IDENTITY, uid: caller === "root" ? 0 : IDENTITY.uid }, calls: ["proc.send"] });
     // SAFETY: this fixture supplies the process ownership and controller fields inspected by proc.send.
     vi.mocked(ctx.procs.get).mockReturnValue({
@@ -561,11 +502,12 @@ describe("proc handlers", () => {
       ctx.processId = "proc:source";
       ctx.callerOwnerUid = IDENTITY.uid;
     }
-    await forwardToProcess({ type: "req", id: "first", call: "proc.send", args: { pid: "proc:ship", message: "Hello" } }, ctx);
+    await handleProcSend({ pid: "proc:ship", message: "Hello" }, ctx);
     if (caller === "owner") {
       expect(ctx.welcome.activate).toHaveBeenCalledWith(IDENTITY.uid);
       expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(IDENTITY.uid);
-      expect(vi.mocked(ctx.welcome.activate).mock.invocationCallOrder[0]).toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);
+      expect(vi.mocked(ctx.welcome.activate).mock.invocationCallOrder[0])
+        .toBeLessThan(vi.mocked(ctx.events.deliverNow).mock.invocationCallOrder[0]!);
     } else {
       expect(ctx.welcome.activate).not.toHaveBeenCalled();
       expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
@@ -986,47 +928,17 @@ describe("proc handlers", () => {
     expect(ctx.procs.kill).toHaveBeenCalledWith("proc-1");
   });
 
-  it("cleans up pending IPC call when delivery reports failure", async () => {
-    sendFrameToProcessMock.mockResolvedValue({
-      type: "res",
-      id: "deliver",
-      ok: true,
-      data: { ok: false, error: "target unavailable" } satisfies ProcIpcSendResult,
-    } satisfies ResponseFrame);
-
-    const { ctx, ipcCalls } = makeIpcCallContext();
-    const result = await handleProcIpcCall({
-      pid: "target-process",
-      message: "bounded work",
-    }, ctx);
-
-    expect(result).toEqual({ ok: false, error: "target unavailable" });
-    const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-    const runId = (sendFrameToProcessMock.mock.calls[0]?.[2] as RequestFrame | undefined)?.args.runId;
-    expect(callId).toBeTruthy();
-    expect(runId).toBeTruthy();
-    expect(ipcCalls.remove).toHaveBeenCalledWith(callId);
-    expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
-      sourceRunId: "source-run",
-      targetRunId: runId,
-    }));
-    expect(ctx.scheduleIpcCallTimeout).toHaveBeenCalledWith(
-      callId,
-      ipcCalls.create.mock.calls[0]?.[0]?.deadlineAt,
-    );
-  });
-
   it("spawns a fresh top-level process when explicit cwd is requested", async () => {
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     const ctx = {
       installationId: TEST_INSTALLATION_ID,
       env: {
         STORAGE: makeStorageBucket(),
+        ...requiredTestBindings(),
       },
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
-      config: { get: vi.fn(() => "1002") },
+      config: { get: vi.fn(() => "1002"), set: vi.fn() },
       welcome: { createdAt: vi.fn() },
       defer: vi.fn(),
       responsibilities: {
@@ -1036,6 +948,7 @@ describe("proc handlers", () => {
         get: vi.fn(() => null),
         spawn: vi.fn(),
       },
+      events: logEvents(),
     // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as KernelContext;
 
@@ -1079,14 +992,9 @@ describe("proc handlers", () => {
     )?.[2] as RequestFrame | undefined;
     expect(identityFrame?.args).not.toHaveProperty("installationId");
     expect(identityFrame?.args).not.toHaveProperty("pid");
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      expect.any(String),
-      expect.objectContaining({
-        call: "proc.send",
-        args: expect.objectContaining({ message: "Review this project." }),
-      }),
-    );
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      type: "message.received", body: { content: { kind: "inline", message: "Review this project." } },
+    });
   });
 
   it("spawns a fresh top-level process when requested without explicit cwd", async () => {
@@ -1095,10 +1003,11 @@ describe("proc handlers", () => {
       installationId: TEST_INSTALLATION_ID,
       env: {
         STORAGE: makeStorageBucket(),
+        ...requiredTestBindings(),
       },
       peer: testPeer({ kind: "human", account: IDENTITY, calls: ["*"] }),
       auth: makePersonalAgentAuth(),
-      config: { get: vi.fn(() => "1002") },
+      config: { get: vi.fn(() => "1002"), set: vi.fn() },
       welcome: { createdAt: vi.fn() },
       defer: vi.fn(),
       responsibilities: {
@@ -1529,6 +1438,15 @@ describe("proc handlers", () => {
 
 });
 
+/** A log that appends every event as evt_7 and delivers it at once. */
+function logEvents(runId: string | null = null) {
+  return {
+    append: vi.fn((input: EventInput): LoggedEvent => ({ ...input, seq: 7, id: "evt_7", body: input.body ?? null, createdAt: 1 })),
+    transaction: vi.fn(<T,>(operation: () => T): T => operation()),
+    deliverNow: vi.fn(async (): Promise<InlineDelivery> => ({ state: "delivered", runId, queued: false })),
+  };
+}
+
 function makeIpcCallContext(options: {
   identity?: ProcessIdentity;
   source?: { uid: number; ownerUid: number; activeRunId?: string | null };
@@ -1542,9 +1460,18 @@ function makeIpcCallContext(options: {
   const target = options.target ?? { uid: identity.uid, ownerUid: identity.uid };
   const ipcCalls = {
     create: vi.fn(),
-    get: vi.fn(() => ({ status: "pending", error: null })),
     remove: vi.fn(),
   };
+  // The log appends every event as evt_7, and its target takes it at once.
+  const events = {
+    append: vi.fn((input: EventInput): LoggedEvent => ({ ...input, seq: 7, id: "evt_7", body: input.body ?? null, createdAt: 1 })),
+    transaction: vi.fn(<T,>(operation: () => T): T => operation()),
+    deliverNow: vi.fn(async (): Promise<InlineDelivery> => ({ state: "delivered", runId: TARGET_DELIVERY, queued: false })),
+    pending: vi.fn((_type: string, _subject: string): PendingDelivery[] => []),
+    withdraw: vi.fn(),
+    keyed: vi.fn((_type: string, _key: string): LoggedEvent | null => null),
+  };
+  const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   const ctx = {
     installationId: TEST_INSTALLATION_ID,
@@ -1559,11 +1486,12 @@ function makeIpcCallContext(options: {
       }),
     },
     ipcCalls,
-    scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
+    events,
+    scheduleIpcCallTimeout,
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
 
-  return { ctx, ipcCalls };
+  return { ctx, ipcCalls, events, scheduleIpcCallTimeout };
 }
 
 function makeForwardContext(overrides?: {

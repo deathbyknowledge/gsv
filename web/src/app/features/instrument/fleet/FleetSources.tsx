@@ -129,7 +129,8 @@ export function SourceInspector({ source, events, canChange, canRead, now, onCho
         <span class="fleet-work-summary"><span>{t(SENDERS[event.emittedBy])}</span><span>{relativeTime(event.receivedAtMs, now)}</span></span>
         {event.body && <details><summary>{t("fleet.sources.body")}</summary><pre>{event.body}</pre></details>}
       </li>)}</ul>
-      : <p class="fleet-empty">{t("fleet.sources.nothingArrived")}</p>}
+      // The list keeps 30 days, while the sources table still shows an older last event.
+      : <p class="fleet-empty">{t(source.lastEventAtMs ? "fleet.sources.nothingRecent" : "fleet.sources.nothingArrived")}</p>}
   </div>;
 }
 

@@ -8,7 +8,6 @@ describe("internal syscall exposure", () => {
     expect(isInternalOnlySyscall("ai.context")).toBe(true);
     expect(isInternalOnlySyscall("ai.tools")).toBe(true);
     expect(isInternalOnlySyscall("codemode.exec")).toBe(true);
-    expect(isInternalOnlySyscall("proc.ipc.deliver")).toBe(true);
   });
 
   it("keeps user-facing syscalls public", () => {

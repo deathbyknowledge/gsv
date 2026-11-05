@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  okProcessResponse, runInProcess, ROOT_IDENTITY, drainProcessQueue, initProcess, makeReq,
+  runInProcess, ROOT_IDENTITY, drainProcessQueue, initProcess, ipcMessage,
 } from "./do-test-harness";
 
 describe("proc.ipc.*", () => {
@@ -15,28 +15,15 @@ describe("proc.ipc.*", () => {
       };
     });
 
-    const response = await okProcessResponse(
-      stub,
-      makeReq("proc.ipc.deliver", {
-        runId: "queued-ipc-run",
-        sourcePid: "source-process",
-        source: ROOT_IDENTITY,
-        message: "Queued IPC work.",
-        metadata: { priority: "normal" },
-        sentAt: 1_700_000_000_000,
-        // SAFETY: test fixture is constructed with the asserted domain shape.
-      }),
-    );
-
-    expect(response.ok).toBe(true);
-    expect(response.data).toMatchObject({
-      ok: true,
-      status: "started",
-      pid,
+    const delivered = await stub.deliverEvent(ipcMessage({
       sourcePid: "source-process",
-      runId: "queued-ipc-run",
-      queued: true,
-    });
+      source: ROOT_IDENTITY,
+      message: "Queued IPC work.",
+      metadata: { priority: "normal" },
+      sentAt: 1_700_000_000_000,
+    }, "queued-ipc-run"));
+
+    expect(delivered).toEqual({ eventId: "queued-ipc-run", runId: "queued-ipc-run", queued: true });
 
     await runInProcess(stub, (process) => {
       const store = process.store;

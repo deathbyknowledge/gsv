@@ -26,7 +26,7 @@ function sources(processes: ProcessRecord[], summary = vi.fn(async () => ({
     }] },
     // SAFETY: the snapshot reads only the open count.
     responsibilities: { list: () => ({ records: [], count: 3, revision: 1 }) } as never,
-    shipEvents: { backlog: () => ({ queued: 2, oldestQueuedAt: 77 }) },
+    events: { backlog: (consumer: string) => consumer === "personal:1000" ? { queued: 2, oldestQueuedAt: 77 } : { queued: 0, oldestQueuedAt: null } },
     shipSummary: summary,
     now: () => 1_000,
   };

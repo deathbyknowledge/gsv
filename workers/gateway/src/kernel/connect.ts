@@ -29,8 +29,7 @@ import { deploymentPresentation } from "@humansandmachines/gsv/services/deployme
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
 import { USER_CONNECTION_SIGNALS } from "./user-signals";
-import { gsvInferenceFeaturesFromEnv } from "../inference/features";
-import { setupFeatures } from "../installation/lifecycle";
+import { GSV_INFERENCE_FEATURE } from "@humansandmachines/gsv/services/inference";
 
 export type ConnectOutcome =
   | {
@@ -41,16 +40,9 @@ export type ConnectOutcome =
     }
   | { ok: false; code: number; message: string; details?: JsonValue };
 
-export const SETUP_REQUIRED_ERROR_CODE = 425;
-type SetupRequiredDetails = { setupMode: true; next: "sys.setup"; setupFeatures: string[] };
-
 export const PROTOCOL_VERSION = 4;
 const MACHINE_CONNECTION_CAPABILITIES: string[] = [];
 const SERVICE_CAPABILITY_GIDS = [102];
-
-export function setupRequiredDetails(env: { PDS?: unknown }): SetupRequiredDetails {
-  return { setupMode: true, next: "sys.setup", setupFeatures: setupFeatures(env) };
-}
 
 export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void> {
   await ctx.auth.bootstrap();
@@ -189,7 +181,7 @@ export async function handleConnect(
     },
   };
 
-  const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
+  const serverFeatures: string[] = [GSV_INFERENCE_FEATURE];
   if (ctx.env.INSTANCES && hasCapability(capabilities, "sys.instance.list")) serverFeatures.push("cloud-instances");
   if (ctx.env.FEEDBACK && hasCapability(capabilities, "sys.feedback")) serverFeatures.push(FEEDBACK_FEATURE);
   const result: ConnectResult = {
@@ -199,12 +191,10 @@ export async function handleConnect(
       release: SERVER_RELEASE,
       connectionId: ctx.connection.id,
       deployment: deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG),
+      features: serverFeatures,
     },
     peer,
   };
-  if (serverFeatures.length > 0) {
-    result.server.features = serverFeatures;
-  }
 
   return { ok: true, peer, result, ...(newMachine ? { newMachine } : undefined) };
 }

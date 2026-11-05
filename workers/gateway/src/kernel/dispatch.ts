@@ -44,6 +44,7 @@ import {
 import {
   handleProcList,
   handleProcIpcCall,
+  handleProcSend,
   handleProcIpcSend,
   handleProcFork,
   handleProcObserve,
@@ -571,6 +572,8 @@ async function dispatchKernel(
         data = await handleProcIpcCall(frame.args, ctx);
         break;
       case "proc.send":
+        data = await handleProcSend(frame.args, ctx);
+        break;
       case "proc.abort":
       case "proc.hil":
       case "proc.kill":
@@ -590,8 +593,6 @@ async function dispatchKernel(
           ok: true,
           ...await forwardToProcess(frame, ctx),
         };
-      case "proc.ipc.deliver":
-        return errFrame(frame.id, 403, "proc.ipc.deliver is kernel-only");
       case "proc.setidentity":
         return errFrame(frame.id, 403, "proc.setidentity is kernel-only");
       case "proc.history.export":
@@ -1053,7 +1054,7 @@ async function routeToTarget(
 
   try {
     await authorizeNestedOperation(ctx, frame.call, jsonObjectSchema.parse({ ...frame.args, target: target.targetId }),
-      undefined, approvalTargetIdentity(target));
+      approvalTargetIdentity(target));
     ctx.requestSignal?.throwIfAborted();
     if (ctx.toolOwner) {
       const current = await resolveVisibleTarget(ctx, target.targetId, { includeOffline: true });

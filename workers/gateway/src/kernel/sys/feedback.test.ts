@@ -125,15 +125,13 @@ describe("operator feedback", () => {
     ctx.processId = "proc:ship";
     ctx.toolOwner = { runId: "run", requestId: "shell" };
     let approve!: (approved: boolean) => void;
-    const send = vi.spyOn(transport, "sendFrameToProcess").mockImplementation(async () => ({
-      type: "res", id: "approval", ok: true, data: { approved: await new Promise<boolean>(resolve => { approve = resolve; }) },
+    const send = vi.spyOn(transport, "authorizeProcessTool").mockImplementation(async () => ({
+      approved: await new Promise<boolean>(resolve => { approve = resolve; }),
     }));
     const pending = handleSysFeedback({ message: "Report" }, ctx);
     const rejected = expect(pending).rejects.toThrow("not approved");
     await vi.waitFor(() => expect(send).toHaveBeenCalled());
-    expect(send).toHaveBeenCalledWith("inst_feedback", "proc:ship", expect.objectContaining({
-      call: "proc.tool.authorize", args: expect.objectContaining({ syscall: "sys.feedback", args: {} }),
-    }));
+    expect(send).toHaveBeenCalledWith("inst_feedback", "proc:ship", expect.any(String), expect.objectContaining({ syscall: "sys.feedback", args: {} }));
     expect(submitFeedback).not.toHaveBeenCalled();
     approve(false);
     await rejected;

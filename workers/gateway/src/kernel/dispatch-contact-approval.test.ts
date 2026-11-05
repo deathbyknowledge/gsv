@@ -21,23 +21,21 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("nested contact resource approvals", () => {
   it.each(["fs.read", "fs.transfer.send"] as const)("denies %s before opening a contact resource", async (call) => {
-    const send = vi.spyOn(processTransport, "sendFrameToProcess")
-      .mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: false } });
+    const send = vi.spyOn(processTransport, "authorizeProcessTool")
+      .mockResolvedValue({ approved: false });
     const read = vi.spyOn(federation, "handleContactResourceRead");
     const transfer = vi.spyOn(federation, "handleContactResourceSend");
     const frame: RequestFrame = { type: "req", id: "nested", call, args: { ...source } };
     expect(await dispatch(frame, { type: "process", id: "process" }, context(), deps))
       .toMatchObject({ handled: true, response: { ok: false, error: { message: `Tool execution was not approved: ${call}` } } });
-    expect(send).toHaveBeenCalledWith("installation", "process", expect.objectContaining({
-      call: "proc.tool.authorize", args: expect.objectContaining({ ...owner, syscall: call, args: source }),
-    }));
+    expect(send).toHaveBeenCalledWith("installation", "process", expect.any(String), expect.objectContaining({ ...owner, syscall: call, args: source }));
     expect(read).not.toHaveBeenCalled();
     expect(transfer).not.toHaveBeenCalled();
   });
 
   it("opens an approved nested read and does not reapprove direct tool reads", async () => {
-    const send = vi.spyOn(processTransport, "sendFrameToProcess")
-      .mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: true } });
+    const send = vi.spyOn(processTransport, "authorizeProcessTool")
+      .mockResolvedValue({ approved: true });
     const read = vi.spyOn(federation, "handleContactResourceRead")
       .mockResolvedValue({ data: { ok: false, error: "fixture resource" } });
     const frame = (): RequestFrame<"fs.read"> => ({ type: "req", id: "nested", call: "fs.read", args: { ...source } });
@@ -54,9 +52,9 @@ describe("nested contact resource approvals", () => {
   it.each(["deny", "cancel"] as const)("preserves the Shell owner and source signal when a contact copy ends with %s", async (outcome) => {
     const controller = new AbortController();
     const open = vi.spyOn(federation, "openContactResourceSource");
-    const send = vi.spyOn(processTransport, "sendFrameToProcess").mockImplementation(async () => {
+    const send = vi.spyOn(processTransport, "authorizeProcessTool").mockImplementation(async () => {
       if (outcome === "cancel") controller.abort(new Error("copy cancelled"));
-      return { type: "res", id: "approval", ok: true, data: { approved: outcome === "cancel" } };
+      return { approved: outcome === "cancel" };
     });
     vi.spyOn(nativeTarget, "dispatchGsvTarget").mockImplementation(async (frame, _ctx, options) => {
       await options.fsTransport!.openContactSource!(source, controller.signal);
@@ -69,9 +67,7 @@ describe("nested contact resource approvals", () => {
     expect(result).toMatchObject({ handled: true, response: { ok: false, error: {
       message: outcome === "deny" ? "Tool execution was not approved: fs.transfer.send" : "copy cancelled",
     } } });
-    expect(send).toHaveBeenCalledWith("installation", "process", expect.objectContaining({
-      call: "proc.tool.authorize", args: expect.objectContaining({ ...owner, syscall: "fs.transfer.send", args: source }),
-    }));
+    expect(send).toHaveBeenCalledWith("installation", "process", expect.any(String), expect.objectContaining({ ...owner, syscall: "fs.transfer.send", args: source }));
     expect(open).not.toHaveBeenCalled();
   });
 });

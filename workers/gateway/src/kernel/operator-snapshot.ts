@@ -4,7 +4,8 @@ import type { ProcessOperatorSummary } from "../process/operator-summary";
 import type { IdentityLinkStore } from "./identity-links";
 import type { ProcessRegistry } from "./processes";
 import type { ResponsibilityStore } from "./responsibility-store";
-import type { ShipEventStore } from "./ship-event-store";
+import { shipConsumer } from "./events/consumers";
+import type { EventStore } from "./events/store";
 import type { TargetRegistry } from "./target-registry";
 
 export type OperatorSnapshotSources = {
@@ -13,7 +14,7 @@ export type OperatorSnapshotSources = {
   identityLinks: Pick<IdentityLinkStore, "list">;
   targets: Pick<TargetRegistry, "listForUser">;
   responsibilities: Pick<ResponsibilityStore, "list">;
-  shipEvents: Pick<ShipEventStore, "backlog">;
+  events: Pick<EventStore, "backlog">;
   /** Asks the Ship's Process for its recent runs; null when it cannot answer. */
   shipSummary(pid: string): Promise<ProcessOperatorSummary | null>;
   now(): number;
@@ -71,7 +72,7 @@ export async function buildOperatorShipSnapshot(sources: OperatorSnapshotSources
       online: target.online,
       lastSeenAt: target.last_seen_at,
     })),
-    shipEvents: ownerUid === null ? { queued: 0, oldestQueuedAt: null } : sources.shipEvents.backlog(ownerUid),
+    shipEvents: ownerUid === null ? { queued: 0, oldestQueuedAt: null } : sources.events.backlog(shipConsumer(ownerUid)),
     openResponsibilities: ownerUid === null ? 0 : sources.responsibilities.list({ ownerUid, limit: 1 }).count,
   };
 }
