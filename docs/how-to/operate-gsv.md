@@ -406,7 +406,7 @@ The box starts unchecked and is separate from the required account agreement.
 For new signups, Accounts queues explicit choices made when creating a Ship with a verified
 email. Sign-in and email verification alone never subscribe anyone.
 
-To deliver these requests, apply migrations 0034 through 0036 and supply an
+To deliver these requests, apply migration 0034 and supply an
 optional `ProductEmailService` as `PRODUCT_EMAIL`. The Accounts scheduled handler
 calls `runProductEmailJobs`; operator compositions may pass a local implementation
 of the same contract. Requests wait durably while the service is absent or
@@ -459,14 +459,8 @@ Imported rows carry source `ship-existing-user-backfill`, the import ID and
 `consent_basis=operator-confirmed-existing-opt-ins`. Their original consent time,
 wording and locale are unknown; `requested_at` records the queue insertion time,
 not the historical opt-in. New checkbox choices retain their actual recorded
-timestamp and wording. Approving a held signup replay preserves its real checkbox
-evidence and request ID, while recording the approving import ID.
-
-Migration 0035 already ran on earlier deployments and remains unchanged. Its
-historical automatic-backfill and replay rows are held by forward migration 0036
-until an operator explicitly imports them. The earlier migration erased the old
-completion flags on replayed requests, so 0036 holds those requests rather than
-guessing their old state. The current import never resets a completed delivery.
+timestamp and wording. Migration 0034 creates an empty table: deploying never
+adds an existing owner, and only this import does.
 
 Keep delivery disabled while upgrading and importing. Then enable it,
 and verify one new opted-in signup and one imported owner with the provider before

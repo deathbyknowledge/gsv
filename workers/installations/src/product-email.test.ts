@@ -55,27 +55,12 @@ it.each(["email", "disabled"])("discards pending delivery after the owner's %s c
   expect(await f.row()).toBeNull();
 });
 
-it("holds old automatic backfill rows and distinguishes a confirmed import from checkbox evidence", async () => {
+it("tells the service an imported owner's request apart from checkbox evidence", async () => {
   const f = await fixture();
   const importId = crypto.randomUUID();
-  await db.prepare(`UPDATE product_email_signups SET source='ship-existing-user-backfill',
-    consented_at=NULL,consent_basis='unconfirmed-legacy-backfill',wording_version='unknown',locale='und' WHERE principal_id=?`)
-    .bind(f.owner.id).run();
-  await runProductEmailJobs(db, f.config);
-  expect(f.subscribe).not.toHaveBeenCalled();
-  await db.prepare("UPDATE product_email_signups SET consent_basis='operator-confirmed-existing-opt-ins',import_id=? WHERE principal_id=?")
-    .bind(importId, f.owner.id).run();
+  await db.prepare(`UPDATE product_email_signups SET source='ship-existing-user-backfill',consent_basis='operator-confirmed-existing-opt-ins',
+    consented_at=NULL,import_id=?,wording_version='unknown',locale='und' WHERE principal_id=?`).bind(importId, f.owner.id).run();
   await runProductEmailJobs(db, f.config);
   expect(f.subscribe.mock.calls[0][0]).toMatchObject({ source: "ship-existing-user-backfill",
     consentBasis: "operator-confirmed-existing-opt-ins", importId, wordingVersion: null, locale: null, consentedAt: null });
-});
-
-it("accepts a real checkbox choice in place of an unconfirmed preview backfill", async () => {
-  const f = await fixture();
-  await db.prepare(`UPDATE product_email_signups SET source='ship-existing-user-backfill',
-    consented_at=NULL,consent_basis='unconfirmed-legacy-backfill' WHERE principal_id=?`).bind(f.owner.id).run();
-  await queueProductEmail(db, f.owner, choice);
-  await runProductEmailJobs(db, f.config);
-  expect(f.subscribe.mock.calls[0][0]).toMatchObject({ source: "ship-signup", consentBasis: "signup-checkbox",
-    consentedAt: expect.any(Number), wordingVersion: choice.wordingVersion, importId: null });
 });

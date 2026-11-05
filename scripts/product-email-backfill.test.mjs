@@ -21,30 +21,12 @@ function ship(db, id, principal, state = "active", created = 1) {
 }
 function preview(db) { return createManifest("test-database", false, 100, db.prepare(recipientQuery(100)).all()); }
 
-it("holds automatic backfills and replay requests from the immutable earlier migration", () => {
-  const db = database("0035");
+it("deploys an empty queue: migrations never add an existing owner", () => {
+  const db = database("0034");
   try {
     owner(db, "existing"); ship(db, "existing", "existing");
-    owner(db, "other"); ship(db, "other", "other");
-    db.exec(`INSERT INTO product_email_signups (email,principal_id,request_id,wording_version,locale,requested_at,verified_at,due_at,attempts,completed_at)
-      VALUES ('existing@example.com','existing','request','actual-wording','es',12,1,15,2,20)`);
-    db.exec(source("0035_product_email_users.sql"));
-    db.exec(source("0036_product_email_consent.sql"));
-    const existing = db.prepare("SELECT * FROM product_email_signups WHERE principal_id='existing'").get();
-    assert.equal(existing.wording_version, 'actual-wording');
-    assert.equal(existing.requested_at, 12);
-    assert.equal(existing.consented_at, 12);
-    assert.equal(existing.consent_basis, 'unconfirmed-legacy-replay');
-    assert.equal(db.prepare("SELECT consent_basis FROM product_email_signups WHERE principal_id='other'").get().consent_basis, 'unconfirmed-legacy-backfill');
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM product_email_signups WHERE consent_basis IN ('signup-checkbox','operator-confirmed-existing-opt-ins')").get().n, 0);
-    const manifest = preview(db);
-    db.exec(importSql(manifest, 200));
-    const approved = db.prepare("SELECT * FROM product_email_signups WHERE principal_id='existing'").get();
-    assert.equal(approved.consent_basis, 'signup-checkbox');
-    assert.equal(approved.wording_version, 'actual-wording');
-    assert.equal(approved.locale, 'es');
-    assert.equal(approved.consented_at, 12);
-    assert.equal(approved.import_id, manifest.importId);
+    for (const name of readdirSync(migrations).filter((name) => name.endsWith(".sql") && name >= "0034").sort()) db.exec(source(name));
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM product_email_signups").get().n, 0);
   } finally { db.close(); }
 });
 
@@ -96,23 +78,16 @@ it("rechecks current eligibility, never includes later owners, and preserves com
   } finally { db.close(); }
 });
 
-it("holds earlier preview backfills until an operator confirms the import and preserves real signup evidence", () => {
-  const db = database("0036");
+it("leaves a recorded checkbox choice as it is when an import covers the same owner", () => {
+  const db = database();
   try {
-    for (const id of ["legacy", "completed", "checkbox"]) {
-      owner(db, id); ship(db, id, id);
-      db.prepare(`INSERT INTO product_email_signups (email,principal_id,request_id,wording_version,locale,requested_at,verified_at,due_at,source,completed_at)
-        VALUES (?,?,?,'old-wording','es',12,1,12,?,?)`).run(`${id}@example.com`, id, id,
-        id === "checkbox" ? "ship-signup" : "ship-existing-user-backfill", id === "completed" ? 20 : null);
-    }
-    db.exec(source("0036_product_email_consent.sql"));
-    assert.equal(db.prepare("SELECT consent_basis FROM product_email_signups WHERE principal_id='legacy'").get().consent_basis, "unconfirmed-legacy-backfill");
-    const completed = db.prepare("SELECT * FROM product_email_signups WHERE principal_id='completed'").get();
+    for (const id of ["checkbox", "quiet"]) { owner(db, id); ship(db, id, id); }
+    db.exec(`INSERT INTO product_email_signups (email,principal_id,request_id,source,consent_basis,consented_at,wording_version,locale,requested_at,verified_at,due_at)
+      VALUES ('checkbox@example.com','checkbox','request','ship-signup','signup-checkbox',12,'actual-wording','es',12,1,12)`);
     const checkbox = db.prepare("SELECT * FROM product_email_signups WHERE principal_id='checkbox'").get();
     db.exec(importSql(preview(db), 200));
-    assert.equal(db.prepare("SELECT consent_basis FROM product_email_signups WHERE principal_id='legacy'").get().consent_basis, "operator-confirmed-existing-opt-ins");
     assert.deepEqual(db.prepare("SELECT * FROM product_email_signups WHERE principal_id='checkbox'").get(), checkbox);
-    assert.deepEqual(db.prepare("SELECT * FROM product_email_signups WHERE principal_id='completed'").get(), completed);
+    assert.equal(db.prepare("SELECT consent_basis FROM product_email_signups WHERE principal_id='quiet'").get().consent_basis, "operator-confirmed-existing-opt-ins");
   } finally { db.close(); }
 });
 

@@ -62,10 +62,8 @@ not replayed.
 The request distinguishes a recorded checkbox choice from an operator-confirmed
 import of earlier choices. Imports carry an import ID and leave the original
 consent date and wording unknown. Queue recording time is a separate field.
-Operators explicitly preview and apply historical imports. Migration 0035 is
-retained unchanged for deployments that already applied it; migration 0036 holds
-its automatic backfill and replay rows. Those historical queue entries cannot
-authorize delivery until an operator explicitly approves them.
+Operators explicitly preview and apply historical imports; no migration adds an
+existing owner.
 
 The service owns provider credentials, subscription status, suppression and
 provider-specific tag policy. An operator may inject its implementation locally

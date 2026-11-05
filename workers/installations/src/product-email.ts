@@ -15,17 +15,13 @@ type Signup = {
   consent_basis: "signup-checkbox" | "operator-confirmed-existing-opt-ins"; import_id: string | null;
 };
 
-/** Signup has already authorized this verified owner. Replays never create another subscription request. */
+/** Signup has already authorized this verified owner. An address already queued keeps its first request, so replays never create another. */
 export async function queueProductEmail(db: D1Database, owner: PrincipalRecord, choice: ProductEmailChoice, ip?: string): Promise<void> {
   const now = Date.now();
-  await db.prepare(`INSERT INTO product_email_signups(email,principal_id,request_id,wording_version,locale,requested_at,verified_at,ip,due_at,consented_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(email) DO UPDATE SET
-      request_id=excluded.request_id,wording_version=excluded.wording_version,locale=excluded.locale,
-      requested_at=excluded.requested_at,verified_at=excluded.verified_at,ip=excluded.ip,due_at=excluded.due_at,
-      consented_at=excluded.consented_at,consent_basis='signup-checkbox',source='ship-signup',import_id=NULL,attempts=0,last_error=NULL
-    WHERE product_email_signups.principal_id=excluded.principal_id AND product_email_signups.completed_at IS NULL
-      AND product_email_signups.consent_basis IN ('unconfirmed-legacy-backfill','unconfirmed-legacy-replay')`)
-    .bind(owner.email.trim().toLowerCase(), owner.id, crypto.randomUUID(), choice.wordingVersion, choice.locale, now, owner.emailVerifiedAt, ip ?? null, now, now).run();
+  await db.prepare(`INSERT INTO product_email_signups(email,principal_id,request_id,source,consent_basis,consented_at,
+      wording_version,locale,requested_at,verified_at,ip,due_at)
+    VALUES(?,?,?,'ship-signup','signup-checkbox',?,?,?,?,?,?,?) ON CONFLICT(email) DO NOTHING`)
+    .bind(owner.email.trim().toLowerCase(), owner.id, crypto.randomUUID(), now, choice.wordingVersion, choice.locale, now, owner.emailVerifiedAt, ip ?? null, now).run();
 }
 
 /** Accounts owns durable delivery; the optional service owns provider semantics. */
@@ -38,7 +34,7 @@ export async function runProductEmailJobs(db: D1Database, env: ProductEmailEnvir
       AND p.primary_email_normalized=product_email_signups.email AND p.email_verified_at IS NOT NULL)`).run();
   const now = Date.now();
   const pending = await db.prepare(`SELECT * FROM product_email_signups WHERE completed_at IS NULL AND due_at<=?
-    AND consent_basis IN ('signup-checkbox','operator-confirmed-existing-opt-ins') ORDER BY due_at LIMIT 30`)
+    ORDER BY due_at LIMIT 30`)
     .bind(now).all<Signup>();
   for (const row of pending.results) {
     const claim = await db.prepare(`UPDATE product_email_signups SET attempts=attempts+1,due_at=?
