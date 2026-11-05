@@ -25,13 +25,16 @@ export function MemoryArticle({ note, db, fragment, onOpen }: {
   const ref = useRef<HTMLElement>(null);
   const rendered = useRef<{ db: string; path: string; markdown: string; t: Translate } | null>(null);
   const location = useRef<{ db: string; path: string; fragment: string } | null>(null);
+  const controls = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => () => { controls.current?.(); controls.current = null; }, []);
   useLayoutEffect(() => {
     const article = ref.current;
     if (!active || !article) return;
     const previous = rendered.current;
     if (previous?.db === db && previous.path === note.path && previous.markdown === note.markdown && previous.t === t) return;
+    controls.current?.();
     article.innerHTML = renderMarkdownHtml(note.markdown);
-    enhanceCodeBlocks(article);
+    controls.current = enhanceCodeBlocks(article);
     assignLibraryHeadingIds(article);
     for (const anchor of article.querySelectorAll<HTMLAnchorElement>("a[href]")) {
       const href = anchor.getAttribute("href") || "";

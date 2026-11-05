@@ -6,7 +6,8 @@ This is the distributed part. Each connection becomes part of one computer your 
 
 In Chat, choose **+ → connect a computer**, or ask Ship directly. The shortcut fills the composer with editable text; add a name and say whether it runs
 macOS, Linux or Windows. Ship can create the invitation and share the install and
-`gsv pair CODE` commands for you to run on that computer. If Ship is already installed,
+`gsv pair CODE` commands for you to run on that computer, each in its own code
+block with a copy button. If Ship is already installed,
 you only need the `gsv pair CODE` command. Tell Ship when it finishes so it can check the connection.
 
 To create the invitation yourself:
@@ -14,7 +15,7 @@ To create the invitation yourself:
 1. Open **Work** and click **connect** beside Connections. While Ship's home is the only connection, Chat offers the same panel: open **Ship's home** below the composer and click **+ add a connection**.
 2. Enter a name, such as **My macbook**. The connection ID starts as **my-macbook** and follows the name until you edit it yourself.
 3. Choose the platform and click **create invitation**.
-4. Run the install command on that computer, then the `gsv pair CODE` command. It supplies your Ship, account and connection ID and starts the background daemon.
+4. Run the install command on that computer, then the `gsv pair CODE` command. Each command has a copy button. The pair command supplies your Ship, account and connection ID and starts the background daemon.
 
 The invitation lasts ten minutes. You can close the panel and return to it in the
 same browser tab. If the connection drops while connecting, run `gsv pair` without
