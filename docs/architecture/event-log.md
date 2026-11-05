@@ -102,8 +102,8 @@ that request is still pending.
 
 | Type | Appended for | Goes to · lane | Idle | During a run |
 |---|---|---|---|---|
-| `message.received` | chat, a messenger, a person's `proc.send` or spawn prompt | the Ship or the routed process · person | start | stop it and start this one |
-| `process.message` | `proc.send` or a spawn prompt from a process or schedule | the process · background | start | own run after |
+| `message.received` | chat, a messenger, a person's `proc.send` or spawn prompt, a scheduled spawn's prompt | the Ship or the routed process · person | start | stop it and start this one |
+| `process.message` | a spawn prompt from a process | the process · background | start | own run after |
 | `work.returned` | `/ship` on a messenger | the Ship · person | start | own run after |
 | `ipc.message`, `ipc.call` | another process's message or call | the target · background | start | own run after |
 | `ipc.reply`, `ipc.timeout`, `ipc.overdue` | a call's end or check-in | the caller · background | start | join the run that asked; own run after during another |
@@ -140,6 +140,23 @@ is a responsibility, which reaches the Ship as `responsibility.ready`.
    `kick()` the runner, or call `deliverNow` on a request path.
 3. Test it with a real Kernel and Process: append, deliver, and read the log
    and the process's history.
+4. Add it to the census, below. The registry's own test fails until you do.
+
+## The census
+
+`test-integration/event-census.test.ts` fires every producer on one clean
+instance, with a second Ship only to send a contact's message, then reads the
+log. It checks three things:
+
+- every type in the registry was appended and delivered where its row in the
+  table above says;
+- no Process refused a delivery;
+- every run in every live process's history was started or joined by a
+  delivery the log made to that process. A run's id is the id its delivery
+  recorded, so a run that came any other way shows up by name.
+
+`kernel/events/registry.test.ts` keeps the registry and the census's list in
+`test-integration/census-types.ts` equal, so a new type can't skip the census.
 
 The runner is `kernel/events/runtime.ts`, the tables and retention are in
 `kernel/events/store.ts`, and the Process's entry is
