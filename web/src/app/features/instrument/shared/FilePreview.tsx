@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { FieldStatus } from "../../../components/ui/FieldStatus";
 import { IconButton } from "../../../components/ui/IconButton";
 import { InfoTip } from "../../../components/ui/InfoTip";
@@ -15,6 +15,7 @@ import type { OpenFile } from "./PlaceFiles";
 import { previewBody, type PreviewBody } from "./filePreviewModel";
 import { escapeHtml, renderMarkdownHtml } from "./markdown";
 import { enhanceCodeBlocks } from "./codeBlocks";
+import { useCodeCopy, useCodeCopyOutcome } from "./codeCopy";
 import { useT, type Translate } from "../../../i18n/locale";
 import "./prose.css";
 import "./filePreview.css";
@@ -66,17 +67,8 @@ export function FilePreview({
   useEffect(() => {
     if (folder !== null) onFolder?.(folder);
   }, [folder, onFolder]);
-  const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
-  useEffect(() => {
-    if (copied === "idle") return;
-    const settle = setTimeout(() => setCopied("idle"), 2000);
-    return () => clearTimeout(settle);
-  }, [copied]);
-  useEffect(() => { setCopied("idle"); }, [file.path]);
-  const copyPath = () => {
-    // Without the Clipboard API (an insecure context) the write throws before any promise exists; that is a failed copy too.
-    Promise.resolve().then(() => navigator.clipboard.writeText(file.path)).then(() => setCopied("copied"), () => setCopied("failed"));
-  };
+  const { state: copied, copy: copyPath } = useCodeCopy(() => file.path, file.path);
+  const copyOutcome = useCodeCopyOutcome(copied);
   const size = contents ? formatChatMediaSize(contents.size) : "";
   const extent = contents?.truncated ? t("shell.file.firstLines", { count: contents.lines ?? 0 }) : "";
   return (
@@ -87,7 +79,7 @@ export function FilePreview({
           <IconButton glyph="copy" ghost size="small" ariaLabel={t("shell.file.copyPath")} onClick={copyPath} />
         </Hint>
         <FieldStatus status={copied === "copied" ? "success" : copied === "failed" ? "error" : "none"}
-          message={copied === "copied" ? t("shell.copied") : copied === "failed" ? t("shell.code.copyFailed") : ""} />
+          message={copyOutcome} live />
       </div>
       <div class="file-preview-scroll" data-scroll-edge>
         <div class="file-preview-body">

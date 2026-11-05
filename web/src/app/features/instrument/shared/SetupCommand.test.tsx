@@ -54,6 +54,12 @@ describe("setup command", () => {
     expect(note()?.message).toBe("copied");
   });
 
+  it("says copying failed where the page has no clipboard at all", async () => {
+    vi.stubGlobal("navigator", {});
+    await copy();
+    expect(note()).toMatchObject({ status: "error", message: "couldn't copy" });
+  });
+
   it("says when the browser refuses to copy, and rests when the command changes", async () => {
     writeText.mockRejectedValueOnce(new Error("denied"));
     await copy();
