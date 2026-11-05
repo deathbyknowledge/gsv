@@ -15,6 +15,7 @@ const fsReadArgsSchema = z.object({
   target: z.string().optional(),
   offset: z.number().optional(),
   limit: z.number().optional(),
+  maxBytes: z.number().optional(),
 });
 type FsReadImageContent = [
   { type: "text"; text: string },

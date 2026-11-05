@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { createMockGatewayClient, mockGatewayRequested } from "./mockGateway";
+import { requestFsRead } from "./fsRead";
+import { readChatResource } from "../chat/backend/chatService";
+import { bodyToText, type FsReadResult } from "@humansandmachines/gsv/protocol";
 
 const hilSchema = z.object({ pid: z.string(), requestId: z.string(), syscall: z.string(), target: z.string(), purpose: z.string().optional(), args: z.object({ input: z.string().optional() }) });
 const committedSchema = z.object({ message: z.object({ text: z.string(), author: z.object({ kind: z.string() }) }) });
@@ -148,5 +151,41 @@ describe("mock gateway", () => {
       { syscall: "atproto.write", target: "gsv", args: expect.objectContaining({ handle: "esteve", address: "esteve.ship.space" }) },
     ]);
     expect(hilSchema.parse(raised[0])).not.toHaveProperty("purpose");
+  });
+
+  it("reads fixture files the way the gateway does: limited text, images, references, and refused binaries", async () => {
+    const client = await connectedClient();
+    const settle = async <T>(work: Promise<T>) => { await vi.advanceTimersByTimeAsync(1); return await work; };
+
+    const head = await client.request<FsReadResult>("fs.read", { path: "~/notes/sync.log", limit: 50 });
+    const text = await settle(bodyToText(head.body!));
+    expect(head.data).toMatchObject({ ok: true, path: "/home/esteve/notes/sync.log", kind: "text", contentType: "text/plain", lines: 50, truncated: true, nextOffset: 50 });
+    expect(text.split("\n")).toHaveLength(50);
+    expect(head.data.ok && "size" in head.data && head.data.size).toBeGreaterThan(new TextEncoder().encode(text).byteLength);
+
+    const capped = await client.request<FsReadResult>("fs.read", { path: "~/notes/sync.log", maxBytes: 200 });
+    expect(new TextEncoder().encode(await settle(bodyToText(capped.body!))).byteLength).toBeLessThanOrEqual(200);
+    expect(capped.data).toMatchObject({ truncated: true });
+
+    const whole = await settle(requestFsRead(client, { path: "~/notes/backup.sh" }));
+    expect(whole).toMatchObject({ kind: "text", contentType: "text/x-shellscript", lines: 25 });
+    expect(whole).not.toHaveProperty("truncated");
+
+    const image = await settle(requestFsRead(client, { path: "~/notes/drive.png" }));
+    expect(image).toMatchObject({ kind: "image", contentType: "image/png", content: [{ type: "text" }, { type: "image", mimeType: "image/png" }] });
+
+    expect((await client.request("fs.read", { path: "~/notes/studio.pdf" })).data)
+      .toEqual({ ok: false, error: "Binary file (application/pdf, 1.2 MB) — not readable as text" });
+
+    const reference = await client.request<FsReadResult>("fs.read", { target: "gsv", path: "/home/esteve/notes/drive.png", representation: "reference" });
+    expect(reference.body).toBeUndefined();
+    if (!reference.data.ok || !("resource" in reference.data) || !reference.data.resource) throw new Error("no reference");
+    expect(reference.data.resource).toEqual({ type: "file", target: "gsv", path: "/home/esteve/notes/drive.png", revision: "mock-1", contentType: "image/png", size: reference.data.size });
+    const resource = await settle(readChatResource(client, reference.data.resource));
+    expect(resource.blob.size).toBe(reference.data.size);
+    expect(Array.from(new Uint8Array(await resource.blob.arrayBuffer()).subarray(1, 4))).toEqual([0x50, 0x4e, 0x47]);
+
+    const pdf = await client.request<FsReadResult>("fs.read", { path: "~/notes/studio.pdf", representation: "reference" });
+    expect(pdf.data).toMatchObject({ ok: true, kind: "file", contentType: "application/pdf", size: 1_258_291, resource: { revision: "mock-1" } });
   });
 });

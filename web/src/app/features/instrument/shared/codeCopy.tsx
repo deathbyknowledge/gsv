@@ -21,10 +21,13 @@ export function useCodeCopy(read: () => string, text?: string) {
   }, [attempt]);
   useEffect(() => { setAttempt((current) => ({ ...current, state: "idle" })); }, [text]);
   const copy = () => {
-    navigator.clipboard.writeText(read()).then(
-      () => setAttempt((current) => ({ state: "copied", count: current.count + 1 })),
-      () => setAttempt((current) => ({ state: "failed", count: current.count + 1 })),
-    );
+    const outcome = (state: CodeCopyState) => () => setAttempt((current) => ({ state, count: current.count + 1 }));
+    try {
+      navigator.clipboard.writeText(read()).then(outcome("copied"), outcome("failed"));
+    } catch {
+      // Without the Clipboard API (an insecure context) the write throws before any promise exists; that is a failed copy too.
+      outcome("failed")();
+    }
   };
   return { state: attempt.state, copy };
 }

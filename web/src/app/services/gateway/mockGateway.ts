@@ -69,6 +69,9 @@ import {
   type SysLedgerLine,
   type SysTargetSummary,
   type AiTranscriptionCreateResult,
+  type FileResourceReference,
+  type FsReadResult,
+  type FsTransferSendResult,
   type SysTokenCreateResult,
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
@@ -167,13 +170,14 @@ function at(daysAgo: number, hour: number, minute: number): number {
 
 const LINES: [who: "you" | "ship", createdAt: number, text: string][] = [
   ["you", at(1, 9, 12), "Can you pull the notes from yesterday's call with Mara and put the action items somewhere I'll find them?"],
-  ["ship", at(1, 9, 13), "Done. Three action items are in your notes under Mara: the deck for Thursday, the intro to Lena, and the follow-up on pricing. I set a reminder for the deck on Wednesday evening."],
+  ["ship", at(1, 9, 13), "Done. Three action items are in /home/esteve/notes/mara.md: the deck for Thursday, the intro to Lena, and the follow-up on pricing. The full call notes are in ~/notes/calls/. I set a reminder for the deck on Wednesday evening."],
   ["you", at(1, 12, 2), "Paste the paragraph I need to send Lena so I can copy it as is."],
   ["ship", at(1, 12, 2), "Here it is, exactly as you drafted it:\n\n```\nHi Lena, thanks again for Tuesday. As discussed, I'll send the revised deck by Thursday and loop Mara in on the pricing thread so we can close the quote before the end of the week.\nBest, Alex\n```"],
   ["you", at(1, 18, 40), "What's still open from this week?"],
   ["ship", at(1, 18, 40), "Two things. The pricing follow-up with Mara, and the studio backup, which has failed since Monday because the drive is nearly full."],
   ["you", at(0, 8, 5), "Morning. Anything I should know before the standup?"],
   ["ship", at(0, 8, 6), "Nothing urgent. The studio backup ran clean overnight after I cleared the old build caches, and Lena replied about the intro; she is in. Standup is at 9:30."],
+  ["ship", at(0, 8, 7), "If you want to look at the backup yourself: the script is ~/notes/backup.sh, last night's run is at the end of ~/notes/sync.log, and ~/notes/drive.png shows the drive after the cleanup. The quote for a bigger drive is in ~/notes/studio.pdf."],
 ];
 
 const WELCOME = "Hi, I'm Ship. I'm here to do the things you'd rather not deal with: booking restaurants, planning trips, sorting out emails, managing your calendar, even making purchases and tracking parcels for you. Tell me a little about yourself. What do you do, and is there anything I can help with?";
@@ -343,7 +347,128 @@ type Step = {
   failure?: string;
 };
 
+const MARA_NOTES = "# Mara\n\n- Deck for Thursday (reminder Wednesday evening)\n- Intro to Lena\n- Follow up on pricing\n";
 const NOTES = "# Backups\n\nStudio drive: /Volumes/Studio, 1.8 TB.\nNightly rsync to /Volumes/Backups at 02:00 (launchd).\nKeep 30 days; caches under Library/Caches/Builds are not backed up.\n\nFailing since Monday: drive at 95%, rsync exits before finishing.\n";
+
+const BACKUP_SCRIPT = `#!/bin/zsh
+# Nightly studio backup, run by launchd at 02:00 (com.esteve.studio-backup).
+set -euo pipefail
+
+SOURCE="/Volumes/Studio/"
+DEST="/Volumes/Backups/studio"
+LOG="$HOME/notes/sync.log"
+KEEP_DAYS=30
+
+log() { print -r -- "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >> "$LOG"; }
+
+if [[ ! -d "$DEST" ]]; then
+  log "backup: $DEST is not mounted, skipping"
+  exit 1
+fi
+
+log "backup: starting"
+rsync -a --delete --stats \\
+  --exclude "Library/Caches/Builds" \\
+  --exclude "node_modules" \\
+  --exclude "*.tmp" \\
+  "$SOURCE" "$DEST/current/" 2>&1 | sed "s/^/rsync: /" >> "$LOG"
+
+find "$DEST/snapshots" -maxdepth 1 -mtime +"$KEEP_DAYS" -exec rm -rf {} +
+log "backup: finished"
+`;
+
+/** Thirty nights of the studio backup, twenty lines each: clean, then failing from the 27th, clean again on the 2nd. */
+function syncLog(): string {
+  let seed = 7;
+  const next = (span: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return Math.floor(seed / 65536) % span; };
+  const folders = ["Projects", "Clients", "Photos", "Audio", "Archive", "Fonts", "Renders", "Documents"];
+  const lines: string[] = [];
+  for (let night = 0; night < 30; night++) {
+    const date = new Date(Date.UTC(2026, 9, 4 + night, 2, 0, 0));
+    const failing = date.getUTCMonth() === 9 && date.getUTCDate() >= 27 || date.getUTCMonth() === 10 && date.getUTCDate() === 1;
+    let second = 0;
+    const line = (text: string) => {
+      second += 20 + next(90);
+      lines.push(`${new Date(date.getTime() + second * 1000).toISOString().replace(".000", "")} ${text}`);
+    };
+    line("backup: starting");
+    line("rsync: building file list");
+    for (let index = 0; index < 14; index++) {
+      const folder = folders[next(folders.length)];
+      const files = 40 + next(1600);
+      line(`rsync: sent ${files.toLocaleString("en-US")} files from ${folder} (${(files * (0.4 + next(30) / 10)).toFixed(1)} MB)`);
+    }
+    line("rsync: skipped Library/Caches/Builds (excluded)");
+    if (failing) {
+      line("rsync: write failed on /Volumes/Backups/studio/current/Renders: No space left on device (28)");
+      line("rsync error: error in file IO (code 11) at receiver.c(381) [receiver=3.2.7]");
+      line(`backup: stopped after ${Math.round(second / 60)} minutes, drive at ${94 + next(2)}%`);
+    } else {
+      line(`rsync: total transferred ${(1 + next(40) / 4).toFixed(1)} GB, speedup ${(20 + next(200) / 10).toFixed(1)}`);
+      const removed = 1 + next(2);
+      line(`find: removed ${removed} snapshot${removed === 1 ? "" : "s"} older than 30 days`);
+      line(`backup: finished in ${Math.round(second / 60)} minutes, drive at ${night < 23 ? 88 + next(5) : 81}%`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/** A 96 by 24 picture of the studio drive's fill, 95% used. */
+const DRIVE_PNG = "iVBORw0KGgoAAAANSUhEUgAAAGAAAAAYCAIAAACKi2/DAAAAWklEQVR42u3ZoRWAIABFUQYjGBnBCYyuwJYEkpEtsJo4oNF7zpvgxv9D3JIGBQRTQO3cVer1DNAKUM+HAAECBAgQIECAAAECBAgQIECAfgRkLbMofgOSV+NlN/UT9JvUe4xOAAAAAElFTkSuQmCC";
+/** 1.2 MB, the way the gateway rounds it when it refuses to read the PDF as text. */
+const STUDIO_PDF_SIZE = 1_258_291;
+
+/** A one-page PDF padded after its end marker to the size the listing reports. */
+function studioPdf(): Uint8Array {
+  const pdf = "%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n";
+  const bytes = new Uint8Array(STUDIO_PDF_SIZE).fill(0x20);
+  bytes.set(new TextEncoder().encode(pdf));
+  return bytes;
+}
+
+/** A fixture file: its type and a way to its bytes. */
+type MockFile = { contentType: string; bytes: () => Uint8Array };
+
+/** What each fixture file holds; anything else under a path reads as the backup notes. */
+function mockFile(path: string): MockFile {
+  const text = (content: string, contentType = "text/markdown"): MockFile => ({ contentType, bytes: () => new TextEncoder().encode(content) });
+  switch (path) {
+    case "/home/esteve/notes/mara.md": return text(MARA_NOTES);
+    case "/home/esteve/notes/backup.sh": return text(BACKUP_SCRIPT, "text/x-shellscript");
+    case "/home/esteve/notes/sync.log": return text(syncLog(), "text/plain");
+    case "/home/esteve/notes/drive.png": return { contentType: "image/png", bytes: () => Uint8Array.from(atob(DRIVE_PNG), (char) => char.charCodeAt(0)) };
+    case "/home/esteve/notes/studio.pdf": return { contentType: "application/pdf", bytes: studioPdf };
+    default: return text(NOTES);
+  }
+}
+
+/** A text read the way the gateway answers one: lines from `offset`, at most `limit`, within `maxBytes`. */
+function readTextLines(content: string, offset = 0, limit?: number, maxBytes?: number) {
+  // a closing newline ends the last line rather than starting another, as the preview counts them
+  const all = (content.endsWith("\n") ? content.slice(0, -1) : content).split("\n");
+  const requested = all.slice(offset, limit === undefined ? undefined : offset + limit);
+  const encoder = new TextEncoder();
+  const selected: string[] = [];
+  let used = 0;
+  let partial = false;
+  for (const line of requested) {
+    const bytes = encoder.encode(line);
+    const separator = selected.length === 0 ? 0 : 1;
+    if (maxBytes === undefined || used + separator + bytes.byteLength <= maxBytes) {
+      selected.push(line);
+      used += separator + bytes.byteLength;
+      continue;
+    }
+    if (selected.length === 0) {
+      selected.push(new TextDecoder().decode(bytes.subarray(0, maxBytes)).replace(/�$/, ""));
+      partial = true;
+    }
+    break;
+  }
+  const truncated = partial || offset + selected.length < all.length;
+  const text = selected.join("\n") + (truncated || !content.endsWith("\n") ? "" : "\n");
+  return { text, lines: selected.length, truncated, nextOffset: truncated && !partial && selected.length > 0 ? offset + selected.length : undefined };
+}
 
 const DF = "Filesystem      Size   Used  Avail Capacity  Mounted on\n/dev/disk4s1   1.8Ti  1.7Ti   96Gi    95%    /Volumes/Studio";
 const RSYNC_STATS = "Number of files: 48,211 (reg: 44,930, dir: 3,281)\nNumber of created files: 2,140\nNumber of regular files transferred: 2,140\nTotal file size: 1,412,377,190,144 bytes\nTotal transferred file size: 38,116,482,048 bytes\n\nsent 2,893,114 bytes  received 12,406 bytes  1,163,808.00 bytes/sec\ntotal size is 1,412,377,190,144  speedup is 486,150.03 (DRY RUN)";
@@ -959,6 +1084,13 @@ const tokenArgs = z.object({ expiresAt: z.number().nullable().optional() });
 const hilArgs = z.object({ pid: z.string().optional(), requestId: z.string(), decision: z.enum(["approve", "deny"]) });
 const abortArgs = z.object({ pid: z.string().optional() });
 const responsibilityListArgs = z.object({ states: z.array(z.enum(["open", "active", "waiting", "resolved", "cancelled"])).optional(), includeTerminal: z.boolean().optional(), offset: z.number().optional(), limit: z.number().optional() });
+const fsReadArgs = z.object({
+  target: z.string().optional(), path: z.string(), offset: z.number().optional(), limit: z.number().optional(), maxBytes: z.number().optional(),
+  representation: z.enum(["content", "resource", "reference"]).optional(),
+});
+/** Fixture files never change, so one revision names every one of them. */
+const MOCK_REVISION = "mock-1";
+const homePath = (path: string) => path === "." ? OWNER.home : path.replace(/^~(?=\/|$)/, OWNER.home);
 const scheduleListArgs = z.object({ includeDisabled: z.boolean().optional(), offset: z.number().optional(), limit: z.number().optional() });
 
 function respond<T>(id: string, data: T): string {
@@ -1284,13 +1416,39 @@ function route(socket: MockSocket, id: string, call: string, args: JsonValue): s
       return respond(id, { schedule });
     }
     case "fs.read": {
-      const { path: requestedPath } = z.object({ path: z.string() }).parse(args);
-      const path = ["~", "."].includes(requestedPath) ? "/home/esteve" : requestedPath;
-      if (path === "/") return respond(id, { ok: true, path, files: [], directories: ["home"] });
-      if (path === "/home") return respond(id, { ok: true, path, files: [], directories: ["esteve"] });
-      if (path === "/home/esteve") return respond(id, { ok: true, path, files: ["notes.md"], directories: ["notes"] });
-      if (path === "/home/esteve/notes") return respond(id, { ok: true, path, files: ["backups.md"], directories: [] });
-      return socket.textResponse(id, { ok: true, path, kind: "text", contentType: "text/markdown", lines: 8, size: NOTES.length }, NOTES);
+      const read = fsReadArgs.parse(args);
+      const path = homePath(read.path);
+      const listing = (files: string[], directories: string[]) => respond(id, { ok: true, path, files, directories } satisfies FsReadResult);
+      if (path === "/") return listing([], ["home"]);
+      if (path === "/home") return listing([], ["esteve"]);
+      if (path === "/home/esteve") return listing(["notes.md"], ["notes"]);
+      if (path === "/home/esteve/notes") return listing(["backup.sh", "backups.md", "drive.png", "mara.md", "studio.pdf", "sync.log"], ["calls"]);
+      if (path === "/home/esteve/notes/calls") return listing(["mara-pricing.md"], []);
+      const file = mockFile(path);
+      const bytes = file.bytes();
+      const kind: "text" | "image" | "file" = file.contentType.startsWith("text/") ? "text" : file.contentType.startsWith("image/") ? "image" : "file";
+      const meta = { ok: true as const, path, kind, contentType: file.contentType, size: bytes.byteLength };
+      // `reference` answers any file by reference alone; `resource` does so for images and reads text
+      if (read.representation === "reference" || (read.representation === "resource" && kind === "image")) {
+        const resource: FileResourceReference = { type: "file", target: read.target?.trim() || "gsv", path, revision: MOCK_REVISION, contentType: file.contentType, size: bytes.byteLength };
+        return respond(id, { ...meta, resource } satisfies FsReadResult);
+      }
+      if (kind === "image") return socket.bytesResponse(id, meta satisfies FsReadResult, bytes);
+      if (kind === "file") return respond(id, { ok: false, error: `Binary file (${file.contentType}, ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB) — not readable as text` } satisfies FsReadResult);
+      const { text, lines, truncated, nextOffset } = readTextLines(new TextDecoder().decode(bytes), read.offset, read.limit, read.maxBytes);
+      // a cut-off read says so, and where the next one starts when it knows
+      const page = !truncated ? { ...meta, lines }
+        : nextOffset === undefined ? { ...meta, lines, truncated }
+        : { ...meta, lines, truncated, nextOffset };
+      return socket.textResponse(id, page satisfies FsReadResult, text);
+    }
+    case "fs.transfer.send": {
+      const { path: requestedPath, revision } = z.object({ target: z.string().optional(), path: z.string(), revision: z.string().optional() }).parse(args);
+      const path = homePath(requestedPath);
+      if (revision !== undefined && revision !== MOCK_REVISION) return respond(id, { ok: false, error: `${path} has changed since that revision` } satisfies FsTransferSendResult);
+      const file = mockFile(path);
+      const bytes = file.bytes();
+      return socket.bytesResponse(id, { ok: true, path, size: bytes.byteLength, contentType: file.contentType, revision: MOCK_REVISION } satisfies FsTransferSendResult, bytes);
     }
     case "sys.mcp.list": return respond(id, { servers: [] });
     case "repo.list": return respond(id, { repos: [] });
@@ -1333,9 +1491,13 @@ class MockSocket extends EventTarget implements WebSocket {
 
   /** The small preview fixture fits in the protocol's initial receive window. */
   textResponse<T>(id: string, data: T, text: string): string {
+    return this.bytesResponse(id, data, new TextEncoder().encode(text));
+  }
+
+  /** Every fixture body, the 1.2 MB PDF included, fits in the protocol's initial 4 MB receive window, so it goes as one frame. */
+  bytesResponse<T>(id: string, data: T, bytes: Uint8Array): string {
     const streamId = this.nextStreamId;
     this.nextStreamId += 2;
-    const bytes = new TextEncoder().encode(text);
     window.setTimeout(() => {
       if (this.readyState === this.OPEN) this.dispatchEvent(new MessageEvent("message", {
         data: buildBinaryFrame(streamId, BINARY_FRAME_DATA | BINARY_FRAME_END, bytes),

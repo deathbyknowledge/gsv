@@ -15,9 +15,11 @@ import { useT } from "../../../i18n/locale";
 export type FleetFile = { target: string; path: string; name: string };
 const EDIT_LIMIT = 1024 * 1024;
 
-export function FileReader({ file, account, onClose, onDirtyChange }: {
+export function FileReader({ file, account, backLabel, onClose, onDirtyChange }: {
   file: FleetFile;
   account?: ConsoleAccount;
+  /** Where the back action leads when the reader was opened from somewhere other than Work's own list. */
+  backLabel?: string;
   onClose: (deleted?: boolean) => void;
   onDirtyChange: (dirty: boolean) => void;
 }) {
@@ -114,7 +116,7 @@ export function FileReader({ file, account, onClose, onDirtyChange }: {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && draft && !busy && dirty) { event.preventDefault(); save.mutate(draft); }
   }}>
     <header class="file-reader-head">
-      <button ref={backButton} class="file-reader-action" type="button" disabled={busy} onClick={close}>{t("fleet.file.back")}</button>
+      <button ref={backButton} class="file-reader-action" type="button" disabled={busy} onClick={close}>{backLabel ?? t("fleet.file.back")}</button>
       <span class="file-reader-path">{file.target} · {file.path}</span>
       <div class="file-reader-actions">
         {draft ? <>

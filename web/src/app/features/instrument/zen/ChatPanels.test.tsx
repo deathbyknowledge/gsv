@@ -1,0 +1,82 @@
+import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
+import { act } from "preact/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConsoleTarget } from "../../../domain/system/consoleModels";
+import { cloudPlace } from "../fleet/fleetModel";
+import { collectNodes, createTestRoot } from "../../../testing/testHarness";
+import { FilePreview } from "../shared/FilePreview";
+import { PlaceTree } from "../shared/PlaceFiles";
+import { ChatPath } from "./ChatPanels";
+
+async function mountedPath(location: ComponentProps<typeof ChatPath>["location"], targets: readonly ConsoleTarget[] = [], ready = true) {
+  const root = createTestRoot("chat path");
+  let tree: ComponentChildren;
+  const onAsk = vi.fn();
+  const onFleet = vi.fn();
+  function Harness() { tree = ChatPath({ location, targets, ready, allowed: true, onAsk, onFleet }); return null; }
+  await root.render(<Harness />);
+  const props = <P,>(component: ComponentType<P>): P => {
+    const node = collectNodes(tree).find((entry) => entry.type === component);
+    if (!node) throw new Error(`Missing ${component.name}`);
+    // SAFETY: The VNode was selected by the exact component whose props type P describes.
+    return node.props as P;
+  };
+  const has = (component: ComponentType<never>) => collectNodes(tree).some((entry) => entry.type === component);
+  const back = () => collectNodes(tree).find((entry) => entry.type === "button" && String(entry.props.class).includes("chat-context-back"));
+  return { props, has, back, onAsk, onFleet, unmount: () => root.unmount() };
+}
+
+describe("ChatPath", () => {
+  beforeEach(() => vi.stubGlobal("document", {}));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("previews a linked file in place, with Work's reader a step away", async () => {
+    const view = await mountedPath({ kind: "file", target: "gsv", path: "/home/x/notes/plan.md" });
+    try {
+      const preview = view.props(FilePreview);
+      expect(preview.file).toEqual({ target: "gsv", path: "/home/x/notes/plan.md", name: "plan.md" });
+      expect(preview.placeLabel).toBe(cloudPlace().label);
+      expect(preview.open?.label).toBe("open in Work");
+      expect(view.back()).toBeUndefined();
+      preview.open?.onOpen();
+      expect(view.onFleet).toHaveBeenCalledWith("file:gsv:/home/x/notes/plan.md");
+    } finally { await view.unmount(); }
+  });
+
+  it("opens a linked folder as its tree, and a file from that tree in place with a way back", async () => {
+    const view = await mountedPath({ kind: "dir", target: "gsv", path: "~/notes/" });
+    try {
+      expect(view.has(FilePreview)).toBe(false);
+      const tree = view.props(PlaceTree);
+      expect(tree.initialPath).toBe("~/notes/");
+      expect(tree.place.id).toBe("gsv");
+      await act(() => { tree.onOpenFile({ target: "gsv", path: "~/notes/calls/mara.md", name: "mara.md" }); });
+      expect(view.props(FilePreview).file.name).toBe("mara.md");
+      view.props(FilePreview).open?.onOpen();
+      expect(view.onFleet).toHaveBeenCalledWith("file:gsv:~/notes/calls/mara.md");
+      expect(view.back()?.props.children).toEqual(["← ", "notes"]);
+      await act(() => { view.back()?.props.onClick?.(); });
+      expect(view.has(FilePreview)).toBe(false);
+      expect(view.props(PlaceTree).initialPath).toBe("~/notes/");
+    } finally { await view.unmount(); }
+  });
+
+  it("reads a cloud file before the target list arrives, but waits for it on another place", async () => {
+    const cloud = await mountedPath({ kind: "file", target: "gsv", path: "/home/x/notes/plan.md" }, [], false);
+    try {
+      expect(cloud.props(FilePreview).enabled).toBe(true);
+    } finally { await cloud.unmount(); }
+    const laptop = await mountedPath({ kind: "file", target: "laptop", path: "/srv/plan.md" }, [], false);
+    try {
+      expect(laptop.props(FilePreview).enabled).toBe(false);
+    } finally { await laptop.unmount(); }
+  });
+
+  it("says so when the linked place is not connected", async () => {
+    const view = await mountedPath({ kind: "dir", target: "laptop", path: "/srv/" });
+    try {
+      expect(view.has(PlaceTree)).toBe(false);
+      expect(view.has(FilePreview)).toBe(false);
+    } finally { await view.unmount(); }
+  });
+});

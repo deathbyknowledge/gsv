@@ -3,6 +3,7 @@ import { FileReader } from "./FileReader";
 import { FilePreview } from "../shared/FilePreview";
 import { PlaceTree, type OpenFile } from "../shared/PlaceFiles";
 import { FleetDialog } from "./FleetDialog";
+import { fileName } from "../../../services/files/domain/paths";
 import { assignedTo, useResponsibilities } from "../shared/Responsibilities";
 import { useDraftGuard } from "../shared/useDraftGuard";
 import type { ActivityRequest } from "../zen/chatContextModel";
@@ -44,6 +45,7 @@ import {
   shortPid,
   sourceRow,
   fleetReferenceRow,
+  fileRowLocation,
   isApprovalReference,
   isConnectReference,
   type FleetReference,
@@ -101,6 +103,8 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const initialRow = fleetReferenceRow(initialReference);
   const initialConnect = isConnectReference(initialReference) ? initialReference.to : null;
   const approvalReference = isApprovalReference(initialReference) ? initialReference : null;
+  /* a file linked from Chat opens in the full reader, whose back action returns to the chat */
+  const requestedLocation = fileRowLocation(initialRow);
 
   const targetsQuery = useQuery({
     queryKey: INSTRUMENT_TARGETS_KEY,
@@ -153,11 +157,14 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
     setSelected(initialRow);
     setFilesPlace(null);
     setOpenFile(null);
-    setExpandedFile(null);
+    const requestedFile = requestedLocation?.kind === "file"
+      ? { target: requestedLocation.target, path: requestedLocation.path, name: fileName(requestedLocation.path) } : null;
+    setExpandedFile(requestedFile);
+    setExpandedFrom(requestedFile ? "chat" : "work");
     setCreatingProcess(false);
     setCreatingSource(false);
     setConnecting(initialConnect);
-    setInspectorOpen(Boolean(initialRow || initialConnect));
+    setInspectorOpen(Boolean(initialRow || initialConnect) && !requestedFile);
     if (initialRow) focusedRow.current = initialRow;
   }, [openRequest]);
 
@@ -191,6 +198,8 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   const [openFile, setOpenFile] = useState<OpenFile | null>(null);
   const [filesPlace, setFilesPlace] = useState<Place | null>(null);
   const [expandedFile, setExpandedFile] = useState<OpenFile | null>(null);
+  /** Where the reader returns to: Work's own list, or the chat that linked the file. */
+  const [expandedFrom, setExpandedFrom] = useState<"work" | "chat">("work");
   const savedScroll = useRef(0);
   const selectRow = useCallback((row: FleetRow) => {
     setSelected(row);
@@ -296,14 +305,16 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
   };
   const inspectorTitle = connecting === "place" ? t("fleet.connect.title")
     : creatingSource ? t("fleet.sources.newTitle") : selected?.startsWith("source:") ? t("fleet.sources.inspector")
-    : creatingProcess ? t("fleet.newProcess.title") : openFile ? t("fleet.inspector.file") : filesPlace ? t("fleet.inspector.files", { place: filesPlace.label })
+    : creatingProcess ? t("fleet.newProcess.title") : openFile ? openFile.name : filesPlace ? t("fleet.inspector.files", { place: filesPlace.label })
       : selected?.startsWith("proc:") ? t("fleet.field.process") : t("fleet.field.place");
 
   return (
     <main class="fleet" aria-label={t("shell.help.work")}>
-      {expandedFile && <FileReader key={`${expandedFile.target}:${expandedFile.path}`} file={expandedFile} account={viewer} onDirtyChange={setFileDirty} onClose={(deleted) => {
-        if (deleted) { setOpenFile(null); setInspectorOpen(false); }
+      {expandedFile && <FileReader key={`${expandedFile.target}:${expandedFile.path}`} file={expandedFile} account={viewer} onDirtyChange={setFileDirty}
+        backLabel={expandedFrom === "chat" ? t("shell.file.backToChat") : undefined} onClose={(deleted) => {
         setExpandedFile(null);
+        if (expandedFrom === "chat") { onZen(); return; }
+        if (deleted) { setOpenFile(null); setInspectorOpen(false); }
         requestAnimationFrame(() => { if (manifestRef.current) manifestRef.current.scrollTop = savedScroll.current; });
       }} />}
       <div class="fleet-body" hidden={Boolean(expandedFile)}>
@@ -437,7 +448,7 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
 
         </div>
 
-        <FleetDialog open={active && inspectorOpen && !expandedFile} title={inspectorTitle} onClose={closeInspector}>
+        <FleetDialog open={active && inspectorOpen && !expandedFile} title={inspectorTitle} className={openFile ? "is-file" : ""} onClose={closeInspector}>
           {connecting === "place" ? (
             <ConnectPlace account={viewer} targets={targetsQuery.data ?? []} ready={!!targetsQuery.data && !targetsQuery.isError} onClose={closeInspector} onConnected={(id) => selectConnected(targetRow(id))} />
           ) : creatingSource ? (
@@ -452,13 +463,16 @@ export function Fleet({ openRequest, onZen, onCommand, onDirtyChange, onActivity
           ) : filesPlace || openFile ? (
             <>
               {filesPlace && <RetainedView active={active && inspectorOpen && !expandedFile && !openFile}>
-                <button type="button" class="fleet-text-action chat-context-back" onClick={() => setFilesPlace(null)}>← {filesPlace.label}</button>
+                <button type="button" class="fleet-text-action chat-context-back" onClick={() => { setSelected(targetRow(filesPlace.id)); setFilesPlace(null); }}>← {filesPlace.label}</button>
                 <div class="fleet-tree"><PlaceTree key={filesPlace.id} place={filesPlace} enabled={connected && filesPlace.online} onOpenFile={selectFile} initiallyOpen /></div>
               </RetainedView>}
-              {openFile && <FilePreview file={openFile} placeLabel={placeLabel(openFile.target)} onClose={() => { if (filesPlace) setOpenFile(null); else closeInspector(); }} onAsk={(text) => onZen(undefined, undefined, text)} onExpand={() => {
+              {openFile && filesPlace && <button type="button" class="fleet-text-action chat-context-back" onClick={() => setOpenFile(null)}>← {filesPlace.label}</button>}
+              {openFile && <FilePreview file={openFile} placeLabel={placeLabel(openFile.target)}
+                onAsk={(text) => onZen(undefined, undefined, text)} open={{ label: t("shell.file.expand"), onOpen: () => {
               savedScroll.current = manifestRef.current?.scrollTop ?? 0;
+              setExpandedFrom("work");
               setExpandedFile(openFile);
-            }} />}
+            } }} />}
             </>
           ) : selectedPlace ? (
             <PlaceInspector

@@ -28,6 +28,7 @@ export type FilesReadArgs = {
   path: string;
   offset?: number;
   limit?: number;
+  maxBytes?: number;
 };
 
 export type FilesSearchArgs = {
@@ -80,11 +81,12 @@ async function readRawPathWithFallback(client: FilesClient, target: string, path
 export async function readFilesPath(client: FilesClient, args: FilesReadArgs): Promise<FilesReadPayload | FilesErrorPayload> {
   const target = normalizeTarget(args.target);
   const path = normalizePath(args.path, detectPathStyle(args.path));
-  if (args.offset !== undefined || args.limit !== undefined) {
+  if (args.offset !== undefined || args.limit !== undefined || args.maxBytes !== undefined) {
     const payload = await requestFsRead(client, targetArgs(target, {
       path,
       offset: args.offset,
       limit: args.limit,
+      maxBytes: args.maxBytes,
     }));
     return normalizeFilesRead(payload, target, path);
   }
