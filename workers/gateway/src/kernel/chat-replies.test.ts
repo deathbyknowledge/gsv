@@ -101,10 +101,10 @@ function retryNow(kernel: Kernel) {
 
 function logged(kernel: Kernel, type: string) {
   return kernel.ctx.storage.sql.exec<{
-    seq: number; idempotency_key: string; actor_json: string; body_json: string; subject: string;
+    seq: number; idempotency_key: string; actor_json: string; body_json: string; subject: string; created_at: number;
     consumer: string; lane: string | null; state: string; attempt_count: number; next_attempt_at: number; last_error: string | null;
   }>(
-    `SELECT e.seq, e.idempotency_key, e.actor_json, e.body_json, e.subject,
+    `SELECT e.seq, e.idempotency_key, e.actor_json, e.body_json, e.subject, e.created_at,
        d.consumer, d.lane, d.state, d.attempt_count, d.next_attempt_at, d.last_error
      FROM events e JOIN deliveries d ON d.seq = e.seq WHERE e.type = ? ORDER BY e.seq`,
     type,
@@ -193,7 +193,9 @@ describe("messenger replies on the event log", () => {
 
       const message = `The message stopped after 3 retry-safe delivery attempts: ${BLIP.error}`;
       const [failure] = logged(kernel, "delivery.failed");
-      expect(failure).toMatchObject({ consumer: `proc:${WORKER}`, lane: "background", body: { pid: WORKER, runId: RUN, message, wake: true } });
+      // The process hears when the message was written, so one it has outlived since is only noted.
+      const writtenAt = logged(kernel, "chat.reply")[0]!.created_at;
+      expect(failure).toMatchObject({ consumer: `proc:${WORKER}`, lane: "background", body: { pid: WORKER, runId: RUN, message, wake: true, writtenAt } });
       await runEvents(kernel);
       expect(delivered()).toEqual([[kernel.installationId, WORKER, {
         eventId: `evt_${failure!.seq}:proc:${WORKER}`,
@@ -202,6 +204,7 @@ describe("messenger replies on the event log", () => {
           payload: { phase: "message", noticeId: failure!.idempotency_key, runId: RUN, error: message },
         },
         admission: WAKE,
+        writtenAt,
       }]]);
     });
   });
@@ -215,7 +218,7 @@ describe("messenger replies on the event log", () => {
       expect(sent).toHaveLength(1);
       expect(logged(kernel, "chat.reply")[0]).toMatchObject({ state: "failed", attempt_count: 1 });
       expect(logged(kernel, "delivery.failed")[0]!.body).toEqual({
-        pid: WORKER, runId: RUN, wake: true,
+        pid: WORKER, runId: RUN, wake: true, writtenAt: logged(kernel, "chat.reply")[0]!.created_at,
         message: "The message reached the adapter, but provider delivery is ambiguous. It was not retried to avoid a duplicate.",
       });
     });
@@ -233,8 +236,8 @@ describe("messenger replies on the event log", () => {
       expect(reply).toMatchObject({ state: "failed", attempt_count: 1, last_error: "Adapter destination is not authorized" });
       const [failure] = logged(kernel, "delivery.failed");
       expect(logged(kernel, "delivery.failed")).toEqual([{
-        seq: failure!.seq, idempotency_key: `evt_${reply!.seq}:${reply!.consumer}`, subject: `proc:${WORKER}`,
-        actor: { kind: "kernel" }, body: { pid: WORKER, runId: RUN, message, wake: true },
+        seq: failure!.seq, idempotency_key: `evt_${reply!.seq}:${reply!.consumer}`, subject: `proc:${WORKER}`, created_at: failure!.created_at,
+        actor: { kind: "kernel" }, body: { pid: WORKER, runId: RUN, message, wake: true, writtenAt: reply!.created_at },
         consumer: `proc:${WORKER}`, lane: "background", state: "delivered", attempt_count: 0, next_attempt_at: failure!.next_attempt_at, last_error: null,
       }]);
       expect(delivered()).toEqual([[kernel.installationId, WORKER, expect.objectContaining({ admission: WAKE })]]);

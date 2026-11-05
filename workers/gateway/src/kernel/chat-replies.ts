@@ -201,6 +201,7 @@ export const chatReplyEvent: EventDefinition<Prepared> = {
         ...(reply.kind === "approval" ? { requestId: reply.requestId } : undefined),
         message: failureMessage(reply, end.unsent, end.reason),
         wake,
+        ...(wake ? { writtenAt: event.createdAt } : undefined),
       }));
     }
     emitTelemetry(ctx.env, {

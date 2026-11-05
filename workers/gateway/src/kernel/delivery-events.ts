@@ -14,6 +14,8 @@ const bodySchema = z.strictObject({
   message: z.string(),
   /** Set when the failure starts the process's run, or joins the one it is in, instead of only being noted. */
   wake: z.literal(true).optional(),
+  /** When a waking failure's message was written, so a process reset since then only notes it. */
+  writtenAt: z.number().int().nonnegative().optional(),
 });
 
 /** One delivery's failure, keyed by the delivery that failed, so it appends once. */
@@ -25,8 +27,9 @@ export function deliveryFailed(input: {
   requestId?: string;
   message: string;
   wake?: boolean;
+  writtenAt?: number;
 }): EventInput {
-  const { ownerUid, pid, runId, noticeId, requestId, message, wake } = input;
+  const { ownerUid, pid, runId, noticeId, requestId, message, wake, writtenAt } = input;
   return {
     type: DELIVERY_FAILED,
     ownerUid,
@@ -39,6 +42,7 @@ export function deliveryFailed(input: {
       ...(requestId === undefined ? undefined : { requestId }),
       message,
       ...(wake ? { wake: true } : undefined),
+      ...(writtenAt === undefined ? undefined : { writtenAt }),
     },
   };
 }
@@ -50,7 +54,7 @@ export function deliveryFailed(input: {
 export const deliveryFailedEvent: EventDefinition = {
   routes: (event) => [{ consumer: processConsumer(bodySchema.parse(event.body).pid), lane: "background" }],
   admit(event) {
-    const { runId, requestId, message, wake } = bodySchema.parse(event.body);
+    const { runId, requestId, message, wake, writtenAt } = bodySchema.parse(event.body);
     return {
       event: {
         kind: "delivery.failed", severity: "error", audience: "both",
@@ -58,6 +62,7 @@ export const deliveryFailedEvent: EventDefinition = {
       },
       admission: wake ? { idle: "start", busy: "join" } : { idle: "record", busy: "record" },
       ...(requestId === undefined ? undefined : { approvalRequestId: requestId }),
+      ...(writtenAt === undefined ? undefined : { writtenAt }),
     };
   },
 };

@@ -155,7 +155,9 @@ run commits a message ──▶ chat.reply ──▶ chat:<id> · messages lane
   the person another way, such as with `message send --to` another chat. After
   three failed messages in a row to one chat, each further failure is only
   recorded until a reply gets through there, so a chat that keeps failing can't
-  keep its process busy.
+  keep its process busy. A failure is also only recorded when its run was
+  stopped or replaced by a newer message, or the process was reset after the
+  message was written: late news of that work starts and joins nothing.
 
 ## Outside the log
 
