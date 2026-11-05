@@ -7,7 +7,7 @@ import type { Process } from "./do";
 import type { ProcessEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
 import { evictDurableObject } from "cloudflare:test";
 import {
-  initProcess, ipcAnswer, ipcMessage, ROOT_IDENTITY, runInProcess, scheduleFired, workReturned,
+  generationRun, initProcess, ipcAnswer, ipcMessage, processTestConfig, ROOT_IDENTITY, runInProcess, scheduleFired, workReturned,
 } from "./do-test-harness";
 
 function storedRecords(process: Process): ProcHistoryRecordData[] {
@@ -219,6 +219,31 @@ describe("typed controller history producers", () => {
         [expect.stringContaining("goes without attachments"), "resource not found"],
         [expect.stringContaining("goes without attachments"), "resource not found"],
       ]);
+    });
+  });
+
+  it.each(["abort", "reset"] as const)("drops an answer its caller outlived while its files were copied: %s", async (change) => {
+    const pid = `typed-answer-outlived-${change}`;
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      process.store.messages.appendMessage("user", "Ask the worker.", { runId: "run-asking" });
+      process.runs.active = generationRun("run-asking", processTestConfig(pid));
+      // The person stops the asking run, or resets the process, while the answer's file is copied.
+      vi.spyOn(process.resources, "resolveIncomingMedia").mockImplementation(async () => {
+        if (change === "abort") await process.controller.handleProcAbort({ runId: "run-asking" });
+        else await process.controller.resetExecutionState("process.reset");
+        return [WEEK_COPY];
+      });
+      vi.spyOn(process.resources, "prepareEventMedia").mockImplementation(async (media) => JSON.stringify(media));
+      const delivery: ProcessEventDeliverArgs = {
+        ...ipcAnswer("ipc.reply", { callId: "call-1", targetPid: "worker", sourceRunId: "run-asking", createdAt: Date.now(), deadlineAt: Date.now() + 60_000 }),
+        attachments: [WEEK],
+      };
+
+      await expect(process.deliverEvent(delivery)).resolves.toEqual({ eventId: delivery.eventId, runId: null, queued: false, ignored: true });
+      expect(storedRecords(process).filter((record) => record.kind === "event" && record.payload.kind === "ipc.reply")).toEqual([]);
+      expect(process.runs.active).toBeNull();
     });
   });
 

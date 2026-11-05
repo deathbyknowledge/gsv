@@ -91,6 +91,8 @@ async function admitRuntimeEvent(
         console.warn(`[Process] Event ${eventId} goes without attachments it couldn't keep:`, retained.errors.join("; "));
       }
     }
+    // A reset or an abort while the files were copied outlives the event as surely as one before.
+    if (outlived(host, recorded)) return { eventId, runId: null, queued: false, ignored: true };
   }
   const admitted = await host.controller.handleRuntimeEvent(renderHistoryEvent(recorded), recorded.kind, {
     runId: eventId,
