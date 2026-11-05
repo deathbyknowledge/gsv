@@ -247,6 +247,17 @@ export class EventStore {
     ).toArray().map(pendingFromRow);
   }
 
+  /** How many of a consumer's latest ended deliveries failed in a row, counting at most `limit`; a withdrawn one doesn't count. */
+  failedInARow(consumer: string, limit: number): number {
+    const states = this.sql.exec<{ state: DeliveryRecord["state"] }>(
+      `SELECT state FROM deliveries WHERE consumer = ? AND state IN ('delivered', 'failed')
+       ORDER BY seq DESC LIMIT ?`,
+      consumer, limit,
+    ).toArray();
+    const delivered = states.findIndex(({ state }) => state === "delivered");
+    return delivered === -1 ? states.length : delivered;
+  }
+
   backlog(consumer: string): EventBacklog {
     const row = this.sql.exec<{ queued: number; oldest: number | null }>(
       `SELECT COUNT(*) AS queued, MIN(e.created_at) AS oldest FROM deliveries d JOIN events e ON e.seq = d.seq

@@ -34,12 +34,16 @@ export async function deliverProcessEvent(
   }
   const { event, admission: { idle, busy, joinRun } } = args;
   if (event.kind === "delivery.failed") {
-    // Noted under the run that wrote it; a failed approval request only while that request is pending.
+    // A failed approval request matters only while that request is pending.
     const { runId } = event.payload;
     if (args.approvalRequestId !== undefined && host.store.tools.getPendingHil(args.approvalRequestId)?.runId !== runId) {
       return { eventId, runId: null, queued: false, ignored: true };
     }
-    return await appendNotice(host, eventId, event, runId);
+    // One only to note goes under the run that wrote it, as does one the process outlived; one
+    // that wakes the process is admitted like any other event.
+    if ((idle === "record" && busy === "record") || outlivedMessage(host, runId, args.writtenAt)) {
+      return await appendNotice(host, eventId, event, runId);
+    }
   }
   if (outlived(host, event)) return { eventId, runId: null, queued: false, ignored: true };
   // An event only the person sees gives a run nothing to read; one for a given run waits for its own run during another.
@@ -52,11 +56,23 @@ export async function deliverProcessEvent(
 
 /** A call's end or check-in for a run that was aborted, or what was observed before this process last reset. */
 function outlived(host: Process, event: DeliveredEvent): boolean {
-  const resetAt = Number(host.store.state.getValue(PROCESS_RESET_AT_KEY) ?? 0);
+  const resetAt = lastResetAt(host);
   if (event.kind === "target.connection") return event.payload.observedAt <= resetAt;
   if (event.kind !== "ipc.reply" && event.kind !== "ipc.overdue" && event.kind !== "ipc.timeout") return false;
   const { createdAt, sourceRunId } = event.payload;
   return (createdAt !== undefined && createdAt <= resetAt) || (sourceRunId !== undefined && host.controller.isAbortedRun(sourceRunId));
+}
+
+/**
+ * A failed message whose run the person stopped or replaced, or one written before this process
+ * last reset. News of that work wakes nothing.
+ */
+function outlivedMessage(host: Process, runId: string | undefined, writtenAt: number | undefined): boolean {
+  return (runId !== undefined && host.controller.isAbortedRun(runId)) || (writtenAt !== undefined && writtenAt <= lastResetAt(host));
+}
+
+function lastResetAt(host: Process): number {
+  return Number(host.store.state.getValue(PROCESS_RESET_AT_KEY) ?? 0);
 }
 
 /** A scheduled run answers to its schedule and, when it has one, its reply destination. */

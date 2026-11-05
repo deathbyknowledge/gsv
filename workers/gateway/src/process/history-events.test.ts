@@ -5,7 +5,7 @@ import type { Process } from "./do";
 import type { ProcessEventDeliverArgs } from "../protocol/process-frames";
 import { deliverProcessEvent } from "./controller/events";
 import { decodeWireFrameJson } from "../protocol/decode-wire-frame";
-import { deferred, initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
+import { deferred, generationRun, initProcess, processTestConfig, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
 import { PROCESS_RESET_AT_KEY } from "./internal/lifecycle";
 import { buildCompactionSummaryContext } from "./history/helpers";
 import { renderCompactionTranscriptChunks } from "./history/compaction-renderer";
@@ -306,6 +306,55 @@ describe("registered Process events", () => {
       expect(await process.deliverEvent(busy)).toEqual({ eventId: busy.eventId, runId: null, queued: false, messageId: 2 });
       expect(process.runs.active).toEqual({ runId: "active" });
       expect(schedule).not.toHaveBeenCalled();
+    });
+  });
+
+  it("starts a run for a failed delivery that wakes its process, or joins the active one, once", async () => {
+    const stub = await initProcess("history-events-delivery-failed-wake", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+      const idle = { ...deliveryFailure("evt_1:proc:history-events-delivery-failed-wake"), admission: START_OR_JOIN };
+      expect(await process.deliverEvent(idle)).toMatchObject({ runId: idle.eventId, queued: false });
+      expect(await process.deliverEvent(idle)).toMatchObject({ runId: idle.eventId, queued: false });
+      expect(schedule).toHaveBeenCalledTimes(1);
+      const [context] = await process.history.buildContextMessages();
+      expect(context?.content).toContain("The message could not be delivered: chat closed");
+
+      process.runs.active = { runId: "active" };
+      const busy = { ...deliveryFailure("evt_2:proc:history-events-delivery-failed-wake"), admission: START_OR_JOIN };
+      expect(await process.deliverEvent(busy)).toMatchObject({ runId: "active", queued: false });
+      expect(schedule).toHaveBeenCalledTimes(1);
+      expect(process.runs.active).toMatchObject({ runId: "active", pendingRuntimeEvents: 1 });
+    });
+  });
+
+  it.each(["stopped", "replaced", "reset"] as const)("only notes a failed message whose run the person %s", async (change) => {
+    const pid = `history-events-delivery-failed-${change}`;
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      vi.spyOn(process.run, "scheduleTick").mockResolvedValue(undefined);
+      vi.spyOn(process, "maybeStartTaskTitleGeneration").mockImplementation(() => {});
+      const writtenAt = Date.now();
+      // run-1 wrote the message, then the person stopped it, replaced it with a new message, or
+      // reset the process once it had finished.
+      process.store.messages.appendMessage("user", "Book the train.", { runId: "run-1" });
+      process.runs.active = generationRun("run-1", processTestConfig(pid));
+      if (change === "stopped") await process.controller.handleProcAbort({ runId: "run-1" });
+      if (change === "replaced") await process.controller.admitInput({ message: "Actually, the bus." }, "run-2", "interrupt");
+      if (change === "reset") {
+        process.runs.active = null;
+        await process.controller.resetExecutionState("process.reset");
+      }
+      const active = process.runs.active;
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+
+      const failure = { ...deliveryFailure(`evt_1:proc:${pid}`), admission: START_OR_JOIN, writtenAt };
+      expect(await process.deliverEvent(failure)).toMatchObject({ eventId: failure.eventId, runId: null, queued: false });
+      expect(schedule).not.toHaveBeenCalled();
+      expect(process.runs.active).toEqual(active);
+      expect(process.store.messages.getRecords().filter((record) => record.kind === "event")).toMatchObject([
+        { payload: failure.event, runId: "run-1" },
+      ]);
     });
   });
 

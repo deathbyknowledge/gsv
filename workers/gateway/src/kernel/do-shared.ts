@@ -12,6 +12,7 @@ import type {
   ProcMediaInput,
 } from "@humansandmachines/gsv/protocol";
 import {
+  adapterSurfaceSchema,
   resourceBlockSchema,
 } from "@humansandmachines/gsv/protocol";
 import {
@@ -113,6 +114,23 @@ export const userProcessSignalFrameSchema = z.object({
 export type UserProcessSignalFrame = z.infer<typeof userProcessSignalFrameSchema>;
 
 export type AdapterDeliveryRoute = Omit<AdapterRunRoute, "createdAt" | "expiresAt">;
+
+/** A run's messenger route as durable work stores it: where its replies go, and for which run. */
+export const adapterDeliveryRouteSchema = z.object({
+  kind: z.literal("adapter"),
+  runId: z.string(),
+  processId: z.string(),
+  uid: z.number().int().nonnegative(),
+  destination: z.object({
+    kind: z.literal("adapter"),
+    adapter: z.string(),
+    accountId: z.string(),
+    actorId: z.string(),
+    surface: adapterSurfaceSchema,
+  }),
+  replyToId: z.string().optional(),
+  routeGeneration: z.string().optional(),
+});
 
 
 /** Typing announces a delivery that is about to arrive; it never acknowledges a message. */

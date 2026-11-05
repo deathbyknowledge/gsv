@@ -1,6 +1,6 @@
 /**
  * Every event type the Kernel registers, and where the census expects its deliveries: to the
- * owner's Ship, to a process, or to no one, on the lane that orders them there.
+ * owner's Ship, to a process, to a messenger chat, or to no one, on the lane that orders them there.
  * `src/kernel/events/registry.test.ts` keeps these types equal to the registry, so a new type
  * can't skip the census.
  */
@@ -18,6 +18,7 @@ export const CENSUS_ROUTES = {
   "responsibility.ready": { to: ["ship"], lane: null },
   "schedule.fired": { to: ["process"], lane: "background" },
   "target.status": { to: ["process"], lane: "background" },
+  "chat.reply": { to: ["chat"], lane: "messages" },
   "delivery.failed": { to: ["process"], lane: "background" },
   "source.event": { to: [], lane: null },
 } as const;

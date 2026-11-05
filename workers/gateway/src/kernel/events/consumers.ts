@@ -8,12 +8,21 @@ export function processConsumer(pid: string): string {
   return `proc:${pid}`;
 }
 
-export type EventConsumer = { kind: "ship"; ownerUid: number } | { kind: "process"; pid: string };
+/** One messenger chat, by an opaque id: what goes to it goes out in order, whichever process wrote it. */
+export function chatConsumer(chatId: string): string {
+  return `chat:${chatId}`;
+}
+
+export type EventConsumer =
+  | { kind: "ship"; ownerUid: number }
+  | { kind: "process"; pid: string }
+  | { kind: "chat"; chatId: string };
 
 export function parseConsumer(consumer: string): EventConsumer | null {
   const ship = /^personal:(\d+)$/.exec(consumer);
   if (ship) return { kind: "ship", ownerUid: Number(ship[1]) };
   if (consumer.startsWith("proc:") && consumer.length > "proc:".length) return { kind: "process", pid: consumer.slice("proc:".length) };
+  if (consumer.startsWith("chat:") && consumer.length > "chat:".length) return { kind: "chat", chatId: consumer.slice("chat:".length) };
   return null;
 }
 

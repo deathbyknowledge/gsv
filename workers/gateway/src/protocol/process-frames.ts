@@ -98,6 +98,8 @@ export type ProcessEventDelivery =
       attachments?: ResourceBlock[];
       /** The approval request a failed delivery carried, which the failure concerns only while it is pending. */
       approvalRequestId?: string;
+      /** When a waking failure's message was written, so a reset since then leaves it only noted. */
+      writtenAt?: number;
     }
   // Another process's message or call takes a run of its own.
   | { message: ProcessIpcMessage; admission: { idle: "start"; busy: "after" } }

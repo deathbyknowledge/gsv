@@ -5,6 +5,7 @@ import { ShipReplies } from "./ship-replies";
 import { InitialOnboarding } from "./onboarding-responsibility";
 import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import {
+  adapterDeliveryRouteSchema,
   cancelUnlockedBody,
 } from "./do-shared";
 import {
@@ -49,9 +50,6 @@ import type {
   NetFetchArgs,
   ProcessIdentity,
   SysTargetDeleteResult,
-} from "@humansandmachines/gsv/protocol";
-import {
-  adapterSurfaceSchema,
 } from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
 import { PasswordAttempts } from "./password-attempts";
@@ -270,22 +268,6 @@ type KernelTask =
   | { callback: "onBrowserHandoffs"; payload: null };
 
 type KernelTaskCallback = KernelTask["callback"];
-
-const adapterDeliveryRouteSchema = z.object({
-  kind: z.literal("adapter"),
-  runId: z.string(),
-  processId: z.string(),
-  uid: z.number().int().nonnegative(),
-  destination: z.object({
-    kind: z.literal("adapter"),
-    adapter: z.string(),
-    accountId: z.string(),
-    actorId: z.string(),
-    surface: adapterSurfaceSchema,
-  }),
-  replyToId: z.string().optional(),
-  routeGeneration: z.string().optional(),
-});
 
 const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
   z.object({
