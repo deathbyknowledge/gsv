@@ -31,6 +31,8 @@ routine, so the owner controls it in **Work** and can pause or delete it.
 3. For a recurring check, use a `crontab` line whose command prints one JSON
    object per line, `{"id","title","preview","body"}`, piped into
    `event emit NAME --stdin`. Use the item's own id, such as a URL or record id.
+   An event can take up to 64 KiB, title and preview included; a bigger one
+   refuses the whole call before any of it is taken.
 
 ## From Another Computer
 
@@ -78,12 +80,12 @@ signature covers. Ask the owner rather than guess, and confirm with a test deliv
 
 Without a type header, a JSON body's `title`, `subject`, `type` or `event` becomes the title, and
 `preview`, `summary`, `message` or `text` becomes the preview. Bodies are
-limited to 256 KiB.
+limited to 256 KiB, and an event keeps one only while it fits in 64 KiB.
 
 ## Maintain and Check
 
-- `event sources` lists sources; `event list [NAME]` shows what arrived and who
-  sent it (`client`, `process`, `schedule` or `webhook`).
+- `event sources` lists sources; `event list [NAME]` shows what arrived in the
+  last 30 days and who sent it (`client`, `process`, `schedule` or `webhook`).
 - `event source update NAME --pause|--resume`, and other choices, change it.
   A paused source refuses webhooks.
 - `event source rotate NAME` issues a new secret or address, or, with `--stdin`,

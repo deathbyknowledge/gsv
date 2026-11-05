@@ -7,7 +7,7 @@ import { formatContextRunwayAlertMessage } from "../prompts/context-runway";
 import { formatGenerationFailure } from "./history/event-renderer";
 import type { ContextProjection } from "./context/projection";
 import { formatCompactionSummaryMessage } from "./history/event-renderer";
-import { formatIpcReplyMessage, formatProcessRuntimeEvent, formatResponsibilityTransitionEvent, formatScheduleEventMessage, formatWatchedSignalMessage } from "./history/event-renderer";
+import { formatIpcReplyMessage, formatResponsibilityTransitionEvent, formatScheduleEventMessage, formatWatchedSignalMessage, formatWorkReturnedEvent } from "./history/event-renderer";
 import { RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE } from "./internal/lifecycle";
 
 export const GOLDEN_TIME = 1_700_000_000_000;
@@ -96,7 +96,7 @@ export function goldenEvents(): EventFixture[] {
     { event: { kind: "signal.watched", payload: signal, severity: "info", audience: "model" }, text: formatWatchedSignalMessage(signal.signal, signal) },
     {
       event: { kind: "adapter.work.returned", payload: { eventId: "event:returned", workPid: "proc:work" }, severity: "info", audience: "model" },
-      text: formatProcessRuntimeEvent({ type: "adapter.work.returned", workPid: "proc:work" }),
+      text: formatWorkReturnedEvent({ workPid: "proc:work" }),
     },
     { event: { kind: "history.compacted", payload: compacted, severity: "info", audience: "model" }, text: formatCompactionSummaryMessage(compacted) },
     { event: { kind: "correction.text-only", payload: { attempt: 1, limit: 3 }, severity: "warn", audience: "model" }, text: YIELD_CORRECTION_MESSAGE },

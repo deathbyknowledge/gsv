@@ -1,8 +1,8 @@
-import { REQUEST_CANCEL_SIGNAL, type JsonObject } from "@humansandmachines/gsv/protocol";
+import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
 import type { SyscallName } from "../syscalls";
-import type { ProcessApprovalTarget, ProcessToolOwner } from "../protocol/process-frames";
-import { sendFrameToProcess } from "../shared/utils";
+import { processResult, type ProcessApprovalTarget, type ProcessToolOwner } from "../protocol/process-frames";
+import { authorizeProcessTool, cancelProcessCall } from "../shared/utils";
 import { raceWithAbort } from "../shared/abort";
 
 export function nestedToolOwner(ctx: KernelContext): ProcessToolOwner | undefined {
@@ -17,31 +17,26 @@ export async function authorizeNestedOperation(
   ctx: KernelContext,
   syscall: SyscallName,
   args: JsonObject,
-  send: typeof sendFrameToProcess = sendFrameToProcess,
   target?: ProcessApprovalTarget,
 ): Promise<void> {
   if (!ctx.toolOwner) return;
   if (!ctx.processId) throw new Error("Agent operation has no owning process");
   const signal = ctx.requestSignal;
   signal?.throwIfAborted();
-  const id = `approval:${crypto.randomUUID()}`;
+  const cancelId = `approval:${crypto.randomUUID()}`;
   const releaseDeadlines = ctx.executionDeadlines?.hold();
   let response;
   try {
-    response = await raceWithAbort(send(ctx.installationId, ctx.processId, {
-      type: "req", id, call: "proc.tool.authorize", args: { ...ctx.toolOwner, syscall, args, target },
+    response = await raceWithAbort(authorizeProcessTool(ctx.installationId, ctx.processId, cancelId, {
+      ...ctx.toolOwner, syscall, args, target,
     }), signal, {
       onAbort: () => {
-        ctx.defer(send(ctx.installationId, ctx.processId!, {
-          type: "sig", signal: REQUEST_CANCEL_SIGNAL,
-          payload: { id, reason: "Owning operation was cancelled" },
-        }).catch(() => {}));
+        ctx.defer(cancelProcessCall(ctx.installationId, ctx.processId!, cancelId, "Owning operation was cancelled").catch(() => {}));
       },
     });
   } finally {
     releaseDeadlines?.();
   }
   signal?.throwIfAborted();
-  if (!response?.ok) throw new Error(response?.error.message ?? "Approval owner is unavailable");
-  if (!response.data.approved) throw new Error(`Tool execution was not approved: ${syscall}`);
+  if (!processResult(response).approved) throw new Error(`Tool execution was not approved: ${syscall}`);
 }

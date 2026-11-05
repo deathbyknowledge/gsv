@@ -1,88 +1,53 @@
 import { createInstallationStorage } from "../installation/storage";
-import type { InternalRequestFrame } from "../protocol/process-frames";
-import type {
-  ProcessAdapterDeliverArgs,
-} from "../protocol/process-frames";
+import type { ProcessEventDeliverArgs, ProcessResourcesRetainArgs } from "../protocol/process-frames";
 import { REQUEST_CANCEL_SIGNAL, bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { runDurableObjectAlarm } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import {
-  generationRun, processTestConfig, assistantResponse, deferred, okProcessResponse, runInProcess,
-  ROOT_IDENTITY, drainProcessQueue, initProcess, makeAdapterDeliverReq, makeReq, offeredTools,
-  testUsage, waitForRunComplete, type ProcessTestValue,
+  generationRun, processTestConfig, assistantResponse, deferred, runInProcess,
+  ROOT_IDENTITY, drainProcessQueue, initProcess, offeredTools,
+  testUsage, waitForRunComplete, type ProcessTestValue, sendMessage,
 } from "./do-test-harness";
 
 describe("proc.send", () => {
-  it("reconciles repeated adapter deliveries without duplicating admission", async () => {
+  it("answers a redelivered messenger message with its first admission, during and after its run", async () => {
     const pid = "mech-adapter-delivery-idempotent";
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const args: ProcessAdapterDeliverArgs = {
-      runId: "run-adapter-idempotent",
-      pid,
-      message: "retry-safe inbound message",
-      origin: {
-        kind: "adapter",
-        adapter: "telegram",
-        accountId: "primary",
-        surface: { kind: "dm", id: "telegram-chat-1" },
-        actorId: "telegram-user-1",
-        messageId: "telegram-message-1",
+    const delivery: ProcessEventDeliverArgs = {
+      eventId: `evt_1:proc:${pid}`,
+      input: {
+        runId: "run-adapter-idempotent",
+        message: "retry-safe inbound message",
+        origin: {
+          kind: "adapter",
+          adapter: "telegram",
+          accountId: "primary",
+          surface: { kind: "dm", id: "telegram-chat-1" },
+          actorId: "telegram-user-1",
+          messageId: "telegram-message-1",
+        },
       },
+      admission: { idle: "start", busy: "interrupt" },
     };
+    const admitted = { eventId: delivery.eventId, runId: "run-adapter-idempotent", queued: false };
 
-    const firstRequest = makeAdapterDeliverReq(args);
-    const first = await stub.recvFrame(firstRequest);
-    expect(first).toMatchObject({
-      type: "res",
-      id: firstRequest.id,
-      ok: true,
-      data: {
-        ok: true,
-        status: "started",
-        runId: args.runId,
-      },
-    });
-
-    const repeatedRequest = makeAdapterDeliverReq(args);
-    const repeated = await stub.recvFrame(repeatedRequest);
-    expect(repeated).toMatchObject({
-      type: "res",
-      id: repeatedRequest.id,
-      ok: true,
-      data: {
-        replayed: "active",
-      },
-    });
-    // SAFETY: test fixture is constructed with the asserted domain shape.
-    expect((first as any).data).not.toHaveProperty("replayed");
-
+    await expect(stub.deliverEvent(delivery)).resolves.toEqual(admitted);
+    await expect(stub.deliverEvent(delivery)).resolves.toEqual(admitted);
     await runInProcess(stub, (process) => {
       expect(process.store.messages.getMessages()).toEqual([
-        expect.objectContaining({
-          role: "user",
-          content: args.message,
-          runId: args.runId,
-        }),
+        expect.objectContaining({ role: "user", content: "retry-safe inbound message", runId: "run-adapter-idempotent" }),
       ]);
       expect(process.store.queue.queueSize()).toBe(0);
-      expect(process.runs.active).toMatchObject({ runId: args.runId });
-    });
-
-    await runInProcess(stub, (process) => {
+      expect(process.runs.active).toMatchObject({ runId: "run-adapter-idempotent" });
       process.runs.active = null;
     });
-    const recordedRequest = makeAdapterDeliverReq(args);
-    const recorded = await stub.recvFrame(recordedRequest);
-    expect(recorded).toMatchObject({
-      type: "res",
-      id: recordedRequest.id,
-      ok: true,
-      data: {
-        ok: true,
-        runId: args.runId,
-        replayed: "recorded",
-      },
+
+    // Once its run has ended, a redelivery admits nothing more.
+    await expect(stub.deliverEvent(delivery)).resolves.toEqual(admitted);
+    await runInProcess(stub, (process) => {
+      expect(process.store.messages.getMessages()).toHaveLength(1);
+      expect(process.runs.active).toBeNull();
     });
   });
 
@@ -93,22 +58,15 @@ describe("proc.send", () => {
     // SAFETY: test fixture is constructed with the asserted domain shape.
 
     // Start first run
-    const res1 = await okProcessResponse(
-      stub,
-      makeReq("proc.send", { message: "First message" }),
-    );
+    const res1 = await sendMessage(stub, { message: "First message" });
     expect(res1.ok).toBe(true);
 
     // Send second message while run is active — should be queued
-    const res2 = await okProcessResponse(
-      stub,
-      makeReq("proc.send", {
-        message: "Second message",
-        origin: { kind: "process", sourcePid: "child" },
-      }),
-    );
-    // SAFETY: test fixture is constructed with the asserted domain shape.
-    expect((res2.data as any).queued).toBe(true);
+    const res2 = await sendMessage(stub, {
+      message: "Second message",
+      origin: { kind: "process", sourcePid: "child" },
+    });
+    expect(res2.queued).toBe(true);
 
     // Fire alarm for run 1 — fails (no AI binding in tests), finishRun dequeues
     // "Second message" and starts run 2
@@ -126,10 +84,8 @@ describe("proc.send", () => {
       expect(userMsgs).toHaveLength(2);
       expect(userMsgs[0].content).toBe("First message");
       expect(userMsgs[1].content).toBe("Second message");
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect(userMsgs[0].runId).toBe((res1.data as any).runId);
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-      expect(userMsgs[1].runId).toBe((res2.data as any).runId);
+      expect(userMsgs[0].runId).toBe(res1.runId);
+      expect(userMsgs[1].runId).toBe(res2.runId);
       expect(store.queue.queueSize()).toBe(0);
       expect(store.state.getValue("currentRun")).toBeNull();
     });
@@ -215,10 +171,10 @@ describe("proc.send", () => {
       });
       process.runs.active = { runId: "run-old" };
 
-      const result = await process.controller.handleProcSend({
+      const result = await process.controller.admitInput({
         message: "new direction",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       expect(result).toMatchObject({ ok: true, status: "started" });
       await vi.waitFor(() => expect(process.runs.active).toBeNull());
 
@@ -251,18 +207,16 @@ describe("proc.send", () => {
         await preparationBlocked;
         return [];
       });
-      const sending = process.controller.handleProcSend({
+      const sending = process.controller.admitInput({
         message: "too late",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       await preparationStarted;
       process.store.state.deleteValue("identity");
       releasePreparation();
 
-      await expect(sending).resolves.toEqual({
-        ok: false,
-        error: "Process no longer exists",
-      });
+      // The log tries again, or withdraws the message once the Kernel knows the process is gone.
+      await expect(sending).rejects.toThrow("Process no longer exists");
       expect(process.runs.active).toBeNull();
     });
   });
@@ -322,10 +276,10 @@ describe("proc.send", () => {
         { id: "call-live-2", status: "registered" },
       ]);
 
-      const takeover = await process.controller.handleProcSend({
+      const takeover = await process.controller.admitInput({
         message: "stop and do this instead",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       const nextRunId = takeover.runId;
       expect(
         process.store.messages
@@ -378,14 +332,14 @@ describe("proc.send", () => {
       });
       process.runs.active = { runId: "run-original" };
 
-      const first = process.controller.handleProcSend({
+      const first = process.controller.admitInput({
         message: "first takeover",
         origin: { kind: "client", connectionId: "client-1" },
-      });
-      const second = process.controller.handleProcSend({
+      }, crypto.randomUUID(), "interrupt");
+      const second = process.controller.admitInput({
         message: "second takeover",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       const [firstResult, secondResult] = await Promise.all([first, second]);
       expect(finishedRuns).toEqual(["run-original", firstResult.runId]);
       expect(process.runs.active.runId).toBe(secondResult.runId);
@@ -402,11 +356,11 @@ describe("proc.send", () => {
     try {
       const result = await runInProcess(stub, async (process) => {
         process.runs.active = { runId: "run-existing" };
-        const response = await process.controller.handleProcSend({
+        const response = await process.controller.admitInput({
           message: "read this",
           media: [{ type: "image", mimeType: "image/png", key: foreignKey }],
           origin: { kind: "client", connectionId: "client-1" },
-        });
+        }, crypto.randomUUID(), "interrupt");
         return {
           response,
           currentRun: process.runs.active,
@@ -450,21 +404,21 @@ describe("proc.send", () => {
           httpMetadata: { contentType: "image/png" },
         });
 
-        const first = await process.controller.handleProcSend({
+        const first = await process.controller.admitInput({
           message: "first with media",
           media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
           origin: { kind: "client", connectionId: "client-1" },
-        });
+        }, crypto.randomUUID(), "interrupt");
         await mediaStarted;
         expect(process.runs.active).toMatchObject({
           runId: first.runId,
           pendingMediaMessageId: expect.any(Number),
         });
 
-        const second = await process.controller.handleProcSend({
+        const second = await process.controller.admitInput({
           message: "new user direction",
           origin: { kind: "client", connectionId: "client-1" },
-        });
+        }, crypto.randomUUID(), "interrupt");
         releaseMedia();
         // SAFETY: test fixture is constructed with the asserted domain shape.
         await (prepareMedia.mock.results[0]?.value as Promise<void>);
@@ -509,11 +463,11 @@ describe("proc.send", () => {
         httpMetadata: { contentType: "image/png" },
       });
 
-      const result = await process.controller.handleProcSend({
+      const result = await process.controller.admitInput({
         message: "attachment",
         media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       // SAFETY: test fixture is constructed with the asserted domain shape.
       await (prepareMedia.mock.results[0]?.value as Promise<void>);
 
@@ -561,16 +515,16 @@ describe("proc.send", () => {
         httpMetadata: { contentType: "image/png" },
       });
 
-      const first = process.controller.handleProcSend({
+      const first = process.controller.admitInput({
         message: "first process message",
         media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
         origin: { kind: "process", sourcePid: "child-1" },
-      });
+      }, crypto.randomUUID(), "after");
       await mediaStarted;
-      const second = process.controller.handleProcSend({
+      const second = process.controller.admitInput({
         message: "second process message",
         origin: { kind: "process", sourcePid: "child-2" },
-      });
+      }, crypto.randomUUID(), "after");
 
       releaseMedia();
       await Promise.all([first, second]);
@@ -587,23 +541,12 @@ describe("proc.send", () => {
     const pid = "mech-send-media";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
-    const upload = await stub.recvFrame({
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.resource.write",
-      args: {
-        resourceId: "proof",
-        mediaType: "image",
-        contentType: "image/png",
-        filename: "proof.png",
-      },
-      body: bodyFromBytes(new Uint8Array([1, 2, 3])),
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-    } satisfies InternalRequestFrame<"proc.resource.write">);
-    if (!upload.ok) {
-      throw new Error(upload.error.message);
-    }
-    expect(upload.data).toMatchObject({
+    const upload = await stub.writeResource(
+      { resourceId: "proof", mediaType: "image", contentType: "image/png", filename: "proof.png" },
+      bodyFromBytes(new Uint8Array([1, 2, 3])),
+    );
+    if ("unavailable" in upload) throw new Error(upload.message);
+    expect(upload).toMatchObject({
       resource: {
         type: "resource",
         ref: {
@@ -612,15 +555,12 @@ describe("proc.send", () => {
         },
       },
     });
-    const uploadedMedia = upload.data.resource;
+    const uploadedMedia = upload.resource;
 
-    const res = await okProcessResponse(
-      stub,
-      makeReq("proc.send", {
-        message: "Describe this image.",
-        media: [uploadedMedia],
-      }),
-    );
+    const res = await sendMessage(stub, {
+      message: "Describe this image.",
+      media: [uploadedMedia],
+    });
 
     expect(res.ok).toBe(true);
 
@@ -795,43 +735,31 @@ describe("proc.send", () => {
           await storedGate;
           return object;
         });
-        const request: InternalRequestFrame<"proc.resources.retain"> = {
-          type: "req",
-          id: "retain-cancelled",
-          call: "proc.resources.retain",
-          args: {
-            batchId: "retain-cancelled",
-            resources: [
-              {
-                type: "resource",
-                ref: {
-                  type: "file",
-                  target: "gsv",
-                  path: sourcePath,
-                  revision: source.httpEtag,
-                  contentType: "image/png",
-                  size: bytes.byteLength,
-                },
+        const retaining = instance.retainResources("retain-cancelled", {
+          batchId: "retain-cancelled",
+          resources: [
+            {
+              type: "resource",
+              ref: {
+                type: "file",
+                target: "gsv",
+                path: sourcePath,
+                revision: source.httpEtag,
+                contentType: "image/png",
+                size: bytes.byteLength,
               },
-            ],
-          },
-        };
-
-        const retaining = instance.recvFrame(request);
+            },
+          ],
+        });
         await stored;
         await instance.recvFrame({
           type: "sig",
           signal: REQUEST_CANCEL_SIGNAL,
-          payload: { id: request.id, reason: "Send cancelled" },
+          payload: { id: "retain-cancelled", reason: "Send cancelled" },
         });
         releaseStored();
 
-        await expect(retaining).resolves.toMatchObject({
-          type: "res",
-          id: request.id,
-          ok: false,
-          error: { message: "Send cancelled" },
-        });
+        await expect(retaining).rejects.toThrow("Send cancelled");
         expect(retainedKey).toMatch(/^root\/\.gsv\/media\/archived-media:/);
         expect(await process.storage.head(retainedKey)).toBeNull();
       });
@@ -854,35 +782,28 @@ describe("proc.send", () => {
     let successfulKey = "";
     let cancelledKey = "";
 
-    const request = (id: string): InternalRequestFrame<"proc.resources.retain"> => ({
-      type: "req",
-      id,
-      call: "proc.resources.retain",
-      args: {
-        batchId: id,
-        resources: [
-          {
-            type: "resource",
-            ref: {
-              type: "file",
-              target: "gsv",
-              path: sourcePath,
-              revision: source.httpEtag,
-              contentType: "image/png",
-              size: bytes.byteLength,
-            },
+    const request = (batchId: string): ProcessResourcesRetainArgs => ({
+      batchId,
+      resources: [
+        {
+          type: "resource",
+          ref: {
+            type: "file",
+            target: "gsv",
+            path: sourcePath,
+            revision: source.httpEtag,
+            contentType: "image/png",
+            size: bytes.byteLength,
           },
-        ],
-      },
+        },
+      ],
     });
 
     try {
       await runInProcess(successfulStub, async (_process, _state, instance) => {
-        const response = await instance.recvFrame(request("retain-successful"));
-        if (!response || response.type !== "res" || !response.ok) {
-          throw new Error("successful Process did not retain the fixture");
-        }
-        successfulKey = response.data.resources[0].ref.path.replace(/^\/+/, "");
+        const response = await instance.retainResources("retain-successful", request("retain-successful"));
+        if ("unavailable" in response) throw new Error("successful Process did not retain the fixture");
+        successfulKey = response.resources[0].ref.path.replace(/^\/+/, "");
         expect(await createInstallationStorage(env.STORAGE, "inst_test").head(successfulKey)).not.toBeNull();
       });
 
@@ -906,7 +827,7 @@ describe("proc.send", () => {
           await storedGate;
           return object;
         });
-        const retaining = instance.recvFrame(request("retain-cancelled-cross-process"));
+        const retaining = instance.retainResources("retain-cancelled-cross-process", request("retain-cancelled-cross-process"));
         await stored;
         await instance.recvFrame({
           type: "sig",
@@ -915,12 +836,7 @@ describe("proc.send", () => {
         });
         releaseStored();
 
-        await expect(retaining).resolves.toMatchObject({
-          type: "res",
-          id: "retain-cancelled-cross-process",
-          ok: false,
-          error: { message: "Send cancelled" },
-        });
+        await expect(retaining).rejects.toThrow("Send cancelled");
         expect(cancelledKey).not.toBe(successfulKey);
         expect(await createInstallationStorage(env.STORAGE, "inst_test").head(cancelledKey)).toBeNull();
         expect(await createInstallationStorage(env.STORAGE, "inst_test").head(successfulKey)).not.toBeNull();
@@ -948,44 +864,35 @@ describe("proc.send", () => {
         const before = (await process.storage.list({ prefix: archivePrefix })).objects
           .map((object: R2Object) => object.key)
           .sort();
-        const request: InternalRequestFrame<"proc.resources.retain"> = {
-          type: "req",
-          id: "retain-batch-rollback",
-          call: "proc.resources.retain",
-          args: {
-            batchId: "delivery:batch-rollback",
-            resources: [
-              {
-                type: "resource",
-                ref: {
-                  type: "file",
-                  target: "gsv",
-                  path: sourcePath,
-                  revision: source.httpEtag,
-                  contentType: "image/png",
-                  size: bytes.byteLength,
-                },
+        const retaining = instance.retainResources("retain-batch-rollback", {
+          batchId: "delivery:batch-rollback",
+          resources: [
+            {
+              type: "resource",
+              ref: {
+                type: "file",
+                target: "gsv",
+                path: sourcePath,
+                revision: source.httpEtag,
+                contentType: "image/png",
+                size: bytes.byteLength,
               },
-              {
-                type: "resource",
-                ref: {
-                  type: "file",
-                  target: "gsv",
-                  path: "/root/resource-retain-missing.png",
-                  revision: "missing-revision",
-                  contentType: "image/png",
-                  size: bytes.byteLength,
-                },
+            },
+            {
+              type: "resource",
+              ref: {
+                type: "file",
+                target: "gsv",
+                path: "/root/resource-retain-missing.png",
+                revision: "missing-revision",
+                contentType: "image/png",
+                size: bytes.byteLength,
               },
-            ],
-          },
-        };
-
-        await expect(instance.recvFrame(request)).resolves.toMatchObject({
-          type: "res",
-          id: request.id,
-          ok: false,
+            },
+          ],
         });
+
+        await expect(retaining).rejects.toThrow();
         expect(
           (await process.storage.list({ prefix: archivePrefix })).objects
             .map((object: R2Object) => object.key)

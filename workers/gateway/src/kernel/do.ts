@@ -5,6 +5,7 @@ import { ShipReplies } from "./ship-replies";
 import { InitialOnboarding } from "./onboarding-responsibility";
 import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import {
+  adapterDeliveryRouteSchema,
   cancelUnlockedBody,
 } from "./do-shared";
 import {
@@ -25,7 +26,7 @@ import { DurableObject } from "cloudflare:workers";
 import { ModelMetadataResolver } from "../inference/model-metadata";
 import { z } from "zod";
 import { processMemoryReviewSchema, type ProcessMemoryReview } from "../protocol/process-frames";
-import { queueMemoryReview, runMemoryReview } from "./memory-review";
+import { memoryReviewSettled, queueMemoryReview, recoverMemoryReviews } from "./memory-review";
 import { McpClientManager, SqlMcpServerRows } from "./mcp-client";
 import type {
   Frame,
@@ -38,6 +39,7 @@ import { consumeProcessRunStream } from "../protocol/process-run-stream";
 import type {
   AdapterLinkedPeerContext,
   BinaryBody,
+  ConversationMessage,
   ManagedInboundMailAccepted,
   ManagedInboundMailCompletion,
   ManagedInboundMailMetadata,
@@ -48,9 +50,6 @@ import type {
   NetFetchArgs,
   ProcessIdentity,
   SysTargetDeleteResult,
-} from "@humansandmachines/gsv/protocol";
-import {
-  adapterSurfaceSchema,
 } from "@humansandmachines/gsv/protocol";
 import { AuthStore } from "./auth-store";
 import { PasswordAttempts } from "./password-attempts";
@@ -109,7 +108,7 @@ import {
   assertAdapterMessageDestinationAccess,
   identityLinkRouteGeneration,
 } from "./adapter-destinations";
-import type { InternalResponseFrame, ProcessApprovalTarget, ProcessApprovalTargetRef } from "../protocol/process-frames";
+import type { ProcessApprovalTarget, ProcessApprovalTargetRef, ProcessMessageCommitArgs } from "../protocol/process-frames";
 import type {
   ProcessOutboundFrame,
 } from "../protocol/process-frames";
@@ -202,14 +201,13 @@ import { OwnerNoticeRuntime } from "./owner-notice-runtime";
 import { OwnerNoticeStore } from "./owner-notice-store";
 import { NoticeRuleStore } from "./notice-rules";
 import { EventSourceStore, noteSilentSources, receiveWebhook } from "./event-sources";
-import { ShipEventRuntime } from "./ship-event-runtime";
-import { ShipEventStore } from "./ship-event-store";
+import { EventRuntime } from "./events/runtime";
+import { EventStore } from "./events/store";
 import { FederationRuntime } from "./federation-runtime";
 import { ProcessOutput } from "./process-output";
 import { AdapterDelivery } from "./adapter-delivery";
 import type {
   AdapterRouteDeliveryRetry,
-  ProcessDeliveryNoticeRetry,
 } from "./do-shared";
 import { ConnectionRuntime } from "./connection-runtime";
 import { Transport } from "./transport";
@@ -248,10 +246,7 @@ type AuthorizeGitHttpResult =
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
 type KernelTask =
-  | { callback: "onMemoryReview"; payload: number }
-  | { callback: "onProcessApprovalNotice"; payload: { pid: string; runId: string; requestId: string } }
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
-  | { callback: "onIpcCallDelivery"; payload: string }
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
   | { callback: "onManagedOutboundEnqueue"; payload: string }
   | { callback: "onFederationDelivery"; payload: string }
@@ -260,14 +255,13 @@ type KernelTask =
       callback: "onFederationInbox";
       payload: { contactId: string; contactGeneration: string; deliveryId: string };
     }
-  | { callback: "onProcessDeliveryNotice"; payload: ProcessDeliveryNoticeRetry }
   | { callback: "onRouteExpired"; payload: string }
   | { callback: "onScheduleDue"; payload: string }
   | {
       callback: "onResponsibilityWake";
       payload: { ownerUid: number; generation: number };
     }
-  | { callback: "onShipEvents"; payload: number }
+  | { callback: "onEvents"; payload: null }
   | { callback: "onOwnerNotices"; payload: number }
   | { callback: "onEventUpkeep"; payload: null }
   | { callback: "onLedgerRotate"; payload: string }
@@ -275,24 +269,7 @@ type KernelTask =
 
 type KernelTaskCallback = KernelTask["callback"];
 
-const adapterDeliveryRouteSchema = z.object({
-  kind: z.literal("adapter"),
-  runId: z.string(),
-  processId: z.string(),
-  uid: z.number().int().nonnegative(),
-  destination: z.object({
-    kind: z.literal("adapter"),
-    adapter: z.string(),
-    accountId: z.string(),
-    actorId: z.string(),
-    surface: adapterSurfaceSchema,
-  }),
-  replyToId: z.string().optional(),
-  routeGeneration: z.string().optional(),
-});
-
 const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
-  z.object({ callback: z.literal("onMemoryReview"), payload: z.number().int().nonnegative() }),
   z.object({
     callback: z.literal("onAdapterRouteDelivery"),
     payload: z.object({
@@ -304,9 +281,6 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       attempt: z.number().int().positive(),
     }),
   }),
-  // Decode notices persisted by the staged approval implementation so alarms can retire them.
-  z.object({ callback: z.literal("onProcessApprovalNotice"), payload: z.object({ pid: z.string(), runId: z.string(), requestId: z.string() }) }),
-  z.object({ callback: z.literal("onIpcCallDelivery"), payload: z.string() }),
   z.object({
     callback: z.literal("onIpcCallTimeout"),
     payload: ipcCallTimeoutPayloadSchema,
@@ -322,21 +296,6 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       deliveryId: z.string(),
     }),
   }),
-  z.object({
-    callback: z.literal("onProcessDeliveryNotice"),
-    payload: z.object({
-      noticeId: z.string(),
-      runId: z.string(),
-      processId: z.string(),
-      deliveryKind: z.enum(["hil", "message", "final"]),
-      deliveryId: z.string().optional(),
-      requestId: z.string().optional(),
-      state: z.enum(["permanent", "ambiguous", "exhausted"]),
-      message: z.string(),
-      route: adapterDeliveryRouteSchema.optional(),
-      cleanupRunRoute: z.boolean().optional(),
-    }),
-  }),
   z.object({ callback: z.literal("onRouteExpired"), payload: z.string() }),
   z.object({ callback: z.literal("onScheduleDue"), payload: z.string() }),
   z.object({
@@ -346,7 +305,7 @@ const KERNEL_TASK_SCHEMA = z.discriminatedUnion("callback", [
       generation: z.number().int().nonnegative(),
     }),
   }),
-  z.object({ callback: z.literal("onShipEvents"), payload: z.number().int().nonnegative() }),
+  z.object({ callback: z.literal("onEvents"), payload: z.null() }),
   z.object({ callback: z.literal("onOwnerNotices"), payload: z.number().int().nonnegative() }),
   z.object({ callback: z.literal("onEventUpkeep"), payload: z.null() }),
   z.object({ callback: z.literal("onLedgerRotate"), payload: z.string() }),
@@ -413,7 +372,7 @@ export function kernelRuntimes(host: Kernel) {
     processOutput: new ProcessOutput(host),
     federationRuntime: new FederationRuntime(host),
     responsibilityRuntime: new ResponsibilityRuntime(host),
-    shipEventRuntime: new ShipEventRuntime(host),
+    eventRuntime: new EventRuntime(host),
     ownerNoticeRuntime: new OwnerNoticeRuntime(host),
     browserHandoffs: new BrowserHandoffRuntime(host),
     ipc: new IpcRuntime(host),
@@ -456,7 +415,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   readonly schedules: ScheduleStore;
   readonly mailboxes: MailboxStore;
   readonly responsibilities: ResponsibilityStore;
-  readonly shipEvents: ShipEventStore;
+  readonly events: EventStore;
   readonly ownerNotices: OwnerNoticeStore;
   readonly noticeRules: NoticeRuleStore;
   readonly eventSources: EventSourceStore;
@@ -481,7 +440,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   declare readonly scheduleRuntime: ScheduleRuntime;
   declare readonly ipc: IpcRuntime;
   declare readonly responsibilityRuntime: ResponsibilityRuntime;
-  declare readonly shipEventRuntime: ShipEventRuntime;
+  declare readonly eventRuntime: EventRuntime;
   declare readonly ownerNoticeRuntime: OwnerNoticeRuntime;
   declare readonly federationRuntime: FederationRuntime;
   declare readonly processOutput: ProcessOutput;
@@ -561,8 +520,11 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
     this.mailboxes = new MailboxStore(sql);
 
-    this.responsibilities = new ResponsibilityStore(ctx.storage, (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"));
-    this.shipEvents = new ShipEventStore(ctx.storage);
+    this.responsibilities = new ResponsibilityStore(ctx.storage, {
+      changed: (ownerUid) => this.connectionRuntime.broadcastToUserUid(ownerUid, "r12y.changed"),
+      settled: (record) => memoryReviewSettled(this, record),
+    });
+    this.events = new EventStore(ctx.storage);
     this.ownerNotices = new OwnerNoticeStore(ctx.storage);
     // Fires once per owner, when their first sign-in (or an earlier first message) opens the welcome.
     this.welcome = new InitialOnboarding(ctx.storage, this.responsibilities, () => {
@@ -601,24 +563,27 @@ export class Kernel extends DurableObject<GatewayEnv> {
     this.mcp.restoreConnectionsFromStorage();
 
     this.connectionRuntime.rehydrateConnections();
-    for (const callId of this.ipcCalls.recoverDeliveryIds()) {
-      this.ipc.queueIpcCallDelivery(callId);
-    }
     ctx.waitUntil(this.responsibilityRuntime.recoverResponsibilityWakes().catch((error) => {
       console.warn(
         "[Kernel] Failed to recover responsibility wakes:",
         error instanceof Error ? error.message : String(error),
       );
     }));
-    ctx.waitUntil(this.shipEventRuntime.recover().catch((error) => {
+    ctx.waitUntil(this.eventRuntime.recover().catch((error) => {
       console.warn(
-        "[Kernel] Failed to recover Ship events:",
+        "[Kernel] Failed to recover event deliveries:",
         error instanceof Error ? error.message : String(error),
       );
     }));
     ctx.waitUntil(this.ownerNoticeRuntime.recover().catch((error) => {
       console.warn(
         "[Kernel] Failed to recover owner notices:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }));
+    ctx.waitUntil(recoverMemoryReviews(this).catch((error) => {
+      console.warn(
+        "[Kernel] Failed to recover memory reviews:",
         error instanceof Error ? error.message : String(error),
       );
     }));
@@ -770,7 +735,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return receiveWebhook(sourceId, token, new Headers(headers), body, this.buildKernelContext({ callerOwnerUid: row.owner_uid }));
   }
 
-  /** One pending task, moved earlier when a source would go quiet or a body expire sooner. */
+  /** One pending task, moved earlier when a source would go quiet sooner. */
   private async queueEventUpkeep(excludeTaskId?: string): Promise<void> {
     const next = this.eventSources.nextUpkeepAt();
     if (next === null) return;
@@ -789,7 +754,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       await this.schedule(new Date(Date.now() + MANAGED_LIFECYCLE_RECHECK_MS), "onEventUpkeep", null, { idempotent: true, excludeTaskId: taskId });
       return;
     }
-    this.eventSources.prune(Date.now());
     const owners = noteSilentSources(this.eventSources, this.ownerNotices, this.auth, Date.now());
     for (const ownerUid of owners) await this.ownerNoticeRuntime.queue(ownerUid);
     await this.queueEventUpkeep(taskId);
@@ -863,7 +827,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       identityLinks: this.adapters.identityLinks,
       targets: this.targets,
       responsibilities: this.responsibilities,
-      shipEvents: this.shipEvents,
+      events: this.events,
       shipSummary: async (pid) => await (await getProcessByPid(pid, this.installationId)).operatorRunSummary(runLimit),
       now: () => Date.now(),
     });
@@ -986,7 +950,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
 
   async alarm(): Promise<void> {
     if (this.retirement.state) return;
-    await this.tasks.alarm();
+    // A timer that appends an event kicks the runner, which then delivers in the same alarm.
+    await this.tasks.alarm({ followUps: true });
   }
 
   schedule(
@@ -1008,17 +973,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
     task: DurableTask<KernelTask>,
   ): Promise<void> {
     switch (task.callback) {
-      case "onMemoryReview":
-        await runMemoryReview(this, task.payload, task.id);
-        return;
-      case "onProcessApprovalNotice":
-        // Child approvals reach the human through registry signals and adapter routes.
-        return;
       case "onAdapterRouteDelivery":
         await this.adapterDelivery.onAdapterRouteDelivery(task.payload);
-        return;
-      case "onIpcCallDelivery":
-        await this.ipc.onIpcCallDelivery(task.payload);
         return;
       case "onIpcCallTimeout":
         await this.ipc.onIpcCallTimeout(task.payload, task);
@@ -1045,9 +1001,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
       case "onFederationInbox":
         await this.federationRuntime.onFederationInbox(task.payload);
         return;
-      case "onProcessDeliveryNotice":
-        await this.adapterDelivery.onProcessDeliveryNotice(task.payload);
-        return;
       case "onRouteExpired":
         await this.transport.onRouteExpired(task.payload);
         return;
@@ -1057,8 +1010,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
       case "onResponsibilityWake":
         await this.responsibilityRuntime.onResponsibilityWake(task.payload, task);
         return;
-      case "onShipEvents":
-        await this.shipEventRuntime.onShipEvents(task.payload, task);
+      case "onEvents":
+        await this.eventRuntime.onEvents(task);
         return;
       case "onOwnerNotices":
         await this.ownerNoticeRuntime.onOwnerNotices(task.payload, task);
@@ -1086,30 +1039,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     processId: string,
     frame: ProcessOutboundFrame,
     approvedTarget?: ProcessApprovalTarget,
-  ): Promise<Frame | InternalResponseFrame<"proc.message.commit"> | null> {
+  ): Promise<Frame | null> {
     try { this.retirement.assertActive(); } catch (error) {
       await cancelUnlockedBody("body" in frame ? frame.body : undefined, "Installation admission is closed");
       throw error;
     }
     if (frame.type === "req") {
-      if (frame.call === "proc.message.commit") {
-        try {
-          return {
-            type: "res",
-            id: frame.id,
-            ok: true,
-            data: {
-              message: await this.processOutput.commitProcessMessage(processId, frame.args),
-            },
-          };
-        } catch (error) {
-          return errFrame(
-            frame.id,
-            500,
-            error instanceof Error ? error.message : String(error),
-          );
-        }
-      }
       try {
         return await this.handleProcessReq(processId, frame, approvedTarget);
       } finally {
@@ -1144,7 +1079,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       }
       const delivered = this.processOutput.enqueueProcessSignal(processId, processFrame, typedUserFrame);
       if (typedUserFrame) {
-        this.ipc.completeIpcCallsForProcessSignal(processId, typedUserFrame);
+        await this.ipc.completeIpcCallsForProcessSignal(processId, typedUserFrame);
       }
       if (
         frame.signal === "proc.run.finished"
@@ -1158,6 +1093,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     }
 
     return null;
+  }
+
+  /** Commits a user-visible message from one of a Process's runs. */
+  async commitProcessMessage(processId: string, args: ProcessMessageCommitArgs): Promise<ConversationMessage> {
+    this.retirement.assertActive();
+    return await this.processOutput.commitProcessMessage(processId, args);
   }
 
       async acceptProcessRunStream(
@@ -1694,7 +1635,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       schedules: this.schedules,
       mailboxes: this.mailboxes,
       responsibilities: this.responsibilities,
-      shipEvents: this.shipEvents,
+      events: this.eventRuntime,
       ownerNotices: this.ownerNotices,
       noticeRules: this.noticeRules,
       eventSources: this.eventSources,
@@ -1724,7 +1665,6 @@ export class Kernel extends DurableObject<GatewayEnv> {
         await this.cancelSchedule(wakeScheduleId);
       },
       reconcileResponsibilityWake: this.responsibilityRuntime.reconcileResponsibilityWake.bind(this.responsibilityRuntime),
-      queueShipEvents: this.shipEventRuntime.queue.bind(this.shipEventRuntime),
       queueOwnerNotices: this.ownerNoticeRuntime.queue.bind(this.ownerNoticeRuntime),
       queueEventUpkeep: () => this.queueEventUpkeep(),
       trackBrowserHandoff: this.browserHandoffs.track.bind(this.browserHandoffs),

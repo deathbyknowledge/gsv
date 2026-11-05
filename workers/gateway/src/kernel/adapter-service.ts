@@ -40,9 +40,6 @@ import type {
   GatewayEnv,
 } from "../runtime-env";
 import type {
-  SurfaceRouteRecord,
-} from "./surface-routes";
-import type {
   AdapterStatusRecord,
 } from "./adapter-status";
 import {
@@ -76,21 +73,6 @@ type AdapterBindingEnv = GatewayEnv & Record<
 >;
 
 const adapterStatusListSchema = z.array(adapterAccountStatusSchema);
-
-export type AdapterIngressWorkReturnRecovery = {
-  kind: "work_return";
-  uid: number;
-  workPid: string;
-  route: {
-    adapter: string;
-    accountId: string;
-    actorId: string;
-    surfaceKind: "dm";
-    surfaceId: string;
-    threadId?: string;
-    mode: SurfaceRouteRecord["mode"];
-  };
-};
 
 export function resolveAdapterService(
   env: GatewayEnv,

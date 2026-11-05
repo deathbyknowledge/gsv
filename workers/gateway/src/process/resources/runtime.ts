@@ -22,8 +22,9 @@ import type { RunOutputMedia } from "../run/state";
 import type { StagedResourceWriteArgs, StagedResourceWriteResult } from "../internal/contracts";
 import { exactBodyLengthSchema } from "../internal/schemas";
 import { stableOpaqueId } from "../../shared/stable-id";
-import type { InternalRequestFrame } from "../../protocol/process-frames";
 import type {
+  ProcessResourcesRetainArgs,
+  ProcessResourceWriteArgs,
   ProcessRunAttachArgs,
   ProcessRunAttachResult,
   ProcessRunStagedArgs,
@@ -770,21 +771,21 @@ export class ProcessResources {
   }
 
   async handleProcessResourcesRetain(
-    frame: InternalRequestFrame<"proc.resources.retain">,
+    args: ProcessResourcesRetainArgs,
     signal: AbortSignal,
   ): Promise<ResourceBlock[]> {
     if (this.host.killed || !this.host.isInitialized()) {
       throw new Error("Process no longer exists");
     }
-    const batchId = frame.args.batchId.trim();
+    const batchId = args.batchId.trim();
     if (!batchId || batchId.length > 256) {
       throw new Error("Resource retention batch id is invalid");
     }
-    if (frame.args.resources.length === 0) return [];
-    if (frame.args.resources.length > MAX_MESSAGE_MEDIA_ITEMS) {
+    if (args.resources.length === 0) return [];
+    if (args.resources.length > MAX_MESSAGE_MEDIA_ITEMS) {
       throw new Error(`Resource batch exceeds ${MAX_MESSAGE_MEDIA_ITEMS} items`);
     }
-    const resources = frame.args.resources.map((resource) => resourceBlockSchema.parse(resource));
+    const resources = args.resources.map((resource) => resourceBlockSchema.parse(resource));
     let totalBytes = 0;
     for (const resource of resources) {
       if (resource.ref.expiresAt !== undefined && resource.ref.expiresAt <= Date.now()) {
@@ -841,21 +842,21 @@ export class ProcessResources {
   }
 
   async handleProcessResourceWrite(
-    frame: InternalRequestFrame<"proc.resource.write">,
+    args: ProcessResourceWriteArgs,
+    body: FrameBody,
   ): Promise<ResourceBlock> {
-    const body = frame.body;
     if (body.length === undefined || body.length > MAX_MESSAGE_MEDIA_PART_BYTES) {
       await body.stream.cancel("Resource body length is invalid").catch(() => {});
       throw new Error(`Resource body must be at most ${MAX_MESSAGE_MEDIA_PART_BYTES} bytes`);
     }
     const result = await this.storeIncomingResource(
       {
-        type: frame.args.mediaType,
-        mimeType: frame.args.contentType,
-        mediaId: frame.args.resourceId,
-        filename: frame.args.filename,
-        duration: frame.args.duration,
-        transcription: frame.args.transcription,
+        type: args.mediaType,
+        mimeType: args.contentType,
+        mediaId: args.resourceId,
+        filename: args.filename,
+        duration: args.duration,
+        transcription: args.transcription,
       },
       body,
     );
@@ -872,7 +873,7 @@ export class ProcessResources {
       if (
         !object ||
         !this.isValidOwnedArchiveObject(rewrite.key, object, {
-          expectedContentType: frame.args.contentType,
+          expectedContentType: args.contentType,
         })
       ) {
         throw new Error("Stored resource archive is invalid");
@@ -885,13 +886,13 @@ export class ProcessResources {
           target: "gsv",
           path: rewrite.path,
           revision: object.httpEtag,
-          contentType: frame.args.contentType,
+          contentType: args.contentType,
           size: object.size,
         },
-        mediaType: frame.args.mediaType,
-        filename: frame.args.filename,
-        duration: frame.args.duration,
-        transcription: frame.args.transcription,
+        mediaType: args.mediaType,
+        filename: args.filename,
+        duration: args.duration,
+        transcription: args.transcription,
       });
     } catch (error) {
       await this.host.storage.delete(sourceKey).catch(() => {});
@@ -912,14 +913,14 @@ export class ProcessResources {
     try {
       for (const raw of input) {
         const parsed = resourceBlockSchema.safeParse(raw);
-        if (!parsed.success) throw new Error("proc.run.attach media requires a valid resource");
+        if (!parsed.success) throw new Error("Attached media requires a valid resource");
         const item = parsed.data;
         if (!Number.isSafeInteger(item.ref.size) || item.ref.size < 0) {
-          throw new Error("proc.run.attach media requires an exact size");
+          throw new Error("Attached media requires an exact size");
         }
         if (item.ref.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
           throw new Error(
-            `proc.run.attach media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
+            `Attached media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
           );
         }
         const sourceId = JSON.stringify([item.ref.target, item.ref.path, item.ref.revision]);
@@ -928,7 +929,7 @@ export class ProcessResources {
         totalBytes += item.ref.size;
         if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
           throw new Error(
-            `proc.run.attach media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+            `Attached media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
           );
         }
         const retained = await this.retainResource(item, {
@@ -993,15 +994,15 @@ export class ProcessResources {
     }
     const runId = args.runId.trim();
     if (!runId) {
-      return { ok: false, error: "proc.run.attach requires runId" };
+      return { ok: false, error: "Attach requires runId" };
     }
     if (args.media.length === 0) {
-      return { ok: false, error: "proc.run.attach requires media" };
+      return { ok: false, error: "Attach requires media" };
     }
     if (args.media.length > MAX_MESSAGE_MEDIA_ITEMS) {
       return {
         ok: false,
-        error: `proc.run.attach accepts at most ${MAX_MESSAGE_MEDIA_ITEMS} media items`,
+        error: `Attach accepts at most ${MAX_MESSAGE_MEDIA_ITEMS} media items`,
       };
     }
     const identity = this.host.identity;
@@ -1096,13 +1097,13 @@ export class ProcessResources {
       if (media.length > MAX_MESSAGE_MEDIA_ITEMS) {
         return {
           ok: false,
-          error: `proc.run.attach accepts at most ${MAX_MESSAGE_MEDIA_ITEMS} media items`,
+          error: `Attach accepts at most ${MAX_MESSAGE_MEDIA_ITEMS} media items`,
         };
       }
       if (combinedBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
         return {
           ok: false,
-          error: `proc.run.attach media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+          error: `Attached media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
         };
       }
 

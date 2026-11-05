@@ -2,8 +2,9 @@
  * Process DO — the composition root for the "smart process" agent loop.
  *
  * Mutable state (messages, tool calls, metadata) is managed by ProcessStore's
- * SQLite-backed repositories. The Process communicates with the Kernel through
- * recvFrame RPC in both directions.
+ * SQLite-backed repositories. The Kernel sends public syscall frames, their
+ * answers and signals through recvFrame, and makes its own calls through typed
+ * methods such as deliverEvent; the Process reaches the Kernel the same ways.
  *
  * Agent loop: user message → LLM call → tool dispatch → collect results →
  * LLM call → ... → proc.run.finished signal.
@@ -17,9 +18,22 @@ import { processOperatorSummary, type ProcessOperatorSummary } from "./operator-
 import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
 import { InstallationRetirement, durableResourceName, stateWithRetirementStorage, RESOURCE_IDENTITY_KEY, inspectResourceStorage, attachDurableResourceIdentity } from "../installation/retirement";
 import { DurableObject } from "cloudflare:workers";
-import type { SignalFrame } from "../protocol/frames";
-import type { ProcessIdentity, ProcKillResult, ProcResetResult } from "@humansandmachines/gsv/protocol";
-import type { ProcessInboundFrame } from "../protocol/process-frames";
+import type { FrameBody, SignalFrame } from "../protocol/frames";
+import type { ProcessIdentity, ProcKillResult, ProcResetResult, ResourceBlock } from "@humansandmachines/gsv/protocol";
+import type {
+  ProcessEventDeliverArgs,
+  ProcessEventDeliverResult,
+  ProcessInboundFrame,
+  ProcessResourcesRetainArgs,
+  ProcessResourceWriteArgs,
+  ProcessRunAttachArgs,
+  ProcessRunAttachResult,
+  ProcessRunStagedArgs,
+  ProcessRunStagedResult,
+  ProcessToolAuthorizeArgs,
+  ProcessUnavailable,
+} from "../protocol/process-frames";
+import { deliverProcessEvent } from "./controller/events";
 import { createGenerationService } from "../inference/execution-client";
 import { ProcessStore } from "./store";
 import { sendFrameToKernel } from "../shared/utils";
@@ -212,20 +226,71 @@ export class Process extends DurableObject<GatewayEnv> {
     });
   }
 
-  /**
-   * Single entry point — called by the Kernel to deliver frames.
-   */
+  /** The Kernel's entry for public syscall frames, their answers and signals. */
   async recvFrame(frame: ProcessInboundFrame) {
+    await this.admit("body" in frame ? frame.body : undefined);
+    return await this.controller.recvFrame(frame);
+  }
+
+  /** Records a Kernel event in history, or starts the run it asks for. */
+  async deliverEvent(args: ProcessEventDeliverArgs): Promise<ProcessEventDeliverResult | ProcessUnavailable> {
+    return await this.internal(undefined, () => deliverProcessEvent(this, args));
+  }
+
+  /** Applies this Process's run policy to an operation nested under one of its tools. */
+  async authorizeTool(cancelId: string, args: ProcessToolAuthorizeArgs): Promise<{ approved: boolean } | ProcessUnavailable> {
+    return await this.internal(undefined, async () => ({
+      approved: await this.controller.handleCancellableRequest(cancelId, (signal) =>
+        this.tools.authorizeNestedTool(args, signal)),
+    }));
+  }
+
+  /** Retains exact copies of resources a message references. */
+  async retainResources(cancelId: string, args: ProcessResourcesRetainArgs): Promise<{ resources: ResourceBlock[] } | ProcessUnavailable> {
+    return await this.internal(undefined, async () => ({
+      resources: await this.controller.handleCancellableRequest(cancelId, (signal) =>
+        this.resources.handleProcessResourcesRetain(args, signal)),
+    }));
+  }
+
+  /** Cancels a call made with this id, or one that arrives with it later. */
+  async cancelCall(cancelId: string, reason: string): Promise<void> {
+    await this.internal(undefined, async () => this.controller.cancelRequest({ id: cancelId, reason }));
+  }
+
+  /** Stores one inbound media body as a resource of this Process. */
+  async writeResource(args: ProcessResourceWriteArgs, body: FrameBody): Promise<{ resource: ResourceBlock } | ProcessUnavailable> {
+    return await this.internal(body, async () => ({
+      resource: await this.resources.handleProcessResourceWrite(args, body),
+    }));
+  }
+
+  /** Attaches media to the active run's reply. */
+  async attachRunMedia(args: ProcessRunAttachArgs): Promise<ProcessRunAttachResult | ProcessUnavailable> {
+    return await this.internal(undefined, () => this.resources.handleProcRunAttach(args));
+  }
+
+  /** Counts the media staged for the active run's reply. */
+  async countStagedRunMedia(args: ProcessRunStagedArgs): Promise<ProcessRunStagedResult | ProcessUnavailable> {
+    return await this.internal(undefined, async () => this.resources.handleProcRunStaged(args));
+  }
+
+  /** Admits a typed Kernel call, then runs it under the controller's lifecycle rules. */
+  private async internal<T>(body: FrameBody | undefined, run: () => Promise<T>): Promise<T | ProcessUnavailable> {
+    await this.admit(body);
+    return await this.controller.internalCall(body, run);
+  }
+
+  /** A retired or starting Process admits no Kernel call; an unread body is cancelled. */
+  private async admit(body: FrameBody | undefined): Promise<void> {
     try {
       this.retirement.assertActive();
       await this.startup;
       this.retirement.assertActive();
     } catch (error) {
-      const body = "body" in frame ? frame.body : undefined;
       if (body && !body.stream.locked) await body.stream.cancel("Process admission is closed").catch(() => {});
       throw error;
     }
-    return await this.controller.recvFrame(frame);
   }
 
   handleRunStopped(runId: string): boolean {

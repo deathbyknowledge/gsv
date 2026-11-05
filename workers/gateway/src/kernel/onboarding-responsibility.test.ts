@@ -73,9 +73,9 @@ describe("initial onboarding responsibility", () => {
       const revision = store.revision(1000);
       expect(welcome.activate(1000, 3_000)).toBe(true);
       expect(store.revision(1000)).toBe(revision);
-      const batch = store.createReadyBatch(1000, 3_000)!;
-      expect(batch.responsibilities.map(({ id }) => id)).toEqual([seed.id]);
-      store.markBatchDelivered(batch.id);
+      const batch = store.takeReadyBatch(1000, 3_000)!;
+      expect(batch.ids).toEqual([seed.id]);
+      store.markEventDelivered(1000, batch.ids, 3_000);
       store.update({ ownerUid: 1000, id: seed.id,
         patch: { state: "waiting", blocker: "Waiting for the user to respond to the welcome", nextCheckAtMs: null },
         actor: { kind: "process", processId: "ship" }, observedByShip: true, now: 4_000 });

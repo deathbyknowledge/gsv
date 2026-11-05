@@ -2,26 +2,28 @@ import { expect, it, vi } from "vitest";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import * as utils from "../shared/utils";
-import { ROOT_IDENTITY } from "../process/do-test-harness";
+import { runSqlMigrations } from "../schema/runner";
 import type { Kernel } from "./do";
+import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT } from "./schema/migrations";
 
-it("retires persisted approval notices without reading a child or waking a parent", async () => {
+it("drops persisted approval notices on upgrade, so no alarm decodes their retired task", async () => {
   const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
   await runInDurableObject(stub, async (kernel: Kernel, state) => {
-    kernel.procs.spawn("parent", ROOT_IDENTITY, { ownerUid: 1000 });
-    kernel.procs.spawn("child", ROOT_IDENTITY, { ownerUid: 1000, parentPid: "parent" });
-    kernel.procs.updateRuntimeState("child", { state: "waiting_hil", activeRunId: "child-run" });
-    kernel.ipcCalls.create({ callId: "delegation", uid: 1000, sourcePid: "parent", sourceRunId: "parent-run",
-      targetPid: "child", targetRunId: "child-run", deadlineAt: Date.now() + 60_000 });
-    const gate = vi.spyOn(kernel.onboarding, "managedWorkGate").mockResolvedValue({ allowed: true });
+    await state.storage.deleteAll();
+    runSqlMigrations(state.storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter(({ id }) => id <= 91));
+    state.storage.sql.exec(
+      `INSERT INTO cf_agents_schedules (id, callback, payload, type, time)
+       VALUES ('approval-notice', 'onProcessApprovalNotice', '{"pid":"child","runId":"child-run","requestId":"request"}', 'scheduled', 0)`,
+    );
+    runSqlMigrations(state.storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS);
+    expect(state.storage.sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onProcessApprovalNotice'").toArray()).toEqual([]);
     const send = vi.spyOn(utils, "sendFrameToProcess").mockRejectedValue(new Error("No model notice should be sent"));
+    const deliver = vi.spyOn(utils, "deliverEventToProcess").mockRejectedValue(new Error("No model notice should be sent"));
     try {
-      const task = await kernel.schedule(0, "onProcessApprovalNotice", {
-        pid: "child", runId: "child-run", requestId: "request",
-      });
       await kernel.alarm();
       expect(send).not.toHaveBeenCalled();
-      expect(state.storage.sql.exec("SELECT id FROM cf_agents_schedules WHERE id = ?", task.id).toArray()).toEqual([]);
-    } finally { send.mockRestore(); gate.mockRestore(); }
+      // Test files share modules, so the spy also sees Kernels other tests left with work due.
+      expect(deliver.mock.calls.filter(([installationId]) => installationId === kernel.installationId)).toEqual([]);
+    } finally { send.mockRestore(); deliver.mockRestore(); }
   });
 });

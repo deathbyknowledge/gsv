@@ -246,10 +246,11 @@ gsv event emit SOURCE --stdin
 ```
 
 Lets a script on any computer tell you something happened, without a public address. Add the
-source first, in Work or with `gsv run event source add NAME`, and read what arrived there or with
-`gsv run event list`. A new source tells you and leaves your Ship out; change that under
+source first, in Work or with `gsv run event source add NAME`, and read what arrived in the last
+30 days there or with `gsv run event list`. A new source tells you and leaves your Ship out; change that under
 Settings → When things happen.
 With `--stdin`, each line is one JSON object with a `title` and optionally `id`, `preview` and `body`.
+An event can take up to 64 KiB.
 Repeating an `id` is ignored, so a script can re-read the same items.
 
 ### Routines

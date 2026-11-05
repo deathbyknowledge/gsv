@@ -8,11 +8,12 @@ import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import * as personalController from "./personal-controller";
 import { handleSignalWatch } from "./signals";
-import { deliverTargetConnectionEvent } from "./target-events";
 
 async function fixture(work: (kernel: Kernel, root: KernelContext) => Promise<void>) {
   const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
   await runInDurableObject(stub, async (kernel: Kernel) => {
+    // The tests run each event pass themselves; no alarm runs one behind them.
+    vi.spyOn(kernel.ctx.storage, "setAlarm").mockResolvedValue(undefined);
     const password = await hashPassword("event-fixture-password");
     kernel.auth.setShadow(makeShadowEntry("root", password));
     for (const [uid, username] of [[1000, "removed"], [1001, "survivor"], [2000, "agent"]] as const) {
@@ -24,7 +25,13 @@ async function fixture(work: (kernel: Kernel, root: KernelContext) => Promise<vo
     const root = kernel.buildKernelContext({
       peer: testPeer({ account: { uid: 0, gid: 0, gids: [0], username: "root", home: "/root", cwd: "/root" }, calls: ["*"] }),
     });
-    await work(kernel, root);
+    try {
+      await work(kernel, root);
+    } finally {
+      kernel.ctx.storage.sql.exec("DELETE FROM cf_agents_schedules");
+      await kernel.ctx.storage.deleteAlarm();
+      vi.restoreAllMocks();
+    }
   });
 }
 
@@ -36,16 +43,42 @@ function readyResponsibility(kernel: Kernel, ownerUid: number) {
   }).record;
 }
 
-function eventTransport() {
-  return vi.spyOn(processTransport, "sendFrameToProcess").mockImplementation(async (_installation, _pid, frame) => {
-    if (frame.type !== "req" || (frame.call !== "proc.runtime.event.deliver" && frame.call !== "proc.event.deliver")) {
-      throw new Error("Unexpected event fixture frame");
-    }
-    return { type: "res", id: frame.id, ok: true, data: { eventId: frame.args.eventId, runId: frame.args.eventId, queued: false } };
-  });
+function processDelivery() {
+  return vi.spyOn(processTransport, "deliverEventToProcess").mockImplementation(async (_installation, _pid, args) => (
+    { eventId: args.eventId, runId: args.eventId, queued: false }
+  ));
+}
+
+/** Fires an owner's wake timer, then one runner pass, as the Kernel alarm would. */
+async function wakeAndDeliver(kernel: Kernel, ownerUid: number) {
+  await kernel.responsibilityRuntime.onResponsibilityWake(kernel.responsibilities.wakeState(ownerUid));
+  await kernel.eventRuntime.onEvents({ id: `task:${crypto.randomUUID()}` });
+}
+
+function wakeBatches(kernel: Kernel, ownerUid: number) {
+  return kernel.ctx.storage.sql.exec<{ seq: number; state: string; attempt_count: number; body_json: string }>(
+    `SELECT e.seq, d.state, d.attempt_count, e.body_json FROM events e JOIN deliveries d ON d.seq = e.seq
+     WHERE e.type = 'responsibility.ready' AND e.owner_uid = ? ORDER BY e.seq`,
+    ownerUid,
+  ).toArray().map(({ body_json, ...row }) => ({ ...row, body: JSON.parse(body_json) }));
+}
+
+function removeAccount(kernel: Kernel, uid: number) {
+  kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (?, ?)", uid, Date.now());
 }
 
 const targetEvent = { targetId: "machine:shared", event: "connected", platform: "linux", observedAt: Date.now() } as const;
+
+/** Each target event's watch, and how its delivery stands. */
+function targetDeliveries(kernel: Kernel) {
+  return Object.fromEntries(kernel.ctx.storage.sql.exec<{ state: string; body_json: string }>(
+    "SELECT d.state, e.body_json FROM events e JOIN deliveries d ON d.seq = e.seq WHERE e.type = 'target.status' ORDER BY e.seq",
+  ).toArray().map(({ state, body_json }) => [JSON.parse(body_json).watchId, state]));
+}
+
+function watchStatus(kernel: Kernel, watchId: string) {
+  return kernel.ctx.storage.sql.exec<{ status: string }>("SELECT status FROM signal_watches WHERE watch_id = ?", watchId).one().status;
+}
 
 function targetWatch(kernel: Kernel, ownerUid: number, runAsUid: number, audience: "person" | "both") {
   const account = kernel.auth.getPasswdByUid(runAsUid)!;
@@ -60,127 +93,138 @@ function targetWatch(kernel: Kernel, ownerUid: number, runAsUid: number, audienc
 }
 
 describe("new Kernel event admission after account removal", () => {
-  it.each(["before wake", "during allowed gate", "during restricted gate"] as const)("does not prepare a new responsibility batch after removal %s", async (timing) => {
-    const send = eventTransport();
+  it.each(["before its wake", "after its batch was taken", "while its Ship is found"] as const)("delivers no responsibility batch after removal %s", async (timing) => {
+    const send = processDelivery();
+    const ship = Promise.withResolvers<string>();
     const ensureShip = vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+    if (timing === "while its Ship is found") ensureShip.mockImplementationOnce(() => ship.promise);
     try {
       await fixture(async (kernel) => {
         const record = readyResponsibility(kernel, 1000);
         const control = readyResponsibility(kernel, 1001);
-        await kernel.responsibilityRuntime.reconcileResponsibilityWake(1000);
-        const state = kernel.responsibilities.wakeState(1000);
-        if (timing === "before wake") {
-          kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
-          await kernel.responsibilityRuntime.onResponsibilityWake(state, { id: state.taskId! });
+        if (timing === "before its wake") {
+          removeAccount(kernel, 1000);
+          await wakeAndDeliver(kernel, 1000);
+          // Nothing was taken, so the record still waits for a change of its own.
+          expect(kernel.responsibilities.get(1000, record.id)).toEqual(record);
+          expect(wakeBatches(kernel, 1000)).toEqual([]);
         } else {
-          const gate = Promise.withResolvers<Awaited<ReturnType<typeof kernel.onboarding.managedWorkGate>>>();
-          const admission = vi.spyOn(kernel.onboarding, "managedWorkGate").mockImplementationOnce(() => gate.promise);
-          const pending = kernel.responsibilityRuntime.onResponsibilityWake(state, { id: state.taskId! });
-          expect(admission).toHaveBeenCalledTimes(1);
-          kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
-          gate.resolve(timing === "during restricted gate"
-            ? { allowed: false, code: 423, message: "Installation is restricted" }
-            : { allowed: true });
-          await pending;
-          admission.mockRestore();
+          await kernel.responsibilityRuntime.onResponsibilityWake(kernel.responsibilities.wakeState(1000));
+          if (timing === "after its batch was taken") {
+            removeAccount(kernel, 1000);
+            await kernel.eventRuntime.onEvents({ id: "task:removed" });
+          } else {
+            const pass = kernel.eventRuntime.onEvents({ id: "task:removing" });
+            await vi.waitFor(() => expect(ensureShip).toHaveBeenCalledTimes(1));
+            removeAccount(kernel, 1000);
+            ship.resolve("proc:ship");
+            await pass;
+          }
+          expect(wakeBatches(kernel, 1000)).toMatchObject([{ state: "withdrawn", attempt_count: 0 }]);
         }
         expect(send).not.toHaveBeenCalled();
-        expect(ensureShip).not.toHaveBeenCalled();
-        expect(kernel.responsibilities.pendingBatch(1000)).toBeNull();
-        expect(kernel.responsibilities.get(1000, record.id)).toEqual(record);
         expect(kernel.responsibilities.wakeState(1000)).toMatchObject({ taskId: null, scheduledAtMs: null });
         await kernel.responsibilityRuntime.recoverResponsibilityWakes();
         expect(kernel.responsibilities.wakeState(1000)).toMatchObject({ taskId: null, scheduledAtMs: null });
-        await kernel.responsibilityRuntime.onResponsibilityWake(kernel.responsibilities.wakeState(1001));
+        await wakeAndDeliver(kernel, 1001);
         expect(send).toHaveBeenCalledTimes(1);
-        expect(send.mock.calls[0]?.[2]).toMatchObject({ args: { event: { responsibilityIds: [control.id] } } });
+        expect(send.mock.calls[0]?.[2]).toMatchObject({
+          event: { kind: "responsibility.ready", payload: { responsibilityIds: [control.id] } },
+          responsibilities: { ids: [control.id] },
+        });
       });
     } finally { send.mockRestore(); ensureShip.mockRestore(); }
   });
 
-  it("retries the exact already-prepared batch after removal without admitting another batch", async () => {
-    const send = eventTransport();
+  it("retries a batch already attempted before removal without taking another", async () => {
+    const send = processDelivery();
     const ensureShip = vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
     send.mockRejectedValueOnce(new Error("Saved event response was lost"));
     try {
       await fixture(async (kernel) => {
         const first = readyResponsibility(kernel, 1000);
-        await kernel.responsibilityRuntime.onResponsibilityWake(kernel.responsibilities.wakeState(1000));
-        const batch = kernel.responsibilities.pendingBatch(1000)!;
-        expect(batch).toMatchObject({ attemptCount: 1, responsibilities: [{ id: first.id }] });
+        await wakeAndDeliver(kernel, 1000);
+        const [batch] = wakeBatches(kernel, 1000);
+        expect(batch).toMatchObject({ state: "pending", attempt_count: 1, body: { responsibilityIds: [first.id] } });
         const later = readyResponsibility(kernel, 1000);
-        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
-        await kernel.responsibilityRuntime.onResponsibilityWake(kernel.responsibilities.wakeState(1000));
+        removeAccount(kernel, 1000);
+        kernel.ctx.storage.sql.exec("UPDATE deliveries SET next_attempt_at = 0 WHERE seq = ?", batch!.seq);
+        await wakeAndDeliver(kernel, 1000);
         expect(send).toHaveBeenCalledTimes(2);
-        for (const call of send.mock.calls) {
-          expect(call[2]).toMatchObject({ args: { eventId: batch.eventId, event: { responsibilityIds: [first.id] } } });
-        }
-        expect(kernel.responsibilities.pendingBatch(1000)).toBeNull();
+        // The same delivery id, so a Process that saw the first attempt dedupes the retry.
+        const [attempted, retried] = send.mock.calls.map((call) => call[2]);
+        expect(retried).toMatchObject({
+          eventId: attempted!.eventId,
+          event: { payload: { responsibilityIds: [first.id] } },
+          responsibilities: { ids: [first.id] },
+        });
+        expect(wakeBatches(kernel, 1000)).toMatchObject([{ state: "delivered" }]);
         expect(kernel.responsibilities.get(1000, later.id)).toEqual(later);
         expect(kernel.responsibilities.wakeState(1000)).toMatchObject({ taskId: null, scheduledAtMs: null });
-        await kernel.responsibilityRuntime.onResponsibilityWake(kernel.responsibilities.wakeState(1000));
+        await wakeAndDeliver(kernel, 1000);
         expect(send).toHaveBeenCalledTimes(2);
       });
     } finally { send.mockRestore(); ensureShip.mockRestore(); }
   });
 
   it.each(["person", "both"] as const)("fences a fresh %s watch event after owner removal during admission", async (audience) => {
-    const send = eventTransport();
-    try {
-      await fixture(async (kernel) => {
-        const removed = targetWatch(kernel, 1000, 2000, audience);
-        const control = targetWatch(kernel, 1001, 1001, audience);
-        const gate = Promise.withResolvers<Awaited<ReturnType<typeof kernel.onboarding.managedWorkGate>>>();
-        const admission = vi.spyOn(kernel.onboarding, "managedWorkGate").mockImplementationOnce(() => gate.promise);
-        const pending = deliverTargetConnectionEvent(kernel, targetEvent, "transition:removal", kernel.signalWatches.matchTarget(targetEvent.targetId, "target.status"));
-        expect(admission).toHaveBeenCalledTimes(1);
-        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
-        gate.resolve({ allowed: true });
-        await pending;
-        expect(send).toHaveBeenCalledTimes(1);
-        expect(send.mock.calls[0]?.[2]).toMatchObject({ args: { eventId: `transition:removal:${control.watchId}` } });
-        expect(kernel.ctx.storage.sql.exec<{ status: string }>("SELECT status FROM signal_watches WHERE watch_id = ?", removed.watchId).one().status).toBe("failed");
-        admission.mockRestore();
-      });
-    } finally { send.mockRestore(); }
+    const send = processDelivery();
+    await fixture(async (kernel) => {
+      const removed = targetWatch(kernel, 1000, 2000, audience);
+      const control = targetWatch(kernel, 1001, 1001, audience);
+      kernel.connectionRuntime.broadcastTargetStatus(targetEvent.targetId, "connected");
+      const gate = Promise.withResolvers<Awaited<ReturnType<typeof kernel.onboarding.managedWorkGate>>>();
+      const admission = vi.spyOn(kernel.onboarding, "managedWorkGate").mockImplementationOnce(() => gate.promise);
+      const pass = kernel.eventRuntime.onEvents({ id: "task:removal" });
+      expect(admission).toHaveBeenCalledTimes(1);
+      removeAccount(kernel, 1000);
+      gate.resolve({ allowed: true });
+      await pass;
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(targetDeliveries(kernel)).toEqual({ [removed.watchId]: "withdrawn", [control.watchId]: "delivered" });
+      expect(watchStatus(kernel, removed.watchId)).toBe("failed");
+      expect(watchStatus(kernel, control.watchId)).toBe("active");
+    });
   });
 
   it("fences a watch whose run-as account was removed while its owner remains active", async () => {
-    const send = eventTransport();
-    try {
-      await fixture(async (kernel) => {
-        targetWatch(kernel, 1001, 1000, "both");
-        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
-        await deliverTargetConnectionEvent(kernel, targetEvent, "transition:run-as", kernel.signalWatches.matchTarget(targetEvent.targetId, "target.status"));
-        expect(send).not.toHaveBeenCalled();
-        expect(kernel.auth.isAccountDisabled(1001)).toBe(false);
-      });
-    } finally { send.mockRestore(); }
+    const send = processDelivery();
+    await fixture(async (kernel) => {
+      const watch = targetWatch(kernel, 1001, 1000, "both");
+      removeAccount(kernel, 1000);
+      kernel.connectionRuntime.broadcastTargetStatus(targetEvent.targetId, "connected");
+      await kernel.eventRuntime.onEvents({ id: "task:run-as" });
+      expect(send).not.toHaveBeenCalled();
+      expect(targetDeliveries(kernel)).toEqual({ [watch.watchId]: "withdrawn" });
+      expect(kernel.auth.isAccountDisabled(1001)).toBe(false);
+    });
   });
 
   it("keeps an admitted watch delivery's late acknowledgment after removal", async () => {
-    const send = eventTransport();
+    const send = processDelivery();
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    send.mockImplementationOnce(async (_installation, _pid, frame) => {
-      if (frame.type !== "req" || frame.call !== "proc.event.deliver") throw new Error("Unexpected event fixture frame");
+    send.mockImplementationOnce(async (_installation, _pid, args) => {
       entered.resolve();
       await release.promise;
-      return { type: "res", id: frame.id, ok: true, data: { eventId: frame.args.eventId, runId: frame.args.eventId, queued: false } };
+      return { eventId: args.eventId, runId: args.eventId, queued: false };
     });
     try {
       await fixture(async (kernel) => {
         const watch = targetWatch(kernel, 1000, 2000, "both");
-        const pending = deliverTargetConnectionEvent(kernel, targetEvent, "transition:admitted", kernel.signalWatches.matchTarget(targetEvent.targetId, "target.status"));
+        kernel.connectionRuntime.broadcastTargetStatus(targetEvent.targetId, "connected");
+        const pass = kernel.eventRuntime.onEvents({ id: "task:admitted" });
         await entered.promise;
-        kernel.ctx.storage.sql.exec("INSERT INTO account_access (uid, disabled_at) VALUES (1000, ?)", Date.now());
+        removeAccount(kernel, 1000);
         release.resolve();
-        await pending;
+        await pass;
         expect(send).toHaveBeenCalledTimes(1);
-        expect(kernel.ctx.storage.sql.exec<{ status: string }>("SELECT status FROM signal_watches WHERE watch_id = ?", watch.watchId).one().status).toBe("active");
-        await deliverTargetConnectionEvent(kernel, targetEvent, "transition:later", kernel.signalWatches.matchTarget(targetEvent.targetId, "target.status"));
+        expect(targetDeliveries(kernel)).toEqual({ [watch.watchId]: "delivered" });
+        expect(watchStatus(kernel, watch.watchId)).toBe("active");
+        kernel.connectionRuntime.broadcastTargetStatus(targetEvent.targetId, "disconnected");
+        await kernel.eventRuntime.onEvents({ id: "task:later" });
         expect(send).toHaveBeenCalledTimes(1);
       });
-    } finally { release.resolve(); send.mockRestore(); }
+    } finally { release.resolve(); }
   });
 });

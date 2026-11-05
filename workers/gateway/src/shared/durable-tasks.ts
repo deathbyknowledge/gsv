@@ -118,29 +118,36 @@ export class DurableTaskScheduler<Spec extends DurableTaskSpec> {
     return result.rowsWritten > 0;
   }
 
-  async alarm(): Promise<void> {
-    const now = Math.floor(Date.now() / 1_000);
-    const due = this.storage.sql.exec<DurableTaskRow>(
-      `SELECT id, callback, payload, type, time, delayInSeconds, retry_options
-       FROM cf_agents_schedules
-       WHERE time <= ? AND owner_path_key IS NULL
-       ORDER BY time ASC, created_at ASC, id ASC`,
-      now,
-    ).toArray();
+  /**
+   * Runs the due tasks, then re-arms. With `followUps`, it reads once more first: a task that
+   * came due during the alarm, such as a runner a timer kicked, runs in it instead of costing
+   * another, and one that keeps rescheduling itself for now waits for the next alarm.
+   */
+  async alarm({ followUps = false }: { followUps?: boolean } = {}): Promise<void> {
+    for (let read = 0; read < (followUps ? 2 : 1); read += 1) {
+      const due = this.storage.sql.exec<DurableTaskRow>(
+        `SELECT id, callback, payload, type, time, delayInSeconds, retry_options
+         FROM cf_agents_schedules
+         WHERE time <= ? AND owner_path_key IS NULL
+         ORDER BY time ASC, created_at ASC, id ASC`,
+        Math.floor(Date.now() / 1_000),
+      ).toArray();
+      if (due.length === 0) break;
 
-    for (const row of due) {
-      const stillPending = this.storage.sql.exec<{ id: string }>(
-        "SELECT id FROM cf_agents_schedules WHERE id = ? AND owner_path_key IS NULL",
-        row.id,
-      ).toArray()[0];
-      if (!stillPending) continue;
+      for (const row of due) {
+        const stillPending = this.storage.sql.exec<{ id: string }>(
+          "SELECT id FROM cf_agents_schedules WHERE id = ? AND owner_path_key IS NULL",
+          row.id,
+        ).toArray()[0];
+        if (!stillPending) continue;
 
-      const task = taskFromRow(row, this.decode);
-      await this.invokeWithRetry(task);
-      this.storage.sql.exec(
-        "DELETE FROM cf_agents_schedules WHERE id = ? AND owner_path_key IS NULL",
-        task.id,
-      );
+        const task = taskFromRow(row, this.decode);
+        await this.invokeWithRetry(task);
+        this.storage.sql.exec(
+          "DELETE FROM cf_agents_schedules WHERE id = ? AND owner_path_key IS NULL",
+          task.id,
+        );
+      }
     }
     await this.arm();
   }

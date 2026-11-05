@@ -12,6 +12,7 @@ import type {
   ProcMediaInput,
 } from "@humansandmachines/gsv/protocol";
 import {
+  adapterSurfaceSchema,
   resourceBlockSchema,
 } from "@humansandmachines/gsv/protocol";
 import {
@@ -114,6 +115,23 @@ export type UserProcessSignalFrame = z.infer<typeof userProcessSignalFrameSchema
 
 export type AdapterDeliveryRoute = Omit<AdapterRunRoute, "createdAt" | "expiresAt">;
 
+/** A run's messenger route as durable work stores it: where its replies go, and for which run. */
+export const adapterDeliveryRouteSchema = z.object({
+  kind: z.literal("adapter"),
+  runId: z.string(),
+  processId: z.string(),
+  uid: z.number().int().nonnegative(),
+  destination: z.object({
+    kind: z.literal("adapter"),
+    adapter: z.string(),
+    accountId: z.string(),
+    actorId: z.string(),
+    surface: adapterSurfaceSchema,
+  }),
+  replyToId: z.string().optional(),
+  routeGeneration: z.string().optional(),
+});
+
 
 /** Typing announces a delivery that is about to arrive; it never acknowledges a message. */
 export function adapterTypingActivity(route: AdapterDeliveryRoute): AdapterActivity {
@@ -154,22 +172,6 @@ export type AdapterRouteDeliveryRetry = {
   attempt: number;
 };
 
-
-export type ProcessDeliveryNoticeRetry = {
-  noticeId: string;
-  runId: string;
-  processId: string;
-  /** `final` is accepted only for durable tasks created by older gateways. */
-  deliveryKind: "hil" | "message" | "final";
-  deliveryId?: string;
-  requestId?: string;
-  state: "permanent" | "ambiguous" | "exhausted";
-  message: string;
-  /** Owned destination snapshot; absent only on tasks created before this field shipped. */
-  route?: AdapterDeliveryRoute;
-  /** Legacy field ignored because terminal run handling owns route cleanup. */
-  cleanupRunRoute?: boolean;
-};
 
 export function sameRouteOrigin(left: RouteOrigin, right: RouteOrigin): boolean {
   return left.type === right.type && left.id === right.id;

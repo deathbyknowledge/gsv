@@ -1,19 +1,28 @@
-import { describe, expect, it, vi } from "vitest";
-import type { ConversationMessage, OriginMessageRef, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ConversationMessage, JsonObject, OriginMessageRef, ResourceBlock, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
+import type { DurableTaskOptions } from "../../shared/durable-tasks";
+import * as sharedUtils from "../../shared/utils";
+import { spyOnProcessDeliveries } from "../../test-support/process-deliveries";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
 import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
+import { shipConsumer } from "../events/consumers";
+import { isWithdrawn, type ProcessEventDelivery } from "../events/registry";
+import { EventRuntime, type EventRuntimeHost } from "../events/runtime";
+import { EventStore, type LoggedEvent } from "../events/store";
 import { FederationStore, type FederationContactRecord, type FederationOutboxLocalMessage } from "../federation-store";
+import * as personalController from "../personal-controller";
 import { ResponsibilityStore } from "../responsibility-store";
 import { OwnerNoticeStore } from "../owner-notice-store";
-import { ShipEventStore } from "../ship-event-store";
-import { admitContactMessage, admitQueuedContactEvent, bindContactReply, endContactHandling } from "./attention";
+import { admitContactMessage, bindContactReply, contactMessageEvent, endContactHandling } from "./attention";
 import { handleContactPreferencesUpdate } from "./preferences";
 
 const OWNER = { uid: 1000, gid: 1000, gids: [1000], username: "person", home: "/home/person", cwd: "/home/person" };
 const LOCAL_DID = "did:plc:localaaaaaaaaaaaaaaaaaaa";
 const REMOTE_DID = "did:plc:remoteaaaaaaaaaaaaaaaaaa";
 const HUMAN = { kind: "account", uid: OWNER.uid, username: OWNER.username } as const;
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("contact attention admission", () => {
   it.each(["human", "process"] as const)("keeps an accepted contact and new %s messages in People until handed over", async (kind) => {
@@ -40,7 +49,7 @@ describe("contact attention admission", () => {
         topic: "contact.message", pendingCount: 2,
         subject: { contactId: contact.id, contactGeneration: contact.generation, conversationId: contact.conversationId, from: "Remote", preview: "Friday works" },
       });
-      expect(ctx.shipEvents.next(OWNER.uid)).toBeNull();
+      expect(queued(ctx, contact)).toEqual([]);
     });
   });
 
@@ -60,27 +69,170 @@ describe("contact attention admission", () => {
     });
   });
 
-  it("queues each handled message as its own Ship event without rewriting or waking the ledger", async () => {
+  it("appends each handled message as its own event, naming its Conversation message, without rewriting or waking the ledger", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const ctx = context(storage);
       const contact = activate(ctx);
       await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
       const photo = receive(contact, ctx, "human");
-      const caption = receive(contact, ctx, "human");
+      const caption = receive(contact, ctx, "human", undefined, 2);
       expect(admitContactMessage(contact, photo.inbox, photo.message, ctx)).toBe(true);
       const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
       // The title carries the contact's own display name, so the record is marked as outside text.
       expect(work).toMatchObject({ title: "Pending messages from Remote", state: "open", assignee: { kind: "ship" }, details: { contentTrust: "untrusted" } });
       expect(admitContactMessage(contact, caption.inbox, caption.message, ctx)).toBe(true);
       expect(ctx.responsibilities.get(OWNER.uid, work.id)?.revision).toBe(work.revision);
-      expect(ctx.responsibilities.createReadyBatch(OWNER.uid, Date.now())).toBeNull();
+      expect(ctx.responsibilities.takeReadyBatch(OWNER.uid, Date.now())).toBeNull();
 
-      const first = ctx.shipEvents.next(OWNER.uid)!;
-      expect(first).toMatchObject({ eventId: `contact.message:${photo.message.id}`, event: {
-        type: "contact.message", contactId: contact.id, messageId: photo.message.id, from: "Remote", text: "Friday works", responsibilityId: work.id,
+      const [first, second] = queued(ctx, contact);
+      expect(first).toMatchObject({ consumer: shipConsumer(OWNER.uid), lane: "background", event: {
+        type: "contact.message", ownerUid: OWNER.uid, subject: contact.id, key: photo.message.id,
+        actor: { kind: "contact", contactId: contact.id },
+        body: {
+          contactId: contact.id, contactGeneration: contact.generation, conversationId: contact.conversationId,
+          sequence: 1, messageId: photo.message.id, responsibilityId: work.id, ledgerRevision: ctx.responsibilities.revision(OWNER.uid),
+        },
       } });
-      ctx.shipEvents.delivered(first.eventId);
-      expect(ctx.shipEvents.next(OWNER.uid)?.eventId).toBe(`contact.message:${caption.message.id}`);
+      // The Conversation keeps the words and attachments; the event only names them.
+      expect(first!.event.body).not.toHaveProperty("text");
+      expect(second!.event).toMatchObject({ key: caption.message.id, body: { sequence: 2 } });
+    });
+  });
+
+  it("delivers a handled message to Ship as it reads in its Conversation", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const incoming = receive(contact, ctx, "human");
+      const photo = attachment("photo.jpg");
+      const stored = { ...incoming.message, text: "Friday works, see the photo", media: [photo] };
+      const read = readable(stored);
+      admitContactMessage(contact, incoming.inbox, incoming.message, ctx);
+      const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
+      const admittedAt = ctx.responsibilities.revision(OWNER.uid);
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      const deliver = spyOnProcessDeliveries((installationId) => installationId === "installation:test", async (_installation, _pid, args) => (
+        { eventId: args.eventId, runId: args.eventId, queued: false }
+      ));
+      const runner = runtime(storage, ctx);
+
+      await runner.onEvents({ id: "task:contact" });
+
+      expect(read).toHaveBeenCalledExactlyOnceWith({ sequence: 1, messageId: incoming.message.id });
+      const [event] = storage.sql.exec<{ seq: number }>("SELECT seq FROM events").toArray();
+      expect(deliver).toHaveBeenCalledExactlyOnceWith("installation:test", "proc:ship", {
+        eventId: `evt_${event!.seq}:${shipConsumer(OWNER.uid)}`,
+        event: {
+          kind: "contact.message", severity: "info", audience: "model",
+          payload: {
+            contactId: contact.id, conversationId: contact.conversationId, messageId: incoming.message.id,
+            from: "Remote", text: "Friday works, see the photo", responsibilityId: work.id,
+          },
+        },
+        admission: { idle: "start", busy: "join" },
+        responsibilities: { ledgerRevision: admittedAt, ids: [work.id] },
+        attachments: [photo],
+      });
+      expect(queued(ctx, contact)).toEqual([]);
+      // Ship owes this work a run; the ledger now recovers it if that run never settles it.
+      expect(ctx.responsibilities.nextWakeAt(OWNER.uid, Date.now())).toBeGreaterThan(Date.now());
+    });
+  });
+
+  it("starts its work's recovery wakes over when the contact writes again", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const first = receive(contact, ctx, "human");
+      admitContactMessage(contact, first.inbox, first.message, ctx);
+      const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
+      // Ship left the work untouched through three recovery wakes, so the next would be 6 h away.
+      storage.sql.exec("UPDATE responsibilities SET wake_retry_count = 3 WHERE responsibility_id = ?", work.id);
+      const second = receive(contact, ctx, "human", undefined, 2);
+      admitContactMessage(contact, second.inbox, second.message, ctx);
+      readable(second.message);
+      vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
+      vi.spyOn(sharedUtils, "deliverEventToProcess").mockImplementation(async (_installation, _pid, args) => (
+        { eventId: args.eventId, runId: args.eventId, queued: false }
+      ));
+
+      const deliveredFrom = Date.now();
+      await runtime(storage, ctx).onEvents({ id: "task:again" });
+
+      expect(queued(ctx, contact)).toEqual([]);
+      const recoveryAt = ctx.responsibilities.nextWakeAt(OWNER.uid, Date.now())!;
+      expect(recoveryAt).toBeGreaterThanOrEqual(deliveredFrom + 5 * 60_000);
+      expect(recoveryAt).toBeLessThanOrEqual(Date.now() + 5 * 60_000);
+    });
+  });
+
+  it("withdraws a message its Conversation no longer has, and delivers one queued before the event log from its stored words", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const incoming = receive(contact, ctx, "human");
+      admitContactMessage(contact, incoming.inbox, incoming.message, ctx);
+      const [pending] = queued(ctx, contact);
+      const read = readable(null);
+      expect(await contactMessageEvent.prepare!(pending!.event, ctx)).toEqual({ withdrawn: "the message is no longer in its conversation" });
+
+      const photo = attachment("photo.jpg");
+      const { sequence: _sequence, ...reference } = body(pending!.event);
+      const legacy = { ...pending!.event, body: { ...reference, from: "Remote", text: "stored words", media: [photo] } };
+      read.mockClear();
+      expect(await contactMessageEvent.prepare!(legacy, ctx)).toEqual({ text: "stored words", attachments: [photo] });
+      expect(read).not.toHaveBeenCalled();
+    });
+  });
+
+  it("moves a queued message past resolved handling, but withdraws it once the person takes over", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const first = receive(contact, ctx, "human");
+      const second = receive(contact, ctx, "human", undefined, 2);
+      admitContactMessage(contact, first.inbox, first.message, ctx);
+      admitContactMessage(contact, second.inbox, second.message, ctx);
+      const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
+      ctx.responsibilities.update({ ownerUid: OWNER.uid, id: work.id, patch: { state: "resolved" }, actor: HUMAN, observedByShip: true, now: Date.now() });
+
+      const [pending] = queued(ctx, contact);
+      expect(contactMessageEvent.withdrawal!(pending!.event, ctx)).toBeNull();
+      const rebound = admitted(contactMessageEvent.admit(pending!.event, { text: "Friday works", attachments: [] }, ctx));
+      const [fresh] = rebound.responsibilities!.ids;
+      expect(fresh).not.toBe(work.id);
+      expect(ctx.responsibilities.get(OWNER.uid, fresh!)).toMatchObject({ state: "open", assignee: { kind: "ship" } });
+      expect(rebound.event).toMatchObject({ payload: { responsibilityId: fresh } });
+
+      // Both messages still wait for Ship; taking over withdraws them, even once Ship has them back.
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 2, patch: { shipHandlesMessages: false } }, ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 3, patch: { shipHandlesMessages: true } }, ctx);
+      expect(queued(ctx, contact)).toEqual([]);
+    });
+  });
+
+  it("withdraws a queued message from an earlier contact generation, a blocked contact or cancelled work", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const ctx = context(storage);
+      const contact = activate(ctx);
+      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
+      const incoming = receive(contact, ctx, "human");
+      admitContactMessage(contact, incoming.inbox, incoming.message, ctx);
+      const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
+      const [pending] = queued(ctx, contact);
+      const event = pending!.event;
+      expect(contactMessageEvent.withdrawal!({ ...event, body: { ...body(event), contactGeneration: "generation:zero" } }, ctx))
+        .toBe("the contact relationship changed");
+      ctx.federation.setBlock(OWNER.uid, REMOTE_DID, true);
+      expect(contactMessageEvent.withdrawal!(event, ctx)).toBe("the contact is blocked");
+      ctx.federation.setBlock(OWNER.uid, REMOTE_DID, false);
+      ctx.responsibilities.update({ ownerUid: OWNER.uid, id: work.id, patch: { state: "cancelled" },
+        actor: HUMAN, observedByShip: true, now: Date.now() });
+      expect(contactMessageEvent.withdrawal!(event, ctx)).toBe("Ship no longer handles the message");
     });
   });
 
@@ -110,45 +262,6 @@ describe("contact attention admission", () => {
         .rejects.toThrow("Only an active contact");
       expect(ctx.federation.get(contact.id)?.preferences).toMatchObject({ revision, shipHandlesMessages: false });
       expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
-    });
-  });
-
-  it("moves a queued message past resolved handling but withdraws it when the person takes over", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const ctx = context(storage);
-      const contact = activate(ctx);
-      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
-      const first = receive(contact, ctx, "human");
-      const second = receive(contact, ctx, "human");
-      admitContactMessage(contact, first.inbox, first.message, ctx);
-      admitContactMessage(contact, second.inbox, second.message, ctx);
-      const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
-      ctx.responsibilities.update({ ownerUid: OWNER.uid, id: work.id, patch: { state: "resolved" }, actor: HUMAN, observedByShip: true, now: Date.now() });
-
-      const queued = ctx.shipEvents.next(OWNER.uid)!;
-      const rebound = admitQueuedContactEvent(OWNER.uid, queued.eventId, queued.event, ctx)!;
-      expect(rebound.responsibilityId).not.toBe(work.id);
-      expect(ctx.shipEvents.next(OWNER.uid)?.event.responsibilityId).toBe(rebound.responsibilityId);
-
-      // The second message still names the resolved record; taking over withdraws both.
-      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 2, patch: { shipHandlesMessages: false } }, ctx);
-      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 3, patch: { shipHandlesMessages: true } }, ctx);
-      expect(ctx.shipEvents.next(OWNER.uid)).toBeNull();
-    });
-  });
-
-  it("withdraws a queued message from an earlier contact generation or cancelled work", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
-      const ctx = context(storage);
-      const contact = activate(ctx);
-      await handleContactPreferencesUpdate({ contactId: contact.id, expectedRevision: 1, patch: { shipHandlesMessages: true } }, ctx);
-      const incoming = receive(contact, ctx, "human");
-      admitContactMessage(contact, incoming.inbox, incoming.message, ctx);
-      const queued = ctx.shipEvents.next(OWNER.uid)!;
-      expect(admitQueuedContactEvent(OWNER.uid, queued.eventId, { ...queued.event, contactGeneration: "generation:zero" }, ctx)).toBeNull();
-      ctx.responsibilities.update({ ownerUid: OWNER.uid, id: queued.event.responsibilityId, patch: { state: "cancelled" },
-        actor: HUMAN, observedByShip: true, now: Date.now() });
-      expect(admitQueuedContactEvent(OWNER.uid, queued.eventId, queued.event, ctx)).toBeNull();
     });
   });
 
@@ -301,8 +414,12 @@ describe("contact attention admission", () => {
 });
 
 function context(storage: DurableObjectStorage): KernelContext {
+  const events = new EventStore(storage);
+  // SAFETY: producers reach only the runtime's append and its store queries.
+  const runner = new EventRuntime({ events } as EventRuntimeHost);
   const result = {
-    federation: new FederationStore(storage), responsibilities: new ResponsibilityStore(storage), shipEvents: new ShipEventStore(storage),
+    installationId: "installation:test",
+    federation: new FederationStore(storage), responsibilities: new ResponsibilityStore(storage), events: runner,
     ownerNotices: new OwnerNoticeStore(storage),
     peer: testPeer({ kind: "human", account: OWNER, calls: ["contact.*", "r12y.*"] }),
     callerOwnerUid: OWNER.uid, connection: {},
@@ -348,4 +465,49 @@ function receive(contact: FederationContactRecord, ctx: KernelContext, kind: "hu
     author: { kind: "contact", contactId: contact.id, displayName: "Remote" },
     origin: { kind: "federation", contactId: contact.id, deliveryId }, createdAt: Date.now() };
   return { inbox, message };
+}
+
+/** A runner over the same log, delivering through the real registry with this context. */
+function runtime(storage: DurableObjectStorage, ctx: KernelContext): EventRuntime {
+  const host = {
+    installationId: "installation:test",
+    events: new EventStore(storage),
+    responsibilities: ctx.responsibilities,
+    auth: { isAccountDisabled: (_uid: number) => false },
+    procs: { get: (_pid: string) => null },
+    onboarding: { managedWorkGate: async () => ({ allowed: true }) },
+    buildKernelContext: () => ctx,
+    schedule: vi.fn(async (when: Date, _callback: string, _payload: null, _options: DurableTaskOptions) =>
+      ({ id: `task:${when.getTime()}`, time: Math.floor(when.getTime() / 1_000) })),
+    cancelSchedule: vi.fn(async (_id: string) => true),
+  };
+  // SAFETY: EventRuntime reaches only these Kernel members.
+  return new EventRuntime(host as EventRuntimeHost);
+}
+
+function queued(ctx: KernelContext, contact: FederationContactRecord) {
+  return ctx.events.pending("contact.message", contact.id);
+}
+
+function body(event: LoggedEvent): JsonObject {
+  // SAFETY: a contact message's body is always an object.
+  return event.body as JsonObject;
+}
+
+function admitted(delivery: ProcessEventDelivery | { withdrawn: string }): ProcessEventDelivery {
+  if (isWithdrawn(delivery)) throw new Error(`Delivery was withdrawn: ${delivery.withdrawn}`);
+  return delivery;
+}
+
+/** Answers Conversation reads with this message, or with nothing. */
+function readable(message: ConversationMessage | null) {
+  const readMessage = vi.fn(async (_input: { sequence: number; messageId: string }) => message);
+  // SAFETY: delivery reads a contact message through readMessage alone.
+  vi.spyOn(sharedUtils, "getConversationById").mockReturnValue({ readMessage } as ReturnType<typeof sharedUtils.getConversationById>);
+  return readMessage;
+}
+
+function attachment(filename: string): ResourceBlock {
+  return { type: "resource", filename,
+    ref: { type: "file", target: "contact:remote", path: `/resources/${filename}`, revision: "r1", contentType: "image/jpeg", size: 10 } };
 }

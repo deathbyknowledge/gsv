@@ -184,9 +184,8 @@ export type ProcSendResult =
       ok: true;
       status: "started";
       runId: string;
+      /** The message waits: behind the active run, or on the Kernel's log until the process can take it. */
       queued?: boolean;
-      /** Existing admission reconciled for the caller-provided run id. */
-      replayed?: "active" | "queued" | "recorded";
     }
   | { ok: false; error: string };
 
@@ -196,21 +195,6 @@ export type ProcIpcSendArgs = {
   pid: string;
   message: string;
   metadata?: ProcIpcMetadata;
-};
-
-export type ProcIpcDeliverArgs = {
-  runId: string;
-  sourcePid: string;
-  source: ProcessIdentity;
-  message: string;
-  metadata?: ProcIpcMetadata;
-  origin?: InteractionOrigin;
-  sentAt: number;
-  call?: {
-    callId: string;
-    deadlineAt: number;
-    supervised?: boolean;
-  };
 };
 
 export type ProcIpcSendResult =
@@ -223,8 +207,6 @@ export type ProcIpcSendResult =
       queued?: boolean;
     }
   | { ok: false; error: string };
-
-export type ProcIpcDeliverResult = ProcIpcSendResult;
 
 export type ProcIpcCallArgs = ProcIpcSendArgs & {
   timeoutMs?: number;

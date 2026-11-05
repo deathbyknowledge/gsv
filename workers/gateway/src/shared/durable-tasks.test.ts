@@ -50,3 +50,55 @@ describe("durable task successors", () => {
     });
   });
 });
+
+describe("durable task alarms", () => {
+  const spec = (payload: string) => ({ callback: "same-alarm-fixture", payload });
+  const decode = (callback: string, payloadJson: string) => ({ callback, payload: z.string().parse(JSON.parse(payloadJson)) });
+
+  it("runs a task that comes due during an alarm in that same alarm", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ran: string[] = [];
+      const tasks: DurableTaskScheduler<{ callback: string; payload: string }> = new DurableTaskScheduler(storage, decode, async (task) => {
+        ran.push(task.payload);
+        // A timer appends an event and kicks its runner, which is due at once.
+        if (task.payload === "timer") await tasks.schedule(new Date(), spec("runner"));
+      });
+      await tasks.schedule(new Date(Date.now() - 1_000), spec("timer"));
+      await tasks.alarm({ followUps: true });
+      expect(ran).toEqual(["timer", "runner"]);
+      expect(sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'same-alarm-fixture'").toArray()).toEqual([]);
+    });
+  });
+
+  it("leaves a task that comes due during an alarm for the next one unless it runs follow-ups", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ran: string[] = [];
+      const tasks: DurableTaskScheduler<{ callback: string; payload: string }> = new DurableTaskScheduler(storage, decode, async (task) => {
+        ran.push(task.payload);
+        if (task.payload === "tick") await tasks.schedule(new Date(), spec("next tick"));
+      });
+      await tasks.schedule(new Date(Date.now() - 1_000), spec("tick"));
+      await tasks.alarm();
+      expect(ran).toEqual(["tick"]);
+      expect(sql.exec<{ payload: string }>("SELECT payload FROM cf_agents_schedules WHERE callback = 'same-alarm-fixture'").toArray())
+        .toEqual([{ payload: JSON.stringify("next tick") }]);
+      sql.exec("DELETE FROM cf_agents_schedules WHERE callback = 'same-alarm-fixture'");
+    });
+  });
+
+  it("leaves a task that keeps rescheduling itself for the next alarm after one more pass", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const ran: string[] = [];
+      const tasks: DurableTaskScheduler<{ callback: string; payload: string }> = new DurableTaskScheduler(storage, decode, async (task) => {
+        ran.push(task.payload);
+        await tasks.schedule(new Date(), spec("again"));
+      });
+      await tasks.schedule(new Date(Date.now() - 1_000), spec("again"));
+      await tasks.alarm({ followUps: true });
+      expect(ran).toEqual(["again", "again"]);
+      expect(sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'same-alarm-fixture'").toArray()).toHaveLength(1);
+      expect(await storage.getAlarm()).not.toBeNull();
+      sql.exec("DELETE FROM cf_agents_schedules WHERE callback = 'same-alarm-fixture'");
+    });
+  });
+});

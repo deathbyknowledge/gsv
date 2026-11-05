@@ -27,6 +27,8 @@ import { SEND_TOOL } from "../../process/internal/schemas";
 import type { InferenceExecutor, InferenceMediaRequest } from "@humansandmachines/gsv/services/inference-execution";
 import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
+import type { InlineDelivery } from "../../kernel/events/runtime";
+import type { EventInput, LoggedEvent, PendingDelivery } from "../../kernel/events/store";
 import type { TargetRecord } from "../../kernel/target-registry";
 import type { ProcessRecord } from "../../kernel/processes";
 import type { FederationContactRecord } from "../../kernel/federation-store";
@@ -51,6 +53,9 @@ import * as z from "zod/mini";
 const generateMock = vi.fn();
 const createGenerationServiceMock = vi.spyOn(inferenceService, "createGenerationService");
 const sendFrameToProcessMock = vi.spyOn(sharedUtils, "sendFrameToProcess");
+const authorizeProcessToolMock = vi.spyOn(sharedUtils, "authorizeProcessTool");
+const attachProcessRunMediaMock = vi.spyOn(sharedUtils, "attachProcessRunMedia");
+const countProcessStagedRunMediaMock = vi.spyOn(sharedUtils, "countProcessStagedRunMedia");
 const getConversationByIdMock = vi.spyOn(sharedUtils, "getConversationById");
 const TEST_INSTALLATION_ID: KernelContext["installationId"] = "inst_shell_test";
 const TEST_INSTALLATION_CONTEXT = { installationId: TEST_INSTALLATION_ID };
@@ -62,12 +67,14 @@ beforeEach(() => {
     generateText: vi.fn(),
   });
   sendFrameToProcessMock.mockReset();
+  authorizeProcessToolMock.mockReset();
+  attachProcessRunMediaMock.mockReset();
+  countProcessStagedRunMediaMock.mockReset().mockResolvedValue({ ok: true, count: 0 });
   getConversationByIdMock.mockReset();
   sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => (
     frame.type !== "req" ? null
       : frame.call === "proc.setidentity" ? { type: "res", id: frame.id, ok: true, data: { ok: true } }
-        : frame.call === "proc.run.staged" ? { type: "res", id: frame.id, ok: true, data: { ok: true, count: 0 } }
-          : null
+        : null
   ));
   generateMock.mockReset();
 });
@@ -87,8 +94,18 @@ function focusedFixture<T extends object>(value: Partial<T>): T {
   return value as T;
 }
 
-function responseFixture(frame: ResponseFrame): ResponseFrame {
-  return frame;
+/** A log that appends every event as evt_7 and hands it to its consumer at once, unless a test says how it goes. */
+function fakeEventLog(deliver?: (event: LoggedEvent, consumer: string) => Promise<InlineDelivery>) {
+  return {
+    append: vi.fn((input: EventInput): LoggedEvent => ({ ...input, seq: 7, id: "evt_7", body: input.body ?? null, createdAt: 1 })),
+    transaction: vi.fn(<T,>(operation: () => T): T => operation()),
+    deliverNow: vi.fn(deliver ?? (async (event: LoggedEvent, consumer: string): Promise<InlineDelivery> => (
+      { state: "delivered", runId: `${event.id}:${consumer}`, queued: false }
+    ))),
+    pending: vi.fn((): PendingDelivery[] => []),
+    withdraw: vi.fn(),
+    keyed: vi.fn((): LoggedEvent | null => null),
+  };
 }
 
 const currentDestinationOutputSchema = z.object({
@@ -206,6 +223,7 @@ function makeContext(options?: {
   caps?: Partial<KernelContext["caps"]>;
   schedules?: Partial<KernelContext["schedules"]>;
   ipcCalls?: Partial<KernelContext["ipcCalls"]>;
+  events?: Partial<KernelContext["events"]>;
   responsibilities?: Partial<KernelContext["responsibilities"]>;
   responsibilitySources?: Partial<KernelContext["responsibilitySources"]>;
   federation?: Partial<KernelContext["federation"]>;
@@ -355,6 +373,7 @@ function makeContext(options?: {
       findPendingByTargetRun: vi.fn(() => null),
       ...options?.ipcCalls,
     }),
+    events: focusedFixture<KernelContext["events"]>(options?.events ?? {}),
     responsibilities: focusedFixture<KernelContext["responsibilities"]>(
       options?.responsibilities ?? {},
     ),
@@ -629,11 +648,9 @@ describe("native shell execution", () => {
 
     function mailAwaitingAnswer() {
       let answer!: (approved: boolean) => void;
-      sendFrameToProcessMock.mockImplementation(async (_installation: string, _pid: string, frame: { id?: string }) =>
-        await new Promise((resolve) => {
-          // SAFETY: the authorization caller reads only ok and data.approved.
-          answer = (approved) => resolve({ type: "res", id: frame.id ?? "approval", ok: true, data: { approved } } as never);
-        }));
+      authorizeProcessToolMock.mockImplementation(async () => await new Promise((resolve) => {
+        answer = (approved) => resolve({ approved });
+      }));
       const dispatched = vi.fn();
       const send = vi.spyOn(outboundMail, "handleMailSend").mockImplementation(async (input, mailCtx) => {
         // SAFETY: the Process mock never reads these arguments.
@@ -2005,6 +2022,7 @@ describe("proc native command", () => {
       identity: rootIdentity,
       capabilities: ["proc.spawn"],
       procs: { spawn },
+      events: fakeEventLog(),
     });
     ctx.processId = undefined;
 
@@ -2023,11 +2041,9 @@ describe("proc native command", () => {
         label: "manual-child",
       }),
     );
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      expect.stringMatching(/^proc:/),
-      expect.objectContaining({ call: "proc.send", args: expect.objectContaining({ message: "do work" }) }),
-    );
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      subject: expect.stringMatching(/^proc:proc:/), body: { content: { kind: "inline", message: "do work" } },
+    });
 
     const jsonResult = await handleShellExec(
       { input: `proc spawn --json '{"label":"json-child","ai":{"reasoning":"low"}}'` },
@@ -2080,28 +2096,22 @@ describe("proc native command", () => {
       createdAt: 1,
     };
     const spawn = vi.fn();
-    const result = await handleShellExec(
-      { input: "proc spawn -- --timeout 1m" },
-      makeContext({
-        capabilities: ["proc.spawn"],
-        procs: {
-          get: vi.fn((pid: string) => pid === parent.processId ? parent : null),
-          getOwnerUid: vi.fn(() => IDENTITY.uid),
-          spawn,
-        },
-      }),
-    );
+    const ctx = makeContext({
+      capabilities: ["proc.spawn"],
+      procs: {
+        get: vi.fn((pid: string) => pid === parent.processId ? parent : null),
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+        spawn,
+      },
+      events: fakeEventLog(),
+    });
+    const result = await handleShellExec({ input: "proc spawn -- --timeout 1m" }, ctx);
 
     expect(result.ok).toBe(true);
     expect(spawn).toHaveBeenCalledOnce();
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      expect.stringMatching(/^proc:/),
-      expect.objectContaining({
-        call: "proc.send",
-        args: expect.objectContaining({ message: "--timeout 1m" }),
-      }),
-    );
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      subject: expect.stringMatching(/^proc:proc:/), body: { content: { kind: "inline", message: "--timeout 1m" } },
+    });
   });
 
   it("resets a process through the kernel lifecycle path", async () => {
@@ -2202,39 +2212,17 @@ describe("proc native command", () => {
     });
     const ipcCalls = {
       create: vi.fn(),
-      get: vi.fn(() => ({ status: "pending", error: null })),
       remove: vi.fn(),
     };
     const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
+    const events = fakeEventLog();
 
-    sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type !== "req") throw new Error("expected process request frame");
       const req = frame;
       if (req.call === "proc.setidentity") {
         expect(req.args.ai).toEqual({ reasoning: "high" });
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
-      }
-      if (req.call === "proc.ipc.deliver") {
-        expect(pid).toBe(spawnedPids[0]);
-        expect(req.args.message).toBe("write a migration plan");
-        expect(req.args.metadata).toBeUndefined();
-        expect(req.args.call).toEqual(expect.objectContaining({
-          callId: expect.any(String),
-          deadlineAt: expect.any(Number),
-          supervised: true,
-        }));
-        return {
-          type: "res",
-          id: req.id,
-          ok: true,
-          data: {
-            ok: true,
-            status: "started",
-            pid,
-            sourcePid: "task:shell",
-            runId: req.args.runId,
-          },
-        };
       }
       throw new Error(`unexpected process frame: ${req.call}`);
     });
@@ -2261,6 +2249,7 @@ describe("proc native command", () => {
           spawn,
         },
         ipcCalls,
+        events,
         scheduleIpcCallTimeout,
         processRunId: "parent-run",
       }),
@@ -2269,7 +2258,19 @@ describe("proc native command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("status=in_progress");
     const createdCall = ipcCalls.create.mock.calls[0]?.[0];
+    expect(createdCall.targetRunId).toBe(`evt_7:proc:${spawnedPids[0]}`);
     expect(result.stdout).toContain(`run_id=${createdCall.targetRunId}`);
+    expect(events.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: "ipc.call",
+      body: {
+        targetPid: spawnedPids[0],
+        sourcePid: "task:shell",
+        source: expect.objectContaining({ username: "sam" }),
+        message: "write a migration plan",
+        call: { callId: createdCall.callId, deadlineAt: createdCall.deadlineAt, supervised: true },
+      },
+    }));
+    expect(events.deliverNow).toHaveBeenCalledWith(expect.objectContaining({ id: "evt_7" }), `proc:${spawnedPids[0]}`);
     expect(result.stdout).toContain("queued=false");
     expect(result.stdout).toContain("check_in=");
     expect(result.stdout).toContain('label="planning"');
@@ -2333,7 +2334,6 @@ describe("proc native command", () => {
     });
     const ipcCalls = {
       create: vi.fn(),
-      get: vi.fn(() => ({ status: "pending", error: null })),
       remove: vi.fn(),
     };
     const ctx = makeContext({
@@ -2364,33 +2364,22 @@ describe("proc native command", () => {
         order.push("responsibility wake scheduled");
       }),
       ipcCalls,
+      events: fakeEventLog(async (event, consumer) => {
+        order.push("delivered");
+        expect(consumer).toBe(`proc:${children[0]}`);
+        expect(event.body).toMatchObject({ metadata: { responsibilityId } });
+        return { state: "delivered", runId: `${event.id}:${consumer}`, queued: false };
+      }),
       scheduleIpcCallTimeout: vi.fn(async () => {
         order.push("supervision scheduled");
         return "timeout-schedule";
       }),
       processRunId: "parent-run",
     });
-    sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type !== "req") throw new Error("expected process request frame");
       if (frame.call === "proc.setidentity") {
         return { type: "res", id: frame.id, ok: true, data: { ok: true } };
-      }
-      if (frame.call === "proc.ipc.deliver") {
-        order.push("delivered");
-        expect(pid).toBe(children[0]);
-        expect(frame.args.metadata).toEqual({ responsibilityId });
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            status: "started",
-            pid,
-            sourcePid: parent.processId,
-            runId: frame.args.runId,
-          },
-        };
       }
       throw new Error(`unexpected process frame: ${frame.call}`);
     });
@@ -2508,6 +2497,7 @@ describe("proc native command", () => {
         remove: vi.fn(),
         cancelBySourcePid: vi.fn(),
       },
+      events: fakeEventLog(async () => ({ state: "withdrawn", reason: "delivery failed" })),
       scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
       processRunId: "parent-run",
     });
@@ -2523,14 +2513,6 @@ describe("proc native command", () => {
       if (frame.type !== "req") throw new Error("expected process request frame");
       if (frame.call === "proc.setidentity") {
         return { type: "res", id: frame.id, ok: true, data: { ok: true } };
-      }
-      if (frame.call === "proc.ipc.deliver") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: false,
-          error: { code: "DELIVERY_FAILED", message: "delivery failed" },
-        };
       }
       if (frame.call === "proc.kill") {
         return {
@@ -2584,7 +2566,7 @@ describe("proc native command", () => {
 
   it.each([
     {
-      label: "IPC delivery returns an error",
+      label: "its child never takes the work",
       throws: false,
       error: "delivery failed",
     },
@@ -2647,6 +2629,7 @@ describe("proc native command", () => {
         kill,
       },
       ipcCalls,
+      events: fakeEventLog(async () => ({ state: "withdrawn", reason: "delivery failed" })),
       responsibilities: {
         reclaimProcessAssignments: vi.fn(() => []),
       },
@@ -2667,14 +2650,6 @@ describe("proc native command", () => {
       const req = frame;
       if (req.call === "proc.setidentity") {
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
-      }
-      if (req.call === "proc.ipc.deliver" && !throws) {
-        return {
-          type: "res",
-          id: req.id,
-          ok: false,
-          error: { code: "DELIVERY_FAILED", message: "delivery failed" },
-        };
       }
       if (req.call === "proc.kill") {
         return {
@@ -4858,10 +4833,7 @@ describe("native administration shell commands", () => {
     const send = vi.spyOn(federationService, "handleContactSend").mockResolvedValue({
       deliveryId: "delivery:photo", conversationId: "conversation:friend", state: "queued",
     });
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
-      if (frame.type !== "req" || frame.call !== "proc.run.staged") return null;
-      return responseFixture({ type: "res", id: frame.id, ok: true, data: { ok: true, count: 1 } });
-    });
+    countProcessStagedRunMediaMock.mockResolvedValue({ ok: true, count: 1 });
     try {
       const ctx = makeContext({ capabilities: ["shell.exec", "contact.send"], processRunId: "run-photo" });
       const refused = await handleShellExec({
@@ -4870,6 +4842,21 @@ describe("native administration shell commands", () => {
       expect(refused).toMatchObject({ status: "failed", exitCode: 1 });
       expect(refused.stderr).toContain("1 file staged with `message attach` goes with your next reply in this conversation");
       expect(refused.stderr).toContain("--attach PATH");
+      expect(send).not.toHaveBeenCalled();
+    } finally { send.mockRestore(); }
+  });
+
+  it("asks for a retry when the Process could not count the staged files", async () => {
+    const send = vi.spyOn(federationService, "handleContactSend");
+    countProcessStagedRunMediaMock.mockRejectedValue(new Error("SQLITE_BUSY: database is locked"));
+    try {
+      const ctx = makeContext({ capabilities: ["shell.exec", "contact.send"], processRunId: "run-photo" });
+      const refused = await handleShellExec({
+        input: 'message send --to contact:friend --message "the photo" --also',
+      }, ctx);
+      expect(refused).toMatchObject({ status: "failed", exitCode: 1 });
+      expect(refused.stderr).toContain("could not check this run's staged attachments; retry the send");
+      expect(refused.stderr).not.toContain("SQLITE_BUSY");
       expect(send).not.toHaveBeenCalled();
     } finally { send.mockRestore(); }
   });
@@ -4883,10 +4870,9 @@ describe("native administration shell commands", () => {
       ctx.toolOwner = { runId: "run-photo", requestId: "call-send" };
       const sent = await handleShellExec({ input: 'message send --to contact:friend --message "hi" --also' }, ctx);
       expect(sent).toMatchObject({ status: "completed", exitCode: 0 });
-      expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, "task:shell", expect.objectContaining({
-        call: "proc.run.staged",
-        args: { runId: "run-photo", requestId: "call-send", destination: "contact:friend" },
-      }));
+      expect(countProcessStagedRunMediaMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, "task:shell", {
+        runId: "run-photo", requestId: "call-send", destination: "contact:friend",
+      });
       expect(send).toHaveBeenCalledOnce();
     } finally { send.mockRestore(); }
   });
@@ -5450,18 +5436,9 @@ describe("native administration shell commands", () => {
       processRunId: "run-native-file",
     });
     await handleFsWrite({ path: "/tmp/final.png", content: "PNG" }, ctx);
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
-      if (frame.type !== "req") return null;
-      if (frame.call === "proc.run.attach") {
-        return responseFixture({
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: { ok: true, runId: frame.args.runId, media: frame.args.media },
-        });
-      }
-      return null;
-    });
+    attachProcessRunMediaMock.mockImplementation(async (_installationId, _pid, args) => ({
+      ok: true, runId: args.runId, media: args.media,
+    }));
 
     ctx.toolOwner = { runId: "run-native-file", requestId: "call-attach" };
     const result = await handleShellExec({ input: "message attach /tmp/final.png" }, ctx);
@@ -5469,12 +5446,10 @@ describe("native administration shell commands", () => {
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
     expect(result.stdout).toContain("attached=true");
     expect(result.stdout).toContain("run_id=run-native-file");
-    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
+    expect(attachProcessRunMediaMock).toHaveBeenLastCalledWith(
       TEST_INSTALLATION_ID,
       "task:shell",
       expect.objectContaining({
-        call: "proc.run.attach",
-        args: expect.objectContaining({
           runId: "run-native-file",
           requestId: "call-attach",
           media: [expect.objectContaining({
@@ -5488,7 +5463,6 @@ describe("native administration shell commands", () => {
             }),
           })],
         }),
-      }),
     );
   });
 
@@ -5505,30 +5479,19 @@ describe("native administration shell commands", () => {
       ok: true,
       contentType: "application/octet-stream",
     });
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
-      if (frame.type !== "req") return null;
-      if (frame.call === "proc.run.attach") {
-        return responseFixture({
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: { ok: true, runId: frame.args.runId, media: frame.args.media },
-        });
-      }
-      return null;
-    });
+    attachProcessRunMediaMock.mockImplementation(async (_installationId, _pid, args) => ({
+      ok: true, runId: args.runId, media: args.media,
+    }));
 
     const result = await handleShellExec({
       input: "message attach /tmp/voice.ogg --mime audio/ogg",
     }, ctx);
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
+    expect(attachProcessRunMediaMock).toHaveBeenLastCalledWith(
       TEST_INSTALLATION_ID,
       "task:shell",
       expect.objectContaining({
-        call: "proc.run.attach",
-        args: expect.objectContaining({
           media: [expect.objectContaining({
             mediaType: "audio",
             ref: expect.objectContaining({
@@ -5537,7 +5500,6 @@ describe("native administration shell commands", () => {
             }),
           })],
         }),
-      }),
     );
   });
 
@@ -5547,18 +5509,7 @@ describe("native administration shell commands", () => {
       processRunId: "run-ended",
     });
     await handleFsWrite({ path: "/tmp/late.pdf", content: "PDF" }, ctx);
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
-      if (frame.type !== "req") return null;
-      if (frame.call === "proc.run.attach") {
-        return responseFixture({
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: { ok: false, error: "the process run is no longer active" },
-        });
-      }
-      return null;
-    });
+    attachProcessRunMediaMock.mockResolvedValue({ ok: false, error: "the process run is no longer active" });
 
     const result = await handleShellExec({ input: "message attach /tmp/late.pdf" }, ctx);
 
@@ -6457,17 +6408,11 @@ describe("crontab approval", () => {
   }
 
   function answerApprovals(approved: boolean) {
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => (
-      frame.type === "req" && frame.call === "proc.tool.authorize"
-        ? { type: "res", id: frame.id, ok: true, data: { approved } }
-        : null
-    ));
+    authorizeProcessToolMock.mockResolvedValue({ approved });
   }
 
   function approvalRequests() {
-    return sendFrameToProcessMock.mock.calls
-      .map(([, , frame]) => frame)
-      .filter((frame) => frame.type === "req" && frame.call === "proc.tool.authorize");
+    return authorizeProcessToolMock.mock.calls.map(([, , , args]) => args);
   }
 
   async function installByCommand(ctx: KernelContext) {
@@ -6502,9 +6447,7 @@ describe("crontab approval", () => {
     expect(error).toBe("");
     expect(installed).toBe(true);
     expect(approvalRequests()).toHaveLength(1);
-    expect(approvalRequests()[0]).toMatchObject({
-      args: { ...OWNER, syscall: "sched.add", args: { path: USER_PATH, jobs: JOBS_TO_APPROVE } },
-    });
+    expect(approvalRequests()[0]).toMatchObject({ ...OWNER, syscall: "sched.add", args: { path: USER_PATH, jobs: JOBS_TO_APPROVE } });
     expect(create).toHaveBeenCalledTimes(2);
     expect(cronFiles.get(USER_PATH)?.content).toBe(JOBS);
   });
@@ -6543,9 +6486,7 @@ describe("crontab approval", () => {
     await handleShellExec({ input: `cat jobs.cron >> ${USER_PATH}` }, ctx);
 
     expect(approvalRequests()).toHaveLength(1);
-    expect(approvalRequests()[0]).toMatchObject({
-      args: { syscall: "sched.add", args: { path: USER_PATH, jobs: `0 1 * * * echo previous\n${JOBS_TO_APPROVE}` } },
-    });
+    expect(approvalRequests()[0]).toMatchObject({ syscall: "sched.add", args: { path: USER_PATH, jobs: `0 1 * * * echo previous\n${JOBS_TO_APPROVE}` } });
     expect(create).not.toHaveBeenCalled();
     expect(cronFiles.get(USER_PATH)?.content).toBe(PREVIOUS);
     expect([...schedules.keys()]).toEqual(["sched-previous"]);
@@ -6559,9 +6500,7 @@ describe("crontab approval", () => {
     const result = await handleFsWrite({ path: "/etc/cron.d/nightly", content: "0 4 * * * sam proc list\n" }, ctx);
 
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining("not approved") });
-    expect(approvalRequests()[0]).toMatchObject({
-      args: { syscall: "sched.add", args: { path: "/etc/cron.d/nightly", jobs: "0 4 * * * sam proc list" } },
-    });
+    expect(approvalRequests()[0]).toMatchObject({ syscall: "sched.add", args: { path: "/etc/cron.d/nightly", jobs: "0 4 * * * sam proc list" } });
     expect(create).not.toHaveBeenCalled();
     expect(cronFiles.get("/etc/cron.d/nightly")?.content).toBe(PREVIOUS);
   });

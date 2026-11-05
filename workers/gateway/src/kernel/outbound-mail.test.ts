@@ -8,6 +8,7 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import type { InstallationDirectoryResult } from "@humansandmachines/gsv/services/directory";
+import type { ManagedOutboundMailCommand } from "@humansandmachines/gsv/protocol";
 import { MailboxStore } from "./mailbox-store";
 import {
   claimManagedOutboundMail,
@@ -42,8 +43,11 @@ describe("managed outbound mail", () => {
     await runInDurableObject(stub, async (instance: Kernel, state) => {
       const attemptsBefore = instance.mailboxes.getOutbound(outboundId)!.enqueueAttempts;
       const previous = instance.env.MANAGED_MAIL_OUTBOUND;
-      const send = vi.fn(async () => ({ metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } }));
+      const send = vi.fn(async (_command: ManagedOutboundMailCommand) => ({ metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } }));
       instance.env.MANAGED_MAIL_OUTBOUND = { send, sendBatch: vi.fn(async () => { throw new Error("Unexpected batch"); }), metrics: vi.fn(async () => ({ backlogCount: 0, backlogBytes: 0 })) };
+      // Every Kernel in this isolate reads the queue from this shared env, so one another test left
+      // with queued mail can publish here too. Count only this Kernel's publications.
+      const published = () => send.mock.calls.filter(([command]) => command.installationId === installationId);
       try {
         state.storage.sql.exec("UPDATE cf_agents_schedules SET time = 0 WHERE id = ?", currentId);
         await instance.alarm();
@@ -56,17 +60,17 @@ describe("managed outbound mail", () => {
           .toEqual([{ payload: JSON.stringify(outboundId) }]);
         // Re-arming while the current row is due can deliver an automatic alarm during the directory RPC.
         // Publication is at least once; the invariant is one durable chain carrying the same opaque reference.
-        expect(send.mock.calls.length).toBeGreaterThanOrEqual(2);
+        expect(published().length).toBeGreaterThanOrEqual(2);
         expect(instance.mailboxes.getOutbound(outboundId)).toMatchObject({ state: "queued" });
-        expect(instance.mailboxes.getOutbound(outboundId)!.enqueueAttempts).toBeGreaterThanOrEqual(attemptsBefore + send.mock.calls.length);
-        for (const call of send.mock.calls) expect(call).toEqual([{ version: 2, installationId, outboundId }]);
+        expect(instance.mailboxes.getOutbound(outboundId)!.enqueueAttempts).toBeGreaterThanOrEqual(attemptsBefore + published().length);
+        for (const call of published()) expect(call).toEqual([{ version: 2, installationId, outboundId }]);
 
         await instance.completeManagedOutboundMail({ version: 1, outboundId, fingerprint, state: "accepted", providerMessageId: "interrupted-provider" });
-        const publicationsAtCompletion = send.mock.calls.length;
+        const publicationsAtCompletion = published().length;
         state.storage.sql.exec("UPDATE cf_agents_schedules SET time = 0 WHERE callback = 'onManagedOutboundEnqueue'");
         await instance.alarm();
         expect(state.storage.sql.exec("SELECT id FROM cf_agents_schedules WHERE callback = 'onManagedOutboundEnqueue'").toArray()).toEqual([]);
-        expect(send).toHaveBeenCalledTimes(publicationsAtCompletion);
+        expect(published()).toHaveLength(publicationsAtCompletion);
         expect(instance.mailboxes.getOutbound(outboundId)).toMatchObject({ state: "accepted", enqueueNextAt: null, providerMessageId: "interrupted-provider" });
       } finally { instance.env.MANAGED_MAIL_OUTBOUND = previous; }
     });

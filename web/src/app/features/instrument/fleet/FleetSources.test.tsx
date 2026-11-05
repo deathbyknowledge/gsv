@@ -101,6 +101,22 @@ it("shows what arrived for this source only", async () => {
   } finally { await screen.close(); }
 });
 
+it("says nothing came in the last 30 days, rather than ever, when a source's last event is older than its list", async () => {
+  vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
+    if (call === "event.source.list") return { data: { sources: [GITHUB, BACKUPS] } };
+    if (call === "event.list") return { data: { events: [] } };
+    throw new Error(`Unexpected request: ${call} ${JSON.stringify(args)}`);
+  });
+  const older = await mount((events) => inspector(events, GITHUB));
+  try {
+    await vi.waitFor(() => expect(older.text()).toContain("Nothing in the last 30 days."));
+  } finally { await older.close(); }
+  const never = await mount((events) => inspector(events, BACKUPS));
+  try {
+    await vi.waitFor(() => expect(never.text()).toContain("Nothing has arrived yet."));
+  } finally { await never.close(); }
+});
+
 it("shows a new secret on its own source, not on another one", async () => {
   gateway([BACKUPS, GITHUB]);
   const own = await mount((events) => inspector(events, GITHUB));

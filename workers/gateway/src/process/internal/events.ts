@@ -3,41 +3,8 @@
 import {
   type ResponsibilityRecord, responsibilityRequiresAction,
 } from "@humansandmachines/gsv/protocol";
-import type { ProcessRuntimeEvent } from "../../protocol/process-frames";
 import type { ResponsibilityBatchState, RunState } from "../run/state";
 import type { TerminalResponsibilitySnapshot } from "./contracts";
-import {
-  contactMessageRuntimeEventSchema, processRuntimeEventSchema, responsibilityReadyRuntimeEventSchema,
-  workReturnedRuntimeEventSchema,
-} from "./schemas";
-import { z } from "zod";
-
-export function normalizeProcessRuntimeEvent(
-  value: Parameters<typeof processRuntimeEventSchema.safeParse>[0],
-): ProcessRuntimeEvent {
-  const discriminator = z.object({ type: z.string() }).safeParse(value);
-  if (!discriminator.success) {
-    throw new Error("proc.runtime.event.deliver requires an event");
-  }
-  if (discriminator.data.type === "r12y.ready") {
-    const result = responsibilityReadyRuntimeEventSchema.safeParse(value);
-    if (!result.success) throw new Error("r12y.ready fields are invalid");
-    return result.data;
-  }
-  if (discriminator.data.type === "contact.message") {
-    const result = contactMessageRuntimeEventSchema.safeParse(value);
-    if (!result.success) throw new Error("contact.message fields are invalid");
-    return result.data;
-  }
-  if (discriminator.data.type !== "adapter.work.returned") {
-    throw new Error("Unsupported process runtime event type");
-  }
-  const result = workReturnedRuntimeEventSchema.safeParse(value);
-  if (!result.success) {
-    throw new Error("adapter.work.returned fields are invalid");
-  }
-  return result.data;
-}
 
 export function appendResponsibilityBatch(
   run: RunState,

@@ -2,13 +2,11 @@ import type {
   AdapterInboundMessage,
   AdapterSurface,
 } from "../adapter-interface";
-import type {
-  InternalRequestFrame,
-  InternalResponseFrame,
-} from "../protocol/process-frames";
+import { processResult } from "../protocol/process-frames";
 import type {
   AdapterInboundArgs,
   AdapterInboundSyscallResult,
+  AdapterMessageDestination,
   InteractionOrigin,
   BinaryBody,
   ProcListResult,
@@ -34,7 +32,7 @@ import type {
 } from "../protocol/frames";
 import {
   getConversationById,
-  sendFrameToProcess,
+  writeProcessResource,
 } from "../shared/utils";
 import type {
   ConversationAppendRequest,
@@ -65,13 +63,9 @@ import {
   renderAdapterCommandHelp,
   renderAdapterProcessList,
 } from "./adapter-commands";
-import type {
-  AdapterIngressWorkReturnRecovery,
-} from "./adapter-service";
 import {
   adapterInteractionOrigin,
   adapterPrivateActivityAt,
-  deliverAdapterWorkReturnedEvent,
   describeProcessRoute,
   identityForUid,
   resolveActorId,
@@ -84,6 +78,10 @@ import {
 } from "./adapter-send";
 import { resolveAdapterQuote } from "./adapter-quotes";
 import { logAdapterBoundaryFailure } from "./adapter-service";
+import { processConsumer, shipConsumer } from "./events/consumers";
+import type { InlineDelivery } from "./events/runtime";
+import { committedContent, conversationMessage } from "./message-events";
+import { WORK_RETURNED, workReturned } from "./work-return-events";
 
 /** Inbound adapter messages: replay claims, media retention, command handling, and Process delivery. */
 type AdapterCommandResult = {
@@ -112,16 +110,15 @@ type AdapterIngressProcessRecovery = {
   media: ResourceBlock[];
   origin: Extract<InteractionOrigin, { kind: "adapter" }>;
   routeGeneration?: string;
-  conversationId?: string;
-  inputMessageId?: string;
-  messageCreatedAt?: number;
+  conversationId: string;
+  inputMessageId: string;
+  messageCreatedAt: number;
   replyPreferenceOrder?: number;
 };
 
 type AdapterIngressRecovery =
   | { kind: "reply_preference"; uid: number; order: number }
-  | AdapterIngressProcessRecovery
-  | AdapterIngressWorkReturnRecovery;
+  | AdapterIngressProcessRecovery;
 
 const resourceBlockRecoverySchema = z.object({
   type: z.literal("resource"),
@@ -164,24 +161,10 @@ const adapterIngressRecoverySchema = z.discriminatedUnion("kind", [
     media: z.array(resourceBlockRecoverySchema),
     origin: adapterInteractionOriginSchema,
     routeGeneration: z.optional(z.string()),
-    conversationId: z.optional(z.string()),
-    inputMessageId: z.optional(z.string()),
-    messageCreatedAt: z.optional(z.number().check(z.int(), z.positive())),
+    conversationId: z.string(),
+    inputMessageId: z.string(),
+    messageCreatedAt: z.number().check(z.int(), z.positive()),
     replyPreferenceOrder: z.optional(z.number()),
-  }),
-  z.object({
-    kind: z.literal("work_return"),
-    uid: z.number().check(z.int(), z.nonnegative()),
-    workPid: z.string(),
-    route: z.object({
-      adapter: z.string(),
-      accountId: z.string(),
-      actorId: z.string(),
-      surfaceKind: z.literal("dm"),
-      surfaceId: z.string(),
-      threadId: z.optional(z.string()),
-      mode: z.enum(["legacy", "work", "surface"]),
-    }),
   }),
 ]);
 
@@ -459,33 +442,12 @@ async function resolveClaimedAdapterInbound(input: {
       checkpoint: { receiptId, claimToken },
     });
   }
-  if (recovery?.kind === "work_return") {
-    const personalPid = await deliverAdapterWorkReturnedEvent(
-      recovery,
-      receiptId,
-      message.messageId,
-      ctx,
-    );
-    if (!personalPid) {
-      return { ok: true, droppedReason: "superseded_work_return" };
-    }
-    const personal = ctx.procs.get(personalPid);
-    return {
-      ok: true,
-      reply: {
-        text: `[SHIP] Returned to ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
-        replyToId: message.messageId,
-      },
-    };
-  }
-
   const command = await handleAdapterCommand({
     adapter,
     accountId,
     message,
     uid,
     receiptId,
-    claimToken,
     ctx,
   });
   if (command.handled) {
@@ -593,42 +555,6 @@ async function deliverAdapterInboundToProcess(input: {
     throw new Error("Adapter ingress process delivery is missing recovery state");
   }
 
-  if (!hasConversationRecovery(recovery)) {
-    if (!input.checkpoint) {
-      throw new Error("Legacy adapter ingress recovery is missing claim state");
-    }
-    const conversation = conversationForAdapterInbound(
-      recovery.uid,
-      recovery.pid,
-      adapter,
-      accountId,
-      message,
-      ctx,
-    );
-    await getConversationById(ctx.installationId, conversation.id).initialize({
-      ownerUid: conversation.ownerUid,
-      kind: conversation.kind,
-    });
-    recovery = {
-      ...recovery,
-      conversationId: conversation.id,
-      inputMessageId: await stableOpaqueId("msg", [
-        conversation.id,
-        input.checkpoint.receiptId,
-        "input",
-      ]),
-      messageCreatedAt: normalizeAdapterMessageCreatedAt(message.timestamp),
-    };
-    ctx.adapters.ingressReceipts.checkpoint(
-      input.checkpoint.receiptId,
-      input.checkpoint.claimToken,
-      recovery,
-    );
-  }
-  if (!hasConversationRecovery(recovery)) {
-    throw new Error("Adapter ingress recovery is missing conversation state");
-  }
-
   const { uid, pid, runId, origin } = recovery;
   const media = recovery.media.length > 0 ? recovery.media : undefined;
   const conversation = ctx.conversations.get(recovery.conversationId);
@@ -714,75 +640,57 @@ async function deliverAdapterInboundToProcess(input: {
       updatedByUid: uid,
     });
   }
-  ctx.runRoutes.setAdapterRoute({
-    followsShip: conversation.kind === "ship",
+  const quote = message.replyToId === undefined
+    ? undefined
+    : await resolveAdapterQuote(ctx, messageScope, message.replyToId);
+  const ship = conversation.kind === "ship";
+  const received = conversationMessage({
+    ownerUid: uid,
+    ...(ship ? undefined : { pid }),
+    conversationId: conversation.id,
+    messageId: appended.message.id,
+    sequence: appended.message.sequence,
     runId,
-    processId: pid,
-    uid,
-    destination: {
-      kind: "adapter",
-      adapter,
-      accountId,
-      actorId,
-      surface: message.surface,
-    },
-    replyToId: message.messageId,
-    ...(recovery.routeGeneration === undefined
-      ? undefined
-      : { routeGeneration: recovery.routeGeneration }),
+    origin,
+    ...(quote === undefined ? undefined : { quote }),
+    actor: { kind: "person", uid },
+  });
+  // A new event and its reply route commit together. A retry that finds the event leaves the
+  // route alone: its run may already have ended and taken the route with it.
+  const event = ctx.events.keyed(received.type, received.key) ?? ctx.events.transaction(() => {
+    ctx.runRoutes.setAdapterRoute({
+      followsShip: ship,
+      runId,
+      processId: pid,
+      uid,
+      destination: {
+        kind: "adapter",
+        adapter,
+        accountId,
+        actorId,
+        surface: message.surface,
+      },
+      replyToId: message.messageId,
+      ...(recovery.routeGeneration === undefined
+        ? undefined
+        : { routeGeneration: recovery.routeGeneration }),
+    });
+    return ctx.events.append(received);
   });
   // Adapter ingress is itself an RPC from the adapter. Calling activity back
   // into a stateful adapter here would re-enter its Durable Object before this
   // request can return. Process lifecycle signals own typing activity.
-  const request: InternalRequestFrame<"proc.adapter.deliver"> = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.adapter.deliver",
-    args: {
-      runId,
-      pid,
-      message: message.text?.trim() || "",
-      media,
-      origin,
-      interaction: {
-        conversationId: conversation.id,
-        messageId: appended.message.id,
-      },
-      ...(message.replyToId === undefined
-        ? undefined
-        : { quote: await resolveAdapterQuote(ctx, messageScope, message.replyToId) }),
-    },
-  };
-  const response: InternalResponseFrame<"proc.adapter.deliver"> | null = await withInitialOnboarding(
-    conversation.kind === "ship" ? uid : undefined,
+  const sent = await withInitialOnboarding(
+    ship ? uid : undefined,
     ctx,
-    () => sendFrameToProcess(ctx.installationId, pid, request),
+    () => ctx.events.deliverNow(event, ship ? shipConsumer(uid) : processConsumer(pid), committedContent(appended.message)),
   );
-
-  if (!response || response.type !== "res") {
-    throw new Error("No response from process");
-  }
-  if (!response.ok) {
-    throw new Error(response.error.message);
-  }
-
-  const data = response.data;
-  if (!data.ok) {
-    ctx.runRoutes.delete(runId);
-    return { ok: false, error: data.error };
-  }
-  const queued = data.queued === true;
-  if (data.runId !== runId) {
-    ctx.runRoutes.delete(runId);
-    return { ok: false, error: "proc.adapter.deliver admitted an unexpected run" };
-  }
-  if (data.replayed === "recorded") {
-    ctx.runRoutes.delete(runId);
-  }
-
+  // A message its process can never take, or one that is gone, fails; its route went as it settled.
+  if (sent.state === "withdrawn") return { ok: false, error: sent.reason };
   return {
     ok: true,
-    delivered: { uid, pid, runId, queued },
+    // One its process can't take right now waits on the log, which retries it.
+    delivered: { uid, pid, runId, queued: sent.state === "pending" || sent.queued },
   };
 }
 
@@ -792,30 +700,7 @@ function normalizeAdapterIngressRecovery(value: JsonValue | undefined): AdapterI
   if (!parsed.success) {
     throw new Error("Invalid adapter ingress recovery checkpoint");
   }
-  const recovery: AdapterIngressRecovery = parsed.data;
-  if (recovery.kind === "process_delivery") {
-    const present = [
-      recovery.conversationId,
-      recovery.inputMessageId,
-      recovery.messageCreatedAt,
-    ].filter((field) => field !== undefined).length;
-    if (present !== 0 && present !== 3) {
-      throw new Error("Invalid adapter ingress recovery checkpoint");
-    }
-  }
-  return recovery;
-}
-
-function hasConversationRecovery(
-  recovery: AdapterIngressProcessRecovery,
-): recovery is AdapterIngressProcessRecovery & {
-  conversationId: string;
-  inputMessageId: string;
-  messageCreatedAt: number;
-} {
-  return recovery.conversationId !== undefined
-    && recovery.inputMessageId !== undefined
-    && recovery.messageCreatedAt !== undefined;
+  return parsed.data;
 }
 
 function conversationForAdapterInbound(
@@ -903,27 +788,15 @@ async function storeAdapterInboundMedia(
       media: item,
       body: partBody,
     }) => {
-      const request: InternalRequestFrame<"proc.resource.write"> = {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.resource.write",
-        args: {
-          resourceId: `${runId}:${mediaIndex}`,
-          mediaType: item.type,
-          contentType: item.mimeType,
-          filename: item.filename,
-          duration: item.duration,
-          transcription: item.transcription,
-        },
-        body: partBody,
-      };
-      const response = await sendFrameToProcess(installationId, pid, request);
-      if (!response || response.type !== "res" || !response.ok) {
-        throw new Error(response && response.type === "res" && !response.ok
-          ? response.error.message
-          : "No response while storing adapter media");
-      }
-      stored.push(response.data.resource);
+      const result = await writeProcessResource(installationId, pid, {
+        resourceId: `${runId}:${mediaIndex}`,
+        mediaType: item.type,
+        contentType: item.mimeType,
+        filename: item.filename,
+        duration: item.duration,
+        transcription: item.transcription,
+      }, partBody);
+      stored.push(processResult(result).resource);
     }, {
       maxBytes: MAX_MESSAGE_MEDIA_TOTAL_BYTES,
       maxPartBytes: MAX_MESSAGE_MEDIA_PART_BYTES,
@@ -938,10 +811,9 @@ async function handleAdapterCommand(args: {
   message: AdapterInboundMessage;
   uid: number;
   receiptId: string;
-  claimToken: string;
   ctx: KernelContext;
 }): Promise<AdapterCommandResult> {
-  const { adapter, accountId, message, uid, receiptId, claimToken, ctx } = args;
+  const { adapter, accountId, message, uid, receiptId, ctx } = args;
   if (message.surface.kind !== "dm") {
     return { handled: false };
   }
@@ -1032,6 +904,9 @@ async function handleAdapterCommand(args: {
   }
 
   if (parsed.name === "ship") {
+    // A retried /ship finds the return it already recorded and answers as it did.
+    const recorded = ctx.events.keyed(WORK_RETURNED, receiptId);
+    if (recorded) return replyToWorkReturn(message, uid, await ctx.events.deliverNow(recorded, shipConsumer(uid)), ctx);
     const selectedRoute = ctx.adapters.surfaceRoutes.resolveRoute(routeKey);
     if (!selectedRoute) {
       const personalPid = await ensurePersonalController(uid, ctx);
@@ -1041,36 +916,18 @@ async function handleAdapterCommand(args: {
         `[SHIP] Already using ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
       );
     }
-
-    const recovery: AdapterIngressWorkReturnRecovery = {
-      kind: "work_return",
-      uid,
-      workPid: selectedRoute.pid,
-      route: {
-        adapter: selectedRoute.adapter,
-        accountId: selectedRoute.accountId,
-        actorId: selectedRoute.actorId,
-        surfaceKind: "dm",
-        surfaceId: selectedRoute.surfaceId,
-        mode: selectedRoute.mode,
-      },
-    };
-    if (selectedRoute.threadId) recovery.route.threadId = selectedRoute.threadId;
-    ctx.adapters.ingressReceipts.checkpoint(receiptId, claimToken, recovery);
-    const personalPid = await deliverAdapterWorkReturnedEvent(
-      recovery,
-      receiptId,
-      message.messageId,
-      ctx,
-    );
-    if (!personalPid) {
+    const destination: AdapterMessageDestination = { kind: "adapter", adapter, accountId, actorId, surface: message.surface };
+    // A newer message in this chat already chose where it goes.
+    if (!ctx.adapters.ingressReceipts.isLatestPrivateMessage(destination, message.messageId)) {
       return { handled: true };
     }
-    const personal = ctx.procs.get(personalPid);
-    return replyToAdapterCommand(
-      message,
-      `[SHIP] Returned to ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
-    );
+    const event = ctx.events.transaction(() => {
+      ctx.adapters.surfaceRoutes.clearRouteIfMatches({ ...routeKey, pid: selectedRoute.pid, mode: selectedRoute.mode });
+      return ctx.events.append(workReturned({
+        ownerUid: uid, workPid: selectedRoute.pid, receiptId, destination, messageId: message.messageId,
+      }));
+    });
+    return replyToWorkReturn(message, uid, await ctx.events.deliverNow(event, shipConsumer(uid)), ctx);
   }
 
   return replyToAdapterCommand(
@@ -1087,4 +944,20 @@ function replyToAdapterCommand(message: AdapterInboundMessage, text: string): Ad
       replyToId: message.messageId,
     },
   };
+}
+
+/** A return a newer message overtook says nothing; otherwise the person hears where they are now. */
+async function replyToWorkReturn(
+  message: AdapterInboundMessage,
+  uid: number,
+  sent: InlineDelivery,
+  ctx: KernelContext,
+): Promise<AdapterCommandResult> {
+  if (sent.state === "withdrawn") return { handled: true };
+  const personalPid = await ensurePersonalController(uid, ctx);
+  const personal = ctx.procs.get(personalPid);
+  return replyToAdapterCommand(
+    message,
+    `[SHIP] Returned to ${personal ? describeProcessRoute(personal) : shortProcessId(personalPid)}.`,
+  );
 }
