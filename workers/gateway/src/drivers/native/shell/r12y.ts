@@ -77,8 +77,10 @@ async function runR12yCommand(args: string[], ctx: KernelContext): Promise<ExecR
     }
     case "show": {
       requireCommandCapability(ctx, "r12y.get");
-      requireArgumentCount(rest, 1, "show requires: r12y show ID");
-      const shown = handleResponsibilityGet({ id: requireId(rest[0]) }, ctx);
+      // show always prints JSON; --json is accepted as it is on list.
+      const ids = rest.filter((argument) => argument !== "--json");
+      requireArgumentCount(ids, 1, "show requires: r12y show ID");
+      const shown = handleResponsibilityGet({ id: requireId(ids[0]) }, ctx);
       return result(`${JSON.stringify(shown)}\n`);
     }
     case "sources": {
@@ -298,7 +300,7 @@ function r12yUsage(): string {
   return [
     "Usage:",
     "  r12y list [--all] [--json]",
-    "  r12y show ID",
+    "  r12y show ID [--json]",
     "  r12y sources",
     "  r12y source enable|disable SOURCE_ID",
     "  r12y create --title TITLE [--details JSON] [--parent ID] [--process PID] [--priority PRIORITY] [--due ISO] [--check ISO] [--blocker TEXT] [--dedupe KEY]",

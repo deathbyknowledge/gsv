@@ -15,12 +15,15 @@ import type {
   AdapterSendResult,
 } from "../../../../packages/gsv/src/protocol/syscalls/adapter.js";
 import { adapterSendArgsSchema } from "../../../../packages/gsv/src/protocol/syscalls/adapter.js";
+import { messageChoicesText } from "../../../../packages/gsv/src/protocol/message-choices.js";
 import { renderAdapterSend, type RenderedAdapterSend } from "./peer-render";
 
 export type AdapterFrameHandlers = {
   send(delivery: RenderedAdapterSend, body?: BinaryBody): Promise<AdapterProviderSendResult>;
   /** The adapter shows a message's action itself; any other adapter receives it written into the text. */
   actions?: true;
+  /** The adapter shows a message's choices itself; any other adapter receives them as a numbered list in the text. */
+  choices?: true;
 };
 
 /** Validate and dispatch one canonical Gateway-to-adapter frame. */
@@ -67,6 +70,10 @@ export async function handleAdapterFrame(
   if (args.action !== undefined) {
     if (handlers.actions) message.action = args.action;
     else message.text = adapterActionText(message.text, args.action);
+  }
+  if (args.choices !== undefined) {
+    if (handlers.choices) message.choices = args.choices;
+    else message.text = messageChoicesText(message.text, args.choices);
   }
   const delivery = renderAdapterSend(context, message);
 

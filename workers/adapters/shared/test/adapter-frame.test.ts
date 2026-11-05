@@ -120,6 +120,36 @@ describe("handleAdapterFrame", () => {
     });
   });
 
+  describe("replies to tap", () => {
+    const choices = ["Morning person", "Night owl"];
+
+    it("reach an adapter without buttons as a numbered list under the text", async () => {
+      const send = vi.fn(async () => ({ ok: true as const, messageId: "provider-1" }));
+      await handleAdapterFrame("test", CONTEXT, sendFrame({ text: "Mornings or nights?", choices }), { send });
+      expect(send.mock.calls[0]?.[0]).toMatchObject({
+        message: { text: "Mornings or nights?\n\n1. Morning person\n2. Night owl" },
+      });
+      expect(send.mock.calls[0]?.[0].message).not.toHaveProperty("choices");
+    });
+
+    it("reach an adapter that shows buttons as themselves", async () => {
+      const send = vi.fn(async () => ({ ok: true as const, messageId: "provider-1" }));
+      await handleAdapterFrame("test", CONTEXT, sendFrame({ text: "Mornings or nights?", choices }), { send, choices: true });
+      expect(send.mock.calls[0]?.[0]).toMatchObject({ message: { text: "Mornings or nights?", choices } });
+    });
+
+    it.each([
+      [[]],
+      [["Yes", "Yes"]],
+      [Array.from({ length: 11 }, (_, index) => `${index}`)],
+    ])("are refused when no messenger could show them: %j", async (invalid) => {
+      const send = vi.fn(async () => ({ ok: true as const, messageId: "provider-1" }));
+      const result = await handleAdapterFrame("test", CONTEXT, sendFrame({ choices: invalid }), { send });
+      expect(result).toMatchObject({ ok: false, error: { code: 400 } });
+      expect(send).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([false, true])("preserves provider diagnostics through the public frame (ambiguous: %s)", async (ambiguous) => {
     const diagnostics = { exceptionName: "APIError", exceptionMessage: "Provider rejected the delivery", errorCode: "131026", providerStatusCode: 400, providerRequestId: "trace-123" };
     const result = await handleAdapterFrame("test", CONTEXT, sendFrame(), {

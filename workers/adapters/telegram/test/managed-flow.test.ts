@@ -330,7 +330,7 @@ describe("managed Telegram clean-instance flow", () => {
       expect(sent[0]?.body.text).toBe("💬 Bo: are we still on?");
       expect(sent[0]?.body.reply_markup?.inline_keyboard).toEqual([[{ text: "Open in People", url: "https://ada.ship.space/people?contact=contact%3Abo" }]]);
       expect(sent[1]?.body.text).toBe("💬 Bo: are we still on?\nOpen in People: http://localhost:8787/people");
-      expect(sent[1]?.body.reply_markup).toBeUndefined();
+      expect(sent[1]?.body.reply_markup).toEqual({ remove_keyboard: true });
     });
 
     expect((await SELF.fetch(approvalUpdate(

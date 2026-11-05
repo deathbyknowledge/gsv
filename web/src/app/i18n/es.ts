@@ -2021,6 +2021,7 @@ export const es = {
   "chat.message.attachments": "Archivos adjuntos del mensaje",
   "chat.message.cancelUpload": "cancelar subida",
   "chat.message.dismiss": "descartar",
+  "chat.choices.label": "Respuestas que puedes enviar",
   "chat.history.failed": "No se ha podido cargar tu conversación: {error}",
   "chat.history.helperEmpty": "Este ayudante aún no tiene mensajes.",
   "chat.firstOpenPrivacy": "No usamos tus datos para entrenar IA.\nTus conversaciones son privadas.\n¡Tu información te pertenece!",

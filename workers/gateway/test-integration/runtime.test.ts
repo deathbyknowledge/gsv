@@ -410,6 +410,26 @@ describe("gateway runtime integration", () => {
       .toBe("Reply after closing the window.");
   });
 
+  it("keeps a Send's choices on the canonical message and lists them for a messenger without buttons", async () => {
+    const client = await setupClient();
+    await linkTestActor(harness);
+    const { conversation } = await client.conversation.ship({});
+    if (!conversation.handlerPid) throw new Error("Missing Ship");
+    await configureDeterministicAi(client, conversation.handlerPid, ai.baseUrl);
+    ai.enqueue({ kind: "tool-calls", calls: [{
+      id: "choices-send", name: "Send",
+      arguments: { text: "Mornings or nights?", choices: [" Morning person", "Night owl", "Night owl"], yield: true },
+    }] });
+    await sendServiceFrame(harness, inboundFrame({
+      id: "choices-ask", deliveryId: "choices-ask", messageId: "choices-ask", text: "Calibrate me.",
+    }));
+
+    expect((await waitForOutbound(harness, ACCOUNT_ID, 1)).at(-1)?.message.text)
+      .toBe("Mornings or nights?\n\n1. Morning person\n2. Night owl");
+    expect((await client.conversation.history({ conversationId: conversation.id })).messages.at(-1))
+      .toMatchObject({ text: "Mornings or nights?", choices: ["Morning person", "Night owl"] });
+  });
+
   it("preserves a scheduled process's explicit messenger destination when correcting a send", async () => {
     const client = await setupClient();
     await linkTestActor(harness);

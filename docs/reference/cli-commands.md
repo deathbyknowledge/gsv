@@ -678,10 +678,10 @@ message route list [--json]
 message route set --process PID_OR_LABEL [--to here|DESTINATION] [--json]
 message route clear [--to here|DESTINATION] [--json]
 message attach PATH... [--mime TYPE]
-message history --with CONTACT_OR_CONVERSATION [--before SEQUENCE] [--limit N] [--json]
+message history [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]
 message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]
 message delivery show DELIVERY_ID [--json]
-message send [--message TEXT]
+message send [--message TEXT] [--choice TEXT]...
 yield
 message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]
 contact find @HANDLE|ADDRESS
@@ -703,7 +703,7 @@ atproto delete COLLECTION RKEY
 atproto apply (--json WRITES | --file PATH)
 atproto blob PATH [--mime TYPE]
 r12y list [--all] [--json]
-r12y show ID
+r12y show ID [--json]
 r12y create --title TITLE [--details JSON] [--parent ID] [--priority PRIORITY] [--due ISO] [--check ISO] [--blocker TEXT] [--dedupe KEY]
 r12y update ID --json PATCH
 r12y start ID
@@ -816,6 +816,7 @@ Search returns newest matches first, with literal word prefixes combined with AN
 A signed-in user or their Ship may search;
 delegated work does not inherit conversation access. Use `message history` with
 the match's sequence plus one as `--before` and `--limit 1` to read it in full.
+`message history` without `--with` reads the Ship conversation too.
 
 `message current` reports the current run's directed endpoint and exact reply
 commands. For an adapter run, text and JSON also include an opaque destination

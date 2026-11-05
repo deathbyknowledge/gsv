@@ -68,6 +68,8 @@ export type ConversationMessage = {
   /** Target selected for this message, independently of its source and reply endpoint. */
   selectedTarget?: string;
   media?: MessageAttachment[];
+  /** Short replies a process message offers; tapping one sends its text as the person's next message. */
+  choices?: string[];
   origin: ConversationMessageOrigin;
   processId?: string;
   runId?: string;

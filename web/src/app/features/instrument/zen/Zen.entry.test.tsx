@@ -3,7 +3,7 @@ import type { ConversationMessage, ConversationSendArgs, ConversationSendResult,
 import { resourceBlockSchema } from "@humansandmachines/gsv/protocol";
 import { conversationSendMessageId } from "@humansandmachines/gsv/protocol/stable-id";
 import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
-import type { ComponentChildren, ComponentProps, ComponentType } from "preact";
+import type { ComponentChildren, ComponentProps, ComponentType, JSX } from "preact";
 import { act } from "preact/test-utils";
 import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -672,6 +672,34 @@ describe("Zen conversation entry", () => {
       await act(() => { expect(zen.props(NativeVoiceControls).send("Hello from voice")).toBe(true); });
       await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
       expect(send.mock.calls[0]?.[0].text).toBe("Hello from voice");
+    } finally { await zen.unmount(); }
+  });
+
+  it("offers a Ship message's replies while it is the latest and sends a tapped one as the person's message", async () => {
+    messages = [
+      { ...message("process", "Earlier question?", 1), choices: ["Old answer"] },
+      message("user", "Old answer", 2),
+      { ...message("process", "Mornings or nights?", 3), choices: ["Morning person", "Night owl"] },
+    ];
+    const zen = await mountedZen();
+    const offered = () => zen.nodes().filter((node) => node.type === "button" && node.props.class === "zen-choice");
+    try {
+      await vi.waitFor(() => expect(offered().map((node) => collectText(node))).toEqual(["Morning person", "Night owl"]));
+      const committed = message("user", "Night owl", 4);
+      send.mockResolvedValueOnce({ message: committed, handlerPid: shipPid, runId: "run:choice" });
+      // SAFETY: These nodes were selected as the reply buttons Zen renders.
+      const button = offered()[1].props as Pick<JSX.HTMLAttributes<HTMLButtonElement>, "onClick">;
+      const stopPropagation = vi.fn();
+      const tap: Partial<JSX.TargetedMouseEvent<HTMLButtonElement>> = { stopPropagation };
+      // SAFETY: the handler reads only stopPropagation from the event.
+      await act(() => button.onClick!(tap as JSX.TargetedMouseEvent<HTMLButtonElement>));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith({
+        conversationId: "canonical-ship", text: "Night owl", selectedTarget: "gsv", idempotencyKey: expect.any(String),
+      }));
+      // a tap answers rather than selects the message, so the transcript keeps following
+      expect(stopPropagation).toHaveBeenCalledOnce();
+      await act(() => { for (const listener of signals) listener("message.committed", { message: committed, directed: true }); });
+      expect(offered()).toHaveLength(0);
     } finally { await zen.unmount(); }
   });
 

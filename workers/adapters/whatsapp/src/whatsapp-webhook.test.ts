@@ -27,7 +27,7 @@ type MessageFixture = {
   sticker?: MediaFixture;
   location?: { latitude: number; longitude: number; name?: string; address?: string };
   context?: { from?: string; id?: string };
-  interactive?: { type: string; button_reply?: { id: string; title?: string }; list_reply?: { id: string } };
+  interactive?: { type: string; button_reply?: { id: string; title?: string }; list_reply?: { id: string; title?: string } };
   button?: { payload?: string; text?: string };
   reaction?: { message_id: string; emoji: string };
   contacts?: Array<{ name: { formatted_name: string } }>;
@@ -223,6 +223,33 @@ describe("WhatsApp webhook normalization", () => {
     expect(foreign).toMatchObject({
       kind: "accepted",
       events: [{ kind: "message", inbound: { unsupportedContent: true, text: "" } }],
+    });
+  });
+
+  it("relays a tapped choice as the person replying with its title", () => {
+    const result = normalizeWhatsAppWebhook(notification([
+      {
+        from: "34611111189", id: "wamid.button", type: "interactive", timestamp: "1700000300",
+        context: { from: "34600000000", id: "wamid.question" },
+        interactive: { type: "button_reply", button_reply: { id: "gsvc:2", title: "Night owl" } },
+      },
+      {
+        from: "34611111189", id: "wamid.row", type: "interactive",
+        context: { from: "34600000000", id: "wamid.question" },
+        interactive: { type: "list_reply", list_reply: { id: "gsvc:4", title: "Mostly email" } },
+      },
+      { from: "34611111189", id: "wamid.untitled", type: "interactive", interactive: { type: "list_reply", list_reply: { id: "gsvc:1" } } },
+    ]), PHONE_NUMBER_ID);
+    expect(result).toMatchObject({
+      kind: "accepted",
+      events: [
+        { kind: "message", inbound: {
+          deliveryId: "message:wamid.button", messageId: "wamid.button", text: "Night owl",
+          replyToId: "wamid.question", timestamp: 1_700_000_300_000, unsupportedContent: false,
+        } },
+        { kind: "message", inbound: { messageId: "wamid.row", text: "Mostly email", replyToId: "wamid.question", unsupportedContent: false } },
+        { kind: "message", inbound: { messageId: "wamid.untitled", text: "", unsupportedContent: true } },
+      ],
     });
   });
 

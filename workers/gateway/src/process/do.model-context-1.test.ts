@@ -139,7 +139,7 @@ describe("model context", () => {
     expect(result.promptAfter).toBe(result.promptBefore);
     expect(result.promptAfter).not.toContain("Hello from another Ship");
     expect(result.messages).toHaveLength(3);
-    expect(result.messages[0].content).toContain("Responsibility review requested at");
+    expect(result.messages[0].content).toContain("Responsibilities due: ");
     const [, contactMessage, requestMessage] = result.messages;
     expect(contactMessage.content).toContain("Kind: Contact message");
     expect(contactMessage.content).toContain('Contact: "Flynn" (`contact:flynn`)');
@@ -838,7 +838,7 @@ describe("model context", () => {
       // SAFETY: test fixture is constructed with the asserted domain shape.
       expect((repeat as any).data).toEqual((first as any).data);
       expect(process.store.messages.getMessages()).toHaveLength(1);
-      expect(process.store.messages.getMessages()[0].content).toContain("Responsibility review requested at");
+      expect(process.store.messages.getMessages()[0].content).toContain("Responsibilities due: ");
       expect(process.runs.active).toMatchObject({
         runId: "run-busy",
         pendingRuntimeEvents: 1,
