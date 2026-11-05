@@ -12,7 +12,14 @@ type GraphMessage = {
   kind: string;
   body: {
     to?: string; type?: string; text?: { body?: string };
-    interactive?: { type: string; body: { text: string }; action: { name?: string; parameters?: { display_text: string; url: string } } };
+    interactive?: {
+      type: string; body: { text: string };
+      action: {
+        name?: string; parameters?: { display_text: string; url: string };
+        buttons?: Array<{ type: string; reply: { id: string; title: string } }>;
+        button?: string; sections?: Array<{ rows: Array<{ id: string; title: string }> }>;
+      };
+    };
     template?: { components: Array<{ type: string; parameters: Array<{ text?: string }> }> };
   };
 };
@@ -286,4 +293,60 @@ it("puts an action to open on a link button inside the window, and its link in t
   expect(template).toMatchObject({ ok: true });
   const [sent] = await messages("34690217773");
   expect(sent?.body.template?.components[0]?.parameters[0]?.text).toBe(`💬 Bo: are we still on? · Open in People: ${action.url}`);
+});
+
+it("offers choices as reply buttons or a list that fits them word for word, and as a numbered list otherwise", async () => {
+  const question = "Mornings or nights?";
+  const buttons = await seed("34690218881");
+  using buttoned = await buttons.peer.sendMessage(buttons.route.installationId, {
+    ...buttons.message, text: `Nice to meet you.\n\n${question}`, choices: ["Morning person", "Night owl"],
+  });
+  expect(buttoned).toMatchObject({ ok: true });
+  expect((await messages("34690218881")).map((record) => record.body)).toMatchObject([
+    { type: "text", text: { body: "Nice to meet you." } },
+    { type: "interactive", interactive: { type: "button", body: { text: question }, action: { buttons: [
+      { type: "reply", reply: { id: "gsvc:1", title: "Morning person" } },
+      { type: "reply", reply: { id: "gsvc:2", title: "Night owl" } },
+    ] } } },
+  ]);
+
+  const week = ["Meetings", "Email", "Errands", "Admin", "Mostly email and Slack"];
+  const list = await seed("34690218882");
+  using listed = await list.peer.sendMessage(list.route.installationId, { ...list.message, text: "What eats your week?", choices: week });
+  expect(listed).toMatchObject({ ok: true });
+  expect((await messages("34690218882")).map((record) => record.body)).toMatchObject([{
+    type: "interactive",
+    interactive: { type: "list", body: { text: "What eats your week?" }, action: {
+      button: "Choose one",
+      sections: [{ rows: week.map((title, index) => ({ id: `gsvc:${index + 1}`, title })) }],
+    } },
+  }]);
+
+  const long = await seed("34690218883");
+  using written = await long.peer.sendMessage(long.route.installationId, {
+    ...long.message, text: question, choices: ["Morning person", "Night owl, unless there is a deadline"],
+  });
+  expect(written).toMatchObject({ ok: true });
+  expect((await messages("34690218883")).map((record) => record.body.text?.body)).toEqual([
+    question, "1. Morning person\n2. Night owl, unless there is a deadline",
+  ]);
+
+  const wordy = await seed("34690218885");
+  const context = "word ".repeat(220).trim();
+  using fitted = await wordy.peer.sendMessage(wordy.route.installationId, {
+    ...wordy.message, text: `${context} ${question}`, choices: ["Morning person", "Night owl"],
+  });
+  expect(fitted).toMatchObject({ ok: true });
+  const [lead, interactive] = await messages("34690218885");
+  expect(interactive?.body.interactive?.type).toBe("button");
+  expect([...interactive!.body.interactive!.body.text].length).toBeLessThanOrEqual(1024);
+  expect(`${lead?.body.text?.body} ${interactive?.body.interactive?.body.text}`).toBe(`${context} ${question}`);
+
+  const closed = await seed("34690218884", true);
+  using template = await closed.peer.sendMessage(closed.route.installationId, {
+    ...closed.message, text: question, choices: ["Morning person", "Night owl"],
+  });
+  expect(template).toMatchObject({ ok: true });
+  const [sent] = await messages("34690218884");
+  expect(sent?.body.template?.components[0]?.parameters[0]?.text).toBe(`${question} · 1. Morning person · 2. Night owl`);
 });

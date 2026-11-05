@@ -158,6 +158,11 @@ delivery and run completion are separate operations:
   lives through `fs.read` in its `reference` representation, retained into the process archive, and sent with the message, or the send is
   refused naming the file that could not be read. Those reads obey the person's tool approval rules the
   way a Read does: a file that would need approval is refused until it has been read once.
+- `choices` offers up to ten replies with a message that asks something, each one line of at most 80
+  characters. They are stored with the canonical Message, so every client and messenger sees the
+  same ones. Instrument shows them as buttons under Ship's latest message only; once anything follows,
+  they are gone. Tapping one sends its text as an ordinary message from the person, exactly as if they
+  had typed it. Only a Process message with text can offer choices.
 - The same three actions exist as commands, so a person or a script can do what the model does. A
   literal block sends and leaves the run active, `yield` finishes it, and a final message composes both
   with ordinary shell success semantics:

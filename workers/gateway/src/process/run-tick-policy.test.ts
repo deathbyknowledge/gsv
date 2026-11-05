@@ -164,6 +164,36 @@ describe("run tick policy", () => {
     });
   });
 
+  it("carries the replies a Send offers as the person will see them", () => {
+    const parsedOf = (args: Record<string, string | boolean | string[]>) => classifyAssistantTurn(assistant([{
+      type: "toolCall" as const, id: "c1", name: "Send", arguments: args,
+    }]), ["Send"]).runControlCalls[0]?.parsed;
+
+    expect(parsedOf({ text: "Mornings or nights?", choices: [" Morning\nperson", "Night owl", "", "Night owl"] })).toEqual({
+      ok: true,
+      command: { action: "message", text: "Mornings or nights?", finish: false, choices: ["Morning person", "Night owl"] },
+    });
+    expect(parsedOf({ text: "Done?", choices: ["Yes"], yield: true })).toEqual({
+      ok: true,
+      command: { action: "message", text: "Done?", finish: true, choices: ["Yes"] },
+    });
+    // blanks only are no choices at all
+    expect(parsedOf({ text: "hello", choices: [" "] })).toEqual({
+      ok: true,
+      command: { action: "message", text: "hello", finish: false },
+    });
+    expect(parsedOf({ yield: true, choices: ["Yes"] })).toEqual({
+      ok: false, action: "message", error: "choices answer a question: send them with the message that asks it",
+    });
+    expect(parsedOf({ text: "Pick", choices: Array.from({ length: 11 }, (_, index) => `${index}`) })).toEqual({
+      ok: false, action: "message", error: "offer at most 10 choices",
+    });
+    expect(parsedOf({ text: "Pick", choices: ["x".repeat(81)] })).toEqual({
+      ok: false, action: "message", error: "each choice is at most 80 characters; keep it to a few words",
+    });
+    expect(parsedOf({ text: "Pick", choices: "Yes" })).toMatchObject({ ok: false, action: "message" });
+  });
+
   it("reads where an attached file lives the way cp does", () => {
     expect(parseAttachPath("/tmp/a.png")).toEqual({ target: "gsv", path: "/tmp/a.png" });
     expect(parseAttachPath("~/notes/a.md")).toEqual({ target: "gsv", path: "~/notes/a.md" });

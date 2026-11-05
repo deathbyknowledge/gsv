@@ -28,6 +28,7 @@ type MessageRow = {
   selected_target: string | null;
   social_json: string | null;
   media_json: string | null;
+  choices_json: string | null;
   origin_json: string;
   process_id: string | null;
   run_id: string | null;
@@ -42,6 +43,7 @@ export type ConversationAppendInput = {
   selectedTarget?: string;
   social?: SocialMessageMetadata;
   media?: ResourceBlock[];
+  choices?: string[];
   origin: ConversationMessageOrigin;
   processId?: string;
   runId?: string;
@@ -120,9 +122,9 @@ export class ConversationStore {
     }
     this.sql.exec(
       `INSERT OR IGNORE INTO messages
-       (message_id, idempotency_key, author_json, text, selected_target, social_json, media_json, origin_json,
-        process_id, run_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (message_id, idempotency_key, author_json, text, selected_target, social_json, media_json, choices_json,
+        origin_json, process_id, run_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.messageId,
       input.idempotencyKey,
       JSON.stringify(input.author),
@@ -130,6 +132,7 @@ export class ConversationStore {
       input.selectedTarget ?? null,
       input.social ? JSON.stringify(input.social) : null,
       input.media?.length ? JSON.stringify(input.media) : null,
+      input.choices?.length ? JSON.stringify(input.choices) : null,
       JSON.stringify(input.origin),
       input.processId ?? null,
       input.runId ?? null,
@@ -371,6 +374,10 @@ function toMessage(conversationId: string, row: MessageRow): ConversationMessage
   if (row.media_json) {
     // SAFETY: persisted media_json is written only from MessageAttachment arrays.
     message.media = JSON.parse(row.media_json) as MessageAttachment[];
+  }
+  if (row.choices_json) {
+    // SAFETY: persisted choices_json is written only from validated message choices.
+    message.choices = JSON.parse(row.choices_json) as string[];
   }
   if (row.process_id) message.processId = row.process_id;
   if (row.selected_target !== null) message.selectedTarget = row.selected_target;

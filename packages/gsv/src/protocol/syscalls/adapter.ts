@@ -17,6 +17,7 @@ import {
   type AdapterConnectChallenge,
 } from "../adapters";
 import type { JsonValue } from "../json";
+import { messageChoicesSchema } from "../message-choices";
 import * as z from "zod/mini";
 
 const nonEmptyStringSchema = z.string().check(z.minLength(1));
@@ -93,6 +94,8 @@ export type AdapterSendArgs = {
   media?: AdapterMedia[];
   /** Something to open from the message: a button where the messenger has one, a line of text where it doesn't. */
   action?: AdapterSendAction;
+  /** Replies the person can tap: buttons where the messenger has them, a numbered list where it doesn't. */
+  choices?: string[];
   /** Acknowledge that this separate send intentionally duplicates the active run's directed endpoint. */
   also?: boolean;
 };
@@ -106,6 +109,7 @@ export const adapterSendArgsSchema = z.strictObject({
   replyToId: z.optional(z.string()),
   media: z.optional(z.array(adapterMediaSchema)),
   action: z.optional(adapterSendActionSchema),
+  choices: z.optional(messageChoicesSchema),
   also: z.optional(z.boolean()),
 });
 

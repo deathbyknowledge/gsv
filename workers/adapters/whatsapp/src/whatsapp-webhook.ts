@@ -3,6 +3,7 @@ import {
   type WhatsAppInboundMediaSource,
 } from "./whatsapp-inbound-media";
 import { maskWhatsAppNumber } from "./managed-config";
+import { WHATSAPP_CHOICE_REPLY_PREFIX } from "./whatsapp-choices";
 import { WHATSAPP_TEMPLATE_REPLY_PAYLOAD } from "./whatsapp-template";
 import { z } from "zod";
 
@@ -29,6 +30,7 @@ const whatsAppMessageSchema = z.object({
   interactive: z.object({
     type: z.string(),
     button_reply: z.object({ id: z.string(), title: z.string().optional() }).passthrough().optional(),
+    list_reply: z.object({ id: z.string(), title: z.string().optional() }).passthrough().optional(),
   }).passthrough().optional(),
   /** A quick-reply tap on a template message arrives as its own message type. */
   button: z.object({
@@ -233,7 +235,8 @@ function normalizeMessage(
   const actorId = message.from;
   const timestamp = timestampMilliseconds(message.timestamp);
 
-  if (message.type === "interactive") {
+  const choice = tappedChoice(message);
+  if (message.type === "interactive" && choice === null) {
     const reply = message.interactive;
     const providerMessageId = message.context?.id?.trim() ?? "";
     if (
@@ -269,9 +272,11 @@ function normalizeMessage(
     return { kind: "release", tap };
   }
 
-  const content = message.type === "text" || MEDIA_MESSAGE_TYPES.has(message.type)
-    ? extractWhatsAppInboundContent(message)
-    : { text: message.type === "location" ? locationText(message.location) : null, media: [] };
+  const content = choice !== null
+    ? { text: choice, media: [] }
+    : message.type === "text" || MEDIA_MESSAGE_TYPES.has(message.type)
+      ? extractWhatsAppInboundContent(message)
+      : { text: message.type === "location" ? locationText(message.location) : null, media: [] };
   const text = normalizedText(content.text);
   const unsupportedContent = !text;
   const replyToId = message.context?.id?.trim();
@@ -289,6 +294,15 @@ function normalizeMessage(
     unsupportedContent,
   };
   return { kind: "message", inbound };
+}
+
+/** A tap on a reply button or list row that offered a choice is the person replying with its title. */
+function tappedChoice(message: z.infer<typeof whatsAppMessageSchema>): string | null {
+  const interactive = message.type === "interactive" ? message.interactive : undefined;
+  const reply = interactive?.type === "button_reply"
+    ? interactive.button_reply
+    : interactive?.type === "list_reply" ? interactive.list_reply : undefined;
+  return reply?.id.startsWith(WHATSAPP_CHOICE_REPLY_PREFIX) ? reply.title ?? "" : null;
 }
 
 function unsupported(

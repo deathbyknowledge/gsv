@@ -2117,6 +2117,21 @@ describe("Kernel process signal routing", () => {
       );
     });
 
+    it("offers a committed message's choices to the adapter", async () => {
+      const { kernel, route } = deliveredKernel({ messageId: "wamid.a", deliveryState: "sent" });
+      const committed = committedMessageFrame(route, "message-1", "Mornings or nights?");
+      const frame = { ...committed, payload: { message: { ...committed.payload.message, choices: ["Morning person", "Night owl"] } } };
+      await expect(kernel.adapterDelivery.deliverAdapterRouteEvent(route, frame)).resolves.toEqual({ state: "delivered" });
+      expect(kernel.installationEnv.CHANNEL_WHATSAPP.adapterFrame).toHaveBeenCalledExactlyOnceWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          call: "adapter.send",
+          args: expect.objectContaining({ text: "Mornings or nights?", choices: ["Morning person", "Night owl"] }),
+        }),
+      );
+    });
+
     it("maps a retried delivery from the ledger's replayed ids", async () => {
       const { kernel, route } = deliveredKernel({ messageId: "wamid.a", messageIds: ["wamid.a", "wamid.b"], deliveryState: "deduplicated" });
       await kernel.adapterDelivery.deliverAdapterRouteEvent(route, committedMessageFrame(route, "message-1", "reply"));

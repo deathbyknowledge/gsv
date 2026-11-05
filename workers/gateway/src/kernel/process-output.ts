@@ -443,6 +443,7 @@ async commitProcessMessage(
       createdAt: Date.now(),
     };
     if (args.media?.length) appendInput.media = args.media;
+    if (args.choices?.length) appendInput.choices = args.choices;
     let route = this.host.runRoutes.pinMessageRoute(messageId, () =>
       this.resolveRunRoute(processId, args.runId, process.ownerUid, conversation.id));
     const appended = await stub.append(appendInput);
