@@ -501,14 +501,17 @@ createScheduleResponsibility(
 
 buildScheduleContext(record: ScheduleRecord): KernelContext {
     const identity = this.resolveScheduleIdentity(record);
-    return this.host.buildKernelContext({
-      peer: kernelPeerContext({
-        installationId: this.host.installationId,
-        identity,
-        calls: this.host.caps.resolve(identity.gids),
+    return {
+      ...this.host.buildKernelContext({
+        peer: kernelPeerContext({
+          installationId: this.host.installationId,
+          identity,
+          calls: this.host.caps.resolve(identity.gids),
+        }),
+        callerOwnerUid: record.ownerUid,
       }),
-      callerOwnerUid: record.ownerUid,
-    });
+      scheduleId: record.id,
+    };
   }
 
 resolveScheduleIdentity(record: ScheduleRecord): ProcessIdentity {

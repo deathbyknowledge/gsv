@@ -102,8 +102,8 @@ that request is still pending.
 
 | Type | Appended for | Goes to · lane | Idle | During a run |
 |---|---|---|---|---|
-| `message.received` | chat, a messenger, a person's `proc.send` or spawn prompt, a scheduled spawn's prompt | the Ship or the routed process · person | start | stop it and start this one |
-| `process.message` | a spawn prompt from a process | the process · background | start | own run after |
+| `message.received` | chat, a messenger, a person's `proc.send` or spawn prompt | the Ship or the routed process · person | start | stop it and start this one |
+| `process.message` | a spawn prompt from a process or a schedule | the process · background | start | own run after |
 | `work.returned` | `/ship` on a messenger | the Ship · person | start | own run after |
 | `ipc.message`, `ipc.call` | another process's message or call | the target · background | start | own run after |
 | `ipc.reply`, `ipc.timeout`, `ipc.overdue` | a call's end or check-in | the caller · background | start | join the run that asked; own run after during another |

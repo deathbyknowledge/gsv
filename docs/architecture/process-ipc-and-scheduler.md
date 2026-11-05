@@ -275,7 +275,9 @@ and a newer firing replaces one still waiting. Without `replyTo`, a firing joins
 an active run. With `replyTo`, it takes its own run after any active one, and that
 run replies there. A successful `process.spawn` means the
 new process was created and its initial prompt is on the Kernel's log, which
-delivers it and retries until the process takes it. Child answers remain in
+delivers it and retries until the process takes it. The prompt comes from the
+schedule, as a `process.message`, so the process sees which schedule sent it,
+not a message from the account the schedule runs as. Child answers remain in
 the child history unless another mechanism consumes them.
 
 ### Chat delivery contracts

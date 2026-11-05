@@ -199,10 +199,10 @@ describe("event census", () => {
     await runtime.client.sched.add({ name: "census spawn", expression: soon, target: { kind: "process.spawn", label: "census scheduled", prompt: "Census: a scheduled process." } });
     await runtime.client.sched.add({ name: "census ledger", expression: soon, target: { kind: "responsibility", message: "Census: a scheduled responsibility." } });
     await waitForLog("schedule.fired to the worker", async () => (await rows("schedule.fired")).some(({ consumer, state }) => consumer === `proc:${worker}` && state === "delivered"));
-    // A scheduled spawn's context carries no origin of its own, so its prompt arrives as its owner's message.
+    // A scheduled spawn's prompt comes from its schedule, not from a person.
     await waitForLog("the scheduled process's prompt", async () => {
       const scheduled = (await runtime.client.proc.list({})).processes.find(({ label }) => label === "census scheduled");
-      return scheduled !== undefined && (await rows("message.received")).some(({ consumer, state }) => consumer === `proc:${scheduled.pid}` && state === "delivered");
+      return scheduled !== undefined && (await rows("process.message")).some(({ consumer, state }) => consumer === `proc:${scheduled.pid}` && state === "delivered");
     });
     await waitForLog("the scheduled responsibility for Ship", async () => (await rows("responsibility.ready")).filter(({ state }) => state === "delivered").length > before);
   });

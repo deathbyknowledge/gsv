@@ -521,6 +521,7 @@ function interactionOriginForContext(ctx: KernelContext): InteractionOrigin | un
   if (ctx.processId) {
     return processInteractionOrigin(ctx.processId, principalOf(ctx)?.account.uid);
   }
+  if (ctx.scheduleId) return { kind: "scheduler", scheduleId: ctx.scheduleId };
 
   const identity = principalOf(ctx);
   if (!identity) return undefined;
@@ -560,9 +561,11 @@ function processInteractionOrigin(sourcePid: string, uid?: number): InteractionO
   return origin;
 }
 
-/** Who sent a message: the calling process, or the person or device the caller acts for. */
+/** Who sent a message: the calling process, a firing schedule, or the person or device the caller acts for. */
 function senderOf(ctx: KernelContext): EventActor {
-  return ctx.processId ? { kind: "process", pid: ctx.processId } : { kind: "person", uid: requirePrincipal(ctx).account.uid };
+  if (ctx.processId) return { kind: "process", pid: ctx.processId };
+  if (ctx.scheduleId) return { kind: "schedule", scheduleId: ctx.scheduleId };
+  return { kind: "person", uid: requirePrincipal(ctx).account.uid };
 }
 
 /**

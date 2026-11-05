@@ -2262,7 +2262,7 @@ describe("scheduler", () => {
     expect(schedule?.state.lastStatus).toBe("ok");
   });
 
-  it("runs a due process.spawn schedule and sends the prompt to the cron process", async () => {
+  it("runs a due process.spawn schedule and sends the prompt to the cron process as its schedule's message", async () => {
     const installationId = `scheduler-spawn-test-${crypto.randomUUID()}`;
     const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
@@ -2356,6 +2356,25 @@ describe("scheduler", () => {
       role: "user",
       content: "Run the scheduled cron task.",
     }));
+    // The prompt comes from the schedule, not from a person, so the model sees which schedule sent it.
+    const logged = await runInDurableObject(kernel, (_instance: Kernel, state) => state.storage.sql.exec<{
+      type: string; actor_json: string; body_json: string; lane: string | null;
+    }>(
+      "SELECT e.type, e.actor_json, e.body_json, d.lane FROM events e JOIN deliveries d ON d.seq = e.seq WHERE e.subject = ?",
+      `proc:${spawned.pid}`,
+    ).toArray());
+    expect(logged.map((row) => ({
+      type: row.type,
+      lane: row.lane,
+      actor: JSON.parse(row.actor_json),
+      origin: JSON.parse(row.body_json).origin,
+    }))).toEqual([{
+      type: "process.message",
+      lane: "background",
+      actor: { kind: "schedule", scheduleId },
+      origin: { kind: "scheduler", scheduleId },
+    }]);
+    expect(JSON.parse(messages[0]?.origin ?? "null")).toEqual({ kind: "scheduler", scheduleId });
   });
 
   it("runs process-principal spawn schedules after the creator process is gone", async () => {

@@ -108,6 +108,8 @@ export type KernelContext = {
   peer?: PeerContext;
   processId?: string;
   processRunId?: string;
+  /** The schedule this context fires for: what it sends comes from the schedule, not from the account it runs as. */
+  scheduleId?: string;
   toolOwner?: ProcessToolOwner;
   /** Deadlines of this tool execution, held while the Process asks a person to approve a nested operation. */
   executionDeadlines?: ExecutionDeadlines;
