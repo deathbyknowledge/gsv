@@ -3,6 +3,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import * as processTransport from "../shared/utils";
+import { spyOnProcessDeliveries } from "../test-support/process-deliveries";
 import { testPeer } from "../test-support/peers";
 import { handleAdapterInbound } from "./adapter-ingress";
 import type { KernelContext } from "./context";
@@ -20,9 +21,13 @@ const REPLACED = { unavailable: "transitioning", message: "Process is being repl
 
 afterEach(() => vi.restoreAllMocks());
 
+/** The Kernels this file's tests made; only their deliveries reach a test's spy. */
+const ownKernels = new Set<string>();
+
 async function fixture(work: (kernel: Kernel) => Promise<void>) {
   const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
   await runInDurableObject(stub, async (kernel: Kernel) => {
+    ownKernels.add(kernel.installationId);
     // The tests run each pass themselves; no alarm runs one behind them.
     vi.spyOn(kernel.ctx.storage, "setAlarm").mockResolvedValue(undefined);
     vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue(SHIP);
@@ -42,9 +47,9 @@ async function fixture(work: (kernel: Kernel) => Promise<void>) {
   });
 }
 
-/** A spy that answers every Kernel; tests read only the calls their own Kernel made. */
+/** Spies on this file's Kernels' deliveries and frames; tests read only the calls their own Kernel made. */
 function processes() {
-  const deliver = vi.spyOn(processTransport, "deliverEventToProcess").mockImplementation(async (_installation, _pid, args) => (
+  const deliver = spyOnProcessDeliveries((installationId) => ownKernels.has(installationId), async (_installation, _pid, args) => (
     { eventId: args.eventId, runId: "input" in args ? args.input.runId ?? args.eventId : args.eventId, queued: false }
   ));
   const framed = vi.spyOn(processTransport, "sendFrameToProcess").mockImplementation(async (_installation, _pid, frame) => (

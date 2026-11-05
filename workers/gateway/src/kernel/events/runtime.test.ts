@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { DurableTaskOptions } from "../../shared/durable-tasks";
-import * as processTransport from "../../shared/utils";
+import { spyOnProcessDeliveries } from "../../test-support/process-deliveries";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
 import * as personalController from "../personal-controller";
 import { ResponsibilityStore } from "../responsibility-store";
@@ -535,8 +535,7 @@ function fixture(storage: DurableObjectStorage, registry: EventRegistry = REGIST
   return { host, runtime, events, responsibilities, schedule, disabled, processes, gate };
 }
 
+/** The fixture host's deliveries, which a real Kernel another test left behind can't reach. */
 function acknowledge() {
-  return vi.spyOn(processTransport, "deliverEventToProcess").mockImplementation(async (_installationId, _pid, args) => (
-    { eventId: args.eventId, runId: null, queued: false }
-  ));
+  return spyOnProcessDeliveries((installationId) => installationId === "installation:test");
 }

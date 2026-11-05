@@ -22,7 +22,8 @@ it("drops persisted approval notices on upgrade, so no alarm decodes their retir
     try {
       await kernel.alarm();
       expect(send).not.toHaveBeenCalled();
-      expect(deliver).not.toHaveBeenCalled();
+      // Test files share modules, so the spy also sees Kernels other tests left with work due.
+      expect(deliver.mock.calls.filter(([installationId]) => installationId === kernel.installationId)).toEqual([]);
     } finally { send.mockRestore(); deliver.mockRestore(); }
   });
 });

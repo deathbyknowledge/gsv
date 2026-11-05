@@ -6,6 +6,7 @@ import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import { getDurableObjectByName } from "../shared/durable-object";
 import * as utils from "../shared/utils";
+import { spyOnProcessDeliveries } from "../test-support/process-deliveries";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import { SignalWatchStore } from "./signal-watches";
 import { KERNEL_MIGRATIONS, KERNEL_SCHEMA_COMPONENT } from "./schema/migrations";
@@ -15,7 +16,11 @@ const identity: ProcessIdentity = {
   uid: 7100, gid: 7100, gids: [7100], username: "target-observer", home: "/home/target-observer", cwd: "/home/target-observer",
 };
 
+/** The Kernels this file's tests made; only their deliveries reach a test's spy. */
+const ownKernels = new Set<string>();
+
 function setup(kernel: Kernel) {
+  ownKernels.add(kernel.installationId);
   kernel.procs.spawn("proc:observer", identity, { ownerUid: 7000 });
   kernel.procs.spawn("proc:child", identity, { ownerUid: 7000 });
   kernel.procs.spawn("proc:foreign", identity, { ownerUid: 8000 });
@@ -45,9 +50,9 @@ async function fixture(work: (kernel: Kernel, ctx: KernelContext) => Promise<voi
   });
 }
 
-/** A spy that answers every Kernel; tests read only the calls their own Kernel made. */
+/** Spies on this file's Kernels' deliveries; tests read only the calls their own Kernel made. */
 function processes() {
-  const deliver = vi.spyOn(utils, "deliverEventToProcess").mockImplementation(async (_installationId, _pid, args) => (
+  const deliver = spyOnProcessDeliveries((installationId) => ownKernels.has(installationId), async (_installationId, _pid, args) => (
     { eventId: args.eventId, runId: null, queued: false, messageId: 1 }
   ));
   return {
@@ -166,7 +171,7 @@ describe("registered target event watches", () => {
           'null', 1, 'active', 1, 1)`,
       );
       const send = vi.spyOn(utils, "sendFrameToProcess");
-      const deliver = vi.spyOn(utils, "deliverEventToProcess");
+      const deliver = spyOnProcessDeliveries((installationId) => installationId === kernel.installationId);
       const broadcast = vi.spyOn(kernel.processOutput, "broadcastProcessSignal").mockImplementation(() => {});
       const frame = {
         type: "sig", signal: "proc.run.finished", payload: { pid: "proc:child", runId: "run:child", timestamp: Date.now() },

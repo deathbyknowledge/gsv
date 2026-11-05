@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationMessage, JsonObject, OriginMessageRef, ResourceBlock, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
 import type { DurableTaskOptions } from "../../shared/durable-tasks";
 import * as sharedUtils from "../../shared/utils";
+import { spyOnProcessDeliveries } from "../../test-support/process-deliveries";
 import { runWithRealKernelSql } from "../../test-support/real-kernel-sql";
 import { testPeer } from "../../test-support/peers";
 import type { KernelContext } from "../context";
@@ -111,7 +112,7 @@ describe("contact attention admission", () => {
       const work = ctx.responsibilities.list({ ownerUid: OWNER.uid }).records[0]!;
       const admittedAt = ctx.responsibilities.revision(OWNER.uid);
       vi.spyOn(personalController, "ensurePersonalController").mockResolvedValue("proc:ship");
-      const deliver = vi.spyOn(sharedUtils, "deliverEventToProcess").mockImplementation(async (_installation, _pid, args) => (
+      const deliver = spyOnProcessDeliveries((installationId) => installationId === "installation:test", async (_installation, _pid, args) => (
         { eventId: args.eventId, runId: args.eventId, queued: false }
       ));
       const runner = runtime(storage, ctx);

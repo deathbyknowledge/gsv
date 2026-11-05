@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProcessIdentity, ResourceBlock } from "@humansandmachines/gsv/protocol";
 import * as processTransport from "../shared/utils";
 import type { Kernel } from "./do";
+import { spyOnProcessDeliveries } from "../test-support/process-deliveries";
 import { handleProcIpcCall, handleProcIpcSend } from "./proc-handlers";
 
 const OWNER: ProcessIdentity = { uid: 1000, gid: 1000, gids: [1000, 100], username: "sam", home: "/home/sam", cwd: "/home/sam" };
@@ -14,9 +15,13 @@ const REPLACED = { unavailable: "transitioning", message: "Process is being repl
 
 afterEach(() => vi.restoreAllMocks());
 
+/** The Kernels this file's tests made; only their deliveries reach a test's spy. */
+const ownKernels = new Set<string>();
+
 async function fixture(work: (kernel: Kernel) => Promise<void>) {
   const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
   await runInDurableObject(stub, async (kernel: Kernel) => {
+    ownKernels.add(kernel.installationId);
     // The tests run each pass themselves; no alarm runs one behind them.
     vi.spyOn(kernel.ctx.storage, "setAlarm").mockResolvedValue(undefined);
     try {
@@ -35,9 +40,9 @@ async function fixture(work: (kernel: Kernel) => Promise<void>) {
   });
 }
 
-/** A spy that answers every Kernel; tests read only the calls their own Kernel made. */
+/** Spies on this file's Kernels' deliveries and frames; tests read only the calls their own Kernel made. */
 function processes() {
-  const deliver = vi.spyOn(processTransport, "deliverEventToProcess").mockImplementation(async (_installation, _pid, args) => (
+  const deliver = spyOnProcessDeliveries((installationId) => ownKernels.has(installationId), async (_installation, _pid, args) => (
     { eventId: args.eventId, runId: args.eventId, queued: false }
   ));
   const framed = vi.spyOn(processTransport, "sendFrameToProcess").mockResolvedValue(null);

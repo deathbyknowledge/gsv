@@ -3,6 +3,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProcessIdentity, ScheduleTarget } from "@humansandmachines/gsv/protocol";
 import * as processTransport from "../shared/utils";
+import { spyOnProcessDeliveries } from "../test-support/process-deliveries";
 import type { Kernel } from "./do";
 
 const OWNER: ProcessIdentity = { uid: 1000, gid: 1000, gids: [1000, 100], username: "sam", home: "/home/sam", cwd: "/home/sam" };
@@ -15,9 +16,13 @@ const TELEGRAM = {
 
 afterEach(() => vi.restoreAllMocks());
 
+/** The Kernels this file's tests made; only their deliveries reach a test's spy. */
+const ownKernels = new Set<string>();
+
 async function fixture(work: (kernel: Kernel) => Promise<void>) {
   const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
   await runInDurableObject(stub, async (kernel: Kernel) => {
+    ownKernels.add(kernel.installationId);
     // The tests run each firing and pass themselves; no alarm runs one behind them.
     vi.spyOn(kernel.ctx.storage, "setAlarm").mockResolvedValue(undefined);
     try {
@@ -36,13 +41,14 @@ async function fixture(work: (kernel: Kernel) => Promise<void>) {
   });
 }
 
-/** A spy that answers every Kernel; tests read only the calls their own Kernel made. */
+/** Spies on this file's Kernels' deliveries and frames; tests read only the calls their own Kernel made. */
 function processes() {
-  const deliver = vi.spyOn(processTransport, "deliverEventToProcess").mockImplementation(async (_installation, _pid, args) => (
+  const deliver = spyOnProcessDeliveries((installationId) => ownKernels.has(installationId), async (_installation, _pid, args) => (
     { eventId: args.eventId, runId: args.eventId, queued: false }
   ));
   const framed = vi.spyOn(processTransport, "sendFrameToProcess");
   return {
+    deliver,
     delivered: (kernel: Kernel) => deliver.mock.calls.filter(([installationId]) => installationId === kernel.installationId),
     framed: (kernel: Kernel) => framed.mock.calls.filter(([installationId]) => installationId === kernel.installationId),
   };
@@ -161,7 +167,7 @@ describe("schedule firings on the event log", () => {
   });
 
   it("keeps a reply firing's route through a failed attempt and retries under the same run", async () => {
-    const { delivered } = processes();
+    const { deliver, delivered } = processes();
     await fixture(async (kernel) => {
       kernel.adapters.identityLinks.link("telegram", "bot", "telegram:user:42", OWNER.uid, OWNER.uid, { surfaceKind: "dm", surfaceId: "chat-42" });
       const record = schedule(kernel, { replyTo: TELEGRAM });
@@ -170,7 +176,7 @@ describe("schedule firings on the event log", () => {
       const runId = `evt_${firing!.seq}:proc:${WORKER}`;
 
       // The call may have reached the process before it failed, so its run keeps the route.
-      vi.mocked(processTransport.deliverEventToProcess).mockRejectedValueOnce(new Error("Network connection lost."));
+      deliver.mockRejectedValueOnce(new Error("Network connection lost."));
       vi.spyOn(console, "warn").mockImplementation(() => {});
       await runEvents(kernel);
       expect(firings(kernel)[0]).toMatchObject({ state: "pending", last_error: "Network connection lost." });
