@@ -573,15 +573,18 @@ to act tells its owner.
 While the owner is active in a client, or has no messenger, an event appears as a card in their
 conversation rather than on the messenger, and stays out of model context unless the source's `ship` says otherwise. A source going quiet still goes to the messenger.
 
-An `id` already seen for a source is a duplicate and does nothing, for 180 days, and doesn't count against the source's rate limit. Bodies are
-kept for 30 days. Each source accepts 60 events a minute with bursts of 120, and each
-owner 600 a minute. With `expectEveryMs`, the owner is told once when that long passes
-without an event.
+An event takes at most 64 KiB once stored, its title of up to 200 characters and preview
+of up to 1,000 included; `event.emit` refuses a call holding a bigger one before taking any
+of it. An `id` already seen for a source is a duplicate and does nothing, for 180 days, and
+doesn't count against the source's rate limit. `event.list` shows the last 30 days. Each
+source accepts 60 events a minute with bursts of 120, and each owner 600 a minute. With
+`expectEveryMs`, the owner is told once when that long passes without an event.
 
 An event's words are untrusted wherever they end up. An event from a running process
 never wakes Ship.
 
-A source with a webhook takes a `POST` at `/hooks/<sourceId>`, with a body of up to 256 KiB.
+A source with a webhook takes a `POST` at `/hooks/<sourceId>`, with a body of up to 256 KiB
+that becomes the event's body; an event too big to store with it arrives without it.
 A webhook names how a delivery proves its sender, never who the sender is. `standard` checks
 the [Standard Webhooks](https://www.standardwebhooks.com/) signature. `hmac` checks an
 HMAC-SHA256 with the source's secret, in `hmac.header`, encoded as `hmac.encoding` after an
@@ -806,7 +809,7 @@ conversation ownership checks. Delegated processes do not inherit this read auth
 | `conversation.list` | Kernel | Lists the caller's canonical Ship, Work, and Group conversations. |
 | `conversation.history` | Conversation DO | Returns a page in chronological order, paging transparently across hot SQLite messages and immutable R2 segments. `beforeSequence` reads earlier messages; `afterSequence` reads later messages. For a contact conversation, it then checks whether the contact's Ship is gone, at most once an hour for each contact. |
 | `conversation.search` | Conversation DO | Searches retained message indexes, newest matches first. Defaults to the caller's Ship. Only new messages are indexed; older search entries are pruned under storage pressure without deleting their original history. Archival alone does not remove a search entry. |
-| `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and admits the interaction to the conversation handler. The returned run id is deterministically bound to the canonical input message. |
+| `conversation.send` | Kernel | Idempotently commits user input, preinstalls the originating connection's directed run route, and delivers the message to the conversation handler through the Kernel event log in the same call; the handler reads its text from the Conversation. A resend appends nothing and redelivers what is still waiting. The returned run id is deterministically bound to the canonical input message. When the handler can't take the message right now, the call still succeeds with `queued: true` and the log retries delivery. A handler that refuses it, as when its media can no longer be read, fails the call. |
 | `conversation.media.read` | Conversation DO through Kernel | Compatibility reader for media copied by older conversation records. New messages carry resource blocks and resolve them with `fs.transfer.send`. |
 
 ```ts
@@ -1458,10 +1461,10 @@ Runtime behavior:
 | `proc.list` | `handleProcList` | Reads the kernel process registry. Each entry reports whether it occupies its owner's one personal-process slot. Root defaults to all processes and may filter by `uid`; non-root is always scoped to its owning human. |
 | `proc.observe` | Kernel | Adds an owned Process to the current user connection's raw-activity observation set. Reasoning, output, tool, retry, HIL, and finish signals then reach that connection even when it does not own the run route. |
 | `proc.unobserve` | Kernel | Removes an owned Process from the current connection's observation set. |
-| `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity (the personal agent for a parentless default, the parent for an inherited child, or explicit `runAs`), registers a process, sends kernel-only `proc.setidentity`, and optionally admits the initial prompt. |
-| `proc.send` | Process DO `handleProcSend` | Admits work into the target process history. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Attachments are revision-bound resource blocks. The Process validates and retains any non-owned source before generation. Kernel-owned paths can preallocate a run id, which the Process reconciles against active, queued, and recorded admissions. |
-| `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
-| `proc.ipc.call` | `handleProcIpcCall` | Process-callable same-owner IPC. Ordinary calls are bounded: they create a call id and deadline, then later send either `ipc.reply` or `ipc.timeout` to the source process. Kernel-owned delegation may supervise the call instead: each checkpoint renews the result route and sends `ipc.overdue` without cancelling the worker. The worker's ordinary final assistant output is its durable caller result and does not require human-facing message or yield commands. The syscall returns after acceptance, not after the target replies. |
+| `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity (the personal agent for a parentless default, the parent for an inherited child, or explicit `runAs`), registers a process, sends kernel-only `proc.setidentity`, and optionally delivers the initial prompt through the Kernel event log, as `proc.send` does. The prompt is limited to 64 KiB; larger content travels as a file path. |
+| `proc.send` | `handleProcSend` | Appends the message to the Kernel event log and delivers it to the target process in the same call, under the delivery's id, `evt_<seq>:proc:<pid>`, which the result returns as `runId`. A person's message supersedes the active run; process and scheduler messages wait in FIFO order as runs of their own. When the target can't take the message right now, the call still succeeds with `queued: true` and the log retries delivery. Attachments are revision-bound resource blocks. The Process validates and retains any non-owned source before generation, and a message whose media it can't read fails the call. The message and its attachment references are limited to 64 KiB together; larger content travels as a file path. |
+| `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then appends an `ipc.message` event to the Kernel event log and delivers it in the same call. The target receives a visible user message envelope and starts or queues a run under the delivery's id, `evt_<seq>:proc:<pid>`, which the result returns as `runId`. When the target can't take the message right now, the call still succeeds with `queued: true` and the log retries delivery. The message and its metadata are limited to 64 KiB together; larger content travels as a file path. |
+| `proc.ipc.call` | `handleProcIpcCall` | Process-callable same-owner IPC, delivered as an `ipc.call` event in the same way as `proc.ipc.send`. Ordinary calls are bounded: they create a call id and deadline, then later answer the source process with an `ipc.reply` or `ipc.timeout` event through the log, which carries the answer. Files the target's run attached arrive as attachments that the caller copies into its own home, and answer text too large for its event arrives there as an attached file too. The deadline counts from the call; a call its target has not received by then is withdrawn and the caller gets `ipc.timeout`. An answer joins the asking run while it is active and otherwise takes a run of its own; answers for an aborted run, or made before the caller's last reset, are dropped. Kernel-owned delegation may supervise the call instead: each checkpoint renews the result route and sends an `ipc.overdue` check-in, which replaces one the caller has not taken yet, without cancelling the worker. A bounded call marks the target run as returning to its caller and omits terminal human-delivery instructions; the worker's ordinary final assistant output is its durable caller result, taken from `proc.run.finished.result` rather than `delivery`, and does not require human-facing message or yield commands. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` adds an allow rule for the syscall and its target to the owner's approval policy, which every process of that owner follows; `remembered` reports whether the rule was added. A request without one target adds none. |
 | `proc.kill` | Process DO | Optionally archives the process history under the run-as agent's home, promotes referenced media into immutable archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry. |
@@ -1474,7 +1477,6 @@ Runtime behavior:
 | `proc.history.segments` | Process DO | Lists compacted segments and context epochs, including immutable archive paths for closed records. |
 | `proc.fork` | `handleProcFork` | Creates a new process from committed source history through a raw `throughMessageId`, a canonical Conversation message's `throughRunId`, or a compacted `segmentId`. Run selection resolves to the corresponding Process input boundary. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
 | `proc.reset` | Process DO | Archives the non-empty history, clears active execution state, queues, process media, and messages, then increments the history generation. |
-| `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers a Kernel-validated IPC envelope to the target process. A bounded call marks the run as returning to its caller, omits terminal human-delivery instructions, and completes the Kernel call from `proc.run.finished.result` rather than `delivery`. |
 | `proc.history.export` | Process DO direct path | Kernel-only syscall used by `proc.fork` to materialize committed history as archive paths. |
 | `proc.history.import` | Process DO direct path | Kernel-only syscall used by `proc.fork` to initialize an empty target process from exported archives. |
 | `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, initial label, and auto-title policy. |
@@ -1560,19 +1562,6 @@ type ProcIpcSendArgs = {
   metadata?: Record<string, unknown>;
 };
 
-type ProcIpcDeliverArgs = {
-  runId: string;
-  sourcePid: string;
-  source: ProcessIdentity;
-  message: string;
-  metadata?: Record<string, unknown>;
-  sentAt: number;
-  call?: {
-    callId: string;
-    deadlineAt: number;
-  };
-};
-
 type ProcIpcSendResult =
   | { ok: true; status: "started"; pid: string; sourcePid: string; runId: string; queued?: boolean }
   | OperationError;
@@ -1608,7 +1597,7 @@ type ProcessSyscalls = {
 
   "proc.send": {
     args: { pid?: string; message: string; selectedTarget?: string; media?: ResourceBlock[] };
-    result: { ok: true; status: "started"; runId: string; queued?: boolean; replayed?: "active" | "queued" | "recorded" } | OperationError;
+    result: { ok: true; status: "started"; runId: string; queued?: boolean } | OperationError;
   };
 
   "proc.ipc.send": {
@@ -1619,11 +1608,6 @@ type ProcessSyscalls = {
   "proc.ipc.call": {
     args: ProcIpcCallArgs;
     result: ProcIpcCallResult;
-  };
-
-  "proc.ipc.deliver": {
-    args: ProcIpcDeliverArgs;
-    result: ProcIpcSendResult;
   };
 
   "proc.abort": {
@@ -1725,8 +1709,8 @@ an unknown model is still rejected.
 stored with the Process identity before an initial prompt can start. Omitting
 `ai` inherits account defaults and does not copy a parent's process-local choices.
 
-`proc.ipc.deliver`, `proc.history.export`, `proc.history.import`, and
-`proc.setidentity` are kernel-only. User and device callers receive a forbidden
+`proc.history.export`, `proc.history.import`, and `proc.setidentity` are
+kernel-only. User and device callers receive a forbidden
 response. Export and import use normal syscall frames; their Process Durable
 Object methods are routing details rather than a second semantic API.
 
@@ -2533,7 +2517,7 @@ Runtime behavior:
 | `adapter.pair.inspect` | `handleAdapterPairInspect` | Signed-in human or authorized owned process. Resolves a short-lived code to the external identity that requested it. It does not create or move a link. |
 | `adapter.pair.confirm` | `handleAdapterPairConfirm` | Signed-in human or authorized owned process. The Kernel derives the active human owner from the authenticated session or process registry and honors process tool policy. Binds the external identity to that owner and the current installation, activates a fresh route generation, writes the Kernel identity link, and finalizes retryable cleanup of any previous installation. The caller cannot choose the destination uid or installation. |
 | `adapter.pair.disconnect` | `handleAdapterPairDisconnect` | Direct signed-in human only. Generation-fences and disables the managed peer route before removing the matching Kernel identity link. |
-| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, drops an unlinked DM as `pairing_required` so the adapter answers with its own pairing reply, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, install its exact directed endpoint, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
+| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable account-scoped ingress `deliveryId`, derived from the provider's complete event identity, and claims its durable receipt before link, command, route, media, or Process side effects. Actor and surface remain authorization metadata rather than receipt-key components, so alias normalization cannot bypass replay protection and equal provider stanza ids from different participants remain distinct. A platform-owned adapter also supplies its peer-route generation; the Kernel requires the exact currently linked generation and retains it on the run route. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, drops an unlinked DM as `pairing_required` so the adapter answers with its own pairing reply, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages resolve the canonical Ship, Work, or Group conversation, append the user Message idempotently, derive an opaque run id, and append the message to the Kernel event log together with its exact directed endpoint, then deliver it in the same call; the handler reads its text and media from the Conversation. A retry that finds the event already appended redelivers what is still waiting without installing the endpoint again. When the handler can't take the message right now, `delivered.queued` is true and the log retries delivery; a handler that refuses it fails the call. `/ship` records its return on the log with the route it clears, keyed by the ingress receipt, so a retried command answers as the first did; the Ship hears of it as a run of its own unless a newer private message follows. Immediate replies carry deterministic outbound `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call, then replace it with any terminal response state before provider delivery; transport failures and `in_progress` retry through their existing account alarm. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
 | `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, an optional `action` to open (a label of at most 20 characters and an http or https URL, shown as a link button where the messenger supports one and as a line of text otherwise), optional `choices` (up to ten distinct one-line replies of at most 80 characters, shown as buttons where the adapter declares them and as a numbered list otherwise; an answer arrives as an ordinary inbound message), media, reply id, and body to the adapter service. During a process run, a separate send to the current directed endpoint is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. Failed and ambiguous results may include bounded, redacted `diagnostics` (exception name/message/stack/cause, provider status, error code/subcode and request ID). |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
@@ -2699,7 +2683,7 @@ Runtime behavior:
 | `signal.watch` | `handleSignalWatch` | Process-originated only. Creates or upserts a durable watch for an accessible `targetId` with the registered `target.status` signal. Events default to audience `person`; `model` or `both` may be selected explicitly. TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. |
 | `signal.unwatch` | `handleSignalUnwatch` | Process-originated only. Removes watches owned by the calling process using `watchId` or `key`. Returns number removed. |
 
-Target watch delivery is handled by the Kernel when the target connects or disconnects. Once-watches are deleted after a matching acknowledgment that the event was accepted; stale events ignored after reset do not consume them. Temporary lifecycle conflicts, service errors, and RPC failures leave the watch active for later transitions without replaying the missed event. Authorization failures, a gone Process, and invalid acknowledgments mark it failed. Generic process signal watches are retired: `processId` registrations are rejected and existing registrations are removed during upgrade. Historical `signal.watched` records remain readable, but delayed watched-signal envelopes do not admit new Process work.
+When a target connects or disconnects, the Kernel appends one `target.status` event per watch to its event log, which delivers it to the watching Process and retries until the Process takes it. A newer change replaces one still waiting, so the Process hears how the target is now; a watch made after a change doesn't receive it. Each delivery reads the watch, the Process's `signal.watch` capability and its target access again. Once-watches are deleted after the delivery goes; stale events ignored after reset do not consume them. A watch whose Process is gone, or that lost its authorization, is marked failed. Generic process signal watches are retired: `processId` registrations are rejected and existing registrations are removed during upgrade. Historical `signal.watched` records remain readable, but delayed watched-signal envelopes do not admit new Process work.
 
 Target connection events use the registered `target.connection` payload. The Kernel derives target identity and connection state from its authenticated connection lifecycle and rechecks the watching process's capability and target access before delivery. A `person` event enters typed Process history and notifies observing surfaces without starting a model run. `model` and `both` events use the ordinary Process event wake path. Machine peers cannot inject these internal event deliveries or claim another target's identity.
 

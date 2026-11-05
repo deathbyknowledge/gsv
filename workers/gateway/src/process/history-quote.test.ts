@@ -1,9 +1,10 @@
-import type { ProcHistoryMessageQuote, ProcessAdapterDeliverArgs } from "@humansandmachines/gsv/protocol";
+import type { ProcHistoryMessageQuote } from "@humansandmachines/gsv/protocol";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { createInstallationStorage } from "../installation/storage";
 import type { Process } from "./do";
-import { initProcess, makeAdapterDeliverReq, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
+import type { ProcessInput } from "../protocol/process-frames";
+import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
 import { renderCompactionTranscriptChunks } from "./history/compaction-renderer";
 
 const WHATSAPP = JSON.stringify({
@@ -104,12 +105,11 @@ describe("quoted reply model context", () => {
     });
   });
 
-  it("admits a quote from an adapter delivery that interrupts an active run", async () => {
+  it("admits a quote from a messenger message that interrupts an active run", async () => {
     const pid = "quote-admission";
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const args: ProcessAdapterDeliverArgs = {
+    const input: ProcessInput = {
       runId: "run-quoted",
-      pid,
       message: "yes, that one",
       origin: {
         kind: "adapter", adapter: "whatsapp", accountId: "managed", actorId: "34600000000",
@@ -118,8 +118,9 @@ describe("quoted reply model context", () => {
       interaction: { conversationId: "conv:ship", messageId: "msg:reply" },
       quote: { state: "unavailable" },
     };
-    await stub.recvFrame(makeAdapterDeliverReq({ ...args, runId: "run-first", quote: undefined, message: "first" }));
-    await stub.recvFrame(makeAdapterDeliverReq(args));
+    const admission = { idle: "start", busy: "interrupt" } as const;
+    await stub.deliverEvent({ eventId: "evt_1:personal:0", input: { ...input, runId: "run-first", quote: undefined, message: "first" }, admission });
+    await stub.deliverEvent({ eventId: "evt_2:personal:0", input, admission });
     await runInProcess(stub, async (process: Process) => {
       const stored = process.store.messages.getMessages().filter((item: { role: string }) => item.role === "user");
       expect(stored.at(-1)!.content).toBe("yes, that one");

@@ -330,6 +330,19 @@
       ]
     },
     {
+      "id": "event-log",
+      "paths": [
+        "workers/gateway/src/kernel/events/**",
+        "workers/gateway/src/kernel/chat-replies.ts",
+        "workers/gateway/src/kernel/delivery-events.ts",
+        "workers/gateway/src/process/controller/events.ts"
+      ],
+      "docs": [
+        "docs/architecture/event-log.md"
+      ],
+      "manual": []
+    },
+    {
       "id": "targets-pairing",
       "paths": [
         "workers/gateway/src/kernel/sys/pair.ts",

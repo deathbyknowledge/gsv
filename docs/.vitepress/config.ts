@@ -169,6 +169,7 @@ export default defineConfig({
             { text: "Architecture Overview", link: "/architecture/" },
             { text: "The Agent Loop", link: "/architecture/agent-loop" },
             { text: "Process IPC and Scheduler", link: "/architecture/process-ipc-and-scheduler" },
+            { text: "The Event Log", link: "/architecture/event-log" },
             { text: "Process History", link: "/architecture/process-history" },
             { text: "Responsibilities and Context Epochs", link: "/architecture/responsibilities-and-context-epochs" },
           ],

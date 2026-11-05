@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   mockGeneration, processTestConfig, generationRun, assistantResponse, deferred, okProcessResponse,
-  runInProcess, ROOT_IDENTITY, initProcess, makeReq, testUsage,
+  runInProcess, ROOT_IDENTITY, initProcess, makeReq, testUsage, sendMessage,
 } from "./do-test-harness";
 
 describe("proc.reset", () => {
@@ -30,13 +30,8 @@ describe("proc.reset", () => {
       expect(store.tools.getResults(runId)).toHaveLength(0);
     });
 
-    const sendRes = await okProcessResponse(
-      stub,
-      makeReq("proc.send", { message: "first after reset" }),
-    );
-    // SAFETY: test fixture is constructed with the asserted domain shape.
-    const sendData = sendRes.data as { queued?: boolean };
-    expect(sendData.queued).toBeUndefined();
+    const sendRes = await sendMessage(stub, { message: "first after reset" });
+    expect(sendRes.queued).toBeUndefined();
   });
 
   it("fences generation and defers alarms while reset is in flight", async () => {

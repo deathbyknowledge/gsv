@@ -4,9 +4,8 @@ import { z } from "zod";
 import {
   ABORTED_RUN_IDS_KEY, IPC_TOMBSTONE_LIMIT, MEDIA_PREPARATION_TIMEOUT_MS, TOOL_EXECUTION_DENIED_BY_USER_MESSAGE,
   USER_INTERRUPTED_TOOL_MESSAGE, USER_SUPERSEDED_TOOL_MESSAGE, PROCESS_KILLED_TOMBSTONE_KEY, PROCESS_RESET_AT_KEY,
-  tombstoneKilledProcessStorage, type ProcessKilledTombstone, HANDLED_IPC_CALLS_KEY, RUNTIME_EVENT_IDS_KEY,
-  RUNTIME_EVENT_TOMBSTONE_LIMIT, type RuntimeEventAdmission, DELIVERY_NOTICE_IDS_KEY,
-  DELIVERY_NOTICE_TOMBSTONE_LIMIT, MAX_CANCELLED_REQUESTS,
+  tombstoneKilledProcessStorage, type ProcessKilledTombstone, RUNTIME_EVENT_IDS_KEY,
+  RUNTIME_EVENT_TOMBSTONE_LIMIT, type RuntimeEventAdmission, MAX_CANCELLED_REQUESTS,
 } from "../internal/lifecycle";
 import type { Process } from "../do";
 import {
@@ -16,43 +15,40 @@ import {
 import type { RunState, ResponsibilityBatchState } from "../run/state";
 import type { RunFinishReason } from "../run/finish";
 import {
-  abortedRunIdsSchema, archivedToolResultMetadataSchema, type IpcReplyPayload,
-  cancelRequestPayloadSchema, deliveryNoticePayloadSchema, identityChangedPayloadSchema, ipcReplyPayloadSchema,
+  abortedRunIdsSchema, archivedToolResultMetadataSchema,
+  cancelRequestPayloadSchema, identityChangedPayloadSchema,
   type CancelRequestPayload,
 } from "../internal/schemas";
 import { conversationRunState } from "../run/helpers";
 import { errorMessageFromUnknown } from "../../inference/errors";
 import {
   type ProcAbortArgs, type ProcAbortResult, type ProcHilArgs, type ProcHilResult, type ProcHistoryArgs,
-  type ProcHistoryMessage, type ProcHistoryResult, type ProcHistoryToolResultContent, type ProcIpcDeliverArgs,
-  type ProcIpcDeliverResult, type ProcMediaInput, type ProcSendArgs, type ProcSendResult, type ResourceBlock,
+  type ProcHistoryMessage, type ProcHistoryResult, type ProcHistoryToolResultContent,
+  type ProcMediaInput, type ProcSendResult,
   type ProcKillResult, type ProcResetResult, type ProcRunToolFinishedSignal, type ProcRunToolStartedSignal,
   type InteractionOrigin, type JsonObject,
-  type ProcHistoryEvent, type ProcHistoryEventPayload, type ProcHistoryMessageQuote, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
+  type ProcHistoryEvent, type ProcHistoryRecordData, REQUEST_CANCEL_SIGNAL, jsonObjectSchema,
 } from "@humansandmachines/gsv/protocol";
 import { agentArchiveMediaPath } from "../../shared/process-media-path";
-import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../../shared/message-media-limits";
 import { parseInteractionOrigin, serializeInteractionOrigin, emptyProcessArchive } from "../history/helpers";
 import { historyCursor, parseHistoryCursor } from "../history/cursor";
 import { storeIncomingProcessMedia, stringifyStoredProcessMedia, parseStoredProcessMedia, deleteProcessMedia } from "../media";
-import { appendResponsibilityBatch, normalizeProcessRuntimeEvent } from "../internal/events";
-import { formatIpcMessage, formatIpcReplyMessage, formatScheduleEventMessage, renderHistoryEvent } from "../history/event-renderer";
+import { appendResponsibilityBatch } from "../internal/events";
+import { formatIpcMessage } from "../history/event-renderer";
 import type { AssistantHistoryContent, AsyncCleanupTask, CodeModeApprovalWaiter } from "../internal/contracts";
 import { extractStoredFsReadResource } from "../tool-result-media";
 import {
-  isNonNegativeInteger, isPositiveInteger, normalizeToolResultOutcome, normalizeOptionalString,
+  isNonNegativeInteger, isPositiveInteger, normalizeToolResultOutcome,
   parseStoredStringArray, cancelResponseBody,
 } from "../internal/messages";
 import { syscallToolName } from "../../syscalls/constants";
 import { cancelProcessRequests } from "../../shared/utils";
 import type {
-  InternalResponseFrame,
+  ProcessInput,
+  ProcessIpcMessage,
   ProcessUnavailable,
 } from "../../protocol/process-frames";
 import type {
-  ProcessRuntimeEventDeliverArgs,
-  ProcessRuntimeEventDeliverResult,
-  ProcessScheduleDeliverArgs,
   ProcessInboundFrame,
   ProcessRequestFrame,
 } from "../../protocol/process-frames";
@@ -65,11 +61,7 @@ import { handOffMemoryReviews } from "../memory-review";
 const retiredWatchedSignalEnvelopeSchema = z.object({ watched: z.literal(true) });
 
 type SendAdmissionInput = {
-  args: Omit<ProcSendArgs, "media"> & {
-    media?: Array<ResourceBlock | ProcMediaInput>;
-    quote?: ProcHistoryMessageQuote;
-  };
-  admittedRunId?: string;
+  args: ProcessInput;
   identity: Process["identity"];
   incomingMedia: ProcMediaInput[];
   mediaKeys: string[];
@@ -149,17 +141,13 @@ async function admitQueuedSend(
   host: Process,
   input: SendAdmissionInput,
 ): Promise<ProcSendResult> {
-  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
+  const { args, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
   const releaseMedia = await host.resources.acquireMediaKeyAdmissions(mediaKeys);
   const releaseAdmission = await host.controller.acquireQueuedSendAdmission();
   try {
-    if (!sameAdmissionIdentity(host, identity)) {
-      return { ok: false, error: "Process no longer exists" };
-    }
-    if (admittedRunId) {
-      const existing = host.controller.existingRunAdmission(runId);
-      if (existing) return existing;
-    }
+    assertSameAdmissionIdentity(host, identity);
+    const existing = host.controller.existingRunAdmission(runId);
+    if (existing) return existing;
     const media = await storeIncomingProcessMedia(
       host.storage,
       identity.uid,
@@ -178,13 +166,9 @@ async function admitQueuedSend(
     }
 
     const admission = host.ctx.storage.transactionSync((): InstalledSend => {
-      if (!sameAdmissionIdentity(host, identity)) {
-        return { result: { ok: false, error: "Process no longer exists" }, installed: false };
-      }
-      if (admittedRunId) {
-        const existing = host.controller.existingRunAdmission(runId);
-        if (existing) return { result: existing, installed: false };
-      }
+      assertSameAdmissionIdentity(host, identity);
+      const admitted = host.controller.existingRunAdmission(runId);
+      if (admitted) return { result: admitted, installed: false };
       if (host.runs.active) {
         const enqueueOptions: EnqueueMessageOptions = {
           media: media ?? undefined,
@@ -241,7 +225,7 @@ async function admitInterruptingSend(
   host: Process,
   input: SendAdmissionInput,
 ): Promise<ProcSendResult> {
-  const { args, admittedRunId, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
+  const { args, identity, incomingMedia, mediaKeys, origin, runId, receivedAt } = input;
   const releaseMedia = await host.resources.acquireMediaKeyAdmissions(mediaKeys);
   try {
     const missingMediaKey = await host.resources.firstMissingMediaKey(mediaKeys);
@@ -252,13 +236,9 @@ async function admitInterruptingSend(
     if (committingRunId) {
       await host.run.awaitRunControlCommit(committingRunId);
     }
-    if (!sameAdmissionIdentity(host, identity)) {
-      return { ok: false, error: "Process no longer exists" };
-    }
-    if (admittedRunId) {
-      const existing = host.controller.existingRunAdmission(runId);
-      if (existing) return existing;
-    }
+    assertSameAdmissionIdentity(host, identity);
+    const existing = host.controller.existingRunAdmission(runId);
+    if (existing) return existing;
 
     // a reply the person watched being typed is withdrawn while its run can still reach them
     const activeRun = host.runs.active;
@@ -271,7 +251,7 @@ async function admitInterruptingSend(
     const admission = host.ctx.storage.transactionSync(() => {
       if (!sameAdmissionIdentity(host, identity)) return null;
       if (activeRun && host.runs.active?.runId !== activeRun.runId) return null;
-      if (admittedRunId && host.controller.existingRunAdmission(runId)) return null;
+      if (host.controller.existingRunAdmission(runId)) return null;
 
       const effects: InterruptSendEffects = { interrupted: null, finish: null };
       if (activeRun) {
@@ -312,8 +292,10 @@ async function admitInterruptingSend(
 
     await streamAbort;
     if (!admission) {
-      const existing = admittedRunId ? host.controller.existingRunAdmission(runId) : null;
-      return existing ?? { ok: false, error: "Process no longer exists" };
+      // Another admission won the race; the log tries this one again unless it was this message's.
+      const admitted = host.controller.existingRunAdmission(runId);
+      if (admitted) return admitted;
+      throw new Error("The process changed while the message was admitted");
     }
     const { effects, messageId } = admission;
     if (activeRun) {
@@ -364,6 +346,11 @@ async function admitInterruptingSend(
   } finally {
     releaseMedia();
   }
+}
+
+/** A Process killed or re-identified during admission throws, so the log tries again or withdraws the message. */
+function assertSameAdmissionIdentity(host: Process, identity: Process["identity"]): void {
+  if (!sameAdmissionIdentity(host, identity)) throw new Error("Process no longer exists");
 }
 
 function sameAdmissionIdentity(
@@ -806,119 +793,64 @@ export class ProcessController {
     return runIds.includes(runId);
   }
 
-  async handleProcSend(
-    args: Omit<ProcSendArgs, "media"> & {
-      media?: Array<ResourceBlock | ProcMediaInput>;
-      quote?: ProcHistoryMessageQuote;
-    },
-    admittedRunId?: string,
+  /**
+   * A message for this process, delivered from the Kernel's log under its run id. A person's
+   * stops the active run and starts its own; another process's takes a run of its own after it.
+   * A redelivery answers with its first admission. Media that can't be read refuses the message;
+   * a Process that changes during admission throws, so the log tries again.
+   */
+  async admitInput(
+    input: ProcessInput,
+    runId: string,
+    busy: "interrupt" | "after",
   ): Promise<ProcSendResult> {
-    if (!this.host.isInitialized()) {
-      return { ok: false, error: "Process no longer exists" };
-    }
+    const existing = this.existingRunAdmission(runId);
+    if (existing) return existing;
     const receivedAt = Date.now();
     const identity = this.host.identity;
-    const runId = admittedRunId ?? crypto.randomUUID();
-    if (admittedRunId) {
-      const existing = this.existingRunAdmission(runId);
-      if (existing) return existing;
-    }
-
     let incomingMedia: ProcMediaInput[];
     try {
-      incomingMedia = await this.host.resources.resolveIncomingMedia(args.media);
+      incomingMedia = await this.host.resources.resolveIncomingMedia(input.media);
     } catch (error) {
       return { ok: false, error: errorMessageFromUnknown(error) };
     }
-    const mediaKeys = [
-      ...new Set(incomingMedia.flatMap((item) => (item.key === undefined ? [] : [item.key]))),
-    ].sort();
-    const origin = serializeInteractionOrigin(args.origin);
-    const userCanInterrupt = args.origin?.kind !== "process" && args.origin?.kind !== "scheduler";
-
-    return userCanInterrupt
-      ? admitInterruptingSend(this.host, {
-          args,
-          admittedRunId,
-          identity,
-          incomingMedia,
-          mediaKeys,
-          origin,
-          runId,
-          receivedAt,
-        })
-      : admitQueuedSend(this.host, {
-          args,
-          admittedRunId,
-          identity,
-          incomingMedia,
-          mediaKeys,
-          origin,
-          runId,
-          receivedAt,
-        });
+    const admission: SendAdmissionInput = {
+      args: input,
+      identity,
+      incomingMedia,
+      mediaKeys: [...new Set(incomingMedia.flatMap((item) => (item.key === undefined ? [] : [item.key])))].sort(),
+      origin: serializeInteractionOrigin(input.origin),
+      runId,
+      receivedAt,
+    };
+    return busy === "interrupt" ? admitInterruptingSend(this.host, admission) : admitQueuedSend(this.host, admission);
   }
 
+  /** The admission a run already has, for a redelivery of the message that started it. */
   existingRunAdmission(runId: string): Extract<ProcSendResult, { ok: true }> | null {
-    if (this.host.runs.active?.runId === runId) {
-      return { ok: true, status: "started", runId, replayed: "active" };
-    }
+    if (this.host.runs.active?.runId === runId) return { ok: true, status: "started", runId };
     const located = this.host.store.queue.locateRunAdmission(runId);
     if (!located) return null;
-    return {
-      ok: true,
-      status: "started",
-      runId,
-      ...(located === "queued"
-        ? { queued: true, replayed: "queued" as const }
-        : { replayed: "recorded" as const }),
-    };
+    return { ok: true, status: "started", runId, ...(located === "queued" ? { queued: true } : undefined) };
   }
 
-  async handleProcIpcDeliver(args: ProcIpcDeliverArgs): Promise<ProcIpcDeliverResult> {
-    const runId = args.runId.trim();
-    if (!runId) {
-      return { ok: false, error: "proc.ipc.deliver requires runId" };
-    }
-
-    const sourcePid = args.sourcePid.trim();
-    if (!sourcePid) {
-      return { ok: false, error: "proc.ipc.deliver requires sourcePid" };
-    }
-
-    const message = args.message.trim();
-    if (!message) {
-      return { ok: false, error: "proc.ipc.deliver requires message" };
-    }
-
-    const deliveredArgs: ProcIpcDeliverArgs = {
-      runId,
-      sourcePid,
-      source: args.source,
-      message,
-      metadata: args.metadata,
-      origin: args.origin ?? {
-        kind: "process",
-        sourcePid,
-        uid: args.source.uid,
-      },
-      sentAt: Number.isFinite(args.sentAt) ? args.sentAt : Date.now(),
-    };
-    if (args.call) {
-      deliveredArgs.call = args.call;
-    }
-    const renderedMessage = formatIpcMessage(deliveredArgs);
-    const origin = serializeInteractionOrigin(deliveredArgs.origin);
+  /**
+   * Another process's message or call, delivered from the Kernel's log under its delivery id.
+   * It takes a run of its own, now or after the active one; a redelivery answers with its first admission.
+   */
+  async admitIpcMessage(runId: string, ipc: ProcessIpcMessage): Promise<{ runId: string; queued: boolean }> {
+    const eventType = ipc.call ? "ipc.call" : "ipc.message";
+    const renderedMessage = formatIpcMessage(ipc);
+    const origin = serializeInteractionOrigin(ipc.origin);
     const provenance = jsonObjectSchema.parse({
       source: "process",
-      eventType: args.call ? "ipc.call" : "ipc.message",
-      delivery: JSON.parse(JSON.stringify(deliveredArgs)),
+      eventType,
+      delivery: JSON.parse(JSON.stringify({ runId, ...ipc })),
     });
     const releaseAdmission = await this.acquireQueuedSendAdmission();
     try {
-      if (!this.host.isInitialized()) {
-        return { ok: false, error: "Target process no longer exists" };
-      }
+      const existing = this.existingRunAdmission(runId);
+      if (existing) return { runId, queued: existing.queued === true };
       const queued = this.host.ctx.storage.transactionSync(() => {
         if (!this.host.isInitialized()) return null;
         if (this.host.runs.active) {
@@ -926,51 +858,32 @@ export class ProcessController {
             origin: origin ?? undefined,
             provenance: JSON.stringify(provenance),
           };
-          if (args.call) enqueueOptions.kind = "ipc.call";
+          if (ipc.call) enqueueOptions.kind = "ipc.call";
           this.host.store.queue.enqueue(runId, renderedMessage, enqueueOptions);
           return true;
         }
         this.host.store.messages.appendMessage("user", renderedMessage, {
           runId,
           origin: origin ?? undefined,
-          queueKind: args.call ? "ipc.call" : "message",
+          queueKind: ipc.call ? "ipc.call" : "message",
           provenance,
         });
-        const nextRun: RunState = { runId };
-        if (args.call) {
-          nextRun.returnToCaller = true;
-        }
-        this.host.runs.active = nextRun;
+        this.host.runs.active = ipc.call ? { runId, returnToCaller: true } : { runId };
         return false;
       });
-      if (queued === null) {
-        return { ok: false, error: "Target process no longer exists" };
-      }
+      if (queued === null) throw new Error("Process no longer exists");
 
-      this.host.maybeStartTaskTitleGeneration(message);
+      this.host.maybeStartTaskTitleGeneration(ipc.message);
       if (queued) {
         this.host.startBackground(
           `IPC queue notification for ${runId}`,
           this.host.signals.changed(["queue"], { enqueuedRunId: runId }),
         );
-        return {
-          ok: true,
-          status: "started",
-          pid: this.host.pid,
-          sourcePid,
-          runId,
-          queued: true,
-        };
+        return { runId, queued: true };
       }
       await this.scheduleRunOrFinish(runId, "Failed to schedule delegated task");
-      this.announceRun(runId, "proc.ipc.deliver");
-      return {
-        ok: true,
-        status: "started",
-        pid: this.host.pid,
-        sourcePid,
-        runId,
-      };
+      this.announceRun(runId, eventType);
+      return { runId, queued: false };
     } finally {
       releaseAdmission();
     }
@@ -1502,282 +1415,6 @@ export class ProcessController {
     await this.host.signals.changed(["messages"], change);
   }
 
-  async handleIpcSignal(signal: string, payload: IpcReplyPayload): Promise<void> {
-    const content = formatIpcReplyMessage(signal, payload);
-    const callId = normalizeOptionalString(payload.callId);
-    const sourceRunId = normalizeOptionalString(payload.sourceRunId);
-    const createdAt = payload.createdAt ?? null;
-    const handledId =
-      signal === "ipc.overdue" && callId
-        ? `overdue:${callId}:${payload.checkInCount ?? payload.deadlineAt ?? "unknown"}`
-        : callId;
-    const timestamp = Date.now();
-    if (this.host.killed || this.host.lifecyclePhase !== "ready") {
-      return;
-    }
-    const pid = this.host.pid;
-    if (!this.host.store.state.getValue("identity")) {
-      return;
-    }
-    const resetAt = Number(this.host.store.state.getValue(PROCESS_RESET_AT_KEY) ?? 0);
-    const handled = abortedRunIdsSchema.parse(
-      JSON.parse(this.host.store.state.getValue(HANDLED_IPC_CALLS_KEY) ?? "[]"),
-    );
-    if (
-      (handledId && handled.includes(handledId)) ||
-      (sourceRunId && this.isAbortedRun(sourceRunId)) ||
-      (createdAt !== null && createdAt <= resetAt)
-    ) {
-      return;
-    }
-
-    const currentRun = this.host.runs.active;
-    const nextRunId = currentRun ? null : crypto.randomUUID();
-    const { messageId, wakeRunId } = this.host.ctx.storage.transactionSync(() => {
-      if (handledId) {
-        handled.push(handledId);
-        this.host.store.state.setValue(
-          HANDLED_IPC_CALLS_KEY,
-          JSON.stringify(handled.slice(-IPC_TOMBSTONE_LIMIT)),
-        );
-      }
-      const messageOptions: Parameters<ProcessStore["messages"]["appendMessage"]>[2] = {
-        createdAt: timestamp,
-        record: {
-          kind: "event",
-          payload: {
-            kind: signal === "ipc.overdue" ? "ipc.overdue" : signal === "ipc.timeout" ? "ipc.timeout" : "ipc.reply",
-            payload: {
-              callId: payload.callId,
-              targetPid: payload.targetPid,
-              sourceRunId: payload.sourceRunId,
-              createdAt: payload.createdAt,
-              deadlineAt: payload.deadlineAt,
-              nextCheckAt: payload.nextCheckAt,
-              checkInCount: payload.checkInCount,
-              error: payload.error,
-              response: payload.response,
-            },
-            severity: signal === "ipc.timeout" || payload.error ? "error" : "info",
-            audience: "model",
-          },
-        },
-      };
-      if (nextRunId) {
-        messageOptions.runId = nextRunId;
-      }
-      const messageId = this.host.store.messages.appendMessage("system", content, messageOptions);
-
-      let wakeRunId: string | null = null;
-      if (!currentRun) {
-        if (!nextRunId) {
-          throw new Error("Runtime event run id was not allocated");
-        }
-        this.host.runs.active = { runId: nextRunId };
-      } else if (sourceRunId && sourceRunId !== currentRun.runId) {
-        wakeRunId = crypto.randomUUID();
-        this.host.store.queue.enqueueContinuation(wakeRunId);
-      } else {
-        currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
-        this.host.runs.active = currentRun;
-      }
-      return { messageId, wakeRunId };
-    });
-
-    this.host.startBackground(
-      `IPC message notification for ${pid}`,
-      this.host.signals.changed(["messages"], {
-        messageId,
-        role: "system",
-        content,
-        timestamp,
-      }),
-    );
-    if (wakeRunId) {
-      this.host.startBackground(
-        `IPC queue notification for ${pid}`,
-        this.host.signals.changed(["queue"], { enqueuedRunId: wakeRunId }),
-      );
-    } else if (nextRunId) {
-      const scheduled = await this.scheduleRunOrFinish(
-        nextRunId,
-        "Failed to schedule delegated task",
-      );
-      if (scheduled) this.announceRun(nextRunId, "delegated-task");
-    }
-  }
-
-  async handleProcessRuntimeEventDeliver(
-    args: ProcessRuntimeEventDeliverArgs,
-  ): Promise<ProcessRuntimeEventDeliverResult> {
-    const event = normalizeProcessRuntimeEvent(args?.event);
-    const eventId = normalizeOptionalString(args?.eventId);
-    if (!eventId || !/^[a-zA-Z0-9._:-]{1,200}$/.test(eventId)) {
-      throw new Error("Runtime event id is invalid");
-    }
-    const runId = eventId;
-    const admitted = this.runtimeEventAdmission(eventId);
-    if (admitted) return { eventId, runId: admitted.runId, queued: admitted.queued };
-    let admission: RuntimeEventAdmission;
-    if (event.type === "r12y.ready") {
-      const historyEvent: ProcHistoryEvent = {
-        kind: "responsibility.ready",
-        payload: {
-          batchId: event.batchId,
-          ledgerRevision: event.ledgerRevision,
-          responsibilityIds: event.responsibilityIds,
-          receivedAtMs: Date.now(),
-        },
-        severity: "info",
-        audience: "model",
-      };
-      admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
-        runId,
-        event: historyEvent,
-        kind: event.type,
-        dedupeId: eventId,
-        provenance: JSON.stringify({
-          source: "kernel",
-          eventId,
-          eventType: event.type,
-          batchId: event.batchId,
-          ledgerRevision: event.ledgerRevision,
-        }),
-        responsibilityBatch: {
-          batchId: event.batchId,
-          ledgerRevision: event.ledgerRevision,
-          responsibilityIds: event.responsibilityIds,
-        },
-      });
-    } else if (event.type === "contact.message") {
-      const { media, attachmentErrors } = await this.retainContactAttachments(event.media ?? []);
-      let preparedMedia: string | undefined;
-      if (media.length > 0) {
-        try {
-          preparedMedia = await this.host.resources.prepareEventMedia(media) ?? undefined;
-        } catch (error) {
-          // Only enrichment failed: keep the retained attachments themselves.
-          preparedMedia = stringifyStoredProcessMedia(media) ?? undefined;
-          attachmentErrors.push(`attachments could not be prepared: ${errorMessageFromUnknown(error)}`);
-        }
-      }
-      const payload: ProcHistoryEventPayload<"contact.message"> = {
-        contactId: event.contactId,
-        conversationId: event.conversationId,
-        messageId: event.messageId,
-        from: event.from,
-        text: event.text,
-        responsibilityId: event.responsibilityId,
-      };
-      if (attachmentErrors.length > 0) payload.attachmentErrors = attachmentErrors;
-      const historyEvent: ProcHistoryEvent = { kind: "contact.message", payload, severity: "info", audience: "model" };
-      admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
-        runId,
-        event: historyEvent,
-        kind: event.type,
-        dedupeId: eventId,
-        provenance: JSON.stringify({ source: "kernel", eventId, eventType: event.type, contactId: event.contactId }),
-        responsibilityBatch: {
-          batchId: eventId,
-          ledgerRevision: event.ledgerRevision,
-          responsibilityIds: [event.responsibilityId],
-        },
-        media: preparedMedia,
-      });
-    } else {
-      const historyEvent: ProcHistoryEvent = {
-        kind: "adapter.work.returned",
-        payload: { eventId, workPid: event.workPid },
-        severity: "info",
-        audience: "model",
-      };
-      admission = await this.handleRuntimeEvent(renderHistoryEvent(historyEvent), event.type, {
-        distinctRun: true,
-        runId,
-        event: historyEvent,
-      });
-    }
-    if (!admission.ok) {
-      throw new Error(admission.error);
-    }
-    return {
-      eventId,
-      runId: admission.runId,
-      queued: admission.queued,
-    };
-  }
-
-  /** Contact attachments become this Process's own media, as messenger attachments do. */
-  private async retainContactAttachments(blocks: ResourceBlock[]): Promise<{
-    media: ProcMediaInput[];
-    attachmentErrors: string[];
-  }> {
-    const media: ProcMediaInput[] = [];
-    const attachmentErrors: string[] = [];
-    // The message's byte budget is checked against declared sizes before any bytes are fetched.
-    let remainingBytes = MAX_MESSAGE_MEDIA_TOTAL_BYTES;
-    for (const block of blocks) {
-      if (block.ref.size > remainingBytes) {
-        attachmentErrors.push(`${block.filename ?? "an attachment"} exceeds the message attachment byte limit`);
-        continue;
-      }
-      try {
-        media.push(...await this.host.resources.resolveIncomingMedia([block]));
-        remainingBytes -= block.ref.size;
-      } catch (error) {
-        attachmentErrors.push(errorMessageFromUnknown(error));
-      }
-    }
-    return { media, attachmentErrors };
-  }
-
-  async handleProcScheduleDeliver(
-    args: ProcessScheduleDeliverArgs,
-  ): Promise<{ runId: string; queued: boolean }> {
-    const origin: InteractionOrigin = {
-      kind: "scheduler",
-      scheduleId: args.scheduleId,
-    };
-    if (args.replyTo) {
-      origin.replyTo = args.replyTo;
-    }
-    const admission = await this.handleRuntimeEvent(
-      formatScheduleEventMessage(args),
-      "schedule.event",
-      {
-        origin,
-        distinctRun: args.replyTo !== undefined,
-        runId: args.runId,
-        kind: "schedule.event",
-        provenance: JSON.stringify({
-          source: "kernel",
-          eventId: args.runId,
-          eventType: "schedule.event",
-        }),
-        event: {
-          kind: "schedule.fired",
-          payload: {
-            runId: args.runId,
-            scheduleId: args.scheduleId,
-            scheduleName: args.scheduleName,
-            message: args.message,
-            data: args.data,
-            replyTo: args.replyTo,
-            scheduledAtMs: args.scheduledAtMs,
-            firedAtMs: args.firedAtMs,
-          },
-          severity: "info",
-          audience: "model",
-        },
-      },
-    );
-    if (!admission.ok) {
-      throw new Error(admission.error);
-    }
-    this.host.maybeStartTaskTitleGeneration(args.message);
-    return { runId: admission.runId, queued: admission.queued };
-  }
-
   async handleRuntimeEvent(
     content: string | null,
     reason: string,
@@ -1830,6 +1467,7 @@ export class ProcessController {
           origin: serializeInteractionOrigin(options.origin) ?? undefined,
           provenance: options.provenance,
           record,
+          media: options.media,
         });
         return { messageId: -1, wakeRunId };
       }
@@ -2118,21 +1756,8 @@ export class ProcessController {
 
   async handleReq(
     frame: ProcessRequestFrame,
-  ): Promise<ResponseFrame | InternalResponseFrame | null> {
+  ): Promise<ResponseFrame | null> {
     try {
-      if (frame.call === "proc.runtime.event.deliver") {
-        const result = await this.handleProcessRuntimeEventDeliver(frame.args);
-        return { type: "res", id: frame.id, ok: true, data: result };
-      }
-      if (frame.call === "proc.adapter.deliver") {
-        const { runId, ...args } = frame.args;
-        const result = await this.handleProcSend(args, runId);
-        return { type: "res", id: frame.id, ok: true, data: result };
-      }
-      if (frame.call === "proc.schedule.deliver") {
-        const result = await this.handleProcScheduleDeliver(frame.args);
-        return { type: "res", id: frame.id, ok: true, data: result };
-      }
       let data: ResultOf<SyscallName>;
 
       switch (frame.call) {
@@ -2140,15 +1765,6 @@ export class ProcessController {
           data = this.host.settings.initialize(frame.args);
           break;
         }
-        case "proc.send":
-          data = await this.handleProcSend(
-            frame.args,
-            frame.args.interaction ? `run:${frame.args.interaction.messageId}` : undefined,
-          );
-          break;
-        case "proc.ipc.deliver":
-          data = await this.handleProcIpcDeliver(frame.args);
-          break;
         case "proc.abort":
           data = await this.handleProcAbort(frame.args);
           break;
@@ -2197,59 +1813,6 @@ export class ProcessController {
         const parsed = identityChangedPayloadSchema.safeParse(frame.payload);
         if (parsed.success) {
           this.host.store.state.setValue("identity", JSON.stringify(parsed.data.identity));
-        }
-        break;
-      }
-      case "ipc.reply":
-      case "ipc.overdue":
-      case "ipc.timeout": {
-        const parsed = ipcReplyPayloadSchema.safeParse(frame.payload);
-        await this.handleIpcSignal(frame.signal, parsed.success ? parsed.data : {});
-        break;
-      }
-      case "proc.delivery.notice": {
-        const parsed = deliveryNoticePayloadSchema.safeParse(frame.payload);
-        if (parsed.success) {
-          const { message, noticeId, runId } = parsed.data;
-          const noticeKey = `deliveryNotice:${noticeId}`;
-          const messageId = this.host.ctx.storage.transactionSync(() => {
-            if (this.host.store.state.getValue(noticeKey)) return null;
-            const id = this.host.store.messages.appendMessage("system", message, {
-              runId,
-              record: {
-                kind: "event",
-                payload: {
-                  kind: "delivery.failed",
-                  payload: { phase: "message", noticeId, runId, error: message },
-                  severity: "error",
-                  audience: "both",
-                },
-              },
-            });
-            this.host.store.state.setValue(noticeKey, String(id));
-            const noticeIds = abortedRunIdsSchema.parse(
-              JSON.parse(this.host.store.state.getValue(DELIVERY_NOTICE_IDS_KEY) ?? "[]"),
-            );
-            noticeIds.push(noticeId);
-            const expired = noticeIds.splice(
-              0,
-              Math.max(0, noticeIds.length - DELIVERY_NOTICE_TOMBSTONE_LIMIT),
-            );
-            for (const expiredId of expired) {
-              this.host.store.state.deleteValue(`deliveryNotice:${expiredId}`);
-            }
-            this.host.store.state.setValue(DELIVERY_NOTICE_IDS_KEY, JSON.stringify(noticeIds));
-            return id;
-          });
-          if (messageId !== null) {
-            const change: JsonObject = {
-              messageId,
-            };
-            if (runId) {
-              change.runId = runId;
-            }
-            await this.host.signals.changed(["messages"], change);
-          }
         }
         break;
       }

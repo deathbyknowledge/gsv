@@ -1,11 +1,11 @@
 import { evictDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { procHistoryEventSchema, type ProcHistoryEvent } from "@humansandmachines/gsv/protocol";
+import type { ProcHistoryEvent } from "@humansandmachines/gsv/protocol";
 import type { Process } from "./do";
 import type { ProcessEventDeliverArgs } from "../protocol/process-frames";
 import { deliverProcessEvent } from "./controller/events";
 import { decodeWireFrameJson } from "../protocol/decode-wire-frame";
-import { deferred, initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
+import { deferred, generationRun, initProcess, processTestConfig, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
 import { PROCESS_RESET_AT_KEY } from "./internal/lifecycle";
 import { buildCompactionSummaryContext } from "./history/helpers";
 import { renderCompactionTranscriptChunks } from "./history/compaction-renderer";
@@ -13,12 +13,16 @@ import { renderHistoryEvent } from "./history/event-renderer";
 
 afterEach(() => vi.restoreAllMocks());
 
+const START_OR_JOIN = { idle: "start", busy: "join" } as const;
+const RECORD_OR_JOIN = { idle: "record", busy: "join" } as const;
+
 function request(eventId: string, audience: "model" | "person" | "both" = "person"): ProcessEventDeliverArgs {
   return {
     eventId, event: {
       kind: "target.connection", severity: "info", audience,
       payload: { targetId: "laptop", label: "My laptop", platform: "linux", event: "disconnected", observedAt: 1000 },
     },
+    admission: START_OR_JOIN,
   };
 }
 
@@ -31,11 +35,24 @@ function ownerNotice(eventId: string): ProcessEventDeliverArgs {
         preview: "are we still on for tomorrow?", contactId: "contact:ada", conversationId: "conv:ada", messages: 1, sentAtMs: 1000,
       },
     },
+    admission: RECORD_OR_JOIN,
+  };
+}
+
+/** A reply or approval request the run's messenger could not deliver, as the Kernel's log delivers it. */
+function deliveryFailure(eventId: string, approvalRequestId?: string): Extract<ProcessEventDeliverArgs, { event: unknown }> {
+  return {
+    eventId, event: {
+      kind: "delivery.failed", severity: "error", audience: "both",
+      payload: { phase: "message", noticeId: "notice-1", runId: "run-1", error: "The message could not be delivered: chat closed" },
+    },
+    admission: { idle: "record", busy: "record" },
+    ...(approvalRequestId === undefined ? undefined : { approvalRequestId }),
   };
 }
 
 describe("registered Process events", () => {
-  it("rejects retired approval delivery and keeps staged records inspectable outside model context", async () => {
+  it("keeps a retired approval record inspectable outside model context", async () => {
     const stub = await initProcess("history-events-retired-approval", ROOT_IDENTITY);
     const event: ProcHistoryEvent = {
       kind: "process.approval", severity: "warn", audience: "model",
@@ -43,13 +60,6 @@ describe("registered Process events", () => {
         sourceRunId: "parent-run", sourceCreatedAt: 100, observedAt: 300 },
     };
     await runInProcess(stub, async (process: Process) => {
-      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish");
-      // SAFETY: simulate an internal call already in flight from the staged implementation.
-      const args = { eventId: "approval:request:call", event } as ProcessEventDeliverArgs;
-      await expect(process.deliverEvent(args)).rejects.toThrow("Process event is not registered for this delivery path");
-      expect(process.store.messages.messageCount()).toBe(0);
-      expect(process.runs.active).toBeNull();
-      expect(schedule).not.toHaveBeenCalled();
       process.store.messages.appendMessage("system", "retired approval notice", { record: { kind: "event", payload: event } });
       expect(await process.history.buildContextMessages()).toEqual([]);
       const messages = [...renderCompactionTranscriptChunks(process.store.messages.getMessages(), 24_000)].join("");
@@ -237,6 +247,30 @@ describe("registered Process events", () => {
     });
   });
 
+  it("records an event its admission declares record, idle or busy, without starting or joining a run", async () => {
+    const stub = await initProcess("history-events-declared-record", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+      const idle = { ...request("event:declared-idle", "model"), admission: { idle: "record", busy: "record" } } as const;
+      expect(await process.deliverEvent(idle)).toEqual({ eventId: idle.eventId, runId: null, queued: false, messageId: 1 });
+      process.runs.active = { runId: "active" };
+      const busy = { ...request("event:declared-busy", "model"), admission: { idle: "record", busy: "record" } } as const;
+      expect(await process.deliverEvent(busy)).toEqual({ eventId: busy.eventId, runId: null, queued: false, messageId: 2 });
+      expect(schedule).not.toHaveBeenCalled();
+      expect(process.runs.active).toEqual({ runId: "active" });
+    });
+  });
+
+  it("starts a run for an owner notice whose admission declares start", async () => {
+    const stub = await initProcess("history-events-declared-start", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+      const args = { ...ownerNotice("owner.notified:declared-start"), admission: START_OR_JOIN };
+      expect(await process.deliverEvent(args)).toMatchObject({ runId: args.eventId, queued: false });
+      expect(schedule).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("keeps a card only for the person out of an active run and the model's context", async () => {
     const stub = await initProcess("history-events-owner-notice-card", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
@@ -252,18 +286,91 @@ describe("registered Process events", () => {
     });
   });
 
-  it.each([
-    ["for a person only", { audience: "person" }],
-    ["for the model only", { audience: "model" }],
-    ["as a warning", { severity: "warn" }],
-  ] as const)("refuses an owner notice addressed %s", async (_name, change) => {
-    const stub = await initProcess(`history-events-owner-notice-${change.audience ?? change.severity}`, ROOT_IDENTITY);
-    const args = ownerNotice("owner.notified:invalid");
-    // SAFETY: a malformed internal call deliberately tests the Process admission boundary.
-    const invalid = { ...args, event: { ...args.event, ...change } } as ProcessEventDeliverArgs;
-    // expect() probes its argument's properties, which an RPC promise turns into pipelined calls.
-    await expect(Promise.resolve(stub.deliverEvent(invalid))).rejects.toThrow("Process event is not registered for this delivery path");
-    await runInProcess(stub, (process: Process) => expect(process.store.messages.messageCount()).toBe(0));
+  it("notes a failed delivery in the history of the run that wrote it, once, without starting or joining a run", async () => {
+    const stub = await initProcess("history-events-delivery-failed", ROOT_IDENTITY);
+    const args = deliveryFailure("evt_1:proc:history-events-delivery-failed");
+    const first = await stub.deliverEvent(args);
+    expect(first).toEqual({ eventId: args.eventId, runId: null, queued: false, messageId: 1 });
+    await evictDurableObject(stub);
+    expect(await stub.deliverEvent(args)).toEqual(first);
+    await runInProcess(stub, async (process: Process) => {
+      expect(process.runs.active).toBeNull();
+      expect(process.store.queue.queueSize()).toBe(0);
+      expect(process.store.messages.getRecords()).toMatchObject([{ kind: "event", payload: args.event, runId: "run-1" }]);
+      expect(process.store.messages.getMessages()).toMatchObject([
+        { role: "system", runId: "run-1", content: "The message could not be delivered: chat closed" },
+      ]);
+      process.runs.active = { runId: "active" };
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish");
+      const busy = deliveryFailure("evt_2:proc:history-events-delivery-failed");
+      expect(await process.deliverEvent(busy)).toEqual({ eventId: busy.eventId, runId: null, queued: false, messageId: 2 });
+      expect(process.runs.active).toEqual({ runId: "active" });
+      expect(schedule).not.toHaveBeenCalled();
+    });
+  });
+
+  it("starts a run for a failed delivery that wakes its process, or joins the active one, once", async () => {
+    const stub = await initProcess("history-events-delivery-failed-wake", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+      const idle = { ...deliveryFailure("evt_1:proc:history-events-delivery-failed-wake"), admission: START_OR_JOIN };
+      expect(await process.deliverEvent(idle)).toMatchObject({ runId: idle.eventId, queued: false });
+      expect(await process.deliverEvent(idle)).toMatchObject({ runId: idle.eventId, queued: false });
+      expect(schedule).toHaveBeenCalledTimes(1);
+      const [context] = await process.history.buildContextMessages();
+      expect(context?.content).toContain("The message could not be delivered: chat closed");
+
+      process.runs.active = { runId: "active" };
+      const busy = { ...deliveryFailure("evt_2:proc:history-events-delivery-failed-wake"), admission: START_OR_JOIN };
+      expect(await process.deliverEvent(busy)).toMatchObject({ runId: "active", queued: false });
+      expect(schedule).toHaveBeenCalledTimes(1);
+      expect(process.runs.active).toMatchObject({ runId: "active", pendingRuntimeEvents: 1 });
+    });
+  });
+
+  it.each(["stopped", "replaced", "reset"] as const)("only notes a failed message whose run the person %s", async (change) => {
+    const pid = `history-events-delivery-failed-${change}`;
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      vi.spyOn(process.run, "scheduleTick").mockResolvedValue(undefined);
+      vi.spyOn(process, "maybeStartTaskTitleGeneration").mockImplementation(() => {});
+      const writtenAt = Date.now();
+      // run-1 wrote the message, then the person stopped it, replaced it with a new message, or
+      // reset the process once it had finished.
+      process.store.messages.appendMessage("user", "Book the train.", { runId: "run-1" });
+      process.runs.active = generationRun("run-1", processTestConfig(pid));
+      if (change === "stopped") await process.controller.handleProcAbort({ runId: "run-1" });
+      if (change === "replaced") await process.controller.admitInput({ message: "Actually, the bus." }, "run-2", "interrupt");
+      if (change === "reset") {
+        process.runs.active = null;
+        await process.controller.resetExecutionState("process.reset");
+      }
+      const active = process.runs.active;
+      const schedule = vi.spyOn(process.controller, "scheduleRunOrFinish").mockResolvedValue(true);
+
+      const failure = { ...deliveryFailure(`evt_1:proc:${pid}`), admission: START_OR_JOIN, writtenAt };
+      expect(await process.deliverEvent(failure)).toMatchObject({ eventId: failure.eventId, runId: null, queued: false });
+      expect(schedule).not.toHaveBeenCalled();
+      expect(process.runs.active).toEqual(active);
+      expect(process.store.messages.getRecords().filter((record) => record.kind === "event")).toMatchObject([
+        { payload: failure.event, runId: "run-1" },
+      ]);
+    });
+  });
+
+  it("notes an approval request's failed delivery only while that request is pending", async () => {
+    const stub = await initProcess("history-events-approval-delivery-failed", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      process.store.tools.setPendingHil({
+        requestId: "approval-2", runId: "run-1", toolCallId: "call-2", toolName: "Shell",
+        syscall: "shell.exec", args: { input: "date" }, createdAt: Date.now(),
+      });
+      const answered = deliveryFailure("evt_1:proc:approval", "approval-1");
+      expect(await process.deliverEvent(answered)).toEqual({ eventId: answered.eventId, runId: null, queued: false, ignored: true });
+      const pending = deliveryFailure("evt_2:proc:approval", "approval-2");
+      expect(await process.deliverEvent(pending)).toEqual({ eventId: pending.eventId, runId: null, queued: false, messageId: 1 });
+      expect(process.store.messages.getRecords()).toMatchObject([{ kind: "event", payload: pending.event, runId: "run-1" }]);
+    });
   });
 
   it("rejects stale transitions after reset and preserves killed-process terminal state", async () => {
@@ -282,14 +389,8 @@ describe("registered Process events", () => {
     expect(await stub.deliverEvent(request("event:killed"))).toEqual({ unavailable: "killed", message: "Process no longer exists" });
   });
 
-  it("validates registered payloads and keeps event delivery off the public wire", async () => {
+  it("keeps event delivery off the public wire", () => {
     const args = request("event:private");
     expect(() => decodeWireFrameJson(JSON.stringify({ type: "req", id: "request:event:private", call: "proc.event.deliver", args }))).toThrow();
-    expect(() => procHistoryEventSchema.parse({ ...args.event, payload: { targetId: "spoofed" } })).toThrow();
-    const stub = await initProcess("history-events-invalid", ROOT_IDENTITY);
-    // SAFETY: a malformed internal call deliberately tests the Process admission boundary.
-    const invalid = { ...args, event: { ...args.event, severity: "error" } } as ProcessEventDeliverArgs;
-    await expect(Promise.resolve(stub.deliverEvent(invalid))).rejects.toThrow();
-    await runInProcess(stub, (process: Process) => expect(process.store.messages.messageCount()).toBe(0));
   });
 });

@@ -3,6 +3,7 @@ export { IntegrationInstances } from "./instances";
 export { IntegrationPds } from "./pds";
 export { NetworkPds } from "./network-pds";
 export { IntegrationRequestReports } from "./request-reports";
+import { UNDELIVERABLE_REPLY } from "./messenger-faults";
 import { eraseNetworkIdentities, serveNetworkRecord } from "./network-pds";
 import { filedRequestReports } from "./request-reports";
 import { z } from "zod";
@@ -707,9 +708,12 @@ export default class TestDependencies
     accountId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
-  ): Promise<{ ok: true; messageId: string }> {
+  ): Promise<{ ok: true; messageId: string } | { ok: false; error: string; retryable: false }> {
     if (body && !body.stream.locked) {
       await body.stream.cancel("Integration fixture does not consume media").catch(() => {});
+    }
+    if (message.text.includes(UNDELIVERABLE_REPLY)) {
+      return { ok: false, error: "The integration messenger refuses this message", retryable: false };
     }
     await this.integrationState().recordOutbound({
       installationId: installation.installationId,

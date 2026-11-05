@@ -40,7 +40,7 @@ import {
   restoreKernelWebSocket,
 } from "./connection";
 import type { Kernel } from "./do";
-import { deliverTargetConnectionEvent } from "./target-events";
+import { appendTargetConnection } from "./target-events";
 import { hasCapability } from "./capabilities";
 import {
   sameRouteOrigin,
@@ -49,8 +49,6 @@ import {
 
 export class ConnectionRuntime {
   constructor(readonly host: Kernel) {}
-
-  private readonly pendingTargetEvents = new Map<string, Promise<void>>();
 
   invalidateAccountConnections(uid: number): void {
     const epoch = this.host.auth.credentialEpoch(uid);
@@ -437,18 +435,7 @@ broadcastTargetStatus(
       version: device.version, observedAt: Date.now(),
     };
     if (device.label) payload.label = device.label;
-    const transitionId = `target.connection:${crypto.randomUUID()}`;
-    const watches = this.host.signalWatches.matchTarget(targetId, "target.status");
-    const previous = this.pendingTargetEvents.get(targetId) ?? Promise.resolve();
-    const delivery = previous.then(() => deliverTargetConnectionEvent(this.host, payload, transitionId, watches))
-      .catch((error) => {
-        console.warn(`[Kernel] Target event delivery failed: ${error instanceof Error ? error.message : String(error)}`);
-      })
-      .finally(() => {
-        if (this.pendingTargetEvents.get(targetId) === delivery) this.pendingTargetEvents.delete(targetId);
-      });
-    this.pendingTargetEvents.set(targetId, delivery);
-    this.host.ctx.waitUntil(delivery);
+    appendTargetConnection(this.host, payload);
 
     const frame: SignalFrame = {
       type: "sig",

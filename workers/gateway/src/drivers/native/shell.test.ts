@@ -27,6 +27,8 @@ import { SEND_TOOL } from "../../process/internal/schemas";
 import type { InferenceExecutor, InferenceMediaRequest } from "@humansandmachines/gsv/services/inference-execution";
 import * as sharedUtils from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
+import type { InlineDelivery } from "../../kernel/events/runtime";
+import type { EventInput, LoggedEvent, PendingDelivery } from "../../kernel/events/store";
 import type { TargetRecord } from "../../kernel/target-registry";
 import type { ProcessRecord } from "../../kernel/processes";
 import type { FederationContactRecord } from "../../kernel/federation-store";
@@ -90,6 +92,20 @@ function focusedFixture<T extends object>(value: Partial<T>): T {
   // SAFETY: Shell tests use focused doubles whose supplied members are checked
   // against the owning interface; unimplemented members are never exercised.
   return value as T;
+}
+
+/** A log that appends every event as evt_7 and hands it to its consumer at once, unless a test says how it goes. */
+function fakeEventLog(deliver?: (event: LoggedEvent, consumer: string) => Promise<InlineDelivery>) {
+  return {
+    append: vi.fn((input: EventInput): LoggedEvent => ({ ...input, seq: 7, id: "evt_7", body: input.body ?? null, createdAt: 1 })),
+    transaction: vi.fn(<T,>(operation: () => T): T => operation()),
+    deliverNow: vi.fn(deliver ?? (async (event: LoggedEvent, consumer: string): Promise<InlineDelivery> => (
+      { state: "delivered", runId: `${event.id}:${consumer}`, queued: false }
+    ))),
+    pending: vi.fn((): PendingDelivery[] => []),
+    withdraw: vi.fn(),
+    keyed: vi.fn((): LoggedEvent | null => null),
+  };
 }
 
 const currentDestinationOutputSchema = z.object({
@@ -207,6 +223,7 @@ function makeContext(options?: {
   caps?: Partial<KernelContext["caps"]>;
   schedules?: Partial<KernelContext["schedules"]>;
   ipcCalls?: Partial<KernelContext["ipcCalls"]>;
+  events?: Partial<KernelContext["events"]>;
   responsibilities?: Partial<KernelContext["responsibilities"]>;
   responsibilitySources?: Partial<KernelContext["responsibilitySources"]>;
   federation?: Partial<KernelContext["federation"]>;
@@ -356,6 +373,7 @@ function makeContext(options?: {
       findPendingByTargetRun: vi.fn(() => null),
       ...options?.ipcCalls,
     }),
+    events: focusedFixture<KernelContext["events"]>(options?.events ?? {}),
     responsibilities: focusedFixture<KernelContext["responsibilities"]>(
       options?.responsibilities ?? {},
     ),
@@ -2004,6 +2022,7 @@ describe("proc native command", () => {
       identity: rootIdentity,
       capabilities: ["proc.spawn"],
       procs: { spawn },
+      events: fakeEventLog(),
     });
     ctx.processId = undefined;
 
@@ -2022,11 +2041,9 @@ describe("proc native command", () => {
         label: "manual-child",
       }),
     );
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      expect.stringMatching(/^proc:/),
-      expect.objectContaining({ call: "proc.send", args: expect.objectContaining({ message: "do work" }) }),
-    );
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      subject: expect.stringMatching(/^proc:proc:/), body: { content: { kind: "inline", message: "do work" } },
+    });
 
     const jsonResult = await handleShellExec(
       { input: `proc spawn --json '{"label":"json-child","ai":{"reasoning":"low"}}'` },
@@ -2079,28 +2096,22 @@ describe("proc native command", () => {
       createdAt: 1,
     };
     const spawn = vi.fn();
-    const result = await handleShellExec(
-      { input: "proc spawn -- --timeout 1m" },
-      makeContext({
-        capabilities: ["proc.spawn"],
-        procs: {
-          get: vi.fn((pid: string) => pid === parent.processId ? parent : null),
-          getOwnerUid: vi.fn(() => IDENTITY.uid),
-          spawn,
-        },
-      }),
-    );
+    const ctx = makeContext({
+      capabilities: ["proc.spawn"],
+      procs: {
+        get: vi.fn((pid: string) => pid === parent.processId ? parent : null),
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+        spawn,
+      },
+      events: fakeEventLog(),
+    });
+    const result = await handleShellExec({ input: "proc spawn -- --timeout 1m" }, ctx);
 
     expect(result.ok).toBe(true);
     expect(spawn).toHaveBeenCalledOnce();
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      TEST_INSTALLATION_ID,
-      expect.stringMatching(/^proc:/),
-      expect.objectContaining({
-        call: "proc.send",
-        args: expect.objectContaining({ message: "--timeout 1m" }),
-      }),
-    );
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toMatchObject({
+      subject: expect.stringMatching(/^proc:proc:/), body: { content: { kind: "inline", message: "--timeout 1m" } },
+    });
   });
 
   it("resets a process through the kernel lifecycle path", async () => {
@@ -2201,39 +2212,17 @@ describe("proc native command", () => {
     });
     const ipcCalls = {
       create: vi.fn(),
-      get: vi.fn(() => ({ status: "pending", error: null })),
       remove: vi.fn(),
     };
     const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
+    const events = fakeEventLog();
 
-    sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type !== "req") throw new Error("expected process request frame");
       const req = frame;
       if (req.call === "proc.setidentity") {
         expect(req.args.ai).toEqual({ reasoning: "high" });
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
-      }
-      if (req.call === "proc.ipc.deliver") {
-        expect(pid).toBe(spawnedPids[0]);
-        expect(req.args.message).toBe("write a migration plan");
-        expect(req.args.metadata).toBeUndefined();
-        expect(req.args.call).toEqual(expect.objectContaining({
-          callId: expect.any(String),
-          deadlineAt: expect.any(Number),
-          supervised: true,
-        }));
-        return {
-          type: "res",
-          id: req.id,
-          ok: true,
-          data: {
-            ok: true,
-            status: "started",
-            pid,
-            sourcePid: "task:shell",
-            runId: req.args.runId,
-          },
-        };
       }
       throw new Error(`unexpected process frame: ${req.call}`);
     });
@@ -2260,6 +2249,7 @@ describe("proc native command", () => {
           spawn,
         },
         ipcCalls,
+        events,
         scheduleIpcCallTimeout,
         processRunId: "parent-run",
       }),
@@ -2268,7 +2258,19 @@ describe("proc native command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("status=in_progress");
     const createdCall = ipcCalls.create.mock.calls[0]?.[0];
+    expect(createdCall.targetRunId).toBe(`evt_7:proc:${spawnedPids[0]}`);
     expect(result.stdout).toContain(`run_id=${createdCall.targetRunId}`);
+    expect(events.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: "ipc.call",
+      body: {
+        targetPid: spawnedPids[0],
+        sourcePid: "task:shell",
+        source: expect.objectContaining({ username: "sam" }),
+        message: "write a migration plan",
+        call: { callId: createdCall.callId, deadlineAt: createdCall.deadlineAt, supervised: true },
+      },
+    }));
+    expect(events.deliverNow).toHaveBeenCalledWith(expect.objectContaining({ id: "evt_7" }), `proc:${spawnedPids[0]}`);
     expect(result.stdout).toContain("queued=false");
     expect(result.stdout).toContain("check_in=");
     expect(result.stdout).toContain('label="planning"');
@@ -2332,7 +2334,6 @@ describe("proc native command", () => {
     });
     const ipcCalls = {
       create: vi.fn(),
-      get: vi.fn(() => ({ status: "pending", error: null })),
       remove: vi.fn(),
     };
     const ctx = makeContext({
@@ -2363,33 +2364,22 @@ describe("proc native command", () => {
         order.push("responsibility wake scheduled");
       }),
       ipcCalls,
+      events: fakeEventLog(async (event, consumer) => {
+        order.push("delivered");
+        expect(consumer).toBe(`proc:${children[0]}`);
+        expect(event.body).toMatchObject({ metadata: { responsibilityId } });
+        return { state: "delivered", runId: `${event.id}:${consumer}`, queued: false };
+      }),
       scheduleIpcCallTimeout: vi.fn(async () => {
         order.push("supervision scheduled");
         return "timeout-schedule";
       }),
       processRunId: "parent-run",
     });
-    sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type !== "req") throw new Error("expected process request frame");
       if (frame.call === "proc.setidentity") {
         return { type: "res", id: frame.id, ok: true, data: { ok: true } };
-      }
-      if (frame.call === "proc.ipc.deliver") {
-        order.push("delivered");
-        expect(pid).toBe(children[0]);
-        expect(frame.args.metadata).toEqual({ responsibilityId });
-        return {
-          type: "res",
-          id: frame.id,
-          ok: true,
-          data: {
-            ok: true,
-            status: "started",
-            pid,
-            sourcePid: parent.processId,
-            runId: frame.args.runId,
-          },
-        };
       }
       throw new Error(`unexpected process frame: ${frame.call}`);
     });
@@ -2507,6 +2497,7 @@ describe("proc native command", () => {
         remove: vi.fn(),
         cancelBySourcePid: vi.fn(),
       },
+      events: fakeEventLog(async () => ({ state: "withdrawn", reason: "delivery failed" })),
       scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
       processRunId: "parent-run",
     });
@@ -2522,14 +2513,6 @@ describe("proc native command", () => {
       if (frame.type !== "req") throw new Error("expected process request frame");
       if (frame.call === "proc.setidentity") {
         return { type: "res", id: frame.id, ok: true, data: { ok: true } };
-      }
-      if (frame.call === "proc.ipc.deliver") {
-        return {
-          type: "res",
-          id: frame.id,
-          ok: false,
-          error: { code: "DELIVERY_FAILED", message: "delivery failed" },
-        };
       }
       if (frame.call === "proc.kill") {
         return {
@@ -2583,7 +2566,7 @@ describe("proc native command", () => {
 
   it.each([
     {
-      label: "IPC delivery returns an error",
+      label: "its child never takes the work",
       throws: false,
       error: "delivery failed",
     },
@@ -2646,6 +2629,7 @@ describe("proc native command", () => {
         kill,
       },
       ipcCalls,
+      events: fakeEventLog(async () => ({ state: "withdrawn", reason: "delivery failed" })),
       responsibilities: {
         reclaimProcessAssignments: vi.fn(() => []),
       },
@@ -2666,14 +2650,6 @@ describe("proc native command", () => {
       const req = frame;
       if (req.call === "proc.setidentity") {
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
-      }
-      if (req.call === "proc.ipc.deliver" && !throws) {
-        return {
-          type: "res",
-          id: req.id,
-          ok: false,
-          error: { code: "DELIVERY_FAILED", message: "delivery failed" },
-        };
       }
       if (req.call === "proc.kill") {
         return {

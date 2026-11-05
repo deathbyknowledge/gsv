@@ -60,7 +60,8 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `processes` | Process registry, identity, cwd, workspace, state. |
 | `identity_links`, `surface_routes` | Adapter actor links and inbound surface routing. |
 | `run_routes` | Retains the exact client endpoint or adapter destination for a process run. |
-| `ipc_calls` | Durable same-owner IPC call deadlines, terminal results, and delivery outbox state. |
+| `ipc_calls` | Same-owner IPC calls in flight: their deadlines, supervision and delegated work. A call's row goes when it ends, and its answer goes on the event log. |
+| `events`, `deliveries` | The [event log](../architecture/event-log.md): each event of new work for a process, and one delivery per event and consumer with its lane, attempts and outcome. |
 | `signal_watches` | Process-owned target connection watches. |
 
 ## Process SQLite

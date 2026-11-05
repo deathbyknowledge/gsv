@@ -271,7 +271,7 @@ describe("Send text streaming", () => {
       if (operation === "abort") await process.controller.handleProcAbort({ runId });
       else if (operation === "reset") await process.controller.resetExecutionState("test reset");
       else if (operation.startsWith("kill")) await process.controller.handleProcKill({ archive: operation === "kill-archive" });
-      else await process.controller.handleProcSend({ message: "New input" });
+      else await process.controller.admitInput({ message: "New input" }, crypto.randomUUID(), "interrupt");
       return { streamed, activeRunId: process.killed ? undefined : process.runs.active?.runId, killed: process.killed };
     });
     expect(result.streamed.map((entry) => entry.phase)).toEqual(["started", "delta", "aborted"]);

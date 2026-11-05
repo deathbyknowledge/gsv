@@ -1182,8 +1182,8 @@ async function commitInboundMessage(
   ctx.conversations.recordContactMessage(appended.message, ctx.federation.get(contact.id)?.preferences.muted ?? true);
   if (appended.created) broadcastCommittedMessage(contact, appended.message, ctx);
   admitContactMessage(contact, inbox, appended.message, ctx);
-  // Queue even on recovery: the event may have committed before its delivery was scheduled.
-  await ctx.queueShipEvents(contact.ownerUid);
+  // Kick even on recovery: the event may have committed before its delivery was scheduled.
+  await ctx.events.kick();
   await ctx.queueOwnerNotices(contact.ownerUid);
 }
 

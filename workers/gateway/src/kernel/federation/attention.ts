@@ -1,8 +1,12 @@
-import type { ConversationMessage, JsonObject, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
-import { contactDisplayName } from "@humansandmachines/gsv/protocol";
+import type { ConversationMessage, JsonObject, ResourceBlock, ResponsibilityRecord } from "@humansandmachines/gsv/protocol";
+import { contactDisplayName, resourceBlockSchema } from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
+import { getConversationById } from "../../shared/utils";
 import type { KernelContext } from "../context";
+import { shipConsumer } from "../events/consumers";
+import type { EventDefinition, Withdrawn } from "../events/registry";
+import type { LoggedEvent } from "../events/store";
 import type { FederationContactRecord, FederationInboxRecord, FederationOutboxLocalMessage } from "../federation-store";
-import type { ProcessContactMessageRuntimeEvent } from "../../protocol/process-frames";
 import { handleResponsibilityGet } from "../responsibilities";
 import { requireContactCaller } from "./authority";
 
@@ -23,9 +27,9 @@ export function bindContactReply(contact: FederationContactRecord, message: Fede
  * bound to a specific task stay with that task.
  */
 export function cancelContactHandling(contact: FederationContactRecord, ctx: KernelContext): void {
-  for (const queued of ctx.shipEvents.queuedForContact(contact.ownerUid, contact.id)) {
-    const work = ctx.responsibilities.get(contact.ownerUid, queued.responsibilityId);
-    if (work?.dedupeKey?.startsWith(handoffPrefix(contact))) ctx.shipEvents.delivered(queued.eventId);
+  for (const queued of ctx.events.pending("contact.message", contact.id)) {
+    const work = ctx.responsibilities.get(contact.ownerUid, contactMessageBody(queued.event).responsibilityId);
+    if (work?.dedupeKey?.startsWith(handoffPrefix(contact))) ctx.events.withdraw(queued, "the person took over its contact");
   }
   const existing = standingHandling(contact, ctx);
   if (!existing) return;
@@ -35,10 +39,10 @@ export function cancelContactHandling(contact: FederationContactRecord, ctx: Ker
 }
 
 /**
- * Queue a handled contact message for Ship. Each message becomes its own Ship event;
- * the responsibility only records that this contact is owed attention, so a message
- * reuses one that is still open instead of rewriting it. A message Ship doesn't handle
- * becomes a notice for the person instead.
+ * Append a handled contact message for Ship. Each message becomes its own event, naming
+ * its Conversation message; the responsibility only records that this contact is owed
+ * attention, so a message reuses one that is still open instead of rewriting it. A
+ * message Ship doesn't handle becomes a notice for the person instead.
  */
 export function admitContactMessage(contact: FederationContactRecord, inbox: FederationInboxRecord, message: ConversationMessage, ctx: KernelContext): boolean {
   return ctx.federation.transaction(() => {
@@ -66,44 +70,108 @@ export function admitContactMessage(contact: FederationContactRecord, inbox: Fed
       }
       return false;
     }
-    const event: ProcessContactMessageRuntimeEvent = {
+    // The message is new input for its work, so recovery after it starts over.
+    ctx.responsibilities.restartRecovery(current.ownerUid, work.id);
+    ctx.events.append({
       type: "contact.message",
-      contactId: current.id,
-      contactGeneration: current.generation,
-      conversationId: message.conversationId,
-      messageId: message.id,
-      from: contactDisplayName(current),
-      text: message.text,
-      responsibilityId: work.id,
-      ledgerRevision: ctx.responsibilities.revision(current.ownerUid),
-    };
-    const media = (message.media ?? []).filter((item) => item.type === "resource");
-    if (media.length > 0) event.media = media;
-    ctx.shipEvents.enqueue(current.ownerUid, `contact.message:${message.id}`, event, Date.now());
+      ownerUid: current.ownerUid,
+      subject: current.id,
+      actor: { kind: "contact", contactId: current.id },
+      key: message.id,
+      body: {
+        contactId: current.id,
+        contactGeneration: current.generation,
+        conversationId: message.conversationId,
+        sequence: message.sequence,
+        messageId: message.id,
+        responsibilityId: work.id,
+        ledgerRevision: ctx.responsibilities.revision(current.ownerUid),
+      },
+    });
     return true;
   });
 }
 
+const contactMessageBodySchema = z.object({
+  contactId: z.string(),
+  contactGeneration: z.string(),
+  conversationId: z.string(),
+  messageId: z.string(),
+  responsibilityId: z.string(),
+  ledgerRevision: z.number().int().nonnegative(),
+}).and(z.union([
+  z.object({ sequence: z.number().int().nonnegative() }),
+  // Queued for Ship before v092 moved its events into the log: these carry their words.
+  z.object({ text: z.string(), media: z.array(z.custom<ResourceBlock>((value) => resourceBlockSchema.safeParse(value).success)).optional() }),
+]));
+
+type ContactMessageBody = z.infer<typeof contactMessageBodySchema>;
+
+/** What a contact message reads in its Conversation when it goes to Ship. */
+export type ContactMessageContent = { text: string; attachments: ResourceBlock[] };
+
+function contactMessageBody(event: LoggedEvent): ContactMessageBody {
+  return contactMessageBodySchema.parse(event.body);
+}
+
 /**
- * Rebind or revoke a queued contact message before delivery. It is fenced to the
- * contact generation that queued it and stays with open work. If Ship resolved that
- * work while the message waited, the message joins standing handling as a newly
- * arriving one would; cancelled work withdraws it. Returns the event to deliver.
+ * A contact message for the owner's Ship, read from its Conversation when it goes. It is
+ * fenced to the contact generation that admitted it and stays with open work. If Ship
+ * resolved that work while the message waited, the message joins standing handling as a
+ * newly arriving one would; cancelled work, a block or a changed relationship withdraws it.
  */
-export function admitQueuedContactEvent(
-  ownerUid: number, eventId: string, event: ProcessContactMessageRuntimeEvent, ctx: KernelContext,
-): ProcessContactMessageRuntimeEvent | null {
-  return ctx.federation.transaction(() => {
-    const contact = ctx.federation.get(event.contactId);
-    if (!contact || contact.ownerUid !== ownerUid || contact.generation !== event.contactGeneration ||
-        contact.state !== "active" || contact.blocked) return null;
-    const work = ctx.responsibilities.get(ownerUid, event.responsibilityId);
-    if (work && !terminal(work)) return event;
-    if (work?.state !== "resolved" || !contact.preferences.shipHandlesMessages) return null;
-    const rebound = { ...event, responsibilityId: pendingMessages(contact, ctx).id, ledgerRevision: ctx.responsibilities.revision(ownerUid) };
-    ctx.shipEvents.rebind(eventId, rebound);
-    return rebound;
-  });
+export const contactMessageEvent: EventDefinition<ContactMessageContent> = {
+  routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: "background" }],
+  withdrawal(event, ctx) {
+    const target = contactMessageTarget(event.ownerUid, contactMessageBody(event), ctx);
+    return "withdrawn" in target ? target.withdrawn : null;
+  },
+  async prepare(event, ctx) {
+    const body = contactMessageBody(event);
+    if (!("sequence" in body)) return { text: body.text, attachments: body.media ?? [] };
+    const message = await getConversationById(ctx.installationId, body.conversationId)
+      .readMessage({ sequence: body.sequence, messageId: body.messageId });
+    if (!message) return { withdrawn: "the message is no longer in its conversation" };
+    return { text: message.text, attachments: (message.media ?? []).filter((item) => item.type === "resource") };
+  },
+  admit(event, content, ctx) {
+    return ctx.federation.transaction(() => {
+      const body = contactMessageBody(event);
+      const target = contactMessageTarget(event.ownerUid, body, ctx);
+      if ("withdrawn" in target) return target;
+      const work = target.work ?? pendingMessages(target.contact, ctx);
+      if (!target.work) ctx.responsibilities.restartRecovery(event.ownerUid, work.id);
+      return {
+        event: {
+          kind: "contact.message", severity: "info", audience: "model",
+          payload: {
+            contactId: target.contact.id, conversationId: body.conversationId, messageId: body.messageId,
+            from: contactDisplayName(target.contact), text: content.text, responsibilityId: work.id,
+          },
+        },
+        admission: { idle: "start", busy: "join" },
+        responsibilities: { ledgerRevision: target.work ? body.ledgerRevision : ctx.responsibilities.revision(event.ownerUid), ids: [work.id] },
+        ...(content.attachments.length > 0 ? { attachments: content.attachments } : undefined),
+      };
+    });
+  },
+  // A delivered message armed its work's recovery wake.
+  settled: (event, ctx) => ctx.reconcileResponsibilityWake(event.ownerUid),
+};
+
+/** The contact a queued message goes to and its open work, null when standing handling takes it; or why it should not go. */
+function contactMessageTarget(
+  ownerUid: number, body: ContactMessageBody, ctx: KernelContext,
+): { contact: FederationContactRecord; work: ResponsibilityRecord | null } | Withdrawn {
+  const contact = ctx.federation.get(body.contactId);
+  if (!contact || contact.ownerUid !== ownerUid || contact.generation !== body.contactGeneration || contact.state !== "active") {
+    return { withdrawn: "the contact relationship changed" };
+  }
+  if (contact.blocked) return { withdrawn: "the contact is blocked" };
+  const work = ctx.responsibilities.get(ownerUid, body.responsibilityId);
+  if (work && !terminal(work)) return { contact, work };
+  if (work?.state === "resolved" && contact.preferences.shipHandlesMessages) return { contact, work: null };
+  return { withdrawn: "Ship no longer handles the message" };
 }
 
 export function endContactHandling(contact: FederationContactRecord, ctx: KernelContext): boolean {

@@ -16,6 +16,8 @@ import {
   noteSilentSources,
   receiveWebhook,
 } from "./event-sources";
+import { EventRuntime, type EventRuntimeHost } from "./events/runtime";
+import { EventStore } from "./events/store";
 import { OwnerNoticeStore } from "./owner-notice-store";
 
 const OWNER = 1000;
@@ -24,9 +26,16 @@ const SHIP_PID = "proc:ship";
 type Caller = "client" | "ship" | "worker" | "schedule";
 
 function kernel(storage: DurableObjectStorage) {
+  const events = new EventStore(storage);
+  const schedule = vi.fn(async (when: Date) => ({ id: "task:events", time: Math.floor(when.getTime() / 1_000) }));
+  const host = { installationId: "installation:test", events, schedule, cancelSchedule: vi.fn(async () => true) };
   return {
     eventSources: new EventSourceStore(storage),
     ownerNotices: new OwnerNoticeStore(storage),
+    events,
+    // SAFETY: a source's events go to no one, so the runner reaches only the log and its task.
+    runtime: new EventRuntime(host as EventRuntimeHost),
+    schedule,
     create: vi.fn(),
     wake: vi.fn(async () => undefined),
   };
@@ -51,6 +60,7 @@ function context(k: ReturnType<typeof kernel>, caller: Caller = "client"): Kerne
     },
     installationIdentity: { canonicalOrigin: "https://ada.example" },
     eventSources: k.eventSources,
+    events: k.runtime,
     ownerNotices: k.ownerNotices,
     responsibilities: { create: k.create },
     reconcileResponsibilityWake: k.wake,
@@ -245,31 +255,78 @@ describe("event sources", () => {
     });
   });
 
-  it("forgets bodies and ids on time, even from a source that never sends again", async () => {
+  it("forgets what arrived on the log's schedule, even from a source that never sends again", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const k = kernel(storage);
       await handleEventSourceAdd({ name: "feed" }, context(k));
       const start = Date.now();
       handleEventEmit({ source: "feed", events: [{ id: "a", title: "A", body: "private" }] }, context(k));
       const day = 24 * 60 * 60_000;
-      expect(k.eventSources.nextUpkeepAt()).toBeLessThanOrEqual(start + 30 * day + 1_000);
-
-      k.eventSources.prune(start + 31 * day);
-      expect(handleEventList({ source: "feed" }, context(k)).events[0]).toMatchObject({ eventId: "a" });
-      expect(handleEventList({ source: "feed" }, context(k)).events[0]?.body).toBeUndefined();
-
-      k.eventSources.prune(start + 181 * day);
-      expect(handleEventList({ source: "feed" }, context(k)).events).toEqual([]);
+      // The log wakes for the body's expiry; upkeep only watches for silence.
+      expect(k.schedule.mock.calls.at(-1)?.[0].getTime()).toBeGreaterThanOrEqual(start + 30 * day);
       expect(k.eventSources.nextUpkeepAt()).toBeNull();
+
+      // A source's list shows 30 days, while its ids still refuse a repeat.
+      k.events.prune(start + 31 * day);
+      expect(handleEventList({ source: "feed" }, context(k)).events).toEqual([]);
+      expect(handleEventEmit({ source: "feed", events: [{ id: "a", title: "A" }] }, context(k))).toEqual({ accepted: 0, duplicates: 1 });
+
+      k.events.prune(start + 181 * day);
+      expect(handleEventEmit({ source: "feed", events: [{ id: "a", title: "A" }] }, context(k))).toEqual({ accepted: 1, duplicates: 0 });
+    });
+  });
+
+  it("records each event in the Kernel log under its source, for no one to receive", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      const k = kernel(storage);
+      const { source } = await handleEventSourceAdd({ name: "feed" }, context(k));
+      handleEventEmit({ source: "feed", events: [{ id: "a", title: "A", preview: "first", body: "private" }, { title: "B" }] }, context(k, "worker"));
+      const rows = sql.exec<{ type: string; subject: string; idempotency_key: string; actor_json: string; body_json: string; deliveries: number }>(
+        `SELECT type, subject, idempotency_key, actor_json, body_json, (SELECT count(*) FROM deliveries d WHERE d.seq = e.seq) AS deliveries
+         FROM events e ORDER BY seq`,
+      ).toArray().map(({ actor_json, body_json, ...row }) => ({ ...row, actor: JSON.parse(actor_json), body: JSON.parse(body_json) }));
+      const recorded = { type: "source.event", subject: `source:${source.sourceId}`, actor: { kind: "source", sourceId: source.sourceId }, deliveries: 0 };
+      expect(rows).toEqual([
+        { ...recorded, idempotency_key: `${source.sourceId}:a`, body: { eventId: "a", title: "A", preview: "first", body: "private", emittedBy: "process" } },
+        { ...recorded, idempotency_key: expect.stringMatching(new RegExp(`^${source.sourceId}:`)), body: { eventId: expect.any(String), title: "B", emittedBy: "process" } },
+      ]);
+      expect(sql.exec("SELECT name FROM sqlite_master WHERE name = 'event_log'").toArray()).toEqual([]);
+    });
+  });
+
+  it("refuses an event too big for the log before taking any, while a webhook keeps its event without the body", async () => {
+    await runWithRealKernelSql(async (_sql, storage) => {
+      const k = kernel(storage);
+      await handleEventSourceAdd({ name: "feed" }, context(k));
+      // Under the 65,536-character cap, but past 64 KiB once stored.
+      const events = [{ id: "small", title: "fits" }, { id: "big", title: "too big", body: "é".repeat(40_000) }];
+      expect(() => handleEventEmit({ source: "feed", events }, context(k))).toThrow(/events\[1\] takes \d+ bytes.*64 KiB/);
+      expect(handleEventList({ source: "feed" }, context(k)).events).toEqual([]);
+
+      const { source, webhookUrl } = await handleEventSourceAdd({ name: "form", webhook: "url" }, context(k));
+      const token = webhookUrl?.split("/").pop() ?? "";
+      const payload = new TextEncoder().encode(JSON.stringify({ title: "big form", text: "x".repeat(65_000) }));
+      expect((await receiveWebhook(source.sourceId, token, new Headers(), payload, context(k, "schedule"))).status).toBe(200);
+      const [received] = handleEventList({ source: "form" }, context(k)).events;
+      expect(received).toMatchObject({ title: "big form" });
+      expect(received?.body).toBeUndefined();
+
+      // An id too big for the log, even without the body, refuses the delivery.
+      const huge = new TextEncoder().encode(JSON.stringify({ id: "x".repeat(70_000), title: "huge id" }));
+      expect((await receiveWebhook(source.sourceId, token, new Headers(), huge, context(k, "schedule"))).status).toBe(413);
+      expect(handleEventList({ source: "form" }, context(k)).events).toHaveLength(1);
     });
   });
 
   it("removes a source and everything that arrived from it", async () => {
-    await runWithRealKernelSql(async (_sql, storage) => {
+    await runWithRealKernelSql(async (sql, storage) => {
       const k = kernel(storage);
       await handleEventSourceAdd({ name: "feed" }, context(k));
       handleEventEmit({ source: "feed", events: [{ title: "x" }] }, context(k));
+      const logged = () => sql.exec<{ count: number }>("SELECT count(*) AS count FROM events WHERE type = 'source.event'").one().count;
+      expect(logged()).toBe(1);
       expect(handleEventSourceRemove({ name: "feed" }, context(k))).toEqual({ removed: true });
+      expect(logged()).toBe(0);
       expect(handleEventList({}, context(k)).events).toEqual([]);
       expect(handleEventSourceRemove({ name: "feed" }, context(k))).toEqual({ removed: false });
     });

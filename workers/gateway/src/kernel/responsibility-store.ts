@@ -71,18 +71,6 @@ type ResponsibilityLedgerRow = {
   wake_at: number | null;
 };
 
-type ResponsibilityWakeBatchRow = {
-  batch_id: string;
-  owner_uid: number;
-  through_revision: number;
-  responsibility_ids_json: string;
-  event_id: string;
-  attempt_count: number;
-  last_error: string | null;
-  created_at: number;
-  updated_at: number;
-};
-
 export type ResponsibilityWakeState = {
   ownerUid: number;
   generation: number;
@@ -90,14 +78,10 @@ export type ResponsibilityWakeState = {
   scheduledAtMs: number | null;
 };
 
-export type ResponsibilityWakeBatch = {
-  id: string;
-  ownerUid: number;
+/** Records taken for Ship's attention, and the ledger revision they were taken at. */
+export type ResponsibilityReadyBatch = {
+  ids: string[];
   throughRevision: number;
-  eventId: string;
-  responsibilities: ResponsibilityRecord[];
-  attemptCount: number;
-  createdAtMs: number;
 };
 
 export type ResponsibilityCreateInput = {
@@ -171,8 +155,16 @@ export type ResponsibilityChangesOutcome = {
   hasMore: boolean;
 };
 
+/** What the ledger's owner follows as records change. */
+export type ResponsibilityStoreHooks = {
+  /** After a change commits, such as to tell the owner's clients. */
+  changed?(ownerUid: number): void;
+  /** Inside the transaction that resolves or cancels a record, such as to admit work that waited on it. */
+  settled?(record: ResponsibilityRecord): void;
+};
+
 export class ResponsibilityStore {
-  constructor(private readonly storage: DurableObjectStorage, private readonly onChange?: (ownerUid: number) => void) {}
+  constructor(private readonly storage: DurableObjectStorage, private readonly hooks: ResponsibilityStoreHooks = {}) {}
 
   get(ownerUid: number, id: string): ResponsibilityRecord | null {
     const row = this.getRow(ownerUid, id);
@@ -484,7 +476,7 @@ export class ResponsibilityStore {
       outcome = { record, created: true, revision };
     });
     if (!outcome) throw new Error("Responsibility creation did not produce a result");
-    if (outcome.created) this.onChange?.(input.ownerUid);
+    if (outcome.created) this.hooks.changed?.(input.ownerUid);
     return outcome;
   }
 
@@ -593,10 +585,11 @@ export class ResponsibilityStore {
         record,
         now: input.now,
       });
+      if (terminal && current.state !== record.state) this.hooks.settled?.(record);
       outcome = { record, revision, changed: true };
     });
     if (!outcome) throw new Error("Responsibility update did not produce a result");
-    if (outcome.changed) this.onChange?.(input.ownerUid);
+    if (outcome.changed) this.hooks.changed?.(input.ownerUid);
     return outcome;
   }
 
@@ -657,8 +650,6 @@ export class ResponsibilityStore {
   }
 
   nextWakeAt(ownerUid: number, now: number): number | null {
-    const pending = this.getPendingBatchRow(ownerUid);
-    if (pending) return now;
     const row = this.storage.sql.exec<{ wake_at: number | null }>(
       `SELECT MIN(wake_at) AS wake_at FROM (
          SELECT ? AS wake_at
@@ -738,18 +729,18 @@ export class ResponsibilityStore {
     ).toArray().map((row) => row.owner_uid);
   }
 
-  createReadyBatch(
+  /**
+   * Takes up to `limit` records that need Ship's attention: clears their pending change and
+   * stamps what came due. Each keeps its recovery step for the delivery to arm: a record
+   * woken only to retry work Ship left untouched climbs a step, any other starts over.
+   * Call inside the transaction that appends the event naming them.
+   */
+  takeReadyBatch(
     ownerUid: number,
     now: number,
     limit = DEFAULT_WAKE_BATCH_LIMIT,
-  ): ResponsibilityWakeBatch | null {
-    let batch: ResponsibilityWakeBatch | null = null;
-    this.storage.transactionSync(() => {
-      const existing = this.getPendingBatchRow(ownerUid);
-      if (existing) {
-        batch = batchFromRow(existing, this.recordsByIds(ownerUid, parseStringArray(existing.responsibility_ids_json)));
-        return;
-      }
+  ): ResponsibilityReadyBatch | null {
+    return this.storage.transactionSync(() => {
       const rows = this.storage.sql.exec<ResponsibilityRow>(
         `SELECT * FROM responsibilities
          WHERE owner_uid = ? AND (
@@ -783,7 +774,7 @@ export class ResponsibilityStore {
         now,
         Math.max(1, Math.min(100, Math.trunc(limit))),
       ).toArray();
-      if (rows.length === 0) return;
+      if (rows.length === 0) return null;
 
       for (const row of rows) {
         const requiresAction = responsibilityRequiresAction(recordFromRow(row), now);
@@ -803,88 +794,44 @@ export class ResponsibilityStore {
                WHEN lease_expires_at IS NOT NULL AND lease_expires_at <= ? THEN lease_expires_at
                ELSE lease_woken_at
              END,
-             wake_retry_at = ?,
+             wake_retry_at = NULL,
              wake_retry_count = ?
            WHERE owner_uid = ? AND responsibility_id = ?`,
           now,
           now,
           now,
-          requiresAction ? recoveryWakeAt(retries, now) : null,
           retries,
           ownerUid,
           row.responsibility_id,
         );
       }
-      const id = `batch:${crypto.randomUUID()}`;
-      const eventId = `r12y.ready:${id}`;
-      const ids = rows.map((row) => row.responsibility_id);
-      const throughRevision = this.revision(ownerUid);
-      this.storage.sql.exec(
-        `INSERT INTO responsibility_wake_batches (
-          batch_id, owner_uid, through_revision, responsibility_ids_json,
-          event_id, attempt_count, last_error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, NULL, ?, ?)`,
-        id,
-        ownerUid,
-        throughRevision,
-        JSON.stringify(ids),
-        eventId,
-        now,
-        now,
-      );
-      const currentRecords = this.recordsByIds(ownerUid, ids);
-      batch = {
-        id,
-        ownerUid,
-        throughRevision,
-        eventId,
-        responsibilities: currentRecords,
-        attemptCount: 0,
-        createdAtMs: now,
-      };
+      return { ids: rows.map((row) => row.responsibility_id), throughRevision: this.revision(ownerUid) };
     });
-    return batch;
-  }
-
-  pendingBatch(ownerUid: number): ResponsibilityWakeBatch | null {
-    const row = this.getPendingBatchRow(ownerUid);
-    if (!row) return null;
-    return batchFromRow(
-      row,
-      this.recordsByIds(ownerUid, parseStringArray(row.responsibility_ids_json)),
-    );
   }
 
   /**
-   * A Ship event naming these records reached Ship. Like a delivered wake batch, an
-   * actionable record gets a recovery wake in case the run that received it fails.
+   * A delivery handed these records to a run. Each actionable one gets a recovery wake at
+   * its current step, in case the run never settles it.
    */
   markEventDelivered(ownerUid: number, ids: string[], now: number): void {
-    for (const record of this.recordsByIds(ownerUid, ids)) {
+    for (const id of ids) {
+      const row = this.getRow(ownerUid, id);
+      if (!row) continue;
       this.storage.sql.exec(
-        "UPDATE responsibilities SET wake_retry_at = ?, wake_retry_count = 0 WHERE owner_uid = ? AND responsibility_id = ?",
-        responsibilityRequiresAction(record, now) ? recoveryWakeAt(0, now) : null,
+        "UPDATE responsibilities SET wake_retry_at = ? WHERE owner_uid = ? AND responsibility_id = ?",
+        responsibilityRequiresAction(recordFromRow(row), now) ? recoveryWakeAt(row.wake_retry_count, now) : null,
         ownerUid,
-        record.id,
+        id,
       );
     }
   }
 
-  markBatchDelivered(batchId: string): void {
+  /** New input for this work, such as a contact's message, starts its recovery wakes over. */
+  restartRecovery(ownerUid: number, id: string): void {
     this.storage.sql.exec(
-      "DELETE FROM responsibility_wake_batches WHERE batch_id = ?",
-      batchId,
-    );
-  }
-
-  markBatchFailed(batchId: string, error: string, now: number): void {
-    this.storage.sql.exec(
-      `UPDATE responsibility_wake_batches
-       SET attempt_count = attempt_count + 1, last_error = ?, updated_at = ?
-       WHERE batch_id = ?`,
-      error.slice(0, 1_000),
-      now,
-      batchId,
+      "UPDATE responsibilities SET wake_retry_count = 0 WHERE owner_uid = ? AND responsibility_id = ?",
+      ownerUid,
+      id,
     );
   }
 
@@ -1007,24 +954,6 @@ export class ResponsibilityStore {
       JSON.stringify(input.record),
       input.now,
     );
-  }
-
-  private getPendingBatchRow(ownerUid: number): ResponsibilityWakeBatchRow | null {
-    return this.storage.sql.exec<ResponsibilityWakeBatchRow>(
-      `SELECT * FROM responsibility_wake_batches
-       WHERE owner_uid = ?
-       LIMIT 1`,
-      ownerUid,
-    ).toArray()[0] ?? null;
-  }
-
-  private recordsByIds(ownerUid: number, ids: string[]): ResponsibilityRecord[] {
-    const records: ResponsibilityRecord[] = [];
-    for (const id of ids) {
-      const row = this.getRow(ownerUid, id);
-      if (row) records.push(recordFromRow(row));
-    }
-    return records;
   }
 }
 
@@ -1170,25 +1099,6 @@ function transitionFromRow(row: ResponsibilityTransitionRow): ResponsibilityTran
   };
   if (row.before_state) transition.beforeState = row.before_state;
   return transition;
-}
-
-function batchFromRow(
-  row: ResponsibilityWakeBatchRow,
-  records: ResponsibilityRecord[],
-): ResponsibilityWakeBatch {
-  return {
-    id: row.batch_id,
-    ownerUid: row.owner_uid,
-    throughRevision: row.through_revision,
-    eventId: row.event_id,
-    responsibilities: records,
-    attemptCount: row.attempt_count,
-    createdAtMs: row.created_at,
-  };
-}
-
-function parseStringArray(value: string): string[] {
-  return parseStoredJson<string[]>(value);
 }
 
 function parseStoredJson<Value>(value: string): Value {

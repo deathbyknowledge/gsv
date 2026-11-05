@@ -1,7 +1,6 @@
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { getKernelPtr } from "../shared/utils";
-import { admitMemoryReview, runMemoryReview } from "../kernel/memory-review";
 import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
 import { deliverMemoryReview, enqueueMemoryReview } from "./memory-review";
 import type { ProcessMemoryReview } from "../protocol/process-frames";
@@ -74,7 +73,6 @@ describe("durable memory review delivery", () => {
     const kernel = await getKernelPtr("inst_test");
     await runInDurableObject(kernel, (instance) => {
       instance.procs.spawn(pid, ROOT_IDENTITY, { ownerUid: ROOT_IDENTITY.uid, isPersonalController: true });
-      vi.spyOn(instance.onboarding, "managedWorkGate").mockResolvedValue({ allowed: true });
       vi.spyOn(instance.responsibilityRuntime, "reconcileResponsibilityWake").mockResolvedValue();
     });
     const review = source(25);
@@ -84,7 +82,7 @@ describe("durable memory review delivery", () => {
       expect(JSON.parse(process.store.state.getValue("pendingMemoryReviews")!)).toEqual([]);
     });
     await runInDurableObject(kernel, async (instance) => {
-      await runMemoryReview(instance, ROOT_IDENTITY.uid, "kernel-admission");
+      // The Kernel admits a slice as it accepts it while no review is active.
       const record = instance.responsibilities.getByDedupeKey(ROOT_IDENTITY.uid, `memory.review:${pid}:${review.segmentId}`);
       expect(record).toMatchObject({ ownerUid: ROOT_IDENTITY.uid, details: { sourceProcessId: pid, ...review, afterMessageId: 0 } });
       vi.restoreAllMocks();
@@ -99,11 +97,17 @@ describe("durable memory review delivery", () => {
     const first = source(20);
     const second = source(40);
     const blocker = source(10);
+    const reviewKey = (sourcePid: string, segmentId: string) => `memory.review:${sourcePid}:${segmentId}`;
     await runInDurableObject(kernel, async (instance) => {
       instance.procs.spawn(pid, ROOT_IDENTITY, { ownerUid: ownerUid, isPersonalController: true });
       vi.spyOn(instance.onboarding, "managedWorkGate").mockResolvedValue({ allowed: false, code: 423, message: "Restricted" });
       vi.spyOn(instance.responsibilityRuntime, "reconcileResponsibilityWake").mockResolvedValue();
-      await admitMemoryReview({ ...blocker, afterMessageId: 0, sourceProcessId: "previous-ship", ownerUid: ownerUid }, instance.buildKernelContext({}));
+      // A previous Ship's review is still active.
+      instance.responsibilities.create({
+        ownerUid, title: "Update personal memory", source: { kind: "system", component: "memory-review" },
+        assignee: { kind: "ship" }, state: "open", priority: "low", dedupeKey: reviewKey("previous-ship", blocker.segmentId),
+        actor: { kind: "system", component: "memory-review" }, observedByShip: false, now: Date.now(),
+      });
     });
     await runInProcess(stub, async (process) => {
       enqueueMemoryReview(process, first);
@@ -112,7 +116,6 @@ describe("durable memory review delivery", () => {
       expect(process.killed).toBe(true);
     });
     await runInDurableObject(kernel, async (instance) => {
-      await runMemoryReview(instance, ownerUid, "restricted");
       expect(instance.ctx.storage.kv.get(`memory-reviews:${ownerUid}`)).toMatchObject([
         { segmentId: first.segmentId, afterMessageId: 0, throughMessageId: 20 },
         { segmentId: second.segmentId, afterMessageId: 20, throughMessageId: 40 },
@@ -123,21 +126,18 @@ describe("durable memory review delivery", () => {
     });
     await evictDurableObject(kernel);
     await runInDurableObject(kernel, async (instance) => {
-      vi.spyOn(instance.onboarding, "managedWorkGate").mockResolvedValue({ allowed: true });
       vi.spyOn(instance.responsibilityRuntime, "reconcileResponsibilityWake").mockResolvedValue();
-      await runMemoryReview(instance, ownerUid, "still-busy");
+      // The Kernel's start admits nothing while the previous review is active.
       expect(instance.ctx.storage.kv.get(`memory-reviews:${ownerUid}`)).toHaveLength(2);
       const resolveReview = (sourcePid: string, segmentId: string) => {
-        const record = instance.responsibilities.getByDedupeKey(ownerUid, `memory.review:${sourcePid}:${segmentId}`)!;
+        const record = instance.responsibilities.getByDedupeKey(ownerUid, reviewKey(sourcePid, segmentId))!;
         instance.responsibilities.update({ ownerUid: ownerUid, id: record.id, patch: { state: "resolved" }, actor: { kind: "system", component: "test" }, observedByShip: true, now: Date.now() });
       };
       resolveReview("previous-ship", blocker.segmentId);
-      await runMemoryReview(instance, ownerUid, "first-after-replacement");
       expect(instance.ctx.storage.kv.get(`memory-reviews:${ownerUid}`)).toMatchObject([{ segmentId: second.segmentId }]);
       resolveReview(pid, first.segmentId);
-      await runMemoryReview(instance, ownerUid, "second-after-replacement");
       expect(instance.ctx.storage.kv.get(`memory-reviews:${ownerUid}`)).toEqual([]);
-      expect(instance.responsibilities.getByDedupeKey(ownerUid, `memory.review:${pid}:${second.segmentId}`)).toMatchObject({ state: "open" });
+      expect(instance.responsibilities.getByDedupeKey(ownerUid, reviewKey(pid, second.segmentId))).toMatchObject({ state: "open" });
       vi.restoreAllMocks();
     });
   });

@@ -49,10 +49,10 @@ The Kernel delivers public syscall frames, their answers and signals to the Proc
 DO through `recvFrame`, and makes its own calls through typed methods: events,
 nested tool approvals, resource retention and run media, each cancelled through
 `cancelCall` when its caller gives up. Direct clients
-append canonical input with `conversation.send`, which privately admits the same
-interaction to its handler Process. Adapter ingress follows the same Kernel-owned
-conversation path. `proc.send` remains the Process admission primitive and handles
-background-origin work, `proc.history` reads raw Process activity, `proc.reset`
+append canonical input with `conversation.send`, whose message reaches its handler
+Process through the Kernel's event log. Adapter ingress follows the same
+Kernel-owned conversation path. `proc.send` sends a message straight to a process
+through the same log, `proc.history` reads raw Process activity, `proc.reset`
 archives and clears that activity, and `proc.kill` optionally archives it before
 wiping the Process. None of those lifecycle operations deletes canonical messages.
 
@@ -63,8 +63,10 @@ A normal user message follows this path:
 1. The Kernel authorizes the direct client or adapter, appends the canonical user
    message, and selects the conversation's handler Process.
 2. Before Process admission, the Kernel installs the run's directed client or
-   adapter endpoint. It then forwards the interaction through `proc.send` or
-   `proc.adapter.deliver` with the conversation and input-message identities.
+   adapter endpoint. The message then goes on the Kernel's event log, which
+   delivers it in the same call and retries while the Process can't take it.
+   It carries the conversation and input-message identities, and the Process
+   reads its text and media from the Conversation.
 3. The Process appends its raw user-input activity immediately. Media preparation proceeds
    in the background and generation waits for it.
 4. If no run is active, the Process creates `currentRun` and schedules a

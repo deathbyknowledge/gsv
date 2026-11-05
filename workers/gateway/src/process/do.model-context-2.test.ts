@@ -1,5 +1,4 @@
 import { Kernel } from "../kernel/do";
-import type { ProcessRuntimeEventDeliverArgs } from "../protocol/process-frames";
 import { getKernelPtr } from "../shared/utils";
 import type { ProcAbortResult } from "@humansandmachines/gsv/protocol";
 import { runInDurableObject } from "cloudflare:test";
@@ -14,10 +13,10 @@ import {
   runInProcess,
   ROOT_IDENTITY,
   initProcess,
-  makeRuntimeEventDeliverReq,
   messageAction,
   messageUpdateAction,
   offeredTools,
+  responsibilityReady,
   terminalTestConfig,
   terminalTestResponse,
   testUsage,
@@ -31,15 +30,7 @@ describe("model context", () => {
     const firstId = "r12y:00000000-0000-4000-8000-000000000041";
     const secondId = "r12y:00000000-0000-4000-8000-000000000042";
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const secondBatch: ProcessRuntimeEventDeliverArgs = {
-      eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000043",
-      event: {
-        type: "r12y.ready",
-        batchId: "batch:00000000-0000-4000-8000-000000000043",
-        ledgerRevision: 2,
-        responsibilityIds: [secondId],
-      },
-    };
+    const secondBatch = responsibilityReady("evt_43:personal:0", [secondId], 2);
 
     await runInProcess(stub, async (process, _state, instance) => {
       const { promise: firstReadBlocked, resolve: releaseFirstRead } = deferred();
@@ -88,7 +79,7 @@ describe("model context", () => {
         [],
       );
       await firstReadStarted;
-      await instance.recvFrame(makeRuntimeEventDeliverReq(secondBatch));
+      await instance.deliverEvent(secondBatch);
       releaseFirstRead();
 
       const result = await yielding;
@@ -121,15 +112,8 @@ describe("model context", () => {
     const responsibilityId = "r12y:00000000-0000-4000-8000-000000000051";
     const batchId = "batch:00000000-0000-4000-8000-000000000052";
     const stub = await initProcess(pid, ROOT_IDENTITY);
-    const revisedBatch: ProcessRuntimeEventDeliverArgs = {
-      eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000053",
-      event: {
-        type: "r12y.ready",
-        batchId,
-        ledgerRevision: 2,
-        responsibilityIds: [responsibilityId],
-      },
-    };
+    // The record changed again after its first batch, so the timer handed it over in another.
+    const revisedBatch = responsibilityReady("evt_53:personal:0", [responsibilityId], 2);
 
     await runInProcess(stub, async (process, _state, instance) => {
       const { promise: streamCleanupBlocked, resolve: releaseStreamCleanup } = deferred();
@@ -175,7 +159,7 @@ describe("model context", () => {
         [],
       );
       await streamCleanupStarted;
-      await instance.recvFrame(makeRuntimeEventDeliverReq(revisedBatch));
+      await instance.deliverEvent(revisedBatch);
       releaseStreamCleanup();
       const result = await yielding;
 
@@ -195,11 +179,8 @@ describe("model context", () => {
       expect(process.runs.active).toMatchObject({
         runId,
         responsibilityBatches: [
-          {
-            batchId,
-            ledgerRevision: 2,
-            responsibilityIds: [responsibilityId],
-          },
+          { batchId, ledgerRevision: 1, responsibilityIds: [responsibilityId] },
+          { batchId: revisedBatch.eventId, ledgerRevision: 2, responsibilityIds: [responsibilityId] },
         ],
       });
       process.runs.active = null;
@@ -903,10 +884,10 @@ describe("model context", () => {
 
       const ticking = process.run.runTick(runId);
       await streamCleanupStarted;
-      const takeover = await process.controller.handleProcSend({
+      const takeover = await process.controller.admitInput({
         message: "Replace the old run.",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       expect(process.runs.active).toMatchObject({ runId: takeover.runId });
 
       releaseStreamCleanup();
@@ -961,10 +942,10 @@ describe("model context", () => {
 
       const ticking = process.run.runTick(runId);
       await actionStarted;
-      const takeover = await process.controller.handleProcSend({
+      const takeover = await process.controller.admitInput({
         message: "Replace the run while it is yielding.",
         origin: { kind: "client", connectionId: "client-1" },
-      });
+      }, crypto.randomUUID(), "interrupt");
       releaseAction();
       await ticking;
 
