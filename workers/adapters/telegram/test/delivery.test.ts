@@ -1,6 +1,7 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { expect, it, vi } from "vitest";
 import { DeliveryLedger, fingerprintOutboundDelivery } from "../../shared/src/delivery-ledger";
+import { binaryBodyFromOwnedBytes } from "../../shared/src/media-body";
 import type { ManagedTelegramPeerEnv } from "../src/managed-peer";
 import type { ManagedTelegramPeerState } from "../src/managed-peer-state";
 
@@ -129,4 +130,33 @@ it("does not send the next part when the route changes during the pacing pause",
     }
   });
   expect(await sentTexts(actorId)).toEqual([first]);
+});
+
+it("offers choices as a keyboard of replies that the next message withdraws, and lists them beside media", async () => {
+  const actorId = "88345";
+  const { peer, route, message } = await seed(actorId);
+  using asked = await peer.sendMessage(route.installationId, {
+    ...message, deliveryId: "choices-asked", text: "Nice to meet you.\n\nMornings or nights?", choices: ["Morning person", "Night owl"],
+  });
+  expect(asked).toMatchObject({ ok: true });
+  using answered = await peer.sendMessage(route.installationId, { ...message, deliveryId: "choices-answered", text: "Night owl it is." });
+  expect(answered).toMatchObject({ ok: true });
+  using pictured = await peer.sendMessage(route.installationId, {
+    ...message, deliveryId: "choices-pictured", text: "Which one?", choices: ["Left", "Right"],
+    media: [{ type: "image", mimeType: "image/png", size: 4, body: { offset: 0, length: 4 } }],
+  }, binaryBodyFromOwnedBytes(new Uint8Array([1, 2, 3, 4])));
+  expect(pictured).toMatchObject({ ok: true });
+
+  const records = await (await bindings.TELEGRAM_API.fetch("https://telegram-api.test/messages"))
+    .json<Array<{ method: string; body: { chat_id?: string | number; text?: string; caption?: string; reply_markup?: unknown } }>>();
+  const sent = records.filter((record) => String(record.body.chat_id) === actorId && record.method !== "sendChatAction");
+  expect(sent.map(({ body }) => body.text === undefined ? { caption: body.caption } : { text: body.text, reply_markup: body.reply_markup })).toEqual([
+    { text: "Nice to meet you.", reply_markup: undefined },
+    {
+      text: "Mornings or nights?",
+      reply_markup: { keyboard: [[{ text: "Morning person" }], [{ text: "Night owl" }]], one_time_keyboard: true, resize_keyboard: true },
+    },
+    { text: "Night owl it is.", reply_markup: { remove_keyboard: true } },
+    { caption: "Which one?\n\n1. Left\n2. Right" },
+  ]);
 });

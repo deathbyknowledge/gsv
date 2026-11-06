@@ -6,7 +6,8 @@ This is the distributed part. Each connection becomes part of one computer your 
 
 In Chat, choose **+ → connect a computer**, or ask Ship directly. The shortcut fills the composer with editable text; add a name and say whether it runs
 macOS, Linux or Windows. Ship can create the invitation and share the install and
-`gsv pair CODE` commands for you to run on that computer. If Ship is already installed,
+`gsv pair CODE` commands for you to run on that computer, each in its own code
+block with a copy button. If Ship is already installed,
 you only need the `gsv pair CODE` command. Tell Ship when it finishes so it can check the connection.
 
 To create the invitation yourself:
@@ -14,7 +15,7 @@ To create the invitation yourself:
 1. Open **Work** and click **connect** beside Connections. While Ship's home is the only connection, Chat offers the same panel: open **Ship's home** below the composer and click **+ add a connection**.
 2. Enter a name, such as **My macbook**. The connection ID starts as **my-macbook** and follows the name until you edit it yourself.
 3. Choose the platform and click **create invitation**.
-4. Run the install command on that computer, then the `gsv pair CODE` command. It supplies your Ship, account and connection ID and starts the background daemon.
+4. Run the install command on that computer, then the `gsv pair CODE` command. Each command has a copy button. The pair command supplies your Ship, account and connection ID and starts the background daemon.
 
 The invitation lasts ten minutes. You can close the panel and return to it in the
 same browser tab. If the connection drops while connecting, run `gsv pair` without
@@ -31,6 +32,13 @@ Responsibilities and routines open from the activity line above Chat's prompt.
 In a connection’s file list, **../** moves up from the
 current starting folder and stops at that connection’s filesystem root.
 **Chat → + → reference a file** selects a file into your draft in one tap.
+A path Ship writes in Chat opens over the chat: tap it to open the file's preview, or the
+folder's file list, from the cloud home without leaving the conversation.
+The preview shows the file itself: Markdown rendered as a document, other text as a
+code block with a copy control, an image fitted to the panel. A long file shows its first
+lines and says so beneath. Closing the preview returns to the conversation.
+**Open in Work** opens the same file in Work's full reader, with edit, download and delete;
+its back action returns to the chat. In Work's own file list, **expand** opens that reader.
 A file preview’s **talk about it** control adds its connection and path to your Chat
 draft as editable text, keeping existing text and attachments. It sends nothing
 until you choose **send**.

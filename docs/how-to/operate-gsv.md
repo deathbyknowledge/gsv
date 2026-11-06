@@ -398,3 +398,70 @@ another disposable directory. Model calls still require an available provider.
 This composition and the migration tooling have local D1 and configuration tests.
 Local success is not evidence that a cloud deployment has completed; verify a
 fresh deployment end to end before giving anyone a Ship on it.
+
+## Optional signup emails
+
+During signup, people can optionally check **Email me occasionally with cool Ship updates**.
+The box starts unchecked and is separate from the required account agreement.
+For new signups, Accounts queues explicit choices made when creating a Ship with a verified
+email. Sign-in and email verification alone never subscribe anyone.
+
+To deliver these requests, apply migration 0034 and supply an
+optional `ProductEmailService` as `PRODUCT_EMAIL`. The Accounts scheduled handler
+calls `runProductEmailJobs`; operator compositions may pass a local implementation
+of the same contract. Requests wait durably while the service is absent or
+unavailable. Inspect `product_email_signups.due_at`, `attempts` and `last_error`
+for failures. Retries reuse one request ID; completed requests are not replayed.
+The temporary signup IP is cleared after delivery.
+
+The operator's implementation owns provider credentials, tags, subscription
+status and suppression. It should preserve existing tags and unsubscribe choices.
+The managed Buttondown implementation enables delivery separately and appends
+the `user` tag to existing subscribers. Pending, unsubscribed, blocked and other
+suppressed addresses remain untouched.
+
+### Import earlier marketing signups
+
+An operator may fulfil earlier opt-ins when the delivery backend did not exist.
+Use a fixed cutoff covering that cohort and confirm the prior opt-ins when
+applying. Approval is separate from deployment and never runs during a migration.
+The preview selects verified active owners and active Ships created by the
+cutoff, once per address. Apply rechecks that ownership, address, verification
+and Ship eligibility still hold, and imports only the reviewed recipients.
+Future signups continue to require the checkbox.
+
+From the runtime checkout, using the Accounts Wrangler configuration and exact
+database name for the intended environment:
+
+```bash
+node scripts/product-email-backfill.mjs preview \
+  --database ACCOUNTS_DATABASE --config PATH_TO_ACCOUNTS_CONFIG \
+  --cutoff 2026-11-02T00:00:00Z --out /tmp/product-email-import.json --remote
+```
+
+Review the recipients in the private JSON manifest and its cutoff, database and
+remote mode. Then apply that same manifest:
+
+```bash
+node scripts/product-email-backfill.mjs apply \
+  --database ACCOUNTS_DATABASE --config PATH_TO_ACCOUNTS_CONFIG \
+  --manifest /tmp/product-email-import.json --confirm-existing-opt-ins --remote
+```
+
+The example cutoff must be replaced with the cohort boundary the operator has
+confirmed. Omit `--remote` for a local database. Preview writes no database
+state. The manifest is created with private file permissions; do not commit it.
+A changed manifest requires a fresh preview. Imports can be retried after an
+interruption: stable request IDs and the address key prevent duplicate requests,
+and completed deliveries and existing checkbox evidence remain unchanged.
+
+Imported rows carry source `ship-existing-user-backfill`, the import ID and
+`consent_basis=operator-confirmed-existing-opt-ins`. Their original consent time,
+wording and locale are unknown; `requested_at` records the queue insertion time,
+not the historical opt-in. New checkbox choices retain their actual recorded
+timestamp and wording. Migration 0034 creates an empty table: deploying never
+adds an existing owner, and only this import does.
+
+Keep delivery disabled while upgrading and importing. Then enable it,
+and verify one new opted-in signup and one imported owner with the provider before
+considering rollout complete.

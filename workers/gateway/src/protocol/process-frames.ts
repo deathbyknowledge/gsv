@@ -201,6 +201,8 @@ export type ProcessMessageCommitArgs = {
   conversationId?: string;
   text: string;
   media?: ResourceBlock[];
+  /** Replies the person can tap, already normalized by the Process. */
+  choices?: string[];
   /** Time from the person's message reaching the Process to this commit; only on a run's first reply. */
   replyMs?: number;
 };

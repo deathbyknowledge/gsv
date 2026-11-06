@@ -5,13 +5,16 @@ import { renderMarkdownHtml, renderPlainTextHtml } from "../shared/markdown";
 import { enhanceCodeBlocks } from "../shared/codeBlocks";
 import { createGlyphReveal, type GlyphReveal } from "./glyphReveal";
 import { linkPlaceReferences, type Place } from "./zenModel";
+import { filePathLinks } from "./fileReferences";
 import { FOLDED_LINES, lineHeight, useFold } from "./zenFold";
 import { useT } from "../../../i18n/locale";
 
-export const ZenText = memo(function ZenText({ text, markdown, places, progress, tick, opened = false, onClick, onFold }: {
+export const ZenText = memo(function ZenText({ text, markdown, places, linkFiles = false, progress, tick, opened = false, onClick, onFold }: {
   text: string;
   markdown: boolean;
   places?: readonly Place[];
+  /** Link the paths in markdown text so they open in Work; only for a reader who may read those files. */
+  linkFiles?: boolean;
   /** null is settled; negative means the tail of a live reply. */
   progress: number | null;
   tick: number;
@@ -25,12 +28,15 @@ export const ZenText = memo(function ZenText({ text, markdown, places, progress,
   const ref = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const reveal = useRef<GlyphReveal | null>(null);
+  const controls = useRef<(() => void) | null>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const id = useId();
   const streaming = progress !== null && progress < 0;
   const fold = useFold(streaming, opened);
   const folded = fold.state === "folded";
-  const html = useMemo(() => markdown ? renderMarkdownHtml(places ? linkPlaceReferences(text, places) : text) : renderPlainTextHtml(text), [markdown, places, text]);
+  const html = useMemo(() => markdown
+    ? renderMarkdownHtml(places ? linkPlaceReferences(text, places) : text, linkFiles ? filePathLinks : undefined)
+    : renderPlainTextHtml(text), [markdown, places, linkFiles, text]);
   useLayoutEffect(() => {
     const element = content.current;
     if (!element) return;
@@ -50,8 +56,10 @@ export const ZenText = memo(function ZenText({ text, markdown, places, progress,
       if (last) last.after(caret);
       else element.append(caret);
     }
-    if (markdown) enhanceCodeBlocks(element);
+    if (markdown) controls.current = enhanceCodeBlocks(element);
     return () => {
+      controls.current?.();
+      controls.current = null;
       reveal.current?.dispose();
       reveal.current = null;
     };

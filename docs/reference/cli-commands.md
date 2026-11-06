@@ -681,7 +681,7 @@ message attach PATH... [--mime TYPE]
 message history [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]
 message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]
 message delivery show DELIVERY_ID [--json]
-message send [--message TEXT]
+message send [--message TEXT] [--choice TEXT]...
 yield
 message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]
 contact find @HANDLE|ADDRESS

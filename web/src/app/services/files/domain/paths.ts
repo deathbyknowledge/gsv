@@ -79,6 +79,11 @@ export function resolvePath(
   return normalizePath(`${base === "." ? "" : `${base}/`}${raw}`, style);
 }
 
+/** The last segment of a path, or the path itself when it has none. */
+export function fileName(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? path;
+}
+
 export function childPath(parent: string, child: string): string {
   return resolvePath(child, parent, detectPathStyle(parent));
 }

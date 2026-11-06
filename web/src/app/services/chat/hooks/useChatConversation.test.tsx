@@ -311,6 +311,38 @@ describe("live conversation attachments", () => {
   });
 });
 
+describe("live conversation choices", () => {
+  it("keeps the replies a committed Ship message offers", async () => {
+    vi.stubGlobal("document", {});
+    const summary = conversation("conv:choices", "proc:choices");
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const root = createTestRoot("Live conversation choices");
+    const observed: ObservedHook = {};
+    let listener: Parameters<GSVClient["onSignal"]>[0] | undefined;
+    const message: ConversationMessage = {
+      id: "message:choices", conversationId: summary.id, sequence: 1,
+      author: { kind: "process", pid: summary.handlerPid, uid: 1001 },
+      text: "Mornings or nights?", createdAt: 1,
+      origin: { kind: "process", pid: summary.handlerPid, runId: "run:choices" },
+      processId: summary.handlerPid, runId: "run:choices",
+      choices: ["Morning person", "Night owl"],
+    };
+    const gateway: ChatConversationRuntimeGateway = {
+      client: {
+        conversation: { forProcess: async () => ({ conversation: summary }), history: async () => ({ conversation: summary, messages: [], hasMore: false }) },
+        onSignal: (next) => { listener = next; return () => { listener = undefined; }; },
+      }, connected: true,
+    };
+    function Harness() { observed.current = useChatConversationRuntime({ processId: summary.handlerPid }, gateway); return null; }
+    try {
+      await root.render(<QueryClientProvider client={queryClient}><Harness /></QueryClientProvider>);
+      await vi.waitFor(() => { expect(observed.current?.loaded).toBe(true); expect(listener).toBeDefined(); });
+      await act(() => { listener?.("message.committed", { message, directed: true }); });
+      await vi.waitFor(() => expect(observed.current?.rows[0]?.choices).toEqual(["Morning person", "Night owl"]));
+    } finally { await root.unmount(); queryClient.clear(); vi.unstubAllGlobals(); }
+  });
+});
+
 describe("live conversation drafts", () => {
   it.each([true, false])("reconciles a streamed message with directed=%s and withdraws an aborted follow-up", async (directed) => {
     vi.stubGlobal("document", {});

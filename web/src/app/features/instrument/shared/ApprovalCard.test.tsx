@@ -80,7 +80,7 @@ describe("approval card", () => {
   it("offers Always allow for any kind of request on one place", async () => {
     const tree = await approvalCardTree({ ...props, request: { ...request, toolName: "CodeMode", syscall: "mail.send", target: "gsv", args: {} } });
     expect(collectText(tree)).toContain("Always allow");
-    expect(collectNodes(tree).find((node) => node.type === Hint && collectText(node) === "Always allow")?.props.text).toContain("“Send mail”");
+    expect(collectNodes(tree).find((node) => node.type === Hint && collectText(node) === "Always allow")?.props.text).toContain("“Send email”");
   });
 
   it("leads with the model's purpose and folds the command away", async () => {

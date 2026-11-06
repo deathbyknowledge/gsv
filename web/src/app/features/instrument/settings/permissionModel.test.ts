@@ -49,7 +49,7 @@ describe("Settings approval labels", () => {
     const unknown = permissionOptionsForRule(rule, []);
     expect(unknown.tools.find((option) => option.value === rule.match)).toMatchObject({ value: rule.match, label: "Custom match" });
     expect(unknown.customToolLabel).toBe("Plugin Special Action · plugin.special_action");
-    expect(unknown.targets.find((option) => option.value === targetOptionValue(rule.target))).toMatchObject({ value: targetOptionValue(rule.target), label: rule.target });
+    expect(unknown.targets.find((option) => option.value === targetOptionValue(rule.target))).toMatchObject({ value: targetOptionValue(rule.target), label: `${rule.target} (not connected)` });
     const discovered = permissionOptionsForRule(rule, [{ id: rule.target, label: "Old laptop" }]);
     expect(discovered.targets.find((option) => option.value === targetOptionValue(rule.target))).toMatchObject({ value: targetOptionValue(rule.target), label: "Old laptop" });
     expect(rule).toEqual({ match: "plugin.special_action", target: "machine:missing", action: "deny" });

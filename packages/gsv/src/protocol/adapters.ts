@@ -9,6 +9,7 @@ import {
 } from "./frame";
 import type { JsonPrimitive, JsonValue } from "./json";
 import { jsonPrimitiveSchema } from "./json";
+import { messageChoicesSchema } from "./message-choices";
 import { procHilRequestSchema, type ProcHilRequest } from "./syscalls/proc";
 import * as z from "zod/mini";
 
@@ -160,6 +161,8 @@ export type AdapterOutboundMessage = {
   media?: AdapterMedia[];
   replyToId?: string;
   action?: AdapterSendAction;
+  /** Replies to show as buttons; only an adapter that declares them receives this, the others get a numbered list in the text. */
+  choices?: string[];
 };
 
 export const adapterOutboundMessageSchema = z.strictObject({
@@ -171,6 +174,7 @@ export const adapterOutboundMessageSchema = z.strictObject({
   media: z.optional(z.array(adapterMediaSchema)),
   replyToId: z.optional(z.string()),
   action: z.optional(adapterSendActionSchema),
+  choices: z.optional(messageChoicesSchema),
 });
 
 /**

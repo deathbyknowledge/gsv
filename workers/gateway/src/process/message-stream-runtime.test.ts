@@ -248,7 +248,7 @@ describe("Send text streaming", () => {
       {
         phase: "aborted",
         id: `draft:${runId}:send-stream-2`,
-        reason: "Send accepts text (a string) and yield (a boolean) and nothing else",
+        reason: "Send accepts text (a string), yield (a boolean), attach (file paths) and choices (short replies) and nothing else",
       },
     ]);
     expect(result.commits).toHaveLength(0);

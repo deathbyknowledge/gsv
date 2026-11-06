@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AiConfigResult } from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, TextContent, ThinkingContent, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 import {
-  parseRunControlCommand, type RunControlCommand, type RunControlCommandParseResult,
+  normalizeMessageChoices, parseRunControlCommand, type RunControlCommand, type RunControlCommandParseResult,
 } from "./run-control-command";
 import { SEND_TOOL, sendToolArgsSchema } from "./internal/schemas";
 
@@ -161,18 +161,21 @@ function parseRunControlSendCall(toolCall: ToolCall): RunControlCall | null {
       parsed: {
         ok: false,
         action: "message",
-        error: "Send accepts text (a string) and yield (a boolean) and nothing else",
+        error: "Send accepts text (a string), yield (a boolean), attach (file paths) and choices (short replies) and nothing else",
       },
     };
   }
   const text = args.data.text ?? "";
   const finish = args.data.yield === true;
   const attach = [...new Set((args.data.attach ?? []).map((spec) => spec.trim()).filter((spec) => spec !== ""))];
+  const choices = normalizeMessageChoices(text, args.data.choices ?? []);
+  if (!choices.ok) return { toolCall, parsed: { ok: false, action: "message", error: choices.error } };
+  const offered = choices.choices.length > 0 ? { choices: choices.choices } : undefined;
   const command: RunControlCommand = attach.length > 0
-    ? { action: "message", text, finish, attach }
+    ? { action: "message", text, finish, attach, ...offered }
     : finish && !text.trim()
       ? { action: "message", text: "", finish: true, emptyMeansYield: true }
-      : { action: "message", text, finish };
+      : { action: "message", text, finish, ...offered };
   return { toolCall, parsed: { ok: true, command } };
 }
 

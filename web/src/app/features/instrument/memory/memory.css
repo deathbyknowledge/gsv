@@ -153,22 +153,12 @@
 .memory-page .page-head .page-action { padding: 3px 0; border: 0; background: none; color: var(--text-dim); font: inherit; letter-spacing: 0; text-transform: none; cursor: pointer; }
 .memory-page .page-head .page-action:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 0.25em; }
 .memory-page .page-head :is(.ibtn, .page-action) kbd { margin-right: 6px; }
+/* The page's measure and padding; the document's own rules are shared/prose.css. */
 .memory-page .prose {
   padding: 5vh 40px calc(10vh + var(--instrument-bottom-padding));
   max-width: var(--measure-prose);
-  font-family: var(--gsv-font-prose);
-  font-size: var(--prose-size, 16px);
-  line-height: 1.6;
-  color: var(--text-hi);
 }
-.memory-page .prose h1, .memory-page .prose h2, .memory-page .prose h3 { font-weight: 600; line-height: 1.2; margin: 1.4em 0 0.5em; }
-.memory-page .prose h1:first-child, .memory-page .prose h2:first-child { margin-top: 0; }
-.memory-page .prose p { margin: 0 0 0.8em; }
-.memory-page .prose a { color: var(--path); }
 .memory-page .prose [id] { scroll-margin-top: 24px; }
-.memory-page .prose :not(pre) > code { font-family: var(--gsv-font-mono); font-size: 0.85em; color: var(--path); overflow-wrap: anywhere; }
-.memory-page .prose ul, .memory-page .prose ol { padding-left: 1.3em; margin: 0 0 0.8em; }
-.memory-page .prose li::marker { color: var(--accent); }
 .memory-page .editor {
   flex: 1;
   min-height: 0;

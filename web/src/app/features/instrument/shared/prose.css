@@ -1,0 +1,16 @@
+/* A rendered Markdown document. Memory pages and file previews read the same way; each surface adds its own measure and padding. */
+.prose {
+  font-family: var(--gsv-font-prose);
+  font-size: var(--prose-size, 16px);
+  line-height: 1.6;
+  color: var(--text-hi);
+}
+.prose h1, .prose h2, .prose h3 { font-weight: 600; line-height: 1.2; margin: 1.4em 0 0.5em; }
+.prose h1:first-child, .prose h2:first-child { margin-top: 0; }
+.prose p { margin: 0 0 0.8em; }
+.prose a { color: var(--path); }
+.prose a[aria-disabled="true"] { color: inherit; text-decoration: underline dotted; cursor: default; }
+.prose :not(pre) > code { font-family: var(--gsv-font-mono); font-size: 0.85em; color: var(--path); overflow-wrap: anywhere; }
+.prose ul, .prose ol { padding-left: 1.3em; margin: 0 0 0.8em; }
+.prose li::marker { color: var(--accent); }
+.prose img { max-width: 100%; }

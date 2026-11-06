@@ -3,8 +3,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
-import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
+import {collectNodes, createTestRoot } from "../../../testing/testHarness";
 import { Permissions } from "./Permissions";
+import { IconButton } from "../../../components/ui/IconButton";
+import { Table, type TableProps } from "../../../components/ui/Table";
 import { Select, type SelectProps } from "../../../components/ui/Select";
 import { MessengerConnections } from "./MessengerConnections";
 import { MessengerPairing } from "./Telegram";
@@ -45,19 +47,25 @@ it("keeps Slack and Discord connection controls disabled even when their adapter
   } finally { await screen.close(); }
 });
 
-it("reorders permission rules with arrows and removes a rule below its tool selector before saving", async () => {
+it("reorders permission rules through the table and removes one before saving", async () => {
   const rules = [{ match: "fs.*", action: "ask" }, { match: "web.*", action: "auto" }];
   const gateway = settingsGatewayFixture([{ key: "users/1000/ai/tools/approval", value: JSON.stringify({ default: "ask", rules }), redacted: false }]);
   const screen = await mount(() => Permissions({ account, active: true, onDirty: () => {} }));
   try {
-    await vi.waitFor(() => expect(screen.nodes().filter((node) => node.props.class === "settings-rule-tool")).toHaveLength(2));
-    await act(() => screen.nodes().find((node) => node.props["aria-label"] === "move down")!.props.onClick?.());
-    const toolGroup = screen.nodes().find((node) => node.props.class === "settings-rule-tool")!;
-    // SAFETY: The tool group holds one design-system Select.
-    expect((collectNodes(toolGroup).find((node) => node.type === Select) as VNode<SelectProps>).props.selected).toBe("web.*");
-    const remove = collectNodes(toolGroup).find((node) => node.type === "button" && collectText(node) === "remove")!;
-    expect(remove).toBeDefined();
-    await act(() => remove.props.onClick?.());
+    // SAFETY: the rules table is the one Table node the section renders.
+    const table = () => screen.nodes().find((node) => node.type === Table) as VNode<TableProps<{ rule: { match: string }; index: number }>>;
+    await vi.waitFor(() => expect(table().props.rows).toHaveLength(2));
+    const movingId = table().props.rowId(table().props.rows[1], 1);
+    await act(() => { table().props.reorder?.onMove(1, 0); });
+    const first = table().props.rows[0];
+    expect(first.rule.match).toBe("web.*");
+    expect(table().props.rowId(first, 0)).toBe(movingId);
+    // SAFETY: the tool column renders one design-system Select for its row.
+    const tool = collectNodes(table().props.columns[0].cell(first, 0)).find((node) => node.type === Select) as VNode<SelectProps>;
+    expect(tool.props.selected).toBe("web.*");
+    const remove = collectNodes(table().props.rowActions?.(first, 0)).find((node) => node.type === IconButton)!;
+    await act(() => { remove.props.onClick?.(); });
+    expect(table().props.rows).toHaveLength(1);
     // SAFETY: The form's submit handler only requires preventDefault.
     const form = screen.nodes().find((node) => node.type === "form") as VNode<{ onSubmit: (event: { preventDefault: () => void }) => void }>;
     await act(() => form.props.onSubmit({ preventDefault: () => {} }));

@@ -1289,7 +1289,7 @@ describe("native shell capability discovery", () => {
     expect(page.ok).toBe(true);
     expect(page.exitCode).toBe(0);
     expect(page.stdout).toContain("SEND(1)");
-    expect(page.stdout.trimEnd().split("\n").length).toBeLessThanOrEqual(25);
+    expect(page.stdout.trimEnd().split("\n").length).toBeLessThanOrEqual(26);
     for (const parameter of Object.keys(SEND_TOOL.parameters.properties ?? {})) {
       expect(page.stdout).toMatch(new RegExp(`^  ${parameter}\\b`, "m"));
     }

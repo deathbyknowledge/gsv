@@ -52,3 +52,27 @@
   background: none;
   padding: 0;
 }
+/* One-line variant: a field holding a single command, elided, with the copy
+   action at the end and the copy outcome in the status note beneath. */
+.markdown-code-field { margin: 0.7em 0; }
+.markdown-code-field > .markdown-code-block { margin: 0; }
+.markdown-code-block.is-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px 0 14px;
+}
+/* The Hint wraps the code; the wrapper takes the flexible width and the code elides inside it. */
+.markdown-code-block.is-line > :first-child { flex: 1 1 auto; min-width: 0; display: block; }
+.markdown-code-block.is-line code {
+  display: block;
+  min-width: 0;
+  padding: 9px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: 400 clamp(13px, 0.72em, 18px)/1.65 var(--gsv-font-mono);
+  color: var(--text-hi);
+  background: none;
+}
+.markdown-code-block.is-line code:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }

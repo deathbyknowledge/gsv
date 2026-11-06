@@ -295,6 +295,8 @@
   gap: 16px;
   margin-top: 18px;
 }
+/* A help tip sits by the action it explains, at the label-row distance, not a whole action gap away. */
+.fleet-actions .gsv-infotip { margin-inline-start: -12px; }
 .fleet-text-action { border: 0; padding: 2px 0; background: none; color: var(--text-dim); font: inherit; font-size: 12px; letter-spacing: 0; text-transform: none; text-decoration: none; cursor: pointer; text-underline-offset: 5px; }
 .fleet-text-action:hover, .fleet-text-action[aria-pressed="true"] { color: var(--accent); }
 .fleet-text-action:hover, .fleet-text-action[aria-pressed="true"], .fleet-text-action:focus-visible { text-decoration: underline; }
@@ -326,16 +328,11 @@
 .fleet-place-form label :disabled { opacity: .5; cursor: not-allowed; }
 .fleet-connection { overflow-wrap: anywhere; }
 .fleet-connection .is-on { color: var(--online); }
-.fleet-connection .fleet-setup { max-height: 16rem; overflow: auto; }
 .device-pairing .gsv-fld { width: 100%; max-width: 42rem; margin-top: 14px; }
 .device-pairing .gsv-fld + .gsv-fld { margin-top: 1.5rem; }
-.fleet-setup-command .fleet-actions { margin-top: 8px; color: var(--text-dim); font-size: 12px; }
-.fleet-setup-command .fleet-copy-command { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 10px; letter-spacing: 0.06em; }
-.fleet-copy-command svg { display: block; flex: none; }
 .fleet-empty { color: var(--text-dim); font-size: 12px; line-height: 1.6; }
 .fleet-invites { list-style: none; padding: 0; color: var(--text-dim); font-size: 12px; }
 .fleet-invites li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); }
-.fleet-setup { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; max-height: 320px; overflow-y: auto; }
 .fleet-approval:focus { outline: 1px solid var(--border-focus); outline-offset: 5px; }
 @container instrument (max-width: 900px) {
   .fleet-manifest { padding-inline: 0; }
@@ -411,16 +408,13 @@
 .fleet .inspector .sub { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 16px; }
 .fleet .inspector .note { margin-top: 18px; font-size: 12px; color: var(--text-dim); line-height: 1.55; }
 
-/* deeper directories and files in the tree; a bounded preview in the inspector */
+/* deeper directories and files in the tree; the file preview itself is shared/filePreview.css */
 .fleet-tree .dir .place-head { font-size: 12px; }
 .fleet-tree li.f button.file { color: var(--text); font: inherit; padding: 1px 0; text-align: left; }
 .fleet-tree li.f button.file:hover { color: var(--accent); }
 .fleet .more td { padding: 8px 10px; border-top: 1px solid var(--rule-inner); }
 .fleet .more button { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); }
 .fleet .more button:hover { color: var(--accent); }
-.fleet .file-preview { margin-top: 12px; max-height: 40vh; overflow: auto; border-left: 2px solid var(--border); padding-left: 12px; }
-.fleet .file-preview pre { margin: 0; font-family: var(--gsv-font-mono); font-size: 11px; line-height: 1.5; color: var(--label); white-space: pre; }
-.fleet .file-preview img { max-width: 100%; display: block; }
 
 .fleet-ledger .row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; min-width: 0; padding-left: 8px; }
 .fleet-ledger .older { grid-column: 1 / -1; padding: 6px 0 2px; border-top: 1px solid var(--rule-inner); }

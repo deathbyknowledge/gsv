@@ -33,7 +33,7 @@ import { ChatPlans } from "./ChatPlans";
 import { ChatPanels } from "./ChatPanels";
 import { canConfigure } from "../settings/settingsModel";
 import { flushSync } from "preact/compat";
-import type { ActivityRequest, ChatContext } from "./chatContextModel";
+import { chatLinkContext, type ActivityRequest, type ChatContext } from "./chatContextModel";
 import { INSTRUMENT_MEMORY_KEY, INSTRUMENT_TARGETS_KEY } from "../wire/queryKeys";
 import type { MemoryPageRef } from "../shared/navigation";
 import { PromptLine, type PromptLineHandle, type PromptPlace } from "../shared/PromptLine";
@@ -49,6 +49,7 @@ import { DelegatedApprovals } from "./DelegatedApprovals";
 import { useZenScroll } from "./useZenScroll";
 import { useZenProcess } from "./useZenProcess";
 import { ZenText } from "./ZenText";
+import { textLinkRow } from "./fileReferences";
 import { ThinkingMark, THINKING_MARK } from "./ThinkingMark";
 import { WakingUp } from "./WakingUp";
 import { ReceiptTimeline, RECEIPT_LAYOUT } from "./ReceiptTimeline";
@@ -71,7 +72,6 @@ import {
   nextDayBoundary,
   ownerTimeZone,
   parsePromptInput,
-  PLACE_REFERENCE_PREFIX,
   placeLabel,
   resolvePlace,
   receiptSummary,
@@ -347,6 +347,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
   const viewer = accounts.data?.find((account) => account.relation === "self");
+  /* paths in Ship's text open in Work only for a reader who may read files there */
+  const canReadFiles = Boolean(viewer && canConfigure(viewer, "fs.read"));
 
   const timeZone = ownerTimeZone(config.data, viewer?.uid);
   const [today, setToday] = useState(Date.now);
@@ -769,6 +771,18 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     [attachments, conversation.conversation?.id, outbox.send, pastes, pid, pidProp, speech, scrolling.follow, where],
   );
 
+  /* a reply the ship offered goes out as written, leaving the prompt's draft and attachments where they are */
+  const choose = useCallback(
+    (text: string) => {
+      if (!pid || !connected || outbox.sending) return;
+      const accepted = outbox.send({
+        pid, conversationId: conversation.conversation?.id, message: text, selectedTarget: where ?? defaultPlace(),
+      });
+      if (accepted) scrolling.follow();
+    },
+    [connected, conversation.conversation?.id, outbox.send, outbox.sending, pid, scrolling.follow, where],
+  );
+
   const voiceScope = `${snapshot.url}:${snapshot.username}:${pid ?? ""}:${currentPlace.id}`;
   const voiceInput = useRef<NativeVoiceHandle>(null);
   const nativePanels = useRef<HTMLDivElement>(null);
@@ -961,18 +975,30 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
     return () => window.removeEventListener("paste", onPaste);
   }, [active, addFiles, foldPaste, pendingHil]);
 
-  /* references to places inside ship text */
+  /* references to places and paths inside ship text */
   const onTextClick = useCallback(
     (event: JSX.TargetedMouseEvent<HTMLDivElement>) => {
       const target = event.target;
       if (!(target instanceof HTMLAnchorElement)) return;
-      const href = target.getAttribute("href") ?? "";
-      if (!href.startsWith(PLACE_REFERENCE_PREFIX)) return;
+      const row = textLinkRow(target.getAttribute("href") ?? "");
+      if (!row) return;
       event.preventDefault();
-      onFleet(`target:${decodeURIComponent(href.slice(PLACE_REFERENCE_PREFIX.length))}`);
+      const linked = chatLinkContext(row);
+      if (linked) setContext(linked);
+      else onFleet(row);
     },
     [onFleet],
   );
+
+  /* the ship's latest message keeps its replies on offer until anyone writes again */
+  const offered = useMemo(() => {
+    for (let index = moments.length - 1; index >= 0; index -= 1) {
+      const moment = moments[index];
+      if (moment.role === "note") continue;
+      return moment.role === "ship" && !moment.streaming && moment.choices?.length ? moment.id : null;
+    }
+    return null;
+  }, [moments]);
 
   // Moving the browse cursor changes row decoration, not the message, receipt or attachment content.
   const messageBodies = useMemo(() => {
@@ -1029,13 +1055,25 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
         {moment.role === "human" ? (
           <ZenText text={moment.text} markdown={false} progress={settleProgress(moment)} tick={settling.has(moment.id) ? tick : 0} onFold={pin} />
         ) : moment.text ? (
-          <ZenText text={moment.text} places={places} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0}
+          <ZenText text={moment.text} places={places} linkFiles={canReadFiles} markdown progress={moment.streaming ? -1 : settleProgress(moment)} tick={moment.streaming || settling.has(moment.id) ? tick : 0}
             opened={streamed(moment) || receivedMessages.has(moment.id)} onClick={onTextClick} onFold={pin} />
         ) : moment.thinking || moment.streaming ? (
           <div class="text">{waking ? <WakingUp /> : null}<ThinkingMark tick={tick} /></div>
         ) : null}
         {moment.role === "ship" && !moment.streaming && !settling.has(moment.id) && moment.text ? <ZenLinkCards text={moment.text} /> : null}
         {moment.media?.map((media, index) => <ZenMedia key={index} media={media} processId={moment.processId ?? pid ?? ""} />)}
+        {moment.id === offered && !settling.has(moment.id) ? (
+          <div class="zen-choices" role="group" aria-label={t("chat.choices.label")}>
+            {moment.choices?.map((choice) => (
+              <button type="button" key={choice} class="zen-choice" disabled={!connected || !pid || outbox.sending || pendingHil !== null}
+                onClick={(event) => {
+                  // A tap answers rather than selects the message, so the transcript keeps following.
+                  event.stopPropagation();
+                  choose(choice);
+                }}>{choice}</button>
+            ))}
+          </div>
+        ) : null}
         {moment.text && <MomentCopyButton text={moment.text} />}
         {moment.outgoing && !moment.media?.length && Boolean(moment.outgoing.draft.media?.length) ? (
           <ul class="zen-draft-attachments" aria-label={t("chat.message.attachments")}>
@@ -1054,8 +1092,8 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
       </>;
     });
   }, [ready, moments, who, today, timeZone, places, openActivities, toggleActivity, onFleet,
-    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed, receivedMessages,
-    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t, waking]);
+    receipts, memoryCollections.data, onMemory, pendingHil, settling, tick, onTextClick, pin, streamed, receivedMessages, canReadFiles,
+    pid, connected, outbox.sending, outbox.cancelUpload, outbox.retry, outbox.discard, t, waking, offered, choose]);
 
   /* the status line */
   const selectorPlaces = useMemo(() => orderPlaces(targetsQuery.data ?? []), [targetsQuery.data, t]);

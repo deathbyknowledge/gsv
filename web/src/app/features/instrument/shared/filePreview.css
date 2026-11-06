@@ -1,0 +1,44 @@
+/* The file preview, in the chat path modal and in Work's inspector alike: the path above, the contents scrolling on
+   their own with "talk about it" where they end, and the size with the way to the full reader pinned beneath. */
+.file-preview { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; }
+.file-preview-head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+.file-preview-path { min-width: 0; color: var(--path); font-size: 12px; overflow-wrap: anywhere; }
+.file-preview-head .gsv-fld-stat { flex-basis: 100%; }
+.file-preview-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.file-preview-body { min-width: 0; }
+.file-preview-ask { margin-top: 14px; }
+.file-preview-body > .note { margin: 0; }
+.file-preview-reason { color: var(--faint); }
+.file-preview-body .prose { max-width: var(--measure-prose); }
+.file-preview-code > .markdown-code-block, .file-preview-body .prose > .markdown-code-block:first-child { margin-top: 0; }
+.file-preview-image { display: block; max-width: 100%; margin: 0; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.file-preview-body img { display: block; max-width: 100%; }
+.file-preview-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-inner);
+}
+.file-preview-meta { font-size: 11px; color: var(--text-dim); }
+.file-preview-foot > .fleet-text-action { margin-left: auto; }
+
+/* The dialog hands the preview its whole height; a back action above it keeps its own line, flush with the path. */
+.fleet-inspector:has(> .file-preview),
+.fleet-inspector:has(> .instrument-view:not([hidden]) > .file-preview) { display: flex; flex-direction: column; overflow: hidden; }
+.fleet-inspector > .instrument-view:not([hidden]):has(> .file-preview) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.fleet-inspector:has(.file-preview) .chat-context-back { flex: none; align-self: flex-start; margin-top: 0; }
+/* A file's name is a name, not a label: the dialog shows it as written. */
+.fleet-dialog:is(.is-file, .is-path) .fleet-dialog-head > span { font-size: 12px; letter-spacing: .04em; text-transform: none; color: var(--text-title); overflow-wrap: anywhere; }
+/* The inspector's own heading and table styles stay out of a rendered document. */
+.fleet-inspector .prose h3 { font-size: 1.17em; font-weight: 600; letter-spacing: 0; color: inherit; text-shadow: none; margin: 1.4em 0 0.5em; }
+.fleet .file-preview .prose :is(th, td) { white-space: normal; letter-spacing: normal; text-transform: none; font-size: inherit; color: inherit; }

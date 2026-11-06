@@ -88,7 +88,7 @@ export type DeliveryFailureKind = "retryable" | "permanent" | "ambiguous";
 
 type OutboundDeliveryFingerprintInput = Pick<
   AdapterOutboundMessage,
-  "surface" | "actorId" | "routeGeneration" | "text" | "media" | "replyToId" | "action"
+  "surface" | "actorId" | "routeGeneration" | "text" | "media" | "replyToId" | "action" | "choices"
 >;
 
 /**
@@ -130,8 +130,9 @@ export async function fingerprintOutboundDelivery(
     text: message.text,
     replyToId: message.replyToId ?? null,
     media,
-    // Present only with an action, so a message without one keeps the fingerprint it always had.
+    // Present only with an action or choices, so a message without them keeps the fingerprint it always had.
     ...(message.action === undefined ? undefined : { action: message.action }),
+    ...(message.choices === undefined ? undefined : { choices: message.choices }),
   });
   return await sha256Hex(new TextEncoder().encode(canonical));
 }

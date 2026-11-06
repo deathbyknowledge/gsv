@@ -26,6 +26,15 @@ export function fleetReferenceRow(reference: FleetReference | null): FleetRow | 
   return isApprovalReference(reference) ? processRow(reference.pid) : isConnectReference(reference) ? null : reference;
 }
 
+export type FileRowLocation = { kind: "file" | "dir"; target: string; path: string };
+
+/** The place and path a `file:` or `dir:` row names. Target ids carry no colon, so the first one ends the target. */
+export function fileRowLocation(row: FleetRow | null): FileRowLocation | null {
+  const match = row ? /^(file|dir):([^:]+):(.+)$/.exec(row) : null;
+  if (!match) return null;
+  return { kind: match[1] === "dir" ? "dir" : "file", target: match[2], path: match[3] };
+}
+
 /** A link must never authorize a different request that subsequently occupies the same process. */
 export function referencedApproval(pending: ProcHilRequest | null | undefined, pid: string, requestId?: string): ProcHilRequest | null {
   return pending?.pid === pid && (requestId === undefined || pending.requestId === requestId) ? pending : null;
