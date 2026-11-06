@@ -4,6 +4,7 @@ import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
 import type { KernelRefs } from "./index";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { R2MountBackend } from "./backends/r2";
+import type { MountBackend } from "./mount";
 import { BUILTIN_SKILL_NAMES } from "../kernel/sys/builtin-skills";
 
 const ROOT: ProcessIdentity = {
@@ -1660,5 +1661,31 @@ describe("GsvFs stat identity", () => {
     expect(again.identity).toBe(first.identity);
     expect(other.identity).not.toBe(first.identity);
     expect((await fs.stat("/")).identity).toBeDefined();
+  });
+});
+
+describe("GsvFs readlink", () => {
+  it("leaves a backend's immediate refusal to the caller", async () => {
+    // SAFETY: readlink reaches only these members of the mounted backend.
+    const home = {
+      handles: (path: string) => path.startsWith("/home/sam/"),
+      async readlink(path: string): Promise<string> {
+        throw new Error(`ENOENT: no such file or directory, readlink '${path}'`);
+      },
+    } as unknown as MountBackend;
+    const unhandled: unknown[] = [];
+    const record = (event: PromiseRejectionEvent) => {
+      unhandled.push(event.reason);
+      event.preventDefault();
+    };
+    addEventListener("unhandledrejection", record);
+    try {
+      const fs = new GsvFs(env.STORAGE, SAM, undefined, undefined, null, home);
+      await expect(fs.readlink("/home/sam/missing")).rejects.toThrow("ENOENT");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    } finally {
+      removeEventListener("unhandledrejection", record);
+    }
+    expect(unhandled).toEqual([]);
   });
 });
