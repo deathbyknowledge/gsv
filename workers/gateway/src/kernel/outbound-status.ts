@@ -50,12 +50,13 @@ function publicOutboundStatus(outbound: MailOutboundRecord): MailOutboundStatus 
     outboundId: outbound.outboundId,
     state: outbound.state,
     from: outbound.from,
-    to: outbound.to,
+    to: outbound.to.join(", "),
     subject: outbound.subject,
     createdAt: outbound.createdAt,
     queuedAt: outbound.queuedAt,
     completedAt: outbound.completedAt,
   };
+  if (outbound.cc.length > 0) result.cc = outbound.cc.join(", ");
   if (outbound.providerMessageId) result.providerMessageId = outbound.providerMessageId;
   if (outbound.errorCode) result.errorCode = outbound.errorCode;
   return result;

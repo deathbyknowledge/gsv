@@ -81,7 +81,13 @@ export type ManagedOutboundMailQuote = {
 
 export type ManagedOutboundMailDraft = ManagedOutboundMailReference & {
   from: string;
-  to: string;
+  /**
+   * The recipient, or the list of To recipients. The Kernel sends a list
+   * whenever a message has several recipients or copies, which a Worker that
+   * predates them refuses rather than dropping anyone.
+   */
+  to: string | string[];
+  cc?: string[];
   subject: string;
   bodyDigest: string;
   textSize: number;

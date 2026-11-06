@@ -370,7 +370,9 @@ message and `mail reply` replies to a stored inbound message:
 
 ```bash
 mail send --to person@example.com --subject "Hello" --message "Hello from GSV"
+mail send --to anna@example.com,mike@example.com --cc bob@example.com --subject "Friday" --body ./plan.md
 mail reply MESSAGE_ID --body ./reply.txt
+mail reply MESSAGE_ID --all --message "Count me in."
 mail status DELIVERY_ID
 ```
 
@@ -383,17 +385,22 @@ ordinal.
 
 ## Mail: `mail.send`
 
-`mail.send` is the explicit managed-email send primitive. Version one accepts a
-non-empty text body of at most 1 MiB and exactly one recipient. It does not
-accept HTML, CC, BCC, or attachments. Write the body as in chat: recipients get
-an HTML part rendered from its Markdown and a plain-text part without the
-marks. Raw HTML stays visible text, only web and mail links survive, and images
-become links. The From line carries the owner's display name, and a reply
-quotes the original's plain text below it while the owner keeps that message.
+`mail.send` is the explicit managed-email send primitive. It accepts a
+non-empty text body of at most 1 MiB. `to` and `cc` each take one address or a
+list; together they reach at most 10 people, each listed once. It does not accept HTML, BCC, or attachments. Write the body as in chat:
+recipients get an HTML part rendered from its Markdown and a plain-text part
+without the marks. Raw HTML stays visible text, only web and mail links
+survive, and images become links. The From line carries the owner's display
+name, and a reply quotes the original's plain text below it while the owner
+keeps that message.
 New messages require `to` and `subject`. A reply
 instead supplies `replyToMessageId`; the Kernel looks up that message in the
 caller's mailbox, derives its recipient and threading headers, and derives a
-`Re:` subject unless the caller supplies one. A reply cannot override `to`.
+`Re:` subject unless the caller supplies one. A reply cannot override `to`, but
+may add `cc`. `replyAll: true` also copies everyone else the original was sent
+to or copied, except this Ship under any of its addresses. The approval request
+names the resolved recipients and subject, so a reply's approval shows who
+gets it.
 
 The caller must have the `mail.send` capability and resolve to an active human
 mailbox owner. The Kernel derives `from` from that owner's managed mailbox; the
@@ -426,9 +433,11 @@ type MailSyscalls = {
   "mail.send": {
     args: {
       text: string;
-      to?: string;
+      to?: string | string[];
+      cc?: string | string[];
       subject?: string;
       replyToMessageId?: string;
+      replyAll?: boolean;
       deliveryId: string;
     };
     result:
@@ -438,7 +447,8 @@ type MailSyscalls = {
           outboundId: string;
           state: "queued" | "accepted" | "failed" | "unknown";
           from: string;
-          to: string;
+          to: string; // addresses separated by ", "
+          cc?: string; // the same form, absent without copies
           subject: string;
           errorCode?: string;
           replayed: boolean;
@@ -460,6 +470,7 @@ type MailSyscalls = {
         state: "staging" | "queued" | "accepted" | "failed" | "unknown";
         from: string;
         to: string;
+        cc?: string;
         subject: string;
         createdAt: number;
         queuedAt: number | null;

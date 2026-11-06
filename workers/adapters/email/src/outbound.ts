@@ -1,6 +1,7 @@
 import {
   MAIL_MAX_OUTBOUND_TEXT_BYTES as ABSOLUTE_MAX_TEXT_BYTES,
   MAIL_MAX_QUOTE_BYTES,
+  MAIL_MAX_RECIPIENTS,
   MAIL_MAX_SENDER_NAME_BYTES,
 } from "@humansandmachines/gsv/services/mail";
 import { configuredDomainAliases } from "@humansandmachines/gsv/services/deployment";
@@ -63,6 +64,8 @@ type OutboundRow = {
 
 type ValidatedOutbound = {
   draft: ManagedOutboundMailDraft;
+  /** To and Cc together; each counts toward the daily message allowance. */
+  recipients: number;
   /** The message as recipients see it: HTML and plain text, footer and quote included. */
   rendered: RenderedMail;
   headers?: Record<string, string>;
@@ -371,7 +374,7 @@ export class OutboundDeliveryCoordinator {
         await this.notify(this.requireByReference(reference));
         return;
       }
-      if (!this.reserveAttempt(reference, outbound.draft.textSize, limits)) {
+      if (!this.reserveAttempt(reference, outbound.draft.textSize, outbound.recipients, limits)) {
         this.emitTerminal(this.requireByReference(reference));
         await this.notify(this.requireByReference(reference));
         return;
@@ -427,7 +430,6 @@ export class OutboundDeliveryCoordinator {
       )
       || !validAddress(draft.from)
       || !allowedSenders.has(draft.from)
-      || !validAddress(draft.to)
       || !validSubject(draft.subject)
       || !validOptionalHeader(draft.inReplyTo)
       || !validOptionalHeader(draft.references)
@@ -439,6 +441,8 @@ export class OutboundDeliveryCoordinator {
     ) {
       throw new InvalidDraftError();
     }
+    const recipients = recipientCount(draft.to, draft.cc);
+    if (recipients === null) throw new InvalidDraftError();
     const bytes = await bodyToBytes(
       claim.body,
       Math.min(ABSOLUTE_MAX_TEXT_BYTES, limits.maxOutboundTextBytes),
@@ -468,7 +472,7 @@ export class OutboundDeliveryCoordinator {
     const headers: Record<string, string> = {};
     if (draft.inReplyTo) headers["In-Reply-To"] = draft.inReplyTo;
     if (draft.references) headers.References = draft.references;
-    const validated: ValidatedOutbound = { draft, rendered };
+    const validated: ValidatedOutbound = { draft, recipients, rendered };
     if (Object.keys(headers).length > 0) validated.headers = headers;
     return validated;
   }
@@ -477,6 +481,7 @@ export class OutboundDeliveryCoordinator {
     const { draft } = outbound;
     return await this.env.EMAIL.send({
       to: draft.to,
+      cc: draft.cc,
       from: draft.fromName ? { email: draft.from, name: draft.fromName } : draft.from,
       subject: draft.subject,
       text: outbound.rendered.text,
@@ -488,6 +493,7 @@ export class OutboundDeliveryCoordinator {
   private reserveAttempt(
     reference: ManagedOutboundMailReference,
     textSize: number,
+    recipients: number,
     limits: MailLimits,
   ): boolean {
     return this.ctx.storage.transactionSync(() => {
@@ -511,7 +517,7 @@ export class OutboundDeliveryCoordinator {
         day,
       ).one();
       if (
-        usage.outbound_messages + 1 > limits.dailyOutboundMessages
+        usage.outbound_messages + recipients > limits.dailyOutboundMessages
         || usage.outbound_bytes + textSize > limits.dailyOutboundBytes
       ) {
         this.ctx.storage.sql.exec(
@@ -530,9 +536,10 @@ export class OutboundDeliveryCoordinator {
       }
       this.ctx.storage.sql.exec(
         `UPDATE mail_daily_usage
-         SET outbound_messages = outbound_messages + 1,
+         SET outbound_messages = outbound_messages + ?,
              outbound_bytes = outbound_bytes + ?
          WHERE day = ?`,
+        recipients,
         textSize,
         day,
       );
@@ -941,6 +948,19 @@ function validOptionalHeader(value: ExternalValue): boolean {
 
 function validOptionalOpaqueId(value: ExternalValue): boolean {
   return value === undefined || validOpaqueId(value);
+}
+
+/** How many people a draft reaches, or null unless each is a distinct valid address within the limit. */
+function recipientCount(
+  to: ManagedOutboundMailDraft["to"],
+  cc: ManagedOutboundMailDraft["cc"],
+): number | null {
+  if (Array.isArray(to) && to.length === 0) return null;
+  if (cc !== undefined && !Array.isArray(cc)) return null;
+  const addresses = [...(Array.isArray(to) ? to : [to]), ...(cc ?? [])];
+  if (addresses.length > MAIL_MAX_RECIPIENTS || !addresses.every(validAddress)) return null;
+  const distinct = new Set(addresses.map((address) => address.toLowerCase()));
+  return distinct.size === addresses.length ? addresses.length : null;
 }
 
 function validOptionalSenderName(value: ExternalValue): boolean {

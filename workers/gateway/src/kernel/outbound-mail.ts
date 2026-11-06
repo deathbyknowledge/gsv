@@ -1,6 +1,8 @@
+import { deploymentDomains, deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
 import {
   MAIL_MAX_OUTBOUND_TEXT_BYTES as MAX_OUTBOUND_TEXT_BYTES,
   MAIL_MAX_QUOTE_BYTES as MAX_QUOTE_BYTES,
+  MAIL_MAX_RECIPIENTS as MAX_RECIPIENTS,
   MAIL_MAX_SENDER_NAME_BYTES as MAX_SENDER_NAME_BYTES,
 } from "@humansandmachines/gsv/services/mail";
 import type {
@@ -40,7 +42,8 @@ type NormalizedMailSend = {
   deliveryId: string;
   text: string;
   textSize: number;
-  to: string;
+  to: string[];
+  cc: string[];
   subject: string;
   replyToMessageId?: string;
   inReplyTo?: string;
@@ -66,8 +69,18 @@ export async function handleMailSend(
     if (!from) {
       throw new MailSendError("Managed mail is not available for this account", false);
     }
-    const normalized = normalizeMailSend(value, ownerUid, ctx);
-    await authorizeNestedOperation(ctx, "mail.send", value);
+    const normalized = normalizeMailSend(value, ownerUid, from, ctx);
+    // The owner approves who actually gets the message, including a reply's derived recipients.
+    // One recipient stays a string, as clients that predate lists show it.
+    const approved: MailSendArgs = {
+      ...value,
+      to: normalized.to.length === 1 ? normalized.to[0] : normalized.to,
+      subject: normalized.subject,
+    };
+    // Approval args must be JSON: the Kernel drops an approval signal that carries an undefined field.
+    if (normalized.cc.length > 0) approved.cc = normalized.cc;
+    else delete approved.cc;
+    await authorizeNestedOperation(ctx, "mail.send", approved);
     ctx.requestSignal?.throwIfAborted();
     deliveryId = normalized.deliveryId;
     outboundId = await stableOpaqueId("mail-outbound", [
@@ -79,7 +92,9 @@ export async function handleMailSend(
     const fingerprint = await sha256(JSON.stringify({
       version: 1,
       from,
-      to: normalized.to,
+      to: normalized.to.join(", "),
+      // Left out without copies, so a single-recipient intent keeps its earlier fingerprint.
+      cc: normalized.cc.length > 0 ? normalized.cc.join(", ") : undefined,
       subject: normalized.subject,
       textSize: normalized.textSize,
       bodyDigest,
@@ -97,6 +112,7 @@ export async function handleMailSend(
       fingerprint,
       from,
       to: normalized.to,
+      cc: normalized.cc,
       subject: normalized.subject,
       bodyDigest,
       bodyPath,
@@ -164,10 +180,11 @@ export async function handleMailSend(
       outboundId: outbound.outboundId,
       state: outbound.state,
       from: outbound.from,
-      to: outbound.to,
+      to: outbound.to.join(", "),
       subject: outbound.subject,
       replayed: !ensured.created,
     };
+    if (outbound.cc.length > 0) result.cc = outbound.cc.join(", ");
     if (outbound.errorCode) result.errorCode = outbound.errorCode;
     return result;
   } catch (error) {
@@ -351,6 +368,7 @@ export function completeManagedOutboundMail(
 function normalizeMailSend(
   value: MailSendArgs,
   ownerUid: number,
+  from: string,
   ctx: KernelContext,
 ): NormalizedMailSend {
   const deliveryId = normalizeIdentifier(
@@ -360,6 +378,10 @@ function normalizeMailSend(
   const text = normalizeText(value.text);
   const textSize = TEXT_ENCODER.encode(text).byteLength;
   const replySelector = optionalIdentifier(value.replyToMessageId, "replyToMessageId");
+  if (value.replyAll !== undefined && value.replyAll !== true && value.replyAll !== false) {
+    throw new MailSendError("replyAll must be true or false", false);
+  }
+  const copies = addressList(value.cc, "cc");
   if (replySelector) {
     if (value.to !== undefined) {
       throw new MailSendError("A reply derives its recipient from the original message", false);
@@ -367,7 +389,10 @@ function normalizeMailSend(
     const source = ctx.mailboxes.getMessage(ownerUid, replySelector);
     if (!source) throw new MailSendError(`Mail message not found: ${replySelector}`, false);
     const replyToMessageId = source.messageId;
-    const to = replyRecipient(source);
+    const { to, cc } = recipientLists(
+      [replyRecipient(source)],
+      value.replyAll ? [...originalRecipients(source, from, ctx), ...copies] : copies,
+    );
     const subject = value.subject === undefined
       ? replySubject(source.subject)
       : normalizeSubject(value.subject);
@@ -377,6 +402,7 @@ function normalizeMailSend(
       text,
       textSize,
       to,
+      cc,
       subject,
       replyToMessageId,
     };
@@ -390,15 +416,62 @@ function normalizeMailSend(
   if (value.replyToMessageId !== undefined) {
     throw new MailSendError("replyToMessageId is invalid", false);
   }
-  if (value.to === undefined) throw new MailSendError("to is required", false);
+  if (value.replyAll) throw new MailSendError("replyAll needs replyToMessageId", false);
+  const to = addressList(value.to, "to");
+  if (to.length === 0) throw new MailSendError("to is required", false);
   if (value.subject === undefined) throw new MailSendError("subject is required", false);
   return {
     deliveryId,
     text,
     textSize,
-    to: normalizeAddress(value.to),
+    ...recipientLists(to, copies),
     subject: normalizeSubject(value.subject),
   };
+}
+
+function addressList(value: MailSendArgs["to"], field: "to" | "cc"): string[] {
+  if (value === undefined) return [];
+  const entries = Array.isArray(value) ? value : [value];
+  if (entries.length > MAX_RECIPIENTS) throw tooManyRecipients(entries.length);
+  return entries.map((entry) => {
+    if (String(entry) !== entry) throw new MailSendError(`${field} must list email addresses`, false);
+    if (entry.includes(",")) throw new MailSendError(`${field}: give several addresses as a list`, false);
+    return normalizeAddress(entry, field);
+  });
+}
+
+/** Each address once, To before Cc, within the recipient limit. */
+function recipientLists(to: readonly string[], cc: readonly string[]) {
+  const seen = new Set<string>();
+  const unique = (addresses: readonly string[]) => addresses.filter((address) => {
+    const key = address.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const lists = { to: unique(to), cc: unique(cc) };
+  const count = lists.to.length + lists.cc.length;
+  if (count > MAX_RECIPIENTS) throw tooManyRecipients(count);
+  return lists;
+}
+
+function tooManyRecipients(count: number): MailSendError {
+  return new MailSendError(`A message can go to at most ${MAX_RECIPIENTS} people; this one has ${count}`, false);
+}
+
+/** Everyone the original was sent to or copied, except this Ship under any of its addresses. */
+function originalRecipients(source: MailMessageRecord, from: string, ctx: KernelContext): string[] {
+  const handle = ctx.installationIdentity?.handle?.toLowerCase();
+  const domains = deploymentDomains(deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG));
+  const own = new Set([
+    from,
+    source.envelopeTo,
+    ...(handle ? domains.map((domain) => `${handle}@${domain}`) : []),
+  ].map((address) => address.toLowerCase()));
+  return [...source.to, ...source.cc]
+    .map((entry) => extractAddress(entry).trim())
+    .filter((address) => !own.has(address.toLowerCase()))
+    .map((address) => normalizeAddress(address, "cc"));
 }
 
 function normalizeReference(value: ManagedOutboundMailReference): ManagedOutboundMailReference {
@@ -457,7 +530,7 @@ function requireActiveHuman(ownerUid: number, ctx: KernelContext) {
 function replyRecipient(message: MailMessageRecord): string {
   return normalizeAddress(extractAddress(
     message.replyTo[0] ?? message.displayFrom ?? message.envelopeFrom,
-  ));
+  ), "to");
 }
 
 function extractAddress(value: string): string {
@@ -481,7 +554,7 @@ function truncateSubject(value: string): string {
   return normalizeSubject(`${new TextDecoder().decode(bytes.subarray(0, written))}${suffix}`);
 }
 
-function normalizeAddress(value: string): string {
+function normalizeAddress(value: string, field: "to" | "cc"): string {
   const source = value.trim();
   const separator = source.lastIndexOf("@");
   const address = separator > 0
@@ -497,7 +570,7 @@ function normalizeAddress(value: string): string {
     || /[\s<>(),;:"]/.test(address)
     || address.includes("..")
   ) {
-    throw new MailSendError("to is not a valid single email address", false);
+    throw new MailSendError(`${field} has an invalid email address: ${source}`, false);
   }
   return address;
 }
@@ -602,12 +675,13 @@ function outboundDraft(outbound: MailOutboundRecord): ManagedOutboundMailDraft {
     outboundId: outbound.outboundId,
     fingerprint: outbound.fingerprint,
     from: outbound.from,
-    to: outbound.to,
+    to: outbound.to.length === 1 && outbound.cc.length === 0 ? outbound.to[0] : [...outbound.to],
     subject: outbound.subject,
     bodyDigest: outbound.bodyDigest,
     textSize: outbound.textSize,
     createdAt: outbound.createdAt,
   };
+  if (outbound.cc.length > 0) draft.cc = [...outbound.cc];
   if (outbound.replyToMessageId) draft.replyToMessageId = outbound.replyToMessageId;
   if (outbound.inReplyTo) draft.inReplyTo = outbound.inReplyTo;
   if (outbound.references) draft.references = outbound.references;

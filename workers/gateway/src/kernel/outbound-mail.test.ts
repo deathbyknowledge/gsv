@@ -10,6 +10,8 @@ import type { Kernel } from "./do";
 import type { InstallationDirectoryResult } from "@humansandmachines/gsv/services/directory";
 import { MAIL_MAX_QUOTE_BYTES } from "@humansandmachines/gsv/services/mail";
 import type { MailSendArgs, ManagedOutboundMailClaim } from "@humansandmachines/gsv/protocol";
+import * as sharedUtils from "../shared/utils";
+import type { ProcessToolAuthorizeArgs } from "../protocol/process-frames";
 import { MAIL_NO_TEXT_BODY } from "./mailbox";
 import { MailboxStore } from "./mailbox-store";
 import {
@@ -30,7 +32,7 @@ describe("managed outbound mail", () => {
     const fingerprint = `sha256:${[...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
     const currentId = await runInDurableObject(stub, async (instance: Kernel, state) => {
       instance.mailboxes.ensureOutbound({ version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "interrupted-successor",
-        from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Interrupted fixture", bodyDigest: fingerprint,
+        from: "fixture@example.invalid", to: ["recipient@example.invalid"], cc: [], subject: "Interrupted fixture", bodyDigest: fingerprint,
         bodyPath: "/home/fixture/.gsv/mail/outbox/interrupted.txt", textSize: bytes.byteLength, createdAt: 1 });
       await instance.bindings.STORAGE.put("home/fixture/.gsv/mail/outbox/interrupted.txt", bytes);
       instance.mailboxes.markOutboundQueued(outboundId, fingerprint);
@@ -87,7 +89,7 @@ describe("managed outbound mail", () => {
     const fingerprint = `sha256:${"a".repeat(64)}`;
     await runInDurableObject(stub, (instance: Kernel) => {
       instance.mailboxes.ensureOutbound({ version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "legacy-pending",
-        from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Pending fixture", bodyDigest: fingerprint,
+        from: "fixture@example.invalid", to: ["recipient@example.invalid"], cc: [], subject: "Pending fixture", bodyDigest: fingerprint,
         bodyPath: "/home/fixture/.gsv/mail/outbox/pending.txt", textSize: 10, createdAt: 1 });
       instance.mailboxes.markOutboundQueued(outboundId, fingerprint);
       instance.mailboxes.markOutboundEnqueued(outboundId, fingerprint);
@@ -175,7 +177,7 @@ describe("managed outbound mail", () => {
       const outboundId = "mail-outbound:staging-body-missing";
       const fingerprint = `sha256:${"a".repeat(64)}`;
       ctx.mailboxes.ensureOutbound({ version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "staging-body-missing",
-        from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Incomplete staging", bodyDigest: fingerprint,
+        from: "fixture@example.invalid", to: ["recipient@example.invalid"], cc: [], subject: "Incomplete staging", bodyDigest: fingerprint,
         bodyPath: "/home/fixture/.gsv/mail/outbox/missing.txt", textSize: 10, createdAt: 1 });
       await recoverManagedOutboundEnqueue(outboundId, ctx, true);
       expect(queue.send).not.toHaveBeenCalled();
@@ -254,7 +256,7 @@ describe("managed outbound mail", () => {
       await runInDurableObject(kernel, (instance: Kernel) => {
         instance.mailboxes.ensureOutbound({
           version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "same-id",
-          from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Owned fixture",
+          from: "fixture@example.invalid", to: ["recipient@example.invalid"], cc: [], subject: "Owned fixture",
           bodyDigest: fingerprint, bodyPath: "/home/fixture/.gsv/mail/outbox/fixture/message.txt",
           textSize: 10, createdAt: 1,
         });
@@ -980,12 +982,151 @@ describe("outbound mail presentation", () => {
   });
 });
 
+describe("outbound mail recipients", () => {
+  it("sends to several people and copies, each once", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+
+      const sent = await handleMailSend({
+        to: ["mike@example.com", "anna@Example.COM"],
+        cc: ["bob@example.com", "Mike@example.com"],
+        subject: "Friday",
+        text: "Table for four.",
+        deliveryId: "group",
+      }, ctx);
+
+      expect(sent).toMatchObject({ ok: true, to: "mike@example.com, anna@example.com", cc: "bob@example.com" });
+      if (!sent.ok) throw new Error(sent.error);
+      const claim = await claimOutbound(ctx, sent.outboundId);
+      expect(claim.draft).toMatchObject({ to: ["mike@example.com", "anna@example.com"], cc: ["bob@example.com"] });
+    });
+  });
+
+  it("keeps a single recipient's fingerprint and draft as they were before copies", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+
+      const claim = await sendAndClaim(ctx, { to: "mike@example.com", subject: "Contract", text: "Signed.", deliveryId: "single" });
+
+      expect(claim.draft.fingerprint).toBe(await sha256Text(JSON.stringify({
+        version: 1, from: "hank@gsv.space", to: "mike@example.com", subject: "Contract", textSize: 7,
+        bodyDigest: await sha256Text("Signed."), replyToMessageId: null, inReplyTo: null, references: null,
+      })));
+      expect(claim.draft.to).toBe("mike@example.com");
+      expect(claim.draft).not.toHaveProperty("cc");
+    });
+  });
+
+  it("replies to all without the Ship, and asks approval for who gets it", async () => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const storage = new MemoryR2Bucket();
+        const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) }, {
+          publicConfig: JSON.stringify({ primaryDomain: "ship.space", legacyDomains: ["gsv.space"] }),
+        });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+        await recordSource(ctx, storage, "Who's in?", {
+          to: ["Hank <hank@gsv.space>", "Anna <anna@example.com>"],
+          cc: ["hank@ship.space", "bob@example.com"],
+        });
+
+        const sent = await handleMailSend({
+          replyToMessageId: "mail:source",
+          replyAll: true,
+          cc: ["carol@example.com"],
+          text: "Count me in.",
+          deliveryId: "reply-all",
+        }, ctx);
+
+        expect(sent).toMatchObject({
+          ok: true,
+          to: "mike@example.com",
+          cc: "anna@example.com, bob@example.com, carol@example.com",
+          subject: "Re: Contract",
+        });
+        expect(approvals).toEqual([expect.objectContaining({
+          syscall: "mail.send",
+          args: expect.objectContaining({
+            replyToMessageId: "mail:source",
+            to: "mike@example.com",
+            cc: ["anna@example.com", "bob@example.com", "carol@example.com"],
+            subject: "Re: Contract",
+          }),
+        })]);
+      });
+    });
+  });
+
+  it("asks approval without a copy that is already a recipient", async () => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+
+        const sent = await handleMailSend({
+          to: "mike@example.com",
+          cc: "Mike@example.com",
+          subject: "Friday",
+          text: "Table for four.",
+          deliveryId: "self-copy",
+        }, ctx);
+
+        expect(sent).toMatchObject({ ok: true, to: "mike@example.com" });
+        expect(sent).not.toHaveProperty("cc");
+        // Approval args reach the owner's clients as JSON, so the dropped copy leaves no cc field.
+        expect(approvals.map(({ args }) => args)).toStrictEqual([{
+          to: "mike@example.com",
+          subject: "Friday",
+          text: "Table for four.",
+          deliveryId: "self-copy",
+        }]);
+      });
+    });
+  });
+
+  it.each([
+    {
+      refusal: "more than ten people",
+      args: { to: ["mike@example.com"], cc: Array.from({ length: 10 }, (_, index) => `guest${index}@example.com`) },
+      error: "A message can go to at most 10 people; this one has 11",
+    },
+    { refusal: "a comma list in one address", args: { to: "mike@example.com, anna@example.com" }, error: "to: give several addresses as a list" },
+    { refusal: "reply-all on a new message", args: { to: "mike@example.com", replyAll: true }, error: "replyAll needs replyToMessageId" },
+    { refusal: "an invalid copy", args: { to: "mike@example.com", cc: ["anna at example"] }, error: "cc has an invalid email address: anna at example" },
+  ])("refuses $refusal before recording anything", async ({ args, error }) => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+
+      const sent = await handleMailSend({ subject: "Friday", text: "Hi.", deliveryId: "refused", ...args }, ctx);
+
+      expect(sent).toEqual({ ok: false, error, retryable: false });
+      expect(ctx.mailboxes.getOutboundForDelivery(1000, "refused")).toBeNull();
+    });
+  });
+
+  it("refuses a reply-all that would reach more than ten people", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) });
+      await recordSource(ctx, storage, "Party!", {
+        to: Array.from({ length: 10 }, (_, index) => `guest${index}@example.com`),
+      });
+
+      const sent = await handleMailSend({ replyToMessageId: "mail:source", replyAll: true, text: "Yes!", deliveryId: "too-many" }, ctx);
+
+      expect(sent).toMatchObject({ ok: false, error: "A message can go to at most 10 people; this one has 11" });
+    });
+  });
+});
+
 /** Records the message a reply answers, with its rendered message.txt unless `text` is null. */
 async function recordSource(
   ctx: KernelContext,
   storage: MemoryR2Bucket,
   text: string | null,
-  overrides: { displayFrom?: string; sentAt?: number | null } = {},
+  overrides: { displayFrom?: string; sentAt?: number | null; to?: string[]; cc?: string[] } = {},
 ): Promise<void> {
   const textPath = "/home/hank/.gsv/mail/inbox/mail:source/message.txt";
   ctx.mailboxes.ensureMailbox("mailbox:1000:primary", 1000, "hank@gsv.space");
@@ -998,8 +1139,8 @@ async function recordSource(
     envelopeTo: "hank@gsv.space",
     headerMessageId: "<source@example.com>",
     displayFrom: overrides.displayFrom ?? "Mike <mike@example.com>",
-    to: ["hank@gsv.space"],
-    cc: [],
+    to: overrides.to ?? ["hank@gsv.space"],
+    cc: overrides.cc ?? [],
     replyTo: [],
     subject: "Contract",
     sentAt: overrides.sentAt === undefined ? 1 : overrides.sentAt,
@@ -1017,21 +1158,45 @@ async function recordSource(
 async function sendAndClaim(ctx: KernelContext, args: MailSendArgs): Promise<ManagedOutboundMailClaim> {
   const sent = await handleMailSend(args, ctx);
   if (!sent.ok) throw new Error(sent.error);
+  return await claimOutbound(ctx, sent.outboundId);
+}
+
+/** Runs with every approval request approved, collecting what the owner was asked. */
+async function withApprovals(run: (approvals: ProcessToolAuthorizeArgs[]) => Promise<void>): Promise<void> {
+  const approvals: ProcessToolAuthorizeArgs[] = [];
+  const sendFrame = vi.spyOn(sharedUtils, "sendFrameToProcess").mockImplementation(async (_installation, _pid, frame) => {
+    if (frame.type === "req" && frame.call === "proc.tool.authorize") approvals.push(frame.args);
+    // SAFETY: the approval caller reads only ok and data.approved.
+    return { type: "res", id: frame.type === "req" ? frame.id : "approval", ok: true, data: { approved: true } } as never;
+  });
+  try {
+    await run(approvals);
+  } finally {
+    sendFrame.mockRestore();
+  }
+}
+
+async function claimOutbound(ctx: KernelContext, outboundId: string): Promise<ManagedOutboundMailClaim> {
   const claim = await claimManagedOutboundMail({
     version: 1,
-    outboundId: sent.outboundId,
-    fingerprint: ctx.mailboxes.getOutbound(sent.outboundId)!.fingerprint,
+    outboundId,
+    fingerprint: ctx.mailboxes.getOutbound(outboundId)!.fingerprint,
   }, ctx);
   if (claim.status !== "ready") throw new Error("Expected a ready mail claim");
   await claim.body.stream.cancel();
   return claim;
 }
 
+async function sha256Text(text: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 function outboundContext(
   sql: SqlStorage,
   storage: MemoryR2Bucket,
   queue: { send: ReturnType<typeof vi.fn> } | undefined,
-  owner: { displayName?: string; config?: ReadonlyMap<string, string> } = {},
+  owner: { displayName?: string; config?: ReadonlyMap<string, string>; publicConfig?: string } = {},
 ): KernelContext {
   const humans = [{
     username: "hank",
@@ -1053,6 +1218,7 @@ function outboundContext(
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       STORAGE: storage as R2Bucket,
       ...(queue ? { MANAGED_MAIL_OUTBOUND: queue } : undefined),
+      GSV_PUBLIC_CONFIG: owner.publicConfig,
     },
     installationId: "installation-1",
     installationIdentity: {

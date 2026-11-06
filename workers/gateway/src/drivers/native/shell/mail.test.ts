@@ -220,7 +220,7 @@ describe("mail shell command", () => {
       outboundId: `outbound:${input.deliveryId}`,
       state: "queued",
       from: "hank@gsv.space",
-      to: input.to ?? "mike@example.com",
+      to: [input.to ?? "mike@example.com"].flat().join(", "),
       subject: input.subject ?? "Re: Hello",
       replayed: false,
     }));
@@ -244,7 +244,7 @@ describe("mail shell command", () => {
 
     expect(handleMailSend).toHaveBeenNthCalledWith(1, {
       text: "Checking in.",
-      to: "mike@example.com",
+      to: ["mike@example.com"],
       subject: "Hello",
       deliveryId: "shell-frame-7:mail:1",
     }, ctx);
@@ -260,6 +260,46 @@ describe("mail shell command", () => {
     expect(replied.stdout).toContain("delivery_id=shell-frame-7:mail:2");
   });
 
+  it("sends to several people with copies, and replies to all", async () => {
+    const ctx = commandContext("shell-frame-copies");
+    handleMailSend.mockImplementation(async (input: MailSendArgs): Promise<MailSendResult> => ({
+      ok: true,
+      deliveryId: input.deliveryId!,
+      outboundId: `outbound:${input.deliveryId}`,
+      state: "queued",
+      from: "hank@gsv.space",
+      to: [input.to ?? "mike@example.com"].flat().join(", "),
+      cc: input.cc?.join(", "),
+      subject: input.subject ?? "Re: Hello",
+      replayed: false,
+    }));
+    const command = buildMailCommand(emptyFs(), ctx);
+
+    const sent = await command.execute([
+      "send", "--to", "anna@example.com, mike@example.com", "--to", "bob@example.com", "--cc", "carol@example.com",
+      "--subject", "Friday", "--message", "Table for four.",
+    ], shellCommandContext());
+    await command.execute([
+      "reply", "mail:aaaaaaaa", "--all", "--cc", "dave@example.com", "--message", "Count me in.",
+    ], shellCommandContext());
+    const misplaced = await command.execute([
+      "send", "--all", "--to", "anna@example.com", "--subject", "Friday", "--message", "Hi.",
+    ], shellCommandContext());
+
+    expect(handleMailSend).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      to: ["anna@example.com", "mike@example.com", "bob@example.com"],
+      cc: ["carol@example.com"],
+    }), ctx);
+    expect(handleMailSend).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      replyToMessageId: "mail:aaaaaaaa",
+      replyAll: true,
+      cc: ["dave@example.com"],
+    }), ctx);
+    expect(sent.stdout).toContain("to=anna@example.com, mike@example.com, bob@example.com\ncc=carol@example.com\n");
+    expect(misplaced).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("--all applies to mail reply") });
+    expect(handleMailSend).toHaveBeenCalledTimes(2);
+  });
+
   it("preserves explicit delivery ids while ordinals track every outbound command", async () => {
     const fs = emptyFs();
     const ctx = commandContext("shell-frame-explicit");
@@ -269,7 +309,7 @@ describe("mail shell command", () => {
       outboundId: `outbound:${input.deliveryId}`,
       state: "queued",
       from: "hank@gsv.space",
-      to: input.to!,
+      to: [input.to!].flat().join(", "),
       subject: input.subject!,
       replayed: false,
     }));

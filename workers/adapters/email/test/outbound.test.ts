@@ -23,6 +23,7 @@ type OutboundPayload = {
     subject: string;
     textSize: number;
   };
+  recipients: number;
   rendered: { text: string; html: string };
   headers?: Record<string, string>;
 };
@@ -264,6 +265,7 @@ describe("managed outbound mail delivery", () => {
         to: "recipient@example.com",
         subject: "Subject for outbound-success",
       }),
+      recipients: 1,
       rendered: {
         text: "Body for outbound-success\n",
         html: expect.stringContaining("<p>Body for outbound-success</p>"),
@@ -1258,5 +1260,67 @@ describe("outbound mail presentation", () => {
       expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "accepted" })]);
     });
     expect(fixture.send).toHaveBeenCalledOnce();
+  });
+});
+
+describe("outbound mail recipients", () => {
+  it("sends to every To and Cc recipient and counts each toward the daily allowance", async () => {
+    const installationId = `installation_outbound_copies_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-copies");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "Table for four.", {
+      to: ["recipient@example.com"],
+      cc: ["anna@example.com"],
+    }));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "accepted", error_code: null })]);
+    });
+
+    expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({
+      to: ["recipient@example.com"],
+      cc: ["anna@example.com"],
+    }));
+    await expect(stub.usage()).resolves.toMatchObject({ outboundMessages: 2 });
+  });
+
+  it("refuses a message that reaches more people than the day still allows", async () => {
+    const installationId = `installation_outbound_copies_quota_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-copies-quota");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "Party!", {
+      to: ["recipient@example.com", "mike@example.com"],
+      cc: ["anna@example.com"],
+    }));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "failed", error_code: "outbound_quota" })]);
+    });
+
+    expect(fixture.send).not.toHaveBeenCalled();
+    await expect(stub.usage()).resolves.toMatchObject({ outboundMessages: 0 });
+  });
+
+  it.each([
+    { recipients: "no To recipient", draft: { to: [] } },
+    { recipients: "a repeated address", draft: { to: ["recipient@example.com"], cc: ["Recipient@example.com"] } },
+    { recipients: "more than ten people", draft: { to: ["recipient@example.com"], cc: Array.from({ length: 10 }, (_, index) => `guest${index}@example.com`) } },
+    { recipients: "an invalid copy", draft: { cc: ["not an address"] } },
+  ])("fails a draft with $recipients without sending it", async ({ draft }) => {
+    const installationId = `installation_outbound_bad_recipients_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-bad-recipients");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "Hi.", draft));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "failed", error_code: "invalid_draft" })]);
+    });
+    expect(fixture.send).not.toHaveBeenCalled();
   });
 });

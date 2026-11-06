@@ -276,6 +276,7 @@ pub(crate) async fn run(
         }
         Some(MailAction::Send {
             to,
+            cc,
             subject,
             message,
         }) => {
@@ -285,11 +286,22 @@ pub(crate) async fn run(
                     "Write the message after the address, or pipe it in: gsv mail send ana@example.com < note.txt",
                 )?,
             };
+            let recipients = |list: &str| -> Vec<String> {
+                list.split(',')
+                    .map(str::trim)
+                    .filter(|address| !address.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            };
             let mut args = json!({
-                "to": to,
+                "to": recipients(&to),
                 "text": body,
                 "deliveryId": uuid::Uuid::new_v4().to_string(),
             });
+            let copies: Vec<String> = cc.iter().flat_map(|entry| recipients(entry)).collect();
+            if !copies.is_empty() {
+                args["cc"] = json!(copies);
+            }
             if let Some(subject) = subject {
                 args["subject"] = json!(subject);
             }
@@ -305,7 +317,11 @@ pub(crate) async fn run(
                 };
                 return Err(format!("{}{retry}", text(&result, "error")).into());
             }
-            let (from, to) = (text(&result, "from"), text(&result, "to"));
+            let from = text(&result, "from");
+            let to = match opt_text(&result, "cc") {
+                Some(cc) => format!("{}, copying {cc}", text(&result, "to")),
+                None => text(&result, "to").to_owned(),
+            };
             if out.json {
                 if text(&result, "state") == "failed" {
                     return Err(format!("The mail to {to} could not be sent.").into());
@@ -347,11 +363,12 @@ pub(crate) async fn run(
                 "unknown" => ("unknown; the mail service didn't confirm", Tone::Warn),
                 _ => ("on its way", Tone::Normal),
             };
-            let mut rows: Vec<(&str, Cell)> = vec![
-                ("To", text(outbound, "to").into()),
-                ("Subject", text(outbound, "subject").into()),
-                ("State", Cell::new(state, tone)),
-            ];
+            let mut rows: Vec<(&str, Cell)> = vec![("To", text(outbound, "to").into())];
+            if let Some(cc) = opt_text(outbound, "cc") {
+                rows.push(("Cc", cc.into()));
+            }
+            rows.push(("Subject", text(outbound, "subject").into()));
+            rows.push(("State", Cell::new(state, tone)));
             if let Some(code) = opt_text(outbound, "errorCode") {
                 rows.push(("Reason", Cell::new(code, Tone::Bad)));
             }

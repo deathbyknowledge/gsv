@@ -7,6 +7,9 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 
+// Outbound recipients are stored as header lists; a mail.send address holds no comma or space.
+const ADDRESS_SEPARATOR = ", ";
+
 export type MailboxRecord = {
   mailboxId: string;
   ownerUid: number;
@@ -84,7 +87,9 @@ export type MailMessagePage = {
 
 export type MailPageOptions = { limit?: number; before?: string };
 
-export type MailOutboundRecord = ManagedOutboundMailDraft & {
+export type MailOutboundRecord = Omit<ManagedOutboundMailDraft, "to" | "cc" | "fromName" | "quote"> & {
+  to: string[];
+  cc: string[];
   ownerUid: number;
   deliveryId: string;
   bodyPath: string;
@@ -445,17 +450,18 @@ export class MailboxStore {
     this.sql.exec(
       `INSERT OR IGNORE INTO mail_outbound (
          outbound_id, owner_uid, delivery_id, fingerprint,
-         from_address, to_address, subject, body_digest, body_path, text_size,
+         from_address, to_address, cc_addresses, subject, body_digest, body_path, text_size,
          reply_to_message_id, in_reply_to_header, references_header,
          state, provider_message_id, error_code,
          created_at, queued_at, completed_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'staging', NULL, NULL, ?, NULL, NULL)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'staging', NULL, NULL, ?, NULL, NULL)`,
       input.outboundId,
       input.ownerUid,
       input.deliveryId,
       input.fingerprint,
       input.from,
-      input.to,
+      input.to.join(ADDRESS_SEPARATOR),
+      input.cc.length > 0 ? input.cc.join(ADDRESS_SEPARATOR) : null,
       input.subject,
       input.bodyDigest,
       input.bodyPath,
@@ -751,6 +757,7 @@ type MailOutboundRow = {
   fingerprint: string;
   from_address: string;
   to_address: string;
+  cc_addresses: string | null;
   subject: string;
   body_digest: string;
   body_path: string;
@@ -831,7 +838,8 @@ function outboundFromRow(row: MailOutboundRow): MailOutboundRecord {
     deliveryId: row.delivery_id,
     fingerprint: row.fingerprint,
     from: row.from_address,
-    to: row.to_address,
+    to: row.to_address.split(ADDRESS_SEPARATOR),
+    cc: row.cc_addresses?.split(ADDRESS_SEPARATOR) ?? [],
     subject: row.subject,
     bodyDigest: row.body_digest,
     bodyPath: row.body_path,

@@ -20,7 +20,16 @@ import {
   requireShellOptionValue,
 } from "./common";
 
-type MailSendOptions = { to?: string; subject?: string; message?: string; bodyPath?: string; deliveryId?: string; replyToMessageId?: string };
+type MailSendOptions = {
+  to: string[];
+  cc: string[];
+  replyAll: boolean;
+  subject?: string;
+  message?: string;
+  bodyPath?: string;
+  deliveryId?: string;
+  replyToMessageId?: string;
+};
 type MailSearchOptions = MailPageOptions & { query: string };
 type MailPageOptions = { limit?: number; before?: string };
 
@@ -30,10 +39,12 @@ const MAIL_USAGE = `Usage:
   mail search <query> [--limit N] [--before CURSOR]
   mail show <message-id> [--raw]
   mail status <delivery-id>
-  mail send --to ADDRESS --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]
-  mail reply <message-id> [--subject SUBJECT] (--message TEXT | --body PATH) [--delivery-id ID]
+  mail send --to ADDRESS... [--cc ADDRESS...] --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]
+  mail reply <message-id> [--all] [--cc ADDRESS...] [--subject SUBJECT] (--message TEXT | --body PATH) [--delivery-id ID]
 
 Write bodies in Markdown; recipients see it formatted. A reply quotes the original below it.
+Repeat --to or --cc, or separate addresses with commas; a message reaches at most 10 people.
+--all also copies everyone else the original was sent to.
 `;
 
 export function buildMailCommand(fs: GsvFs, ctx: KernelContext) {
@@ -146,7 +157,9 @@ async function sendMail(
   const deliveryId = options.deliveryId
     ?? defaultDeliveryId(ctx.requestId, invocationOrdinal);
   const input: MailSendArgs = { text, deliveryId };
-  if (options.to) input.to = options.to;
+  if (options.to.length > 0) input.to = options.to;
+  if (options.cc.length > 0) input.cc = options.cc;
+  if (options.replyAll) input.replyAll = true;
   if (options.subject !== undefined) input.subject = options.subject;
   if (options.replyToMessageId) input.replyToMessageId = options.replyToMessageId;
   return formatSendResult(await handleMailSend(input, requestCtx), deliveryId);
@@ -163,7 +176,9 @@ function withShellSignal(ctx: KernelContext, shellCtx: CommandContext): KernelCo
 }
 
 function parseSend(args: string[], reply: boolean): MailSendOptions {
-  let to: string | undefined;
+  const to: string[] = [];
+  const cc: string[] = [];
+  let replyAll = false;
   let subject: string | undefined;
   let message: string | undefined;
   let bodyPath: string | undefined;
@@ -172,8 +187,14 @@ function parseSend(args: string[], reply: boolean): MailSendOptions {
 
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
+    if (current === "--all") {
+      if (!reply) throw new Error("--all applies to mail reply");
+      replyAll = true;
+      continue;
+    }
     if (
       current === "--to"
+      || current === "--cc"
       || current === "--subject"
       || current === "--message"
       || current === "--body"
@@ -183,7 +204,9 @@ function parseSend(args: string[], reply: boolean): MailSendOptions {
       const value = requireShellOptionValue(args[index], current);
       if (current === "--to") {
         if (reply) throw new Error("mail reply does not accept --to");
-        to = value;
+        to.push(...addressArgument(value));
+      } else if (current === "--cc") {
+        cc.push(...addressArgument(value));
       } else if (current === "--subject") {
         subject = value;
       } else if (current === "--message") {
@@ -207,7 +230,7 @@ function parseSend(args: string[], reply: boolean): MailSendOptions {
   if (reply) {
     if (!replyToMessageId) throw new Error("mail reply requires a message id");
   } else {
-    if (!to) throw new Error("mail send requires --to");
+    if (to.length === 0) throw new Error("mail send requires --to");
     if (subject === undefined) throw new Error("mail send requires --subject");
   }
   if (message === undefined && bodyPath === undefined) {
@@ -216,14 +239,18 @@ function parseSend(args: string[], reply: boolean): MailSendOptions {
   if (message !== undefined && bodyPath !== undefined) {
     throw new Error("--message and --body are mutually exclusive");
   }
-  const parsed: MailSendOptions = {};
-  if (to) parsed.to = to;
+  const parsed: MailSendOptions = { to, cc, replyAll };
   if (subject !== undefined) parsed.subject = subject;
   if (message !== undefined) parsed.message = message;
   if (bodyPath) parsed.bodyPath = bodyPath;
   if (deliveryId) parsed.deliveryId = deliveryId;
   if (replyToMessageId) parsed.replyToMessageId = replyToMessageId;
   return parsed;
+}
+
+/** `--to a@x.com,b@y.com` names two people, as `--to a@x.com --to b@y.com` does. */
+function addressArgument(value: string): string[] {
+  return value.split(",").map((address) => address.trim()).filter(Boolean);
 }
 
 function defaultDeliveryId(requestId: string | undefined, ordinal: number): string {
@@ -247,6 +274,7 @@ function formatSendResult(result: MailSendResult, deliveryId: string): ExecResul
     `outbound_id=${result.outboundId}`,
     `from=${result.from}`,
     `to=${result.to}`,
+    ...(result.cc ? [`cc=${result.cc}`] : []),
     `subject=${cleanColumn(result.subject)}`,
     ...(result.errorCode ? [`error_code=${result.errorCode}`] : []),
     `replayed=${result.replayed ? "true" : "false"}`,
@@ -263,6 +291,7 @@ function formatStatusResult(result: MailStatusResult): ExecResult {
     `outbound_id=${outbound.outboundId}`,
     `from=${outbound.from}`,
     `to=${outbound.to}`,
+    ...(outbound.cc ? [`cc=${outbound.cc}`] : []),
     `subject=${cleanColumn(outbound.subject)}`,
     ...(outbound.providerMessageId
       ? [`provider_message_id=${outbound.providerMessageId}`]

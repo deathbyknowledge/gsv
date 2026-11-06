@@ -554,8 +554,11 @@ pub(crate) enum MailAction {
     },
     /// Send mail from your Ship's address; the body comes from MESSAGE or stdin
     Send {
-        /// Recipient address
+        /// Recipient address; separate several with commas
         to: String,
+        /// Copy someone; repeat or separate addresses with commas
+        #[arg(long, value_delimiter = ',')]
+        cc: Vec<String>,
         /// Subject line
         #[arg(long, short = 's')]
         subject: Option<String>,
