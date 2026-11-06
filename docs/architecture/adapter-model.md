@@ -106,7 +106,14 @@ bounded summary, category, attention flag, and optional confidence. It omits
 separate mailbox identifiers, address fields, display names, subjects, raw headers,
 and message bodies. Its title contains only the opaque id, so sender-controlled
 summary text enters model context only after Ship explicitly inspects the record.
-The summary remains untrusted external context. Upgrades preserve historical Inbox
+The summary remains untrusted external context. The adapter marks automatic mail:
+an automatic reply (`Auto-Submitted: auto-replied`, such as an out-of-office) or a
+delivery report (an RFC 3464 report, or mail from the mail daemon). The Kernel
+stores and summarizes it like any message, and the owner's notice rule still
+applies, but it creates no responsibility and never wakes Ship. Generated mail,
+such as a verification code marked `auto-generated`, stays ordinary. A Gateway
+that predates the mark rejects it, and the adapter retries that message until the
+Gateway is upgraded. Upgrades preserve historical Inbox
 accounts, processes, and mailbox notification fields, but new mail neither consults
 nor updates them.
 
@@ -298,10 +305,11 @@ Changing a selection does not change an existing run route: the current Message
 stays directed to its origin, while the next inbound message enters the new selection.
 
 Managed outbound email has a separate explicit path because email is a mailbox,
-not an observed chat surface. `mail.send` accepts one recipient and a plain-text
-body capped at 1 MiB in version one, or `replyToMessageId` to derive the
+not an observed chat surface. `mail.send` accepts To and Cc recipients, at most
+10 in all, and a text body capped at 1 MiB, or `replyToMessageId` to derive the
 recipient and threading headers from a message in the caller's canonical
-mailbox. The Kernel derives the sender from the active human owner's mailbox.
+mailbox; `replyAll` also copies the original's other recipients except the Ship
+itself. The Kernel derives the sender from the active human owner's mailbox.
 `mail send` and `mail reply` expose the same operation through the native
 shell; CodeMode exposes it as `mail.send`.
 
@@ -320,6 +328,10 @@ do not own delivery durability.
 
 An installation-scoped email Durable Object owns the delivery ledger, daily
 message and byte reservations, claim retries, and completion callback retries.
+Each recipient counts as one message against the daily allowance. A draft with
+one recipient carries `to` as a string; with several recipients or copies the
+Kernel sends `to` as a list with `cc`, which an email Worker that predates
+copies rejects as an invalid draft rather than dropping recipients.
 It independently derives and persists the expected sender on the first
 successful active Accounts resolution. Later handle drift fails closed, and a
 mismatched draft is rejected rather than trusting the claimed `from` field.
@@ -329,13 +341,35 @@ Operators must enable Email Sending for each allowed domain. Receiving aliases
 alone grant no sending authority. Existing mailbox addresses and immutable
 drafts keep their original sender; a domain promotion can retain that domain
 without invalidating pending claims. Handle changes still fail closed.
-Cloudflare Email Sending is called at most once after the DO durably records an
-attempt. Provider acceptance records `accepted`.
-Terminal lifecycle, quota, and draft validation failures before that attempt
+Each attempt calls Cloudflare Email Sending at most once, after the DO durably
+records it. Provider acceptance records `accepted`.
+Terminal lifecycle, quota, and draft validation failures before an attempt
 record `failed`; recoverable nonactive installation states pause delivery.
-A crash, binding throw, or malformed provider result after the attempt records
-`unknown` and is never replayed, because the message may already have
-left the provider boundary.
+A provider error code that refuses the send before handing it on, such as a
+suppressed or disallowed recipient, an unverified sender, a suspended account,
+the provider's daily limit, or an invalid request, also records `failed` with
+the owner-facing code (`recipient_suppressed`, `recipient_not_allowed`,
+`sender_unavailable`, `provider_quota`, `provider_rejected`) and returns the
+attempt's share of the daily allowance. A rate limit instead returns the
+delivery to claiming for a later attempt with the claim backoff.
+A crash, a delivery or service error, any other binding throw, or a malformed
+provider result after the attempt records `unknown` and is never replayed,
+because the message may already have left the provider boundary. The provider's
+code and redacted message reach the operator's logs and diagnostic telemetry;
+recipients' addresses do not.
+
+The email Worker owns presentation. A body is Markdown as written in chat; the
+Worker sends it as an HTML part and a plain-text part without the marks. Raw
+HTML stays visible text, only web and mail links survive, and images become
+links, so a message carries no markup or remote content of its own. When the
+Worker claims a draft, the Kernel adds the owner's current display name for the
+From line and, for a reply, the original's plain text from the owner's stored
+copy with its sender, its date and the owner's timezone. Both are presentation
+rather than part of the fingerprinted intent: a reply whose original was
+deleted is sent without a quote. An operator may set `MAIL_FOOTER_TEXT`, and
+optionally an HTTPS `MAIL_FOOTER_URL`, to add one line under every message,
+above any quote. An invalid footer configuration pauses claims instead of
+sending without it.
 
 Email is an optional operator-composed service. The Humans & Machines graph
 supplies the email Worker, Queue, provider binding, and `mail.send` transport;

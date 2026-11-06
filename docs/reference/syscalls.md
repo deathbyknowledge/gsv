@@ -370,7 +370,9 @@ message and `mail reply` replies to a stored inbound message:
 
 ```bash
 mail send --to person@example.com --subject "Hello" --message "Hello from GSV"
+mail send --to anna@example.com,mike@example.com --cc bob@example.com --subject "Friday" --body ./plan.md
 mail reply MESSAGE_ID --body ./reply.txt
+mail reply MESSAGE_ID --all --message "Count me in."
 mail status DELIVERY_ID
 ```
 
@@ -383,12 +385,22 @@ ordinal.
 
 ## Mail: `mail.send`
 
-`mail.send` is the explicit managed-email send primitive. Version one accepts a
-non-empty plain-text body of at most 1 MiB and exactly one recipient. It does
-not accept HTML, CC, BCC, or attachments. New messages require `to` and `subject`. A reply
+`mail.send` is the explicit managed-email send primitive. It accepts a
+non-empty text body of at most 1 MiB. `to` and `cc` each take one address or a
+list; together they reach at most 10 people, each listed once. It does not accept HTML, BCC, or attachments. Write the body as in chat:
+recipients get an HTML part rendered from its Markdown and a plain-text part
+without the marks. Raw HTML stays visible text, only web and mail links
+survive, and images become links. The From line carries the owner's display
+name, and a reply quotes the original's plain text below it while the owner
+keeps that message.
+New messages require `to` and `subject`. A reply
 instead supplies `replyToMessageId`; the Kernel looks up that message in the
 caller's mailbox, derives its recipient and threading headers, and derives a
-`Re:` subject unless the caller supplies one. A reply cannot override `to`.
+`Re:` subject unless the caller supplies one. A reply cannot override `to`, but
+may add `cc`. `replyAll: true` also copies everyone else the original was sent
+to or copied, except this Ship under any of its addresses. The approval request
+names the resolved recipients and subject, so a reply's approval shows who
+gets it.
 
 The caller must have the `mail.send` capability and resolve to an active human
 mailbox owner. The Kernel derives `from` from that owner's managed mailbox; the
@@ -407,9 +419,13 @@ canonical intent and body are durable and Queue publication is durably owned by
 the Kernel. The Kernel retries publication until the Queue accepts the command.
 Replaying the same call returns its current state. `accepted` means Cloudflare
 Email Sending accepted the message and returned a provider id, not that the
-recipient's mailbox has delivered it. `failed` is a known terminal failure.
+recipient's mailbox has delivered it. `failed` is a known terminal failure:
+nothing was sent, and `errorCode` names why, for example `recipient_suppressed`
+(an address bounced or complained before), `recipient_not_allowed`,
+`outbound_quota` (the owner's daily allowance), `provider_quota`,
+`sender_unavailable`, `provider_rejected` or `invalid_draft`.
 `unknown` means the provider call may have succeeded, so GSV will not replay it
-and risk sending a duplicate.
+and risk sending a duplicate. A rate-limited send stays `queued` and is retried.
 
 Cancellation is effective until the Kernel durably admits the outbox wake. Once
 that admission exists, delivery recovery continues even if the original request
@@ -421,9 +437,11 @@ type MailSyscalls = {
   "mail.send": {
     args: {
       text: string;
-      to?: string;
+      to?: string | string[];
+      cc?: string | string[];
       subject?: string;
       replyToMessageId?: string;
+      replyAll?: boolean;
       deliveryId: string;
     };
     result:
@@ -433,7 +451,8 @@ type MailSyscalls = {
           outboundId: string;
           state: "queued" | "accepted" | "failed" | "unknown";
           from: string;
-          to: string;
+          to: string; // addresses separated by ", "
+          cc?: string; // the same form, absent without copies
           subject: string;
           errorCode?: string;
           replayed: boolean;
@@ -448,22 +467,29 @@ type MailSyscalls = {
   };
   "mail.status": {
     args: { deliveryId: string };
-    result: {
-      outbound: null | {
-        deliveryId: string;
-        outboundId: string;
-        state: "staging" | "queued" | "accepted" | "failed" | "unknown";
-        from: string;
-        to: string;
-        subject: string;
-        createdAt: number;
-        queuedAt: number | null;
-        completedAt: number | null;
-        providerMessageId?: string;
-        errorCode?: string;
-      };
-    };
+    result: { outbound: MailOutboundStatus | null };
   };
+  "mail.sent": {
+    args: { limit?: number; before?: string };
+    result: { outbound: MailOutboundStatus[]; next?: string };
+  };
+};
+
+type MailOutboundStatus = {
+  deliveryId: string;
+  outboundId: string;
+  state: "staging" | "queued" | "accepted" | "failed" | "unknown";
+  from: string;
+  to: string;
+  cc?: string;
+  subject: string;
+  /** The message as written, in Markdown. */
+  textPath: string;
+  createdAt: number;
+  queuedAt: number | null;
+  completedAt: number | null;
+  providerMessageId?: string;
+  errorCode?: string;
 };
 ```
 
@@ -473,6 +499,12 @@ managed Queue is unavailable, and returns the same `null` result for missing
 and foreign-owned deliveries. It does not re-enter compose, body storage, or
 Queue publication. This is the normal way to observe the eventual outcome of a
 send that returned `queued`.
+
+`mail.sent` pages the caller's own sent mail, newest first, under its own
+`mail.sent` capability; the native `mail sent` command uses it. It takes the
+same `limit` (1 to 200, 50 by default) and `before` cursor as `mail.list`, and
+returns `next` while older mail remains. Each entry is the status `mail.status`
+returns, so a failed send keeps its `errorCode`.
 
 ## Received mail: `mail.list`, `mail.search`, `mail.read`
 

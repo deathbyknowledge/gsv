@@ -69,6 +69,8 @@ describe("HIL request wording", () => {
     expect(describeCall({ ...shell, syscall: "fs.write", args: { path: "/tmp/a" } }, "my mac")).toBe("write a file on my mac");
     expect(describeCall({ ...shell, syscall: "mail.send", args: { to: "mike@example.com", subject: "Contract follow-up" } }, "gsv"))
       .toBe("send an email to mike@example.com about Contract follow-up");
+    expect(describeCall({ ...shell, syscall: "mail.send", args: { to: "mike@example.com", cc: ["anna@example.com"], subject: "Friday" } }, "gsv"))
+      .toBe("send an email to mike@example.com (copying anna@example.com) about Friday");
     expect(describeCall({ ...shell, syscall: "sys.mcp.call", toolName: "Search" }, "my mac")).toBe("use Search on my mac");
   });
 
@@ -101,6 +103,12 @@ describe("HIL request wording", () => {
     expect(hilRequestLine({ ...shell, syscall: "mail.send", toolName: "mail.send", args: { to: "mike@example.com", subject: "Hi", text: "body" } }))
       .toEqual({ lead: "none", text: "to mike@example.com · Hi" });
     expect(hilRequestLine({ ...shell, syscall: "mail.send", args: {} })).toBeNull();
+    expect(hilRequestLine({ ...shell, syscall: "mail.send", args: {
+      to: ["mike@example.com", "anna@example.com"], cc: ["bob@example.com"], subject: "Friday",
+    } })?.text).toBe("to mike@example.com, anna@example.com · cc bob@example.com · Friday");
+    expect(hilRequestLine({ ...shell, syscall: "mail.send", args: {
+      replyToMessageId: "mail:abc", to: "mike@example.com", subject: "Re: Contract",
+    } })?.text).toBe("to mike@example.com · Re: Contract");
     expect(hilRequestLine({ ...shell, syscall: "net.fetch", toolName: "net.fetch", args: { url: "https://example.com" } }))
       .toEqual({ lead: "place", text: "fetch https://example.com" });
     expect(hilRequestLine({ ...shell, syscall: "sys.mcp.call", toolName: "sys.mcp.call", args: { serverId: "s1", name: "search_docs", arguments: { q: "granola" } } })?.text)

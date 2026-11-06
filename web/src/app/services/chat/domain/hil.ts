@@ -1,7 +1,7 @@
 import type { JsonValue, ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import { t, type TextKey } from "../../../i18n/locale";
-import { callArgumentText as argText, describeCall, normalizeCallPurpose } from "./callDescription";
+import { callArgumentList, callArgumentText as argText, describeCall, normalizeCallPurpose } from "./callDescription";
 
 type HilWireValue = string | number | boolean | null | HilWireValue[] | HilWireRecord;
 type HilWireRecord = { [key: string]: HilWireValue };
@@ -123,7 +123,9 @@ export function hilRequestLine(request: ProcHilRequest): HilRequestLine | null {
       return url ? { lead: "place", text: t("chat.hil.fetch", { url }) } : null;
     }
     case "mail.send": {
-      const to = argText(request, "to");
+      const recipients = callArgumentList(request, "to");
+      const copies = callArgumentList(request, "cc");
+      const to = recipients && copies ? t("chat.hil.mailCopying", { to: recipients, cc: copies }) : recipients;
       const subject = argText(request, "subject");
       const replyTo = argText(request, "replyToMessageId");
       if (to) return { lead: "none", text: subject ? t("chat.hil.mailToAbout", { to, subject }) : t("chat.hil.mailTo", { to }) };

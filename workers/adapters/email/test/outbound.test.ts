@@ -5,6 +5,8 @@ import {
 import { env } from "cloudflare:workers";
 import type {
   AdapterInstallationContext,
+  ManagedOutboundMailClaimOutcome,
+  ManagedOutboundMailDraft,
   ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
 import type { InstallationDirectoryResult, InstallationState } from "@humansandmachines/gsv/services/directory";
@@ -19,8 +21,10 @@ type OutboundPayload = {
     from: string;
     to: string;
     subject: string;
+    textSize: number;
   };
-  text: string;
+  recipients: number;
+  rendered: { text: string; html: string };
   headers?: Record<string, string>;
 };
 
@@ -123,7 +127,7 @@ function outboundAdmissionFixture(installationId: string, state: InstallationSta
   const configured = env as typeof env & MailEnv;
   const active = { found: true, installationId, handle: "hank", canonicalOrigin: "https://hank.gsv.space", state: "active" } satisfies InstallationDirectoryResult;
   const resolveInstallation = vi.fn(async (): Promise<InstallationDirectoryResult> => ({ ...active, state }));
-  const send = vi.fn(async () => ({ messageId: "provider_resumed" }));
+  const send = vi.fn(async (_message: EmailMessageBuilder | EmailMessage) => ({ messageId: "provider_resumed" }));
   const claimOutboundMail = vi.fn<MailEnv["GATEWAY"]["claimOutboundMail"]>((...args) => configured.GATEWAY.claimOutboundMail(...args));
   const completeOutboundMail = vi.fn<MailEnv["GATEWAY"]["completeOutboundMail"]>((...args) => configured.GATEWAY.completeOutboundMail(...args));
   const bindings: MailEnv = {
@@ -261,7 +265,11 @@ describe("managed outbound mail delivery", () => {
         to: "recipient@example.com",
         subject: "Subject for outbound-success",
       }),
-      text: "Body for outbound-success",
+      recipients: 1,
+      rendered: {
+        text: "Body for outbound-success\n",
+        html: expect.stringContaining("<p>Body for outbound-success</p>"),
+      },
     }]);
     const rows = await runInDurableObject(stub, (_instance, state) =>
       deliveryRows(state));
@@ -386,10 +394,7 @@ describe("managed outbound mail delivery", () => {
     expect(calls).toHaveLength(2);
     await expect(stub.usage()).resolves.toMatchObject({
       outboundMessages: 2,
-      outboundBytes: calls.reduce(
-        (total, call) => total + new TextEncoder().encode(call.text).byteLength,
-        0,
-      ),
+      outboundBytes: calls.reduce((total, call) => total + call.draft.textSize, 0),
     });
   });
 
@@ -1127,5 +1132,334 @@ describe("managed outbound mail delivery", () => {
     });
 
     expect(error).toContain("belongs to another installation");
+  });
+});
+
+/** A ready claim as the Gateway hands it over; build it inside the claim, since its stream belongs to the reading object. */
+async function readyClaim(
+  value: ManagedOutboundMailReference,
+  text: string,
+  draft: Partial<ManagedOutboundMailDraft> = {},
+): Promise<ManagedOutboundMailClaimOutcome> {
+  const bytes = new TextEncoder().encode(text);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return {
+    status: "ready",
+    draft: {
+      version: 1,
+      outboundId: value.outboundId,
+      fingerprint: value.fingerprint,
+      from: "hank@gsv.space",
+      to: "recipient@example.com",
+      subject: "Friday",
+      bodyDigest: `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`,
+      textSize: bytes.byteLength,
+      createdAt: Date.now(),
+      ...draft,
+    },
+    body: { length: bytes.byteLength, stream: new Blob([bytes]).stream() },
+  };
+}
+
+describe("outbound mail presentation", () => {
+  it("sends the owner's name, the rendered Markdown, the footer and the quoted original", async () => {
+    const installationId = `installation_outbound_presented_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    fixture.bindings.MAIL_FOOTER_TEXT = "Sent from my Ship";
+    fixture.bindings.MAIL_FOOTER_URL = "https://ship.space";
+    const value = reference("outbound-presented");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(
+      value,
+      "Table for **4**, see [the booking](https://thefork.com/b/1).",
+      {
+        fromName: "Hank Hill",
+        quote: {
+          from: "Mike <mike@example.com>",
+          sentAt: Date.UTC(2026, 10, 6, 13, 5),
+          timeZone: "UTC",
+          text: "Can you make Friday?",
+        },
+      },
+    ));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "accepted", error_code: null })]);
+    });
+
+    expect(fixture.send).toHaveBeenCalledOnce();
+    const [sent] = fixture.send.mock.calls[0];
+    expect(sent).toMatchObject({
+      from: { email: "hank@gsv.space", name: "Hank Hill" },
+      to: "recipient@example.com",
+      subject: "Friday",
+      text: [
+        "Table for 4, see the booking (https://thefork.com/b/1).",
+        "",
+        "Sent from my Ship (https://ship.space)",
+        "",
+        "On Fri, 6 Nov 2026 at 13:05, Mike <mike@example.com> wrote:",
+        "",
+        "> Can you make Friday?",
+        "",
+      ].join("\n"),
+    });
+    expect("html" in sent && sent.html).toEqual(expect.stringContaining("<strong>4</strong>"));
+  });
+
+  it("sends a bare address and no footer when neither is configured", async () => {
+    const installationId = `installation_outbound_plain_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-plain");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "See you then."));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+    });
+
+    expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({
+      from: "hank@gsv.space",
+      text: "See you then.\n",
+      html: expect.not.stringContaining("Sent from"),
+    }));
+  });
+
+  it("fails a draft whose quote can't be shown without sending it", async () => {
+    const installationId = `installation_outbound_bad_quote_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-bad-quote");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "Friday works.", {
+      quote: { from: "Mike <mike@example.com>", sentAt: 1, timeZone: "Mars/Olympus_Mons", text: "Can you?" },
+    }));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "failed", error_code: "invalid_draft" })]);
+    });
+    expect(fixture.send).not.toHaveBeenCalled();
+  });
+
+  it("holds mail while the operator's footer is misconfigured, then sends it", async () => {
+    const installationId = `installation_outbound_bad_footer_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    fixture.bindings.MAIL_FOOTER_URL = "https://ship.space";
+    const value = reference("outbound-bad-footer");
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "claiming", error_code: "claim_unavailable" })]);
+      expect(fixture.claimOutboundMail).not.toHaveBeenCalled();
+
+      fixture.bindings.MAIL_FOOTER_TEXT = "Sent from my Ship";
+      state.storage.sql.exec("UPDATE mail_outbound_deliveries SET claim_next_attempt_at = ?", Date.now());
+      await new MailInstallation(state, fixture.bindings).alarm();
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "accepted" })]);
+    });
+    expect(fixture.send).toHaveBeenCalledOnce();
+  });
+});
+
+describe("outbound mail recipients", () => {
+  it("sends to every To and Cc recipient and counts each toward the daily allowance", async () => {
+    const installationId = `installation_outbound_copies_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-copies");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "Table for four.", {
+      to: ["recipient@example.com"],
+      cc: ["anna@example.com"],
+    }));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "accepted", error_code: null })]);
+    });
+
+    expect(fixture.send).toHaveBeenCalledWith(expect.objectContaining({
+      to: ["recipient@example.com"],
+      cc: ["anna@example.com"],
+    }));
+    await expect(stub.usage()).resolves.toMatchObject({ outboundMessages: 2 });
+  });
+
+  it("refuses a message that reaches more people than the day still allows", async () => {
+    const installationId = `installation_outbound_copies_quota_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-copies-quota");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "Party!", {
+      to: ["recipient@example.com", "mike@example.com"],
+      cc: ["anna@example.com"],
+    }));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "failed", error_code: "outbound_quota" })]);
+    });
+
+    expect(fixture.send).not.toHaveBeenCalled();
+    await expect(stub.usage()).resolves.toMatchObject({ outboundMessages: 0 });
+  });
+
+  it.each([
+    { recipients: "no To recipient", draft: { to: [] } },
+    { recipients: "a repeated address", draft: { to: ["recipient@example.com"], cc: ["Recipient@example.com"] } },
+    { recipients: "more than ten people", draft: { to: ["recipient@example.com"], cc: Array.from({ length: 10 }, (_, index) => `guest${index}@example.com`) } },
+    { recipients: "an invalid copy", draft: { cc: ["not an address"] } },
+  ])("fails a draft with $recipients without sending it", async ({ draft }) => {
+    const installationId = `installation_outbound_bad_recipients_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-bad-recipients");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "Hi.", draft));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "failed", error_code: "invalid_draft" })]);
+    });
+    expect(fixture.send).not.toHaveBeenCalled();
+  });
+});
+
+describe("outbound mail send errors", () => {
+  function providerError(code: string, message = `${code}: the provider refused the message`): Error {
+    return Object.assign(new Error(message), { code });
+  }
+
+  it.each([
+    { code: "E_RECIPIENT_SUPPRESSED", errorCode: "recipient_suppressed" },
+    { code: "E_RECIPIENT_NOT_ALLOWED", errorCode: "recipient_not_allowed" },
+    { code: "E_SENDER_NOT_VERIFIED", errorCode: "sender_unavailable" },
+    { code: "E_SENDER_DOMAIN_NOT_AVAILABLE", errorCode: "sender_unavailable" },
+    { code: "E_ACCOUNT_SUSPENDED", errorCode: "sender_unavailable" },
+    { code: "E_DAILY_LIMIT_EXCEEDED", errorCode: "provider_quota" },
+    { code: "E_VALIDATION_ERROR", errorCode: "provider_rejected" },
+    { code: "E_CONTENT_TOO_LARGE", errorCode: "provider_rejected" },
+    { code: "E_HEADER_VALUE_INVALID", errorCode: "provider_rejected" },
+  ])("fails a send the provider refused with $code, without counting it", async ({ code, errorCode }) => {
+    const installationId = `installation_outbound_refused_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-refused");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "Hi.", {
+      to: ["recipient@example.com"],
+      cc: ["anna@example.com"],
+    }));
+    fixture.completeOutboundMail.mockResolvedValue(undefined);
+    fixture.send.mockRejectedValueOnce(providerError(code));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({
+        state: "failed",
+        error_code: errorCode,
+        callback_completed_at: expect.any(Number),
+      })]);
+    });
+
+    expect(fixture.send).toHaveBeenCalledOnce();
+    expect(fixture.completeOutboundMail).toHaveBeenCalledWith(
+      context(installationId),
+      expect.objectContaining({ state: "failed", errorCode }),
+    );
+    await expect(stub.usage()).resolves.toMatchObject({ outboundMessages: 0, outboundBytes: 0 });
+  });
+
+  it.each([
+    { error: "E_DELIVERY_FAILED" },
+    { error: "E_INTERNAL_SERVER_ERROR" },
+    { error: "a dropped connection" },
+  ])("keeps a send that may have gone out ($error) unknown and counted", async ({ error }) => {
+    const installationId = `installation_outbound_maybe_sent_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-maybe-sent");
+    fixture.claimOutboundMail.mockImplementation(() => readyClaim(value, "Hi."));
+    fixture.completeOutboundMail.mockResolvedValue(undefined);
+    fixture.send.mockRejectedValueOnce(error.startsWith("E_") ? providerError(error) : new Error(error));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      const mail = new MailInstallation(state, fixture.bindings);
+      await mail.deliverOutbound(context(installationId), value);
+      await mail.deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({
+        state: "unknown",
+        error_code: "delivery_outcome_unknown",
+      })]);
+    });
+
+    expect(fixture.send).toHaveBeenCalledOnce();
+    await expect(stub.usage()).resolves.toMatchObject({ outboundMessages: 1 });
+  });
+
+  it("retries a rate-limited send later and counts it once", async () => {
+    const installationId = `installation_outbound_rate_limited_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-rate-limited");
+    fixture.claimOutboundMail.mockImplementation(() => readyClaim(value, "Hi."));
+    fixture.completeOutboundMail.mockResolvedValue(undefined);
+    fixture.send.mockRejectedValueOnce(providerError("E_RATE_LIMIT_EXCEEDED"));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({
+        state: "claiming",
+        error_code: "provider_rate_limited",
+        claim_next_attempt_at: expect.any(Number),
+        callback_next_attempt_at: null,
+      })]);
+      expect(fixture.completeOutboundMail).not.toHaveBeenCalled();
+
+      state.storage.sql.exec("UPDATE mail_outbound_deliveries SET claim_next_attempt_at = ?", Date.now());
+      await new MailInstallation(state, fixture.bindings).alarm();
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "accepted", error_code: null })]);
+    });
+
+    expect(fixture.send).toHaveBeenCalledTimes(2);
+    expect(fixture.completeOutboundMail).toHaveBeenCalledOnce();
+    await expect(stub.usage()).resolves.toMatchObject({ outboundMessages: 1 });
+  });
+
+  it("records the provider's code for diagnosis without the recipient's address", async () => {
+    const installationId = `installation_outbound_refusal_telemetry_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    fixture.bindings.GSV_TELEMETRY_ENABLED = true;
+    const value = reference("outbound-refusal-telemetry");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "Hi."));
+    fixture.completeOutboundMail.mockResolvedValue(undefined);
+    fixture.send.mockRejectedValueOnce(providerError(
+      "E_RECIPIENT_SUPPRESSED",
+      "recipient@example.com is on the suppression list",
+    ));
+    const records: unknown[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((record) => { records.push(record); });
+    const warn = vi.spyOn(console, "warn").mockImplementation((record) => { records.push(record); });
+
+    try {
+      await runInDurableObject(stub, async (_instance, state) => {
+        await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      });
+    } finally {
+      log.mockRestore();
+      warn.mockRestore();
+    }
+
+    expect(records).toContainEqual(expect.objectContaining({
+      event: expect.objectContaining({
+        name: "mail.delivery.finished",
+        properties: expect.objectContaining({
+          outcome: "failed",
+          reason: "provider_refused",
+          errorCode: "E_RECIPIENT_SUPPRESSED",
+        }),
+      }),
+    }));
+    expect(JSON.stringify(records)).not.toContain("recipient@example.com");
   });
 });

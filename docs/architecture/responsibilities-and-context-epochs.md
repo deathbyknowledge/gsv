@@ -294,7 +294,8 @@ System-owned producers use the same ledger contract:
 - Managed mail completion creates one `mail.received` responsibility keyed by the
   immutable message id. The title contains no sender-controlled text. Bounded summary
   metadata is marked untrusted and is available only when the Ship inspects the record;
-  exact content stays in the mailbox.
+  exact content stays in the mailbox. An automatic reply or delivery report creates
+  none.
 - Pairing a contact and accepting a first message create no agent responsibility.
   An explicit standing handoff keeps one active `contact.handoff` responsibility,
   "Pending messages from" the contact, for that contact generation. Each handled

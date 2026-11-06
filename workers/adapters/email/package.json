@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@humansandmachines/gsv": "file:../../../packages/gsv",
+    "marked": "^16.4.2",
     "postal-mime": "^3.0.0",
     "zod": "4.3.6"
   },
