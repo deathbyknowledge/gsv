@@ -163,6 +163,39 @@ describe("assembleSystemPrompt", () => {
     ].join("\n"));
   });
 
+  it("reads both accounts' context files together and keeps their order", async () => {
+    const files: Record<string, string> = { "context.d/a.md": "alpha", "context.d/b.md": "beta" };
+    let inFlight = 0;
+    let peak = 0;
+    const ripgit: PromptAssemblyInput["ripgit"] = {
+      async readPath(_repo, path) {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        if (path === "context.d") {
+          return {
+            kind: "tree",
+            entries: [
+              { name: "b.md", mode: "100644", hash: "b", type: "blob" },
+              { name: "a.md", mode: "100644", hash: "a", type: "blob" },
+            ],
+          };
+        }
+        const text = files[path];
+        return text ? { kind: "file", bytes: new TextEncoder().encode(text), size: text.length } : { kind: "missing" };
+      },
+    };
+
+    const snapshot = await assembleSystemPromptSnapshot(makeInput({ ripgit, ownerIdentity: OWNER_IDENTITY }));
+
+    // Both homes list context.d at once, then read their files at once.
+    expect(peak).toBe(4);
+    expect(snapshot.sources.flatMap((source) =>
+      source.contextRoot && source.contextRoot.key !== "system" ? [`${source.contextRoot.key}:${source.name}`] : []))
+      .toEqual(["program:a.md", "program:b.md", "user:a.md", "user:b.md"]);
+  });
+
   it("records deterministic source hashes for epoch replay", async () => {
     const snapshot = await assembleSystemPromptSnapshot(makeInput(), [{
       name: "fixture",
