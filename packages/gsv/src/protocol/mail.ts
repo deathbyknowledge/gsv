@@ -14,6 +14,12 @@ export type ManagedMailAttachmentMetadata = {
   contentId?: string;
 };
 
+/**
+ * Mail no person wrote to the Ship: an automatic reply such as an out-of-office
+ * (`Auto-Submitted: auto-replied`), or a report that a message couldn't be delivered.
+ */
+export type ManagedMailAutomatic = "reply" | "delivery-report";
+
 export type ManagedInboundMailMetadata = {
   version: 1;
   intakeId: string;
@@ -34,6 +40,8 @@ export type ManagedInboundMailMetadata = {
   text?: string;
   html?: string;
   attachments: ManagedMailAttachmentMetadata[];
+  /** Absent for mail a person wrote. A Gateway that predates it rejects the field. */
+  automatic?: ManagedMailAutomatic;
 };
 
 export type ManagedInboundMailAccepted = {

@@ -1,4 +1,5 @@
 import type {
+  ManagedMailAutomatic,
   ManagedOutboundMailCompletion,
   ManagedOutboundMailDraft,
   ManagedOutboundMailState,
@@ -53,10 +54,12 @@ export type MailMessageRecord = {
   summarizedAt: number | null;
   eventDeliveredAt: number | null;
   createdAt: number;
+  automatic: ManagedMailAutomatic | null;
 };
 
 export type RecordMailMessageInput = Omit<
   MailMessageRecord,
+  | "automatic"
   | "summary"
   | "category"
   | "requiresAttention"
@@ -68,6 +71,7 @@ export type RecordMailMessageInput = Omit<
   intakeId: string;
   /** The message's plain text; its start is indexed for word search. */
   bodyText?: string;
+  automatic?: ManagedMailAutomatic | null;
 };
 
 export type MailIntakeRecord = {
@@ -307,9 +311,9 @@ export class MailboxStore {
            subject, sent_at,
            received_at, raw_path, text_path, size_bytes, attachments_json,
            summary, category, requires_attention, confidence, summarized_at,
-           event_delivered_at, created_at, search_rowid
+           event_delivered_at, created_at, automatic, search_rowid
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
-                   NULL, NULL, NULL, NULL, NULL, ?,
+                   NULL, NULL, NULL, NULL, NULL, ?, ?,
                    (SELECT COALESCE(MAX(search_rowid), 0) + 1 FROM mail_messages))`,
         input.messageId,
         input.mailboxId,
@@ -329,6 +333,7 @@ export class MailboxStore {
         input.sizeBytes,
         JSON.stringify(input.attachments),
         createdAt,
+        input.automatic ?? null,
       );
       this.sql.exec(
         `INSERT INTO mail_search (rowid, text)
@@ -765,6 +770,7 @@ type MailMessageRow = {
   summarized_at: number | null;
   event_delivered_at: number | null;
   created_at: number;
+  automatic: ManagedMailAutomatic | null;
 };
 
 type MailIntakeRow = {
@@ -842,6 +848,7 @@ function messageFromRow(row: MailMessageRow): MailMessageRecord {
     summarizedAt: row.summarized_at,
     eventDeliveredAt: row.event_delivered_at,
     createdAt: row.created_at,
+    automatic: row.automatic,
   };
 }
 

@@ -139,7 +139,8 @@ an ordered ledger transition and must deliberately inspect the record and mailbo
 before acting. Mail therefore uses the same ordinary Ship loop, tool surface, yield
 rules, and responsibility lifecycle as other unresolved work. If the owner has
 disabled the `mail.received` responsibility source, mail remains durably stored and
-classified but does not create ledger work or wake Ship.
+classified but does not create ledger work or wake Ship. Automatic replies and
+delivery reports are handled the same way regardless of that setting.
 
 Endpoint routing does not alter that standing system prompt. The first
 model-visible message that owns a run, and the next such message whenever its

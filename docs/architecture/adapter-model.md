@@ -106,7 +106,14 @@ bounded summary, category, attention flag, and optional confidence. It omits
 separate mailbox identifiers, address fields, display names, subjects, raw headers,
 and message bodies. Its title contains only the opaque id, so sender-controlled
 summary text enters model context only after Ship explicitly inspects the record.
-The summary remains untrusted external context. Upgrades preserve historical Inbox
+The summary remains untrusted external context. The adapter marks automatic mail:
+an automatic reply (`Auto-Submitted: auto-replied`, such as an out-of-office) or a
+delivery report (an RFC 3464 report, or mail from the mail daemon). The Kernel
+stores and summarizes it like any message, and the owner's notice rule still
+applies, but it creates no responsibility and never wakes Ship. Generated mail,
+such as a verification code marked `auto-generated`, stays ordinary. A Gateway
+that predates the mark rejects it, and the adapter retries that message until the
+Gateway is upgraded. Upgrades preserve historical Inbox
 accounts, processes, and mailbox notification fields, but new mail neither consults
 nor updates them.
 

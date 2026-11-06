@@ -2,6 +2,7 @@ import type {
   ManagedInboundMailMetadata,
   ManagedMailAddress,
   ManagedMailAttachmentMetadata,
+  ManagedMailAutomatic,
 } from "@humansandmachines/gsv/protocol";
 import PostalMime, {
   type Address,
@@ -101,6 +102,7 @@ export async function parseMail(
     attachments: email.attachments
       .slice(0, MAX_ATTACHMENTS)
       .map(attachmentMetadata),
+    automatic: automaticKind(email, from),
   });
   return {
     metadata,
@@ -138,7 +140,26 @@ function compactMetadata(
     cc: [],
     replyTo: [],
     attachments: [],
+    automatic: metadata.automatic,
   };
+}
+
+/**
+ * An automatic reply (RFC 3834 `Auto-Submitted: auto-replied`) or a report that a message
+ * couldn't be delivered (an RFC 3464 report, or anything from the mail daemon). Generated
+ * mail such as a verification code is `auto-generated` and stays ordinary.
+ */
+function automaticKind(email: Email, from: ManagedMailAddress | undefined): ManagedMailAutomatic | undefined {
+  const header = (key: string) => email.headers.find((entry) => entry.key === key)?.value.trim().toLowerCase() ?? "";
+  const contentType = header("content-type");
+  if (
+    (/^multipart\/report\s*;/.test(contentType)
+      && /;\s*report-type\s*=\s*"?delivery-status"?\s*(?:;|$)/.test(contentType))
+    || from?.address.split("@")[0] === "mailer-daemon"
+  ) {
+    return "delivery-report";
+  }
+  return /^auto-replied\b/.test(header("auto-submitted")) ? "reply" : undefined;
 }
 
 function serializedBytes(value: SerializedValue): number {
