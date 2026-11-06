@@ -288,6 +288,8 @@ gsv memory standing
 
 `memory` lists your wikis. `read` prints a page, such as
 `gsv memory read notes/index.md`, and `search` searches every wiki or one.
+It finds pages that hold all of your words, in any order and ignoring case and
+accents, and shows each line where one of them appears.
 `standing` shows the notes your Ship reads in every conversation, from your
 `~/context.d`.
 
