@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { productEmailChoice } from "./product-email";
 import { readJsonObject } from "./http";
 import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } from "./owner-auth-store";
 import { InstallationOwnerStore } from "./owner-store";
@@ -62,8 +63,9 @@ export class InstallationOwnerApi {
         return json({ available: await this.signup.available(handle.parse(url.searchParams.get("value") ?? "")) });
       }
       if (request.method === "POST" && url.pathname === "/owner/api/spaces") {
-        const input = z.strictObject({ operationId: z.string().min(1).max(128), handle }).parse(await readJsonObject(request));
-        return json(await this.signup.prepare(input.operationId, session.principalId, input.handle));
+        const input = z.strictObject({ operationId: z.string().min(1).max(128), handle, productEmails: productEmailChoice.optional() }).parse(await readJsonObject(request));
+        return json(await this.signup.prepare(input.operationId, session.principalId, input.handle, input.productEmails,
+          request.headers.get("cf-connecting-ip") ?? undefined));
       }
       return json({ error: "Not found" }, 404);
     } catch (error) {

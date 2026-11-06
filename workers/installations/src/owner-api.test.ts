@@ -8,6 +8,7 @@ import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationSignup } from "./signup";
 import { InstallationOwnerApi } from "./owner-api";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
+import { runProductEmailJobs } from "./product-email";
 
 const ORIGIN = "https://accounts.example.com";
 const secret = () => crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
@@ -54,9 +55,11 @@ async function fixture() {
 }
 
 describe("desktop owner API", () => {
-  it("replays lost verification and setup responses without duplicating mail or spaces", async () => {
+  it.each([false, true])("replays verified signup without duplicating mail, spaces or optional marketing (opt-in: %s)", async (optedIn) => {
     const f = await fixture();
     const verify = await f.signIn();
+    const marketing = () => env.INSTALLATIONS_DB.prepare("SELECT * FROM product_email_signups WHERE email=?").bind(f.challenge.email).first();
+    expect(await marketing()).toBeNull();
     f.restart();
     expect(f.send).toHaveBeenCalledTimes(1);
     expect(f.send.mock.calls[0][0]).toMatchObject({ from: { email: "accounts@example.com", name: "Ship" } });
@@ -68,11 +71,14 @@ describe("desktop owner API", () => {
     const operationId = crypto.randomUUID();
     const handle = `test-${crypto.randomUUID()}`;
     expect(await (await f.request(`/handle?value=${handle.toUpperCase()}`, f.sessionSecret)).json()).toEqual({ available: true });
-    const first = await (await f.request("/spaces", f.sessionSecret, { operationId, handle: handle.toUpperCase() })).json<{ origin: string; onboardingToken: string }>();
+    const input: JsonObject = { operationId, handle: handle.toUpperCase() };
+    if (optedIn) input.productEmails = { wordingVersion: "ship-product-updates-2026-10-26", locale: "en" };
+    expect((await f.request("/spaces", undefined, input)).status).toBe(401);
+    const first = await (await f.request("/spaces", f.sessionSecret, input)).json<{ origin: string; onboardingToken: string }>();
     expect(first.origin).toBe(`https://${handle}.${initialSession.spaceDomain}`);
     expect(await (await f.request(`/handle?value=${handle.toUpperCase()}`, f.sessionSecret)).json()).toEqual({ available: false });
     f.restart();
-    const resumed = await (await f.request("/spaces", f.sessionSecret, { operationId, handle })).json<typeof first>();
+    const resumed = await (await f.request("/spaces", f.sessionSecret, input)).json<typeof first>();
     expect(resumed.origin).toBe(first.origin);
     const owner = await f.auth.session(f.sessionSecret);
     const reservation = await f.accounts.getReservationByOperation(operationId);
@@ -85,6 +91,15 @@ describe("desktop owner API", () => {
     const session = await (await f.request("/session", f.sessionSecret)).json<{ spaces: unknown[]; setups: unknown[] }>();
     expect(session.spaces).toHaveLength(1);
     expect(session.setups).toHaveLength(0);
+    const subscribe = vi.fn().mockResolvedValue(undefined);
+    const config = { PRODUCT_EMAIL: { subscribe } };
+    await runProductEmailJobs(env.INSTALLATIONS_DB, config);
+    await runProductEmailJobs(env.INSTALLATIONS_DB, config);
+    expect(subscribe).toHaveBeenCalledTimes(optedIn ? 1 : 0);
+    if (optedIn) {
+      expect(await marketing()).toMatchObject({ email: f.challenge.email, completed_at: expect.any(Number), attempts: 1, ip: null });
+      expect(subscribe.mock.calls[0][0]).toMatchObject({ emailAddress: f.challenge.email, source: "ship-signup", consentBasis: "signup-checkbox" });
+    } else expect(await marketing()).toBeNull();
     expect((await f.request("/logout", f.sessionSecret, {})).status).toBe(200);
     expect((await f.request("/session", f.sessionSecret)).status).toBe(401);
     expect((await f.request("/verify", undefined, verify)).status).toBe(400);
@@ -142,3 +157,4 @@ it("returns unavailable for normalized policy matches and rejects direct creatio
     await policy.replace({ reserved: initial.reserved.join("\n"), blocked: initial.blocked.join("\n") });
   }
 });
+
