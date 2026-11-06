@@ -5,6 +5,7 @@ import type { KernelRefs } from "./index";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { R2MountBackend } from "./backends/r2";
 import { BUILTIN_SKILL_NAMES } from "../kernel/sys/builtin-skills";
+import { recordStorageCalls } from "../test-support/storage-calls";
 
 const ROOT: ProcessIdentity = {
   uid: 0,
@@ -652,6 +653,31 @@ describe("GsvFs permissions", () => {
 
     expect(file).toMatchObject({ isFile: true, isDirectory: false, isSymbolicLink: false });
     expect(nested).toMatchObject({ isFile: false, isDirectory: true, isSymbolicLink: false });
+  });
+
+  it("checks every folder on a path at once and still follows symlinked folders", async () => {
+    await putFile(`${TEST_PREFIX}deep/a/b/file.txt`, "deep data", { uid: "1000", gid: "1000", mode: "644" });
+    await putFile(`${TEST_PREFIX}real/file.txt`, "linked data", { uid: "1000", gid: "1000", mode: "644" });
+    await makeFs(SAM).symlink(`/${TEST_PREFIX}real`, `/${TEST_PREFIX}deep/a/link`);
+    const storage = recordStorageCalls(env.STORAGE);
+    const fs = new GsvFs(storage.bucket, SAM);
+
+    expect(await fs.readFile(`/${TEST_PREFIX}deep/a/b/file.txt`)).toBe("deep data");
+    const walk = storage.calls.filter((call) => call.method === "head");
+    expect(walk.map((call) => call.key)).toEqual([
+      "test",
+      "test/perms",
+      "test/perms/deep",
+      "test/perms/deep/a",
+      "test/perms/deep/a/b",
+      "test/perms/deep/a/b/file.txt",
+    ]);
+    // Every folder is asked about before the first answer arrives.
+    expect(Math.max(...walk.map((call) => call.started)))
+      .toBeLessThan(Math.min(...walk.map((call) => call.settled ?? Number.POSITIVE_INFINITY)));
+
+    // A symlinked folder partway down still redirects the rest of the path.
+    expect(await fs.readFile(`/${TEST_PREFIX}deep/a/link/file.txt`)).toBe("linked data");
   });
 
   it("preserves virtual root and etc directories in lstat", async () => {
