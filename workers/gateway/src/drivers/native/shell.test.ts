@@ -6350,6 +6350,67 @@ describe("native administration shell commands", () => {
     expect(result.stdout).toContain("/src/repos/root/gsv-manual/index.md\t4\tAuth overview.");
   });
 
+  it("searches every wiki at once and keeps each wiki in the results", async () => {
+    const wikis = new Map([
+      ["root/gsv-manual", { id: "gsv-manual", title: "GSV Manual", matches: 40 }],
+      ["root/personal", { id: "personal", title: "Personal", matches: 2 }],
+    ]);
+    const active = { read: 0, search: 0 };
+    const peak = { read: 0, search: 0 };
+    const ripgit = focusedFixture<Fetcher>({
+      async fetch(input: RequestInfo | URL) {
+        const url = new URL(String(input));
+        const [, repo = "", action = ""] = /^\/hyperspace\/repos\/([^/]+\/[^/]+)\/([a-z]+)$/.exec(url.pathname) ?? [];
+        const kind = action === "read" ? "read" : action === "search" ? "search" : null;
+        if (!kind) return new Response(`unexpected ${url.pathname}`, { status: 500 });
+        active[kind] += 1;
+        peak[kind] = Math.max(peak[kind], active[kind]);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active[kind] -= 1;
+        const wiki = wikis.get(repo);
+        if (kind === "read") {
+          if (!wiki || url.searchParams.get("path") !== "wiki.json") return new Response("missing", { status: 404 });
+          return new Response(JSON.stringify({ kind: "gsv.wiki", version: 1, id: wiki.id, title: wiki.title }), {
+            headers: { "Content-Type": "text/plain", "X-Blob-Size": "80" },
+          });
+        }
+        if (!wiki) return new Response(`unexpected ${url.pathname}`, { status: 500 });
+        return Response.json({
+          ok: true,
+          matches: Array.from({ length: wiki.matches }, (_, index) => ({
+            path: `pages/${wiki.id}-${index}.md`,
+            line: 1,
+            content: `${wiki.title} birthday ${index}`,
+          })),
+        });
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "wiki search birthday" },
+      makeContext({
+        capabilities: ["repo.list", "repo.read", "repo.search"],
+        config: {
+          "repos/root/gsv-manual/created_at": "1",
+          "repos/root/gsv-manual/visibility": "public",
+          "repos/root/personal/created_at": "1",
+          "repos/root/personal/visibility": "public",
+        },
+        ripgit,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect({ exitCode: result.exitCode, stderr: result.stderr }).toEqual({ exitCode: 0, stderr: "" });
+    const rows = result.stdout.trim().split("\n").slice(1);
+    expect(rows).toHaveLength(30);
+    expect(rows).toContain("/src/repos/root/personal/pages/personal-0.md\t1\tPersonal birthday 0");
+    expect(rows).toContain("/src/repos/root/personal/pages/personal-1.md\t1\tPersonal birthday 1");
+    expect(rows[0]).toBe("/src/repos/root/gsv-manual/pages/gsv-manual-0.md\t1\tGSV Manual birthday 0");
+    expect(peak.read).toBeGreaterThan(1);
+    expect(peak.search).toBe(2);
+  });
+
   it("aborts native shell execution with its request", async () => {
     const controller = new AbortController();
     const ctx = makeContext();
