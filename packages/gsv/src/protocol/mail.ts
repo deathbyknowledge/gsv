@@ -67,6 +67,18 @@ export type ManagedOutboundMailCommand =
   | (ManagedOutboundMailReference & { installationId: string })
   | (ManagedOutboundMailLookup & { version: 2; installationId: string });
 
+/** The message a reply answers, quoted below the reply as mail clients do. */
+export type ManagedOutboundMailQuote = {
+  /** The original sender as the mailbox shows them, e.g. `Mike <mike@example.com>`. */
+  from: string;
+  /** When the original was sent, or received when it carried no date. */
+  sentAt: number;
+  /** The owner's IANA timezone, for the "On …, Mike wrote:" line. */
+  timeZone: string;
+  /** Plain text, already cut to the quote limit. */
+  text: string;
+};
+
 export type ManagedOutboundMailDraft = ManagedOutboundMailReference & {
   from: string;
   to: string;
@@ -77,6 +89,13 @@ export type ManagedOutboundMailDraft = ManagedOutboundMailReference & {
   replyToMessageId?: string;
   inReplyTo?: string;
   references?: string;
+  /**
+   * Presentation the Kernel derives when the adapter claims the message: the
+   * owner's current name for the From line, and the quoted original of a
+   * reply. Neither is part of the fingerprinted intent.
+   */
+  fromName?: string;
+  quote?: ManagedOutboundMailQuote;
 };
 
 export type ManagedOutboundMailClaim = {

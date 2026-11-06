@@ -19,6 +19,8 @@ import { accountIdentity } from "./accounts";
 import type { KernelContext } from "./context";
 
 const MAX_PARSED_MAIL_TEXT_BYTES = 4 * 1024 * 1024;
+/** What message.txt says in place of a body when the message had no text. */
+export const MAIL_NO_TEXT_BODY = "[No plain-text body. Read raw.eml for the original message.]";
 const MAX_MAIL_ATTACHMENTS = 256;
 const TEXT_ENCODER = new TextEncoder();
 
@@ -575,7 +577,7 @@ function renderMessageText(metadata: ManagedInboundMailMetadata): string {
     ...(metadata.subject === undefined ? [] : [`Subject: ${metadata.subject}`]),
     ...(metadata.rfcMessageId === undefined ? [] : [`Message-ID: ${metadata.rfcMessageId}`]),
   ];
-  return `${headers.join("\n")}\n\n${metadata.text ?? "[No plain-text body. Read raw.eml for the original message.]"}\n`;
+  return `${headers.join("\n")}\n\n${metadata.text ?? MAIL_NO_TEXT_BODY}\n`;
 }
 
 function pathToStorageKey(path: string): string {

@@ -32,6 +32,8 @@ const MAIL_USAGE = `Usage:
   mail status <delivery-id>
   mail send --to ADDRESS --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]
   mail reply <message-id> [--subject SUBJECT] (--message TEXT | --body PATH) [--delivery-id ID]
+
+Write bodies in Markdown; recipients see it formatted. A reply quotes the original below it.
 `;
 
 export function buildMailCommand(fs: GsvFs, ctx: KernelContext) {

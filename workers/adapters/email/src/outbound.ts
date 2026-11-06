@@ -1,4 +1,8 @@
-import { MAIL_MAX_OUTBOUND_TEXT_BYTES as ABSOLUTE_MAX_TEXT_BYTES } from "@humansandmachines/gsv/services/mail";
+import {
+  MAIL_MAX_OUTBOUND_TEXT_BYTES as ABSOLUTE_MAX_TEXT_BYTES,
+  MAIL_MAX_QUOTE_BYTES,
+  MAIL_MAX_SENDER_NAME_BYTES,
+} from "@humansandmachines/gsv/services/mail";
 import { configuredDomainAliases } from "@humansandmachines/gsv/services/deployment";
 import {
   bodyToBytes,
@@ -9,10 +13,11 @@ import {
   type ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
 import { mailAddressForHandle } from "./address";
-import type { MailEnv, MailLimits } from "./env";
+import { mailFooter, type MailEnv, type MailLimits } from "./env";
 import type { MailPolicy } from "./policy";
 import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import type { MailRetirement } from "./retirement";
+import { renderMail, type MailFooter, type RenderedMail } from "./render";
 interface ExternalObject { [key: string]: ExternalValue; }
 type ExternalValue = string | number | boolean | ExternalObject | null | undefined;
 
@@ -26,6 +31,8 @@ const MAX_ADDRESS_LENGTH = 320;
 const MAX_SUBJECT_LENGTH = 998;
 const MAX_HEADER_LENGTH = 998;
 const MAX_OPAQUE_ID_LENGTH = 256;
+// A stored sender is a bounded name and address: `Name <address>`.
+const MAX_QUOTE_SENDER_BYTES = 2048;
 const TEXT_ENCODER = new TextEncoder();
 
 type OutboundState =
@@ -56,7 +63,8 @@ type OutboundRow = {
 
 type ValidatedOutbound = {
   draft: ManagedOutboundMailDraft;
-  text: string;
+  /** The message as recipients see it: HTML and plain text, footer and quote included. */
+  rendered: RenderedMail;
   headers?: Record<string, string>;
 };
 
@@ -242,11 +250,13 @@ export class OutboundDeliveryCoordinator {
     let expectedFrom: string;
     let allowedSenders: ReadonlySet<string>;
     let limits: MailLimits;
+    let footer: MailFooter | undefined;
     try {
       const [installation, allowance] = await Promise.all([
         this.env.ACCOUNTS.resolveInstallation(this.installationId), this.policy.limits(),
       ]);
       limits = allowance;
+      footer = mailFooter(this.env);
       if (this.retirement.retired) return;
       if (!installation.found) {
         this.setTerminal(reference, "failed", "installation_inactive");
@@ -335,6 +345,7 @@ export class OutboundDeliveryCoordinator {
           claim,
           allowedSenders,
           limits,
+          footer,
         );
       } catch (error) {
         if (this.retirement.retired) return;
@@ -394,6 +405,7 @@ export class OutboundDeliveryCoordinator {
     claim: ManagedOutboundMailClaim,
     allowedSenders: ReadonlySet<string>,
     limits: MailLimits,
+    footer: MailFooter | undefined,
   ): Promise<ValidatedOutbound> {
     if (!claim || claim.constructor !== Object) {
       throw new InvalidDraftError();
@@ -420,6 +432,8 @@ export class OutboundDeliveryCoordinator {
       || !validOptionalHeader(draft.inReplyTo)
       || !validOptionalHeader(draft.references)
       || !validOptionalOpaqueId(draft.replyToMessageId)
+      || !validOptionalSenderName(draft.fromName)
+      || !validOptionalQuote(draft.quote)
       || !claim.body
       || claim.body.length !== draft.textSize
     ) {
@@ -445,23 +459,28 @@ export class OutboundDeliveryCoordinator {
     } catch {
       throw new InvalidDraftError();
     }
+    let rendered: RenderedMail;
+    try {
+      rendered = renderMail(text, { footer, quote: draft.quote });
+    } catch {
+      throw new InvalidDraftError();
+    }
     const headers: Record<string, string> = {};
     if (draft.inReplyTo) headers["In-Reply-To"] = draft.inReplyTo;
     if (draft.references) headers.References = draft.references;
-    const validated: ValidatedOutbound = {
-      draft,
-      text,
-    };
+    const validated: ValidatedOutbound = { draft, rendered };
     if (Object.keys(headers).length > 0) validated.headers = headers;
     return validated;
   }
 
   private async send(outbound: ValidatedOutbound): Promise<EmailSendResult> {
+    const { draft } = outbound;
     return await this.env.EMAIL.send({
-      to: outbound.draft.to,
-      from: outbound.draft.from,
-      subject: outbound.draft.subject,
-      text: outbound.text,
+      to: draft.to,
+      from: draft.fromName ? { email: draft.from, name: draft.fromName } : draft.from,
+      subject: draft.subject,
+      text: outbound.rendered.text,
+      html: outbound.rendered.html,
       headers: outbound.headers,
     });
   }
@@ -922,6 +941,41 @@ function validOptionalHeader(value: ExternalValue): boolean {
 
 function validOptionalOpaqueId(value: ExternalValue): boolean {
   return value === undefined || validOpaqueId(value);
+}
+
+function validOptionalSenderName(value: ExternalValue): boolean {
+  return value === undefined
+    || (String(value) === value
+      && value.length > 0
+      && value.trim() === value
+      && TEXT_ENCODER.encode(value).byteLength <= MAIL_MAX_SENDER_NAME_BYTES
+      && !/\p{Cc}/u.test(value));
+}
+
+function validOptionalQuote(value: ManagedOutboundMailDraft["quote"]): boolean {
+  if (value === undefined) return true;
+  return Boolean(value)
+    && value.constructor === Object
+    && String(value.from) === value.from
+    && value.from.length > 0
+    && TEXT_ENCODER.encode(value.from).byteLength <= MAX_QUOTE_SENDER_BYTES
+    && !/\p{Cc}/u.test(value.from)
+    && Number.isSafeInteger(value.sentAt)
+    && value.sentAt >= 0
+    && validTimeZone(value.timeZone)
+    && String(value.text) === value.text
+    && value.text.length > 0
+    && TEXT_ENCODER.encode(value.text).byteLength <= MAIL_MAX_QUOTE_BYTES;
+}
+
+function validTimeZone(value: ExternalValue): boolean {
+  if (String(value) !== value || value.length === 0 || value.length > 64) return false;
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: value }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseProviderMessageId(value: ExternalValue): string {

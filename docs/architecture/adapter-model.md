@@ -298,7 +298,7 @@ Changing a selection does not change an existing run route: the current Message
 stays directed to its origin, while the next inbound message enters the new selection.
 
 Managed outbound email has a separate explicit path because email is a mailbox,
-not an observed chat surface. `mail.send` accepts one recipient and a plain-text
+not an observed chat surface. `mail.send` accepts one recipient and a text
 body capped at 1 MiB in version one, or `replyToMessageId` to derive the
 recipient and threading headers from a message in the caller's canonical
 mailbox. The Kernel derives the sender from the active human owner's mailbox.
@@ -336,6 +336,19 @@ record `failed`; recoverable nonactive installation states pause delivery.
 A crash, binding throw, or malformed provider result after the attempt records
 `unknown` and is never replayed, because the message may already have
 left the provider boundary.
+
+The email Worker owns presentation. A body is Markdown as written in chat; the
+Worker sends it as an HTML part and a plain-text part without the marks. Raw
+HTML stays visible text, only web and mail links survive, and images become
+links, so a message carries no markup or remote content of its own. When the
+Worker claims a draft, the Kernel adds the owner's current display name for the
+From line and, for a reply, the original's plain text from the owner's stored
+copy with its sender, its date and the owner's timezone. Both are presentation
+rather than part of the fingerprinted intent: a reply whose original was
+deleted is sent without a quote. An operator may set `MAIL_FOOTER_TEXT`, and
+optionally an HTTPS `MAIL_FOOTER_URL`, to add one line under every message,
+above any quote. An invalid footer configuration pauses claims instead of
+sending without it.
 
 Email is an optional operator-composed service. The Humans & Machines graph
 supplies the email Worker, Queue, provider binding, and `mail.send` transport;

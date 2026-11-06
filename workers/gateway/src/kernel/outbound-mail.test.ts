@@ -8,6 +8,9 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import type { InstallationDirectoryResult } from "@humansandmachines/gsv/services/directory";
+import { MAIL_MAX_QUOTE_BYTES } from "@humansandmachines/gsv/services/mail";
+import type { MailSendArgs, ManagedOutboundMailClaim } from "@humansandmachines/gsv/protocol";
+import { MAIL_NO_TEXT_BODY } from "./mailbox";
 import { MailboxStore } from "./mailbox-store";
 import {
   claimManagedOutboundMail,
@@ -908,10 +911,127 @@ describe("managed outbound mail", () => {
   });
 });
 
+describe("outbound mail presentation", () => {
+  it.each([
+    { source: "the account's name", displayName: undefined, fromName: "Hank" },
+    { source: "the profile's display name", displayName: " Hank Hill ", fromName: "Hank Hill" },
+    { source: "no name when it holds a control character", displayName: "Hank\u0085Hill", fromName: undefined },
+  ])("signs the From line with $source, read at claim time", async ({ displayName, fromName }) => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, { displayName });
+
+      const claim = await sendAndClaim(ctx, { to: "mike@example.com", subject: "Contract", text: "Signed.", deliveryId: "named" });
+
+      expect(claim.draft.fromName).toBe(fromName);
+      expect(claim.draft.quote).toBeUndefined();
+    });
+  });
+
+  it("quotes a reply's original from the owner's copy, in the owner's timezone", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) }, {
+        config: new Map([["users/1000/locale/timezone", "Europe/Madrid"]]),
+      });
+      await recordSource(ctx, storage, "Can you sign by Friday?\n\nMike", { displayFrom: "Mike\tSmith <mike@example.com>" });
+
+      const claim = await sendAndClaim(ctx, { replyToMessageId: "mail:source", text: "Signed.", deliveryId: "reply" });
+
+      expect(claim.draft.quote).toEqual({
+        from: "Mike Smith <mike@example.com>",
+        sentAt: 1,
+        timeZone: "Europe/Madrid",
+        text: "Can you sign by Friday?\n\nMike",
+      });
+      expect(claim.draft.fromName).toBe("Hank");
+    });
+  });
+
+  it.each([
+    { original: "its copy is gone", text: null },
+    { original: "it had no plain text", text: MAIL_NO_TEXT_BODY },
+  ])("sends a reply without a quote when $original", async ({ text }) => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) });
+      await recordSource(ctx, storage, text);
+
+      const claim = await sendAndClaim(ctx, { replyToMessageId: "mail:source", text: "Signed.", deliveryId: "reply" });
+
+      expect(claim.draft.inReplyTo).toBe("<source@example.com>");
+      expect(claim.draft.quote).toBeUndefined();
+    });
+  });
+
+  it("cuts a long original and falls back to UTC for an invalid server timezone", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) }, {
+        config: new Map([["config/server/timezone", "Mars/Olympus_Mons"]]),
+      });
+      await recordSource(ctx, storage, "é".repeat(MAIL_MAX_QUOTE_BYTES), { sentAt: null });
+
+      const claim = await sendAndClaim(ctx, { replyToMessageId: "mail:source", text: "Signed.", deliveryId: "reply" });
+
+      const quote = claim.draft.quote;
+      expect(quote).toMatchObject({ sentAt: 2, timeZone: "UTC", text: expect.stringMatching(/^é+\n\[…\]$/) });
+      expect(new TextEncoder().encode(quote?.text).byteLength).toBeLessThanOrEqual(MAIL_MAX_QUOTE_BYTES);
+    });
+  });
+});
+
+/** Records the message a reply answers, with its rendered message.txt unless `text` is null. */
+async function recordSource(
+  ctx: KernelContext,
+  storage: MemoryR2Bucket,
+  text: string | null,
+  overrides: { displayFrom?: string; sentAt?: number | null } = {},
+): Promise<void> {
+  const textPath = "/home/hank/.gsv/mail/inbox/mail:source/message.txt";
+  ctx.mailboxes.ensureMailbox("mailbox:1000:primary", 1000, "hank@gsv.space");
+  ctx.mailboxes.recordMessage({
+    messageId: "mail:source",
+    mailboxId: "mailbox:1000:primary",
+    intakeId: "intake-source",
+    digest: `sha256:${"a".repeat(64)}`,
+    envelopeFrom: "bounce@example.net",
+    envelopeTo: "hank@gsv.space",
+    headerMessageId: "<source@example.com>",
+    displayFrom: overrides.displayFrom ?? "Mike <mike@example.com>",
+    to: ["hank@gsv.space"],
+    cc: [],
+    replyTo: [],
+    subject: "Contract",
+    sentAt: overrides.sentAt === undefined ? 1 : overrides.sentAt,
+    receivedAt: 2,
+    rawPath: "/home/hank/.gsv/mail/inbox/mail:source/raw.eml",
+    textPath,
+    sizeBytes: 100,
+    attachments: [],
+  });
+  if (text !== null) {
+    await storage.put(textPath.slice(1), `From: Mike <mike@example.com>\nTo: hank@gsv.space\nSubject: Contract\n\n${text}\n`);
+  }
+}
+
+async function sendAndClaim(ctx: KernelContext, args: MailSendArgs): Promise<ManagedOutboundMailClaim> {
+  const sent = await handleMailSend(args, ctx);
+  if (!sent.ok) throw new Error(sent.error);
+  const claim = await claimManagedOutboundMail({
+    version: 1,
+    outboundId: sent.outboundId,
+    fingerprint: ctx.mailboxes.getOutbound(sent.outboundId)!.fingerprint,
+  }, ctx);
+  if (claim.status !== "ready") throw new Error("Expected a ready mail claim");
+  await claim.body.stream.cancel();
+  return claim;
+}
+
 function outboundContext(
   sql: SqlStorage,
   storage: MemoryR2Bucket,
   queue: { send: ReturnType<typeof vi.fn> } | undefined,
+  owner: { displayName?: string; config?: ReadonlyMap<string, string> } = {},
 ): KernelContext {
   const humans = [{
     username: "hank",
@@ -952,6 +1072,8 @@ function outboundContext(
       resolveGids: (_username: string, gid: number) => [gid, 100],
     },
     mailboxes: new MailboxStore(sql),
+    profiles: { draft: () => owner.displayName === undefined ? null : { fields: { displayName: owner.displayName } } },
+    config: { get: (key: string) => owner.config?.get(key) ?? null },
     procs: { getOwnerUid: () => 1000 },
     scheduleManagedOutboundEnqueue: vi.fn(async () => undefined),
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.

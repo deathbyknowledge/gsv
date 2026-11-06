@@ -384,8 +384,13 @@ ordinal.
 ## Mail: `mail.send`
 
 `mail.send` is the explicit managed-email send primitive. Version one accepts a
-non-empty plain-text body of at most 1 MiB and exactly one recipient. It does
-not accept HTML, CC, BCC, or attachments. New messages require `to` and `subject`. A reply
+non-empty text body of at most 1 MiB and exactly one recipient. It does not
+accept HTML, CC, BCC, or attachments. Write the body as in chat: recipients get
+an HTML part rendered from its Markdown and a plain-text part without the
+marks. Raw HTML stays visible text, only web and mail links survive, and images
+become links. The From line carries the owner's display name, and a reply
+quotes the original's plain text below it while the owner keeps that message.
+New messages require `to` and `subject`. A reply
 instead supplies `replyToMessageId`; the Kernel looks up that message in the
 caller's mailbox, derives its recipient and threading headers, and derives a
 `Re:` subject unless the caller supplies one. A reply cannot override `to`.

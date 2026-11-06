@@ -799,7 +799,9 @@ Ship responsibility for each message; enabling it affects future completions.
 installation's managed-mail domain (for example `<handle>@gsv.space` on the
 public service), which the runtime facts also list; `man --search` ranks `mail`
 for sign-up, verification code, receipt and tracking questions, and reports it
-unavailable when the installation has no mailbox.
+unavailable when the installation has no mailbox. `mail send` and `mail reply`
+take the body in Markdown: recipients see it formatted, with a plain-text copy,
+and a reply quotes the original below it.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
 

@@ -1,4 +1,8 @@
-import { MAIL_MAX_OUTBOUND_TEXT_BYTES as MAX_OUTBOUND_TEXT_BYTES } from "@humansandmachines/gsv/services/mail";
+import {
+  MAIL_MAX_OUTBOUND_TEXT_BYTES as MAX_OUTBOUND_TEXT_BYTES,
+  MAIL_MAX_QUOTE_BYTES as MAX_QUOTE_BYTES,
+  MAIL_MAX_SENDER_NAME_BYTES as MAX_SENDER_NAME_BYTES,
+} from "@humansandmachines/gsv/services/mail";
 import type {
   MailSendArgs,
   MailSendResult,
@@ -7,13 +11,16 @@ import type {
   ManagedOutboundMailCompletion,
   ManagedOutboundMailDraft,
   ManagedOutboundMailLookup,
+  ManagedOutboundMailQuote,
   ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
 import { isLocked } from "../auth/shadow";
 import { stableOpaqueId } from "../shared/stable-id";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
-import { managedMailAddressForOwner } from "./mailbox";
+import { MAIL_NO_TEXT_BODY, managedMailAddressForOwner } from "./mailbox";
+import { ownerDisplayName } from "./profiles";
+import { normalizeTimezone, ownerTimezone } from "./timezone";
 import { authorizeNestedOperation } from "./tool-approval";
 import type {
   MailMessageRecord,
@@ -316,9 +323,16 @@ export async function claimManagedOutboundMail(
   if (await sha256Bytes(body) !== outbound.bodyDigest) {
     return settleUnavailableOutbound(outbound, ctx);
   }
+  const draft = outboundDraft(outbound);
+  const fromName = senderName(outbound.ownerUid, ctx);
+  if (fromName) draft.fromName = fromName;
+  const quote = outbound.replyToMessageId
+    ? await replyQuote(outbound.replyToMessageId, outbound.ownerUid, ctx)
+    : undefined;
+  if (quote) draft.quote = quote;
   return {
     status: "ready",
-    draft: outboundDraft(outbound),
+    draft,
     body: {
       stream: new Blob([body]).stream(),
       length: object.size,
@@ -598,6 +612,57 @@ function outboundDraft(outbound: MailOutboundRecord): ManagedOutboundMailDraft {
   if (outbound.inReplyTo) draft.inReplyTo = outbound.inReplyTo;
   if (outbound.references) draft.references = outbound.references;
   return draft;
+}
+
+/** The owner's name for the From line, as they show it to other people; read at send time. */
+function senderName(ownerUid: number, ctx: KernelContext): string | undefined {
+  const name = ownerDisplayName(ownerUid, ctx)?.trim();
+  return name
+    && !/\p{Cc}/u.test(name)
+    && TEXT_ENCODER.encode(name).byteLength <= MAX_SENDER_NAME_BYTES
+    ? name
+    : undefined;
+}
+
+/** The original of a reply, from the owner's stored copy; none once that copy is gone. */
+async function replyQuote(
+  messageId: string,
+  ownerUid: number,
+  ctx: KernelContext,
+): Promise<ManagedOutboundMailQuote | undefined> {
+  const source = ctx.mailboxes.getMessage(ownerUid, messageId);
+  if (source?.messageId !== messageId) return undefined;
+  const object = await ctx.env.STORAGE.get(pathToStorageKey(source.textPath));
+  if (!object) return undefined;
+  const rendered = new TextDecoder().decode(await object.arrayBuffer());
+  // message.txt is a header block, a blank line, then the text.
+  const boundary = rendered.indexOf("\n\n");
+  const text = boundary === -1 ? "" : rendered.slice(boundary + 2).trimEnd();
+  if (!text.trim() || text === MAIL_NO_TEXT_BODY) return undefined;
+  return {
+    // A received name may hold control characters; the attribution line can't.
+    from: (source.displayFrom ?? source.envelopeFrom).replace(/\p{Cc}+/gu, " "),
+    sentAt: source.sentAt ?? source.receivedAt,
+    timeZone: quoteTimeZone(ownerUid, ctx),
+    text: truncateQuote(text),
+  };
+}
+
+// The server default isn't validated when written, and a reply must not fail over its date line.
+function quoteTimeZone(ownerUid: number, ctx: KernelContext): string {
+  try {
+    return normalizeTimezone(ownerTimezone(ctx.config, ownerUid));
+  } catch {
+    return "UTC";
+  }
+}
+
+function truncateQuote(text: string): string {
+  if (TEXT_ENCODER.encode(text).byteLength <= MAX_QUOTE_BYTES) return text;
+  const marker = "\n[…]";
+  const bytes = new Uint8Array(MAX_QUOTE_BYTES - TEXT_ENCODER.encode(marker).byteLength);
+  const { written = 0 } = TEXT_ENCODER.encodeInto(text, bytes);
+  return `${new TextDecoder().decode(bytes.subarray(0, written))}${marker}`;
 }
 
 function outboundCompletion(
