@@ -60,6 +60,7 @@ first message request. Telling Ship "add @esteve" is enough: Ship resolves the
 handle, asks you to approve sending it (an `approach.create` rule in the
 [approval policy](../reference/configuration.md#tool-approval-policy) can skip the question),
 and Esteve decides whether to accept. A handle resolves when its owner made their profile public.
+You can send 50 new message requests a day.
 An unavailable profile does not establish whether the Ship exists: the handle may
 be mistyped, the Ship elsewhere, or the profile private. It does not prevent
 sharing a private invitation.
