@@ -62,10 +62,16 @@ function execute(database, remote, sql, config, readOnly = false) {
     const args = ["exec", "--", "wrangler", "d1", "execute", database, remote ? "--remote" : "--local", "--json",
       ...(readOnly ? ["--command", sql] : ["--file", file])];
     if (config) args.push("--config", config);
-    const result = JSON.parse(execFileSync("npm", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }));
-    if (!Array.isArray(result) || result.some((item) => item.success === false)) throw new Error("D1 command failed");
-    return result.flatMap((item) => item.results ?? []);
+    return d1Results(execFileSync("npm", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }));
   } finally { rmSync(directory, { recursive: true, force: true }); }
+}
+
+/** Remote `--file` runs print upload progress on stdout before the JSON, even with `--json`. */
+export function d1Results(output) {
+  const start = output.search(/^\[/m);
+  const result = start < 0 ? null : JSON.parse(output.slice(start));
+  if (!Array.isArray(result) || result.some((item) => item.success === false)) throw new Error("D1 command failed");
+  return result.flatMap((item) => item.results ?? []);
 }
 
 function main() {
