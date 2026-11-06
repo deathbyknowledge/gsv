@@ -16,7 +16,7 @@ import {
 import { mailAddressForHandle } from "./address";
 import { mailFooter, type MailEnv, type MailLimits } from "./env";
 import type { MailPolicy } from "./policy";
-import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
+import { emitTelemetry, exceptionDiagnostics, type ExceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { MailRetirement } from "./retirement";
 import { renderMail, type MailFooter, type RenderedMail } from "./render";
 interface ExternalObject { [key: string]: ExternalValue; }
@@ -35,6 +35,27 @@ const MAX_OPAQUE_ID_LENGTH = 256;
 // A stored sender is a bounded name and address: `Name <address>`.
 const MAX_QUOTE_SENDER_BYTES = 2048;
 const TEXT_ENCODER = new TextEncoder();
+const RATE_LIMITED = "provider_rate_limited";
+/**
+ * Email Sending codes for a send it refused before handing anything on, with the code the
+ * owner sees. A delivery or service error stays unknown: the provider makes no promise that
+ * nothing was sent.
+ */
+const PROVIDER_REFUSALS = new Map([
+  ["E_RECIPIENT_SUPPRESSED", "recipient_suppressed"],
+  ["E_RECIPIENT_NOT_ALLOWED", "recipient_not_allowed"],
+  ["E_SENDER_NOT_VERIFIED", "sender_unavailable"],
+  ["E_SENDER_DOMAIN_NOT_AVAILABLE", "sender_unavailable"],
+  ["E_ACCOUNT_SUSPENDED", "sender_unavailable"],
+  ["E_DAILY_LIMIT_EXCEEDED", "provider_quota"],
+  ["E_RATE_LIMIT_EXCEEDED", RATE_LIMITED],
+  ...[
+    "E_VALIDATION_ERROR", "E_FIELD_MISSING", "E_TOO_MANY_RECIPIENTS", "E_TOO_MANY_ATTACHMENTS",
+    "E_CONTENT_TOO_LARGE", "E_HEADER_NOT_ALLOWED", "E_HEADER_USE_API_FIELD", "E_HEADER_VALUE_INVALID",
+    "E_HEADER_VALUE_TOO_LONG", "E_HEADER_NAME_INVALID", "E_HEADERS_TOO_LARGE", "E_HEADERS_TOO_MANY",
+  ].map((code) => [code, "provider_rejected"] as const),
+]);
+const REFUSAL_CODES: ReadonlySet<string> = new Set(PROVIDER_REFUSALS.values());
 
 type OutboundState =
   | "claiming"
@@ -387,13 +408,23 @@ export class OutboundDeliveryCoordinator {
         if (this.retirement.retired) return;
         const messageId = parseProviderMessageId(result.messageId);
         this.setTerminal(reference, "accepted", null, messageId);
-      } catch {
+      } catch (error) {
         if (this.retirement.retired) return;
-        this.setTerminal(
-          reference,
-          "unknown",
-          "delivery_outcome_unknown",
-        );
+        const diagnostics = exceptionDiagnostics(error);
+        console.warn(JSON.stringify({
+          service: "managed_mail",
+          event: "provider_error",
+          phase: "outbound_send",
+          errorType: diagnostics.exceptionName ?? "Error",
+          errorCode: diagnostics.errorCode,
+        }));
+        const refusal = PROVIDER_REFUSALS.get(diagnostics.errorCode ?? "");
+        if (refusal) {
+          this.refuseAttempt(reference, outbound, refusal, reserved.claim_attempts, diagnostics);
+          await this.scheduleNextAlarm();
+        } else {
+          this.setTerminal(reference, "unknown", "delivery_outcome_unknown", null, diagnostics);
+        }
       }
       await this.notify(this.requireByReference(reference));
     } finally {
@@ -557,6 +588,53 @@ export class OutboundDeliveryCoordinator {
         reference.fingerprint,
       );
       return true;
+    });
+  }
+
+  /**
+   * The provider refused the send before handing it on, so the attempt stops counting toward
+   * the daily allowance. A rate limit returns the delivery to claiming for a later attempt;
+   * any other refusal fails it.
+   */
+  private refuseAttempt(
+    reference: ManagedOutboundMailReference,
+    outbound: ValidatedOutbound,
+    errorCode: string,
+    attempts: number,
+    diagnostics: ExceptionDiagnostics,
+  ): void {
+    this.ctx.storage.transactionSync(() => {
+      const row = this.requireByReference(reference);
+      if (row.state !== "attempting") return;
+      this.ctx.storage.sql.exec(
+        `UPDATE mail_daily_usage
+         SET outbound_messages = outbound_messages - ?,
+             outbound_bytes = outbound_bytes - ?
+         WHERE day = ?`,
+        outbound.recipients,
+        outbound.draft.textSize,
+        row.usage_day,
+      );
+      if (errorCode !== RATE_LIMITED) {
+        this.setTerminal(reference, "failed", errorCode, null, diagnostics);
+        return;
+      }
+      const now = Date.now();
+      this.ctx.storage.sql.exec(
+        `UPDATE mail_outbound_deliveries
+         SET state = 'claiming', error_code = ?, usage_day = NULL,
+             attempting_expires_at = NULL, claim_next_attempt_at = ?,
+             updated_at = ?
+         WHERE outbound_id = ? AND fingerprint = ? AND state = 'attempting'`,
+        errorCode,
+        now + claimRetryDelay(attempts),
+        now,
+        reference.outboundId,
+        reference.fingerprint,
+      );
+      emitTelemetry(this.env, { installationId: this.installationId, component: "mail", event: {
+        stream: "operational", name: "mail.work.deferred", properties: { stage: "outbound_send", reason: "rate_limited" },
+      } });
     });
   }
 
@@ -743,6 +821,7 @@ export class OutboundDeliveryCoordinator {
     state: "accepted" | "failed" | "unknown",
     errorCode: string | null,
     providerMessageId: string | null = null,
+    diagnostics: ExceptionDiagnostics = {},
   ): void {
     const previous = this.requireByReference(reference);
     const now = Date.now();
@@ -761,17 +840,18 @@ export class OutboundDeliveryCoordinator {
       reference.outboundId,
       reference.fingerprint,
     );
-    if (!isTerminal(previous.state)) this.emitTerminal(this.requireByReference(reference));
+    if (!isTerminal(previous.state)) this.emitTerminal(this.requireByReference(reference), diagnostics);
   }
 
-  private emitTerminal(row: OutboundRow): void {
+  private emitTerminal(row: OutboundRow, diagnostics: ExceptionDiagnostics = {}): void {
     if (!isTerminal(row.state)) return;
     const reason = row.state === "accepted" ? "none" : row.state === "unknown" ? "provider_unknown"
       : row.error_code === "outbound_disabled" ? "disabled" : row.error_code === "outbound_quota" ? "quota"
-      : row.error_code === "installation_inactive" ? "inactive" : "invalid";
+      : row.error_code === "installation_inactive" ? "inactive"
+      : REFUSAL_CODES.has(row.error_code ?? "") ? "provider_refused" : "invalid";
     emitTelemetry(this.env, { installationId: this.installationId, component: "mail",
       event: { stream: "operational", name: "mail.delivery.finished", properties: {
-        outcome: row.state, reason, durationMs: Math.max(0, row.updated_at - row.created_at),
+        ...diagnostics, outcome: row.state, reason, durationMs: Math.max(0, row.updated_at - row.created_at),
       } } });
   }
 

@@ -8,7 +8,7 @@ import type { RequestFrame } from "../protocol/frames";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { dispatch, type DispatchDeps } from "./dispatch";
 import { MailboxStore, type RecordMailOutboundInput } from "./mailbox-store";
-import { handleMailStatus, type MailStatusContext } from "./outbound-status";
+import { handleMailSent, handleMailStatus, type MailStatusContext } from "./outbound-status";
 
 describe("managed outbound mail status", () => {
   it("returns staging and terminal state without exposing internal delivery fields", async () => {
@@ -25,6 +25,7 @@ describe("managed outbound mail status", () => {
           from: "hank@gsv.space",
           to: "mike@example.com",
           subject: "Hello",
+          textPath: "/home/hank/.gsv/mail/outbox/mail-outbound:1/message.txt",
           createdAt: staging.createdAt,
           queuedAt: null,
           completedAt: null,
@@ -45,6 +46,7 @@ describe("managed outbound mail status", () => {
           from: "hank@gsv.space",
           to: "mike@example.com",
           subject: "Hello",
+          textPath: "/home/hank/.gsv/mail/outbox/mail-outbound:1/message.txt",
           createdAt: accepted.createdAt,
           queuedAt: accepted.queuedAt,
           completedAt: accepted.completedAt,
@@ -167,6 +169,72 @@ describe("managed outbound mail status", () => {
   });
 });
 
+describe("managed outbound mail sent list", () => {
+  it("lists the owner's sent mail newest first, a page at a time", async () => {
+    await runWithRealKernelSql((sql) => {
+      const mailboxes = new MailboxStore(sql);
+      for (const minute of [1, 3, 2]) {
+        recordOutbound(mailboxes, outboundInput({
+          outboundId: `mail-outbound:${minute}`,
+          deliveryId: `delivery-${minute}`,
+          subject: `Minute ${minute}`,
+          createdAt: 1_800_000_000_000 + minute * 60_000,
+        }));
+      }
+      recordOutbound(mailboxes, outboundInput({
+        outboundId: "mail-outbound:other-owner",
+        deliveryId: "delivery-other-owner",
+        ownerUid: 1001,
+        createdAt: 1_800_000_000_000 + 10 * 60_000,
+      }));
+      const ctx = statusContext(mailboxes, 1000);
+
+      const first = handleMailSent({ limit: 2 }, ctx);
+      expect(first.outbound.map((outbound) => outbound.subject)).toEqual(["Minute 3", "Minute 2"]);
+      expect(first.outbound[0]).toMatchObject({
+        deliveryId: "delivery-3",
+        state: "staging",
+        to: "mike@example.com",
+        textPath: "/home/hank/.gsv/mail/outbox/mail-outbound:1/message.txt",
+      });
+      expect(first.next).toBe(`${1_800_000_000_000 + 2 * 60_000}.mail-outbound:2`);
+      expect(handleMailSent({ limit: 2, before: first.next }, ctx)).toEqual({
+        outbound: [expect.objectContaining({ subject: "Minute 1" })],
+      });
+      expect(handleMailSent({}, statusContext(mailboxes, 1002))).toEqual({ outbound: [] });
+    });
+  });
+
+  it.each([{ limit: 0 }, { limit: 201 }, { before: "" }, { before: "yesterday" }])(
+    "rejects the page request %o",
+    async (value) => {
+      await runWithRealKernelSql((sql) => {
+        expect(() => handleMailSent(value, statusContext(new MailboxStore(sql), 1000)))
+          .toThrow(/mail\.sent|Invalid mail page cursor/);
+      });
+    },
+  );
+
+  it("dispatches the owner-scoped sent list syscall", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const mailboxes = new MailboxStore(sql);
+      recordOutbound(mailboxes, outboundInput());
+      const result = await dispatch(
+        { type: "req", id: "sent-request-1", call: "mail.sent", args: {} },
+        { type: "connection", id: "connection-1" },
+        statusContext(mailboxes, 1000),
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        {} as DispatchDeps,
+      );
+
+      expect(result).toMatchObject({
+        handled: true,
+        response: { ok: true, data: { outbound: [expect.objectContaining({ deliveryId: "delivery-1" })] } },
+      });
+    });
+  });
+});
+
 function statusContext(
   mailboxes: MailboxStore,
   uid: number,
@@ -180,7 +248,7 @@ function statusContext(
         username: `user-${uid}`,
         home: `/home/user-${uid}`,
         cwd: `/home/user-${uid}`,
-      }, calls: ["mail.status"] }),
+      }, calls: ["mail.status", "mail.sent"] }),
     mailboxes,
     procs: {
       getOwnerUid: (processId: string) => (

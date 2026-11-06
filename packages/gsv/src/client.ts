@@ -279,6 +279,7 @@ const SYSCALL_NAMES = [
   "mail.status",
   "mail.list",
   "mail.search",
+  "mail.sent",
   "mail.read",
   "notify.rule.list",
   "notify.rule.set",

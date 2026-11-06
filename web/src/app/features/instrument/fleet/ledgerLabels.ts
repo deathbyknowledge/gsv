@@ -22,6 +22,7 @@ const labels = {
   "mail.status": "fleet.ledger.mailStatus",
   "mail.list": "fleet.ledger.mailList",
   "mail.search": "fleet.ledger.mailSearch",
+  "mail.sent": "fleet.ledger.mailSent",
   "mail.read": "fleet.ledger.mailRead",
   "notify.rule.list": "fleet.ledger.notifyRuleList",
   "notify.rule.set": "fleet.ledger.notifyRuleSet",

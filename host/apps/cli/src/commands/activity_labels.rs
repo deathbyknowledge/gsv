@@ -96,6 +96,7 @@ const LABELS: &[(&str, &str)] = &[
     ("mail.read", "read an email"),
     ("mail.search", "searched email"),
     ("mail.send", "sent an email"),
+    ("mail.sent", "listed sent email"),
     ("mail.status", "checked email delivery"),
     ("net.fetch", "fetched from the web"),
     ("proc.abort", "stopped a run"),

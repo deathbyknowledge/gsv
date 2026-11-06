@@ -66,6 +66,7 @@ const inboundMailMetadataSchema = z.strictObject({
   text: z.string().optional(),
   html: z.string().optional(),
   attachments: z.array(mailAttachmentSchema),
+  automatic: z.enum(["reply", "delivery-report"]).optional(),
 });
 const inboundMailCompletionSchema = z.strictObject({
   version: z.literal(1),
@@ -148,6 +149,7 @@ export async function acceptManagedInboundMail(
       subject: metadata.subject ?? null,
       sentAt: metadata.sentAt ?? null,
       receivedAt: metadata.receivedAt,
+      automatic: metadata.automatic ?? null,
       rawPath,
       textPath,
       sizeBytes: metadata.rawSize,
@@ -189,7 +191,9 @@ export async function completeManagedInboundMail(
     }
     ctx.mailboxes.markEventDelivered(summarized.messageId);
   };
+  // An automatic reply or delivery report follows the owner's notice rule but is no work for the Ship.
   if (ctx.auth.isAccountDisabled(mailbox.ownerUid)
+    || summarized.automatic !== null
     || !ctx.responsibilitySources.isEnabled(mailbox.ownerUid, "mail.received")) {
     noteAndMarkDelivered();
     return;
@@ -407,6 +411,7 @@ function normalizeInboundMetadata(
   }
   if (text !== undefined) normalized.text = text;
   if (html !== undefined) normalized.html = html;
+  if (parsed.automatic !== undefined) normalized.automatic = parsed.automatic;
   return normalized;
 }
 

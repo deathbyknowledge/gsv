@@ -1,4 +1,5 @@
 import type {
+  ManagedMailAutomatic,
   ManagedOutboundMailCompletion,
   ManagedOutboundMailDraft,
   ManagedOutboundMailState,
@@ -53,10 +54,12 @@ export type MailMessageRecord = {
   summarizedAt: number | null;
   eventDeliveredAt: number | null;
   createdAt: number;
+  automatic: ManagedMailAutomatic | null;
 };
 
 export type RecordMailMessageInput = Omit<
   MailMessageRecord,
+  | "automatic"
   | "summary"
   | "category"
   | "requiresAttention"
@@ -68,6 +71,7 @@ export type RecordMailMessageInput = Omit<
   intakeId: string;
   /** The message's plain text; its start is indexed for word search. */
   bodyText?: string;
+  automatic?: ManagedMailAutomatic | null;
 };
 
 export type MailIntakeRecord = {
@@ -86,6 +90,11 @@ export type MailMessagePage = {
 };
 
 export type MailPageOptions = { limit?: number; before?: string };
+
+export type MailOutboundPage = {
+  outbound: MailOutboundRecord[];
+  next?: string;
+};
 
 export type MailOutboundRecord = Omit<ManagedOutboundMailDraft, "to" | "cc" | "fromName" | "quote"> & {
   to: string[];
@@ -302,9 +311,9 @@ export class MailboxStore {
            subject, sent_at,
            received_at, raw_path, text_path, size_bytes, attachments_json,
            summary, category, requires_attention, confidence, summarized_at,
-           event_delivered_at, created_at, search_rowid
+           event_delivered_at, created_at, automatic, search_rowid
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
-                   NULL, NULL, NULL, NULL, NULL, ?,
+                   NULL, NULL, NULL, NULL, NULL, ?, ?,
                    (SELECT COALESCE(MAX(search_rowid), 0) + 1 FROM mail_messages))`,
         input.messageId,
         input.mailboxId,
@@ -324,6 +333,7 @@ export class MailboxStore {
         input.sizeBytes,
         JSON.stringify(input.attachments),
         createdAt,
+        input.automatic ?? null,
       );
       this.sql.exec(
         `INSERT INTO mail_search (rowid, text)
@@ -438,6 +448,27 @@ export class MailboxStore {
       deliveryId,
     ).toArray()[0];
     return row ? outboundFromRow(row) : null;
+  }
+
+  /** The owner's sent mail, newest first. */
+  listOutbound(ownerUid: number, options: MailPageOptions = {}): MailOutboundPage {
+    const limit = normalizePageNumber(options.limit ?? 50, 1, 200, 50);
+    const before = options.before === undefined ? null : parseMailCursor(options.before);
+    const rows = this.sql.exec<MailOutboundRow>(
+      `SELECT * FROM mail_outbound
+        WHERE owner_uid = ?
+          ${before ? "AND (created_at, outbound_id) < (?, ?)" : ""}
+        ORDER BY created_at DESC, outbound_id DESC
+        LIMIT ?`,
+      ownerUid,
+      ...(before ? [before.at, before.id] : []),
+      limit + 1,
+    ).toArray();
+    const outbound = rows.slice(0, limit).map(outboundFromRow);
+    const last = outbound.at(-1);
+    return rows.length > limit && last
+      ? { outbound, next: `${last.createdAt}.${last.outboundId}` }
+      : { outbound };
   }
 
   ensureOutbound(input: RecordMailOutboundInput): EnsureMailOutboundResult {
@@ -666,7 +697,7 @@ export class MailboxStore {
         LIMIT ?`,
       ownerUid,
       ...filterArgs,
-      ...(before ? [before.receivedAt, before.messageId] : []),
+      ...(before ? [before.at, before.id] : []),
       limit + 1,
     ).toArray();
     const messages = rows.slice(0, limit).map(messageFromRow);
@@ -739,6 +770,7 @@ type MailMessageRow = {
   summarized_at: number | null;
   event_delivered_at: number | null;
   created_at: number;
+  automatic: ManagedMailAutomatic | null;
 };
 
 type MailIntakeRow = {
@@ -816,6 +848,7 @@ function messageFromRow(row: MailMessageRow): MailMessageRecord {
     summarizedAt: row.summarized_at,
     eventDeliveredAt: row.event_delivered_at,
     createdAt: row.created_at,
+    automatic: row.automatic,
   };
 }
 
@@ -895,13 +928,14 @@ function parseAttachments(value: string): MailAttachmentRecord[] {
 // Enough to find a message by what it says without indexing whole newsletters.
 const MAIL_SEARCH_BODY_CHARS = 16_384;
 
-type MailCursor = { receivedAt: number; messageId: string };
+/** Where a page ends: the last entry's time and id, as `<time>.<id>`. */
+type MailCursor = { at: number; id: string };
 
 function parseMailCursor(cursor: string): MailCursor {
   const match = /^(\d+)\.(.+)$/.exec(cursor);
-  const receivedAt = match ? Number(match[1]) : NaN;
-  if (!match || !Number.isSafeInteger(receivedAt)) throw new Error("Invalid mail page cursor");
-  return { receivedAt, messageId: match[2] };
+  const at = match ? Number(match[1]) : NaN;
+  if (!match || !Number.isSafeInteger(at)) throw new Error("Invalid mail page cursor");
+  return { at, id: match[2] };
 }
 
 function normalizePageNumber(

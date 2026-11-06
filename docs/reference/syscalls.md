@@ -419,9 +419,13 @@ canonical intent and body are durable and Queue publication is durably owned by
 the Kernel. The Kernel retries publication until the Queue accepts the command.
 Replaying the same call returns its current state. `accepted` means Cloudflare
 Email Sending accepted the message and returned a provider id, not that the
-recipient's mailbox has delivered it. `failed` is a known terminal failure.
+recipient's mailbox has delivered it. `failed` is a known terminal failure:
+nothing was sent, and `errorCode` names why, for example `recipient_suppressed`
+(an address bounced or complained before), `recipient_not_allowed`,
+`outbound_quota` (the owner's daily allowance), `provider_quota`,
+`sender_unavailable`, `provider_rejected` or `invalid_draft`.
 `unknown` means the provider call may have succeeded, so GSV will not replay it
-and risk sending a duplicate.
+and risk sending a duplicate. A rate-limited send stays `queued` and is retried.
 
 Cancellation is effective until the Kernel durably admits the outbox wake. Once
 that admission exists, delivery recovery continues even if the original request
@@ -463,23 +467,29 @@ type MailSyscalls = {
   };
   "mail.status": {
     args: { deliveryId: string };
-    result: {
-      outbound: null | {
-        deliveryId: string;
-        outboundId: string;
-        state: "staging" | "queued" | "accepted" | "failed" | "unknown";
-        from: string;
-        to: string;
-        cc?: string;
-        subject: string;
-        createdAt: number;
-        queuedAt: number | null;
-        completedAt: number | null;
-        providerMessageId?: string;
-        errorCode?: string;
-      };
-    };
+    result: { outbound: MailOutboundStatus | null };
   };
+  "mail.sent": {
+    args: { limit?: number; before?: string };
+    result: { outbound: MailOutboundStatus[]; next?: string };
+  };
+};
+
+type MailOutboundStatus = {
+  deliveryId: string;
+  outboundId: string;
+  state: "staging" | "queued" | "accepted" | "failed" | "unknown";
+  from: string;
+  to: string;
+  cc?: string;
+  subject: string;
+  /** The message as written, in Markdown. */
+  textPath: string;
+  createdAt: number;
+  queuedAt: number | null;
+  completedAt: number | null;
+  providerMessageId?: string;
+  errorCode?: string;
 };
 ```
 
@@ -489,6 +499,12 @@ managed Queue is unavailable, and returns the same `null` result for missing
 and foreign-owned deliveries. It does not re-enter compose, body storage, or
 Queue publication. This is the normal way to observe the eventual outcome of a
 send that returned `queued`.
+
+`mail.sent` pages the caller's own sent mail, newest first, under its own
+`mail.sent` capability; the native `mail sent` command uses it. It takes the
+same `limit` (1 to 200, 50 by default) and `before` cursor as `mail.list`, and
+returns `next` while older mail remains. Each entry is the status `mail.status`
+returns, so a failed send keeps its `errorCode`.
 
 ## Received mail: `mail.list`, `mail.search`, `mail.read`
 

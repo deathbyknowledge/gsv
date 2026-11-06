@@ -25,6 +25,7 @@ import { KERNEL_V089_HAPPENING_RULES } from "./v089_happening_rules";
 import { KERNEL_V090_EVENT_SOURCES } from "./v090_event_sources";
 import { KERNEL_V091_OUTSIDE_TEXT_LABELS } from "./v091_outside_text_labels";
 import { KERNEL_V092_OUTBOUND_MAIL_COPIES } from "./v092_outbound_mail_copies";
+import { KERNEL_V093_AUTOMATIC_MAIL } from "./v093_automatic_mail";
 import { runSqlMigrations, type SqlMigration } from "../../schema/runner";
 import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
@@ -234,6 +235,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V090_EVENT_SOURCES,
   KERNEL_V091_OUTSIDE_TEXT_LABELS,
   KERNEL_V092_OUTBOUND_MAIL_COPIES,
+  KERNEL_V093_AUTOMATIC_MAIL,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

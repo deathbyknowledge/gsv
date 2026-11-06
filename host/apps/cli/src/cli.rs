@@ -566,6 +566,11 @@ pub(crate) enum MailAction {
         #[arg(num_args = 0..)]
         message: Vec<String>,
     },
+    /// List mail your Ship sent, newest first
+    Sent {
+        #[command(flatten)]
+        page: MailPage,
+    },
     /// Check a sent message's delivery
     Status {
         /// Delivery id printed by `gsv mail send`

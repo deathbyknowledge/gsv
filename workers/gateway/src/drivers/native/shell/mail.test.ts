@@ -1,6 +1,7 @@
 import type {
   MailSendArgs,
   MailSendResult,
+  MailSentResult,
   MailStatusResult,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
@@ -19,6 +20,7 @@ import * as outboundStatus from "../../../kernel/outbound-status";
 
 const handleMailSend = vi.spyOn(outboundMail, "handleMailSend");
 const handleMailStatus = vi.spyOn(outboundStatus, "handleMailStatus");
+const handleMailSent = vi.spyOn(outboundStatus, "handleMailSent");
 
 function emptyFs(): GsvFs {
   // SAFETY: these command tests exercise argument and capability handling before filesystem access.
@@ -29,6 +31,7 @@ describe("mail shell command", () => {
   beforeEach(() => {
     handleMailSend.mockReset();
     handleMailStatus.mockReset();
+    handleMailSent.mockReset();
   });
 
   it("lists and reads only the calling human's indexed mail", async () => {
@@ -370,6 +373,7 @@ describe("mail shell command", () => {
         from: "hank@gsv.space",
         to: "mike@example.com",
         subject: "Hello\nthere",
+        textPath: "/home/hank/.gsv/mail/outbox/mail-outbound:1/message.txt",
         providerMessageId: "provider-1",
         createdAt: Date.parse("2026-08-13T12:00:00.000Z"),
         queuedAt: Date.parse("2026-08-13T12:00:01.000Z"),
@@ -384,10 +388,70 @@ describe("mail shell command", () => {
     expect(result).toMatchObject({ exitCode: 0, stderr: "" });
     expect(result.stdout).toContain("state=accepted");
     expect(result.stdout).toContain("subject=Hello there");
+    expect(result.stdout).toContain("text_path=/home/hank/.gsv/mail/outbox/mail-outbound:1/message.txt");
     expect(result.stdout).toContain("provider_message_id=provider-1");
     expect(result.stdout).toContain("created_at=2026-08-13T12:00:00.000Z");
     expect(result.stdout).toContain("queued_at=2026-08-13T12:00:01.000Z");
     expect(result.stdout).toContain("completed_at=2026-08-13T12:00:02.000Z");
+  });
+
+  it("lists sent mail one per line with its delivery id, state and recipients", async () => {
+    const ctx = commandContext("shell-sent-1", ["shell.exec", "mail.sent"]);
+    const sent = {
+      outboundId: "mail-outbound:1",
+      from: "hank@gsv.space",
+      textPath: "/home/hank/.gsv/mail/outbox/mail-outbound:1/message.txt",
+      queuedAt: null,
+      completedAt: null,
+    };
+    handleMailSent.mockReturnValue({
+      outbound: [
+        {
+          ...sent,
+          deliveryId: "delivery-2",
+          state: "failed",
+          errorCode: "recipient_suppressed",
+          to: "mike@example.com, anna@example.com",
+          cc: "bob@example.com",
+          subject: "Friday\nplans",
+          createdAt: Date.parse("2026-11-06T10:00:00.000Z"),
+        },
+        {
+          ...sent,
+          deliveryId: "delivery-1",
+          state: "accepted",
+          to: "mike@example.com",
+          subject: "Hello",
+          createdAt: Date.parse("2026-11-06T09:00:00.000Z"),
+        },
+      ],
+      next: "1793955600000.mail-outbound:1",
+    } satisfies MailSentResult);
+    const command = buildMailCommand(emptyFs(), ctx);
+
+    const result = await command.execute(["sent", "--limit", "2"]);
+
+    expect(handleMailSent).toHaveBeenCalledWith({ limit: 2 }, ctx);
+    expect(result).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: [
+        "delivery-2\t2026-11-06T10:00:00.000Z\tfailed recipient_suppressed\tmike@example.com, anna@example.com cc bob@example.com\tFriday plans",
+        "delivery-1\t2026-11-06T09:00:00.000Z\taccepted\tmike@example.com\tHello",
+        "More: mail sent --before 1793955600000.mail-outbound:1",
+        "",
+      ].join("\n"),
+    });
+  });
+
+  it("requires mail.sent capability before listing sent mail", async () => {
+    const command = buildMailCommand(emptyFs(), commandContext("shell-sent-denied"));
+
+    const result = await command.execute(["sent"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Permission denied: mail.sent");
+    expect(handleMailSent).not.toHaveBeenCalled();
   });
 
   it("reports missing outbound delivery status without disclosing ownership", async () => {
