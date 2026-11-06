@@ -419,9 +419,13 @@ canonical intent and body are durable and Queue publication is durably owned by
 the Kernel. The Kernel retries publication until the Queue accepts the command.
 Replaying the same call returns its current state. `accepted` means Cloudflare
 Email Sending accepted the message and returned a provider id, not that the
-recipient's mailbox has delivered it. `failed` is a known terminal failure.
+recipient's mailbox has delivered it. `failed` is a known terminal failure:
+nothing was sent, and `errorCode` names why, for example `recipient_suppressed`
+(an address bounced or complained before), `recipient_not_allowed`,
+`outbound_quota` (the owner's daily allowance), `provider_quota`,
+`sender_unavailable`, `provider_rejected` or `invalid_draft`.
 `unknown` means the provider call may have succeeded, so GSV will not replay it
-and risk sending a duplicate.
+and risk sending a duplicate. A rate-limited send stays `queued` and is retried.
 
 Cancellation is effective until the Kernel durably admits the outbox wake. Once
 that admission exists, delivery recovery continues even if the original request

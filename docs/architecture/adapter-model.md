@@ -334,13 +334,22 @@ Operators must enable Email Sending for each allowed domain. Receiving aliases
 alone grant no sending authority. Existing mailbox addresses and immutable
 drafts keep their original sender; a domain promotion can retain that domain
 without invalidating pending claims. Handle changes still fail closed.
-Cloudflare Email Sending is called at most once after the DO durably records an
-attempt. Provider acceptance records `accepted`.
-Terminal lifecycle, quota, and draft validation failures before that attempt
+Each attempt calls Cloudflare Email Sending at most once, after the DO durably
+records it. Provider acceptance records `accepted`.
+Terminal lifecycle, quota, and draft validation failures before an attempt
 record `failed`; recoverable nonactive installation states pause delivery.
-A crash, binding throw, or malformed provider result after the attempt records
-`unknown` and is never replayed, because the message may already have
-left the provider boundary.
+A provider error code that refuses the send before handing it on, such as a
+suppressed or disallowed recipient, an unverified sender, a suspended account,
+the provider's daily limit, or an invalid request, also records `failed` with
+the owner-facing code (`recipient_suppressed`, `recipient_not_allowed`,
+`sender_unavailable`, `provider_quota`, `provider_rejected`) and returns the
+attempt's share of the daily allowance. A rate limit instead returns the
+delivery to claiming for a later attempt with the claim backoff.
+A crash, a delivery or service error, any other binding throw, or a malformed
+provider result after the attempt records `unknown` and is never replayed,
+because the message may already have left the provider boundary. The provider's
+code and redacted message reach the operator's logs and diagnostic telemetry;
+recipients' addresses do not.
 
 The email Worker owns presentation. A body is Markdown as written in chat; the
 Worker sends it as an HTML part and a plain-text part without the marks. Raw
