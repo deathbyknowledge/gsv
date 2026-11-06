@@ -1239,8 +1239,9 @@ pub struct CommitSearchResult {
     pub commit_time: i64,
 }
 
-/// Search code in the FTS index. Auto-detects whether to use FTS5 MATCH
-/// (for word queries) or INSTR (for literal/symbol queries).
+/// Search code in the FTS index. Word queries run through FTS5, which marks
+/// the lines each match came from; symbols and paths run as a substring
+/// search (see `plan_search`).
 /// Returns all matching lines with line numbers, not just one snippet per file.
 pub fn search_code(
     sql: &SqlStorage,
@@ -1249,55 +1250,24 @@ pub fn search_code(
     ext_filter: Option<&str>,
     limit: usize,
 ) -> Result<Vec<CodeSearchResult>> {
-    let (search_term, literal) = if let Some(stripped) = query.strip_prefix("lit:") {
-        (stripped, true)
-    } else {
-        (query, needs_literal_search(query))
+    let files = match plan_search(query) {
+        SearchPlan::Words(expression) => {
+            search_files_fts(sql, &expression, path_filter, ext_filter, limit)?
+        }
+        SearchPlan::Literal(needle) => {
+            search_files_literal(sql, &needle, path_filter, ext_filter, limit)?
+        }
     };
 
-    let files = if literal {
-        search_files_literal(sql, search_term, path_filter, ext_filter, limit)?
-    } else {
-        search_files_fts(sql, search_term, path_filter, ext_filter, limit)?
-    };
-
-    // Scan each file for matching lines
     let mut results = Vec::new();
-    let mut total_matches = 0usize;
-    let max_matches = 500;
-    let term_lower = search_term.to_lowercase();
-
-    for (path, content) in files {
-        if total_matches >= max_matches {
+    let mut remaining_matches = 500usize;
+    for (path, mut matches) in files {
+        if remaining_matches == 0 {
             break;
         }
-
-        let mut line_matches = Vec::new();
-        for (i, line) in content.lines().enumerate() {
-            let found = if literal {
-                line.contains(search_term)
-            } else {
-                line.to_lowercase().contains(&term_lower)
-            };
-
-            if found {
-                line_matches.push(LineMatch {
-                    line_number: i + 1,
-                    line_text: line.to_string(),
-                });
-                total_matches += 1;
-                if total_matches >= max_matches {
-                    break;
-                }
-            }
-        }
-
-        if !line_matches.is_empty() {
-            results.push(CodeSearchResult {
-                path,
-                matches: line_matches,
-            });
-        }
+        matches.truncate(remaining_matches);
+        remaining_matches -= matches.len();
+        results.push(CodeSearchResult { path, matches });
     }
 
     Ok(results)
@@ -1360,33 +1330,69 @@ pub fn search_commits(
     Ok(results)
 }
 
-/// Detect if a query needs literal (INSTR) search instead of FTS5 MATCH.
-/// Triggers on any character that would break or confuse FTS5 tokenization:
-/// dots, underscores, parens, colons, angle brackets, etc.
-fn needs_literal_search(query: &str) -> bool {
-    query
-        .bytes()
-        .any(|b| !matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b' ' | b'"' | b'*'))
+/// How a search query runs against `fts_head`.
+#[derive(Debug, PartialEq)]
+enum SearchPlan {
+    /// An FTS5 MATCH expression, limited to file contents.
+    Words(String),
+    /// A substring that ignores ASCII case, for symbols and paths.
+    Literal(String),
 }
 
-/// FTS5 MATCH search — returns (path, content) pairs for files that match.
+/// `lit:` forces a substring search. A query in FTS5 word syntax runs as
+/// typed, so phrases, `prefix*` and operators keep working; that syntax
+/// accepts non-ASCII letters too. Several words with punctuation, such as
+/// `maria's birthday`, are quoted one by one so FTS5 tokenizes them. A
+/// single punctuated term (`foo.bar`, `snake_case`, `a->b`) stays a
+/// substring search. The column filter keeps file names out of every word.
+fn plan_search(query: &str) -> SearchPlan {
+    if let Some(needle) = query.strip_prefix("lit:") {
+        return SearchPlan::Literal(needle.to_string());
+    }
+    let word_syntax = query.bytes().all(
+        |b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b' ' | b'"' | b'*' | 0x80..=0xff),
+    );
+    if word_syntax {
+        return SearchPlan::Words(format!("{{content}}: ({})", query));
+    }
+    let words: Vec<&str> = query.split_whitespace().collect();
+    if words.len() > 1 && !query.contains('"') && query.chars().any(char::is_alphanumeric) {
+        let quoted: Vec<String> = words.iter().map(|word| format!("\"{}\"", word)).collect();
+        return SearchPlan::Words(format!("{{content}}: ({})", quoted.join(" ")));
+    }
+    SearchPlan::Literal(query.to_string())
+}
+
+/// FTS5 `highlight()` wraps each match in these marks.
+const MATCH_START: char = '\u{1}';
+const MATCH_END: char = '\u{2}';
+
+/// The lines of a highlighted file that hold a match, without the marks.
+/// Every FTS5 match is in the content column, so a matching file always
+/// has at least one marked line.
+fn marked_lines(marked: &str) -> Vec<LineMatch> {
+    marked
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains(MATCH_START))
+        .map(|(index, line)| LineMatch {
+            line_number: index + 1,
+            line_text: line.replace(|c| c == MATCH_START || c == MATCH_END, ""),
+        })
+        .collect()
+}
+
+/// FTS5 MATCH search: each matching file in rank order, with the lines its
+/// match came from.
 fn search_files_fts(
     sql: &SqlStorage,
-    query: &str,
+    expression: &str,
     path_filter: Option<&str>,
     ext_filter: Option<&str>,
     limit: usize,
-) -> Result<Vec<(String, String)>> {
-    // Use {content} column filter so we don't match on filenames,
-    // unless the user already specified a column (e.g. content:foo or path:bar).
-    let has_column_spec = query.contains("content:") || query.contains("path:");
-    let fts_match = if has_column_spec {
-        query.to_string()
-    } else {
-        format!("{{content}}: {}", query)
-    };
+) -> Result<Vec<(String, Vec<LineMatch>)>> {
     let mut where_parts = vec!["fts_head MATCH ?".to_string()];
-    let mut params: Vec<SqlStorageValue> = vec![SqlStorageValue::from(fts_match)];
+    let mut params: Vec<SqlStorageValue> = vec![SqlStorageValue::from(expression.to_string())];
 
     if let Some(path) = path_filter {
         where_parts.push("path LIKE ?".to_string());
@@ -1400,30 +1406,36 @@ fn search_files_fts(
     params.push(SqlStorageValue::from(limit as i64));
 
     let sql_str = format!(
-        "SELECT path, content FROM fts_head WHERE {} ORDER BY rank LIMIT ?",
+        "SELECT path, highlight(fts_head, 1, char(1), char(2)) AS marked \
+         FROM fts_head WHERE {} ORDER BY rank LIMIT ?",
         where_parts.join(" AND "),
     );
 
     #[derive(serde::Deserialize)]
     struct Row {
         path: String,
-        content: String,
+        marked: String,
     }
 
     let rows: Vec<Row> = sql.exec(&sql_str, params)?.to_array()?;
-    Ok(rows.into_iter().map(|r| (r.path, r.content)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.path, marked_lines(&r.marked)))
+        .collect())
 }
 
 /// Literal substring search via INSTR — full table scan, but bounded by repo size.
+/// SQLite's LOWER folds ASCII only, so the line check folds ASCII only too.
 fn search_files_literal(
     sql: &SqlStorage,
-    query: &str,
+    needle: &str,
     path_filter: Option<&str>,
     ext_filter: Option<&str>,
     limit: usize,
-) -> Result<Vec<(String, String)>> {
-    let mut where_parts = vec!["INSTR(content, ?) > 0".to_string()];
-    let mut params: Vec<SqlStorageValue> = vec![SqlStorageValue::from(query.to_string())];
+) -> Result<Vec<(String, Vec<LineMatch>)>> {
+    let needle = needle.to_ascii_lowercase();
+    let mut where_parts = vec!["INSTR(LOWER(content), ?) > 0".to_string()];
+    let mut params: Vec<SqlStorageValue> = vec![SqlStorageValue::from(needle.clone())];
 
     if let Some(path) = path_filter {
         where_parts.push("path LIKE ?".to_string());
@@ -1448,7 +1460,23 @@ fn search_files_literal(
     }
 
     let rows: Vec<Row> = sql.exec(&sql_str, params)?.to_array()?;
-    Ok(rows.into_iter().map(|r| (r.path, r.content)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let matches = r
+                .content
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| line.to_ascii_lowercase().contains(&needle))
+                .map(|(index, line)| LineMatch {
+                    line_number: index + 1,
+                    line_text: line.to_string(),
+                })
+                .collect::<Vec<_>>();
+            (r.path, matches)
+        })
+        .filter(|(_, matches)| !matches.is_empty())
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -1504,4 +1532,67 @@ fn reassemble_chunks(sql: &SqlStorage, group_id: i64, version: i64) -> Result<Ve
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{marked_lines, plan_search, SearchPlan};
+
+    fn words(expression: &str) -> SearchPlan {
+        SearchPlan::Words(expression.to_string())
+    }
+
+    #[test]
+    fn plans_word_queries_on_contents_as_typed() {
+        assert_eq!(
+            plan_search("maria birthday"),
+            words("{content}: (maria birthday)")
+        );
+        assert_eq!(plan_search("birth*"), words("{content}: (birth*)"));
+        assert_eq!(
+            plan_search("\"calls to texts\""),
+            words("{content}: (\"calls to texts\")")
+        );
+        assert_eq!(
+            plan_search("cumpleaños sofía"),
+            words("{content}: (cumpleaños sofía)")
+        );
+    }
+
+    #[test]
+    fn quotes_each_word_of_punctuated_multi_word_queries() {
+        assert_eq!(
+            plan_search("maria's birthday"),
+            words("{content}: (\"maria's\" \"birthday\")"),
+        );
+        assert_eq!(
+            plan_search("-> maria"),
+            words("{content}: (\"->\" \"maria\")")
+        );
+    }
+
+    #[test]
+    fn keeps_symbols_and_forced_literals_as_substrings() {
+        let literal = |needle: &str| SearchPlan::Literal(needle.to_string());
+        assert_eq!(plan_search("handleSearch()"), literal("handleSearch()"));
+        assert_eq!(plan_search("snake_case"), literal("snake_case"));
+        assert_eq!(plan_search("-> <-"), literal("-> <-"));
+        assert_eq!(plan_search("say \"hi\"!"), literal("say \"hi\"!"));
+        assert_eq!(plan_search("lit:maria birthday"), literal("maria birthday"));
+    }
+
+    #[test]
+    fn returns_marked_lines_without_marks() {
+        let marked =
+            "# \u{1}Maria\u{2}\n\n\u{1}Maria's\u{2} birthday is 12 May.\r\nShe prefers calls.\n";
+        let lines = marked_lines(marked);
+        let found: Vec<(usize, &str)> = lines
+            .iter()
+            .map(|line| (line.line_number, line.line_text.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            vec![(1, "# Maria"), (3, "Maria's birthday is 12 May.")]
+        );
+    }
 }
