@@ -10,7 +10,19 @@ export type WelcomeState = {
   operationId: string | null;
   handle: string | null;
   contactInvite?: string | null;
+  /** Where the signup link was clicked, as the website's closed slugs; reported once the Ship activates. */
+  attribution?: SignupAttribution | null;
 };
+export type SignupAttribution = { placement: string; example?: string };
+const ATTRIBUTION_SLUG = /^[a-z0-9-]{1,32}$/;
+
+/** Read `from` and `example` from a signup URL fragment; anything outside the slug shape is dropped. */
+export function signupAttributionFromFragment(fragment: URLSearchParams): SignupAttribution | null {
+  const placement = fragment.get("from");
+  if (!placement || !ATTRIBUTION_SLUG.test(placement)) return null;
+  const example = fragment.get("example");
+  return example && ATTRIBUTION_SLUG.test(example) ? { placement, example } : { placement };
+}
 export type WelcomeSnapshot = { revision: string; value: WelcomeState | null };
 export type WelcomeStorage = { save(revision: string, value: WelcomeState | null): Promise<WelcomeSnapshot> };
 type OwnerFetch = (url: string, init: {
@@ -19,7 +31,7 @@ type OwnerFetch = (url: string, init: {
 export type ProductEmailChoice = { wordingVersion: "ship-product-updates-2026-10-26"; locale: "en" | "es" | "pt-BR" };
 type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
-  | { operationId: string; handle: string; productEmails?: ProductEmailChoice } | Record<string, never>;
+  | { operationId: string; handle: string; attribution?: SignupAttribution; productEmails?: ProductEmailChoice } | Record<string, never>;
 type OwnerHeaders = { "content-type": string; authorization?: string };
 const deliverySchema = z.object({ deliveryStatus: z.enum(["sent", "sending", "failed"]) });
 const verifiedSchema = z.object({ email: z.string(), expiresAt: z.number() });
@@ -94,7 +106,9 @@ export class OwnerWelcome {
 
   async prepare(handle: string, operationId = this.state.operationId ?? crypto.randomUUID(), productEmails?: ProductEmailChoice): Promise<PreparedSpace> {
     await this.save({ flow: "create", operationId, handle });
-    const prepared = await this.request("/spaces", preparationSchema, { operationId, handle, productEmails });
+    const attribution = this.state.attribution ?? undefined;
+    const prepared = await this.request("/spaces", preparationSchema,
+      attribution ? { operationId, handle, attribution, productEmails } : { operationId, handle, productEmails });
     if (!prepared.onboardingToken) await this.completeCreation();
     return prepared;
   }

@@ -91,3 +91,37 @@ describe("signup entrypoint recovery", () => {
     expectContactNavigation();
   });
 });
+
+describe("signup attribution", () => {
+  it("keeps the website's signup origin for activation and takes it off the URL", async () => {
+    window.location.href = `${origin}/#from=hero&example=plan-a-trip`;
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ placement: "hero", example: "plan-a-trip" });
+    // SAFETY: the page passes the URL object it rewrote as the third replaceState argument.
+    const replaced = vi.mocked(window.history.replaceState).mock.lastCall![2] as URL;
+    expect(replaced.hash).toBe("");
+  });
+
+  it("drops an origin left over from an abandoned attributed visit when signup starts again directly", async () => {
+    window.location.href = origin;
+    storage.load.mockResolvedValue({ revision: "saved", value: { origin, flow: "create", sessionSecret: null,
+      challenge: null, operationId: null, handle: null, attribution: { placement: "hero" } } });
+    const props = await screen();
+    expect((await props.load()).state.attribution).toBeNull();
+  });
+
+  it("keeps the stored origin when a signup resumes without a fragment", async () => {
+    window.location.href = `${origin}/?resume=1`;
+    window.location.search = "?resume=1";
+    storage.load.mockResolvedValue({ revision: "saved", value: { origin, flow: "create", sessionSecret: null,
+      challenge: null, operationId: "op-1", handle: "resumed", attribution: { placement: "hero" } } });
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ placement: "hero" });
+  });
+
+  it("ignores an origin that is not a plain slug", async () => {
+    window.location.href = `${origin}/#from=Hero%20Banner&example=x`;
+    const props = await screen();
+    expect((await props.load()).state.attribution).toBeNull();
+  });
+});

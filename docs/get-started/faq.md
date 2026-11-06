@@ -57,6 +57,12 @@ Your Ship's state lives in its operator's Cloudflare account. With self-hosting,
 that is your account. Model providers and connected messengers receive the data
 routed to them. The public stack works without routing through H&M services.
 
+If you sign up from a link on ship.space, Accounts keeps which part of the page
+the link was on, as one of a few fixed placements, and for an example card,
+which example. It never keeps who you are or the link's own wording; anything
+outside that list is stored as `other`. That origin is reported once, as
+`installation.attributed`, when your Ship activates, and that's all.
+
 ### Is anything exposed to the internet?
 
 No open ports, no VPN, no box sitting exposed. Your devices connect outbound through the gateway using tokens, so nothing comes inbound to your machines. Only your Ship URL is public, everything else is private.
