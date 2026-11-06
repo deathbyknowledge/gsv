@@ -106,7 +106,11 @@ bounded summary, category, attention flag, and optional confidence. It omits
 separate mailbox identifiers, address fields, display names, subjects, raw headers,
 and message bodies. Its title contains only the opaque id, so sender-controlled
 summary text enters model context only after Ship explicitly inspects the record.
-The summary remains untrusted external context. Upgrades preserve historical Inbox
+The summary remains untrusted external context. When a rule tells the owner about
+mail, the notice also keeps the subject line, as the sender wrote it, for the
+person's own clients: a card shows the subject with the summary beneath it. The
+model's rendering of the notice leaves the subject out, and a messenger carries
+neither the sender nor any of the email's words. Upgrades preserve historical Inbox
 accounts, processes, and mailbox notification fields, but new mail neither consults
 nor updates them.
 

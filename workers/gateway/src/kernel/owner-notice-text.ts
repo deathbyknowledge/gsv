@@ -121,17 +121,19 @@ export function noticeLanguage(preference: string | null | undefined): NoticeLan
 }
 
 /** Who a notice is from and what they wrote. They come from other people, so each stays on one short line. */
-export type OwnerNoticeParts = { from: string; handle?: string; preview?: string };
+export type OwnerNoticeParts = { from: string; handle?: string; preview?: string; title?: string };
 
 export function ownerNoticeParts(notice: OwnerNotice): OwnerNoticeParts {
   const { subject } = notice;
   const handle = subject.handle ? oneLine(subject.handle, NAME_CHARACTERS) : "";
   const preview = notice.topic === "contact.message" || notice.topic === "mail.received" || notice.topic === "event.received"
     ? oneLine(subject.preview ?? "", PREVIEW_CHARACTERS) : "";
+  const title = notice.topic === "mail.received" ? oneLine(subject.title ?? "", PREVIEW_CHARACTERS) : "";
   return {
     from: oneLine(subject.from, NAME_CHARACTERS) || "?",
     ...(handle ? { handle } : undefined),
     ...(preview ? { preview } : undefined),
+    ...(title ? { title } : undefined),
   };
 }
 

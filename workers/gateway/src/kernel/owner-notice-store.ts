@@ -19,6 +19,8 @@ export type OwnerNoticeSubject = {
   from: string;
   handle?: string;
   preview?: string;
+  /** An email's subject line. */
+  title?: string;
   /** The messenger account a messenger notice is about, which can't itself carry a notice it needs fixed. */
   adapter?: string;
   accountId?: string;
@@ -60,6 +62,7 @@ const subjectSchema = z.object({
   from: z.string(),
   handle: z.string().optional(),
   preview: z.string().optional(),
+  title: z.string().optional(),
   adapter: z.string().optional(),
   accountId: z.string().optional(),
   ruleChange: z.enum(["stopped-telling", "started-acting"]).optional(),

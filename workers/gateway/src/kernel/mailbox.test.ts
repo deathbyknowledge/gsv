@@ -314,7 +314,7 @@ describe("managed Kernel mailbox", () => {
         version: 1, intakeId: METADATA.intakeId, messageId: accepted.messageId,
         summary: { summary: "Mike approved the contract.", category: "work", requiresAttention: true, confidence: 0.9 },
       }, ctx);
-      expect(ctx.ownerNotices.next(1000)).toMatchObject({ topic: "mail.received", pendingCount: 1, subject: { preview: "Mike approved the contract." } });
+      expect(ctx.ownerNotices.next(1000)).toMatchObject({ topic: "mail.received", pendingCount: 1, subject: { preview: "Mike approved the contract.", title: "Re: contract" } });
       expect(ctx.responsibilities.list({ ownerUid: 1000 }).records).toEqual([]);
       expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
     });

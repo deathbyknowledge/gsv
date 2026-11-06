@@ -5,6 +5,7 @@ import type { ChatErrorContext } from "../../../services/chat/domain/errorPresen
 import { Hint } from "../../../components/ui/Tooltip";
 import { FeedbackNote, MomentTime, NoteMoment, zenFailure } from "./ZenNotes";
 import type { Moment } from "./zenModel";
+import { NOTICE_ICONS, NoticeIcon } from "../shared/noticeIcons";
 
 let root: ReturnType<typeof createTestRoot> | undefined;
 afterEach(async () => { await root?.unmount(); root = undefined; vi.unstubAllGlobals(); });
@@ -69,6 +70,23 @@ describe("owner notices", () => {
     const text = collectText(await card(notice({ messages: 3 }, { kind: "contact", contactId: "contact:ada" })));
     expect(text).toContain("3 messages");
     expect(text).toContain("Sent an attachment");
+  });
+
+  it("shows an email's subject with the Ship's summary beneath, and a plain line without one", async () => {
+    const mail = { topic: "mail.received" as const, from: "Blizzard", contactId: undefined };
+    const tree = await card(notice({ ...mail, title: "Season 3 is here", preview: "A newsletter about the new season." }, { kind: "contact", contactId: "contact:ada" }));
+    const title = collectNodes(tree).find((node) => node.props?.class === "notice-title");
+    const summary = collectNodes(tree).find((node) => node.props?.class === "notice-summary");
+    expect(collectText(title?.props.children)).toBe("Season 3 is here");
+    expect(collectText(summary?.props.children)).toBe("A newsletter about the new season.");
+    expect(collectText(await card(notice({ ...mail, title: "x", messages: 2 }, { kind: "contact", contactId: "contact:ada" })))).toContain("2 emails");
+    expect(collectText(await card(notice(mail, { kind: "contact", contactId: "contact:ada" })))).toContain("Sent you an email.");
+  });
+
+  it("marks each kind of notice with the icon its setting shows", async () => {
+    const icon = (tree: ComponentChildren) => collectNodes(tree).find((node) => node.type === NoticeIcon)?.props.path;
+    expect(icon(await card(notice({ topic: "mail.received" }, { kind: "contact", contactId: "contact:ada" })))).toBe(NOTICE_ICONS["mail.received"]);
+    expect(icon(await card(notice({}, { kind: "contact", contactId: "contact:ada" })))).toBe(NOTICE_ICONS["contact.message"]);
   });
 
   it("opens a message request where the owner decides it", async () => {
