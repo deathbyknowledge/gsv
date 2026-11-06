@@ -177,7 +177,8 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   }));
   const ownerOriginAliases = JSON.stringify(props.installations.ownerOriginAliases ?? []);
   configuredOriginAliases(ownerOriginAliases);
-  const observability = { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: false } };
+  // Profiling only, drop before merge: Accounts and inference follow the preview's traces.
+  const observability = { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: props.observability?.traces ?? { enabled: false } };
   let directory = props.services?.installationDirectory;
   let database: Cloudflare.D1.Database | undefined;
   if (!directory) {

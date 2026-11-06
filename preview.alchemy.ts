@@ -67,7 +67,8 @@ export default Alchemy.Stack(`gsv-previews-${repositoryId}`, {
     routing: { zoneId }, pds,
     names: { gateway: prefix, ripgit: `${prefix}-ripgit`, storageBucket: `${prefix}-storage` },
     paths: runtime,
-    observability: { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: false } },
+    // Profiling only, drop before merge: trace every request on this preview.
+    observability: { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: true, persist: true, headSamplingRate: 1 } },
     installations: {
       workerName: `${prefix}-installations`, databaseName: `${prefix}-installations`,
       workerBundle: runtime.installationsBundle, migrationsDirectory: runtime.installationsMigrations,
