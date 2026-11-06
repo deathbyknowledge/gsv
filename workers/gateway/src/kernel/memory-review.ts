@@ -102,6 +102,9 @@ function admitWaitingReview(host: MemoryReviewHost, ownerUid: number): boolean {
           now: Date.now(),
         });
         // An older Kernel took a slice off its queue only after admitting it, so one may already be reviewed.
+        // TODO(event-log): the release after the cutover ships, admit just the head: a review this
+        // Kernel admits leaves its queue in the same transaction. Drop the older Kernel from
+        // recoverMemoryReviews' note with it.
         if (record.state === "resolved" || record.state === "cancelled") continue;
         host.ctx.storage.kv.put(`${QUEUE_KEY_PREFIX}${ownerUid}`, queued.slice(index + 1));
         return true;

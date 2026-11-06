@@ -343,6 +343,7 @@ describe("messenger replies on the event log", () => {
     });
   });
 
+  // TODO(event-log): remove these two tests with onAdapterRouteDelivery.
   it("hands a retry task queued before the log to the log, once", async () => {
     await fixture(async (kernel) => {
       const sent = chat(kernel);

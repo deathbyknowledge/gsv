@@ -271,6 +271,7 @@ export class EventRuntime {
     const late = this.withdrawal(definition, delivery, target, ctx);
     if (late) return { kind: "withdrawn", reason: late };
     if (!definition.admit) return { kind: "refused", reason: `Event type ${event.type} has nothing for a process` };
+    // TODO(event-log): the release after the cutover ships, every delivery goes under deliveryId() again.
     const eventId = delivery.legacyId ?? deliveryId(event.id, delivery.consumer);
     const admitted = definition.admit(event, prepared, ctx, eventId);
     if (isWithdrawn(admitted)) return { kind: "withdrawn", reason: admitted.withdrawn };

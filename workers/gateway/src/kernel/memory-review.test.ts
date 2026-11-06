@@ -141,6 +141,7 @@ describe("archived memory review", () => {
     });
   });
 
+  // TODO(event-log): drop the already-admitted slice with the skip in admitWaitingReview.
   it("admits on start-up a review an older Kernel left waiting, skipping one it had already admitted", async () => {
     const stub = env.KERNEL.get(env.KERNEL.idFromName(crypto.randomUUID()));
     const admitted = slice();

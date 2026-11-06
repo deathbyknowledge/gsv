@@ -109,6 +109,7 @@ describe("event log cutover", () => {
         created_at: at, ...pending("proc:ship", "background", at),
       });
       // A Ship event or wake batch goes under the id its Process deduped it by, in case it already has it.
+      // TODO(event-log): drop legacy_id from this check once a migration drops the column.
       expect(log).toEqual([
         {
           type: "owner.notified", subject: `notice:${NOTICE_ID}`, actor: KERNEL, idempotency_key: NOTICE_ID,

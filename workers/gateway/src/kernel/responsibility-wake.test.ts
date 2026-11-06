@@ -103,6 +103,7 @@ describe("responsibility wakes on the event log", () => {
     });
   });
 
+  // TODO(event-log): remove with PendingDelivery.legacyId.
   it("hands Ship a batch the cutover moved under the id it may already have it by", async () => {
     const { delivered } = ship();
     await fixture(async (kernel) => {

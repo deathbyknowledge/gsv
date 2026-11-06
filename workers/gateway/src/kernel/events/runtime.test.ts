@@ -127,6 +127,7 @@ describe("event runtime", () => {
     });
   });
 
+  // TODO(event-log): remove with PendingDelivery.legacyId.
   it("delivers a row the cutover moved under the id its Process may already have it by", async () => {
     await runWithRealKernelSql(async (sql, storage) => {
       const { runtime } = fixture(storage);

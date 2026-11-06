@@ -51,7 +51,12 @@ export type PendingDelivery = {
   consumer: string;
   lane: string | null;
   attemptCount: number;
-  /** legacy: the id an older Kernel delivered a row the cutover moved under. Remove one release after it. */
+  /**
+   * The id an older Kernel delivered a row the cutover moved under.
+   * TODO(event-log): remove the release after the cutover (Kernel v092) ships, with `legacy_id`
+   * below, the runner's fallback, the moved-batch note in responsibility-runtime.ts, and the
+   * moved-row sentence in docs/architecture/event-log.md.
+   */
   legacyId?: string;
 };
 

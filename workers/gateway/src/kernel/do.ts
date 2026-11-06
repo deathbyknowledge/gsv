@@ -246,6 +246,7 @@ type AuthorizeGitHttpResult =
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
 type KernelTask =
+  // TODO(event-log): remove with AdapterDelivery.onAdapterRouteDelivery, and its schema and case below.
   | { callback: "onAdapterRouteDelivery"; payload: AdapterRouteDeliveryRetry }
   | { callback: "onIpcCallTimeout"; payload: IpcCallTimeout }
   | { callback: "onManagedOutboundEnqueue"; payload: string }

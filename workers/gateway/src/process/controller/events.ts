@@ -56,9 +56,12 @@ export async function deliverProcessEvent(
 }
 
 /**
- * legacy: a call answer or failure notice the Kernel's cutover moved onto its log, which this
- * Process handled before it, by the records it kept then. New calls and notices take new ids,
- * so only a moved one matches. Remove with those records, one release after the cutover.
+ * A call answer or failure notice the Kernel's cutover moved onto its log, which this Process
+ * handled before it, by the records it kept then. New calls and notices take new ids, so only a
+ * moved one matches.
+ * TODO(event-log): remove with its call in deliverProcessEvent the release after the cutover
+ * ships, when Process v019 deletes the records it reads (see schema/migrations.ts), and with
+ * its sentence in docs/architecture/event-log.md.
  */
 function handledBeforeTheLog(host: Process, event: DeliveredEvent): boolean {
   if (event.kind === "ipc.reply" || event.kind === "ipc.timeout") {

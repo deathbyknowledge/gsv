@@ -373,7 +373,7 @@ describe("registered Process events", () => {
     });
   });
 
-  // legacy: what this Process handled before the Kernel's log. Remove with the records they read.
+  // TODO(event-log): remove these two tests with handledBeforeTheLog, the release after the cutover ships.
   it.each(["ipc.reply", "ipc.timeout"] as const)("ignores a moved %s for a call this process handled before the Kernel's log", async (kind) => {
     const pid = `history-events-handled-${kind}`;
     const stub = await initProcess(pid, ROOT_IDENTITY);

@@ -184,8 +184,8 @@ describe("process schema migrations", () => {
     expect(normalizedStatements()).toContain("DELETE FROM process_kv WHERE key = 'processContextFiles'");
   });
 
-  // legacy: answers and failure notices the Kernel's cutover moved are checked against these
-  // records for one release; then a migration removes them.
+  // Answers and failure notices the Kernel's cutover moved are checked against these records.
+  // TODO(event-log): the release after the cutover ships, v019 removes them and this test goes.
   it("keeps the records of handled call answers and failed deliveries", () => {
     expect(normalizedStatements().filter((statement) => /handledIpcCalls|deliveryNotice/u.test(statement))).toEqual([]);
   });

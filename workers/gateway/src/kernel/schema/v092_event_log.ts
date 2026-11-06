@@ -35,6 +35,7 @@ export const KERNEL_V092_EVENT_LOG: SqlMigration = {
     "CREATE INDEX events_created ON events (created_at)",
     "CREATE INDEX events_type_subject_created ON events (type, subject, created_at)",
     "CREATE INDEX events_type_owner_created ON events (type, owner_uid, created_at)",
+    // TODO(event-log): the release after this ships, a new migration drops deliveries.legacy_id.
     `
       CREATE TABLE deliveries (
         seq INTEGER NOT NULL REFERENCES events (seq) ON DELETE CASCADE,

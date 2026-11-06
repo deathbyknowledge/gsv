@@ -168,6 +168,7 @@ describe("contact attention admission", () => {
     });
   });
 
+  // TODO(event-log): drop the stored-words half with the moved-message branch in attention.ts.
   it("withdraws a message its Conversation no longer has, and delivers one queued before the event log from its stored words", async () => {
     await runWithRealKernelSql(async (_sql, storage) => {
       const ctx = context(storage);

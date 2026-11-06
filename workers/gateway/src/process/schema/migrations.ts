@@ -40,6 +40,9 @@ export const PROCESS_MIGRATIONS: readonly SqlMigration[] = [
   PROCESS_V016_CALL_PURPOSE,
   PROCESS_V017_APPROVAL_TARGET,
   PROCESS_V018_OWNER_APPROVAL_POLICY,
+  // TODO(event-log): the release after the Kernel's event log cutover ships, add v019
+  // remove_handled_deliveries, which runs
+  // DELETE FROM process_kv WHERE key IN ('handledIpcCalls', 'deliveryNoticeIds') OR key LIKE 'deliveryNotice:%'
 ];
 
 export function runProcessSqlMigrations(storage: DurableObjectStorage): void {

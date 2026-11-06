@@ -63,6 +63,10 @@ function noticeOutcome(notice: OwnerNotice, ctx: KernelContext) {
  * Sends each owner's notices to their private messenger, unless a client of theirs is active
  * and already shows the change. Records each one for Ship without waking it, as its rule says,
  * including whether the person was told.
+ *
+ * TODO(event-log): when the messenger copy moves onto chat consumers, as a run's replies did,
+ * `onOwnerNotices` goes with its own gate check, scheduling and retries, and so does the retry
+ * state in owner-notice-store.ts. Grouping and rendering stay.
  */
 export class OwnerNoticeRuntime {
   constructor(readonly host: Kernel) {}

@@ -39,6 +39,7 @@ export const responsibilityReadyEvent: EventDefinition = {
   // Checked before Ship is found, so a batch with nothing left starts no Ship.
   withdrawal: (event, ctx) => unsettled(event, ctx).ids.length === 0 ? "its work was settled while it waited" : null,
   // A batch goes by its delivery's id, which a batch an older Kernel had on its way keeps.
+  // TODO(event-log): drop the moved batch from this note with PendingDelivery.legacyId.
   admit(event, _prepared, ctx, batchId) {
     const { ids, ledgerRevision } = unsettled(event, ctx);
     return {

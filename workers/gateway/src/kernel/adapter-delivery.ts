@@ -190,7 +190,10 @@ materializePersonalAdapterFallback(
 
   /**
    * A retry task queued before replies went through the event log hands its reply to the log,
-   * which sends it from a fresh first attempt. Remove once no Kernel can still hold one.
+   * which sends it from a fresh first attempt.
+   * TODO(event-log): remove the release after the cutover ships, with `legacyReply`,
+   * `legacyCommittedSchema`, `AdapterRouteDeliveryRetry` and the task kind in do.ts, plus a
+   * migration deleting any `onAdapterRouteDelivery` task rows still left.
    */
   async onAdapterRouteDelivery(input: AdapterRouteDeliveryRetry): Promise<void> {
     const route = input.route ?? this.host.runRoutes.get(input.runId);

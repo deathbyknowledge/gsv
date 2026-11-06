@@ -102,6 +102,8 @@ const contactMessageBodySchema = z.object({
 }).and(z.union([
   z.object({ sequence: z.number().int().nonnegative() }),
   // Queued for Ship before v092 moved its events into the log: these carry their words.
+  // TODO(event-log): remove with the branch in prepare the release after the cutover ships,
+  // withdrawing any moved message still pending in the same change.
   z.object({ text: z.string(), media: z.array(z.custom<ResourceBlock>((value) => resourceBlockSchema.safeParse(value).success)).optional() }),
 ]));
 
