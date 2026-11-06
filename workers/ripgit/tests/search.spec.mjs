@@ -6,7 +6,8 @@ const PAGES = {
   "pages/people/maria.md": "# Maria\n\nMaria's birthday is 12 May.\nShe prefers calls to texts.\n",
   "pages/people/sofia.md": "# Sofía\n\nEl cumpleaños de Sofía es el 3 de marzo.\n",
   "pages/notes.md": "# Notes\n\nNothing about birthdays here.\n",
-  "src/app.ts": "export function handleSearch() {}\n",
+  "pages/trip.md": "# Trip\n\n✅ Book flights\nBook dinner → Thursday\nDeposit is €20.\nThe taxi takes 20 minutes.\n",
+  "src/app.ts": "export function handleSearch() {}\nconst limit = 30;\n// The limit is 30 rows.\n",
 };
 
 describe("repository search", () => {
@@ -52,6 +53,11 @@ describe("repository search", () => {
     ["cumpleaños sofía", ["pages/people/sofia.md:1", "pages/people/sofia.md:3"]],
     ["sofia", ["pages/people/sofia.md:1", "pages/people/sofia.md:3"]],
     ["handlesearch()", ["src/app.ts:1"]],
+    ["✅", ["pages/trip.md:3"]],
+    ["→", ["pages/trip.md:4"]],
+    ["€20", ["pages/trip.md:5"]],
+    ["✅ book", ["pages/trip.md:3"]],
+    ["limit = 30", ["src/app.ts:2"]],
   ])("finds the lines for %s", async (query, expected) => {
     const matches = await search(query);
     expect(matches.map((match) => `${match.path}:${match.line}`).sort()).toEqual(expected);

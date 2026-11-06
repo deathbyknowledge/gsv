@@ -1339,24 +1339,31 @@ enum SearchPlan {
     Literal(String),
 }
 
-/// `lit:` forces a substring search. A query in FTS5 word syntax runs as
-/// typed, so phrases, `prefix*` and operators keep working; that syntax
-/// accepts non-ASCII letters too. Several words with punctuation, such as
-/// `maria's birthday`, are quoted one by one so FTS5 tokenizes them. A
-/// single punctuated term (`foo.bar`, `snake_case`, `a->b`) stays a
-/// substring search. The column filter keeps file names out of every word.
+/// `lit:` forces a substring search. A query in FTS5 word syntax (letters
+/// and digits in any script, quotes and `*`) runs as typed, so phrases,
+/// `prefix*` and operators keep working. FTS5 drops every other character,
+/// so a single term that holds one (`foo.bar`, `snake_case`, `€20`, `✅`),
+/// or a query with a word that has no letter or digit (`x = 1`, `✅ book`),
+/// stays a substring search. Other words with punctuation, such as
+/// `maria's birthday`, are quoted one by one so FTS5 tokenizes them. The
+/// column filter keeps file names out of every word.
 fn plan_search(query: &str) -> SearchPlan {
     if let Some(needle) = query.strip_prefix("lit:") {
         return SearchPlan::Literal(needle.to_string());
     }
-    let word_syntax = query.bytes().all(
-        |b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b' ' | b'"' | b'*' | 0x80..=0xff),
-    );
+    let word_syntax = query
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '"' | '*'));
     if word_syntax {
         return SearchPlan::Words(format!("{{content}}: ({})", query));
     }
     let words: Vec<&str> = query.split_whitespace().collect();
-    if words.len() > 1 && !query.contains('"') && query.chars().any(char::is_alphanumeric) {
+    if words.len() > 1
+        && !query.contains('"')
+        && words
+            .iter()
+            .all(|word| word.chars().any(char::is_alphanumeric))
+    {
         let quoted: Vec<String> = words.iter().map(|word| format!("\"{}\"", word)).collect();
         return SearchPlan::Words(format!("{{content}}: ({})", quoted.join(" ")));
     }
@@ -1566,8 +1573,8 @@ mod tests {
             words("{content}: (\"maria's\" \"birthday\")"),
         );
         assert_eq!(
-            plan_search("-> maria"),
-            words("{content}: (\"->\" \"maria\")")
+            plan_search("€20 deposit"),
+            words("{content}: (\"€20\" \"deposit\")")
         );
     }
 
@@ -1577,6 +1584,11 @@ mod tests {
         assert_eq!(plan_search("handleSearch()"), literal("handleSearch()"));
         assert_eq!(plan_search("snake_case"), literal("snake_case"));
         assert_eq!(plan_search("-> <-"), literal("-> <-"));
+        assert_eq!(plan_search("-> maria"), literal("-> maria"));
+        assert_eq!(plan_search("x = 1"), literal("x = 1"));
+        assert_eq!(plan_search("✅"), literal("✅"));
+        assert_eq!(plan_search("✅ book"), literal("✅ book"));
+        assert_eq!(plan_search("€20"), literal("€20"));
         assert_eq!(plan_search("say \"hi\"!"), literal("say \"hi\"!"));
         assert_eq!(plan_search("lit:maria birthday"), literal("maria birthday"));
     }
