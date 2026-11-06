@@ -52,7 +52,21 @@ export function setupRequiredDetails(env: { PDS?: unknown }): SetupRequiredDetai
   return { setupMode: true, next: "sys.setup", setupFeatures: setupFeatures(env) };
 }
 
-export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void> {
+const kernelBootstraps = new WeakMap<KernelContext["auth"], Promise<void>>();
+
+/** First-boot provisioning, once per Kernel lifetime; a failure is retried by the next caller. */
+export function ensureKernelBootstrapped(ctx: KernelContext): Promise<void> {
+  const pending = kernelBootstraps.get(ctx.auth);
+  if (pending) return pending;
+  const task = bootstrapKernel(ctx).catch((error) => {
+    kernelBootstraps.delete(ctx.auth);
+    throw error;
+  });
+  kernelBootstraps.set(ctx.auth, task);
+  return task;
+}
+
+async function bootstrapKernel(ctx: KernelContext): Promise<void> {
   await ctx.auth.bootstrap();
   ctx.caps.seed();
   migrateUserPrivateGroups(ctx);
@@ -127,7 +141,7 @@ export async function handleConnect(
     return { ok: false, code: 103, message: "Peer id is required" };
   }
 
-  // First-boot provisioning (SQLite, no R2)
+  // First-boot provisioning, once per Kernel lifetime
   await ensureKernelBootstrapped(ctx);
 
   if (auth.isSetupMode()) {

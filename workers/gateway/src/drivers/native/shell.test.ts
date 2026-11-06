@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../../test-support/peers";
+import { recordStorageCalls } from "../../test-support/storage-calls";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
 import { GsvFs } from "../../fs/gsv-fs";
@@ -218,6 +219,7 @@ function makeContext(options?: {
   identity?: ProcessIdentity;
   media?: InferenceExecutor["media"];
   ripgit?: Fetcher;
+  storage?: R2Bucket;
   requestSignal?: AbortSignal;
 }): KernelContext {
   const identity = options?.identity ?? IDENTITY;
@@ -265,7 +267,7 @@ function makeContext(options?: {
     resolveGids: vi.fn(() => [...identity.gids]),
   };
   const testEnv = focusedFixture<Env>({
-    STORAGE: env.STORAGE,
+    STORAGE: options?.storage ?? env.STORAGE,
     RIPGIT: options?.ripgit ?? focusedFixture<Fetcher>({}),
     LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
   });
@@ -742,6 +744,39 @@ describe("native shell execution", () => {
       status: "completed",
       stdout: "substitution works",
     });
+  });
+
+  it("keeps built-in commands when storage holds files under /usr/bin", async () => {
+    await env.STORAGE.put("usr/bin/marker", "x");
+    try {
+      const result = await handleShellExec({ input: "printf 'a\\nb\\n' | wc -l" }, makeContext());
+      expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(result.stdout.trim()).toBe("2");
+    } finally {
+      await env.STORAGE.delete("usr/bin/marker");
+    }
+  });
+
+  it("looks for commands only where storage can hold them, one round trip each", async () => {
+    const storage = recordStorageCalls(env.STORAGE);
+    const result = await handleShellExec(
+      { input: "echo hi | sed s/hi/ho/" },
+      makeContext({ storage: storage.bucket }),
+    );
+
+    expect(result).toMatchObject({ status: "completed", stdout: "ho\n" });
+    expect(storage.calls.map(({ method, key }) => `${method} ${key}`).sort()).toEqual([
+      "head usr/local/bin/echo",
+      "head usr/local/bin/sed",
+      "list usr/local/bin/echo/",
+      "list usr/local/bin/sed/",
+    ]);
+    for (const name of ["echo", "sed"]) {
+      const head = storage.calls.find((call) => call.method === "head" && call.key === `usr/local/bin/${name}`);
+      const list = storage.calls.find((call) => call.method === "list" && call.key === `usr/local/bin/${name}/`);
+      // The directory listing goes out before the object lookup answers.
+      expect(list?.started).toBeLessThan(head?.settled ?? -1);
+    }
   });
 
   it("keeps command stderr visible on non-zero exits", async () => {

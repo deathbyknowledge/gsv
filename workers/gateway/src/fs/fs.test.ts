@@ -4,7 +4,9 @@ import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
 import type { KernelRefs } from "./index";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { R2MountBackend } from "./backends/r2";
+import type { MountBackend } from "./mount";
 import { BUILTIN_SKILL_NAMES } from "../kernel/sys/builtin-skills";
+import { recordStorageCalls } from "../test-support/storage-calls";
 
 const ROOT: ProcessIdentity = {
   uid: 0,
@@ -654,6 +656,31 @@ describe("GsvFs permissions", () => {
     expect(nested).toMatchObject({ isFile: false, isDirectory: true, isSymbolicLink: false });
   });
 
+  it("checks every folder on a path at once and still follows symlinked folders", async () => {
+    await putFile(`${TEST_PREFIX}deep/a/b/file.txt`, "deep data", { uid: "1000", gid: "1000", mode: "644" });
+    await putFile(`${TEST_PREFIX}real/file.txt`, "linked data", { uid: "1000", gid: "1000", mode: "644" });
+    await makeFs(SAM).symlink(`/${TEST_PREFIX}real`, `/${TEST_PREFIX}deep/a/link`);
+    const storage = recordStorageCalls(env.STORAGE);
+    const fs = new GsvFs(storage.bucket, SAM);
+
+    expect(await fs.readFile(`/${TEST_PREFIX}deep/a/b/file.txt`)).toBe("deep data");
+    const walk = storage.calls.filter((call) => call.method === "head");
+    expect(walk.map((call) => call.key)).toEqual([
+      "test",
+      "test/perms",
+      "test/perms/deep",
+      "test/perms/deep/a",
+      "test/perms/deep/a/b",
+      "test/perms/deep/a/b/file.txt",
+    ]);
+    // Every folder is asked about before the first answer arrives.
+    expect(Math.max(...walk.map((call) => call.started)))
+      .toBeLessThan(Math.min(...walk.map((call) => call.settled ?? Number.POSITIVE_INFINITY)));
+
+    // A symlinked folder partway down still redirects the rest of the path.
+    expect(await fs.readFile(`/${TEST_PREFIX}deep/a/link/file.txt`)).toBe("linked data");
+  });
+
   it("preserves virtual root and etc directories in lstat", async () => {
     const fs = makeConfigBackedFs(SAM, {});
 
@@ -1137,6 +1164,39 @@ describe("GsvFs root path", () => {
     expect(exists).toBe(true);
     expect(stat.isDirectory).toBe(true);
     expect(stat.mode).toBe(0o755);
+  });
+});
+
+describe("GsvFs built-in command directories", () => {
+  it("keeps /bin and /usr/bin out of storage for every account", async () => {
+    await env.STORAGE.put("usr/bin/marker", "x");
+    try {
+      const fs = makeFs(ROOT);
+      await expect(fs.exists("/usr/bin")).resolves.toBe(false);
+      await expect(fs.exists("/usr/bin/marker")).resolves.toBe(false);
+      await expect(fs.readdir("/usr/bin")).rejects.toThrow(/ENOENT/);
+      await expect(fs.readlink("/usr/bin/marker")).rejects.toThrow(/ENOENT/);
+      await expect(fs.search("/usr/bin", "x")).rejects.toThrow(/ENOENT/);
+      await expect(fs.writeFile("/bin/tool", "x")).rejects.toThrow(/EROFS/);
+      await expect(fs.mkdir("/usr/bin", { recursive: true })).rejects.toThrow(/EROFS/);
+      await expect(makeFs(SAM).writeFile("/usr/bin/tool", "x")).rejects.toThrow(/EROFS/);
+      expect(await env.STORAGE.head("bin/tool")).toBeNull();
+      expect(await env.STORAGE.head("usr/bin/tool")).toBeNull();
+    } finally {
+      await env.STORAGE.delete(["usr/bin/marker", "bin/tool", "usr/bin/tool", "usr/bin/.dir"]);
+    }
+  });
+
+  it("leaves look-alike paths and /usr/local/bin in storage", async () => {
+    const fs = makeFs(SAM);
+    try {
+      await fs.writeFile("/usr/local/bin/tool", "echo tool");
+      await fs.writeFile("/binaries/tool", "echo tool");
+      await expect(fs.exists("/usr/local/bin/tool")).resolves.toBe(true);
+      await expect(fs.exists("/binaries/tool")).resolves.toBe(true);
+    } finally {
+      await env.STORAGE.delete(["usr/local/bin/tool", "binaries/tool"]);
+    }
   });
 });
 
@@ -1660,5 +1720,31 @@ describe("GsvFs stat identity", () => {
     expect(again.identity).toBe(first.identity);
     expect(other.identity).not.toBe(first.identity);
     expect((await fs.stat("/")).identity).toBeDefined();
+  });
+});
+
+describe("GsvFs readlink", () => {
+  it("leaves a backend's immediate refusal to the caller", async () => {
+    // SAFETY: readlink reaches only these members of the mounted backend.
+    const home = {
+      handles: (path: string) => path.startsWith("/home/sam/"),
+      async readlink(path: string): Promise<string> {
+        throw new Error(`ENOENT: no such file or directory, readlink '${path}'`);
+      },
+    } as MountBackend;
+    const unhandled: unknown[] = [];
+    const record = (event: PromiseRejectionEvent) => {
+      unhandled.push(event.reason);
+      event.preventDefault();
+    };
+    addEventListener("unhandledrejection", record);
+    try {
+      const fs = new GsvFs(env.STORAGE, SAM, undefined, undefined, null, home);
+      await expect(fs.readlink("/home/sam/missing")).rejects.toThrow("ENOENT");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    } finally {
+      removeEventListener("unhandledrejection", record);
+    }
+    expect(unhandled).toEqual([]);
   });
 });

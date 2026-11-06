@@ -91,7 +91,6 @@ describe("model context", () => {
         runId,
         config: {
           ...terminalTestConfig(pid),
-          skillIndexMode: "off",
           systemContextFiles: [
             {
               name: "10-responsibilities.md",
@@ -240,7 +239,6 @@ describe("model context", () => {
         runId,
         config: {
           ...terminalTestConfig(pid),
-          skillIndexMode: "off",
           systemContextFiles: [
             {
               name: "10-responsibilities.md",
@@ -314,15 +312,6 @@ describe("model context", () => {
             text: "Date: {{current.date}}\nTargets:\n{{devices}}\nMCP:\n{{mcpServers}}",
           },
         ],
-        skillIndexMode: "summary" as const,
-        skillIndex: [
-          {
-            id: "alpha",
-            name: "Alpha",
-            description: "Alpha workflow",
-            source: { kind: "home" as const, label: "home", writable: true },
-          },
-        ],
       };
       const firstSnapshot = {
         targets: [
@@ -336,8 +325,15 @@ describe("model context", () => {
         mcpServers: ["Search"],
         systemContextFiles: config.systemContextFiles,
         system: { timezone: "UTC" },
-        skillIndex: config.skillIndex,
-        skillIndexMode: config.skillIndexMode,
+        skillIndex: [
+          {
+            id: "alpha",
+            name: "Alpha",
+            description: "Alpha workflow",
+            source: { kind: "home" as const, label: "home", writable: true },
+          },
+        ],
+        skillIndexMode: "summary" as const,
       };
       const firstProjection = {
         version: 1 as const,
@@ -352,7 +348,7 @@ describe("model context", () => {
         ],
         mcpServers: firstSnapshot.mcpServers,
         skills: {
-          mode: config.skillIndexMode,
+          mode: firstSnapshot.skillIndexMode,
           entries: [{ id: "alpha", description: "Alpha workflow" }],
         },
       };
@@ -406,7 +402,7 @@ describe("model context", () => {
         ],
         mcpServers: nextSnapshot.mcpServers,
         skills: {
-          mode: config.skillIndexMode,
+          mode: firstSnapshot.skillIndexMode,
           entries: [{ id: "beta", description: "Beta workflow" }],
         },
       };
@@ -489,7 +485,6 @@ describe("model context", () => {
       });
       const config = {
         ...terminalTestConfig(pid),
-        skillIndexMode: "off" as const,
         systemContextFiles: [{ name: "00-test.md", text: "current prompt" }],
       };
       const snapshot = {
@@ -553,7 +548,6 @@ describe("model context", () => {
       });
       const configA = {
         ...terminalTestConfig(pid),
-        skillIndexMode: "off",
         systemContextFiles: [{ name: "00-test.md", text: "epoch alpha" }],
       };
       const runA = {
@@ -939,6 +933,51 @@ describe("model context", () => {
 
       process.runs.active = null;
       releaseContext();
+      await ticking;
+    });
+  });
+
+  it("asks the Kernel for configuration, tools and context at once on a run's first tick", async () => {
+    const pid = "mech-run-inputs-together";
+    const runId = "run-inputs-together";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      const { promise: configBlocked, resolve: releaseConfig } = deferred();
+      const started: string[] = [];
+      process.settings.resolveAiConfig = vi.fn(async () => {
+        started.push("ai.config");
+        await configBlocked;
+        return terminalTestConfig(pid);
+      });
+      process.kernel.kernelRpc = vi.fn(async (call: string) => {
+        if (call === "ai.tools") {
+          started.push("ai.tools");
+          return { tools: [], devices: [], mcpServers: [] };
+        }
+        return responsibilityKernelResult(call);
+      });
+      process.settings.resolveAiContext = vi.fn(async () => {
+        started.push("ai.context");
+        return {
+          targets: [],
+          mcpServers: [],
+          system: { timezone: "UTC" },
+          skillIndex: [],
+          skillIndexMode: "summary",
+        };
+      });
+      process.run.scheduleTick = vi.fn(async () => {});
+      process.sendSignal = vi.fn(async () => {});
+      process.store.messages.appendMessage("user", "Read the inputs together.", { runId });
+      process.runs.active = { runId };
+
+      const ticking = process.run.runTick(runId);
+      // Tools and context are already asked for while configuration is still loading.
+      await vi.waitFor(() => expect([...started].sort()).toEqual(["ai.config", "ai.context", "ai.tools"]));
+
+      process.runs.active = null;
+      releaseConfig();
       await ticking;
     });
   });

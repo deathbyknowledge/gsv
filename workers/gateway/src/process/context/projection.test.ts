@@ -195,6 +195,17 @@ describe("context epoch projection", () => {
     expect(otherChanges.runtime.date).toBe("Saturday, 2026-08-29");
   });
 
+  it("starts an unreadable skill catalog in its configured mode without inventing skills", () => {
+    const projection = createContextProjection({
+      mcpServers: [],
+      system: { timezone: "UTC" },
+      skillIndexMode: "names",
+    }, new Date("2026-08-28T12:00:00Z"), { targets: [{ id: "laptop", implements: ["shell.exec"] }] });
+
+    expect(projection.skills).toEqual({ mode: "names", entries: [] });
+    expect(projection.targets).toMatchObject([{ id: "laptop" }]);
+  });
+
   it("starts an unavailable target catalog without inventing a prior target", () => {
     const projection = createContextProjection({
       mcpServers: [],

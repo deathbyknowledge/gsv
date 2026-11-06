@@ -2,7 +2,7 @@
 
 import type { ExecutionDeadline } from "../../shared/execution-deadline";
 import type {
-  AiConfigResult, ConversationMessage, JsonObject, ProcArchiveEntry, ProcContextState, ProcMediaInput, ProcToolResultOutcome,
+  AiConfigResult, AiContextResult, ConversationMessage, JsonObject, ProcArchiveEntry, ProcContextState, ProcMediaInput, ProcToolResultOutcome,
 } from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, Context, ThinkingContent, Tool, ToolCall } from "@humansandmachines/gsv/services/inference-context";
 import type { AssistantTurnClassification } from "../run-tick-policy";
@@ -51,6 +51,8 @@ export type RunTickInputs = {
   activeConfig: AiConfigResult;
   workTools: Tool[];
   tools: Tool[];
+  /** Context asked for alongside configuration and tools; the tick's first context build uses it. */
+  contextSnapshot?: Promise<AiContextResult>;
 };
 
 export type RunTickContextState = RunTickInputs & {

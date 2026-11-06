@@ -281,7 +281,7 @@ export function renderSkillMarkdown(input: {
 }
 
 export function renderSkillIndex(
-  entries: SkillIndexEntry[],
+  entries: Pick<SkillIndexEntry, "id" | "description">[],
   mode: Exclude<AiSkillIndexMode, "off"> = "summary",
 ): string {
   if (entries.length === 0) {
@@ -303,7 +303,7 @@ export function renderSkillIndex(
 }
 
 function formatPromptSkillEntry(
-  entry: SkillIndexEntry,
+  entry: Pick<SkillIndexEntry, "id" | "description">,
   mode: Exclude<AiSkillIndexMode, "off">,
 ): string {
   return [
@@ -331,25 +331,22 @@ async function collectRipgitRuntimeSkillFiles(
   homeLayers: SkillHomeLayer[],
   options: SkillCollectionOptions,
 ): Promise<ParsedSkillFile[]> {
-  const files: ParsedSkillFile[] = [];
+  // Homes are separate repositories, so read them together; layer order still decides precedence.
+  const layers = await Promise.all(homeLayers.map((layer) => collectRipgitSkillFiles(
+    ripgit,
+    accountHomeRepoRef(layer.identity.username),
+    "skills.d",
+    {
+      kind: "home",
+      label: layer.label,
+      writable: true,
+    },
+    `${layer.identity.home}/skills.d`,
+    undefined,
+    options,
+  )));
 
-  for (const layer of homeLayers) {
-    files.push(...await collectRipgitSkillFiles(
-      ripgit,
-      accountHomeRepoRef(layer.identity.username),
-      "skills.d",
-      {
-        kind: "home",
-        label: layer.label,
-        writable: true,
-      },
-      `${layer.identity.home}/skills.d`,
-      undefined,
-      options,
-    ));
-  }
-
-  return files;
+  return layers.flat();
 }
 
 function filesystemSkillRoots(
@@ -530,21 +527,18 @@ async function collectRipgitSkillFiles(
   idPrefix?: string,
   options: SkillCollectionOptions = { includeNested: true },
 ): Promise<ParsedSkillFile[]> {
-  const files: ParsedSkillFile[] = [];
-  await walkRipgitSkillRoot(
+  return walkRipgitSkillRoot(
     ripgit,
     repo,
     trimSlashes(rootPath),
     "",
     source,
     trimTrailingSlash(virtualRoot),
-    files,
     undefined,
     0,
     idPrefix,
     options,
   );
-  return files;
 }
 
 async function walkRipgitSkillRoot(
@@ -554,87 +548,90 @@ async function walkRipgitSkillRoot(
   relativePath: string,
   source: SkillSource,
   virtualRoot: string,
-  files: ParsedSkillFile[],
   parentId: string | undefined,
   depth: number,
   idPrefix?: string,
   options: SkillCollectionOptions = { includeNested: true },
-): Promise<void> {
+): Promise<ParsedSkillFile[]> {
   if (depth > MAX_SKILL_WALK_DEPTH) {
-    return;
+    return [];
   }
 
   const tree = await readRipgitSkillPath(ripgit, repo, absolutePath, options);
   if (tree.kind !== "tree") {
-    return;
+    return [];
   }
 
-  for (const entry of tree.entries.sort((left, right) => left.name.localeCompare(right.name))) {
+  // Every skill is its own read, so read them together; name order still decides precedence.
+  const entries = tree.entries.sort((left, right) => left.name.localeCompare(right.name));
+  const collected = await Promise.all(entries.map(async (entry): Promise<ParsedSkillFile[]> => {
     const path = joinPath(absolutePath, entry.name);
     const rel = relativePath ? `${relativePath}/${entry.name}` : entry.name;
     if (entry.type === "blob" && entry.name.endsWith(".md") && entry.name !== "DESCRIPTION.md" && entry.name !== "SKILL.md") {
       const file = await readRipgitSkillPath(ripgit, repo, path, options);
-      if (file.kind === "file") {
-        const content = decodeTextFile(file.bytes);
-        if (content !== null) {
-          const skillFile = createSkillFile({
-            fallbackName: fallbackSkillName(rel),
-            content,
-            path: `${virtualRoot}/${rel}`,
-            source,
-            parentId,
-            depth,
-            idPrefix,
-          });
-          if (skillFile) {
-            files.push(skillFile);
-          }
-        }
-      }
-      continue;
-    }
-    if (entry.type === "tree") {
-      const skillPath = joinPath(path, "SKILL.md");
-      const file = await readRipgitSkillPath(ripgit, repo, skillPath, options);
       if (file.kind !== "file") {
-        continue;
+        return [];
       }
       const content = decodeTextFile(file.bytes);
       if (content === null) {
-        continue;
+        return [];
       }
-
       const skillFile = createSkillFile({
-        fallbackName: fallbackSkillName(`${rel}/SKILL.md`),
+        fallbackName: fallbackSkillName(rel),
         content,
-        path: `${virtualRoot}/${rel}/SKILL.md`,
+        path: `${virtualRoot}/${rel}`,
         source,
         parentId,
         depth,
         idPrefix,
       });
-      if (!skillFile) {
-        continue;
-      }
-      files.push(skillFile);
-
-      if (options.includeNested) {
-        await walkRipgitSkillRoot(
-          ripgit,
-          repo,
-          joinPath(path, "skills.d"),
-          `${rel}/skills.d`,
-          source,
-          virtualRoot,
-          files,
-          skillFile.idBase,
-          depth + 1,
-          idPrefix,
-          options,
-        );
-      }
+      return skillFile ? [skillFile] : [];
     }
-  }
+    if (entry.type !== "tree") {
+      return [];
+    }
+    const skillPath = joinPath(path, "SKILL.md");
+    const file = await readRipgitSkillPath(ripgit, repo, skillPath, options);
+    if (file.kind !== "file") {
+      return [];
+    }
+    const content = decodeTextFile(file.bytes);
+    if (content === null) {
+      return [];
+    }
+
+    const skillFile = createSkillFile({
+      fallbackName: fallbackSkillName(`${rel}/SKILL.md`),
+      content,
+      path: `${virtualRoot}/${rel}/SKILL.md`,
+      source,
+      parentId,
+      depth,
+      idPrefix,
+    });
+    if (!skillFile) {
+      return [];
+    }
+    if (!options.includeNested) {
+      return [skillFile];
+    }
+    return [
+      skillFile,
+      ...await walkRipgitSkillRoot(
+        ripgit,
+        repo,
+        joinPath(path, "skills.d"),
+        `${rel}/skills.d`,
+        source,
+        virtualRoot,
+        skillFile.idBase,
+        depth + 1,
+        idPrefix,
+        options,
+      ),
+    ];
+  }));
+  return collected.flat();
 }
 
 async function readRipgitSkillPath(

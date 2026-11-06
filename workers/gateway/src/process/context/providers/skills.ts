@@ -5,14 +5,14 @@ export function createSkillIndexProvider(): PromptContextProvider {
   return {
     name: "available.skills",
     async collect(input) {
-      const mode = input.config.skillIndexMode ?? "summary";
+      const { mode, entries } = input.skills;
       if (mode === "off") {
         return [];
       }
       return [
         {
           name: "available.skills",
-          text: renderSkillIndex(input.config.skillIndex ?? [], mode),
+          text: renderSkillIndex(entries, mode),
         },
       ];
     },
