@@ -349,7 +349,9 @@ export class GsvFs implements IFileSystem {
     if (!backend.readlink) {
       throw new Error(`EINVAL: invalid argument, readlink '${p}'`);
     }
-    return backend.readlink(p);
+    // Await rather than return: workerd reports a backend's immediate rejection as
+    // unhandled before a returned promise is adopted.
+    return await backend.readlink(p);
   }
 
   async realpath(path: string): Promise<string> {
