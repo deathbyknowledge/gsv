@@ -13,6 +13,9 @@ tokio-tungstenite = { version = "0.24", default-features = false, features = ["c
 tokio-util = { version = "0.7", features = ["io", "rt"] }
 uuid = { version = "1", features = ["v4"] }
 
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+
 [features]
 default = ["native-tls"]
 native-tls = ["tokio-tungstenite/native-tls"]

@@ -624,6 +624,7 @@ pub async fn run(
                 keepalive_seconds = keepalive_interval.as_secs(),
             );
             let mut next_keepalive_at = tokio::time::Instant::now() + keepalive_interval;
+            let mut suspend = SuspendWatch::new();
 
             // Monitor for disconnection or Ctrl+C
             loop {
@@ -647,6 +648,11 @@ pub async fn run(
                                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {}
                             }
                             break; // Break inner loop to reconnect
+                        }
+
+                        if suspend.resumed() {
+                            info!(event = "system.resumed");
+                            next_keepalive_at = tokio::time::Instant::now();
                         }
 
                         let flushed = flush_exec_event_outbox(&conn, &exec_event_outbox).await;
@@ -682,7 +688,7 @@ pub async fn run(
                                     conn.close();
                                     shutdown_device!("control")
                                 },
-                                result = tokio::time::timeout(keepalive_timeout, conn.send_ping(payload)) => result,
+                                result = tokio::time::timeout(keepalive_timeout, conn.ping(payload)) => result,
                             };
 
                             match keepalive {
@@ -730,6 +736,40 @@ pub async fn run(
     };
 
     run.instrument(device_span).await
+}
+
+/// Notices that the machine slept between two observations. Tokio timers
+/// follow a clock that stops during suspend on Linux and macOS, so without
+/// this the keepalive would wait a full interval of awake time before testing
+/// a socket that died while the machine was asleep.
+struct SuspendWatch {
+    wall: std::time::SystemTime,
+    monotonic: std::time::Instant,
+}
+
+impl SuspendWatch {
+    /// Larger than any scheduling delay of the one-second tick, smaller than
+    /// any sleep worth noticing. A wall clock step forward only costs a ping.
+    const THRESHOLD: std::time::Duration = std::time::Duration::from_secs(10);
+
+    fn new() -> Self {
+        Self {
+            wall: std::time::SystemTime::now(),
+            monotonic: std::time::Instant::now(),
+        }
+    }
+
+    fn resumed(&mut self) -> bool {
+        self.observe(std::time::SystemTime::now(), std::time::Instant::now())
+    }
+
+    fn observe(&mut self, wall: std::time::SystemTime, monotonic: std::time::Instant) -> bool {
+        let wall_elapsed = wall.duration_since(self.wall).unwrap_or_default();
+        let monotonic_elapsed = monotonic.saturating_duration_since(self.monotonic);
+        self.wall = wall;
+        self.monotonic = monotonic;
+        wall_elapsed > monotonic_elapsed + Self::THRESHOLD
+    }
 }
 
 /// A spawned task that must not outlive the driver that started it.
@@ -1484,6 +1524,7 @@ fn skipped_notice(release: &str, error: &UpdateError) -> daemon_protocol::Diagno
 mod tests {
     use super::*;
     use crate::update::ReleaseChannel;
+
     use gateway_client::protocol::{
         ConnectedPeer, PeerGrant, PeerPrincipal, PeerPrincipalKind, ProcessIdentity, ServerInfo,
     };
@@ -1520,6 +1561,27 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[test]
+    fn suspend_watch_notices_wall_time_that_passed_while_asleep() {
+        let mut watch = SuspendWatch::new();
+        let wall = watch.wall;
+        let monotonic = watch.monotonic;
+        let tick = std::time::Duration::from_secs(1);
+
+        assert!(!watch.observe(wall + tick, monotonic + tick));
+        assert!(watch.observe(
+            wall + tick + std::time::Duration::from_secs(3600),
+            monotonic + tick + tick,
+        ));
+        // The next ordinary tick is measured from the wake, not the sleep.
+        assert!(!watch.observe(
+            wall + tick * 3 + std::time::Duration::from_secs(3600),
+            monotonic + tick * 3,
+        ));
+        // A wall clock stepped backwards is never a wake.
+        assert!(!watch.observe(wall, monotonic + tick * 4));
     }
 
     #[tokio::test]
