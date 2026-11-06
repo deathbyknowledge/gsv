@@ -153,7 +153,11 @@ producer switch and tail consumer; schema support alone does not export anything
 without granting those adapters ownership of another component's application events.
 
 - Gateway: terminal runs, compaction completion and failure stage, delegation,
-  committed messages, target/adapter connection and adapter transport outcomes.
+  committed messages, target/adapter connection, adapter transport outcomes and
+  contact invitations. `contact.invite.created` counts an invitation link the
+  Ship issued and `contact.invite.accepted` the first time another Ship
+  accepted one; both carry no properties and are recorded for the issuing Ship
+  only, so the other Ship, its handle and the link never enter a record.
   `delegation.finished` distinguishes `aborted` child runs from `failed` work,
   including when completion delivery is recovered after a Kernel restart.
   Terminal adapter delivery failures report the route/media/adapter stage,
@@ -192,9 +196,13 @@ without granting those adapters ownership of another component's application eve
   never reported.
 - Accounts: activation and attribution. `installation.attributed` is reported
   once when a self-service signup completes onboarding (a Ship an operator
-  created or reset reports nothing), with `origin: "website"` and a closed
-  placement class (`hero`, `final-call`, `example` or `other`) and, for example
-  cards, a closed example id, or `origin: "direct"` when there were none. The
+  created or reset reports nothing), with `origin: "invite"` when the signup
+  carried another Ship's contact invitation that Accounts resolved, otherwise
+  `origin: "website"` with a closed placement class (`hero`, `final-call`,
+  `example` or `other`) and, for example cards, a closed example id, or
+  `origin: "direct"` when there were none. Which Ship invited the new one stays
+  in Accounts; the record never names it, so two installations' product series
+  cannot be joined through it. The
   signup page reads the website's slugs from the signup link's fragment in the
   browser and keeps them in its own signup state until the space request; the
   owner API bounds their shape and classifies them into the allowlist before

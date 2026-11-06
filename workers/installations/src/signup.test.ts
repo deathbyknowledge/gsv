@@ -185,3 +185,63 @@ describe("signup attribution", () => {
     expect(stored!.attribution_json).toBeNull();
   });
 });
+
+describe("signup inviter", () => {
+  async function ship(state: "active" | "restricted" = "active", principalId?: string) {
+    const ownerId = principalId ?? await owner();
+    const space = await accounts.reserveInstallation({ principalId: ownerId, operationId: crypto.randomUUID(), handle: handle() });
+    await db.batch([
+      db.prepare("UPDATE installations SET state = ? WHERE id = ?").bind(state, space.installationId),
+      db.prepare("UPDATE hostnames SET state = 'active' WHERE installation_id = ?").bind(space.installationId),
+    ]);
+    return { installationId: space.installationId, hostname: `${space.handle}.example.com` };
+  }
+  const inviterOf = async (operationId: string) => (await db.prepare(
+    "SELECT inviter_installation_id, attribution_json FROM provisioning_operations WHERE operation_id = ?",
+  ).bind(operationId).first<{ inviter_installation_id: string | null; attribution_json: string | null }>())!;
+
+  it("records an active Ship someone else owns, next to the website origin", async () => {
+    const inviter = await ship();
+    const principalId = await owner(), operationId = crypto.randomUUID();
+    await signup.prepare(operationId, principalId, handle(), { placement: "hero" }, inviter.hostname);
+    const stored = await inviterOf(operationId);
+    expect(stored.inviter_installation_id).toBe(inviter.installationId);
+    expect(JSON.parse(stored.attribution_json!)).toEqual({ placement: "hero" });
+  });
+
+  it("drops an unknown or inactive Ship without failing the signup", async () => {
+    const restricted = await ship("restricted");
+    for (const hostname of ["nobody-here.example.com", restricted.hostname]) {
+      const principalId = await owner(), operationId = crypto.randomUUID();
+      await expect(signup.prepare(operationId, principalId, handle(), undefined, hostname)).resolves.toMatchObject({ onboardingToken: expect.any(String) });
+      expect((await inviterOf(operationId)).inviter_installation_id).toBeNull();
+    }
+  });
+
+  it("never records a Ship as inviting its own owner, and keeps a reservation whose inviter vanished", async () => {
+    const principalId = await owner();
+    const own = await ship("active", principalId);
+    // Operator allocation has no one-Ship limit, so the owner's own Ship can be offered as inviter and must be dropped by the insert.
+    const operationId = crypto.randomUUID();
+    await accounts.reserveInstallation({ principalId, operationId, handle: handle(), inviterInstallationId: own.installationId });
+    expect((await inviterOf(operationId)).inviter_installation_id).toBeNull();
+    // An inviter erased between the lookup and the write leaves the reservation intact, without an inviter.
+    const gone = crypto.randomUUID();
+    await expect(accounts.reserveInstallation({ principalId, operationId: gone, handle: handle(), inviterInstallationId: "inst_gone" }))
+      .resolves.toMatchObject({ state: "reserved" });
+    expect((await inviterOf(gone)).inviter_installation_id).toBeNull();
+  });
+
+  it("keeps the first request's inviter when a resumed signup carries another or none", async () => {
+    const first = await ship(), second = await ship();
+    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
+    await signup.prepare(operationId, principalId, name, undefined, first.hostname);
+    await signup.prepare(operationId, principalId, name, undefined, second.hostname);
+    await signup.prepare(operationId, principalId, name);
+    expect((await inviterOf(operationId)).inviter_installation_id).toBe(first.installationId);
+    const directOwner = await owner(), direct = crypto.randomUUID(), directName = handle();
+    await signup.prepare(direct, directOwner, directName);
+    await signup.prepare(direct, directOwner, directName, undefined, first.hostname);
+    expect((await inviterOf(direct)).inviter_installation_id).toBeNull();
+  });
+});

@@ -123,6 +123,28 @@ describe("Ship page", () => {
     expect(body).not.toContain("Installation ID");
   });
 
+  it("shows who invited the Ship, how many it invited and where each Ship came from", async () => {
+    const ships = stack();
+    const { http, service } = ships;
+    const inviterId = await createShip(http, service, "inviter-page");
+    await activate(ships, inviterId);
+    const invitedId = await createShip(http, service, "invited-page");
+    await env.INSTALLATIONS_DB.prepare("UPDATE provisioning_operations SET inviter_installation_id = ? WHERE installation_id = ? AND kind = 'create'")
+      .bind(inviterId, invitedId).run();
+    await activate(ships, invitedId);
+
+    const invited = await page(http, `/admin/installations/${invitedId}`);
+    expect(invited).toContain(`<dt>Invited by</dt><dd><a href="/admin/installations/${inviterId}">inviter-page</a></dd>`);
+    expect(invited).toContain("<dt>Invited</dt><dd>0 Ships (0 active)</dd>");
+    const inviter = await page(http, `/admin/installations/${inviterId}`);
+    expect(inviter).not.toContain("Invited by");
+    expect(inviter).toContain("<dt>Invited</dt><dd>1 Ship (1 active)</dd>");
+    const list = await page(http, "/admin/installations?q=-page");
+    expect(list).toContain("<th>Source</th>");
+    expect(list).toMatch(/invited-page[\s\S]*?<td>invite<\/td>/);
+    expect(list).toMatch(/inviter-page[\s\S]*?<td>direct<\/td>/);
+  });
+
   it("still renders the Ship when its health cannot be read", async () => {
     const { http, service } = stack();
     const installationId = await createShip(http, service, "nohealth");

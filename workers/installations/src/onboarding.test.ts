@@ -222,11 +222,12 @@ describe("installation onboarding claims", () => {
 });
 
 describe("activation attribution", () => {
-  async function activate(suffix: string, attribution: string | null, ownerSetup = true) {
+  async function activate(suffix: string, attribution: string | null, inviterInstallationId: string | null = null, ownerSetup = true) {
     const fixture = await provisioningInstallation(suffix);
     const onboarding = new InstallationOnboardingStore(env.INSTALLATIONS_DB, fixture.accounts, undefined, { GSV_TELEMETRY_ENABLED: "1" });
     await env.INSTALLATIONS_DB.batch([
-      env.INSTALLATIONS_DB.prepare("UPDATE provisioning_operations SET attribution_json = ? WHERE installation_id = ?").bind(attribution, fixture.installationId),
+      env.INSTALLATIONS_DB.prepare("UPDATE provisioning_operations SET attribution_json = ?, inviter_installation_id = ? WHERE installation_id = ?")
+        .bind(attribution, inviterInstallationId, fixture.installationId),
       env.INSTALLATIONS_DB.prepare("UPDATE installations SET owner_setup = ? WHERE id = ?").bind(ownerSetup ? 1 : 0, fixture.installationId),
     ]);
     const issued = await onboarding.issue(fixture.installationId);
@@ -239,7 +240,7 @@ describe("activation attribution", () => {
     } finally {
       log.mockRestore();
     }
-    return { installationId: fixture.installationId, records: logged.flatMap((value) => {
+    return { installationId: fixture.installationId, serialized: JSON.stringify(logged), records: logged.flatMap((value) => {
       const record = telemetryRecordSchema.safeParse(value);
       return record.success ? [record.data] : [];
     }) };
@@ -253,9 +254,9 @@ describe("activation attribution", () => {
   });
 
   it("reports nothing for a Ship an operator created or reset, which was never a signup here", async () => {
-    const operator = await activate("operator-made", null, false);
+    const operator = await activate("operator-made", null, null, false);
     expect(operator.records).toEqual([]);
-    const reset = await activate("reset-replacement", JSON.stringify({ placement: "hero" }), false);
+    const reset = await activate("reset-replacement", JSON.stringify({ placement: "hero" }), null, false);
     expect(reset.records).toEqual([]);
   });
 
@@ -266,5 +267,22 @@ describe("activation attribution", () => {
     expect((await activate("malformed", JSON.stringify({ placement: "hero-heading", visitorId: "abc" }))).records.map((record) => record.event)).toEqual([
       { stream: "product", name: "installation.attributed", properties: { origin: "direct" } },
     ]);
+  });
+
+  it("reports an invited signup without naming the inviter, keeping the website placement it also carried", async () => {
+    const inviter = await provisioningInstallation("inviter");
+    await env.INSTALLATIONS_DB.prepare("UPDATE installations SET state = 'active' WHERE id = ?").bind(inviter.installationId).run();
+    const invited = await activate("invited", null, inviter.installationId);
+    expect(invited.records.map((record) => record.event)).toEqual([
+      { stream: "product", name: "installation.attributed", properties: { origin: "invite" } },
+    ]);
+    const both = await activate("invited-website", JSON.stringify({ placement: "example", example: "tickets" }), inviter.installationId);
+    expect(both.records.map((record) => record.event)).toEqual([
+      { stream: "product", name: "installation.attributed", properties: { origin: "invite", placement: "example", example: "tickets" } },
+    ]);
+    for (const { serialized } of [invited, both]) {
+      expect(serialized).not.toContain(inviter.installationId);
+      expect(serialized).not.toContain("onboarding-inviter");
+    }
   });
 });

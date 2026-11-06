@@ -163,6 +163,8 @@ function identityPanel(installation: AdminInstallation, context?: ShipContext): 
       <dt>Provisioning</dt><dd>${stateBadge(installation.operationState)}</dd>
       <dt>Created</dt><dd>${formatDate(installation.createdAt)}</dd>
       <dt>Activated</dt><dd>${formatDate(installation.activatedAt)}</dd>
+      ${installation.invitedBy ? `<dt>Invited by</dt><dd><a href="/admin/installations/${encodeURIComponent(installation.invitedBy.installationId)}">${escapeHtml(installation.invitedBy.handle)}</a></dd>` : ""}
+      <dt>Invited</dt><dd>${formatInteger(installation.invitations.total)} ${installation.invitations.total === 1 ? "Ship" : "Ships"} (${formatInteger(installation.invitations.active)} active)</dd>
       ${installation.reset ? `<dt>Reset from</dt><dd>${escapeHtml(installation.reset.previousInstallationId)}</dd><dt>Old data deletion</dt><dd>${stateBadge(installation.reset.dataDeletionState)}</dd>` : ""}
     </dl>
   </section>`;
@@ -253,7 +255,7 @@ function installationTable<Summary extends AdminInstallationSummary>(
   if (installations.length === 0) {
     return `<div class="empty">No Ships match this view.</div>`;
   }
-  return `<div class="table-wrap"><table><thead><tr><th>Ship</th><th>State</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}<th>Created</th></tr></thead>
+  return `<div class="table-wrap"><table><thead><tr><th>Ship</th><th>State</th><th>Source</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}<th>Created</th></tr></thead>
     <tbody>${installations.map((installation) => installationRow(installation, column)).join("")}</tbody></table></div>`;
 }
 
@@ -265,6 +267,7 @@ function installationRow<Summary extends AdminInstallationSummary>(
   return `<tr>
     <td><strong><a href="${href}">${escapeHtml(installation.handle)}</a></strong><small>${escapeHtml(installation.installationId)}</small></td>
     <td>${stateBadge(installation.state)}<small>provisioning: ${escapeHtml(installation.operationState)}</small></td>
+    <td>${escapeHtml(installation.origin)}</td>
     ${column ? `<td>${column.render(installation)}</td>` : ""}
     <td>${formatDate(installation.createdAt)}</td>
   </tr>`;

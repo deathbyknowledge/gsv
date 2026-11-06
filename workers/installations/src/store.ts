@@ -122,6 +122,12 @@ export class AccountStore {
     allowReservedHandle?: boolean;
     /** Where the signup link was clicked, already classified; written with the reservation, never updated. */
     attribution?: SignupAttribution;
+    /**
+     * The Ship the signup's contact invitation named, resolved by Accounts and never taken from a
+     * request body as an id. The insert itself keeps it only while it is an active installation someone
+     * else owns, so an inviter erased in between leaves the reservation intact without an inviter.
+     */
+    inviterInstallationId?: string;
   }): Promise<InstallationReservation> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
     const operationId = parseOpaqueId(input.operationId, "operationId");
@@ -184,9 +190,11 @@ export class AccountStore {
         this.db.prepare(
           `INSERT INTO provisioning_operations (
              operation_id, installation_id, principal_id, kind, state,
-             attempt, last_error, updated_at, attribution_json
-           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?, ?)`,
-        ).bind(operationId, identity.installationId, principalId, now, input.attribution ? JSON.stringify(input.attribution) : null),
+             attempt, last_error, updated_at, attribution_json, inviter_installation_id
+           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?, ?,
+             (SELECT id FROM installations WHERE id = ? AND state = 'active' AND owner_principal_id != ?))`,
+        ).bind(operationId, identity.installationId, principalId, now, input.attribution ? JSON.stringify(input.attribution) : null,
+          input.inviterInstallationId ?? null, principalId),
       ]);
     } catch (error) {
       const replay = await this.getReservationByOperation(operationId);
@@ -379,17 +387,43 @@ export class AccountStore {
          JOIN installations i ON i.id = r.previous_installation_id
          WHERE r.operation_id = ? AND r.replacement_installation_id = ?`,
       ).bind(now, operationId, replacement.installationId),
+      // The replacement continues the same person's Ship: it takes over the signup
+      // origin and inviter recorded for the old installation and the invitees that
+      // named it, so those facts outlive the old installation's cleanup. It reports
+      // no attribution of its own: it is not an owner signup.
       this.db.prepare(
         `INSERT INTO provisioning_operations (
            operation_id, installation_id, principal_id, kind, state,
-           attempt, last_error, updated_at
+           attempt, last_error, updated_at, attribution_json, inviter_installation_id
          )
          SELECT r.operation_id, r.replacement_installation_id,
-                i.owner_principal_id, 'create', 'reserved', 0, NULL, ?
+                i.owner_principal_id, 'create', 'reserved', 0, NULL, ?,
+                (SELECT p.attribution_json FROM provisioning_operations p
+                 WHERE p.installation_id = r.previous_installation_id AND p.kind = 'create'
+                 ORDER BY p.updated_at DESC LIMIT 1),
+                (SELECT p.inviter_installation_id FROM provisioning_operations p
+                 WHERE p.installation_id = r.previous_installation_id AND p.kind = 'create'
+                 ORDER BY p.updated_at DESC LIMIT 1)
          FROM installation_reset_operations r
          JOIN installations i ON i.id = r.previous_installation_id
          WHERE r.operation_id = ? AND r.replacement_installation_id = ?`,
       ).bind(now, operationId, replacement.installationId),
+      // Moved, not copied: the old installation no longer counts as the invitee.
+      // Clearing an inviter is the one update the retirement fence admits.
+      this.db.prepare(
+        `UPDATE provisioning_operations SET inviter_installation_id = NULL
+         WHERE installation_id = ? AND kind = 'create' AND inviter_installation_id IS NOT NULL
+           AND EXISTS (SELECT 1 FROM installation_reset_operations
+                       WHERE operation_id = ? AND replacement_installation_id = ?)`,
+      ).bind(previousInstallationId, operationId, replacement.installationId),
+      // Invitees follow the person to the replacement; one already retiring is left to its erasure.
+      this.db.prepare(
+        `UPDATE provisioning_operations SET inviter_installation_id = ?
+         WHERE inviter_installation_id = ?
+           AND NOT EXISTS (SELECT 1 FROM installation_account_deletions d WHERE d.installation_id = provisioning_operations.installation_id)
+           AND EXISTS (SELECT 1 FROM installation_reset_operations
+                       WHERE operation_id = ? AND replacement_installation_id = ?)`,
+      ).bind(replacement.installationId, previousInstallationId, operationId, replacement.installationId),
       ...participants.map((participant) => this.db.prepare(
         `INSERT INTO installation_reset_participants (
            operation_id, participant_id, state, updated_at

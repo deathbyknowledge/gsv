@@ -39,7 +39,7 @@ export class InstallationSignup {
       UNION ALL SELECT 1 FROM username_policy WHERE normalized_handle = ? LIMIT 1`).bind(handle, normalizeUsernamePolicy(handle)).first();
   }
 
-  async prepare(operationIdValue: string, principalIdValue: string, handle: string, attribution?: SignupAttribution, productEmails?: ProductEmailChoice, ip?: string) {
+  async prepare(operationIdValue: string, principalIdValue: string, handle: string, attribution?: SignupAttribution, inviter?: string, productEmails?: ProductEmailChoice, ip?: string) {
     const operationId = parseOpaqueId(operationIdValue, "operationId");
     const principalId = parseOpaqueId(principalIdValue, "principalId");
     const principal = await this.accounts.getPrincipal(principalId);
@@ -49,7 +49,8 @@ export class InstallationSignup {
     if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
     // The origin is written with the reservation itself, so the request that reserves the operation
     // sets it once and a retry or resumed signup can neither lose nor rewrite it.
-    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true, attribution });
+    const inviterInstallationId = !existing && inviter ? await this.inviterInstallation(inviter) : undefined;
+    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true, attribution, inviterInstallationId });
     const owned = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_setup = 1 AND owner_principal_id = ?")
       .bind(space.installationId, principalId).first();
     if (!owned) throw new Error("Ship activation is unavailable.");
@@ -73,5 +74,14 @@ export class InstallationSignup {
         } } });
       throw new Error(`Ship activation failed. Try again. Reference: ${diagnosticId}`, { cause });
     }
+  }
+
+  /**
+   * The inviter is the signup's own claim: an unknown address is dropped silently here, and the
+   * reservation keeps the Ship only if it is still active and owned by someone else when it is written.
+   */
+  private async inviterInstallation(hostname: string): Promise<string | undefined> {
+    const inviter = await this.accounts.resolveHostname(hostname);
+    return inviter.found ? inviter.installationId : undefined;
   }
 }

@@ -472,6 +472,28 @@ describe("installation.attributed", () => {
   });
 });
 
+describe("contact invitations", () => {
+  const record = (component, name, properties) => {
+    try {
+      return telemetryRecordSchema.safeParse(createTelemetryRecord(
+        { installationId: "inst_telemetry", component, event: { stream: "product", name, properties } },
+        1_789_000_000_000,
+        "11111111-1111-4111-8111-111111111111",
+      ));
+    } catch {
+      return { success: false };
+    }
+  };
+
+  it("counts them for the issuing Ship with no content", () => {
+    assert.equal(record("gateway", "contact.invite.created", {}).success, true);
+    assert.equal(record("gateway", "contact.invite.accepted", {}).success, true);
+    assert.equal(record("accounts", "contact.invite.created", {}).success, false);
+    assert.equal(record("gateway", "contact.invite.created", { handle: "bob.ship.test" }).success, false);
+    assert.equal(record("gateway", "contact.invite.accepted", { remoteDid: "did:plc:x" }).success, false);
+  });
+});
+
 describe("onboarding funnel events", () => {
   const record = (component, name, properties) => {
     try {

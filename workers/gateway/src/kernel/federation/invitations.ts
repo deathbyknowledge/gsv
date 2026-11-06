@@ -19,6 +19,7 @@ import {
   encodeContactInvitation,
   parseContactInvitation,
 } from "@humansandmachines/gsv/protocol";
+import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
 import { ensureShipAccount, ensureShipDid } from "../atproto";
 import type { KernelContext } from "../context";
 import { ensureContactConversation } from "../federation";
@@ -95,6 +96,11 @@ export async function handleContactInviteCreate(
   });
   const code = encodeContactInvitation({ version: 2, did: ship.did, handle: ship.handle, name, token, expiresAtMs });
   ctx.broadcastToUserUid(ownerUid, "contact.invite.changed");
+  emitTelemetry(ctx.env, {
+    installationId: ctx.installationId,
+    component: "gateway",
+    event: { stream: "product", name: "contact.invite.created", properties: {} },
+  });
   const origin = ctx.installationIdentity?.canonicalOrigin;
   const url = contactInvitationUrl(code, ctx.env.GSV_OWNER_SIGNUP_URL ?? `${origin}/connect`);
   return { inviteId: invite.inviteId, code, url, expiresAtMs };
@@ -291,6 +297,12 @@ export async function acceptInvitation(call: ShipCall, ctx: KernelContext): Prom
   if (changed) {
     ctx.broadcastToUserUid(contact.ownerUid, "contact.changed");
     ctx.broadcastToUserUid(contact.ownerUid, "contact.invite.changed");
+    // Counts the acceptance for this issuing Ship only; the record carries nothing about the other Ship.
+    emitTelemetry(ctx.env, {
+      installationId: ctx.installationId,
+      component: "gateway",
+      event: { stream: "product", name: "contact.invite.accepted", properties: {} },
+    });
   }
   await ensureContactConversation(contact, ctx);
   await ctx.reconcileResponsibilityWake(contact.ownerUid);

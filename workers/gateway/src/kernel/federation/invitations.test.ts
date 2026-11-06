@@ -67,6 +67,40 @@ describe("invitations", () => {
     expect(await notices(bob)).toEqual([]);
   });
 
+  it("counts an invitation once when it is made and once when it is accepted, naming neither person", async () => {
+    const [carol, dave] = [await testSpace(network, "carol", { telemetry: true }), await testSpace(network, "dave", { telemetry: true })];
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    // SAFETY: emitTelemetry logs one structured record object per call; the filter below tolerates any other shape.
+    const invitationRecords = () => log.mock.calls
+      .map(([record]) => record as { installationId?: string; event?: { name?: string } })
+      .filter((record) => record?.event?.name?.startsWith("contact.invite."));
+
+    const { code } = await carol.run((ctx) => handleContactInviteCreate({}, ctx));
+    expect(invitationRecords()).toEqual([expect.objectContaining({
+      installationId: carol.installationId,
+      component: "gateway",
+      event: { stream: "product", name: "contact.invite.created", properties: {} },
+    })]);
+
+    await dave.run((ctx) => handleContactInviteAccept({ code, shipHandlesMessages: false }, ctx));
+    const { token } = parseContactInvitation(code).invitation;
+    // Dave's Ship asks again, as after a lost answer; the replay is not a second acceptance.
+    expect((await callAcceptInvitation(dave.account, carol, { token, name: "Dave" })).status).toBe(200);
+    expect(invitationRecords()).toEqual([
+      expect.objectContaining({ installationId: carol.installationId, event: expect.objectContaining({ name: "contact.invite.created" }) }),
+      expect.objectContaining({
+        installationId: carol.installationId,
+        component: "gateway",
+        event: { stream: "product", name: "contact.invite.accepted", properties: {} },
+      }),
+    ]);
+
+    const serialized = JSON.stringify(log.mock.calls);
+    for (const identifying of [dave.account.did, "dave.ship.test", "Dave", token, code]) {
+      expect(serialized).not.toContain(identifying);
+    }
+  });
+
   it("makes the Ship that signed the acceptance the contact, whichever name it gives", async () => {
     const { code } = await alice.run((ctx) => handleContactInviteCreate({}, ctx));
     const { token } = parseContactInvitation(code).invitation;

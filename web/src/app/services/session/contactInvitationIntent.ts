@@ -40,3 +40,8 @@ export function contactInvitationPreview(value: string): { name: string; handle:
     return { error: t(cause instanceof OutdatedContactInvitationError ? "session.contact.outdated" : "session.contact.invalid") };
   }
 }
+
+/** The inviting Ship's hostname, for signup attribution; never the token or DID, and expiry is not checked. */
+export function contactInvitationInviter(value: string): string | null {
+  try { return parseContactInvitation(value).invitation.handle; } catch { return null; }
+}
