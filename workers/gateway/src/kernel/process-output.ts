@@ -1,10 +1,11 @@
 import type {
   SignalFrame,
 } from "../protocol/frames";
-import type {
-  JsonValue,
-  ConversationMessage,
-  ConversationMessageOrigin,
+import {
+  procHilRequestSchema,
+  type JsonValue,
+  type ConversationMessage,
+  type ConversationMessageOrigin,
 } from "@humansandmachines/gsv/protocol";
 import {
   emitTelemetry,
@@ -191,9 +192,20 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
     }
 
     if (frame.signal === "proc.run.hil.requested") {
-      // HIL admission waits only for a durable retry task, never for provider
+      // HIL admission waits only for its log entry, never for provider
       // delivery, so entering HIL cannot lose its approval notification.
-      await this.host.adapterDelivery.queueAdapterRouteDelivery(route, userFrame, 1);
+      // The send reads the request itself from its process when it goes.
+      const requestId = procHilRequestSchema.safeParse(userFrame.payload).data?.requestId;
+      if (requestId) {
+        await this.host.adapterDelivery.queueReply(route, { kind: "approval", requestId });
+      } else {
+        await setAdapterRouteActivity(
+          this.host.bindings,
+          this.host.installationId,
+          route,
+          adapterWorkingActivity(route, false),
+        ).catch(() => undefined);
+      }
       return;
     }
     if (frame.signal === "proc.run.finished") {
@@ -205,11 +217,7 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
         // The notice answers the message that started the run; a fallback or scheduled route has none.
         && route.replyToId
       ) {
-        await this.host.adapterDelivery.queueAdapterRouteDelivery(route, {
-          type: "sig",
-          signal: "proc.run.finished",
-          payload: { pid: processId, runId, status: "error" },
-        }, 1);
+        await this.host.adapterDelivery.queueReply(route, { kind: "run.failed" });
       }
       this.host.runRoutes.delete(runId);
       await setAdapterRouteActivity(
@@ -220,7 +228,14 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
       ).catch(() => undefined);
       return;
     }
-    await this.host.adapterDelivery.deliverAdapterRouteEvent(route, userFrame);
+    if (frame.signal === "proc.run.started") {
+      await setAdapterRouteActivity(
+        this.host.bindings,
+        this.host.installationId,
+        route,
+        adapterWorkingActivity(route, true),
+      ).catch(() => undefined);
+    }
   }
 
 updateProcessRuntimeFromSignal(
@@ -512,11 +527,13 @@ async commitProcessMessage(
         });
       }
       if (route?.kind === "adapter") {
-        await this.host.adapterDelivery.queueAdapterRouteDelivery(route, {
-          type: "sig",
-          signal: "message.committed",
-          payload: { message, directed: true },
-        }, 1);
+        await this.host.adapterDelivery.queueReply(route, {
+          kind: "message",
+          conversationId: message.conversationId,
+          messageId: message.id,
+          sequence: message.sequence,
+          writtenAt: message.createdAt,
+        });
       }
     }
     if (appended.created) {

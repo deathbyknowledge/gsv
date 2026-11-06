@@ -26,13 +26,14 @@ A good order is:
 2. [Conversations and Process Activity](./conversations.md)
 3. [The Agent Loop](./agent-loop.md)
 4. [Process IPC and Scheduler](./process-ipc-and-scheduler.md)
-5. [The Adapter Model](./adapter-model.md)
-6. [Context and Knowledge](./context-and-knowledge.md)
-7. [Responsibilities and Context Epochs](./responsibilities-and-context-epochs.md)
-8. [Targets and Capability Environments](./targets.md)
-9. [Unified Protocol Peers](./unified-protocol-peers.md)
-10. [Security Model](./security-model.md)
-11. [Telemetry](./telemetry.md)
+5. [The Event Log](./event-log.md)
+6. [The Adapter Model](./adapter-model.md)
+7. [Context and Knowledge](./context-and-knowledge.md)
+8. [Responsibilities and Context Epochs](./responsibilities-and-context-epochs.md)
+9. [Targets and Capability Environments](./targets.md)
+10. [Unified Protocol Peers](./unified-protocol-peers.md)
+11. [Security Model](./security-model.md)
+12. [Telemetry](./telemetry.md)
 
 ## The Current Pillars
 

@@ -1258,12 +1258,18 @@ describe("scheduler", () => {
     });
 
     await runInDurableObject(kernel, (instance: Kernel) => instance.scheduleRuntime.onScheduleDue(scheduleId));
+    // The timer appended the firing; the runner it kicked delivers it on the Kernel alarm,
+    // which may already be running by itself.
+    await runDurableObjectAlarm(kernel);
 
-    const messages = await runInDurableObject(process, (instance: Process) => {
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      return instance.store.messages.getMessages();
+    const messages = await vi.waitFor(async () => {
+      const stored = await runInDurableObject(process, (instance: Process) => {
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        return instance.store.messages.getMessages();
+      });
+      expect(stored).toHaveLength(1);
+      return stored;
     });
-    expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe("system");
     expect(messages[0].content).toContain("Schedule `ops pulse` fired.");
     expect(messages[0].content).toContain("Run the scheduled ops pulse.");
@@ -2127,11 +2133,15 @@ describe("scheduler", () => {
     expect(schedule?.state.nextRunAtMs).toBe(nextRunAtMs);
     expect(schedule?.enabled).toBe(true);
 
-    const messages = await runInDurableObject(process, (instance: Process) =>
-      // SAFETY: test fixture is constructed with the asserted kernel domain shape.
-      instance.store.messages.getMessages(),
-    );
-    expect(messages[0].content).toContain("Run early.");
+    // The Kernel alarm delivers the firing; it may already be running by itself.
+    await runDurableObjectAlarm(kernel);
+    await vi.waitFor(async () => {
+      const messages = await runInDurableObject(process, (instance: Process) =>
+        // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+        instance.store.messages.getMessages(),
+      );
+      expect(messages[0]?.content).toContain("Run early.");
+    });
   });
 
   it("skips a due schedule that is already running", async () => {
@@ -2252,7 +2262,7 @@ describe("scheduler", () => {
     expect(schedule?.state.lastStatus).toBe("ok");
   });
 
-  it("runs a due process.spawn schedule and sends the prompt to the cron process", async () => {
+  it("runs a due process.spawn schedule and sends the prompt to the cron process as its schedule's message", async () => {
     const installationId = `scheduler-spawn-test-${crypto.randomUUID()}`;
     const kernel = await getDurableObjectByName<Env, Kernel>(
       env.KERNEL,
@@ -2346,6 +2356,25 @@ describe("scheduler", () => {
       role: "user",
       content: "Run the scheduled cron task.",
     }));
+    // The prompt comes from the schedule, not from a person, so the model sees which schedule sent it.
+    const logged = await runInDurableObject(kernel, (_instance: Kernel, state) => state.storage.sql.exec<{
+      type: string; actor_json: string; body_json: string; lane: string | null;
+    }>(
+      "SELECT e.type, e.actor_json, e.body_json, d.lane FROM events e JOIN deliveries d ON d.seq = e.seq WHERE e.subject = ?",
+      `proc:${spawned.pid}`,
+    ).toArray());
+    expect(logged.map((row) => ({
+      type: row.type,
+      lane: row.lane,
+      actor: JSON.parse(row.actor_json),
+      origin: JSON.parse(row.body_json).origin,
+    }))).toEqual([{
+      type: "process.message",
+      lane: "background",
+      actor: { kind: "schedule", scheduleId },
+      origin: { kind: "scheduler", scheduleId },
+    }]);
+    expect(JSON.parse(messages[0]?.origin ?? "null")).toEqual({ kind: "scheduler", scheduleId });
   });
 
   it("runs process-principal spawn schedules after the creator process is gone", async () => {

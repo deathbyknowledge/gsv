@@ -1,7 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { AuthorizeRootRecoveryInput, InstallationRecoveryGatewayService } from "@humansandmachines/gsv/services/ownership";
 import type { GatewayEnv } from "../runtime-env";
-import { getKernelByInstallationId } from "./routing";
+import { getKernelByInstallationId } from "../installation/routing";
 
 /** Only an Accounts binding with deployment-owned props grants incoming recovery authority. */
 export class GatewayRecoveryEntrypoint extends WorkerEntrypoint<GatewayEnv, { authority: "installation-owner-recovery" }>
@@ -18,7 +18,6 @@ export class GatewayRecoveryEntrypoint extends WorkerEntrypoint<GatewayEnv, { au
 
   private async kernel(installationId: string) {
     if (this.ctx.props?.authority !== "installation-owner-recovery") throw new Error("Recovery binding authority is required");
-    if (!this.env.INSTALLATION_DIRECTORY) throw new Error("Installation directory is required");
     const result = await this.env.INSTALLATION_DIRECTORY.resolveInstallation(installationId);
     if (!result.found || result.installationId !== installationId || result.state !== "active") throw new Error("This Ship is unavailable");
     return getKernelByInstallationId(this.env.KERNEL, installationId);

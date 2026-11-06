@@ -1,6 +1,6 @@
 import { createExecutionContext } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import { InstancesGatewayEntrypoint } from "./instances-entrypoint";
+import { InstancesGatewayEntrypoint } from "./instances";
 
 function fixture(authority: string | undefined = "instance-notifications", state = "active", found = true) {
   const ctx = createExecutionContext();

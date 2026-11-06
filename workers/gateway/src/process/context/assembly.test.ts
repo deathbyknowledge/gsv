@@ -458,7 +458,11 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
         return { objects: [] };
       },
     },
-    ripgit: null,
+    ripgit: {
+      async readPath() {
+        return { kind: "missing" };
+      },
+    },
     ...overrides,
   };
 }

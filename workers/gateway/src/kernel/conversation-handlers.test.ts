@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../test-support/peers";
 import {
-  REQUEST_CANCEL_SIGNAL,
   type ConversationMessage,
   type ConversationSummary,
   type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import type { KernelContext } from "./context";
+import type { InlineDelivery } from "./events/runtime";
+import type { EventInput, LoggedEvent } from "./events/store";
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { ShipReplies } from "./ship-replies";
 import { RunRouteStore } from "./run-routes";
@@ -15,7 +16,8 @@ import * as utils from "../shared/utils";
 import * as personalController from "./personal-controller";
 import * as targets from "./targets";
 const getConversationByIdMock = vi.spyOn(utils, "getConversationById");
-const sendFrameToProcessMock = vi.spyOn(utils, "sendFrameToProcess");
+const retainProcessResourcesMock = vi.spyOn(utils, "retainProcessResources");
+const cancelProcessCallMock = vi.spyOn(utils, "cancelProcessCall");
 const ensurePersonalControllerMock = vi.spyOn(personalController, "ensurePersonalController");
 
 import {
@@ -85,6 +87,11 @@ function context(ownerUid = 1000): KernelContext {
       setConnectionRoute: vi.fn(),
       delete: vi.fn(),
     },
+    // A log that appends every event as evt_7 and delivers it at once.
+    events: {
+      append: vi.fn((input: EventInput): LoggedEvent => ({ ...input, seq: 7, id: "evt_7", body: input.body ?? null, createdAt: 1 })),
+      deliverNow: vi.fn(async (): Promise<InlineDelivery> => ({ state: "delivered", runId: null, queued: false })),
+    },
     broadcastToUserUid: vi.fn(),
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.
   } as KernelContext;
@@ -112,12 +119,13 @@ describe("conversation handlers", () => {
     vi.mocked(ctx.conversations.get).mockReturnValue({ ...SHIP, kind: "contact" });
     await expect(handleConversationSend({ conversationId: SHIP.id, text: "Hello Alice" }, ctx))
       .rejects.toThrow("Use contact.send");
-    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    expect(ctx.events.append).not.toHaveBeenCalled();
   });
 
   beforeEach(() => {
     getConversationByIdMock.mockReset();
-    sendFrameToProcessMock.mockReset();
+    retainProcessResourcesMock.mockReset();
+    cancelProcessCallMock.mockReset().mockResolvedValue();
     ensurePersonalControllerMock.mockReset();
     ensurePersonalControllerMock.mockResolvedValue(PROCESS.processId);
   });
@@ -134,20 +142,14 @@ describe("conversation handlers", () => {
     expect(initialize).toHaveBeenCalledWith({ ownerUid: 1000, kind: "ship" });
   });
 
-  it("keeps an accepted user message when its Process admission fails", async () => {
+  it("keeps an accepted user message its process refuses, and fails the send", async () => {
     const append = vi.fn(async (input: any) => ({
       created: true,
       message: canonicalMessage(input),
     }));
     getConversationByIdMock.mockReturnValue({ append });
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
-      type: "res",
-      id: frame.id,
-      ok: false,
-      error: { code: 500, message: "Process unavailable" },
-    }));
     const ctx = context();
-
+    vi.mocked(ctx.events.deliverNow).mockResolvedValue({ state: "withdrawn", reason: "media not found: /home/user-1000/a.png" });
     vi.mocked(ctx.welcome.activate).mockReturnValue(true);
 
     await expect(handleConversationSend({
@@ -155,26 +157,23 @@ describe("conversation handlers", () => {
       text: "remember this",
       selectedTarget: "gsv",
       idempotencyKey: "desktop:one",
-    }, ctx)).rejects.toThrow("Process unavailable");
+    }, ctx)).rejects.toThrow("media not found: /home/user-1000/a.png");
 
     expect(append).toHaveBeenCalledOnce();
     expect(append.mock.calls[0][0]).toMatchObject({ text: "remember this", selectedTarget: "gsv" });
-    expect(sendFrameToProcessMock.mock.calls[0][2]).toMatchObject({ call: "proc.send", args: { message: "remember this", selectedTarget: "gsv" } });
-    expect(append.mock.invocationCallOrder[0]).toBeLessThan(
-      sendFrameToProcessMock.mock.invocationCallOrder[0],
-    );
+    // The event follows the Conversation's commit.
+    expect(append.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(ctx.events.append).mock.invocationCallOrder[0]!);
     expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(1000, "message.committed", {
       message: expect.objectContaining({ text: "remember this" }),
       directed: false,
     });
-    expect(ctx.runRoutes.delete).toHaveBeenCalledWith(expect.stringMatching(/^run:msg:/));
     expect(ctx.welcome.activate).toHaveBeenCalledWith(1000);
     expect(vi.mocked(ctx.welcome.activate).mock.invocationCallOrder[0]).toBeLessThan(
-      sendFrameToProcessMock.mock.invocationCallOrder[0],
+      vi.mocked(ctx.events.deliverNow).mock.invocationCallOrder[0]!,
     );
     expect(ctx.reconcileResponsibilityWake).toHaveBeenCalledWith(1000);
     expect(vi.mocked(ctx.reconcileResponsibilityWake).mock.invocationCallOrder[0]).toBeGreaterThan(
-      sendFrameToProcessMock.mock.invocationCallOrder[0],
+      vi.mocked(ctx.events.deliverNow).mock.invocationCallOrder[0]!,
     );
   });
 
@@ -191,10 +190,6 @@ describe("conversation handlers", () => {
         throw new Error("lost append response after commit");
       });
       getConversationByIdMock.mockReturnValue({ append });
-      sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
-        type: "res", id: frame.id, ok: true,
-        data: { ok: true, runId: message!.runId, queued: false, status: "started" },
-      }));
       const input = { conversationId: SHIP.id, text: "Reply here", idempotencyKey: "same-input" };
       await expect(handleConversationSend(input, ctx)).rejects.toThrow("lost append response");
       ctx.shipReplies = new ShipReplies(storage);
@@ -220,10 +215,6 @@ describe("conversation handlers", () => {
       getConversationByIdMock.mockReturnValue({
         append: vi.fn(async (input: any) => ({ created: true, message: canonicalMessage(input) })),
       });
-      sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
-        type: "res", id: frame.id, ok: true,
-        data: { ok: true, runId: `run:${frame.args.interaction.messageId}`, queued: false, status: "started" },
-      }));
       try {
         const inputs = [0, 1].map((i) => ({ conversationId: SHIP.id, text: `Message ${i}`, idempotencyKey: `overlap-${i}` }));
         const pending = [first, second].map((ctx, i) => handleConversationSend(inputs[i], ctx));
@@ -288,18 +279,12 @@ describe("conversation handlers", () => {
     expect(search).toHaveBeenCalledTimes(2);
   });
 
-  it("admits the canonical input into the handler and pins the reply to its client", async () => {
+  it("appends the committed message for Ship and pins the reply to its client first", async () => {
     const append = vi.fn(async (input: any) => ({
       created: true,
       message: canonicalMessage(input),
     }));
     getConversationByIdMock.mockReturnValue({ append });
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
-      type: "res",
-      id: frame.id,
-      ok: true,
-      data: { ok: true, status: "started", runId: `run:${frame.args.interaction.messageId}` },
-    }));
     const ctx = context();
 
     const result = await handleConversationSend({
@@ -308,20 +293,21 @@ describe("conversation handlers", () => {
       idempotencyKey: "desktop:two",
     }, ctx);
 
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      "inst_test",
-      PROCESS.processId,
-      expect.objectContaining({
-        call: "proc.send",
-        args: expect.objectContaining({
-          message: "hello",
-          interaction: {
-            conversationId: SHIP.id,
-            messageId: result.message.id,
-          },
-        }),
-      }),
-    );
+    expect(result).toMatchObject({ handlerPid: PROCESS.processId, runId: `run:${result.message.id}`, queued: false });
+    // The event names the committed message. The send's own attempt is handed its text; a retry reads it from the Conversation.
+    expect(vi.mocked(ctx.events.append).mock.calls[0]?.[0]).toEqual({
+      type: "message.received",
+      ownerUid: 1000,
+      subject: `conversation:${SHIP.id}`,
+      actor: { kind: "person", uid: 1000 },
+      key: result.message.id,
+      body: {
+        runId: result.runId,
+        origin: { kind: "client", connectionId: "connection-1", clientId: "desktop-1", platform: "macos" },
+        content: { kind: "conversation", conversationId: SHIP.id, messageId: result.message.id, sequence: 1 },
+      },
+    });
+    expect(ctx.events.deliverNow).toHaveBeenCalledWith(expect.objectContaining({ id: "evt_7" }), "personal:1000", { message: "hello" });
     expect(ctx.runRoutes.setConnectionRoute).toHaveBeenCalledWith({
       followsShip: true,
       runId: result.runId,
@@ -331,7 +317,7 @@ describe("conversation handlers", () => {
       clientPlatform: "macos",
     });
     expect(vi.mocked(ctx.runRoutes.setConnectionRoute).mock.invocationCallOrder[0])
-      .toBeLessThan(sendFrameToProcessMock.mock.invocationCallOrder[0]);
+      .toBeLessThan(vi.mocked(ctx.events.deliverNow).mock.invocationCallOrder[0]!);
   });
 
   it("forwards client cancellation to in-flight resource retention", async () => {
@@ -349,36 +335,21 @@ describe("conversation handlers", () => {
         size: 3,
       },
     };
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
-      if (frame.type === "sig") return null;
-      return await new Promise<never>(() => {});
-    });
+    retainProcessResourcesMock.mockImplementation(() => new Promise<never>(() => {}));
 
     const retaining = retainConversationResources([resource], PROCESS.processId, ctx);
-    await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(retainProcessResourcesMock).toHaveBeenCalledWith(
       "inst_test",
       PROCESS.processId,
-      expect.objectContaining({ call: "proc.resources.retain" }),
+      expect.any(String),
+      expect.objectContaining({ resources: [resource] }),
     ));
-    const retainFrame = sendFrameToProcessMock.mock.calls.find(
-      ([, , frame]) => frame.type === "req" && frame.call === "proc.resources.retain",
-    )?.[2];
-    if (!retainFrame || retainFrame.type !== "req") {
-      throw new Error("Resource retain request was not captured");
-    }
+    const cancelId = retainProcessResourcesMock.mock.calls[0]?.[2];
 
     controller.abort(new Error("Upload cancelled"));
 
     await expect(retaining).rejects.toThrow("Upload cancelled");
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      "inst_test",
-      PROCESS.processId,
-      {
-        type: "sig",
-        signal: REQUEST_CANCEL_SIGNAL,
-        payload: { id: retainFrame.id, reason: "Upload cancelled" },
-      },
-    );
+    expect(cancelProcessCallMock).toHaveBeenCalledWith("inst_test", PROCESS.processId, cancelId, "Upload cancelled");
   });
 
   it("reads canonical history and media only through an owned conversation", async () => {
@@ -425,9 +396,6 @@ describe("conversation.send telemetry", () => {
   it("reports the person's Ship message by platform and presence, once per committed message", async () => {
     const append = vi.fn(async (input: any) => ({ created: true, message: canonicalMessage(input) }));
     getConversationByIdMock.mockReturnValue({ append });
-    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
-      type: "res", id: frame.id, ok: true, data: { ok: true, status: "started", runId: `run:${frame.args.interaction.messageId}` },
-    }));
     const ctx = context();
     // SAFETY: the send handler reads only the telemetry switch from its environment.
     ctx.env = { GSV_TELEMETRY_ENABLED: "1" } as KernelContext["env"];

@@ -140,12 +140,14 @@ export class SignalWatchStore {
     ).toArray().map(toSignalWatchRecord);
   }
 
-  isActiveRevision(watchId: string, revision: number): boolean {
-    return this.sql.exec(
-      `SELECT 1 FROM signal_watches WHERE watch_id = ? AND revision = ? AND status = 'active'
+  /** The watch at this revision while it is active and unexpired. */
+  active(watchId: string, revision: number): SignalWatchRecord | null {
+    const [row] = this.sql.exec<SignalWatchRow>(
+      `SELECT * FROM signal_watches WHERE watch_id = ? AND revision = ? AND status = 'active'
        AND (expires_at IS NULL OR expires_at > ?) LIMIT 1`,
       watchId, revision, Date.now(),
-    ).toArray().length > 0;
+    ).toArray();
+    return row ? toSignalWatchRecord(row) : null;
   }
 
   deleteHandled(watchId: string, revision: number): void {

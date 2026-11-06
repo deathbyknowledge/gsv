@@ -1,12 +1,10 @@
 /** Owns model-facing text for typed Process events and run-control results. */
 
 import type {
-  JsonValue, ProcHistoryEvent, ProcHistoryEventPayload, ProcIpcDeliverArgs,
+  JsonValue, ProcHistoryEvent, ProcHistoryEventPayload,
 } from "@humansandmachines/gsv/protocol";
 import { jsonValueSchema } from "@humansandmachines/gsv/protocol";
-import type {
-  ProcessAdapterWorkReturnedRuntimeEvent,
-} from "../../protocol/process-frames";
+import type { ProcessIpcMessage } from "../../protocol/process-frames";
 import {
   CORRECTION_FAILURE_NOTICE, MAX_TERMINAL_COMMAND_FAILURES, MAX_TERMINAL_DELIVERY_FAILURES,
   RUNTIME_EVENT_WAKE_MESSAGE, YIELD_CORRECTION_MESSAGE,
@@ -48,7 +46,7 @@ export function renderHistoryEvent(event: ProcHistoryEvent): string {
     case "ipc.reply":
     case "ipc.overdue":
     case "ipc.timeout": return formatIpcReplyMessage(event.kind, event.payload);
-    case "adapter.work.returned": return formatProcessRuntimeEvent({ type: event.kind, ...event.payload });
+    case "adapter.work.returned": return formatWorkReturnedEvent(event.payload);
     case "contact.message": return formatContactMessageEvent(event.payload);
     case "target.connection": return formatTargetConnectionEvent(event.payload);
     case "owner.notified": return formatOwnerNotifiedEvent(event.payload);
@@ -113,9 +111,9 @@ export function renderContextFailure(payload: ProcHistoryEventPayload<"context.f
   throw new Error(`Context failure ${reason} has no rendering data`);
 }
 
-export function formatProcessRuntimeEvent(event: ProcessAdapterWorkReturnedRuntimeEvent): string {
+export function formatWorkReturnedEvent({ workPid }: Pick<ProcHistoryEventPayload<"adapter.work.returned">, "workPid">): string {
   return [
-    `The user returned from work process \`${event.workPid}\` to their personal intelligence.`,
+    `The user returned from work process \`${workPid}\` to their personal intelligence.`,
     "No work-session transcript was attached to this event.",
   ].join("\n");
 }
@@ -145,10 +143,8 @@ export function formatWatchedSignalMessage(
   return lines.join("\n");
 }
 
-export function formatIpcMessage(args: ProcIpcDeliverArgs): string {
-  const sentAt = Number.isFinite(args.sentAt)
-    ? new Date(args.sentAt).toISOString()
-    : new Date().toISOString();
+export function formatIpcMessage(args: ProcessIpcMessage): string {
+  const sentAt = new Date(args.sentAt).toISOString();
   const source = `${args.source.username} (${args.sourcePid})`;
   const lines = args.call
     ? [

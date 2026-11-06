@@ -1,6 +1,6 @@
 import { createExecutionContext } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import { OperatorGatewayEntrypoint } from "./operator-entrypoint";
+import { OperatorGatewayEntrypoint } from "./operator";
 
 const snapshot = {
   version: 1, installationId: "inst_operator", capturedAt: 1, ship: null, processes: { total: 0, running: 0 },

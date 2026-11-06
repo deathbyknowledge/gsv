@@ -1,19 +1,15 @@
 import { z } from "zod";
 import type {
-  AdapterInteractionOrigin,
-  ConversationMessage,
-  EventReplyTarget,
+  InteractionOrigin,
   JsonObject,
   ProcMediaInput,
-  ProcSendResult,
   ProcHistoryEvent,
+  ProcHistoryEventPayload,
   ProcHistoryMessageQuote,
+  ProcessIdentity,
   ResourceBlock,
-  ResponseErrEnvelope,
-  TypedRequest,
-  TypedResponseOk,
 } from "@humansandmachines/gsv/protocol";
-import type { Frame, FrameBody, RequestFrame, SignalFrame } from "./frames";
+import type { Frame, RequestFrame, SignalFrame } from "./frames";
 import type { SyscallName } from "../syscalls";
 import type { TargetDescriptor } from "../kernel/targets";
 
@@ -52,53 +48,66 @@ export type ProcessToolAuthorizeArgs = ProcessToolOwner & {
   target?: ProcessApprovalTarget;
 };
 
-export type ProcessAdapterWorkReturnedRuntimeEvent = {
-  type: "adapter.work.returned";
-  workPid: string;
+/** What a delivered history event does to its Process, declared once per event type. */
+export type ProcessEventAdmission = {
+  /** With no active run: start one, or only record the event in history. */
+  idle: "start" | "record";
+  /** During a run: join it, take its own run once it ends, or only record the event. */
+  busy: "join" | "after" | "record";
+  /** Joins only this run; during another, the event takes its own run after it. */
+  joinRun?: string;
 };
 
-export type ProcessResponsibilityReadyRuntimeEvent = {
-  type: "r12y.ready";
-  batchId: string;
-  ledgerRevision: number;
-  responsibilityIds: string[];
+/** A message for a process to act on, from a person or from another process. */
+export type ProcessInput = {
+  message: string;
+  media?: Array<ResourceBlock | ProcMediaInput>;
+  origin?: InteractionOrigin;
+  /** The Conversation message it was committed as, when it has one. */
+  interaction?: { conversationId: string; messageId: string };
+  selectedTarget?: string;
+  /** Present only when the person quoted a message. */
+  quote?: ProcHistoryMessageQuote;
+  /** The run it takes when its producer recorded one first, as a Conversation does; otherwise the delivery's id. */
+  runId?: string;
 };
 
-/** One contact message for Ship, with its attachments as references to the contact's Ship. */
-export type ProcessContactMessageRuntimeEvent = {
-  type: "contact.message";
-  contactId: string;
-  contactGeneration: string;
-  conversationId: string;
-  messageId: string;
-  from: string;
-  text: string;
-  media?: ResourceBlock[];
-  responsibilityId: string;
-  ledgerRevision: number;
+/** Another process's message or call, as its target records it. */
+export type ProcessIpcMessage = {
+  sourcePid: string;
+  source: ProcessIdentity;
+  message: string;
+  metadata?: JsonObject;
+  origin: Extract<InteractionOrigin, { kind: "process" }>;
+  sentAt: number;
+  /** A call's final answer returns to its caller. */
+  call?: { callId: string; deadlineAt: number; supervised?: boolean };
 };
 
-export type ProcessRuntimeEvent =
-  | ProcessAdapterWorkReturnedRuntimeEvent
-  | ProcessResponsibilityReadyRuntimeEvent
-  | ProcessContactMessageRuntimeEvent;
-
-export type ProcessRuntimeEventDeliverArgs = {
-  eventId: string;
-  event: ProcessRuntimeEvent;
-};
-
-export type ProcessRuntimeEventDeliverResult = {
-  eventId: string;
-  runId: string;
-  queued: boolean;
-};
+/** What a Kernel event hands its Process: a history event, a message to act on, or another process's message or call. */
+export type ProcessEventDelivery =
+  | {
+      event: Extract<ProcHistoryEvent, {
+        kind: "target.connection" | "owner.notified" | "contact.message" | "responsibility.ready" | "schedule.fired"
+          | "ipc.reply" | "ipc.overdue" | "ipc.timeout" | "adapter.work.returned" | "delivery.failed";
+      }>;
+      admission: ProcessEventAdmission;
+      /** Responsibilities the event hands its run, which the run settles before it yields. */
+      responsibilities?: { ledgerRevision: number; ids: string[] };
+      /** Resources the event carries, retained as this Process's own media before admission. */
+      attachments?: ResourceBlock[];
+      /** The approval request a failed delivery carried, which the failure concerns only while it is pending. */
+      approvalRequestId?: string;
+      /** When a waking failure's message was written, so a reset since then leaves it only noted. */
+      writtenAt?: number;
+    }
+  // Another process's message or call takes a run of its own.
+  | { message: ProcessIpcMessage; admission: { idle: "start"; busy: "after" } }
+  // A person's message stops the active run; another process's waits its turn.
+  | { input: ProcessInput; admission: { idle: "start"; busy: "interrupt" | "after" } };
 
 /** Kernel-derived registered events; this call is never available to public peers. */
-export type ProcessEventDeliverArgs = {
-  eventId: string;
-  event: Extract<ProcHistoryEvent, { kind: "target.connection" | "owner.notified" }>;
-};
+export type ProcessEventDeliverArgs = ProcessEventDelivery & { eventId: string };
 
 export type ProcessEventDeliverResult = {
   eventId: string;
@@ -106,57 +115,12 @@ export type ProcessEventDeliverResult = {
   queued: boolean;
   messageId?: number;
   ignored?: boolean;
+  /** Why the Process can never take this delivery, such as media that is gone; it is not retried. */
+  refused?: string;
 };
 
-export const processEventDeliverResultSchema: z.ZodType<ProcessEventDeliverResult> = z.strictObject({
-  eventId: z.string(),
-  runId: z.string().nullable(),
-  queued: z.boolean(),
-  messageId: z.number().int().positive().optional(),
-  ignored: z.boolean().optional(),
-});
-
-type ProcessScheduleDataValue =
-  | string
-  | number
-  | boolean
-  | null
-  | ProcessScheduleDataValue[]
-  | { [key: string]: ProcessScheduleDataValue };
-
-export type ProcessScheduleData = {
-  [key: string]: ProcessScheduleDataValue;
-};
-
-export type ProcessScheduleDeliverArgs = {
-  runId: string;
-  scheduleId: string;
-  scheduleName?: string;
-  message: string;
-  data?: ProcessScheduleData;
-  replyTo?: EventReplyTarget;
-  scheduledAtMs?: number | null;
-  firedAtMs: number;
-};
-
-export type ProcessScheduleDeliverResult = {
-  runId: string;
-  queued: boolean;
-};
-
-export type ProcessAdapterDeliverArgs = {
-  runId: string;
-  pid: string;
-  message: string;
-  media?: Array<ResourceBlock | ProcMediaInput>;
-  origin: AdapterInteractionOrigin;
-  interaction: {
-    conversationId: string;
-    messageId: string;
-  };
-  /** Present only when the person quoted a message. */
-  quote?: ProcHistoryMessageQuote;
-};
+/** What a schedule's firing tells its process: the `schedule.fired` payload, which `prompts/schedule-events.ts` formats. */
+export type ProcessScheduleDeliverArgs = ProcHistoryEventPayload<"schedule.fired">;
 
 export type ProcessRunAttachArgs = {
   runId: string;
@@ -208,51 +172,16 @@ export type ProcessMessageCommitArgs = {
 };
 
 /**
- * Kernel-to-Process and Process-to-Kernel calls that never cross a public
- * carrier. They share the public frame envelope but have their own contract table.
+ * What a typed internal Process call answers instead of its result while the
+ * Process is killed or changing lifecycle. Other failures are thrown.
  */
-export type InternalSyscallDomains = {
-  "proc.tool.authorize": { args: ProcessToolAuthorizeArgs; result: { approved: boolean } };
-  "proc.event.deliver": { args: ProcessEventDeliverArgs; result: ProcessEventDeliverResult };
-  "proc.runtime.event.deliver": {
-    args: ProcessRuntimeEventDeliverArgs;
-    result: ProcessRuntimeEventDeliverResult;
-  };
-  "proc.schedule.deliver": {
-    args: ProcessScheduleDeliverArgs;
-    result: ProcessScheduleDeliverResult;
-  };
-  "proc.adapter.deliver": { args: ProcessAdapterDeliverArgs; result: ProcSendResult };
-  "proc.run.attach": { args: ProcessRunAttachArgs; result: ProcessRunAttachResult };
-  "proc.run.staged": { args: ProcessRunStagedArgs; result: ProcessRunStagedResult };
-  "proc.resources.retain": {
-    args: ProcessResourcesRetainArgs;
-    result: { resources: ResourceBlock[] };
-  };
-  "proc.resource.write": { args: ProcessResourceWriteArgs; result: { resource: ResourceBlock } };
-  "proc.message.commit": { args: ProcessMessageCommitArgs; result: { message: ConversationMessage } };
-};
+export type ProcessUnavailable = { unavailable: "killed" | "transitioning"; message: string };
 
-export type InternalSyscallName = keyof InternalSyscallDomains;
-
-/** `proc.resource.write` carries its bytes as a mandatory body. */
-type InternalRequestOf<S extends InternalSyscallName> = S extends "proc.resource.write"
-  ? TypedRequest<InternalSyscallDomains, S, FrameBody> & { body: FrameBody }
-  : TypedRequest<InternalSyscallDomains, S, FrameBody>;
-
-export type InternalRequestFrame<S extends InternalSyscallName = InternalSyscallName> = {
-  [K in S]: InternalRequestOf<K>;
-}[S];
-
-/** Internal calls always answer with their result; only public frames may omit data. */
-export type InternalResponseFrame<S extends InternalSyscallName = InternalSyscallName> =
-  | (TypedResponseOk<InternalSyscallDomains, S, FrameBody> & {
-      data: InternalSyscallDomains[S]["result"];
-    })
-  | ResponseErrEnvelope;
-
-/** Internal calls the Kernel sends to a Process. */
-export type ProcessInternalCall = Exclude<InternalSyscallName, "proc.message.commit">;
+/** A typed internal call's result, where an unavailable Process is a failure. */
+export function processResult<T extends object>(result: T | ProcessUnavailable): T {
+  if ("unavailable" in result) throw new Error(result.message);
+  return result;
+}
 
 export function processMessageDraftId(runId: string, actionId: string): string {
   return `draft:${runId}:${actionId}`;
@@ -269,9 +198,6 @@ export type ProcessMessageStreamSignal = SignalFrame<{
   timestamp: number;
 }> & { signal: "proc.message.stream" };
 
-export type ProcessRequestFrame = (RequestFrame | InternalRequestFrame<ProcessInternalCall>) & { toolOwner?: ProcessToolOwner };
+export type ProcessRequestFrame = RequestFrame & { toolOwner?: ProcessToolOwner };
 export type ProcessInboundFrame = Exclude<Frame, { type: "req" }> | ProcessRequestFrame;
-export type ProcessOutboundFrame =
-  | Frame
-  | InternalRequestFrame<"proc.message.commit">
-  | ProcessMessageStreamSignal;
+export type ProcessOutboundFrame = Frame | ProcessMessageStreamSignal;

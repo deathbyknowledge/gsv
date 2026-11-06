@@ -24,7 +24,7 @@ export type PromptAssemblyInput = {
   /** The managed mailbox rendered into this epoch; absent when the installation has none. */
   mailbox?: { address: string };
   storage: PromptStorage;
-  ripgit: PromptRipgitClient | null;
+  ripgit: PromptRipgitClient;
 };
 
 export type PromptSection = {

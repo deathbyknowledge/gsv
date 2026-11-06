@@ -1,6 +1,6 @@
 import { createInstallationStorage } from "../installation/storage";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
-import type { InternalRequestFrame } from "../protocol/protocol/process-frames";
+import type { ProcessResourcesRetainArgs } from "../protocol/process-frames";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import { deferred, runInProcess, ROOT_IDENTITY, initProcess } from "./do-test-harness";
@@ -40,34 +40,26 @@ describe("proc.send", () => {
           writeHttpMetadata() {},
         } as R2Object;
       });
-      const request: InternalRequestFrame<"proc.resources.retain"> = {
-        type: "req",
-        id: "retain-large-reference",
-        call: "proc.resources.retain",
-        args: {
-          batchId: "delivery:large-reference",
-          resources: [
-            {
-              type: "resource",
-              ref: {
-                type: "file",
-                target: "machine:camera",
-                path: "/captures/large.raw",
-                revision: sourceRevision,
-                contentType: "application/octet-stream",
-                size: retainedSize,
-              },
+      const args: ProcessResourcesRetainArgs = {
+        batchId: "delivery:large-reference",
+        resources: [
+          {
+            type: "resource",
+            ref: {
+              type: "file",
+              target: "machine:camera",
+              path: "/captures/large.raw",
+              revision: sourceRevision,
+              contentType: "application/octet-stream",
+              size: retainedSize,
             },
-          ],
-        },
+          },
+        ],
       };
 
       try {
-        await expect(instance.recvFrame(request)).resolves.toMatchObject({
-          type: "res",
-          id: request.id,
-          ok: true,
-          data: { resources: [{ ref: { size: retainedSize } }] },
+        await expect(instance.retainResources("retain-large-reference", args)).resolves.toMatchObject({
+          resources: [{ ref: { size: retainedSize } }],
         });
       } finally {
         head.mockRestore();

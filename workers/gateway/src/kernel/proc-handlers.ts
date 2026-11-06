@@ -3,7 +3,8 @@
  *
  * proc.list — answered entirely by the kernel ProcessRegistry.
  * proc.spawn — registers in ProcessRegistry, DO is lazily instantiated.
- * proc.send/kill/history/reset — forwarded to the Process DO via recvFrame.
+ * proc.send — appended to the event log and delivered in the call.
+ * proc.kill/history/reset — forwarded to the Process DO via recvFrame.
  */
 
 import type { FrameBody, FrameError, RequestFrame, ResponseFrame } from "../protocol/frames";
@@ -27,15 +28,14 @@ import type {
   ProcHistoryExportResult,
   ProcIpcCallArgs,
   ProcIpcCallResult,
-  ProcIpcDeliverArgs,
-  ProcIpcDeliverResult,
   ProcIpcSendArgs,
   ProcIpcSendResult,
   ProcSpawnArgs,
   ProcSpawnResult,
   ProcSendArgs,
+  ProcSendResult,
 } from "@humansandmachines/gsv/protocol";
-import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
+import { REQUEST_CANCEL_SIGNAL, resourceBlockSchema } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../shared/utils";
 import { raceWithAbort } from "../shared/abort";
 import { resolveUserPath } from "../fs";
@@ -45,6 +45,10 @@ import { canOwnerDelegateRunAs } from "./account-access";
 import { invalidatePersonalControllerReadiness } from "./personal-controller";
 import { notifyProcessChanged, unregisterProcess } from "./process-notifications";
 import { resolveSelectedMessageTarget } from "./targets";
+import { deliveryId, processConsumer } from "./events/consumers";
+import { eventBodyBytes, MAX_EVENT_BODY_BYTES, type EventActor, type EventInput } from "./events/store";
+import { IPC_TIMED_OUT, IPC_TIMEOUT, ipcForward, withdrawIpcAnswer, type IpcForward } from "./ipc-events";
+import { directMessage } from "./message-events";
 import { nestedToolOwner } from "./tool-approval";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
@@ -139,6 +143,13 @@ export async function handleProcSpawn(
   // caller's personal agent. A delegated child inherits this identity unless
   // a specialized agent is selected explicitly.
   const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
+  // The prompt goes through the log once the process exists; one too big for it is refused first.
+  const prompt = args.prompt
+    ? directMessage({ ownerUid, pid, message: args.prompt, origin: interactionOriginForContext(ctx), actor: senderOf(ctx) })
+    : null;
+  if (prompt && eventBodyBytes(prompt.body ?? null) > MAX_EVENT_BODY_BYTES) {
+    return { ok: false, error: "proc.spawn prompt exceeds 64 KiB; write the content to a file and pass its path" };
+  }
   const aiError = args.ai && processAiConfigInputError(args.ai);
   if (aiError) return { ok: false, error: aiError };
   const ai = args.ai ? createProcessAiConfig(args.ai) : null;
@@ -265,19 +276,9 @@ export async function handleProcSpawn(
 
   notifyProcessChanged(ctx, pid, ["created"]);
 
-  if (args.prompt) {
-    const origin = interactionOriginForContext(ctx);
-    const sendArgs: ProcSendArgs = {
-      pid,
-      message: args.prompt,
-    };
-    if (origin) sendArgs.origin = origin;
-    await sendFrameToProcess(ctx.installationId, pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.send",
-      args: sendArgs,
-    });
+  if (prompt) {
+    // One its process can't take right now waits on the log, which retries it.
+    await ctx.events.deliverNow(ctx.events.append(prompt), processConsumer(pid));
   }
 
   return {
@@ -516,33 +517,11 @@ export function resolveRunAsIdentity(
   return { ok: true, identity: accountIdentity(auth, entry) };
 }
 
-function withProcSendOrigin(
-  frame: RequestFrame<"proc.send">,
-  ctx: KernelContext,
-): RequestFrame<"proc.send"> {
-  const nextArgs: ProcSendArgs = { ...frame.args };
-  const origin = interactionOriginForContext(ctx);
-  if (origin) {
-    nextArgs.origin = origin;
-  } else {
-    delete nextArgs.origin;
-  }
-  delete nextArgs.interaction;
-  const nextFrame: RequestFrame<"proc.send"> = {
-    type: "req",
-    id: frame.id,
-    call: "proc.send",
-    args: nextArgs,
-  };
-  if (frame.runId !== undefined) nextFrame.runId = frame.runId;
-  if (frame.body !== undefined) nextFrame.body = frame.body;
-  return nextFrame;
-}
-
 function interactionOriginForContext(ctx: KernelContext): InteractionOrigin | undefined {
   if (ctx.processId) {
     return processInteractionOrigin(ctx.processId, principalOf(ctx)?.account.uid);
   }
+  if (ctx.scheduleId) return { kind: "scheduler", scheduleId: ctx.scheduleId };
 
   const identity = principalOf(ctx);
   if (!identity) return undefined;
@@ -582,45 +561,98 @@ function processInteractionOrigin(sourcePid: string, uid?: number): InteractionO
   return origin;
 }
 
+/** Who sent a message: the calling process, a firing schedule, or the person or device the caller acts for. */
+function senderOf(ctx: KernelContext): EventActor {
+  if (ctx.processId) return { kind: "process", pid: ctx.processId };
+  if (ctx.scheduleId) return { kind: "schedule", scheduleId: ctx.scheduleId };
+  return { kind: "person", uid: requirePrincipal(ctx).account.uid };
+}
+
+/**
+ * A message sent straight to a process, appended to the log and delivered in the call. A
+ * person's stops the run the process is in; another process's takes a run of its own after it.
+ * The run takes the delivery's id, so a reply route can be pinned before the run starts.
+ */
+export async function handleProcSend(
+  args: ProcSendArgs,
+  ctx: KernelContext,
+): Promise<ProcSendResult> {
+  const identity = requirePrincipal(ctx);
+  const pid = args.pid ?? ctx.processId;
+  if (!pid) {
+    throw new ProcessRequestError({ code: 400, message: "proc.send requires pid outside a process", retryable: false });
+  }
+  const proc = ctx.procs.get(pid);
+  if (!proc) {
+    throw new ProcessRequestError({ code: 404, message: `Process not found: ${pid}`, retryable: false });
+  }
+  if (proc.ownerUid !== resolveCallerOwnerUid(ctx) && identity.account.uid !== 0) {
+    throw new ProcessRequestError({ code: 403, message: `Permission denied: cannot access process ${pid}`, retryable: false });
+  }
+  // The model writes these arguments; the Process checks each block it can read when it takes the message.
+  if (args.media !== undefined && !(Array.isArray(args.media) && args.media.every((block) => resourceBlockSchema.safeParse(block).success))) {
+    return { ok: false, error: "proc.send media must be resource blocks" };
+  }
+  const input = directMessage({
+    ownerUid: proc.ownerUid,
+    pid,
+    message: args.message,
+    media: args.media,
+    selectedTarget: args.selectedTarget === undefined ? undefined : await resolveSelectedMessageTarget(ctx, args.selectedTarget),
+    origin: interactionOriginForContext(ctx),
+    actor: senderOf(ctx),
+  });
+  if (eventBodyBytes(input.body ?? null) > MAX_EVENT_BODY_BYTES) {
+    return { ok: false, error: "proc.send message exceeds 64 KiB; write the content to a file and send its path" };
+  }
+  const consumer = processConsumer(pid);
+  const event = ctx.events.append(input);
+  const runId = deliveryId(event.id, consumer);
+  if (identity.kind === "human" && ctx.connection) {
+    ctx.runRoutes.setConnectionRoute({
+      runId,
+      processId: pid,
+      uid: proc.ownerUid,
+      connectionId: ctx.connection.id,
+      clientPlatform: ctx.connection.state.clientPlatform?.trim() || undefined,
+    });
+  }
+  const sent = await withInitialOnboarding(
+    identity.kind === "human" && !ctx.processId && identity.account.uid === proc.ownerUid && proc.isPersonalController
+      ? proc.ownerUid : undefined,
+    ctx,
+    () => ctx.events.deliverNow(event, consumer),
+  );
+  if (sent.state === "withdrawn") return { ok: false, error: sent.reason };
+  return {
+    ok: true,
+    status: "started",
+    runId,
+    // One its process can't take right now waits on the log, which retries it.
+    ...(sent.state === "pending" || sent.queued ? { queued: true } : undefined),
+  };
+}
+
 export async function handleProcIpcSend(
   args: ProcIpcSendArgs,
   ctx: KernelContext,
 ): Promise<ProcIpcSendResult> {
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.send");
   if (!resolved.ok) return resolved;
-  const runId = crypto.randomUUID();
-
-  const response = await sendFrameToProcess(ctx.installationId, resolved.args.pid, {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.ipc.deliver",
-    args: {
-      runId,
-      sourcePid: resolved.sourcePid,
-      source: requirePrincipal(ctx).account,
-      message: resolved.args.message,
-      metadata: resolved.args.metadata,
-      origin: processInteractionOrigin(resolved.sourcePid, resolved.source.uid),
-      sentAt: Date.now(),
-    },
-  });
-
-  if (response && response.type === "res") {
-    if (!response.ok) {
-      return { ok: false, error: response.error.message };
-    }
-    // SAFETY: this response corresponds to the proc.ipc.deliver request above.
-    const delivered = response.data as ProcIpcDeliverResult | undefined;
-    if (!delivered) {
-      return { ok: false, error: "proc.ipc.deliver returned no data" };
-    }
-    if (delivered.ok && delivered.runId !== runId) {
-      return { ok: false, error: "proc.ipc.deliver returned an unexpected runId" };
-    }
-    return delivered;
-  }
-
-  return { ok: false, error: "proc.ipc.deliver did not return a response" };
+  const input = ipcForwardEvent(resolved, ctx);
+  if (eventBodyBytes(input.body ?? null) > MAX_EVENT_BODY_BYTES) return ipcForwardTooLarge("proc.ipc.send");
+  const consumer = processConsumer(resolved.args.pid);
+  const event = ctx.events.append(input);
+  const sent = await ctx.events.deliverNow(event, consumer);
+  if (sent.state === "withdrawn") return { ok: false, error: sent.reason };
+  return {
+    ok: true,
+    status: "started",
+    pid: resolved.args.pid,
+    sourcePid: resolved.sourcePid,
+    runId: deliveryId(event.id, consumer),
+    ...(sent.state === "pending" || sent.queued ? { queued: true } : undefined),
+  };
 }
 
 export async function handleProcIpcCall(
@@ -637,22 +669,13 @@ export async function handleProcIpcCall(
   const timeoutMs = resolveIpcCallTimeoutMs(args.timeoutMs);
   const deadlineAt = Date.now() + timeoutMs;
   const callId = crypto.randomUUID();
-  const runId = crypto.randomUUID();
+  const supervised = options.superviseAfterTimeout === true;
+  const input = ipcForwardEvent(resolved, ctx, { callId, deadlineAt, ...(supervised ? { supervised } : undefined) });
+  if (eventBodyBytes(input.body ?? null) > MAX_EVENT_BODY_BYTES) return ipcForwardTooLarge("proc.ipc.call");
 
-  ctx.ipcCalls.create({
-    callId,
-    uid: resolved.source.ownerUid,
-    sourcePid: resolved.sourcePid,
-    sourceRunId: ctx.processRunId ?? null,
-    targetPid: resolved.args.pid,
-    targetRunId: runId,
-    deadlineAt,
-    supervised: options.superviseAfterTimeout === true,
-    responsibilityId: options.responsibilityId,
-  });
-
+  // The timer goes first, so every call the log holds has its timeout.
   try {
-    if (options.superviseAfterTimeout) {
+    if (supervised) {
       await ctx.scheduleIpcCallTimeout(callId, deadlineAt, {
         mode: "supervise",
         intervalMs: timeoutMs,
@@ -663,90 +686,73 @@ export async function handleProcIpcCall(
       await ctx.scheduleIpcCallTimeout(callId, deadlineAt);
     }
   } catch (error) {
-    ctx.ipcCalls.remove(callId);
     return {
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     };
   }
 
-  const deliverCall: NonNullable<ProcIpcDeliverArgs["call"]> = {
-    callId,
-    deadlineAt,
-  };
-  if (options.superviseAfterTimeout) deliverCall.supervised = true;
-
-  let response: Awaited<ReturnType<typeof sendFrameToProcess>>;
-  try {
-    response = await sendFrameToProcess(ctx.installationId, resolved.args.pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.ipc.deliver",
-      args: {
-        runId,
-        sourcePid: resolved.sourcePid,
-        source: requirePrincipal(ctx).account,
-        message: resolved.args.message,
-        metadata: resolved.args.metadata,
-        origin: processInteractionOrigin(resolved.sourcePid, resolved.source.uid),
-        sentAt: Date.now(),
-        call: deliverCall,
-      },
+  const targetPid = resolved.args.pid;
+  const consumer = processConsumer(targetPid);
+  const event = ctx.events.transaction(() => {
+    const appended = ctx.events.append(input);
+    // The target runs the call under its delivery's id, so the run's end finds this row.
+    ctx.ipcCalls.create({
+      callId,
+      uid: resolved.source.ownerUid,
+      sourcePid: resolved.sourcePid,
+      sourceRunId: ctx.processRunId ?? null,
+      targetPid,
+      targetRunId: deliveryId(appended.id, consumer),
+      deadlineAt,
+      supervised,
+      responsibilityId: options.responsibilityId,
     });
-  } catch (error) {
-    ctx.ipcCalls.remove(callId);
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
+    return appended;
+  });
+  const sent = await ctx.events.deliverNow(event, consumer);
+  if (sent.state === "withdrawn") {
+    // Its target never took it, so the caller hears here and nowhere else; a call that ended first says why.
+    const error = ctx.events.transaction(() => {
+      ctx.ipcCalls.remove(callId);
+      return withdrawIpcAnswer(ctx, callId);
+    });
+    return { ok: false, error: error ?? sent.reason };
   }
-
-  if (!response || response.type !== "res") {
-    ctx.ipcCalls.remove(callId);
-    return { ok: false, error: "proc.ipc.deliver did not return a response" };
+  if (ctx.events.keyed(IPC_TIMEOUT, callId) || (!supervised && Date.now() >= deadlineAt)) {
+    return { ok: false, error: IPC_TIMED_OUT };
   }
-  if (!response.ok) {
-    ctx.ipcCalls.remove(callId);
-    return { ok: false, error: response.error.message };
-  }
-
-  // SAFETY: this response corresponds to the proc.ipc.deliver request above.
-  const delivered = response.data as ProcIpcDeliverResult | undefined;
-  if (!delivered) {
-    ctx.ipcCalls.remove(callId);
-    return { ok: false, error: "proc.ipc.deliver returned no data" };
-  }
-  if (!delivered.ok) {
-    ctx.ipcCalls.remove(callId);
-    return delivered;
-  }
-  if (delivered.runId !== runId) {
-    ctx.ipcCalls.remove(callId);
-    return { ok: false, error: "proc.ipc.deliver returned an unexpected runId" };
-  }
-
-  const call = ctx.ipcCalls.get(callId);
-  if (
-    call?.status === "timed_out"
-    || (!options.superviseAfterTimeout && Date.now() >= deadlineAt)
-  ) {
-    return {
-      ok: false,
-      error: call?.error ?? "IPC call timed out",
-    };
-  }
-
-  const result: Extract<ProcIpcCallResult, { ok: true }> = {
+  return {
     ok: true,
     status: "started",
     callId,
-    pid: delivered.pid,
+    pid: targetPid,
     sourcePid: resolved.sourcePid,
-    runId,
+    runId: deliveryId(event.id, consumer),
     deadlineAt,
+    ...(sent.state === "pending" || sent.queued ? { queued: true } : undefined),
   };
-  if (delivered.queued) result.queued = true;
-  return result;
+}
+
+/** A message or call as the log keeps it until its target takes it. */
+function ipcForwardEvent(
+  resolved: Extract<ResolvedSameOwnerIpc, { ok: true }>,
+  ctx: KernelContext,
+  call?: IpcForward["call"],
+): EventInput {
+  return ipcForward(resolved.source.ownerUid, {
+    targetPid: resolved.args.pid,
+    sourcePid: resolved.sourcePid,
+    source: requirePrincipal(ctx).account,
+    message: resolved.args.message,
+    ...(resolved.args.metadata === undefined ? undefined : { metadata: resolved.args.metadata }),
+    ...(call === undefined ? undefined : { call }),
+  });
+}
+
+/** The log holds 64 KiB of an event inline; a bigger message travels as a file. */
+function ipcForwardTooLarge(syscall: "proc.ipc.send" | "proc.ipc.call"): Extract<ProcIpcSendResult, { ok: false }> {
+  return { ok: false, error: `${syscall} message and metadata exceed 64 KiB; write the content to a file and send its path` };
 }
 
 /**
@@ -790,22 +796,13 @@ export async function forwardToProcess(
   }
   const processFrame = ownedCall
     ? { ...frame, toolOwner: owner }
-    : frame.call === "proc.send"
-      ? withProcSendOrigin(frame, ctx)
-      : frame.call === "proc.ai.config.set"
-        ? withValidatedProcAiConfig(frame, ctx, proc.ownerUid)
-        : frame;
-  if (processFrame.call === "proc.send" && processFrame.args.selectedTarget !== undefined) {
-    processFrame.args.selectedTarget = await resolveSelectedMessageTarget(ctx, processFrame.args.selectedTarget);
-  }
+    : frame.call === "proc.ai.config.set"
+      ? withValidatedProcAiConfig(frame, ctx, proc.ownerUid)
+      : frame;
   if (frame.call === "proc.kill" && proc.isPersonalController) {
     invalidatePersonalControllerReadiness(proc.ownerUid, pid, ctx.procs);
   }
-  const responsePromise = withInitialOnboarding(
-    frame.call === "proc.send" && identity.kind === "human" && !ctx.processId
-      && identity.account.uid === proc.ownerUid && proc.isPersonalController ? proc.ownerUid : undefined,
-    ctx, () => sendFrameToProcess(ctx.installationId, pid, processFrame),
-  );
+  const responsePromise = sendFrameToProcess(ctx.installationId, pid, processFrame);
   let cancellation: Promise<unknown> | undefined;
   const signal = frame.call === "codemode.run" || frame.call === "proc.history.compact"
     ? ctx.requestSignal
@@ -850,26 +847,8 @@ export async function forwardToProcess(
       } else if (frame.call === "proc.kill") {
         reconcileKilledProcess(proc.ownerUid, pid, ctx);
       }
-      const responseData = response.data;
-      // SAFETY: the Process response preserves the request syscall; this branch
-      // reads proc.send data only when the originating call is proc.send.
-      const runData = responseData as ResultOf<"proc.send"> | undefined;
-      if (
-        frame.call === "proc.send"
-        && identity.kind === "human"
-        && ctx.connection
-        && runData?.ok
-      ) {
-        ctx.runRoutes.setConnectionRoute({
-          runId: runData.runId,
-          processId: pid,
-          uid: proc.ownerUid,
-          connectionId: ctx.connection.id,
-          clientPlatform: ctx.connection.state.clientPlatform?.trim() || undefined,
-        });
-      }
       const result: ForwardedProcessResult = {
-        data: responseData,
+        data: response.data,
       };
       if (response.body !== undefined) result.body = response.body;
       return result;

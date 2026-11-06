@@ -34,9 +34,6 @@ export async function handleSysBootstrap(
   if (args && Object.keys(args).length > 0) {
     throw new Error("sys.bootstrap does not accept source overrides");
   }
-  if (!ctx.env.RIPGIT) {
-    throw new Error("RIPGIT binding is required for system bootstrap");
-  }
   if (!principalOf(ctx)) {
     throw new Error("Authenticated identity required");
   }

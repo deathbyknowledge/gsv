@@ -1,4 +1,8 @@
-import { contactDisplayName, type NoticeDelivery, type ShipOutcome } from "@humansandmachines/gsv/protocol";
+import {
+  contactDisplayName, procHistoryEventLinkSchema, procHistoryEventPayloadSchemas,
+  type NoticeDelivery, type ProcHistoryEventLink, type ProcHistoryEventPayload, type ShipOutcome,
+} from "@humansandmachines/gsv/protocol";
+import { z } from "zod";
 import type { DurableTaskOptions } from "../shared/durable-tasks";
 import { stableOpaqueId } from "../shared/stable-id";
 import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
@@ -6,11 +10,40 @@ import { deliverAdapterDestination } from "./adapter-send";
 import { identityLinkRouteGeneration } from "./adapter-destinations";
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
+import { shipConsumer } from "./events/consumers";
+import type { EventDefinition } from "./events/registry";
 import type { OwnerNotice } from "./owner-notice-store";
 import { messengerNoticeAction, noticeLanguage, ownerNoticeLink, ownerNoticeParts, renderOwnerNotice } from "./owner-notice-text";
-import type { OwnerNotifiedShipEvent } from "./ship-event-store";
 
 const MAX_RETRY_DELAY_MS = 5 * 60_000;
+
+const ownerNotifiedBodySchema = z.object({
+  payload: z.custom<ProcHistoryEventPayload<"owner.notified">>(
+    (value) => procHistoryEventPayloadSchemas["owner.notified"].safeParse(value).success,
+  ),
+  /** Set for a card in the person's conversation; otherwise it follows whether a messenger carried the notice. */
+  audience: z.enum(["person", "both"]).optional(),
+  link: z.custom<ProcHistoryEventLink>((value) => procHistoryEventLinkSchema.safeParse(value).success).optional(),
+});
+
+/**
+ * A notice the owner received, recorded in Ship's history. It joins an active run like
+ * any runtime event; otherwise it waits, without starting a run, for the owner's reply
+ * that needs it. The owner already has the notice, so nothing withdraws Ship's record.
+ */
+export const ownerNotifiedEvent: EventDefinition = {
+  routes: (event) => [{ consumer: shipConsumer(event.ownerUid), lane: "background" }],
+  admit(event) {
+    const { payload, audience, link } = ownerNotifiedBodySchema.parse(event.body);
+    return {
+      event: {
+        kind: "owner.notified", payload, severity: "info", audience: audience ?? (payload.adapter ? "both" : "model"),
+        ...(link ? { link } : undefined),
+      },
+      admission: { idle: "record", busy: "join" },
+    };
+  },
+};
 
 const isSourceNotice = (notice: OwnerNotice): boolean => notice.topic === "event.received" || notice.topic === "event.silent";
 
@@ -30,6 +63,10 @@ function noticeOutcome(notice: OwnerNotice, ctx: KernelContext) {
  * Sends each owner's notices to their private messenger, unless a client of theirs is active
  * and already shows the change. Records each one for Ship without waking it, as its rule says,
  * including whether the person was told.
+ *
+ * TODO(event-log): when the messenger copy moves onto chat consumers, as a run's replies did,
+ * `onOwnerNotices` goes with its own gate check, scheduling and retries, and so does the retry
+ * state in owner-notice-store.ts. Grouping and rendering stay.
  */
 export class OwnerNoticeRuntime {
   constructor(readonly host: Kernel) {}
@@ -139,8 +176,7 @@ export class OwnerNoticeRuntime {
     const noticeId = `${notice.key}:${notice.createdAtMs}:${notice.round}`;
     const link = ownerNoticeLink(notice);
     if (topic === "notice.rule.changed") throw new Error("Ship's own rule changes are never recorded for it");
-    const event: OwnerNotifiedShipEvent = {
-      type: "owner.notified",
+    const body: z.infer<typeof ownerNotifiedBodySchema> = {
       ...(shownInClient ? { audience: shipSees ? "both" as const : "person" as const } : undefined),
       payload: {
         noticeId,
@@ -157,9 +193,11 @@ export class OwnerNoticeRuntime {
     };
     this.host.ctx.storage.transactionSync(() => {
       finish();
-      this.host.shipEvents.enqueue(notice.ownerUid, `owner.notified:${noticeId}`, event, now);
+      this.host.eventRuntime.append({
+        type: "owner.notified", ownerUid: notice.ownerUid, subject: `notice:${noticeId}`, actor: { kind: "kernel" }, key: noticeId, body,
+      });
     });
-    await this.host.shipEventRuntime.queue(notice.ownerUid);
+    await this.host.eventRuntime.kick();
   }
 
   /** The notice as it stands now, or null once its subject was read, decided, muted, fixed or ended. */

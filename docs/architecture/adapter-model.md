@@ -403,11 +403,15 @@ and held messages intact.
 Outcomes that may already have reached a provider are reported as
 ambiguous and are not replayed; Discord can additionally reuse an
 enforced deterministic nonce, while Telegram conservatively uses at-most-once
-delivery for ambiguous outcomes. The Kernel retains retry-safe delivery as scheduled work,
-shows typing before each attempt and ends the run's acknowledgement after it, and removes the reply route after success or
-after a terminal delivery notice is accepted by the Process. The canonical
+delivery for ambiguous outcomes. A run's replies to its messenger chat go through the Kernel's
+[event log](./event-log.md#replies-to-a-messenger-chat) as `chat.reply`, in order for each chat. The Kernel shows
+typing before each attempt and ends the run's acknowledgement after it, keeps the run's reply route until the run
+ends, and tries a retry-safe failure twice more, after 2 s and then 8 s. A reply that can't go, refused, ambiguous
+or out of retries, reaches the run's Process as `delivery.failed`. A failed message wakes that process so it can
+reach the person another way, until three in a row have failed in that chat. A failed approval request or failure
+notice is only recorded in that run's history, and an approval request only while it is still pending. The canonical
 Message remains in conversation history and its delivery outcome remains
-inspectable in Process activity. Approval attempt one is durably scheduled
+inspectable in Process activity. An approval request's reply is logged
 before Process acknowledges the HIL signal; provider notification failure
 therefore cannot clear or fail a pending approval.
 Adapter command responses use this same outbound ledger.

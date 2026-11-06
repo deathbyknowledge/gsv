@@ -159,17 +159,14 @@ describe("message requests", () => {
     const procs = { get: (pid: string): Pick<ProcessRecord, "isPersonalController" | "ownerUid"> | null => ({ isPersonalController: pid === "proc:ship", ownerUid: SPACE_OWNER_UID }) };
     // SAFETY: the authority check reads only the calling process's controller flag and owner; the tool owner names the Ship's run.
     const asShipTool = (ctx: KernelContext) => ({ ...held(ctx), processId: "proc:ship", procs, toolOwner: { runId: "run", requestId: "shell" } } as KernelContext);
-    const authorize = vi.spyOn(transport, "sendFrameToProcess").mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: false } });
+    const authorize = vi.spyOn(transport, "authorizeProcessTool").mockResolvedValue({ approved: false });
     await expect(alice.run((ctx) => handleApproachCreate({ ...request(profile), shipHandlesMessages: false }, asShipTool(ctx)))).rejects.toThrow("not approved");
-    expect(authorize).toHaveBeenCalledWith(alice.installationId, "proc:ship", expect.objectContaining({
-      call: "proc.tool.authorize",
-      args: expect.objectContaining({
+    expect(authorize).toHaveBeenCalledWith(alice.installationId, "proc:ship", expect.any(String), expect.objectContaining({
         syscall: "approach.create",
         args: expect.objectContaining({ recipient: "bob.ship.test", did: bob.account.did }),
-      }),
-    }));
+      }));
     expect(await alice.run((ctx) => ctx.approaches.list(SPACE_OWNER_UID, { direction: "outgoing", limit: 10 }))).toEqual([]);
-    authorize.mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: true } });
+    authorize.mockResolvedValue({ approved: true });
     const sent = (await alice.run((ctx) => handleApproachCreate({ ...request(profile), shipHandlesMessages: false }, asShipTool(ctx)))).approach;
     expect((await alice.run((ctx) => ctx.approaches.list(SPACE_OWNER_UID, { direction: "outgoing", limit: 10 }))).map((entry) => entry.id)).toEqual([sent.id]);
   });
@@ -178,12 +175,9 @@ describe("message requests", () => {
     const procs = { get: (pid: string): Pick<ProcessRecord, "isPersonalController" | "ownerUid"> | null => ({ isPersonalController: pid === "proc:ship", ownerUid: SPACE_OWNER_UID }) };
     // SAFETY: a direct process syscall carries the process, run and request ids but no tool owner.
     const asShipSyscall = (ctx: KernelContext) => ({ ...held(ctx), processId: "proc:ship", processRunId: "run:direct", requestId: "req:direct", procs } as KernelContext);
-    const authorize = vi.spyOn(transport, "sendFrameToProcess").mockResolvedValue({ type: "res", id: "approval", ok: true, data: { approved: false } });
+    const authorize = vi.spyOn(transport, "authorizeProcessTool").mockResolvedValue({ approved: false });
     await expect(alice.run((ctx) => handleApproachCreate({ ...request(profile), shipHandlesMessages: false }, asShipSyscall(ctx)))).rejects.toThrow("not approved");
-    expect(authorize).toHaveBeenCalledWith(alice.installationId, "proc:ship", expect.objectContaining({
-      call: "proc.tool.authorize",
-      args: expect.objectContaining({ runId: "run:direct", requestId: "req:direct", syscall: "approach.create" }),
-    }));
+    expect(authorize).toHaveBeenCalledWith(alice.installationId, "proc:ship", expect.any(String), expect.objectContaining({ runId: "run:direct", requestId: "req:direct", syscall: "approach.create" }));
     expect(await alice.run((ctx) => ctx.approaches.list(SPACE_OWNER_UID, { direction: "outgoing", limit: 10 }))).toEqual([]);
   });
 
@@ -191,9 +185,9 @@ describe("message requests", () => {
     const procs = { get: (pid: string): Pick<ProcessRecord, "isPersonalController" | "ownerUid"> | null => ({ isPersonalController: pid === "proc:ship", ownerUid: SPACE_OWNER_UID }) };
     // SAFETY: the authority check reads only the calling process's controller flag and owner; the tool owner names the Ship's run.
     const asShipTool = (ctx: KernelContext) => ({ ...held(ctx), processId: "proc:ship", procs, toolOwner: { runId: "run", requestId: "shell" } } as KernelContext);
-    vi.spyOn(transport, "sendFrameToProcess").mockImplementation(async () => {
+    vi.spyOn(transport, "authorizeProcessTool").mockImplementation(async () => {
       await publishProfile(bob, "requests", "Hello again");
-      return { type: "res", id: "approval", ok: true, data: { approved: true } };
+      return { approved: true };
     });
     await expect(alice.run((ctx) => handleApproachCreate({ ...request(profile), shipHandlesMessages: false }, asShipTool(ctx)))).rejects.toThrow("This profile changed; review it again before sending");
     expect(await alice.run((ctx) => ctx.approaches.list(SPACE_OWNER_UID, { direction: "outgoing", limit: 10 }))).toEqual([]);

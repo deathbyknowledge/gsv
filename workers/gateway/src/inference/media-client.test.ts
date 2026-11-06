@@ -42,11 +42,11 @@ describe("gateway media execution ownership", () => {
     await expect(new Response(result.body).text()).rejects.toThrow("timed out");
   });
 
-  it("cancels an input body when no inference service can accept ownership", async () => {
+  it("cancels an input body when the inference service refuses ownership", async () => {
+    const { getExecutor, execute } = fixture();
+    getExecutor.mockRejectedValue(new Error("Inference execution refused"));
     const cancel = vi.fn();
-    // SAFETY: Deliberately missing binding exercises admission cleanup.
-    const execute = createMediaExecutor({} as GatewayEnv, async () => identity);
-    await expect(execute({ kind: "transcription", input: { provider: "workers-ai", model: "whisper", maxInputBytes: 100 } }, new ReadableStream({ cancel }), 1000)).rejects.toThrow("not configured");
+    await expect(execute({ kind: "transcription", input: { provider: "workers-ai", model: "whisper", maxInputBytes: 100 } }, new ReadableStream({ cancel }), 1000)).rejects.toThrow("Inference execution refused");
     expect(cancel).toHaveBeenCalledOnce();
   });
 

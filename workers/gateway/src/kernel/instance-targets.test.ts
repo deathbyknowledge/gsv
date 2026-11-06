@@ -146,22 +146,17 @@ describe("instance gateway boundary", () => {
       const execute = vi.fn<InstallationInstances["execute"]>(async (_actor, _id, frame) => ({ type: "res", id: frame.id, ok: true, data: {} }));
       const { ctx } = context({ list, execute }, "crew-process");
       ctx.toolOwner = { runId: "run", requestId: "shell" };
-      const approve = vi.spyOn(processTransport, "sendFrameToProcess").mockImplementation(async (_installation, _pid, frame) => {
-        if (frame.type !== "req" || frame.call !== "proc.tool.authorize") throw new Error("Unexpected callback");
-        const args = frame.args;
-        return { type: "res", id: frame.id, ok: true, data: {
-          approved: resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, args.syscall, args.args, args.target).action === "auto",
-        } };
-      });
+      const approve = vi.spyOn(processTransport, "authorizeProcessTool").mockImplementation(async (_installation, _pid, _requestId, args) => ({
+        approved: resolveToolApproval(DEFAULT_TOOL_APPROVAL_POLICY, args.syscall, args.args, args.target).action === "auto",
+      }));
       // SAFETY: An instance route uses only the durable session store from these dependencies.
       const deps = { shellSessions: new ShellSessionStore(sql) } as DispatchDeps;
       const request = () => dispatch({ type: "req", id: crypto.randomUUID(), call: "shell.exec", args: { target: "browser", input: "page snapshot" } },
         { type: "process", id: "crew-process" }, ctx, deps);
       ctx.approvedTarget = { targetId: "browser", ownerUid: 1000, platform: "browser", route: { kind: "instance", instanceId: "instance" } };
       expect(await request()).toMatchObject({ response: { ok: true } });
-      expect(approve).toHaveBeenCalledWith("trusted-installation", "crew-process", expect.objectContaining({
-        args: expect.objectContaining({ syscall: "shell.exec", target: ctx.approvedTarget }),
-      }));
+      expect(approve).toHaveBeenCalledWith("trusted-installation", "crew-process", expect.any(String),
+        expect.objectContaining({ syscall: "shell.exec", target: ctx.approvedTarget }));
       expect(execute).toHaveBeenCalledOnce();
 
       ctx.approvedTarget = { targetId: "browser", ownerUid: 1000, platform: "browser", route: { kind: "machine", targetId: "browser" } };
@@ -182,14 +177,13 @@ describe("instance gateway boundary", () => {
       expect(execute).toHaveBeenCalledOnce();
       delete ctx.approvedTarget;
       expect(await request()).toMatchObject({ response: { ok: false, error: { code: 403 } } });
-      expect(approve).toHaveBeenLastCalledWith("trusted-installation", "crew-process", expect.objectContaining({
-        args: expect.objectContaining({ target: expect.objectContaining({ route: { kind: "machine", targetId: "browser" } }) }),
-      }));
+      expect(approve).toHaveBeenLastCalledWith("trusted-installation", "crew-process", expect.any(String),
+        expect.objectContaining({ target: expect.objectContaining({ route: { kind: "machine", targetId: "browser" } }) }));
 
       ctx.targets.canAccess = () => false;
-      approve.mockImplementationOnce(async (_installation, _pid, frame) => {
+      approve.mockImplementationOnce(async () => {
         instance.instanceId = "changed-during-approval";
-        return { type: "res", id: frame.id, ok: true, data: { approved: true } };
+        return { approved: true };
       });
       expect(await request()).toMatchObject({ response: { ok: false, error: { code: 403, message: expect.stringContaining("changed while awaiting approval") } } });
       expect(execute).toHaveBeenCalledOnce();
@@ -324,16 +318,14 @@ describe("instance gateway boundary", () => {
     const controller = new AbortController();
     ctx.requestSignal = controller.signal;
     ctx.toolOwner = { runId: "run", requestId: "shell" };
-    const approve = vi.spyOn(processTransport, "sendFrameToProcess").mockImplementation(async () => {
+    const approve = vi.spyOn(processTransport, "authorizeProcessTool").mockImplementation(async () => {
       if (outcome === "cancel") controller.abort(new Error("stop cancelled"));
-      return { type: "res", id: "approval", ok: true, data: { approved: outcome !== "deny" } };
+      return { approved: outcome !== "deny" };
     });
     const deleting = handleSysTargetDelete({ targetId: "browser" }, ctx);
     if (outcome === "approve") await deleting;
     else await expect(deleting).rejects.toThrow(outcome === "deny" ? "not approved" : "stop cancelled");
-    expect(approve).toHaveBeenCalledWith("trusted-installation", "crew-process", expect.objectContaining({
-      call: "proc.tool.authorize", args: expect.objectContaining({ ...ctx.toolOwner, syscall: "sys.instance.stop", args: { instanceId: "instance" } }),
-    }));
+    expect(approve).toHaveBeenCalledWith("trusted-installation", "crew-process", expect.any(String), expect.objectContaining({ ...ctx.toolOwner, syscall: "sys.instance.stop", args: { instanceId: "instance" } }));
     expect(stop).toHaveBeenCalledTimes(outcome === "approve" ? 1 : 0);
   });
 

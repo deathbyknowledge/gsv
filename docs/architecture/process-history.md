@@ -174,6 +174,8 @@ use its existing `signal.watch` capability to watch an accessible target:
 The source is an explicit `targetId`, and the only registered signal is
 `target.status`. Watches default to audience `person`; `model` and `both`
 explicitly admit model work. Existing watch TTL and one-shot semantics apply.
+Each connection change goes through the Kernel's event log, one event per watch,
+retried until the Process takes it; a newer change replaces one still waiting.
 Generic process signal watches are retired: upgrade removes their registrations,
 and delayed watched-signal frames are ignored. Historical `signal.watched`
 records and their original model rendering remain supported.
@@ -184,8 +186,8 @@ The command validates the public syscall argument contract and delegates to the
 same capability-checked Kernel handlers; it does not add a model tool.
 
 The Kernel captures connection facts from its target registry, checks target
-access and the watching Process's current capability, and uses an internal
-`proc.event.deliver` request. Public callers cannot send that request, choose a
+access and the watching Process's current capability, and calls the Process's
+internal `deliverEvent` method. Public callers cannot make that call, choose a
 target identity in a machine signal, or register arbitrary payload shapes.
 The managed installation work gate also applies before delivery. Watch revisions
 fence updates and removal while an earlier delivery is in flight.
@@ -203,7 +205,7 @@ available independently of the canonical Conversation.
 Target connection notifications are best effort. SQL retains the watch.
 Temporary Process lifecycle conflicts, service errors, and RPC failures leave
 watches eligible for later transitions, including one-shot
-watches that have not received a matching successful acknowledgment. The missed
-transition is not replayed. Authorization failures, a gone Process, and invalid
-acknowledgments still disable the watch.
+watches that have not received a successful acknowledgment. The missed
+transition is not replayed. Authorization failures and a gone Process still
+disable the watch.
 Stale events ignored at the Process reset boundary do not consume one-shot watches.

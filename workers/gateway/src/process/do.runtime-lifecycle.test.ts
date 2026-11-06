@@ -160,58 +160,19 @@ describe("Process DO — mechanical", () => {
     });
   });
 
-  it("records terminal adapter delivery outcomes in process history", async () => {
-    const pid = "mech-delivery-notice";
-    const stub = await initProcess(pid, ROOT_IDENTITY);
+  it("records nothing for the retired delivery notice signal, whose failures now arrive from the Kernel's log", async () => {
+    const stub = await initProcess("mech-delivery-notice", ROOT_IDENTITY);
 
-    // SAFETY: test fixture is constructed with the asserted domain shape.
-
-    const notice = {
+    await stub.recvFrame({
       type: "sig",
       signal: "proc.delivery.notice",
-      payload: {
-        noticeId: "notice:mech-delivery-notice",
-        runId: "run-delivery-notice",
-        deliveryKind: "final",
-        state: "ambiguous",
-        message: "The message reached the adapter, but provider delivery is ambiguous.",
-      },
-      // SAFETY: test fixture is constructed with the asserted domain shape.
-    } as const;
-    await stub.recvFrame(notice);
-    await stub.recvFrame(notice);
+      payload: { noticeId: "notice:retired", runId: "run-delivery-notice", message: "The message could not be delivered." },
+    });
 
     await runInProcess(stub, (process) => {
-      expect(process.store.messages.getMessages()).toEqual([
-        expect.objectContaining({
-          role: "system",
-          runId: "run-delivery-notice",
-          content: expect.stringContaining("delivery is ambiguous"),
-        }),
-      ]);
+      expect(process.store.messages.getMessages()).toEqual([]);
     });
   });
-
-  it("bounds terminal adapter delivery notice tombstones", async () => {
-    const stub = await initProcess("mech-delivery-notice-bounds", ROOT_IDENTITY);
-
-    await runInProcess(stub, async (process) => {
-      for (let index = 0; index <= 256; index += 1) {
-        await process.controller.handleSig({
-          type: "sig",
-          signal: "proc.delivery.notice",
-          payload: {
-            noticeId: `notice:bounded:${index}`,
-            runId: `run-${index}`,
-            message: `Delivery notice ${index}`,
-          },
-        });
-      }
-      expect(process.store.state.getValue("deliveryNotice:notice:bounded:0")).toBeNull();
-      expect(process.store.state.getValue("deliveryNotice:notice:bounded:256")).not.toBeNull();
-      expect(JSON.parse(process.store.state.getValue("deliveryNoticeIds"))).toHaveLength(256);
-    });
-  }, 15_000);
 
   it("projects proc.run signals into kernel process activity", async () => {
     const pid = "mech-kernel-process-activity";

@@ -469,10 +469,13 @@ describe("the profile on Bluesky", () => {
     vi.spyOn(utils, "getConversationById").mockReturnValue({
       initialize: vi.fn(async () => undefined),
       append: vi.fn(async (input) => ({ created: true, message: { id: input.messageId, sequence: 1 } })),
+      readMessage: vi.fn(async ({ messageId }) => ({ id: messageId, sequence: 1, text: "Hello" })),
     });
+    vi.spyOn(utils, "deliverEventToProcess").mockImplementation(async (_installationId, _pid, args) => (
+      { eventId: args.eventId, runId: "input" in args ? args.input.runId ?? args.eventId : args.eventId, queued: false }
+    ));
     vi.spyOn(utils, "sendFrameToProcess").mockImplementation(async (_installationId, _pid, frame) => ({
-      type: "res", id: frame.id, ok: true,
-      data: frame.call === "proc.adapter.deliver" ? { ok: true, status: "started", runId: frame.args.runId, queued: false } : { ok: true },
+      type: "res", id: frame.id, ok: true, data: { ok: true },
     }));
     await runInDurableObject(await kernel(), async (instance: Kernel) => {
       await instance.ensureInstallationIdentity({ installationId, handle: "local", canonicalOrigin: "https://local.example" });
@@ -493,7 +496,7 @@ describe("the profile on Bluesky", () => {
       const { ctx, deferred } = messengerContext(instance, host);
       // The commit waits until the message is in, so a message that waited for the host would never arrive.
       const commit = holdNextCommit(repository);
-      await expect(messengerMessage(ctx, "wamid-1")).resolves.toMatchObject({ ok: true, delivered: { uid: OWNER.uid } });
+      await expect(messengerMessage(ctx, "wamid-1")).resolves.toMatchObject({ ok: true, delivered: { uid: OWNER.uid, queued: false } });
       commit.release();
       await Promise.all(deferred);
       expect(repository.applyWrites).toHaveBeenCalledExactlyOnceWith([blueskyPut({ displayName: DRAFT.displayName, description: DRAFT.about })]);
@@ -504,7 +507,7 @@ describe("the profile on Bluesky", () => {
     await runInDurableObject(await kernel(), async (instance: Kernel) => {
       const { ctx, deferred } = messengerContext(instance, host);
       const asked = host.getInstallation.mock.calls.length;
-      await expect(messengerMessage(ctx, "wamid-2")).resolves.toMatchObject({ ok: true, delivered: { uid: OWNER.uid } });
+      await expect(messengerMessage(ctx, "wamid-2")).resolves.toMatchObject({ ok: true, delivered: { uid: OWNER.uid, queued: false } });
       await Promise.all(deferred);
       expect(host.getInstallation).toHaveBeenCalledTimes(asked);
       expect(repository.applyWrites).toHaveBeenCalledOnce();

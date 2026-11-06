@@ -27,8 +27,9 @@ Two things we keep straight, because you'll check:
 
 ## What it costs
 
-The baseline can run within **Cloudflare Workers Free**, plus your own model
-costs. Workers Paid is optional for CodeMode and additional runtime capacity.
+The public composition includes CodeMode's Worker Loader, so it needs
+[Workers Paid](https://developers.cloudflare.com/dynamic-workers/pricing/), plus
+your own model costs.
 
 ## Where we are
 

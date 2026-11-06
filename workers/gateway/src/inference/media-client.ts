@@ -39,7 +39,6 @@ export function createMediaExecutor(env: GatewayEnv, attribution: () => Promise<
     abort.signal.addEventListener("abort", cancel, { once: true });
     try {
       abort.signal.throwIfAborted();
-      if (!env.INFERENCE_EXECUTION) throw new Error("Inference execution service is not configured");
       const identity = await raceWithAbort(attribution(), abort.signal);
       requestId = identity.logicalRequestId;
       target = await raceWithAbort(env.INFERENCE_EXECUTION.getExecutor(identity.installationId), abort.signal, {

@@ -8,7 +8,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
 import { DEFAULT_WORKERS_AI_MODEL } from "../src/inference/default-models";
-import { createGatewayTestHarness, webSocketUrl } from "./harness";
+import { createGatewayTestHarness, webSocketUrl, type TestNetworkOptions } from "./harness";
 import { startOpenAiFixture, type OpenAiFixture } from "./openai-fixture";
 import type { IntegrationState } from "./fixtures/dependencies";
 
@@ -49,6 +49,9 @@ export async function startProcessRuntimeHarness(options: {
   /** The profile choice the person makes at setup. */
   profile?: "public" | "private";
   managedMailQueue?: string;
+  network?: TestNetworkOptions;
+  /** Runs once the Gateway listens and before setup, such as to serve it on a test network. */
+  beforeSetup?: (harness: TestHarness, url: URL) => Promise<void>;
 } = {}): Promise<ProcessRuntimeHarness> {
   const ai = await startOpenAiFixture();
   let harness: TestHarness | undefined;
@@ -58,6 +61,7 @@ export async function startProcessRuntimeHarness(options: {
   try {
     harness = createGatewayTestHarness(options);
     const { url } = await harness.listen();
+    await options.beforeSetup?.(harness, url);
     // Mail and the open network address the Ship by its handle under its canonical origin.
     if (options.managedMailQueue || options.pds) {
       const { INTEGRATION_STATE } = await harness.getWorker<{

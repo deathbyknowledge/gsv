@@ -330,6 +330,19 @@
       ]
     },
     {
+      "id": "event-log",
+      "paths": [
+        "workers/gateway/src/kernel/events/**",
+        "workers/gateway/src/kernel/chat-replies.ts",
+        "workers/gateway/src/kernel/delivery-events.ts",
+        "workers/gateway/src/process/controller/events.ts"
+      ],
+      "docs": [
+        "docs/architecture/event-log.md"
+      ],
+      "manual": []
+    },
+    {
       "id": "targets-pairing",
       "paths": [
         "workers/gateway/src/kernel/sys/pair.ts",
@@ -429,7 +442,7 @@
       "id": "operator-ship-snapshot",
       "paths": [
         "packages/gsv/src/services/operator.ts",
-        "workers/gateway/src/installation/operator-entrypoint.ts",
+        "workers/gateway/src/entrypoints/operator.ts",
         "workers/gateway/src/kernel/operator-snapshot.ts",
         "workers/gateway/src/process/operator-summary.ts",
         "workers/installations/src/admin/insight.ts"

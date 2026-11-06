@@ -1,22 +1,20 @@
 import { evictDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InteractionOrigin } from "@humansandmachines/gsv/protocol";
-import type { InternalRequestFrame } from "../protocol/process-frames";
+import type { ProcessEventDeliverArgs } from "../protocol/process-frames";
 import type { Process } from "./do";
-import { deferred, initProcess, ROOT_IDENTITY, runInProcess, terminalTestConfig } from "./do-test-harness";
+import { deferred, initProcess, ipcAnswer, ROOT_IDENTITY, runInProcess, scheduleFired, terminalTestConfig } from "./do-test-harness";
 
 afterEach(() => vi.restoreAllMocks());
 
-function targetEvent(eventId: string): InternalRequestFrame<"proc.event.deliver"> {
+function targetEvent(eventId: string): ProcessEventDeliverArgs {
   return {
-    type: "req", id: `request:${eventId}`, call: "proc.event.deliver",
-    args: {
-      eventId,
-      event: {
-        kind: "target.connection", severity: "info", audience: "model",
-        payload: { targetId: "laptop", platform: "linux", event: "connected", observedAt: Date.now() },
-      },
+    eventId,
+    event: {
+      kind: "target.connection", severity: "info", audience: "model",
+      payload: { targetId: "laptop", platform: "linux", event: "connected", observedAt: Date.now() },
     },
+    admission: { idle: "start", busy: "join" },
   };
 }
 
@@ -39,7 +37,7 @@ describe("durable runtime continuations", () => {
         runId: "slack-run", origin: JSON.stringify(slackOrigin),
       });
       process.runs.active = { runId: "slack-run" };
-      await process.controller.handleReq(targetEvent("event:slack-guidance"));
+      await process.deliverEvent(targetEvent("event:slack-guidance"));
       const before = await process.history.buildContextMessages();
       expect(before).toHaveLength(2);
       expect(before[0]?.content).toContain("[Directed endpoint: this Slack thread.]");
@@ -69,7 +67,7 @@ describe("durable runtime continuations", () => {
     });
   });
 
-  it.each(["schedule", "client"] as const)("puts continuation guidance after a later queued %s input", async (source) => {
+  it.each(["schedule", "client"] as const)("gives an earlier run's answer its own run after a later queued %s input, directed at this process", async (source) => {
     const stub = await initProcess(`history-continuation-later-${source}`, ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       suppressExternalWork(process);
@@ -78,42 +76,41 @@ describe("durable runtime continuations", () => {
       });
       process.runs.active = { runId: "slack-run" };
       if (source === "schedule") {
-        await process.controller.handleProcScheduleDeliver({
+        await process.deliverEvent(scheduleFired({
           scheduleId: "schedule:queued", runId: "queued-input", firedAtMs: Date.now(), message: "Send the reminder.",
           replyTo: {
             kind: "adapter", adapter: "telegram", accountId: "fixture", actorId: "fixture-user",
             surface: { kind: "dm", id: "fixture-chat" },
           },
-        });
+        }));
       } else {
         process.store.queue.enqueue("queued-input", "Continue from the client.", {
           origin: JSON.stringify({ kind: "client", connectionId: "fixture-client", clientId: "gsv-ui" }),
         });
       }
-      await process.controller.handleIpcSignal("ipc.reply", {
+      const answer = ipcAnswer("ipc.reply", {
         callId: `call:${source}`, sourceRunId: "earlier-run", targetPid: "worker",
         createdAt: Date.now(), response: { text: "Delegated work completed." },
       });
+      await process.deliverEvent(answer);
       expect(process.store.queue.queueSize()).toBe(2);
 
       await process.run.finishRun("slack-run", { reason: "run.yielded", status: "ok", resultText: null });
 
       expect(process.runs.active).toEqual({ runId: "queued-input" });
       const before = await process.history.buildContextMessages();
-      expect(before).toHaveLength(3);
-      expect(before[1]?.content).toContain("Delegated work completed.");
-      expect(before[2]?.content).toContain(source === "schedule"
+      expect(before).toHaveLength(2);
+      expect(before[1]?.content).toContain(source === "schedule"
         ? "Reply destination: this Telegram direct message."
         : "[Directed endpoint: this GSV client.]");
-      const records = process.store.messages.getRecords();
 
       await process.run.finishRun("queued-input", { reason: "run.yielded", status: "ok", resultText: null });
 
-      expect(process.runs.active?.continuation).toBe(true);
+      expect(process.runs.active).toMatchObject({ runId: answer.eventId });
       const after = await process.history.buildContextMessages();
       expect(after.slice(0, -1)).toEqual(before);
-      expect(after.at(-1)?.content).toBe("[Directed endpoint: this GSV process.]");
-      expect(process.store.messages.getRecords()).toEqual(records);
+      expect(after.at(-1)?.content).toContain("[Directed endpoint: this GSV process.]");
+      expect(after.at(-1)?.content).toContain("Delegated work completed.");
       expect(process.store.queue.queueSize()).toBe(0);
       process.runs.active = null;
     });
@@ -125,13 +122,13 @@ describe("durable runtime continuations", () => {
     const successor = await runInProcess(stub, async (process: Process) => {
       const scheduled = suppressExternalWork(process);
       process.runs.active = { runId: "busy-run" };
-      expect(await process.controller.handleReq(event)).toMatchObject({ ok: true, data: { runId: "busy-run" } });
-      expect(await process.controller.handleReq(event)).toMatchObject({ ok: true, data: { runId: "busy-run" } });
+      expect(await process.deliverEvent(event)).toMatchObject({ runId: "busy-run" });
+      expect(await process.deliverEvent(event)).toMatchObject({ runId: "busy-run" });
       expect(process.runs.active).toMatchObject({ pendingRuntimeEvents: 1 });
       expect(process.store.queue.queueSize()).toBe(0);
       const records = process.store.messages.getRecords();
       expect(records).toHaveLength(1);
-      expect(records[0]).toMatchObject({ kind: "event", payload: event.args.event });
+      expect(records[0]).toMatchObject({ kind: "event", payload: event.event });
 
       await process.run.finishRun("busy-run", { reason: "run.yielded", status: "ok", resultText: null });
 
@@ -149,7 +146,7 @@ describe("durable runtime continuations", () => {
     await runInProcess(stub, async (process: Process) => {
       suppressExternalWork(process);
       expect(process.runs.active).toEqual({ runId: successor, continuation: true });
-      expect(await process.controller.handleReq(event)).toMatchObject({ ok: true, data: { runId: "busy-run" } });
+      expect(await process.deliverEvent(event)).toMatchObject({ runId: "busy-run" });
       expect(process.store.messages.getRecords()).toHaveLength(1);
       expect(process.store.queue.queueSize()).toBe(0);
       await process.run.finishRun(successor!, { reason: "run.yielded", status: "ok", resultText: null });
@@ -162,7 +159,7 @@ describe("durable runtime continuations", () => {
     await runInProcess(stub, async (process: Process) => {
       const scheduled = suppressExternalWork(process);
       process.runs.active = { runId: "busy-run" };
-      await process.controller.handleReq(targetEvent("event:queued-message"));
+      await process.deliverEvent(targetEvent("event:queued-message"));
       process.store.queue.enqueue("next-message", "Continue my work.");
 
       await process.run.finishRun("busy-run", { reason: "run.yielded", status: "ok", resultText: null });
@@ -192,7 +189,7 @@ describe("durable runtime continuations", () => {
         r12yBaseline: [], sourceManifest: {}, observedProjection: {}, now: Date.now(),
       });
       process.runs.active = { runId: "snapshot-run", contextEpochId: epoch.id };
-      await process.controller.handleReq(targetEvent("event:before-snapshot"));
+      await process.deliverEvent(targetEvent("event:before-snapshot"));
       const { promise: snapshotTaken, resolve: markSnapshotTaken } = deferred();
       const { promise: snapshotBlocked, resolve: releaseSnapshot } = deferred();
       const buildMessages = process.history.buildContextMessages.bind(process.history);
@@ -209,8 +206,8 @@ describe("durable runtime continuations", () => {
       await snapshotTaken;
       try {
         const lateEvent = targetEvent("event:after-snapshot");
-        lateEvent.args.event.payload.targetId = "desktop";
-        await process.controller.handleReq(lateEvent);
+        lateEvent.event.payload.targetId = "desktop";
+        await process.deliverEvent(lateEvent);
         expect(process.runs.active?.pendingRuntimeEvents).toBe(2);
       } finally {
         releaseSnapshot();
@@ -235,38 +232,38 @@ describe("durable runtime continuations", () => {
     });
   });
 
-  it("keeps a cross-run IPC continuation and reply deduplication across eviction", async () => {
+  it("keeps an earlier run's answer queued once across eviction, then gives it its own run", async () => {
     const stub = await initProcess("history-continuation-ipc", ROOT_IDENTITY);
     const reply = {
       callId: "call:continuation", sourceRunId: "earlier-run", targetPid: "worker",
       createdAt: Date.now(), response: { text: "Completed the delegated work." },
     };
+    const answer = ipcAnswer("ipc.reply", reply);
     await runInProcess(stub, async (process: Process) => {
       const scheduled = suppressExternalWork(process);
       process.runs.active = { runId: "other-run" };
-      await process.controller.handleIpcSignal("ipc.reply", reply);
+      await process.deliverEvent(answer);
       expect(process.runs.active).toEqual({ runId: "other-run" });
       expect(process.store.queue.queueSize()).toBe(1);
-      expect(process.store.messages.getRecords()).toHaveLength(1);
+      expect(process.store.messages.getRecords()).toHaveLength(0);
       expect(scheduled).not.toHaveBeenCalled();
     });
 
     await evictDurableObject(stub);
     await runInProcess(stub, async (process: Process) => {
       const scheduled = suppressExternalWork(process);
-      await process.controller.handleIpcSignal("ipc.reply", reply);
+      await process.deliverEvent(answer);
       expect(process.store.queue.queueSize()).toBe(1);
-      const records = process.store.messages.getRecords();
-      expect(records).toHaveLength(1);
-      expect(records[0]).toMatchObject({ kind: "event", payload: { kind: "ipc.reply", payload: reply } });
 
       await process.run.finishRun("other-run", { reason: "run.yielded", status: "ok", resultText: null });
 
-      expect(process.runs.active?.runId).not.toBe("other-run");
-      expect(scheduled).toHaveBeenCalledExactlyOnceWith(process.runs.active?.runId);
+      expect(process.runs.active?.runId).toBe(answer.eventId);
+      expect(scheduled).toHaveBeenCalledExactlyOnceWith(answer.eventId);
       expect(process.store.queue.queueSize()).toBe(0);
-      expect(process.store.messages.getRecords()).toEqual(records);
-      await process.controller.handleIpcSignal("ipc.reply", reply);
+      const records = process.store.messages.getRecords();
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({ kind: "event", payload: { kind: "ipc.reply", payload: reply } });
+      await process.deliverEvent(answer);
       expect(process.store.messages.getRecords()).toEqual(records);
       expect(process.store.queue.queueSize()).toBe(0);
       process.runs.active = null;

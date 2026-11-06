@@ -90,16 +90,17 @@ rechecks the gate before new admission and may resume after reactivation.
 
 Inside a Kernel or Process, the gate remembers an `active` answer for one
 minute and shares one directory lookup among concurrent requests, so ordinary
-traffic does not query Accounts per frame. A refusal is never remembered and
-clears an earlier confirmation. Calls that authenticate or grant credentials
+traffic does not query Accounts per frame. Each gateway isolate keeps the same
+gate per installation for adapter and mail calls. A refusal is never
+remembered and clears an earlier confirmation. Calls that authenticate or grant credentials
 (`sys.connect`, device pairing and account recovery, and the recovery and
 owner-link authorizations Accounts requests) always ask Accounts. Deletion
-quiescence clears the confirmation. A lookup that fails or takes longer than
+quiescence clears the Kernel's confirmation. A lookup that fails or takes longer than
 two seconds is recorded as a diagnostic and fails closed with a retryable
 "Ship is briefly unreachable" error, because an outage cannot be told apart
-from a suspension. Accounts does not notify a Kernel when it restricts or
-resets an installation, so already-authenticated traffic observes those
-changes within a minute. Accounts does tell the deployment's PDS when it
+from a suspension. Accounts does not notify a Kernel or the gateway when it
+restricts or resets an installation, so already-authenticated traffic, adapter
+messages and mail observe those changes within a minute. Accounts does tell the deployment's PDS when it
 restricts, reactivates or retires an installation, so relays hear of the
 suspension and a retired Ship's repository stops being served; see
 [the open network](open-network.md).

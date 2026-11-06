@@ -58,8 +58,6 @@ import type {
   ProcTraceResult,
   ProcIpcCallArgs,
   ProcIpcCallResult,
-  ProcIpcDeliverArgs,
-  ProcIpcDeliverResult,
   ProcIpcSendArgs,
   ProcIpcSendResult,
   ProcKillArgs,
@@ -454,7 +452,6 @@ export type SyscallDomains = {
   "proc.send": { args: ProcSendArgs; result: ProcSendResult };
   "proc.ipc.send": { args: ProcIpcSendArgs; result: ProcIpcSendResult };
   "proc.ipc.call": { args: ProcIpcCallArgs; result: ProcIpcCallResult };
-  "proc.ipc.deliver": { args: ProcIpcDeliverArgs; result: ProcIpcDeliverResult };
   "proc.abort": { args: ProcAbortArgs; result: ProcAbortResult };
   "proc.hil": { args: ProcHilArgs; result: ProcHilResult };
   "proc.history": { args: ProcHistoryArgs; result: ProcHistoryResult };

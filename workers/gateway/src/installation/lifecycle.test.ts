@@ -3,7 +3,11 @@ import type {
   InstallationDirectoryService,
 } from "@humansandmachines/gsv/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ManagedInstallationGate, managedInstallationWorkGate, setupFeatures } from "./lifecycle";
+import {
+  ManagedInstallationGate,
+  setupFeatures,
+  type ManagedInstallationLifecycleBindings,
+} from "./lifecycle";
 
 function directory(
   result: InstallationDirectoryResult,
@@ -12,6 +16,10 @@ function directory(
     resolveHostname: vi.fn(async () => result),
     resolveInstallation: vi.fn(async () => result),
   };
+}
+
+function managedInstallationWorkGate(bindings: ManagedInstallationLifecycleBindings, installationId: string) {
+  return new ManagedInstallationGate(bindings, () => installationId).check();
 }
 
 describe("managed installation lifecycle", () => {
@@ -37,12 +45,6 @@ describe("managed installation lifecycle", () => {
   it("offers the profile choice at setup only where an open-network host can publish it", () => {
     expect(setupFeatures({})).toEqual(["language"]);
     expect(setupFeatures({ PDS: {} })).toEqual(["language", "profile"]);
-  });
-
-  it("fails closed without an installation directory", async () => {
-    await expect(
-      managedInstallationWorkGate({}, "inst_missing_directory"),
-    ).resolves.toEqual({ allowed: false, code: 503, message: "Managed installation is unavailable" });
   });
 
   it("allows active installations and rejects suspended installations", async () => {

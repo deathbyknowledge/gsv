@@ -3,11 +3,6 @@ import type {
   AdapterSurface,
 } from "../adapter-interface";
 import type {
-  InternalRequestFrame,
-  InternalResponseFrame,
-} from "../protocol/process-frames";
-import type {
-  AdapterMessageDestination,
   InteractionOrigin,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
@@ -30,9 +25,6 @@ import { notifyProcessChanged } from "./process-notifications";
 import type {
   SurfaceRouteRecord,
 } from "./surface-routes";
-import type {
-  AdapterIngressWorkReturnRecovery,
-} from "./adapter-service";
 
 /** Adapter route resolution, private DM selection, and process spawning for adapter traffic. */
 export function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity | null {
@@ -108,61 +100,6 @@ export async function resolveAdapterRoute(
     updatedByUid: uid,
   });
   return pid;
-}
-
-export async function deliverAdapterWorkReturnedEvent(
-  recovery: AdapterIngressWorkReturnRecovery,
-  receiptId: string,
-  providerMessageId: string,
-  ctx: KernelContext,
-): Promise<string | null> {
-  const destination: AdapterMessageDestination = {
-    kind: "adapter",
-    adapter: recovery.route.adapter,
-    accountId: recovery.route.accountId,
-    actorId: recovery.route.actorId,
-    surface: { kind: "dm", id: recovery.route.surfaceId },
-  };
-  if (recovery.route.threadId) destination.surface.threadId = recovery.route.threadId;
-  if (!ctx.adapters.ingressReceipts.isLatestPrivateMessage(destination, providerMessageId)) {
-    return null;
-  }
-  ctx.adapters.surfaceRoutes.clearRouteIfMatches({
-    ...recovery.route,
-    pid: recovery.workPid,
-  });
-  const personalPid = await ensurePersonalController(recovery.uid, ctx);
-  if (!ctx.adapters.ingressReceipts.isLatestPrivateMessage(destination, providerMessageId)) {
-    return null;
-  }
-  const eventId = `adapter-home:${receiptId}`;
-  const request: InternalRequestFrame<"proc.runtime.event.deliver"> = {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.runtime.event.deliver",
-    args: {
-      eventId,
-      event: {
-        type: "adapter.work.returned",
-        workPid: recovery.workPid,
-      },
-    },
-  };
-  const response: InternalResponseFrame<"proc.runtime.event.deliver"> | null = await sendFrameToProcess(
-    ctx.installationId,
-    personalPid,
-    request,
-  );
-  if (
-    !response
-    || response.type !== "res"
-    || response.id !== request.id
-    || !response.ok
-    || response.data.eventId !== eventId
-  ) {
-    throw new Error("Personal return event was not admitted");
-  }
-  return personalPid;
 }
 
 export async function resolvePrivateDmSelection(

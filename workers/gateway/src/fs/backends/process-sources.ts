@@ -21,7 +21,7 @@ const DEFAULT_REPO_REF = "main";
 
 export type ProcessSourceBackendOptions = {
   identity: ProcessIdentity;
-  ripgit: RipgitClient | null;
+  ripgit: RipgitClient;
   repos?: RepoSummary[] | null;
 };
 
@@ -36,11 +36,7 @@ type SourceRepo = {
 
 export function createProcessSourceBackend(
   options: ProcessSourceBackendOptions,
-): MountBackend | null {
-  if (!options.ripgit) {
-    return null;
-  }
-
+): MountBackend {
   return new ProcessSourceBackend(options);
 }
 
@@ -55,9 +51,6 @@ class ProcessSourceBackend implements MountBackend {
   private readonly repos: SourceRepo[];
 
   constructor(options: ProcessSourceBackendOptions) {
-    if (!options.ripgit) {
-      throw new Error("Process source backend requires ripgit");
-    }
     this.identity = options.identity;
     this.ripgit = options.ripgit;
     this.repos = visibleSourceRepos(options.repos);

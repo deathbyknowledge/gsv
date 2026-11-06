@@ -1,31 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bodyFromBytes, type ResourceBlock } from "@humansandmachines/gsv/protocol";
 import type { Process } from "./do";
-import type { InternalRequestFrame } from "../protocol/process-frames";
+import type { ProcessRunAttachArgs, ProcessRunStagedArgs } from "../protocol/process-frames";
 import { initProcess, ROOT_IDENTITY, runInProcess } from "./do-test-harness";
 import * as utils from "../shared/utils";
 
-function staged(runId: string, requestId?: string): InternalRequestFrame<"proc.run.staged"> {
-  return {
-    type: "req", id: crypto.randomUUID(), call: "proc.run.staged",
-    args: { runId, destination: "contact:friend", ...(requestId ? { requestId } : undefined) },
-  };
+function staged(runId: string, requestId?: string): ProcessRunStagedArgs {
+  return { runId, destination: "contact:friend", ...(requestId ? { requestId } : undefined) };
 }
 
-function attach(runId: string, requestId: string, media: ResourceBlock[]): InternalRequestFrame<"proc.run.attach"> {
-  return { type: "req", id: crypto.randomUUID(), call: "proc.run.attach", args: { runId, media, requestId } };
+function attach(runId: string, requestId: string, media: ResourceBlock[]): ProcessRunAttachArgs {
+  return { runId, media, requestId };
 }
 
 async function photo(stub: Awaited<ReturnType<typeof initProcess>>): Promise<ResourceBlock> {
-  const uploaded = await stub.recvFrame({
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.resource.write",
-    args: { resourceId: "photo", mediaType: "image", contentType: "image/jpeg", filename: "photo.jpg" },
-    body: bodyFromBytes(new Uint8Array([1, 2, 3])),
-  } satisfies InternalRequestFrame<"proc.resource.write">);
-  if (!uploaded.ok) throw new Error(uploaded.error.message);
-  return uploaded.data.resource;
+  const uploaded = await stub.writeResource(
+    { resourceId: "photo", mediaType: "image", contentType: "image/jpeg", filename: "photo.jpg" },
+    bodyFromBytes(new Uint8Array([1, 2, 3])),
+  );
+  if ("unavailable" in uploaded) throw new Error(uploaded.message);
+  return uploaded.resource;
 }
 
 /** Registers one model turn's parallel tool calls as running. */
@@ -54,12 +48,12 @@ describe("staged reply files", () => {
     const resource = await photo(stub);
     await runInProcess(stub, async (process: Process) => {
       process.runs.active = { runId: "run-photo" };
-      expect(await process.recvFrame(attach("run-photo", "call-attach", [resource]))).toMatchObject({ ok: true, data: { ok: true } });
-      expect(await process.recvFrame(staged("run-photo", "call-send"))).toMatchObject({ ok: true, data: { ok: true, count: 1 } });
+      expect(await process.attachRunMedia(attach("run-photo", "call-attach", [resource]))).toMatchObject({ ok: true });
+      expect(await process.countStagedRunMedia(staged("run-photo", "call-send"))).toEqual({ ok: true, count: 1 });
       // A stale run never sees another run's files.
-      expect(await process.recvFrame(staged("run-other"))).toMatchObject({ ok: true, data: { ok: true, count: 0 } });
+      expect(await process.countStagedRunMedia(staged("run-other"))).toEqual({ ok: true, count: 0 });
       process.run.consumeRunOutputMedia("run-photo", process.runs.active.outputMedia ?? []);
-      expect(await process.recvFrame(staged("run-photo"))).toMatchObject({ ok: true, data: { ok: true, count: 0 } });
+      expect(await process.countStagedRunMedia(staged("run-photo"))).toEqual({ ok: true, count: 0 });
     });
   });
 
@@ -69,10 +63,10 @@ describe("staged reply files", () => {
     await runInProcess(stub, async (process: Process) => {
       process.runs.active = { runId: "run-photo" };
       running(process, "run-photo", "call-attach", "call-send");
-      expect(await process.recvFrame(staged("run-photo", "call-send"))).toMatchObject({ ok: true, data: { ok: true, count: 0 } });
-      const refused = await process.recvFrame(attach("run-photo", "call-attach", [resource]));
-      expect(refused).toMatchObject({ ok: true, data: { ok: false } });
-      expect(refused.ok && !refused.data.ok && refused.data.error).toContain(
+      expect(await process.countStagedRunMedia(staged("run-photo", "call-send"))).toEqual({ ok: true, count: 0 });
+      const refused = await process.attachRunMedia(attach("run-photo", "call-attach", [resource]));
+      expect(refused).toMatchObject({ ok: false });
+      expect("error" in refused && refused.error).toContain(
         "a message went to contact:friend without files while this attach was running",
       );
       expect(process.runs.active?.outputMedia).toBeUndefined();
@@ -86,9 +80,9 @@ describe("staged reply files", () => {
       process.runs.active = { runId: "run-photo" };
       running(process, "run-photo", "call-codemode");
       nested(process, "run-photo", "call-codemode", "codemode-attach", "codemode-send");
-      expect(await process.recvFrame(staged("run-photo", "codemode-send"))).toMatchObject({ ok: true, data: { ok: true, count: 0 } });
-      const refused = await process.recvFrame(attach("run-photo", "codemode-attach", [resource]));
-      expect(refused).toMatchObject({ ok: true, data: { ok: false } });
+      expect(await process.countStagedRunMedia(staged("run-photo", "codemode-send"))).toEqual({ ok: true, count: 0 });
+      const refused = await process.attachRunMedia(attach("run-photo", "codemode-attach", [resource]));
+      expect(refused).toMatchObject({ ok: false });
       expect(process.runs.active?.outputMedia).toBeUndefined();
     });
   });
@@ -101,8 +95,8 @@ describe("staged reply files", () => {
       running(process, "run-photo", "call-codemode-a", "call-codemode-b");
       nested(process, "run-photo", "call-codemode-a", "codemode-attach");
       nested(process, "run-photo", "call-codemode-b", "codemode-send");
-      await process.recvFrame(staged("run-photo", "codemode-send"));
-      expect(await process.recvFrame(attach("run-photo", "codemode-attach", [resource]))).toMatchObject({ ok: true, data: { ok: false } });
+      await process.countStagedRunMedia(staged("run-photo", "codemode-send"));
+      expect(await process.attachRunMedia(attach("run-photo", "codemode-attach", [resource]))).toMatchObject({ ok: false });
     });
   });
 
@@ -113,8 +107,8 @@ describe("staged reply files", () => {
       process.runs.active = { runId: "run-photo" };
       running(process, "run-photo", "call-codemode");
       nested(process, "run-photo", "call-codemode", "codemode-attach", "codemode-send");
-      expect(await process.recvFrame(attach("run-photo", "codemode-attach", [resource]))).toMatchObject({ ok: true, data: { ok: true } });
-      expect(await process.recvFrame(staged("run-photo", "codemode-send"))).toMatchObject({ ok: true, data: { ok: true, count: 1 } });
+      expect(await process.attachRunMedia(attach("run-photo", "codemode-attach", [resource]))).toMatchObject({ ok: true });
+      expect(await process.countStagedRunMedia(staged("run-photo", "codemode-send"))).toEqual({ ok: true, count: 1 });
     });
   });
 
@@ -138,11 +132,11 @@ describe("staged reply files", () => {
     await runInProcess(stub, async (process: Process) => {
       process.runs.active = { runId: "run-photo" };
       running(process, "run-photo", "call-attach", "call-send");
-      await process.recvFrame(staged("run-photo", "call-send"));
+      await process.countStagedRunMedia(staged("run-photo", "call-send"));
       const key = await process.resources.resourceRetentionKey(source);
       expect(key).toBeTruthy();
-      const refused = await process.recvFrame(attach("run-photo", "call-attach", [source]));
-      expect(refused).toMatchObject({ ok: true, data: { ok: false } });
+      const refused = await process.attachRunMedia(attach("run-photo", "call-attach", [source]));
+      expect(refused).toMatchObject({ ok: false });
       expect(await process.storage.head(key!)).toBeNull();
     });
   });
@@ -153,12 +147,10 @@ describe("staged reply files", () => {
     await runInProcess(stub, async (process: Process) => {
       process.runs.active = { runId: "run-photo" };
       running(process, "run-photo", "call-send");
-      await process.recvFrame(staged("run-photo", "call-send"));
+      await process.countStagedRunMedia(staged("run-photo", "call-send"));
       process.store.tools.resolve("call-send", "sent");
       running(process, "run-photo", "call-attach-later");
-      expect(await process.recvFrame(attach("run-photo", "call-attach-later", [resource]))).toMatchObject({
-        ok: true, data: { ok: true },
-      });
+      expect(await process.attachRunMedia(attach("run-photo", "call-attach-later", [resource]))).toMatchObject({ ok: true });
       expect(process.runs.active?.outputMedia).toHaveLength(1);
     });
   });

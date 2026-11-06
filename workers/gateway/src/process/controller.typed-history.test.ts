@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  procHistoryRecordDataSchema, type ProcHistoryRecordData, type ProcIpcDeliverArgs, type ResourceBlock,
+  procHistoryRecordDataSchema, type ProcHistoryRecordData, type ResourceBlock,
 } from "@humansandmachines/gsv/protocol";
 import { MAX_MESSAGE_MEDIA_TOTAL_BYTES } from "../shared/message-media-limits";
 import type { Process } from "./do";
-import type { ProcessRuntimeEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
+import type { ProcessEventDeliverArgs, ProcessScheduleDeliverArgs } from "../protocol/process-frames";
 import { evictDurableObject } from "cloudflare:test";
 import {
-  initProcess, ROOT_IDENTITY, runInProcess,
+  generationRun, initProcess, ipcAnswer, ipcMessage, processTestConfig, ROOT_IDENTITY, runInProcess, scheduleFired, workReturned,
 } from "./do-test-harness";
 
 function storedRecords(process: Process): ProcHistoryRecordData[] {
@@ -18,6 +18,13 @@ function storedRecords(process: Process): ProcHistoryRecordData[] {
     payload: JSON.parse(row.payload_json),
   }));
 }
+
+/** A file a target's run attached, in the target's home, and the copy this Process keeps of it. */
+const WEEK: ResourceBlock = {
+  type: "resource", mediaType: "document", filename: "week.csv",
+  ref: { type: "file", target: "gsv", path: `/home/crew/.gsv/media/archived-media:${"b".repeat(64)}`, revision: "w1", contentType: "text/csv", size: 2_048 },
+};
+const WEEK_COPY = { type: "document" as const, mimeType: "text/csv", key: `root/.gsv/media/archived-media:${"c".repeat(64)}`, size: 2_048, filename: "week.csv" };
 
 function isolateAdmission(process: Process): void {
   vi.spyOn(process.run, "scheduleTick").mockResolvedValue(undefined);
@@ -75,31 +82,17 @@ describe("typed controller history producers", () => {
 
   it.each([false, true])("persists each responsibility wake once across reload with active run=%s", async (busy) => {
     const stub = await initProcess(`typed-responsibility-ready-${busy}`, ROOT_IDENTITY);
-    const input = {
-      eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000081",
-      event: {
-        type: "r12y.ready", batchId: "batch:00000000-0000-4000-8000-000000000081",
-        ledgerRevision: 2, responsibilityIds: ["r12y:00000000-0000-4000-8000-000000000082"],
-      },
-    } satisfies ProcessRuntimeEventDeliverArgs;
+    const ids = ["r12y:00000000-0000-4000-8000-000000000082"];
+    const input = responsibilityReady("evt_81:personal:0", ids);
     const retained = await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
       if (busy) process.runs.active = { runId: "existing-run" };
-      const first = await process.controller.handleProcessRuntimeEventDeliver(input);
-      const duplicate = await process.controller.handleProcessRuntimeEventDeliver(input);
+      const first = await process.deliverEvent(input);
+      const duplicate = await process.deliverEvent(input);
       expect(duplicate).toEqual(first);
       expect(first.runId).toBe(busy ? "existing-run" : input.eventId);
       const records = storedRecords(process);
-      expect(records).toEqual([{
-        kind: "event",
-        payload: {
-          kind: "responsibility.ready", severity: "info", audience: "model",
-          payload: {
-            batchId: input.event.batchId, ledgerRevision: 2,
-            responsibilityIds: input.event.responsibilityIds, receivedAtMs: expect.any(Number),
-          },
-        },
-      }]);
+      expect(records).toEqual([{ kind: "event", payload: input.event }]);
       expect(await process.history.buildContextMessages()).toEqual([
         expect.objectContaining({ role: "user", content: expect.stringContaining("Responsibilities due: ") }),
       ]);
@@ -108,12 +101,9 @@ describe("typed controller history producers", () => {
     await evictDurableObject(stub);
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
-      await process.controller.handleProcessRuntimeEventDeliver(input);
+      await process.deliverEvent(input);
       expect(storedRecords(process)).toEqual(retained);
-      await process.controller.handleProcessRuntimeEventDeliver({
-        eventId: "r12y.ready:batch:00000000-0000-4000-8000-000000000083",
-        event: { ...input.event, batchId: "batch:00000000-0000-4000-8000-000000000083" },
-      });
+      await process.deliverEvent(responsibilityReady("evt_83:personal:0", ids));
       expect(storedRecords(process)).toHaveLength(2);
       expect(await process.history.buildContextMessages()).toHaveLength(2);
     });
@@ -131,22 +121,20 @@ describe("typed controller history producers", () => {
       const photo = contactResource("selfie.png", 10);
       // The second attachment no longer fits the message's byte budget and is never fetched.
       const oversized = contactResource("video.mp4", MAX_MESSAGE_MEDIA_TOTAL_BYTES);
-      await process.controller.handleProcessRuntimeEventDeliver({
-        eventId: "contact.message:msg:photo",
-        event: {
-          type: "contact.message", contactId: "contact:remote", contactGeneration: "1", conversationId: "conv:remote", messageId: "msg:photo",
-          from: "Xisca", text: "", media: [photo, oversized],
-          responsibilityId: "r12y:00000000-0000-4000-8000-000000000091", ledgerRevision: 3,
-        },
-      });
+      const delivery = contactMessage("evt_1:personal:0", "msg:photo", [photo, oversized]);
+      const first = await process.deliverEvent(delivery);
+      expect(await process.deliverEvent(delivery)).toEqual(first);
       expect(resolve).toHaveBeenCalledExactlyOnceWith([photo]);
       expect(prepare).toHaveBeenCalledExactlyOnceWith([retained]);
       expect(process.store.sql.exec<{ media_json: string | null }>("SELECT media_json FROM messages").toArray())
         .toEqual([{ media_json: prepared }]);
       expect(process.runs.active?.pendingMediaMessageId).toBeUndefined();
+      expect(process.runs.active?.responsibilityBatches).toEqual([{
+        batchId: delivery.eventId, ledgerRevision: 3, responsibilityIds: ["r12y:00000000-0000-4000-8000-000000000091"],
+      }]);
       expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: {
         kind: "contact.message",
-        payload: { attachmentErrors: ["video.mp4 exceeds the message attachment byte limit"] },
+        payload: { from: "Xisca", attachmentErrors: ["video.mp4 exceeds the message attachment byte limit"] },
         media: JSON.parse(prepared),
       } }]);
     });
@@ -159,14 +147,7 @@ describe("typed controller history producers", () => {
       const retained = { type: "audio" as const, mimeType: "audio/ogg", key: "home/root/.gsv/media/archived-media:voice", size: 10, filename: "voice.ogg" };
       vi.spyOn(process.resources, "resolveIncomingMedia").mockResolvedValue([retained]);
       vi.spyOn(process.resources, "prepareEventMedia").mockRejectedValue(new Error("transcription timed out"));
-      await process.controller.handleProcessRuntimeEventDeliver({
-        eventId: "contact.message:msg:voice",
-        event: {
-          type: "contact.message", contactId: "contact:remote", contactGeneration: "1", conversationId: "conv:remote", messageId: "msg:voice",
-          from: "Xisca", text: "", media: [contactResource("voice.ogg", 10)],
-          responsibilityId: "r12y:00000000-0000-4000-8000-000000000092", ledgerRevision: 3,
-        },
-      });
+      await process.deliverEvent(contactMessage("evt_2:personal:0", "msg:voice", [contactResource("voice.ogg", 10)]));
       const [row] = process.store.sql.exec<{ media_json: string | null }>("SELECT media_json FROM messages").toArray();
       expect(JSON.parse(row?.media_json ?? "[]")).toEqual([expect.objectContaining({ key: retained.key, filename: "voice.ogg" })]);
       expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: { kind: "contact.message", payload: {
@@ -175,24 +156,115 @@ describe("typed controller history producers", () => {
     });
   });
 
+  it("keeps an answer's file and its target's files as this process's own media, trying again while its own file can't be read", async () => {
+    const stub = await initProcess("typed-answer-file", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      const key = `root/.gsv/media/archived-media:${"a".repeat(64)}`;
+      const file: ResourceBlock = {
+        type: "resource", mediaType: "document", filename: "answer.md",
+        ref: { type: "file", target: "gsv", path: `/${key}`, revision: "r1", contentType: "text/markdown", size: 70_000 },
+      };
+      const owned = { type: "document" as const, mimeType: "text/markdown", key, size: 70_000, filename: "answer.md" };
+      let unread = 1;
+      const resolve = vi.spyOn(process.resources, "resolveIncomingMedia").mockImplementation(async (input) => {
+        if (input?.[0] !== file) return [WEEK_COPY];
+        if (unread-- > 0) throw new Error("storage is unavailable");
+        return [owned];
+      });
+      vi.spyOn(process.resources, "prepareEventMedia").mockImplementation(async (media) => JSON.stringify(media));
+      const delivery: ProcessEventDeliverArgs = {
+        ...ipcAnswer("ipc.reply", { callId: "call-1", targetPid: "worker", createdAt: 1, deadlineAt: 2 }), attachments: [file, WEEK],
+      };
+
+      await expect(process.deliverEvent(delivery)).rejects.toThrow("storage is unavailable");
+      expect(storedRecords(process)).toEqual([]);
+      await process.deliverEvent(delivery);
+
+      expect(resolve).toHaveBeenLastCalledWith([WEEK]);
+      expect(storedRecords(process)).toMatchObject([{ kind: "event", payload: { kind: "ipc.reply", media: [owned, WEEK_COPY] } }]);
+      const [answer] = await process.history.buildContextMessages();
+      expect(answer?.content).toEqual([
+        { type: "text", text: expect.stringContaining("Process `worker` finished task `call-1`.") },
+        { type: "text", text: `Attached document "answer.md" [text/markdown] 68.4 KB\nPath: /${key}` },
+        { type: "text", text: `Attached document "week.csv" [text/csv] 2.0 KB\nPath: /${WEEK_COPY.key}` },
+      ]);
+    });
+  });
+
+  it("answers without a target's file it can't copy, as a contact's message goes without one, and logs why", async () => {
+    const stub = await initProcess("typed-answer-lost-file", ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const gone: ResourceBlock = { ...WEEK, filename: "gone.csv", ref: { ...WEEK.ref, path: `/home/crew/.gsv/media/archived-media:${"d".repeat(64)}` } };
+      vi.spyOn(process.resources, "resolveIncomingMedia").mockImplementation(async (input) => {
+        if (input?.[0] === gone) throw new Error("resource not found");
+        return [WEEK_COPY];
+      });
+      vi.spyOn(process.resources, "prepareEventMedia").mockImplementation(async (media) => JSON.stringify(media));
+      const answer = (callId: string, attachments: ResourceBlock[]): ProcessEventDeliverArgs => ({
+        ...ipcAnswer("ipc.reply", { callId, targetPid: "worker", createdAt: 1, deadlineAt: 2, response: { text: "The week.", usage: null } }),
+        attachments,
+      });
+
+      await process.deliverEvent(answer("call-1", [WEEK, gone]));
+      await process.deliverEvent(answer("call-2", [gone]));
+
+      const [kept, bare] = storedRecords(process);
+      expect(kept).toMatchObject({ kind: "event", payload: { kind: "ipc.reply", payload: { callId: "call-1" }, media: [WEEK_COPY] } });
+      expect(bare).toMatchObject({ kind: "event", payload: { kind: "ipc.reply", payload: { callId: "call-2" } } });
+      expect(bare?.payload).not.toHaveProperty("media");
+      expect(warn.mock.calls).toEqual([
+        [expect.stringContaining("goes without attachments"), "resource not found"],
+        [expect.stringContaining("goes without attachments"), "resource not found"],
+      ]);
+    });
+  });
+
+  it.each(["abort", "reset"] as const)("drops an answer its caller outlived while its files were copied: %s", async (change) => {
+    const pid = `typed-answer-outlived-${change}`;
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    await runInProcess(stub, async (process: Process) => {
+      isolateAdmission(process);
+      process.store.messages.appendMessage("user", "Ask the worker.", { runId: "run-asking" });
+      process.runs.active = generationRun("run-asking", processTestConfig(pid));
+      // The person stops the asking run, or resets the process, while the answer's file is copied.
+      vi.spyOn(process.resources, "resolveIncomingMedia").mockImplementation(async () => {
+        if (change === "abort") await process.controller.handleProcAbort({ runId: "run-asking" });
+        else await process.controller.resetExecutionState("process.reset");
+        return [WEEK_COPY];
+      });
+      vi.spyOn(process.resources, "prepareEventMedia").mockImplementation(async (media) => JSON.stringify(media));
+      const delivery: ProcessEventDeliverArgs = {
+        ...ipcAnswer("ipc.reply", { callId: "call-1", targetPid: "worker", sourceRunId: "run-asking", createdAt: Date.now(), deadlineAt: Date.now() + 60_000 }),
+        attachments: [WEEK],
+      };
+
+      await expect(process.deliverEvent(delivery)).resolves.toEqual({ eventId: delivery.eventId, runId: null, queued: false, ignored: true });
+      expect(storedRecords(process).filter((record) => record.kind === "event" && record.payload.kind === "ipc.reply")).toEqual([]);
+      expect(process.runs.active).toBeNull();
+    });
+  });
+
   it("retains canonical interaction identity on direct and queued input", async () => {
     const stub = await initProcess("typed-input-origin", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
       const directInteraction = { conversationId: "conversation-1", messageId: "message-1" };
-      await process.controller.handleProcSend({
+      await process.controller.admitInput({
         message: "Direct input",
         selectedTarget: "macbook",
         origin: { kind: "client", connectionId: "client-1" },
         interaction: directInteraction,
-      }, "direct-run");
+      }, "direct-run", "interrupt");
       const queuedInteraction = { conversationId: "conversation-2", messageId: "message-2" };
-      await process.controller.handleProcSend({
+      await process.controller.admitInput({
         message: "Queued input",
         selectedTarget: "gsv",
         origin: { kind: "process", sourcePid: "parent-1" },
         interaction: queuedInteraction,
-      }, "queued-run");
+      }, "queued-run", "after");
 
       expect(process.store.queue.queueSize()).toBe(1);
       process.runs.active = null;
@@ -230,11 +302,11 @@ describe("typed controller history producers", () => {
         },
       ]);
       process.runs.active = null;
-      await process.controller.handleProcSend({
+      await process.controller.admitInput({
         message: "Immediate background input",
         origin: { kind: "process", sourcePid: "parent-1" },
         interaction: { conversationId: "conversation-3", messageId: "message-3" },
-      }, "immediate-background-run");
+      }, "immediate-background-run", "after");
       expect(storedRecords(process).at(-1)).toMatchObject({
         kind: "message",
         payload: { conversationId: "conversation-3", conversationMessageId: "message-3" },
@@ -246,16 +318,15 @@ describe("typed controller history producers", () => {
     const stub = await initProcess("typed-ipc-origin", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
-      const delivery: ProcIpcDeliverArgs = {
-        runId: "ipc-run-1",
+      const delivery = {
         sourcePid: "parent-1",
         source: ROOT_IDENTITY,
         message: "Research the queue contract",
         metadata: { priority: "normal" },
         sentAt: 1_000,
       };
-      await process.controller.handleProcIpcDeliver(delivery);
-      await process.controller.handleProcIpcDeliver({ ...delivery, runId: "ipc-run-2" });
+      await process.deliverEvent(ipcMessage(delivery, "ipc-run-1"));
+      await process.deliverEvent(ipcMessage(delivery, "ipc-run-2"));
       process.runs.active = null;
       process.controller.claimNextQueuedRun();
       const records = storedRecords(process);
@@ -298,7 +369,7 @@ describe("typed controller history producers", () => {
         scheduledAtMs: 1_000,
         firedAtMs: 2_000,
       };
-      await process.controller.handleProcScheduleDeliver(event);
+      await process.deliverEvent(scheduleFired(event));
       const queuedEvent: ProcessScheduleDeliverArgs = {
         ...event,
         runId: "schedule-run-2",
@@ -310,7 +381,7 @@ describe("typed controller history producers", () => {
           actorId: "actor-1",
         },
       };
-      await process.controller.handleProcScheduleDeliver(queuedEvent);
+      await process.deliverEvent(scheduleFired(queuedEvent));
       expect(process.store.queue.queueSize()).toBe(1);
       process.runs.active = null;
       process.controller.claimNextQueuedRun();
@@ -327,10 +398,7 @@ describe("typed controller history producers", () => {
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
       process.runs.active = { runId: "busy-run" };
-      await process.controller.handleProcessRuntimeEventDeliver({
-        eventId: "work-return-1",
-        event: { type: "adapter.work.returned", workPid: "work-1" },
-      });
+      await process.deliverEvent(workReturned("work-return-1", "work-1"));
       process.runs.active = null;
       process.controller.claimNextQueuedRun();
       expect(storedRecords(process)).toEqual([{
@@ -370,8 +438,8 @@ describe("typed controller history producers", () => {
     });
   });
 
-  it.each(["ipc.reply", "ipc.overdue", "ipc.timeout"])(
-    "persists %s data and queues a continuation without another history event",
+  it.each(["ipc.reply", "ipc.overdue", "ipc.timeout"] as const)(
+    "queues %s for another run as its own run, once, with its data",
     async (signal) => {
       const stub = await initProcess(`typed-${signal}`, ROOT_IDENTITY);
       await runInProcess(stub, async (process: Process) => {
@@ -384,11 +452,13 @@ describe("typed controller history producers", () => {
           checkInCount: 2,
           response: { text: "Work complete", artifact: { path: "/result.txt" } },
         };
-        await process.controller.handleIpcSignal(signal, payload);
-        await process.controller.handleIpcSignal(signal, payload);
+        const delivery = ipcAnswer(signal, payload);
+        await process.deliverEvent(delivery);
+        await process.deliverEvent(delivery);
         expect(process.store.queue.queueSize()).toBe(1);
+        expect(storedRecords(process)).toEqual([]);
         process.runs.active = null;
-        expect(process.controller.claimNextQueuedRun()).toMatchObject({ type: "continuation" });
+        expect(process.controller.claimNextQueuedRun()).toMatchObject({ type: "message", runId: delivery.eventId });
         expect(storedRecords(process)).toEqual([
           {
             kind: "event",
@@ -404,22 +474,30 @@ describe("typed controller history producers", () => {
     },
   );
 
-  it("persists a delivery failure exactly once with severity and audience", async () => {
-    const stub = await initProcess("typed-delivery-failure", ROOT_IDENTITY);
+  it("keeps an answer's files when it waits for its own run after another", async () => {
+    const stub = await initProcess("typed-answer-files-queued", ROOT_IDENTITY);
     await runInProcess(stub, async (process: Process) => {
       isolateAdmission(process);
-      const notice = { noticeId: "notice-1", runId: "run-1", message: "Provider rejected delivery" };
-      await process.controller.handleSig({ type: "sig", signal: "proc.delivery.notice", payload: notice });
-      await process.controller.handleSig({ type: "sig", signal: "proc.delivery.notice", payload: notice });
-      expect(storedRecords(process)).toEqual([{
-        kind: "event",
-        payload: {
-          kind: "delivery.failed",
-          payload: { phase: "message", noticeId: notice.noticeId, runId: notice.runId, error: notice.message },
-          severity: "error",
-          audience: "both",
-        },
-      }]);
+      process.runs.active = { runId: "another-run" };
+      vi.spyOn(process.resources, "resolveIncomingMedia").mockResolvedValue([WEEK_COPY]);
+      vi.spyOn(process.resources, "prepareEventMedia").mockImplementation(async (media) => JSON.stringify(media));
+      const delivery: ProcessEventDeliverArgs = {
+        ...ipcAnswer("ipc.reply", {
+          callId: "call-1", targetPid: "worker", sourceRunId: "run-asking", createdAt: 1, deadlineAt: 2,
+          response: { text: "The week.", usage: null },
+        }),
+        attachments: [WEEK],
+      };
+
+      expect(await process.deliverEvent(delivery)).toEqual({ eventId: delivery.eventId, runId: delivery.eventId, queued: true });
+      process.runs.active = null;
+      expect(process.controller.claimNextQueuedRun()).toMatchObject({ type: "message", runId: delivery.eventId });
+
+      const [answer] = await process.history.buildContextMessages();
+      expect(answer?.content).toEqual([
+        { type: "text", text: expect.stringContaining("Process `worker` finished task `call-1`.") },
+        { type: "text", text: `Attached document "week.csv" [text/csv] 2.0 KB\nPath: /${WEEK_COPY.key}` },
+      ]);
     });
   });
 
@@ -449,6 +527,32 @@ describe("typed controller history producers", () => {
     });
   });
 });
+
+function responsibilityReady(eventId: string, ids: string[]): ProcessEventDeliverArgs {
+  return {
+    eventId,
+    event: {
+      kind: "responsibility.ready", severity: "info", audience: "model",
+      payload: { batchId: eventId, ledgerRevision: 2, responsibilityIds: ids, receivedAtMs: 1 },
+    },
+    admission: { idle: "start", busy: "join" },
+    responsibilities: { ledgerRevision: 2, ids },
+  };
+}
+
+function contactMessage(eventId: string, messageId: string, attachments: ResourceBlock[]): ProcessEventDeliverArgs {
+  const responsibilityId = "r12y:00000000-0000-4000-8000-000000000091";
+  return {
+    eventId,
+    event: {
+      kind: "contact.message", severity: "info", audience: "model",
+      payload: { contactId: "contact:remote", conversationId: "conv:remote", messageId, from: "Xisca", text: "", responsibilityId },
+    },
+    admission: { idle: "start", busy: "join" },
+    responsibilities: { ledgerRevision: 3, ids: [responsibilityId] },
+    attachments,
+  };
+}
 
 function contactResource(filename: string, size: number): ResourceBlock {
   return {

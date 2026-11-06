@@ -2,317 +2,83 @@ import { describe, expect, it } from "vitest";
 
 import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import { IpcCallStore } from "./ipc-calls";
-import {
-  KERNEL_V036_SUPERVISE_DELEGATED_IPC_CALLS,
-} from "./schema/v036_supervise_delegated_ipc_calls";
+
+const RESPONSIBILITY = "r12y:11111111-1111-4111-8111-111111111111";
+
+function callTo(calls: IpcCallStore, targetPid: string, options: { deadlineAt?: number; supervised?: boolean; responsibilityId?: string } = {}) {
+  const callId = crypto.randomUUID();
+  calls.create({
+    callId, uid: 1000, sourcePid: "proc:ship", sourceRunId: "run:ship",
+    targetPid, targetRunId: `run:${targetPid}`, deadlineAt: options.deadlineAt ?? Date.now() + 60_000,
+    ...(options.supervised ? { supervised: true } : undefined),
+    ...(options.responsibilityId ? { responsibilityId: options.responsibilityId } : undefined),
+  });
+  return callId;
+}
 
 describe("IpcCallStore", () => {
-  it("retains an aborted run's status through delivery recovery", async () => {
+  it("keeps a call only while it is in flight: its run, its target or its deadline ends it and returns it", async () => {
     await runWithRealKernelSql((sql) => {
       const calls = new IpcCallStore(sql);
-      calls.create({
-        callId: "ipc:aborted", uid: 1000, sourcePid: "proc:ship", sourceRunId: "run:ship",
-        targetPid: "proc:worker", targetRunId: "run:worker", deadlineAt: Date.now() + 60_000,
-        responsibilityId: "r12y:11111111-1111-4111-8111-111111111111",
+      const answered = callTo(calls, "proc:answers", { responsibilityId: RESPONSIBILITY });
+      const reset = callTo(calls, "proc:reset");
+      const overdue = callTo(calls, "proc:slow", { deadlineAt: Date.now() + 1_000 });
+
+      expect(calls.findPendingByTargetRun({ uid: 1000, targetPid: "proc:answers", targetRunId: "run:proc:answers" })).toEqual({
+        callId: answered, ownerUid: 1000, sourcePid: "proc:ship", sourceRunId: "run:ship", targetPid: "proc:answers",
+        targetRunId: "run:proc:answers", supervised: false, deadlineAt: expect.any(Number), createdAt: expect.any(Number),
+        responsibilityId: RESPONSIBILITY,
       });
-      calls.completeByRun({
-        uid: 1000, targetPid: "proc:worker", runId: "run:worker", runStatus: "aborted",
-        response: null, error: "A custom interruption reason",
-      });
-      expect(calls.claimDelivery("ipc:aborted")).toMatchObject({
-        status: "completed", runStatus: "aborted", error: "A custom interruption reason",
-      });
-      const recovered = new IpcCallStore(sql);
-      expect(recovered.recoverDeliveryIds()).toEqual(["ipc:aborted"]);
-      expect(recovered.claimDelivery("ipc:aborted")).toMatchObject({
-        status: "completed", runStatus: "aborted", error: "A custom interruption reason",
-      });
+      expect(calls.endByRun({ uid: 1000, targetPid: "proc:answers", runId: "run:proc:answers" }))
+        .toEqual([expect.objectContaining({ callId: answered, responsibilityId: RESPONSIBILITY })]);
+      expect(calls.endByTarget({ uid: 1000, targetPid: "proc:reset" })).toEqual([expect.objectContaining({ callId: reset })]);
+      expect(calls.endOverdue(overdue)).toBeNull();
+      expect(calls.endOverdue(overdue, Date.now() + 1_000)).toMatchObject({ callId: overdue });
+
+      for (const callId of [answered, reset, overdue]) expect(calls.get(callId)).toBeNull();
+      expect(calls.endByRun({ uid: 1000, targetPid: "proc:answers", runId: "run:proc:answers" })).toEqual([]);
     });
   });
 
-  it("stores run correlation atomically and cancels pending calls by source run", async () => {
+  it("leaves an unsupervised call past its deadline to its timeout, and lets a supervised call's run end it at any time", async () => {
     await runWithRealKernelSql((sql) => {
       const calls = new IpcCallStore(sql);
-      const callId = crypto.randomUUID();
-      calls.create({
-        callId,
-        uid: 1000,
-        sourcePid: "proc-source",
-        sourceRunId: "run-source",
-        targetPid: "proc-target",
-        targetRunId: "run-target",
-        deadlineAt: Date.now() + 60_000,
-      });
+      const late = callTo(calls, "proc:late", { deadlineAt: Date.now() - 1 });
+      const supervised = callTo(calls, "proc:supervised", { deadlineAt: Date.now() - 1, supervised: true });
+      const renewed = callTo(calls, "proc:renewed", { deadlineAt: Date.now() - 1 });
 
-      expect(calls.get(callId)).toMatchObject({
-        sourceRunId: "run-source",
-        targetRunId: "run-target",
-        status: "pending",
-        supervised: false,
-      });
-      expect(calls.findPendingByTargetRun({
-        uid: 1000,
-        targetPid: "proc-target",
-        targetRunId: "run-target",
-      })).toMatchObject({
-        callId,
-        sourcePid: "proc-source",
-        sourceRunId: "run-source",
-      });
-      calls.cancelBySourceRun({
-        uid: 1000,
-        sourcePid: "proc-source",
-        sourceRunId: "another-run",
-      });
-      expect(calls.get(callId)?.status).toBe("pending");
-      expect(calls.completeByRun({
-        uid: 1000,
-        targetPid: "proc-target",
-        runId: "run-target",
-        runStatus: "ok",
-        response: { text: "completed before cancellation" },
-      })).toHaveLength(1);
-      expect(calls.findPendingByTargetRun({
-        uid: 1000,
-        targetPid: "proc-target",
-        targetRunId: "run-target",
-      })).toBeNull();
-      calls.cancelBySourceRun({
-        uid: 1000,
-        sourcePid: "proc-source",
-        sourceRunId: "run-source",
-      });
-      expect(calls.get(callId)).toBeNull();
-      expect(calls.completeByRun({
-        uid: 1000,
-        targetPid: "proc-target",
-        runId: "run-target",
-        runStatus: "ok",
-        response: { text: "late result" },
-      })).toEqual([]);
-    });
-  });
-
-  it("allows calls made outside an active source run", async () => {
-    await runWithRealKernelSql((sql) => {
-      const calls = new IpcCallStore(sql);
-      const callId = crypto.randomUUID();
-      calls.create({
-        callId,
-        uid: 1000,
-        sourcePid: "proc-source",
-        sourceRunId: null,
-        targetPid: "proc-target",
-        targetRunId: "run-target",
-        deadlineAt: Date.now() + 60_000,
-      });
-
-      expect(calls.get(callId)?.sourceRunId).toBeNull();
-      calls.cancelBySourcePid({ uid: 1000, sourcePid: "proc-source" });
-      expect(calls.get(callId)).toBeNull();
-    });
-  });
-
-  it("renews a pending supervision deadline without losing its eventual result", async () => {
-    await runWithRealKernelSql((sql) => {
-      const calls = new IpcCallStore(sql);
-      const callId = crypto.randomUUID();
-      calls.create({
-        callId,
-        uid: 1000,
-        sourcePid: "proc-source",
-        sourceRunId: "run-source",
-        targetPid: "proc-target",
-        targetRunId: "run-target",
-        deadlineAt: Date.now() - 1,
-      });
-
+      expect(calls.endByRun({ uid: 1000, targetPid: "proc:late", runId: "run:proc:late" })).toEqual([]);
+      expect(calls.get(late)).toMatchObject({ supervised: false });
+      expect(calls.endByRun({ uid: 1000, targetPid: "proc:supervised", runId: "run:proc:supervised" }))
+        .toEqual([expect.objectContaining({ callId: supervised })]);
+      // A check-in renews the deadline and supervises the call from then on.
       const nextDeadlineAt = Date.now() + 60_000;
-      expect(calls.renewDeadline(callId, nextDeadlineAt)).toMatchObject({
-        callId,
-        status: "pending",
-        supervised: true,
-        deadlineAt: nextDeadlineAt,
-      });
-      expect(calls.completeByRun({
-        uid: 1000,
-        targetPid: "proc-target",
-        runId: "run-target",
-        runStatus: "ok",
-        response: { text: "finished after the first check-in" },
-      })).toEqual([callId]);
+      expect(calls.renewDeadline(renewed, nextDeadlineAt)).toMatchObject({ callId: renewed, supervised: true, deadlineAt: nextDeadlineAt });
+      expect(calls.endByRun({ uid: 1000, targetPid: "proc:renewed", runId: "run:proc:renewed" }))
+        .toEqual([expect.objectContaining({ callId: renewed })]);
     });
   });
 
-  it("backfills only in-flight legacy delegations as supervised", async () => {
+  it("cancels a caller's calls by run or by process, keeping the ones that carry delegated work", async () => {
     await runWithRealKernelSql((sql) => {
       const calls = new IpcCallStore(sql);
-      const delegatedCallId = crypto.randomUUID();
-      const ordinaryCallId = crypto.randomUUID();
-      for (const callId of [delegatedCallId, ordinaryCallId]) {
-        calls.create({
-          callId,
-          uid: 1000,
-          sourcePid: "proc-source",
-          sourceRunId: "run-source",
-          targetPid: `proc-target-${callId}`,
-          targetRunId: `run-target-${callId}`,
-          deadlineAt: Date.now() - 1,
-        });
-      }
-      sql.exec(
-        `INSERT INTO cf_agents_schedules (
-          id, callback, payload, type, time, owner_path, owner_path_key
-        ) VALUES (?, 'onIpcCallTimeout', ?, 'scheduled', ?, NULL, NULL)`,
-        crypto.randomUUID(),
-        JSON.stringify({
-          callId: delegatedCallId,
-          terminateTargetOnTimeout: true,
-        }),
-        Math.floor(Date.now() / 1_000),
-      );
-
-      sql.exec(KERNEL_V036_SUPERVISE_DELEGATED_IPC_CALLS.statements[1]!);
-
-      expect(calls.get(delegatedCallId)?.supervised).toBe(true);
-      expect(calls.get(ordinaryCallId)?.supervised).toBe(false);
-      expect(calls.completeByRun({
-        uid: 1000,
-        targetPid: `proc-target-${delegatedCallId}`,
-        runId: `run-target-${delegatedCallId}`,
-        runStatus: "ok",
-        response: { text: "legacy delegation finished during upgrade" },
-      })).toEqual([delegatedCallId]);
-    });
-  });
-
-  it("preserves the exact deadline for an ordinary IPC call", async () => {
-    await runWithRealKernelSql((sql) => {
-      const calls = new IpcCallStore(sql);
-      const callId = crypto.randomUUID();
+      const first = callTo(calls, "proc:one");
+      const second = callTo(calls, "proc:two");
+      const delegated = callTo(calls, "proc:three", { responsibilityId: RESPONSIBILITY });
       calls.create({
-        callId,
-        uid: 1000,
-        sourcePid: "proc-source",
-        sourceRunId: "run-source",
-        targetPid: "proc-target",
-        targetRunId: "run-target",
-        deadlineAt: Date.now() - 1,
+        callId: "outside-a-run", uid: 1000, sourcePid: "proc:ship", sourceRunId: null,
+        targetPid: "proc:four", targetRunId: "run:proc:four", deadlineAt: Date.now() + 60_000,
       });
 
-      expect(calls.completeByRun({
-        uid: 1000,
-        targetPid: "proc-target",
-        runId: "run-target",
-        runStatus: "ok",
-        response: { text: "late result" },
-      })).toEqual([]);
-      expect(calls.get(callId)).toMatchObject({
-        status: "pending",
-        supervised: false,
-      });
-    });
-  });
-
-  it("accepts a supervised result while its checkpoint is being renewed", async () => {
-    await runWithRealKernelSql((sql) => {
-      const calls = new IpcCallStore(sql);
-      const callId = crypto.randomUUID();
-      calls.create({
-        callId,
-        uid: 1000,
-        sourcePid: "proc-source",
-        sourceRunId: "run-source",
-        targetPid: "proc-target",
-        targetRunId: "run-target",
-        deadlineAt: Date.now() - 1,
-        supervised: true,
-      });
-
-      expect(calls.completeByRun({
-        uid: 1000,
-        targetPid: "proc-target",
-        runId: "run-target",
-        runStatus: "ok",
-        response: { text: "eventual result" },
-      })).toEqual([callId]);
-      expect(calls.get(callId)).toMatchObject({
-        status: "completed",
-        supervised: true,
-      });
-    });
-  });
-
-  it("fails pending calls when their target process is killed", async () => {
-    await runWithRealKernelSql((sql) => {
-      const calls = new IpcCallStore(sql);
-      const callId = crypto.randomUUID();
-      calls.create({
-        callId,
-        uid: 1000,
-        sourcePid: "proc-source",
-        sourceRunId: "run-source",
-        targetPid: "proc-target",
-        targetRunId: "run-target",
-        deadlineAt: Date.now() + 60_000,
-      });
-
-      expect(calls.failByTargetPid({
-        uid: 1000,
-        targetPid: "proc-target",
-        error: "Target process was killed",
-      })).toEqual([callId]);
-      expect(calls.get(callId)).toMatchObject({
-        status: "completed",
-        response: null,
-        error: "Target process was killed",
-      });
-    });
-  });
-
-  it("persists the owner and delegated responsibility through completion", async () => {
-    await runWithRealKernelSql((sql) => {
-      const calls = new IpcCallStore(sql);
-      const responsibilityId = "r12y:11111111-1111-4111-8111-111111111111";
-      calls.create({
-        callId: "ipc:linked-call",
-        uid: 1000,
-        sourcePid: "proc:ship",
-        sourceRunId: "run:ship",
-        targetPid: "proc:worker",
-        targetRunId: "run:worker",
-        deadlineAt: Date.now() + 60_000,
-        responsibilityId,
-      });
-
-      expect(calls.get("ipc:linked-call")).toMatchObject({
-        ownerUid: 1000,
-        responsibilityId,
-        status: "pending",
-      });
-      expect(calls.completeByRun({
-        uid: 1000,
-        targetPid: "proc:worker",
-        runId: "run:worker",
-        runStatus: "ok",
-        response: { text: "done" },
-      })).toEqual(["ipc:linked-call"]);
-      expect(calls.get("ipc:linked-call")).toMatchObject({
-        ownerUid: 1000,
-        responsibilityId,
-        status: "completed",
-        response: { text: "done" },
-      });
-      calls.cancelBySourceRun({
-        uid: 1000,
-        sourcePid: "proc:ship",
-        sourceRunId: "run:ship",
-      });
+      calls.cancelBySourceRun({ uid: 1000, sourcePid: "proc:ship", sourceRunId: "another-run" });
+      expect(calls.get(first)).not.toBeNull();
+      calls.cancelBySourceRun({ uid: 1000, sourcePid: "proc:ship", sourceRunId: "run:ship" });
+      expect(calls.get(first)).toBeNull();
+      expect(calls.get(second)).toBeNull();
+      expect(calls.get("outside-a-run")).toMatchObject({ sourceRunId: null });
       calls.cancelBySourcePid({ uid: 1000, sourcePid: "proc:ship" });
-      expect(calls.get("ipc:linked-call")).toMatchObject({
-        responsibilityId,
-        status: "completed",
-      });
+      expect(calls.get("outside-a-run")).toBeNull();
+      expect(calls.get(delegated)).toMatchObject({ responsibilityId: RESPONSIBILITY });
     });
   });
 });

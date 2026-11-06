@@ -130,7 +130,6 @@ const LABELS: &[(&str, &str)] = &[
     ),
     ("proc.history.segments", "listed history archives"),
     ("proc.ipc.call", "asked Ship or a helper for a result"),
-    ("proc.ipc.deliver", "delivered a result to Ship or a helper"),
     ("proc.ipc.send", "sent a message to Ship or a helper"),
     ("proc.kill", "ended Ship or a helper"),
     ("proc.list", "listed Ship and its helpers"),

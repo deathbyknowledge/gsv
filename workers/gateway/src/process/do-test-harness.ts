@@ -2,18 +2,18 @@
 
 import { Kernel } from "../kernel/do";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
-import type { InternalRequestFrame } from "../protocol/process-frames";
+import type { ProcessInput } from "../protocol/process-frames";
 import type {
-  ProcessAdapterDeliverArgs,
-  ProcessRuntimeEventDeliverArgs,
+  ProcessEventDeliverArgs,
   ProcessInboundFrame,
+  ProcessIpcMessage,
   ProcessScheduleDeliverArgs,
 } from "../protocol/process-frames";
 import { getKernelPtr, getProcessByPid } from "../shared/utils";
 import { resolveToolSyscall } from "../syscalls/constants";
 import { takePurpose, type ToolApprovalPolicy } from "./approval";
 import type { Process } from "./do";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { ProcHistoryEventPayload, ProcSendResult, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { expect, vi } from "vitest";
 
@@ -64,6 +64,25 @@ export async function okProcessResponse(
   return response;
 }
 
+/**
+ * A message as the Kernel's log delivers it: a person's stops the active run, one from a process
+ * or a schedule waits its turn. Answers as `proc.send` does, and throws on a refusal.
+ */
+export async function sendMessage(
+  target: DurableObjectStub<Process> | Process,
+  input: ProcessInput,
+  runId = `evt_${crypto.randomUUID()}:proc:test`,
+): Promise<Extract<ProcSendResult, { ok: true }>> {
+  const fromProcess = input.origin?.kind === "process" || input.origin?.kind === "scheduler";
+  // SAFETY: a Process and its stub expose the same typed method.
+  const result = await (target as Process).deliverEvent({
+    eventId: runId, input, admission: { idle: "start", busy: fromProcess ? "after" : "interrupt" },
+  });
+  if ("unavailable" in result) throw new Error(result.message);
+  if (result.refused !== undefined || result.runId === null) throw new Error(result.refused ?? "the message took no run");
+  return { ok: true, status: "started", runId: result.runId, ...(result.queued ? { queued: true } : undefined) };
+}
+
 // SAFETY: test fixture is constructed with the asserted domain shape.
 export function makeReq(call: string, args: RequestFrame["args"]): RequestFrame {
   // SAFETY: test fixture is constructed with the asserted domain shape.
@@ -80,61 +99,68 @@ export function drainProcessQueue(store: any) {
   return queued;
 }
 
-export function makeScheduleDeliverReq(
+/** A schedule's firing as the Kernel's event log delivers it to a process: with a reply destination, its own run. */
+export function scheduleFired(
   args: Omit<ProcessScheduleDeliverArgs, "runId" | "firedAtMs"> & {
     runId?: string;
     firedAtMs?: number;
   },
-): InternalRequestFrame<"proc.schedule.deliver"> {
+): ProcessEventDeliverArgs {
+  const runId = args.runId ?? `evt_${crypto.randomUUID()}:proc:test`;
   return {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.schedule.deliver",
-    args: {
-      ...args,
-      runId: args.runId ?? crypto.randomUUID(),
-      firedAtMs: args.firedAtMs ?? Date.now(),
+    eventId: runId,
+    event: {
+      kind: "schedule.fired", severity: "info", audience: "model",
+      payload: { ...args, runId, firedAtMs: args.firedAtMs ?? Date.now() },
     },
+    admission: { idle: "start", busy: args.replyTo ? "after" : "join" },
   };
 }
 
-export function makeAdapterDeliverReq(
-  args: ProcessAdapterDeliverArgs,
-): InternalRequestFrame<"proc.adapter.deliver"> {
+/** A call's answer as the Kernel delivers it to the process that asked. */
+export function ipcAnswer(
+  kind: "ipc.reply" | "ipc.overdue" | "ipc.timeout",
+  payload: ProcHistoryEventPayload<"ipc.reply">,
+  eventId = `evt_${crypto.randomUUID()}:proc:test`,
+): ProcessEventDeliverArgs {
   return {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.adapter.deliver",
-    args,
+    eventId,
+    event: { kind, payload, severity: kind === "ipc.timeout" || payload.error ? "error" : "info", audience: "model" },
+    admission: { idle: "start", busy: "join", ...(payload.sourceRunId ? { joinRun: payload.sourceRunId } : undefined) },
   };
 }
 
-export function makeRuntimeEventDeliverReq(
-  args: ProcessRuntimeEventDeliverArgs,
-): InternalRequestFrame<"proc.runtime.event.deliver"> {
+/** Another process's message or call, as the Kernel delivers it. */
+export function ipcMessage(
+  message: Omit<ProcessIpcMessage, "origin" | "sentAt"> & Partial<Pick<ProcessIpcMessage, "origin" | "sentAt">>,
+  eventId = `evt_${crypto.randomUUID()}:proc:test`,
+): ProcessEventDeliverArgs {
   return {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.runtime.event.deliver",
-    args,
+    eventId,
+    message: { origin: { kind: "process", sourcePid: message.sourcePid, uid: message.source.uid }, sentAt: Date.now(), ...message },
+    admission: { idle: "start", busy: "after" },
   };
 }
 
-export function makeRuntimeEventReq(
-  eventId: string,
-  workPid: string,
-): InternalRequestFrame<"proc.runtime.event.deliver"> {
+/** A batch of responsibilities as the Kernel's event log delivers it to Ship. */
+export function responsibilityReady(eventId: string, ids: string[], ledgerRevision: number): ProcessEventDeliverArgs {
   return {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.runtime.event.deliver",
-    args: {
-      eventId,
-      event: {
-        type: "adapter.work.returned",
-        workPid,
-      },
+    eventId,
+    event: {
+      kind: "responsibility.ready", severity: "info", audience: "model",
+      payload: { batchId: eventId, ledgerRevision, responsibilityIds: ids, receivedAtMs: Date.now() },
     },
+    admission: { idle: "start", busy: "join" },
+    responsibilities: { ledgerRevision, ids },
+  };
+}
+
+/** A person's return to Ship from a work process, as the Kernel's log delivers it: a run of its own. */
+export function workReturned(eventId: string, workPid: string): ProcessEventDeliverArgs {
+  return {
+    eventId,
+    event: { kind: "adapter.work.returned", severity: "info", audience: "model", payload: { eventId, workPid } },
+    admission: { idle: "start", busy: "after" },
   };
 }
 

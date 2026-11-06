@@ -3,7 +3,6 @@ import { jsonObjectSchema, toolApprovalTargetSchema } from "@humansandmachines/g
 import {
   aiToolsDeviceSchema,
   processIdentitySchema,
-  responsibilityBatchSchema,
 } from "../internal/schemas";
 
 const aiModelConfigSchema = z.object({
@@ -124,10 +123,11 @@ export const runOutputMediaSchema = processMediaInputSchema.extend({
   revision: z.string().optional(),
 });
 
-// Keyed by the wake batch or event that handed these responsibilities to the run.
-const responsibilityBatchStateSchema = responsibilityBatchSchema.extend({
+// Keyed by the event delivery that handed these responsibilities to the run.
+const responsibilityBatchStateSchema = z.strictObject({
   batchId: z.string().trim().regex(/^[a-zA-Z0-9._:-]{1,200}$/u),
   ledgerRevision: z.number().int().nonnegative().safe().optional(),
+  responsibilityIds: z.array(z.string().trim().regex(/^r12y:[0-9a-f-]{36}$/u)).min(1).max(100),
 });
 
 export const runStateSchema = z.object({
