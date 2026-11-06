@@ -52,6 +52,11 @@ and owns concrete `fs.*`, `shell.exec`, `shell.cancel`, and `net.fetch` executio
 and shell-session lifecycles, request and body cancellation, reconnection,
 logging, health, and shutdown.
 
+A connection counts as alive only while the gateway answers it. Every four
+minutes, and immediately after the machine wakes from sleep, `gsvd` pings the
+gateway and reconnects when nothing comes back within ten seconds. A socket
+that looks open locally can be dead after a suspend or a network change.
+
 The daemon remains in the foreground. The OS service manager owns detachment,
 restart, and login/boot behavior. It authenticates with a driver-bound
 credential and runs as an unprivileged OS user.
