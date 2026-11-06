@@ -463,6 +463,27 @@ describe("createHomeContextProvider", () => {
       "alpha",
     ]);
   });
+
+  it("stops reading context files once the budget is spent", async () => {
+    const names = Array.from({ length: 40 }, (_, index) => `${String(index).padStart(2, "0")}.md`);
+    const read: string[] = [];
+    const sections = await createHomeContextProvider().collect(makeInput({
+      config: { ...CONFIG, maxContextBytes: 20 },
+      ripgit: {
+        async readPath(_repo, path) {
+          if (path === "context.d") {
+            return { kind: "tree", entries: names.map((name) => ({ name, mode: "100644", hash: name, type: "blob" })) };
+          }
+          read.push(path);
+          const bytes = new TextEncoder().encode(`${path} ${"x".repeat(4)}`);
+          return { kind: "file", bytes, size: bytes.length };
+        },
+      },
+    }));
+
+    expect(sections.map((section) => section.name)).toEqual(["00.md"]);
+    expect(read.length).toBeLessThan(names.length / 2);
+  });
 });
 
 function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssemblyInput {

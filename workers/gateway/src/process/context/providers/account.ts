@@ -2,6 +2,8 @@ import { accountHomeRepoRef } from "../../../fs/ripgit/repos";
 import type { PromptAssemblyInput, PromptSection } from "../types";
 
 const TEXT_ENCODER = new TextEncoder();
+/** Context files read together; a directory larger than the budget stops after the batch that spends it. */
+const CONTEXT_READ_BATCH = 8;
 const TEXT_DECODER = new TextDecoder();
 
 type AccountContextRoot = "program" | "user";
@@ -59,28 +61,31 @@ export async function collectAccountContext(
     access: "editable" as const,
     location: `${account.home}/context.d`,
   };
-  // Read every file at once; the budget below still applies in name order.
-  const contextFiles = await Promise.all(
-    (await listAccountContextFiles(input, account)).map(async (file) => ({
-      name: file.name,
-      text: (await file.read())?.trim(),
-    })),
-  );
+  const contextFiles = await listAccountContextFiles(input, account);
   let usedBytes = 0;
-  for (const { name, text } of contextFiles) {
-    if (!text) {
-      continue;
-    }
+  for (let start = 0; start < contextFiles.length; start += CONTEXT_READ_BATCH) {
+    // Read a batch at once; the budget still applies in name order and ends the reading.
+    const batch = await Promise.all(
+      contextFiles.slice(start, start + CONTEXT_READ_BATCH).map(async (file) => ({
+        name: file.name,
+        text: (await file.read())?.trim(),
+      })),
+    );
+    for (const { name, text } of batch) {
+      if (!text) {
+        continue;
+      }
 
-    const bytes = TEXT_ENCODER.encode(text).length;
-    if (usedBytes + bytes > input.config.maxContextBytes) {
-      console.warn(
-        `[Prompt] ${warningLabel} budget exceeded at ${name}, skipping remaining`,
-      );
-      break;
+      const bytes = TEXT_ENCODER.encode(text).length;
+      if (usedBytes + bytes > input.config.maxContextBytes) {
+        console.warn(
+          `[Prompt] ${warningLabel} budget exceeded at ${name}, skipping remaining`,
+        );
+        return sections;
+      }
+      usedBytes += bytes;
+      sections.push({ name, text, contextRoot });
     }
-    usedBytes += bytes;
-    sections.push({ name, text, contextRoot });
   }
 
   return sections;
