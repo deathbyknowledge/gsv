@@ -426,7 +426,10 @@ function discoveryScore(
     } else if (primaryTokens.has(token)) {
       score += 10;
       matched += 1;
-    } else if ([...primaryTokens].some((candidate) => candidate.startsWith(token) || token.startsWith(candidate))) {
+    } else if ([...primaryTokens].some((candidate) =>
+      // A prefix needs three letters, or "or" would match "organize".
+      Math.min(candidate.length, token.length) >= 3 && (candidate.startsWith(token) || token.startsWith(candidate))
+    )) {
       score += 5;
       matched += 1;
     } else if (bodyTokens.has(token)) {
@@ -438,8 +441,10 @@ function discoveryScore(
   return score;
 }
 
+// A lone letter is what's left of a possessive or abbreviation ("person's",
+// "e.g."); as a prefix it would match every word that starts with it.
 function significantTokens(value: string): string[] {
-  return [...new Set(value.split(/\s+/).map(normalizeToken).filter((token) => token && !STOP_WORDS.has(token)))];
+  return [...new Set(value.split(/\s+/).map(normalizeToken).filter((token) => token.length > 1 && !STOP_WORDS.has(token)))];
 }
 
 function normalizeText(value: string): string {

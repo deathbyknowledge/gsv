@@ -72,4 +72,41 @@ describe("discovery ranking", () => {
     expect(rankShellDiscoveryEntries(entries, "send this file to the chat").map((entry) => entry.name))
       .toEqual(["message", "long-guide"]);
   });
+
+  it.each([
+    ["schedule a reminder", ["sched"]],
+    ["store a secret", []],
+    ["user's calendar", []],
+  ])("does not match %s on the letters left over from possessives", (query, expected) => {
+    const entries: ShellDiscoveryEntry[] = [
+      {
+        kind: "command", name: "sched", summary: "Schedule work for later.", useWhen: "Set a reminder.",
+        keywords: ["reminder"], next: "man sched", available: true,
+      },
+      {
+        kind: "command", name: "contact", summary: "Manage a person's contacts.", useWhen: "Read a contact's details.",
+        keywords: [], next: "man contact", available: true,
+      },
+    ];
+
+    expect(rankShellDiscoveryEntries(entries, query).map((entry) => entry.name)).toEqual(expected);
+  });
+
+  it.each([
+    ["organize my notes", ["wiki"]],
+    ["upload a photo", []],
+  ])("does not prefix-match %s on two-letter words", (query, expected) => {
+    const entries: ShellDiscoveryEntry[] = [
+      {
+        kind: "command", name: "chmod", summary: "Change who can read or write a file.", useWhen: "Set up sharing.",
+        keywords: [], next: "man chmod", available: true,
+      },
+      {
+        kind: "command", name: "wiki", summary: "Keep notes in a wiki.", useWhen: "Write down what to remember.",
+        keywords: [], next: "man wiki", available: true,
+      },
+    ];
+
+    expect(rankShellDiscoveryEntries(entries, query).map((entry) => entry.name)).toEqual(expected);
+  });
 });
