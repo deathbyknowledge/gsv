@@ -1140,6 +1140,39 @@ describe("GsvFs root path", () => {
   });
 });
 
+describe("GsvFs built-in command directories", () => {
+  it("keeps /bin and /usr/bin out of storage for every account", async () => {
+    await env.STORAGE.put("usr/bin/marker", "x");
+    try {
+      const fs = makeFs(ROOT);
+      await expect(fs.exists("/usr/bin")).resolves.toBe(false);
+      await expect(fs.exists("/usr/bin/marker")).resolves.toBe(false);
+      await expect(fs.readdir("/usr/bin")).rejects.toThrow(/ENOENT/);
+      await expect(fs.readlink("/usr/bin/marker")).rejects.toThrow(/ENOENT/);
+      await expect(fs.search("/usr/bin", "x")).rejects.toThrow(/ENOENT/);
+      await expect(fs.writeFile("/bin/tool", "x")).rejects.toThrow(/EROFS/);
+      await expect(fs.mkdir("/usr/bin", { recursive: true })).rejects.toThrow(/EROFS/);
+      await expect(makeFs(SAM).writeFile("/usr/bin/tool", "x")).rejects.toThrow(/EROFS/);
+      expect(await env.STORAGE.head("bin/tool")).toBeNull();
+      expect(await env.STORAGE.head("usr/bin/tool")).toBeNull();
+    } finally {
+      await env.STORAGE.delete(["usr/bin/marker", "bin/tool", "usr/bin/tool", "usr/bin/.dir"]);
+    }
+  });
+
+  it("leaves look-alike paths and /usr/local/bin in storage", async () => {
+    const fs = makeFs(SAM);
+    try {
+      await fs.writeFile("/usr/local/bin/tool", "echo tool");
+      await fs.writeFile("/binaries/tool", "echo tool");
+      await expect(fs.exists("/usr/local/bin/tool")).resolves.toBe(true);
+      await expect(fs.exists("/binaries/tool")).resolves.toBe(true);
+    } finally {
+      await env.STORAGE.delete(["usr/local/bin/tool", "binaries/tool"]);
+    }
+  });
+});
+
 describe("GsvFs virtual /dev", () => {
   it("reads /dev/null as empty string", async () => {
     const fs = makeFs(SAM);

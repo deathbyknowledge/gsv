@@ -744,6 +744,17 @@ describe("native shell execution", () => {
     });
   });
 
+  it("keeps built-in commands when storage holds files under /usr/bin", async () => {
+    await env.STORAGE.put("usr/bin/marker", "x");
+    try {
+      const result = await handleShellExec({ input: "printf 'a\\nb\\n' | wc -l" }, makeContext());
+      expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(result.stdout.trim()).toBe("2");
+    } finally {
+      await env.STORAGE.delete("usr/bin/marker");
+    }
+  });
+
   it("keeps command stderr visible on non-zero exits", async () => {
     const result = await handleShellExec(
       { input: "printf 'real failure\\n' >&2; exit 7" },
