@@ -59,10 +59,15 @@ export async function collectAccountContext(
     access: "editable" as const,
     location: `${account.home}/context.d`,
   };
-  const contextFiles = await listAccountContextFiles(input, account);
+  // Read every file at once; the budget below still applies in name order.
+  const contextFiles = await Promise.all(
+    (await listAccountContextFiles(input, account)).map(async (file) => ({
+      name: file.name,
+      text: (await file.read())?.trim(),
+    })),
+  );
   let usedBytes = 0;
-  for (const file of contextFiles) {
-    const text = (await file.read())?.trim();
+  for (const { name, text } of contextFiles) {
     if (!text) {
       continue;
     }
@@ -70,12 +75,12 @@ export async function collectAccountContext(
     const bytes = TEXT_ENCODER.encode(text).length;
     if (usedBytes + bytes > input.config.maxContextBytes) {
       console.warn(
-        `[Prompt] ${warningLabel} budget exceeded at ${file.name}, skipping remaining`,
+        `[Prompt] ${warningLabel} budget exceeded at ${name}, skipping remaining`,
       );
       break;
     }
     usedBytes += bytes;
-    sections.push({ name: file.name, text, contextRoot });
+    sections.push({ name, text, contextRoot });
   }
 
   return sections;
