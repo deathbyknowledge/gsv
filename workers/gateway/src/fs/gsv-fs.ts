@@ -5,6 +5,7 @@
  *   /proc/*, /dev/*, /sys/*, /var/{spool,log}/*, /etc/{passwd,shadow,group,cron.d} → KernelMountBackend
  *   /var/media/*                                          → ProcessMediaMountBackend
  *   /src/repos/*                                       → Process source/ripgit repo backend
+ *   /bin, /usr/bin                                     → built-in commands: always absent, read-only
  *   everything else                                           → R2 backend
  *
  * Two paths remain hybrid in GsvFs itself:
@@ -37,6 +38,7 @@ import type {
   WriteFileStreamResult,
 } from "./mount";
 import { R2MountBackend } from "./backends/r2";
+import { CommandDirectoriesBackend } from "./backends/command-directories";
 import { KernelMountBackend } from "./backends/kernel";
 import { ProcessMediaMountBackend } from "./backends/process-media";
 import { isProcessMediaPath } from "../shared/process-media-path";
@@ -53,6 +55,7 @@ export class GsvFs implements IFileSystem {
   private readonly identity: ProcessIdentity;
   private readonly kernel: KernelRefs | null;
   private readonly r2Backend: MountBackend;
+  private readonly commandDirectoriesBackend: MountBackend;
   private readonly kernelBackend: MountBackend;
   private readonly processMediaBackend: MountBackend;
   private readonly sourceBackend: MountBackend | null;
@@ -69,6 +72,7 @@ export class GsvFs implements IFileSystem {
     this.identity = identity;
     this.kernel = kernel ?? null;
     this.r2Backend = new R2MountBackend(bucket, identity);
+    this.commandDirectoriesBackend = new CommandDirectoriesBackend();
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
     this.processMediaBackend = new ProcessMediaMountBackend(bucket, identity, this.kernel, selfPid ?? null);
     this.sourceBackend = sourceBackend ?? null;
@@ -472,6 +476,10 @@ export class GsvFs implements IFileSystem {
 
     if (this.accountHomeBackend && isAccountHomeReservedPath(path)) {
       throw new Error(`EACCES: permission denied, '${normalizePath(path)}'`);
+    }
+
+    if (this.commandDirectoriesBackend.handles(path)) {
+      return this.commandDirectoriesBackend;
     }
 
     if (this.kernelBackend.handles(path)) {
