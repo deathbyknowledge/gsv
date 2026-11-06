@@ -2406,7 +2406,7 @@ type AiSyscalls = {
 
   "ai.config": {
     args: { modelConfig?: { provider: string; model: string; apiKey?: string; baseUrl?: string; providerStyle?: string; transportTarget?: string; maxTokens?: number; contextWindowTokens?: number }; modelId?: string; reasoning?: string };
-    result: { provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; fallbacks?: Array<{ modelId: string; modelName: string; provider: string; model: string; apiKey: string }>; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "system" | "home"; label: string; writable: boolean } }>; maxContextBytes: number };
+    result: { provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; fallbacks?: Array<{ modelId: string; modelName: string; provider: string; model: string; apiKey: string }>; systemContextFiles?: Array<{ name: string; text: string }>; maxContextBytes: number };
   };
 
   "ai.transcription.create": {

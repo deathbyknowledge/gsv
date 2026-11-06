@@ -22,7 +22,6 @@ describe("Process target availability", () => {
         generationTimeoutMs: 30_000,
         capabilities: ["*"],
         systemContextFiles: [],
-        skillIndexMode: "off" as const,
       };
       const snapshot: AiContextResult = {
         targets: [{ id: "slack-target:workspace", label: "Slack", implements: ["shell.exec"] }],
@@ -121,7 +120,6 @@ describe("Process target availability", () => {
         generationTimeoutMs: 30_000,
         capabilities: ["*"],
         systemContextFiles,
-        skillIndexMode: "off" as const,
       };
       const snapshot: AiContextResult = {
         targets: [],

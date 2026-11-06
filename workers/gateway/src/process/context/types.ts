@@ -1,5 +1,6 @@
 import type { AiConfigResult, AiToolsTarget, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RipgitClient } from "../../fs/ripgit/client";
+import type { ContextProjection } from "./projection";
 
 type PromptStorage = Pick<R2Bucket, "get" | "list">;
 type PromptRipgitClient = Pick<RipgitClient, "readPath">;
@@ -11,6 +12,8 @@ export type PromptAssemblyInput = {
   ownerIdentity?: ProcessIdentity;
   targets: AiToolsTarget[];
   mcpServers: string[];
+  /** Frozen skill index rendered into this epoch. */
+  skills: ContextProjection["skills"];
   /** Frozen runtime facts rendered into this exact epoch baseline. */
   runtime: {
     date: string;

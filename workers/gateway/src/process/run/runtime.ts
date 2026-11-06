@@ -55,7 +55,7 @@ import {
   isRetryableGenerationErrorMessage,
 } from "../../inference/output";
 import { extractCompletedText } from "../../inference/generated-text";
-import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
+import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, withRunControlInstructions } from "./helpers";
 import { deliverMemoryReview } from "../memory-review";
 import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
@@ -2362,7 +2362,7 @@ export class ProcessRun {
     const contextSnapshot = await (prefetched ?? this.host.settings.resolveAiContext(this.runAbortSignal(runId)));
     const fallbackProjection =
       parseContextProjection(this.host.store.epochs.getLiveContextEpoch()?.observedProjection) ??
-      createContextProjection(contextSnapshotFromRun(state.run, state.activeConfig));
+      { targets: state.run.devices ?? [] };
     const currentProjection = createContextProjection(
       contextSnapshot,
       new Date(),

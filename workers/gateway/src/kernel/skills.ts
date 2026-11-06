@@ -281,7 +281,7 @@ export function renderSkillMarkdown(input: {
 }
 
 export function renderSkillIndex(
-  entries: SkillIndexEntry[],
+  entries: Pick<SkillIndexEntry, "id" | "description">[],
   mode: Exclude<AiSkillIndexMode, "off"> = "summary",
 ): string {
   if (entries.length === 0) {
@@ -303,7 +303,7 @@ export function renderSkillIndex(
 }
 
 function formatPromptSkillEntry(
-  entry: SkillIndexEntry,
+  entry: Pick<SkillIndexEntry, "id" | "description">,
   mode: Exclude<AiSkillIndexMode, "off">,
 ): string {
   return [

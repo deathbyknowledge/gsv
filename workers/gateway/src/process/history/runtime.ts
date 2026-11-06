@@ -2121,13 +2121,6 @@ export class ProcessHistory {
     const promptConfig: AiConfigResult = {
       ...config,
       system: { timezone: projection.runtime.timezone, language: projection.runtime.language },
-      skillIndex: projection.skills.entries.map((entry) => ({
-        id: entry.id,
-        name: entry.id,
-        description: entry.description,
-        source: { kind: "home", label: "home", writable: true },
-      })),
-      skillIndexMode: projection.skills.mode,
     };
     if (contextSnapshot.systemContextFiles !== undefined) {
       promptConfig.systemContextFiles = contextSnapshot.systemContextFiles;
@@ -2144,6 +2137,7 @@ export class ProcessHistory {
       ownerIdentity: config.owner ?? undefined,
       targets: projection.targets,
       mcpServers: projection.mcpServers,
+      skills: projection.skills,
       runtime: projection.runtime,
       r12y: baseline.text,
       storage: this.host.storage,

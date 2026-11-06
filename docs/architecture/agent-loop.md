@@ -86,12 +86,16 @@ cleanly.
 
 ## Prompt Assembly
 
-On the first tick for a run, the process asks the Kernel for runtime inputs:
+On the first tick for a run, the process asks the Kernel for its runtime inputs
+at once:
 
 - `ai.config` resolves provider, model, reasoning, output limit, system context
   files, approval policy, and context byte budget.
 - `ai.tools` returns the syscall tool schemas visible to this process and the
   accessible online devices, including owner-authored device descriptions.
+- `ai.context` returns what the prompt is built from: reachable targets, ready
+  MCP servers, system context files, the skill index, the Ship's address, and
+  the managed mailbox. Every later tick asks for it again.
 
 The process then assembles a system prompt from explicit context providers in
 this order:
