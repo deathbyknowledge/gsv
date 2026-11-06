@@ -350,13 +350,15 @@ function callFromRow(row: ChatTranscriptRow): ActivityCall {
   };
   const fields: Array<[key: string, label: TextKey]> = syscall === "fs.write" ? [["content", "chat.field.content"]]
     : syscall === "fs.edit" ? [["oldString", "chat.field.before"], ["newString", "chat.field.after"]]
-    : syscall === "mail.send" ? [["to", "chat.field.to"], ["subject", "chat.field.subject"], ["text", "chat.field.message"]]
+    : syscall === "mail.send" ? [["to", "chat.field.to"], ["cc", "chat.field.cc"], ["subject", "chat.field.subject"], ["text", "chat.field.message"]]
     : [];
   if (fields.length > 0 && isRecord(row.toolArgs)) {
     const args = row.toolArgs;
     call.details = fields.flatMap(([key, label]) => {
-      const text = z.string().safeParse(args[key]);
-      return text.success ? [{ label: t(label), text: text.data }] : [];
+      // Mail recipients may be one address or a list.
+      const value = z.union([z.string(), z.array(z.string())]).safeParse(args[key]);
+      if (!value.success) return [];
+      return [{ label: t(label), text: Array.isArray(value.data) ? value.data.join(", ") : value.data }];
     });
   }
   const verb = filesystemOperationVerbs.get(syscall);

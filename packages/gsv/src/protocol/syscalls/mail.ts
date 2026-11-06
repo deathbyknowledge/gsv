@@ -10,9 +10,14 @@ export type ManagedMailSummaryCategory =
 export type MailSendArgs = {
   text: string;
   deliveryId: string;
-  to?: string;
+  /** One address or several. A reply derives its own. */
+  to?: string | string[];
+  /** Addresses to copy, on a new message or a reply. */
+  cc?: string | string[];
   subject?: string;
   replyToMessageId?: string;
+  /** With `replyToMessageId`, also copy everyone else the original was sent to. */
+  replyAll?: boolean;
 };
 
 export type MailSendResult =
@@ -22,7 +27,10 @@ export type MailSendResult =
       outboundId: string;
       state: "queued" | "accepted" | "failed" | "unknown";
       from: string;
+      /** Recipients separated by `, `, as in a To header. */
       to: string;
+      /** Copied recipients in the same form; absent when none. */
+      cc?: string;
       subject: string;
       errorCode?: string;
       replayed: boolean;
@@ -44,8 +52,13 @@ export type MailOutboundStatus = {
   outboundId: string;
   state: "staging" | "queued" | "accepted" | "failed" | "unknown";
   from: string;
+  /** Recipients separated by `, `, as in a To header. */
   to: string;
+  /** Copied recipients in the same form; absent when none. */
+  cc?: string;
   subject: string;
+  /** The message as written, in Markdown. */
+  textPath: string;
   createdAt: number;
   queuedAt: number | null;
   completedAt: number | null;
@@ -92,6 +105,15 @@ export type MailSearchArgs = MailListArgs & {
 };
 
 export type MailSearchResult = MailPage;
+
+export type MailSentArgs = MailListArgs;
+
+export type MailSentResult = {
+  /** Newest first. */
+  outbound: MailOutboundStatus[];
+  /** Pass as `before` for the next older page; absent on the last page. */
+  next?: string;
+};
 
 export type MailReadArgs = {
   /** A message id, or an unambiguous prefix of one. */

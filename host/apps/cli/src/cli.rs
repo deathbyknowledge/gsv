@@ -554,14 +554,22 @@ pub(crate) enum MailAction {
     },
     /// Send mail from your Ship's address; the body comes from MESSAGE or stdin
     Send {
-        /// Recipient address
+        /// Recipient address; separate several with commas
         to: String,
+        /// Copy someone; repeat or separate addresses with commas
+        #[arg(long, value_delimiter = ',')]
+        cc: Vec<String>,
         /// Subject line
         #[arg(long, short = 's')]
         subject: Option<String>,
         /// Message body (default: read from stdin)
         #[arg(num_args = 0..)]
         message: Vec<String>,
+    },
+    /// List mail your Ship sent, newest first
+    Sent {
+        #[command(flatten)]
+        page: MailPage,
     },
     /// Check a sent message's delivery
     Status {

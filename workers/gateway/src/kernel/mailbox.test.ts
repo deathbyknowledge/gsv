@@ -320,6 +320,32 @@ describe("managed Kernel mailbox", () => {
     });
   });
 
+  it.each(["reply", "delivery-report"] as const)(
+    "keeps an automatic %s and its notice without asking the Ship to review it",
+    async (automatic) => {
+      await runWithRealKernelSql(async (sql, kernelStorage) => {
+        const ctx = mailboxContext(sql, kernelStorage, new MemoryR2Bucket());
+        ctx.noticeRules.set(1000, "mail.received", { notify: "messenger", ship: "wake" }, "person", 1);
+        ctx.reconcileResponsibilityWake = vi.fn(async () => {});
+        const accepted = await acceptManagedInboundMail({ ...METADATA, automatic }, bodyFromBytes(RAW), ctx);
+
+        await completeManagedInboundMail({
+          version: 1, intakeId: METADATA.intakeId, messageId: accepted.messageId,
+          summary: { summary: "Mike is away until Monday.", category: "other", requiresAttention: false, confidence: 0.9 },
+        }, ctx);
+
+        expect(ctx.mailboxes.getMessage(1000, accepted.messageId)).toMatchObject({
+          automatic,
+          summary: "Mike is away until Monday.",
+          eventDeliveredAt: expect.any(Number),
+        });
+        expect(ctx.ownerNotices.next(1000)).toMatchObject({ topic: "mail.received", pendingCount: 1 });
+        expect(ctx.responsibilities.list({ ownerUid: 1000 }).records).toEqual([]);
+        expect(ctx.reconcileResponsibilityWake).not.toHaveBeenCalled();
+      });
+    },
+  );
+
   it("stores mail without waking the Ship when incoming-mail responsibilities are disabled", async () => {
     await runWithRealKernelSql(async (sql, kernelStorage) => {
       const ctx = mailboxContext(sql, kernelStorage, new MemoryR2Bucket());

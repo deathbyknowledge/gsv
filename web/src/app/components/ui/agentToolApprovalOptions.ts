@@ -96,6 +96,7 @@ const GRANT_LABELS = new Map(Object.entries({
   "mail.status": "approval.match.mailStatus",
   "mail.list": "approval.match.mailList",
   "mail.search": "approval.match.mailSearch",
+  "mail.sent": "approval.match.mailSent",
   "mail.read": "approval.match.mailRead",
   // Repositories
   "repo.create": "approval.match.repoCreate",

@@ -190,7 +190,8 @@ request; `decline` on your own request withdraws it.
 gsv mail [--page N] [-n N]
 gsv mail search WORDS [--page N] [-n N]
 gsv mail read ID
-gsv mail send TO [-s SUBJECT] [MESSAGE]
+gsv mail send TO [--cc ADDRESS]... [-s SUBJECT] [MESSAGE]
+gsv mail sent [--page N] [-n N]
 gsv mail status DELIVERY_ID
 ```
 
@@ -204,9 +205,15 @@ can follow the `next` cursor of a `--json` result with the hidden
 `--before CURSOR` option instead. `search` uses `mail.search` with the same
 paging. `read` prints the message's header, then its body.
 
-`send` sends from your Ship's address. The body comes from `MESSAGE` or, when
-it is omitted, from stdin. It prints a delivery id for `status`. Sending
-follows the ordinary `mail.send` approval policy.
+`send` sends from your Ship's address. Separate several recipients in `TO`
+with commas; `--cc` copies someone and can repeat. A message reaches at most
+10 people. The body comes from `MESSAGE` or, when it is omitted, from stdin. It
+prints a delivery id for `status`. Sending follows the ordinary `mail.send`
+approval policy.
+
+`sent` lists what your Ship sent, newest first, with the same paging, using
+`mail.sent`: who got each message, its subject, and whether the mail service
+took it, with the reason when it failed.
 
 ## Look After Things
 
