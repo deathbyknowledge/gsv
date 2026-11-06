@@ -414,13 +414,16 @@ export class GsvFs implements IFileSystem {
       return "/";
     }
 
+    // Ask about every component at once; the answers are still used in path order.
+    const components = parts.map((_part, index) => normalizePath(`/${parts.slice(0, index + 1).join("/")}`));
+    const pending = components.map((component) => this.lstatComponent(component));
     let current = "/";
     for (let index = 0; index < parts.length; index += 1) {
-      current = normalizePath(`${current}/${parts[index]}`);
+      current = components[index];
       const backend = this.backendForPath(current);
       let stat: ExtendedMountStat;
       try {
-        stat = backend.lstat ? await backend.lstat(current) : await backend.stat(current);
+        stat = await pending[index];
       } catch (error) {
         if (options?.allowMissingFinal) {
           return normalizePath(`/${parts.join("/")}`);
@@ -443,6 +446,17 @@ export class GsvFs implements IFileSystem {
       }
     }
     return current;
+  }
+
+  /** Starts a component's lstat; its failure surfaces only if the walk reaches it. */
+  private lstatComponent(path: string): Promise<ExtendedMountStat> {
+    const stat = (async () => {
+      const backend = this.backendForPath(path);
+      return backend.lstat ? await backend.lstat(path) : await backend.stat(path);
+    })();
+    // A missing or symlinked component ends the walk before later answers are read.
+    stat.catch(() => {});
+    return stat;
   }
 
   private resolveSymlinkTarget(linkPath: string, target: string): string {
