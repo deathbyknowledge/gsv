@@ -29,8 +29,9 @@ export type WelcomeStorage = { save(revision: string, value: WelcomeState | null
 type OwnerFetch = (url: string, init: {
   method: "GET" | "POST"; headers: Record<string, string>; credentials: "omit"; cache: "no-store"; body?: string; signal: AbortSignal;
 }) => Promise<Pick<Response, "ok" | "status" | "text">>;
-/** The space reservation body: the website's attribution and the inviting Ship's hostname ride along only when known. */
-type SpaceRequest = { operationId: string; handle: string; attribution?: SignupAttribution; inviter?: string };
+export type ProductEmailChoice = { wordingVersion: "ship-product-updates-2026-10-26"; locale: "en" | "es" | "pt-BR" };
+/** The space reservation body: the website's attribution, the inviting Ship's hostname and the product-email choice ride along only when known. */
+type SpaceRequest = { operationId: string; handle: string; attribution?: SignupAttribution; inviter?: string; productEmails?: ProductEmailChoice };
 type OwnerRequest = { challengeId: string; email: string; browserSecret: string; resend: boolean }
   | { challengeId: string; browserSecret: string; sessionSecret: string; code: string }
   | SpaceRequest | Record<string, never>;
@@ -106,13 +107,14 @@ export class OwnerWelcome {
     await this.save({ flow: "create", handle, operationId });
   }
 
-  async prepare(handle: string, operationId = this.state.operationId ?? crypto.randomUUID()): Promise<PreparedSpace> {
+  async prepare(handle: string, operationId = this.state.operationId ?? crypto.randomUUID(), productEmails?: ProductEmailChoice): Promise<PreparedSpace> {
     await this.save({ flow: "create", operationId, handle });
     const attribution = this.state.attribution ?? undefined;
     const inviter = this.state.contactInvite ? contactInvitationInviter(this.state.contactInvite) : null;
     const body: SpaceRequest = { operationId, handle };
     if (attribution) body.attribution = attribution;
     if (inviter) body.inviter = inviter;
+    if (productEmails) body.productEmails = productEmails;
     const prepared = await this.request("/spaces", preparationSchema, body);
     if (!prepared.onboardingToken) await this.completeCreation();
     return prepared;

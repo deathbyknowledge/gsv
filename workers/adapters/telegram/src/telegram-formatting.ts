@@ -22,8 +22,17 @@ export type TelegramReplyParameters = {
   message_id: number;
 };
 
+/**
+ * Buttons under the message; or a keyboard of replies below the chat, where a
+ * tap sends its text as the person's message; or the removal of that keyboard.
+ */
+export type TelegramReplyMarkup =
+  | TelegramInlineKeyboardMarkup
+  | { keyboard: Array<Array<{ text: string }>>; one_time_keyboard: true; resize_keyboard: true }
+  | { remove_keyboard: true };
+
 export type TelegramTextMessageOptions = {
-  replyMarkup?: TelegramInlineKeyboardMarkup;
+  replyMarkup?: TelegramReplyMarkup;
 };
 
 type CaptionPayloadBuilder = (

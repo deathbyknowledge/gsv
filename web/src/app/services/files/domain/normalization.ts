@@ -157,8 +157,10 @@ export function normalizeFilesRead(payload: FilesRpcPayload, target: string, req
     directoryPath: parentPath(path, pathStyle),
     pathStyle,
     content: normalizeContent(record.content),
+    contentType: asString(record.contentType),
     size: asNumber(record.size),
     lines: asNumber(record.lines),
+    truncated: asBoolean(record.truncated) ?? false,
   };
 }
 

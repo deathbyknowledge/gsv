@@ -62,6 +62,7 @@ const messageSchema = z.object({
   text: z.string(),
   social: z.optional(socialMessageMetadataSchema),
   media: z.array(z.union([resourceBlockSchema, mediaInputSchema])).optional(),
+  choices: z.array(z.string()).optional(),
   origin: originSchema,
   processId: z.string().optional(),
   runId: z.string().optional(),

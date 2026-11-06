@@ -121,6 +121,7 @@ const adapterConversationMessageSchema = z.object({
   }),
   text: z.string(),
   media: z.array(z.union([resourceBlockSchema, procMediaInputSchema])).optional(),
+  choices: z.array(z.string()).optional(),
   origin: z.object({
     kind: z.literal("process"),
     pid: z.string(),
@@ -453,6 +454,7 @@ async deliverAdapterRouteEvent(
         deliveryId: message.id,
         text: message.text,
         media: attachmentBundle.media.length > 0 ? attachmentBundle.media : undefined,
+        choices: message.choices?.length ? message.choices : undefined,
         canonical: {
           conversationId: message.conversationId,
           messageId: message.id,
@@ -506,6 +508,7 @@ async deliverAdapterRouteReply(
       deliveryId: string;
       text: string;
       media?: AdapterMedia[];
+      choices?: string[];
       replyToId?: string;
       hil?: ProcHilRequest;
       /** The canonical message this delivery carries, for a later quote of it to resolve. */
@@ -560,6 +563,7 @@ async deliverAdapterRouteReply(
       deliveryId: message.deliveryId,
       text: message.text,
       ...(message.media === undefined ? undefined : { media: message.media }),
+      ...(message.choices === undefined ? undefined : { choices: message.choices }),
       replyToId: message.replyToId ?? route.replyToId,
       ...(route.routeGeneration === undefined
         ? undefined

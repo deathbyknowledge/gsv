@@ -23,6 +23,7 @@ import {
   InboundDeliveryLedger,
   type InboundDeliveryDisposition,
 } from "../../shared/src/inbound-delivery";
+import { splitTextAtLimit } from "../../shared/src/paragraph-messages";
 import { runAdapterHilSqlMigrations } from "../../shared/src/schema/migrations";
 import { callAdapterGateway, type AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
@@ -33,6 +34,7 @@ import {
   validateAdapterMediaBody,
 } from "../../shared/src/media-body";
 import { adapterActionText, type AdapterSendAction } from "../../../../packages/gsv/src/protocol/adapters.js";
+import { messageChoicesText } from "../../../../packages/gsv/src/protocol/message-choices.js";
 import type {
   AdapterOutboundMessage,
   AdapterDeliveryContext,
@@ -55,6 +57,7 @@ import {
   WHATSAPP_INTERACTIVE_BODY_LIMIT,
   type WhatsAppApprovalControls,
 } from "./whatsapp-approval";
+import { buildWhatsAppChoicesPayload, whatsAppChoicesControl } from "./whatsapp-choices";
 import { managedWhatsAppTemplate, type ManagedWhatsAppTemplateEnv } from "./managed-config";
 import {
   buildWhatsAppTemplatePayload,
@@ -956,7 +959,10 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     const linkButton = message.action && media.length === 0 && new URL(message.action.url).protocol === "https:"
       ? message.action
       : undefined;
-    const text = (message.action && !linkButton ? adapterActionText(message.text, message.action) : message.text).trim();
+    // Choices need an interactive message of their own, so beside media or an action they join the text.
+    const choices = message.choices && media.length === 0 && !message.action ? whatsAppChoicesControl(message.choices) : null;
+    const offered = message.choices && !choices ? messageChoicesText(message.text, message.choices) : message.text;
+    const text = (message.action && !linkButton ? adapterActionText(offered, message.action) : offered).trim();
     if (!text && media.length === 0) {
       await cancelBinaryBody(body, "Managed WhatsApp requires text or media");
       return { ok: false, error: "Managed WhatsApp requires text or media" };
@@ -1071,6 +1077,12 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
         const fits = [...last].length <= WHATSAPP_INTERACTIVE_BODY_LIMIT;
         for (const body of fits ? bodies.slice(0, -1) : bodies) addText(body);
         addPart((index) => send(buildWhatsAppLinkPayload(to, fits ? last : linkButton.label, linkButton), index));
+      } else if (choices) {
+        const bodies = whatsAppTextMessages(text, legacyGrouping || options.splitParagraphs, legacyGrouping);
+        // The control rides on the paragraph that asks, which must fit an interactive body.
+        const asked = splitTextAtLimit(bodies.at(-1) ?? text, WHATSAPP_INTERACTIVE_BODY_LIMIT);
+        for (const body of [...bodies.slice(0, -1), ...asked.slice(0, -1)]) addText(body);
+        addPart((index) => send(buildWhatsAppChoicesPayload(to, asked.at(-1) ?? text, choices), index));
       } else if (media.length === 0) {
         for (const body of whatsAppTextMessages(text, legacyGrouping || options.splitParagraphs, legacyGrouping)) addText(body);
       } else {
@@ -1147,9 +1159,10 @@ export class ManagedWhatsAppPeer extends DurableObject<ManagedWhatsAppPeerEnv> {
     if (message.media?.length) return await fail("permanent", WHATSAPP_WINDOW_CLOSED_MEDIA_ERROR);
     // Templates cannot carry approval buttons. Direct the person to the
     // original request in GSV instead of attaching a fake interactive anchor.
+    const offered = message.choices ? messageChoicesText(message.text, message.choices) : message.text;
     const text = options.controls
       ? "An action needs your approval. Open GSV to review it."
-      : message.action ? adapterActionText(message.text, message.action) : message.text;
+      : message.action ? adapterActionText(offered, message.action) : offered;
     let sent: WhatsAppSentMessage;
     try {
       sent = await sendWhatsAppMessage(

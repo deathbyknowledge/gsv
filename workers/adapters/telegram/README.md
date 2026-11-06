@@ -25,6 +25,10 @@ staging and production require different BotFather bots and credentials.
   throttles a chat at roughly one message per second, with the typing indicator
   covering the pause. Only the first message quotes the inbound message and
   only the last carries the approval buttons.
+- A message offering choices puts them on a one-time reply keyboard on its
+  last message; a tap sends the choice as the person's own message. The first
+  message of any later text delivery without buttons removes that keyboard.
+  Beside media or a link button, the text lists the choices instead.
 - Every accepted message is recorded in the delivery ledger before the next
   one is sent, so a retry after a rate limit resumes at the first message the
   person has not received; an interrupted delivery stays ambiguous and is

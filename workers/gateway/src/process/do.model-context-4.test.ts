@@ -822,7 +822,7 @@ describe("model context", () => {
             providerStyle: "openai-chat-completions",
             transportTarget: "gsv",
             maxTokens: 100,
-            contextWindowTokens: 1300,
+            contextWindowTokens: 1400,
             contextWindowSource: "config",
             generationTimeoutMs: 180000,
             generationStreaming: "auto",

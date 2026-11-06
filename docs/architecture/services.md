@@ -15,6 +15,7 @@ The current contracts are:
 - `inference`: streamed model inference and cancellation
 - `mail`: Gateway mail transport and operational mail inspection
 - `web-search`: optional provider-neutral search implementation for the `gsv` target
+- `product-email`: optional delivery of recorded marketing-email choices
 - `instances`: optional provisioned browser targets, saved profiles and human browser control
 - `pds`: optional ATProto host for each installation's public repository
 - `adapters`: external messaging transport discovery and operations
@@ -48,6 +49,26 @@ Local development uses the same public composition. Separate integration
 fixtures exercise private service contracts. Preserve existing operator resource
 identities when adopting the public components, as described in the
 [deployment guide](../how-to/deploy-with-alchemy.md).
+
+## Product email
+
+Accounts records explicit signup choices and owns their durable delivery queue.
+An optional `ProductEmailService` implements `subscribe`; bind it as
+`PRODUCT_EMAIL` on public Accounts or pass an implementation to
+`runProductEmailJobs` from an operator composition. Without a service, requests
+remain queued. Retries retain the request identity, and completed deliveries are
+not replayed.
+
+The request distinguishes a recorded checkbox choice from an operator-confirmed
+import of earlier choices. Imports carry an import ID and leave the original
+consent date and wording unknown. Queue recording time is a separate field.
+Operators explicitly preview and apply historical imports; no migration adds an
+existing owner.
+
+The service owns provider credentials, subscription status, suppression and
+provider-specific tag policy. An operator may inject its implementation locally
+in the Accounts composition or supply a service binding. Public Accounts does
+not call a particular email provider or require its credentials.
 
 ## Entitlements
 

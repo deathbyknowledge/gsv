@@ -222,6 +222,23 @@ export function resolvePlacement(
   return { left, top, side, arrowOffset };
 }
 
+/**
+ * Places a bubble that lays out under a CSS zoom: the Instrument's text size, when the bubble lives inside the
+ * modal dialog that opened it. The anchor rect and the viewport are in viewport pixels, while the bubble's offset
+ * size and its fixed coordinates are in its own zoomed pixels, so the placement is resolved in viewport space and
+ * written back divided by the zoom. A zoom of 1 is the plain placement.
+ */
+export function resolveZoomedPlacement(
+  anchor: AnchorRect,
+  bw: number,
+  bh: number,
+  requested: TooltipPosition,
+  zoom: number,
+): Placement {
+  const placed = resolvePlacement(anchor, bw * zoom, bh * zoom, requested);
+  return { ...placed, left: placed.left / zoom, top: placed.top / zoom, arrowOffset: placed.arrowOffset / zoom };
+}
+
 function placementsEqual(a: Placement, b: Placement): boolean {
   return (
     a.side === b.side &&
@@ -247,6 +264,7 @@ function useTooltipReveal(position: TooltipPosition, openOnTap = false) {
   const [shown, setShown] = useState(false);
   const [placement, setPlacement] = useState<Placement | null>(null);
   const [theme, setTheme] = useState<JSX.CSSProperties>({});
+  const [host, setHost] = useState<Element | null>(null);
 
   const handleRef = useRef<TooltipHandle | null>(null);
   if (!handleRef.current) handleRef.current = { close: () => setOpen(false) };
@@ -295,11 +313,13 @@ function useTooltipReveal(position: TooltipPosition, openOnTap = false) {
       suppressFocusOpen = false;
       setOpen(false);
     };
+    // A tap opens a tap-to-open hint. Where nothing can hover, a mouse-type press counts as a tap too: it is
+    // the only way in, and some touch surfaces report their taps as mouse presses.
     const onActivate = (event?: PointerEvent) => {
       disarm();
       suppressHover = true;
       suppressFocusOpen = true;
-      setOpen(openOnTap && event !== undefined && event.pointerType !== "mouse");
+      setOpen(openOnTap && event !== undefined && (event.pointerType !== "mouse" || !canHover));
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") onActivate();
@@ -336,6 +356,9 @@ function useTooltipReveal(position: TooltipPosition, openOnTap = false) {
     }
     const wrap = wrapRef.current;
     if (wrap) {
+      // A modal <dialog> paints in the top layer above everything portaled to
+      // <body>, so a bubble for a trigger inside one must live in the dialog.
+      setHost(wrap.closest("dialog:modal"));
       const style = getComputedStyle(wrap);
       setTheme({
         "--gsv-font-mono": style.getPropertyValue("--gsv-font-mono"),
@@ -357,7 +380,10 @@ function useTooltipReveal(position: TooltipPosition, openOnTap = false) {
         handle.close();
         return;
       }
-      const next = resolvePlacement(rect, bub.offsetWidth, bub.offsetHeight, position);
+      // Inside a zoomed host the bubble's layout pixels differ from viewport pixels; older engines
+      // without currentCSSZoom give the same ratio from the bubble's own two measurements.
+      const zoom = bub.currentCSSZoom ?? (bub.offsetWidth ? bub.getBoundingClientRect().width / bub.offsetWidth : 1);
+      const next = resolveZoomedPlacement(rect, bub.offsetWidth, bub.offsetHeight, position, zoom);
       const last = lastPlacementRef.current;
       if (!last || !placementsEqual(last, next)) {
         lastPlacementRef.current = next;
@@ -382,7 +408,7 @@ function useTooltipReveal(position: TooltipPosition, openOnTap = false) {
     };
   }, [open, position]);
 
-  return { wrapRef, bubbleRef, open, shown, placement, theme };
+  return { wrapRef, bubbleRef, open, shown, placement, theme, host };
 }
 
 /** Renders the portaled bubble. Returns null until the wrapper is open. The
@@ -395,6 +421,7 @@ function TooltipBubble({
   placement,
   bubbleRef,
   theme,
+  host,
   text,
   title,
 }: {
@@ -403,6 +430,8 @@ function TooltipBubble({
   placement: Placement | null;
   bubbleRef: RefObject<HTMLSpanElement>;
   theme: JSX.CSSProperties;
+  /** The open modal dialog around the trigger, if any; otherwise the body hosts the bubble. */
+  host: Element | null;
   text: string;
   title?: string;
 }) {
@@ -425,7 +454,7 @@ function TooltipBubble({
       {text}
       <span class="gsv-tt-arrow" />
     </span>,
-    document.body,
+    host ?? document.body,
   );
 }
 
@@ -443,7 +472,7 @@ export function Tooltip({
   const text = textProp ?? t("ui.tooltip.text");
   const bubbleId = useId();
   const bare = children != null;
-  const { wrapRef, bubbleRef, open, shown, placement, theme } = useTooltipReveal(position);
+  const { wrapRef, bubbleRef, open, shown, placement, theme, host } = useTooltipReveal(position);
   return (
     <span ref={wrapRef} class={`gsv-tt ${POS_CLASS[position]}`}>
       <button
@@ -460,6 +489,7 @@ export function Tooltip({
         placement={placement}
         bubbleRef={bubbleRef}
         theme={theme}
+        host={host}
         text={text}
       />
     </span>
@@ -490,7 +520,7 @@ export interface HintProps {
  *  `title`. */
 export function Hint({ text, title, position = "top", openOnTap = false, children }: HintProps) {
   const bubbleId = useId();
-  const { wrapRef, bubbleRef, open, shown, placement, theme } = useTooltipReveal(position, openOnTap);
+  const { wrapRef, bubbleRef, open, shown, placement, theme, host } = useTooltipReveal(position, openOnTap);
   const child = isValidElement(children)
     // SAFETY: isValidElement narrows children to a VNode accepted by cloneElement.
     ? cloneElement(children, {
@@ -507,6 +537,7 @@ export function Hint({ text, title, position = "top", openOnTap = false, childre
         placement={placement}
         bubbleRef={bubbleRef}
         theme={theme}
+        host={host}
         text={text}
         title={title}
       />

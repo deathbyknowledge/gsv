@@ -1022,7 +1022,7 @@ function messageUsage(): string {
     "  message history [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]",
     "  message search QUERY [--with CONTACT_OR_CONVERSATION] [--before SEQUENCE] [--limit N] [--json]",
     "  message delivery show DELIVERY_ID [--json]",
-    "  message send [--message TEXT]",
+    "  message send [--message TEXT] [--choice TEXT]...",
     "  message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]",
     "",
     "A literal `message send <<'GSV_MESSAGE'` block sends to the current conversation and keeps the run active.",

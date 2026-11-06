@@ -16,6 +16,10 @@ Blocks without a language tag, and `text` blocks, wrap at every width; tagged co
 indentation and internal line breaks without adding the renderer's final newline to the clipboard.
 Chat renders human messages as plain text with clickable web URLs. External web links in human
 messages and Ship's Markdown replies open in a new tab.
+A path in Ship's text, such as `~/notes/plan.md` or `/tmp/exports/`, opens over the chat
+when you have file access: a file opens in its preview, rendered like Ship's own replies
+(Markdown as a document, other text as a code block), and a path ending in `/` opens that
+folder's file list. Paths inside code spans and code blocks stay plain text.
 Human messages align right, with the timestamp before the sender's name, and balance line
 lengths to avoid a short final line. Ship's messages align left.
 The Chat transcript scrolls vertically. Long words, URLs and compaction notes wrap within the
@@ -158,6 +162,11 @@ delivery and run completion are separate operations:
   lives through `fs.read` in its `reference` representation, retained into the process archive, and sent with the message, or the send is
   refused naming the file that could not be read. Those reads obey the person's tool approval rules the
   way a Read does: a file that would need approval is refused until it has been read once.
+- `choices` offers up to ten replies with a message that asks something, each one line of at most 80
+  characters. They are stored with the canonical Message, so every client and messenger sees the
+  same ones. Instrument shows them as buttons under Ship's latest message only; once anything follows,
+  they are gone. Tapping one sends its text as an ordinary message from the person, exactly as if they
+  had typed it. Only a Process message with text can offer choices.
 - The same three actions exist as commands, so a person or a script can do what the model does. A
   literal block sends and leaves the run active, `yield` finishes it, and a final message composes both
   with ordinary shell success semantics:

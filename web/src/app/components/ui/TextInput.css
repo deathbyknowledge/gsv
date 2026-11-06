@@ -176,56 +176,9 @@
   margin-bottom: 10px;
   max-width: 46ch;
 }
-.gsv-fld-stat {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  min-height: 13px;
-}
-.gsv-fld-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 1px;
-}
-.gsv-fld-msg {
-  /* size from .gsv-sublabel (12px); tracking kept */
-  letter-spacing: 0.1em;
-}
-.gsv-fld.is-error .gsv-fld-msg {
-  color: var(--error);
-}
-.gsv-fld.is-error .gsv-fld-dot {
-  background: var(--error);
-  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--error);
-}
-.gsv-fld.is-success .gsv-fld-msg {
-  color: var(--online);
-}
-.gsv-fld.is-success .gsv-fld-dot {
-  background: var(--online);
-  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--online);
-}
-.gsv-fld.is-info .gsv-fld-msg {
-  color: var(--live);
-}
-.gsv-fld.is-info .gsv-fld-dot {
-  background: var(--live);
-  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--live);
-}
-.gsv-fld.is-warn .gsv-fld-msg {
-  color: var(--warn);
-}
-.gsv-fld.is-warn .gsv-fld-dot {
-  background: var(--warn);
-  box-shadow: 0 0 var(--gsv-fld-glow, 6px) var(--warn);
-}
 
-/* Light theme: no neon. Unset (dark), the glows fall back to their original
-   values; the light themes drop the focus glow and zero the status-dot blur
-   (--gsv-fld-glow is shared with the .gsv-fld block in Select.css). */
+/* Light theme: no neon. Unset (dark), the focus glow falls back to its
+   original value; FieldStatus.css zeroes the status-dot blur. */
 :is(.instrument.is-light, .gsv-auth-theme.is-light) {
   --gsv-ti-focus-glow: none;
-  --gsv-fld-glow: 0px;
 }

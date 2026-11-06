@@ -254,6 +254,24 @@ a line of text under the message, and adapters without native actions always
 receive it that way from the shared frame handler. The action is part of the
 delivery's content, so a replay with a different action is a different delivery.
 
+An `adapter.send` may also carry `choices`, the replies its message offers: up
+to ten short lines. Adapters that declare native choices receive them as such;
+every other adapter receives them from the shared frame handler as a numbered
+list under the text. Like an action, the choices are part of the delivery's
+content. Whatever the person answers, a tap or a typed reply such as "2",
+arrives as an ordinary inbound message; choices never carry identity, authority
+or a callback.
+
+WhatsApp and Telegram declare native choices. Inside the 24-hour window,
+WhatsApp offers up to three choices of at most 20 characters as reply buttons
+and up to ten of at most 24 as a list, on an interactive message carrying the
+last paragraph; the webhook relays a tap as an inbound message with the reply's
+title. Telegram offers them as a one-time reply keyboard, whose tap Telegram
+itself sends as the person's message, and the next text message without
+controls removes that keyboard, so only the latest message offers replies, as
+in Chat. Choices WhatsApp's limits don't fit, choices beside media or an
+action, and WhatsApp's out-of-window template list them in the text instead.
+
 An approval for a deleted or inaccessible Process is terminal. The Kernel
 preserves the protocol error code, so the adapter resolves the callback as stale
 and continues delivering later messages. Temporary transport or service failures

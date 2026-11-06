@@ -19,6 +19,7 @@ export function conversationMessageRow(
     role: message.author.kind === "user" ? "user" : "assistant",
     text: message.text,
     media: message.media,
+    ...(message.choices?.length ? { choices: message.choices } : undefined),
     timestamp: message.createdAt,
     time: formatTime(message.createdAt),
     origin: interactionOrigin(message.origin),

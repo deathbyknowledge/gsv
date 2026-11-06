@@ -352,6 +352,12 @@ describe("DeliveryLedger", () => {
       { ...base, action: { ...action, url: "https://ada.ship.space/people?view=requests" } },
       [new Uint8Array([1, 2, 3])],
     )).resolves.not.toBe(withAction);
+    const withChoices = await fingerprintOutboundDelivery({ ...base, choices: ["Yes", "No"] }, [new Uint8Array([1, 2, 3])]);
+    expect(withChoices).not.toBe(fingerprint);
+    await expect(fingerprintOutboundDelivery(
+      { ...base, choices: ["No", "Yes"] },
+      [new Uint8Array([1, 2, 3])],
+    )).resolves.not.toBe(withChoices);
   });
 });
 
