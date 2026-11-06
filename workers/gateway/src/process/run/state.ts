@@ -60,17 +60,6 @@ const aiConfigResultSchema = z.object({
     text: z.string(),
   })).optional(),
   system: z.object({ timezone: z.string(), language: z.string().optional() }).optional(),
-  skillIndex: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    description: z.string(),
-    source: z.object({
-      kind: z.enum(["system", "home"]),
-      label: z.string(),
-      writable: z.boolean(),
-    }),
-  })).optional(),
-  skillIndexMode: z.enum(["summary", "names", "off"]).optional(),
   accountApprovalPolicy: z.string().nullable().optional(),
   capabilities: z.array(z.string()).default([]),
   maxContextBytes: z.number(),

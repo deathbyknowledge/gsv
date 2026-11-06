@@ -91,7 +91,6 @@ describe("model context", () => {
         runId,
         config: {
           ...terminalTestConfig(pid),
-          skillIndexMode: "off",
           systemContextFiles: [
             {
               name: "10-responsibilities.md",
@@ -240,7 +239,6 @@ describe("model context", () => {
         runId,
         config: {
           ...terminalTestConfig(pid),
-          skillIndexMode: "off",
           systemContextFiles: [
             {
               name: "10-responsibilities.md",
@@ -314,15 +312,6 @@ describe("model context", () => {
             text: "Date: {{current.date}}\nTargets:\n{{devices}}\nMCP:\n{{mcpServers}}",
           },
         ],
-        skillIndexMode: "summary" as const,
-        skillIndex: [
-          {
-            id: "alpha",
-            name: "Alpha",
-            description: "Alpha workflow",
-            source: { kind: "home" as const, label: "home", writable: true },
-          },
-        ],
       };
       const firstSnapshot = {
         targets: [
@@ -336,8 +325,15 @@ describe("model context", () => {
         mcpServers: ["Search"],
         systemContextFiles: config.systemContextFiles,
         system: { timezone: "UTC" },
-        skillIndex: config.skillIndex,
-        skillIndexMode: config.skillIndexMode,
+        skillIndex: [
+          {
+            id: "alpha",
+            name: "Alpha",
+            description: "Alpha workflow",
+            source: { kind: "home" as const, label: "home", writable: true },
+          },
+        ],
+        skillIndexMode: "summary" as const,
       };
       const firstProjection = {
         version: 1 as const,
@@ -352,7 +348,7 @@ describe("model context", () => {
         ],
         mcpServers: firstSnapshot.mcpServers,
         skills: {
-          mode: config.skillIndexMode,
+          mode: firstSnapshot.skillIndexMode,
           entries: [{ id: "alpha", description: "Alpha workflow" }],
         },
       };
@@ -406,7 +402,7 @@ describe("model context", () => {
         ],
         mcpServers: nextSnapshot.mcpServers,
         skills: {
-          mode: config.skillIndexMode,
+          mode: firstSnapshot.skillIndexMode,
           entries: [{ id: "beta", description: "Beta workflow" }],
         },
       };
@@ -489,7 +485,6 @@ describe("model context", () => {
       });
       const config = {
         ...terminalTestConfig(pid),
-        skillIndexMode: "off" as const,
         systemContextFiles: [{ name: "00-test.md", text: "current prompt" }],
       };
       const snapshot = {
@@ -553,7 +548,6 @@ describe("model context", () => {
       });
       const configA = {
         ...terminalTestConfig(pid),
-        skillIndexMode: "off",
         systemContextFiles: [{ name: "00-test.md", text: "epoch alpha" }],
       };
       const runA = {

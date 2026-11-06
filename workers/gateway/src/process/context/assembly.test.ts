@@ -29,19 +29,12 @@ const CONFIG: AiConfigResult = {
       text: "Running in GSV for {{identity.username}} at {{identity.cwd}}",
     },
   ],
-  skillIndex: [
-    {
-      id: "device-management",
-      name: "device-management",
-      description: "Manage connected devices.",
-      source: {
-        kind: "home",
-        label: "home:device-management",
-        writable: false,
-      },
-    },
-  ],
   maxContextBytes: 64,
+};
+
+const SKILLS: PromptAssemblyInput["skills"] = {
+  mode: "summary",
+  entries: [{ id: "device-management", description: "Manage connected devices." }],
 };
 
 const IDENTITY: ProcessIdentity = {
@@ -399,7 +392,7 @@ describe("createSkillIndexProvider", () => {
 
   it("renders names-only skill context when configured", async () => {
     const prompt = await assembleSystemPrompt(makeInput({
-      config: { ...CONFIG, skillIndexMode: "names" },
+      skills: { ...SKILLS, mode: "names" },
     }), resolvePromptProviders());
 
     expect(prompt).toContain("<name>device-management</name>");
@@ -408,7 +401,7 @@ describe("createSkillIndexProvider", () => {
 
   it("omits prompt skill enumeration without disabling live discovery", async () => {
     const prompt = await assembleSystemPrompt(makeInput({
-      config: { ...CONFIG, skillIndexMode: "off" },
+      skills: { ...SKILLS, mode: "off" },
     }), resolvePromptProviders());
 
     expect(prompt).not.toContain("<available_skills>");
@@ -478,6 +471,7 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
     identity: IDENTITY,
     targets: [],
     mcpServers: [],
+    skills: SKILLS,
     runtime: {
       date: currentDateInTimezone("Europe/Amsterdam"),
       timezone: "Europe/Amsterdam",

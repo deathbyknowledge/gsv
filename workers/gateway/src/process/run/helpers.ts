@@ -58,8 +58,7 @@ export function contextSnapshotFromRun(
       timezone: config.system?.timezone ?? "UTC",
       language: config.system?.language,
     },
-    skillIndex: config.skillIndex ?? [],
-    skillIndexMode: config.skillIndexMode ?? "summary",
+    skillIndexMode: "summary",
     ship: null,
     mailbox: null,
   };
