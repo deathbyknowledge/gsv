@@ -11,8 +11,8 @@ use crate::render::{self, Cell, Style, Table, Tone};
 /// Messages fetched per call while skipping to a later page.
 const SKIP_BATCH: u64 = 100;
 
-/// Arguments for one page. `mail.list` and `mail.search` page with an opaque
-/// cursor, so `--page N` stays stateless by walking past the newer messages
+/// Arguments for one page. `mail.list`, `mail.search` and `mail.sent` page
+/// with an opaque cursor, so `--page N` stays stateless by walking past the newer messages
 /// first; `before` is `None` when there are no messages that old.
 async fn page_args(
     client: &KernelClient,
@@ -115,6 +115,40 @@ fn page_table(style: &Style, messages: &[Value], now: i64) -> String {
     table.render(style)
 }
 
+fn sent_table(style: &Style, sent: &[Value], now: i64) -> String {
+    let mut table = Table::new(&["To", "Subject", "State", "When"])
+        .flex(1)
+        .limit(0, 40);
+    for outbound in sent {
+        let (state, tone) = match text(outbound, "state") {
+            "accepted" => ("sent".to_string(), Tone::Good),
+            "failed" => (
+                opt_text(outbound, "errorCode")
+                    .map_or_else(|| "failed".to_string(), |code| format!("failed: {code}")),
+                Tone::Bad,
+            ),
+            "unknown" => ("unconfirmed".to_string(), Tone::Warn),
+            _ => ("sending".to_string(), Tone::Normal),
+        };
+        let mut to = text(outbound, "to").to_string();
+        if let Some(cc) = opt_text(outbound, "cc") {
+            to.push_str(&format!(", cc {cc}"));
+        }
+        table.row(vec![
+            to.into(),
+            render::one_line(text(outbound, "subject")).into(),
+            Cell::new(state, tone),
+            Cell::new(
+                number(outbound, "createdAt")
+                    .map(|at| render::relative_time(at, now))
+                    .unwrap_or_default(),
+                Tone::Dim,
+            ),
+        ]);
+    }
+    table.render(style)
+}
+
 fn print_page(
     out: Output,
     result: &Value,
@@ -202,6 +236,39 @@ pub(crate) async fn run(
                 &format!("No mail matches {quoted}."),
                 || format!("Older matches: {}", next_page(&command, &page)),
             )
+        }
+        Some(MailAction::Sent { page }) => {
+            let result = match page_args(&client, "mail.sent", json!({}), &page).await? {
+                Some(args) => call(&client, "mail.sent", args).await?,
+                None => json!({ "outbound": [] }),
+            };
+            if out.json {
+                return render::print_json(&result);
+            }
+            let sent = items(&result, "outbound");
+            if sent.is_empty() {
+                let empty = if page.page > 1 {
+                    "No sent mail that old."
+                } else {
+                    "Nothing sent yet."
+                };
+                print!("{}", render::empty(&style, empty, None));
+                return Ok(());
+            }
+            print!(
+                "{}",
+                render::heading(
+                    &style,
+                    "Sent",
+                    Some(&render::count(sent.len(), "message", "messages"))
+                )
+            );
+            print!("{}", sent_table(&style, sent, render::now_ms()));
+            if opt_text(&result, "next").is_some() {
+                let older = format!("Older: {}", next_page("gsv mail sent", &page));
+                print!("{}", render::hint(&style, &older));
+            }
+            Ok(())
         }
         Some(MailAction::Read { id }) => {
             let message_id = message_id(&id);
@@ -407,6 +474,21 @@ mod tests {
             sender(&json!({ "from": "noreply@example.com" })),
             "noreply@example.com"
         );
+    }
+
+    #[test]
+    fn sent_pages_show_who_got_it_and_why_it_failed() {
+        let sent = vec![
+            json!({ "to": "mike@example.com", "cc": "bob@example.com", "subject": "Friday",
+                    "state": "failed", "errorCode": "recipient_suppressed", "createdAt": 0 }),
+            json!({ "to": "mike@example.com", "subject": "Contract", "state": "accepted", "createdAt": 0 }),
+        ];
+        let rendered = sent_table(&Style::plain(120), &sent, 0);
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert!(lines[1].contains("cc bob@example.com"));
+        assert!(lines[1].contains("failed: recipient_suppressed"));
+        assert!(lines[2].contains("Contract"));
+        assert!(lines[2].contains("sent"));
     }
 
     #[test]

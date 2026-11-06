@@ -287,6 +287,8 @@ import type {
   MailSearchResult,
   MailSendArgs,
   MailSendResult,
+  MailSentArgs,
+  MailSentResult,
   MailStatusArgs,
   MailStatusResult,
 } from "./mail";
@@ -382,6 +384,7 @@ export type SyscallDomains = {
   "mail.status": { args: MailStatusArgs; result: MailStatusResult };
   "mail.list": { args: MailListArgs; result: MailListResult };
   "mail.search": { args: MailSearchArgs; result: MailSearchResult };
+  "mail.sent": { args: MailSentArgs; result: MailSentResult };
   "mail.read": { args: MailReadArgs; result: MailReadResult };
 
   "notify.rule.list": { args: NotifyRuleListArgs; result: NotifyRuleListResult };

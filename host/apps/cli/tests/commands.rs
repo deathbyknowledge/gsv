@@ -312,6 +312,40 @@ async fn mail_pages_with_a_cursor_and_json_returns_the_whole_result() {
 }
 
 #[tokio::test]
+async fn mail_sent_lists_who_got_each_message_and_why_one_failed() {
+    fn answer(call: &str, _: &Value) -> Value {
+        let now = now();
+        match call {
+            "mail.sent" => json!({
+                "outbound": [
+                    { "deliveryId": "cli:mail:2", "outboundId": "mail-outbound:2", "state": "failed",
+                      "errorCode": "recipient_suppressed", "from": "hank@ship.space", "to": "mike@example.com",
+                      "cc": "anna@example.com", "subject": "Friday", "textPath": "/home/hank/.gsv/mail/outbox/2/message.txt",
+                      "createdAt": now - 2 * HOUR, "queuedAt": null, "completedAt": null },
+                    { "deliveryId": "cli:mail:1", "outboundId": "mail-outbound:1", "state": "accepted",
+                      "from": "hank@ship.space", "to": "lena@example.com", "subject": "Invoice 2214",
+                      "textPath": "/home/hank/.gsv/mail/outbox/1/message.txt",
+                      "createdAt": now - 26 * HOUR, "queuedAt": null, "completedAt": null }
+                ],
+                "next": "1.mail-outbound:1",
+            }),
+            _ => json!({}),
+        }
+    }
+    let (url, calls) = ship(answer).await;
+    let cli = Cli::signed_in(&url);
+    let output = cli.run(&["mail", "sent"]).await;
+    show("gsv mail sent", &output);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("mike@example.com, cc anna@example.com"));
+    assert!(text.contains("failed: recipient_suppressed"));
+    assert!(text.contains("Invoice 2214"));
+    assert!(text.contains("Older: gsv mail sent --page 2"));
+    assert_eq!(called(&calls, "mail.sent")[0]["limit"], 20);
+}
+
+#[tokio::test]
 async fn run_names_a_place_by_label_and_passes_the_exit_status_through() {
     fn answer(call: &str, _: &Value) -> Value {
         match call {

@@ -1,9 +1,12 @@
 import type {
   MailOutboundStatus,
+  MailSentArgs,
+  MailSentResult,
   MailStatusArgs,
   MailStatusResult,
 } from "@humansandmachines/gsv/protocol";
 import { resolveCallerOwnerUid, type CallerOwnerContext } from "./context";
+import { parseMailPageArgs } from "./inbound-mail-read";
 import type { MailboxStore, MailOutboundRecord } from "./mailbox-store";
 import * as z from "zod/mini";
 
@@ -23,6 +26,13 @@ export function handleMailStatus(
   const ownerUid = resolveCallerOwnerUid(ctx);
   const outbound = ctx.mailboxes.getOutboundForDelivery(ownerUid, deliveryId);
   return { outbound: outbound ? publicOutboundStatus(outbound) : null };
+}
+
+export function handleMailSent(value: MailSentArgs, ctx: MailStatusContext): MailSentResult {
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  const page = ctx.mailboxes.listOutbound(ownerUid, parseMailPageArgs(value, "mail.sent"));
+  const outbound = page.outbound.map(publicOutboundStatus);
+  return page.next === undefined ? { outbound } : { outbound, next: page.next };
 }
 
 function normalizeDeliveryId(value: MailStatusArgs): string {
@@ -52,6 +62,7 @@ function publicOutboundStatus(outbound: MailOutboundRecord): MailOutboundStatus 
     from: outbound.from,
     to: outbound.to.join(", "),
     subject: outbound.subject,
+    textPath: outbound.bodyPath,
     createdAt: outbound.createdAt,
     queuedAt: outbound.queuedAt,
     completedAt: outbound.completedAt,

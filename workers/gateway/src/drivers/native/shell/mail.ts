@@ -6,6 +6,7 @@ import type {
   MailPage,
   MailSendArgs,
   MailSendResult,
+  MailSentResult,
   MailStatusResult,
 } from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
@@ -13,7 +14,7 @@ import type { KernelContext } from "../../../kernel/context";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import { managedMailAddressForOwner } from "../../../kernel/mailbox";
 import { handleMailSend } from "../../../kernel/outbound-mail";
-import { handleMailStatus } from "../../../kernel/outbound-status";
+import { handleMailSent, handleMailStatus } from "../../../kernel/outbound-status";
 import { handleMailList, handleMailRead, handleMailSearch } from "../../../kernel/inbound-mail-read";
 import {
   requireCommandCapability,
@@ -38,6 +39,7 @@ const MAIL_USAGE = `Usage:
   mail list [--limit N] [--before CURSOR]
   mail search <query> [--limit N] [--before CURSOR]
   mail show <message-id> [--raw]
+  mail sent [--limit N] [--before CURSOR]
   mail status <delivery-id>
   mail send --to ADDRESS... [--cc ADDRESS...] --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]
   mail reply <message-id> [--all] [--cc ADDRESS...] [--subject SUBJECT] (--message TEXT | --body PATH) [--delivery-id ID]
@@ -97,6 +99,9 @@ async function runMailCommand(
     }
     case "show":
       return await showMessage(rest, fs, ctx);
+    case "sent":
+      requireCommandCapability(ctx, "mail.sent");
+      return completed(formatSentPage(handleMailSent(parsePage(rest), ctx)));
     case "status":
       return statusMail(rest, ctx);
     case "send":
@@ -293,6 +298,7 @@ function formatStatusResult(result: MailStatusResult): ExecResult {
     `to=${outbound.to}`,
     ...(outbound.cc ? [`cc=${outbound.cc}`] : []),
     `subject=${cleanColumn(outbound.subject)}`,
+    `text_path=${outbound.textPath}`,
     ...(outbound.providerMessageId
       ? [`provider_message_id=${outbound.providerMessageId}`]
       : []),
@@ -350,6 +356,19 @@ function formatMessagePage(page: MailPage, command: string): string {
     message.requiresAttention === true ? "attention" : "",
   ].join("\t"));
   if (page.next) rows.push(`More: ${command} --before ${page.next}`);
+  return `${rows.join("\n")}\n`;
+}
+
+function formatSentPage(page: MailSentResult): string {
+  if (page.outbound.length === 0) return "No sent mail.\n";
+  const rows = page.outbound.map((outbound) => [
+    outbound.deliveryId,
+    new Date(outbound.createdAt).toISOString(),
+    outbound.errorCode ? `${outbound.state} ${outbound.errorCode}` : outbound.state,
+    cleanColumn(outbound.cc ? `${outbound.to} cc ${outbound.cc}` : outbound.to),
+    cleanColumn(outbound.subject),
+  ].join("\t"));
+  if (page.next) rows.push(`More: mail sent --before ${page.next}`);
   return `${rows.join("\n")}\n`;
 }
 

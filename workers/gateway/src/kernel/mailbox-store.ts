@@ -87,6 +87,11 @@ export type MailMessagePage = {
 
 export type MailPageOptions = { limit?: number; before?: string };
 
+export type MailOutboundPage = {
+  outbound: MailOutboundRecord[];
+  next?: string;
+};
+
 export type MailOutboundRecord = Omit<ManagedOutboundMailDraft, "to" | "cc" | "fromName" | "quote"> & {
   to: string[];
   cc: string[];
@@ -440,6 +445,27 @@ export class MailboxStore {
     return row ? outboundFromRow(row) : null;
   }
 
+  /** The owner's sent mail, newest first. */
+  listOutbound(ownerUid: number, options: MailPageOptions = {}): MailOutboundPage {
+    const limit = normalizePageNumber(options.limit ?? 50, 1, 200, 50);
+    const before = options.before === undefined ? null : parseMailCursor(options.before);
+    const rows = this.sql.exec<MailOutboundRow>(
+      `SELECT * FROM mail_outbound
+        WHERE owner_uid = ?
+          ${before ? "AND (created_at, outbound_id) < (?, ?)" : ""}
+        ORDER BY created_at DESC, outbound_id DESC
+        LIMIT ?`,
+      ownerUid,
+      ...(before ? [before.at, before.id] : []),
+      limit + 1,
+    ).toArray();
+    const outbound = rows.slice(0, limit).map(outboundFromRow);
+    const last = outbound.at(-1);
+    return rows.length > limit && last
+      ? { outbound, next: `${last.createdAt}.${last.outboundId}` }
+      : { outbound };
+  }
+
   ensureOutbound(input: RecordMailOutboundInput): EnsureMailOutboundResult {
     const existing = this.getOutboundForDelivery(input.ownerUid, input.deliveryId);
     if (existing) {
@@ -666,7 +692,7 @@ export class MailboxStore {
         LIMIT ?`,
       ownerUid,
       ...filterArgs,
-      ...(before ? [before.receivedAt, before.messageId] : []),
+      ...(before ? [before.at, before.id] : []),
       limit + 1,
     ).toArray();
     const messages = rows.slice(0, limit).map(messageFromRow);
@@ -895,13 +921,14 @@ function parseAttachments(value: string): MailAttachmentRecord[] {
 // Enough to find a message by what it says without indexing whole newsletters.
 const MAIL_SEARCH_BODY_CHARS = 16_384;
 
-type MailCursor = { receivedAt: number; messageId: string };
+/** Where a page ends: the last entry's time and id, as `<time>.<id>`. */
+type MailCursor = { at: number; id: string };
 
 function parseMailCursor(cursor: string): MailCursor {
   const match = /^(\d+)\.(.+)$/.exec(cursor);
-  const receivedAt = match ? Number(match[1]) : NaN;
-  if (!match || !Number.isSafeInteger(receivedAt)) throw new Error("Invalid mail page cursor");
-  return { receivedAt, messageId: match[2] };
+  const at = match ? Number(match[1]) : NaN;
+  if (!match || !Number.isSafeInteger(at)) throw new Error("Invalid mail page cursor");
+  return { at, id: match[2] };
 }
 
 function normalizePageNumber(
