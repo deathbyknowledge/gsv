@@ -22,7 +22,7 @@ function bootedKernel() {
   };
   const caps = { seed: vi.fn() };
   // SAFETY: first-boot provisioning reads only these collaborators.
-  const ctx = { auth, caps, env: { STORAGE: storage, RIPGIT: ripgit } } as unknown as KernelContext;
+  const ctx = { auth, caps, env: { STORAGE: storage, RIPGIT: ripgit } } as KernelContext;
   return { ctx, auth, caps, storage, ripgit };
 }
 

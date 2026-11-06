@@ -157,7 +157,7 @@ describe("assembleSystemPrompt", () => {
   });
 
   it("reads both accounts' context files together and keeps their order", async () => {
-    const files: Record<string, string> = { "context.d/a.md": "alpha", "context.d/b.md": "beta" };
+    const files = new Map([["context.d/a.md", "alpha"], ["context.d/b.md", "beta"]]);
     let inFlight = 0;
     let peak = 0;
     const ripgit: PromptAssemblyInput["ripgit"] = {
@@ -175,7 +175,7 @@ describe("assembleSystemPrompt", () => {
             ],
           };
         }
-        const text = files[path];
+        const text = files.get(path);
         return text ? { kind: "file", bytes: new TextEncoder().encode(text), size: text.length } : { kind: "missing" };
       },
     };

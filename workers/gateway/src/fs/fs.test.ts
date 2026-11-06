@@ -1731,7 +1731,7 @@ describe("GsvFs readlink", () => {
       async readlink(path: string): Promise<string> {
         throw new Error(`ENOENT: no such file or directory, readlink '${path}'`);
       },
-    } as unknown as MountBackend;
+    } as MountBackend;
     const unhandled: unknown[] = [];
     const record = (event: PromiseRejectionEvent) => {
       unhandled.push(event.reason);
