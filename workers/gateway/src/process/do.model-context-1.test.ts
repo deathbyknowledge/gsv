@@ -943,6 +943,51 @@ describe("model context", () => {
     });
   });
 
+  it("asks the Kernel for configuration, tools and context at once on a run's first tick", async () => {
+    const pid = "mech-run-inputs-together";
+    const runId = "run-inputs-together";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInProcess(stub, async (process) => {
+      const { promise: configBlocked, resolve: releaseConfig } = deferred();
+      const started: string[] = [];
+      process.settings.resolveAiConfig = vi.fn(async () => {
+        started.push("ai.config");
+        await configBlocked;
+        return terminalTestConfig(pid);
+      });
+      process.kernel.kernelRpc = vi.fn(async (call: string) => {
+        if (call === "ai.tools") {
+          started.push("ai.tools");
+          return { tools: [], devices: [], mcpServers: [] };
+        }
+        return responsibilityKernelResult(call);
+      });
+      process.settings.resolveAiContext = vi.fn(async () => {
+        started.push("ai.context");
+        return {
+          targets: [],
+          mcpServers: [],
+          system: { timezone: "UTC" },
+          skillIndex: [],
+          skillIndexMode: "summary",
+        };
+      });
+      process.run.scheduleTick = vi.fn(async () => {});
+      process.sendSignal = vi.fn(async () => {});
+      process.store.messages.appendMessage("user", "Read the inputs together.", { runId });
+      process.runs.active = { runId };
+
+      const ticking = process.run.runTick(runId);
+      // Tools and context are already asked for while configuration is still loading.
+      await vi.waitFor(() => expect([...started].sort()).toEqual(["ai.config", "ai.context", "ai.tools"]));
+
+      process.runs.active = null;
+      releaseConfig();
+      await ticking;
+    });
+  });
+
   it("prevents a responsibility-triggered run from yielding unhandled work", async () => {
     const pid = "mech-r12y-yield-boundary";
     const runId = "run-r12y-yield-boundary";
