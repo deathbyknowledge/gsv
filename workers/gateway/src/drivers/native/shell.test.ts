@@ -86,6 +86,34 @@ function focusedFixture<T extends object>(value: Partial<T>): T {
   return value as T;
 }
 
+type StorageCall = { method: string; key: string; started: number; settled?: number };
+
+/** Records each storage call with the order in which it started and settled. */
+function recordStorageCalls(bucket: R2Bucket): { bucket: R2Bucket; calls: StorageCall[] } {
+  const calls: StorageCall[] = [];
+  let clock = 0;
+  const recorded = new Proxy(bucket, {
+    get(target, property) {
+      const value = Reflect.get(target, property);
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        const [first] = args;
+        const call: StorageCall = {
+          method: String(property),
+          key: typeof first === "string" ? first
+            : typeof first === "object" && first !== null && "prefix" in first ? String(first.prefix) : "",
+          started: clock++,
+        };
+        calls.push(call);
+        return Promise.resolve(Reflect.apply(value, target, args)).finally(() => {
+          call.settled = clock++;
+        });
+      };
+    },
+  });
+  return { bucket: recorded, calls };
+}
+
 function responseFixture(frame: ResponseFrame): ResponseFrame {
   return frame;
 }
@@ -218,6 +246,7 @@ function makeContext(options?: {
   identity?: ProcessIdentity;
   media?: InferenceExecutor["media"];
   ripgit?: Fetcher;
+  storage?: R2Bucket;
   requestSignal?: AbortSignal;
 }): KernelContext {
   const identity = options?.identity ?? IDENTITY;
@@ -265,7 +294,7 @@ function makeContext(options?: {
     resolveGids: vi.fn(() => [...identity.gids]),
   };
   const testEnv = focusedFixture<Env>({
-    STORAGE: env.STORAGE,
+    STORAGE: options?.storage ?? env.STORAGE,
     RIPGIT: options?.ripgit ?? focusedFixture<Fetcher>({}),
     LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
   });
@@ -752,6 +781,28 @@ describe("native shell execution", () => {
       expect(result.stdout.trim()).toBe("2");
     } finally {
       await env.STORAGE.delete("usr/bin/marker");
+    }
+  });
+
+  it("looks for commands only where storage can hold them, one round trip each", async () => {
+    const storage = recordStorageCalls(env.STORAGE);
+    const result = await handleShellExec(
+      { input: "echo hi | sed s/hi/ho/" },
+      makeContext({ storage: storage.bucket }),
+    );
+
+    expect(result).toMatchObject({ status: "completed", stdout: "ho\n" });
+    expect(storage.calls.map(({ method, key }) => `${method} ${key}`).sort()).toEqual([
+      "head usr/local/bin/echo",
+      "head usr/local/bin/sed",
+      "list usr/local/bin/echo/",
+      "list usr/local/bin/sed/",
+    ]);
+    for (const name of ["echo", "sed"]) {
+      const head = storage.calls.find((call) => call.method === "head" && call.key === `usr/local/bin/${name}`);
+      const list = storage.calls.find((call) => call.method === "list" && call.key === `usr/local/bin/${name}/`);
+      // The directory listing goes out before the object lookup answers.
+      expect(list?.started).toBeLessThan(head?.settled ?? -1);
     }
   });
 

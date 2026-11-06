@@ -198,12 +198,14 @@ export class R2MountBackend implements MountBackend {
   async exists(path: string): Promise<boolean> {
     const p = normalizePath(path);
     const key = toKey(p);
-    const head = await this.bucket.head(key);
-    if (head) return true;
-
     const dirPrefix = key.endsWith("/") ? key : key + "/";
-    const listed = await this.bucket.list({ prefix: dirPrefix, limit: 1 });
-    return listed.objects.length > 0 || listed.delimitedPrefixes.length > 0;
+    // Ask for the object and for anything below it at once: shell command lookup
+    // mostly misses, and a miss would otherwise wait for two round trips.
+    const [head, listed] = await Promise.all([
+      this.bucket.head(key),
+      this.bucket.list({ prefix: dirPrefix, limit: 1 }),
+    ]);
+    return head !== null || listed.objects.length > 0 || listed.delimitedPrefixes.length > 0;
   }
 
   async stat(path: string): Promise<ExtendedMountStat> {
