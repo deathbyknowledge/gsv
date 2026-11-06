@@ -186,6 +186,7 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
     // supplied through its already-adopted directory Worker, never replayed here.
     database = yield* Cloudflare.D1.Database(`${props.logicalPrefix}InstallationsDatabase`, {
       name: props.installations.databaseName,
+      primaryLocationHint: props.storageLocationHint,
       migrations: { dir: props.installations.migrationsDirectory, table: "installation_migrations" },
     }).pipe(retain(props.allowResourceDeletion !== true));
     const bindings: Cloudflare.Workers.WorkerBindingProps = {

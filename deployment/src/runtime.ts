@@ -87,6 +87,8 @@ export type GsvRuntimeProps = {
   compatibility?: typeof GSV_WORKER_COMPATIBILITY;
   gatewayWorkersDev?: boolean | Cloudflare.Workers.WorkersDevConfig;
   observability?: Cloudflare.Workers.WorkerObservability;
+  /** Profiling only, drop before merge: where the storage bucket and directory database live. */
+  storageLocationHint?: Cloudflare.R2.Bucket.Location;
   telemetry?: {
     tailConsumers: readonly (string | Cloudflare.Workers.Worker)[];
   };
@@ -141,6 +143,7 @@ export const GsvRuntime = (props: GsvRuntimeProps, dependencies = gsvRuntimeDepe
       `${props.logicalPrefix}Storage`,
       {
         name: props.names.storageBucket,
+        locationHint: props.storageLocationHint,
         lifecycleRules: props.allowResourceDeletion === true ? [{
           id: "abort-incomplete-uploads",
           abortMultipartUploadsTransition: { condition: { type: "Age", maxAge: 86_400 } },

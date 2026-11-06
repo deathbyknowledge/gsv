@@ -65,12 +65,15 @@ export default Alchemy.Stack(`gsv-previews-${repositoryId}`, {
     logicalPrefix: "Preview", allowResourceDeletion, domain, adminOrigin,
     access: { kind: "cloudflare-access", teamDomain, audience: application.aud },
     routing: { zoneId }, pds,
-    names: { gateway: prefix, ripgit: `${prefix}-ripgit`, storageBucket: `${prefix}-storage` },
+    // Profiling only, drop before merge: keep storage in Western Europe, like production,
+    // under new names so the replacements are created before the US copies go.
+    names: { gateway: prefix, ripgit: `${prefix}-ripgit`, storageBucket: `${prefix}-storage-weur` },
+    storageLocationHint: "weur",
     paths: runtime,
     // Profiling only, drop before merge: trace every request on this preview.
     observability: { enabled: true, logs: { enabled: true, invocationLogs: false, persist: false }, traces: { enabled: true, persist: true, headSamplingRate: 1 } },
     installations: {
-      workerName: `${prefix}-installations`, databaseName: `${prefix}-installations`,
+      workerName: `${prefix}-installations`, databaseName: `${prefix}-installations-weur`,
       workerBundle: runtime.installationsBundle, migrationsDirectory: runtime.installationsMigrations,
     },
     inference: {
