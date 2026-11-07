@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { it } from "node:test";
-import { createManifest, importSql, recipientQuery } from "./product-email-backfill.mjs";
+import { createManifest, d1Results, importSql, recipientQuery } from "./product-email-backfill.mjs";
 
 const migrations = new URL("../workers/installations/migrations/", import.meta.url);
 const source = (name) => readFileSync(new URL(name, migrations), "utf8");
@@ -100,4 +100,10 @@ it("rejects changed manifests, duplicate recipients and future cutoffs", () => {
     assert.throws(() => importSql(createManifest("test", false, 100, [...manifest.recipients, ...manifest.recipients])), /duplicate/);
     assert.throws(() => recipientQuery(Date.now() + 60_000), /past timestamp/);
   } finally { db.close(); }
+});
+
+it("reads remote file results after wrangler's upload progress", () => {
+  const output = `├ Checking if file needs uploading\n│\n├ 🌀 Uploading 0815.sql\n│ 🌀 Uploading complete.\n│\n${JSON.stringify([{ results: [{ queued: 3 }], success: true }], null, 2)}\n`;
+  assert.deepEqual(d1Results(output), [{ queued: 3 }]);
+  assert.throws(() => d1Results(JSON.stringify([{ results: [], success: false }])), /D1 command failed/);
 });
