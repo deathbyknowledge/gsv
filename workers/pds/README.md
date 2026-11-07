@@ -33,8 +33,9 @@ records and blobs for Accounts' operator pages when the binding carries the
 `operator-moderation` authority. Its calls follow
 `com.atproto.admin.updateSubjectStatus` and `getSubjectStatus`; each
 repository keeps its takedowns in `src/host/moderation.ts`, and every read the
-host serves honours them. Once Accounts restricts or reactivates an
-installation, the binding's `reconcileAccountStatus` has the account follow:
+host serves honours them. After each change of an installation's state,
+Accounts' notice calls the binding's `reconcileAccountStatus`, retrying from
+its cron until a call succeeds, and the account follows:
 the repository sends `#account` suspended, or active with `#identity` and
 `#sync`, and reports the same status in `getRepoStatus` and `listRepos`. A new
 account for a restricted installation starts suspended.

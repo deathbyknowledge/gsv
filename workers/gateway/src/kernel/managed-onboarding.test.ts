@@ -132,25 +132,63 @@ describe("a failed setup step", () => {
   });
 });
 
+/** A Kernel whose Accounts answers with the given directory entry, which a test changes as Accounts would. */
+function gatedKernel(entry: { state: "active" | "restricted" | "retained"; stateRevision?: number }) {
+  const resolveInstallation = vi.fn(async (installationId: string) => ({
+    found: true as const, installationId, handle: "gate", canonicalOrigin: "https://gate.example", ...entry,
+  }));
+  const values = new Map<string, unknown>();
+  // SAFETY: the work gate reads only its directory binding, installation id, retirement state and key-value storage.
+  const host = {} as Kernel;
+  Object.assign(host, {
+    env: { INSTALLATION_DIRECTORY: { resolveInstallation, resolveHostname: vi.fn() } },
+    installationId: "inst_gate",
+    retirement: { assertActive: () => {}, state: undefined },
+    ctx: { storage: { kv: {
+      get: (key: string) => values.get(key),
+      put: vi.fn(<T>(key: string, value: T) => { values.set(key, value); }),
+      delete: vi.fn((key: string) => values.delete(key)),
+    } } },
+  });
+  return { host, entry, resolveInstallation, values, onboarding: new ManagedOnboarding(host) };
+}
+
 describe("managed work gate", () => {
   it("reuses a recent Accounts confirmation until a lifecycle change invalidates it", async () => {
-    let state: "active" | "retained" = "active";
-    const resolveInstallation = vi.fn(async (installationId: string) => ({
-      found: true as const, installationId, handle: "gate", canonicalOrigin: "https://gate.example", state,
-    }));
-    // SAFETY: the work gate reads only its directory binding, installation id and retirement state.
-    const host = {} as Kernel;
-    Object.assign(host, {
-      env: { INSTALLATION_DIRECTORY: { resolveInstallation, resolveHostname: vi.fn() } },
-      installationId: "inst_gate",
-      retirement: { assertActive: () => {} },
-    });
-    const onboarding = new ManagedOnboarding(host);
+    const { entry, onboarding, resolveInstallation } = gatedKernel({ state: "active" });
     await expect(onboarding.managedWorkGate()).resolves.toEqual({ allowed: true });
-    state = "retained";
+    entry.state = "retained";
     await expect(onboarding.managedWorkGate()).resolves.toEqual({ allowed: true });
     onboarding.invalidateWorkGate();
     await expect(onboarding.managedWorkGate()).resolves.toMatchObject({ allowed: false, code: 503 });
     expect(resolveInstallation).toHaveBeenCalledTimes(2);
+  });
+
+  it("follows what Accounts tells it instead of asking again", async () => {
+    const { onboarding, resolveInstallation } = gatedKernel({ state: "active", stateRevision: 1 });
+    const directory = { found: true as const, installationId: "inst_gate", handle: "gate", canonicalOrigin: "https://gate.example" };
+    await expect(onboarding.managedWorkGate()).resolves.toEqual({ allowed: true });
+    expect(onboarding.followInstallationState({ ...directory, state: "restricted", stateRevision: 2 })).toBe(2);
+    await expect(onboarding.managedWorkGate()).resolves.toMatchObject({ allowed: false, code: 423 });
+    expect(onboarding.followInstallationState({ ...directory, state: "active", stateRevision: 3 })).toBe(3);
+    await expect(onboarding.managedWorkGate()).resolves.toEqual({ allowed: true });
+    expect(resolveInstallation).toHaveBeenCalledOnce();
+  });
+
+  it("acknowledges a notice once retired without keeping anything", () => {
+    const { host, onboarding, values } = gatedKernel({ state: "retained", stateRevision: 2 });
+    Object.assign(host.retirement, { state: { phase: "quiesced" } });
+    expect(onboarding.followInstallationState({
+      found: true, installationId: "inst_gate", handle: "gate", canonicalOrigin: "https://gate.example", state: "retained", stateRevision: 2,
+    })).toBe(2);
+    expect(values.size).toBe(0);
+  });
+
+  it("refuses a notice about another installation", () => {
+    const { onboarding, values } = gatedKernel({ state: "active", stateRevision: 1 });
+    expect(() => onboarding.followInstallationState({
+      found: true, installationId: "inst_other", handle: "other", canonicalOrigin: "https://other.example", state: "restricted", stateRevision: 2,
+    })).toThrow("another installation");
+    expect(values.size).toBe(0);
   });
 });

@@ -58,7 +58,7 @@ export class PdsModerationEntrypoint extends WorkerEntrypoint<PdsEnv, { authorit
     return repository && { ...repository, installationId: entry.name };
   }
 
-  /** Accounts calls this once it restricts or reactivates the installation. */
+  /** Accounts calls this after each change of the installation's state, and again from its cron until a call succeeds. */
   async reconcileAccountStatus(installationId: string): Promise<void> {
     await followAdmission(this.env.INSTALLATION_DIRECTORY, installationId, await this.repository(installationId));
   }

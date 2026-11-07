@@ -20,6 +20,7 @@
     "./onboarding": "./src/onboarding.ts",
     "./reset-preparation": "./src/reset-preparation.ts",
     "./request-reports": "./src/request-reports.ts",
+    "./state-notices": "./src/state-notices.ts",
     "./deletion": "./src/deletion.ts",
     "./deletion-verifier": "./src/deletion-verifier.ts",
     "./operator-resources": "./src/operator-resources.ts",

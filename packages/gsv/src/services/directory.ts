@@ -17,7 +17,17 @@ export type InstallationIdentity = {
 };
 
 export type InstallationDirectoryResult =
-  | ({ found: true; state: InstallationState; ownerSetupRecovery?: true } & InstallationIdentity)
+  | ({
+    found: true;
+    state: InstallationState;
+    ownerSetupRecovery?: true;
+    /**
+     * Grows with every change of the installation's state. Accounts reports
+     * it only while it tells the Gateway of each change, so a Kernel may keep
+     * the state with the highest revision it has read instead of asking again.
+     */
+    stateRevision?: number;
+  } & InstallationIdentity)
   | { found: false };
 
 /** Resolves public routing metadata to an immutable installation identity. */

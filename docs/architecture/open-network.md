@@ -44,17 +44,17 @@ dropped the account's events while it was suspended fetches it again.
 the state again meanwhile, the PDS follows that too: it reads the state after
 each change until two reads agree. An account created for a restricted
 installation starts suspended. A takedown outranks a suspension: the account
-reads as `takendown` until the operator restores it, then as `suspended`. If
-the PDS can't follow, Accounts keeps the new state and the operator's request
-fails; the Ship page's **Try again**, or the same request sent again, tells the
-PDS.
+reads as `takendown` until the operator restores it, then as `suspended`.
+Accounts tells the PDS through the same durable notice that tells the Ship's
+Kernel. If the PDS can't be told, the operator's request still succeeds and
+Accounts' cron tells the PDS every minute until it has followed.
 
-Accounts asks the PDS to follow too once it retires an installation, by a
+The same notice tells the PDS when Accounts retires an installation, by a
 reset or as the first step of deleting it. The repository then reads as
 deleted: `getRepoStatus` answers `active: false` with `status: "deleted"`, and
 every other read `RepoNotFound`. Relays hear of the deletion only once it
-quiesces the repository. If the PDS can't follow, the reset or retirement
-fails with the installation retired, and sending it again tells the PDS.
+quiesces the repository. If the PDS can't be told, the reset or retirement
+still succeeds and the cron tells the PDS.
 
 ## Identity
 
