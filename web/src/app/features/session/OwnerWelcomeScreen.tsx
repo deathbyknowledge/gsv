@@ -24,9 +24,10 @@ type Props = {
   compact?: boolean;
   /** Domain shown after the handle before Accounts has stated it; the signed-in session's domain wins. */
   spaceDomain?: string;
+  homeHref?: string;
 };
 
-export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPanel, initialStep = "welcome", chooseSpace = false, invitation, compact = false, spaceDomain: presumedDomain }: Props) {
+export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPanel, initialStep = "welcome", chooseSpace = false, invitation, compact = false, spaceDomain: presumedDomain, homeHref }: Props) {
   const t = useT();
   const [flow, setFlow] = useState<OwnerWelcome | null>(null);
   const [step, setStep] = useState<Step>(invitation ? "invitation" : initialStep);
@@ -308,7 +309,9 @@ export function OwnerWelcomeScreen({ ready, resume, load, onConnect, addressPane
       </div>}
     </div>}
     {formError && <p class="gsv-login-error" role="alert">{formError}</p>}
-    {step !== "welcome" && step !== "invitation" && (invitation || !chooseSpace) && <button class="gsv-auth-link desktop-welcome-back" type="button" disabled={busy} onClick={back}>{t("session.back")}</button>}
+    {step !== "welcome" && step !== "invitation" && (invitation || !chooseSpace) && (!homeHref || step !== "claim") && (homeHref
+      ? <a class="gsv-auth-link desktop-welcome-back" href={homeHref}>{t("session.back")}</a>
+      : <button class="gsv-auth-link desktop-welcome-back" type="button" disabled={busy} onClick={back}>{t("session.back")}</button>)}
     {(loadFailed || (step === "welcome" && error)) && <button type="button" class="gsv-auth-link desktop-welcome-back" disabled={busy} onClick={() => flow ? void run(() => advance(flow)) : window.location.reload()}>{t("session.retry")}</button>}
   </section></AuthLayout>;
 }

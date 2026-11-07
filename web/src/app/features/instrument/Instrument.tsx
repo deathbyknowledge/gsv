@@ -119,7 +119,7 @@ function InstrumentReady({ initialPath, handsfreeDirty }: { initialPath: string;
   const [peopleDirty, setPeopleDirty] = useState(false);
   const [zenTarget, setZenTarget] = useState<string | null>(null);
   /* the theme follows the system until the person picks one with the l key; the choice is remembered on this device */
-  const { theme, toggleTheme } = useColorTheme("light");
+  const { theme, toggleTheme } = useColorTheme();
   /* the tab title and favicon carry Ship's messages while the person is looking elsewhere */
   useTabAttention();
   const [scale, setScale] = useState<Scale>(() => storedScale());
