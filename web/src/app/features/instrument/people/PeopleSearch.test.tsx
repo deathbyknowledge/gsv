@@ -129,6 +129,13 @@ describe("searching People", () => {
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("profile.resolve", { address: "https://juno.ship.space/profile" }));
   });
 
+  it("offers no request to an account that may not send one", async () => {
+    await search("juno.ship.space", { account: { ...ACCOUNT, capabilities: ["profile.resolve", "contact.list", "approach.list", "contact.block.list"] }, resolve: async () => ({ data: { profile: JUNO } }) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    await vi.waitFor(() => expect(collectText(tree)).toContain("cannot send message requests"));
+    expect(collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "send a message request")).toBeUndefined();
+  });
+
   it("says when there is no public profile at that address", async () => {
     await search("nobody.ship.space", { resolve: async () => { throw new GsvClientError({ code: 404, message: "No public profile" }); } });
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
