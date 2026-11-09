@@ -170,7 +170,7 @@ export function People({ onDirtyChange, onAsk }: {
         {requests.error && <p class="people-error" role="alert">{requests.error.message}</p>}
         {requests.data && !items.length && <div class="people-empty-list"><p>{t(history ? "people.requests.noneHistory" : direction === "incoming" ? "people.requests.noneIncoming" : "people.requests.noneOutgoing")}</p><span>{t(direction === "incoming" ? "people.requests.reachHint" : "people.requests.startHint")}</span></div>}
         <ul class="people-rows">{items.map((item) => <RequestRow key={item.id} request={item} selected={requestId === item.id} busy={busy} shipTakenDown={takenDown} onOpen={() => open({ requestId: item.id })} />)}</ul>
-        {requests.hasNextPage && <LoadOnScroll pages={requests.data?.pages.length ?? 0} loading={requests.isFetchingNextPage} onLoad={() => void requests.fetchNextPage()} />}
+        {requests.hasNextPage && <LoadOnScroll pages={requests.data?.pages.length ?? 0} loading={requests.isFetchingNextPage} failed={requests.isFetchNextPageError} onLoad={() => void requests.fetchNextPage()} />}
       </> : <>
         {listView === "inbox" && account && !canConfigure(account, "conversation.inbox") && <p class="people-note people-access-note">{t("people.inbox.noAccess")}</p>}
         {account && !canConfigure(account, "contact.list") && <p class="people-note people-access-note">{t("people.contacts.noAccess")}</p>}
@@ -180,7 +180,7 @@ export function People({ onDirtyChange, onAsk }: {
         {contactsQuery.data && (listView === "contacts" || inbox.data) && !visible.length && <div class="people-empty-list"><p>{t(listView === "contacts" ? "people.contacts.empty" : archived ? "people.inbox.noArchived" : "people.inbox.empty")}</p><span>{t("people.inbox.emptyHint")}</span></div>}
         <ul class="people-rows">{visible.map((contact) => <ContactRow key={contact.id} contact={contact} entry={listView === "inbox" ? inboxByContact.get(contact.id) : undefined} dated={listView === "inbox"}
           selected={view === "inbox" && selectedContact?.id === contact.id} busy={busy} account={account} onOpen={() => openContact(contact.id)} />)}</ul>
-        {listView === "inbox" && inbox.hasNextPage && <LoadOnScroll pages={inbox.data?.pages.length ?? 0} loading={inbox.isFetchingNextPage} onLoad={() => void inbox.fetchNextPage()} />}
+        {listView === "inbox" && inbox.hasNextPage && <LoadOnScroll pages={inbox.data?.pages.length ?? 0} loading={inbox.isFetchingNextPage} failed={inbox.isFetchNextPageError} onLoad={() => void inbox.fetchNextPage()} />}
         {listView === "contacts" && <BlockedPeople account={account} filter="" />}
       </>}
       </div>
