@@ -107,6 +107,13 @@ describe("searching People", () => {
     expect(collectText(tree)).not.toContain("No matching people.");
   });
 
+  it("won't offer a request to someone you blocked under another name", async () => {
+    await search("juno.ship.space", { blocks: [{ did: JUNO.did, displayName: "Old name", createdAtMs: 1 }], resolve: async () => ({ data: { profile: JUNO } }) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    await vi.waitFor(() => expect(collectText(tree)).toContain("You blocked this person."));
+    expect(collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "send a message request")).toBeUndefined();
+  });
+
   it("says when there is no public profile at that address", async () => {
     await search("nobody.ship.space", { resolve: async () => { throw new GsvClientError({ code: 404, message: "No public profile" }); } });
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });

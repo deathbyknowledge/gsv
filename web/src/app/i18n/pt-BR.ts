@@ -898,6 +898,7 @@ export const ptBR = {
   "people.search.lookingUp": "Procurando um perfil público…",
   "people.search.sendRequest": "enviar uma solicitação de mensagem",
   "people.search.noProfile": "Não há perfil público em {handle}.",
+  "people.search.blockedProfile": "Você bloqueou esta pessoa. Desbloqueie em Contatos para enviar uma solicitação de mensagem.",
   "people.nav.label": "Listas de pessoas",
   "people.inbox.loading": "Carregando conversas…",
   "people.inbox.unread": "Não lidas",

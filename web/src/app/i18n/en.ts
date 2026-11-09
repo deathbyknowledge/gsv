@@ -892,6 +892,7 @@ export const en = {
   "people.search.lookingUp": "Looking for a public profile…",
   "people.search.sendRequest": "send a message request",
   "people.search.noProfile": "No public profile at {handle}.",
+  "people.search.blockedProfile": "You blocked this person. Unblock them under Contacts to send them a message request.",
   "people.nav.label": "People lists",
   "people.inbox.loading": "Loading conversations…",
   "people.inbox.unread": "Unread",

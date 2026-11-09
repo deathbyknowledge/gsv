@@ -81,6 +81,8 @@ export function PeopleSearch({ account, query, contacts, contactsLoaded, contact
   }, [address, wantsProfile]);
   const profile = wantsProfile ? lookup.profile : undefined;
   const existing = profile ? contacts.find((contact) => contact.remoteDid === profile.did) : undefined;
+  // A block is kept by DID with the name it had then, so a profile found under another name can still be blocked.
+  const blockedProfile = !!profile && !!blocked.blocks.data?.pages.some((page) => page.blocks.some((block) => block.did === profile.did));
   // While typing pauses and the lookup runs, the profile is still on its way rather than missing.
   const awaitingProfile = wantsProfile && !profile && !lookup.error;
   const nothing = localComplete && !conversations.length && !requests.length && !requestsLoading && !wantsProfile && !blockedMatch;
@@ -110,7 +112,8 @@ export function PeopleSearch({ account, query, contacts, contactsLoaded, contact
       <span class="people-kicker">{handleLabel(profile.handle)}</span>
       <h2>{profile.displayName}</h2>
       {profile.about && <p>{profile.about}</p>}
-      {existing ? <button class="people-action is-accent" disabled={busy} onClick={() => onOpenContact(existing.id)}>{t("people.compose.openExisting")}</button>
+      {blockedProfile ? <p class="people-note">{t("people.search.blockedProfile")}</p>
+        : existing ? <button class="people-action is-accent" disabled={busy} onClick={() => onOpenContact(existing.id)}>{t("people.compose.openExisting")}</button>
         : profile.contactPolicy === "requests" ? <button class="people-action is-accent" disabled={busy} onClick={() => onCompose(profile)}>{t("people.search.sendRequest")}</button>
         : <p class="people-note">{t(profile.contactPolicy === "invitation" ? "people.compose.byInvitation" : "people.compose.closed")}</p>}
     </div>}
