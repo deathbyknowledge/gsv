@@ -261,7 +261,9 @@
 .people-add-results small { color: var(--text-dim); font: 11px/1.5 var(--gsv-font-mono); }
 .people-add-results em { color: var(--text-dim); font: normal 13px/1.5 var(--gsv-font-prose); }
 .people-add-results .people-action { flex-shrink: 0; }
-.people-compose .gsv-cb { margin-top: 4px; }
+/* The request form's stacked labels must not reach the checkbox; it keeps its box beside prose text, as on the profile form. */
+:is(.people, .chat-person) .people-compose .people-form label.gsv-cb { display: inline-flex; align-items: center; width: auto; gap: 12px; margin-top: 4px; color: var(--text); }
+:is(.people, .chat-person) .people-compose .gsv-cb-label { font: 16px/1.5 var(--gsv-font-prose); letter-spacing: normal; text-transform: none; }
 .people-invite h2 { margin: 12px 0 16px; color: var(--text-title); font: 400 30px/1.15 var(--gsv-font-prose); letter-spacing: -.025em; }
 .people-invite > .people-note { margin-bottom: 28px; font-size: 16px; }
 .people-invite-link { border-top: 1px solid var(--border); padding-top: 24px; }

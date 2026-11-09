@@ -10,6 +10,7 @@ import { useT } from "../../../i18n/locale";
 import { NewConversation } from "./NewConversation";
 import { handleLabel, matchesPerson, profileAddress, type ApproachDraft } from "./peopleModel";
 import { usePersonLookup } from "./usePersonLookup";
+import { useBlockedPeople } from "./BlockedPeople";
 
 /** How long typing pauses before a handle is looked up on the open network. */
 const LOOKUP_DELAY_MS = 400;
@@ -44,6 +45,9 @@ export function AddContact({ account, draft, onChange, onSent, onBusy, contacts,
     return () => window.clearTimeout(timer);
   }, [address, mayLookup, !!draft.profile]);
   const found = lookup.profile && !known.some((contact) => contact.remoteDid === lookup.profile!.did) ? lookup.profile : undefined;
+  // A block is kept by DID, so someone found under any name may still be blocked.
+  const blocked = useBlockedPeople(account, "", false);
+  const foundBlocked = !!found && !!blocked.blocks.data?.pages.some((page) => page.blocks.some((block) => block.did === found.did));
   const looking = !!address && mayLookup && !lookup.profile && !lookup.error;
   const missing = !!query && !known.length && !found && !looking;
 
@@ -66,7 +70,8 @@ export function AddContact({ account, draft, onChange, onSent, onBusy, contacts,
       </li>)}
       {found && <li>
         <span><strong>{found.displayName}</strong><small>{handleLabel(found.handle)}</small>{found.about && <em>{found.about}</em>}</span>
-        <button class="people-action is-accent" onClick={() => onChange({ ...draft, profile: found })}>{t("people.add.message", { name: found.displayName })}</button>
+        {foundBlocked ? <small>{t("people.search.blockedProfile")}</small>
+          : <button class="people-action is-accent" onClick={() => onChange({ ...draft, profile: found })}>{t("people.add.message", { name: found.displayName })}</button>}
       </li>}
     </ul>}
     {looking && !known.length && <LoadingState variant="panel">{t("people.search.lookingUp")}</LoadingState>}
