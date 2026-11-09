@@ -19,12 +19,13 @@ const pending = (id: string, direction: ApproachSummary["direction"], displayNam
   displayName, conversationId: `approach:${id}`, state: "pending", revision: 1, delivery: "received", createdAtMs: 10, updatedAtMs: 10, expiresAtMs: 99 });
 const JUNO: PublicProfile = { did: "did:plc:juno", handle: "juno.ship.space", cid: "bafyjuno", displayName: "Juno", about: "", contactPolicy: "requests", url: "https://juno.ship.space/profile" };
 let tree: ComponentChildren;
+let contactsOverride: ContactSummary[] | undefined;
 let root: ReturnType<typeof createTestRoot>;
 let cache: QueryClient;
 const onCompose = vi.fn();
 
 function Harness({ query, contactsLoaded, account }: { query: string; contactsLoaded: boolean; account: ConsoleAccount }) {
-  tree = PeopleSearch({ account, query, contacts: [MARA], contactsLoaded, contactsError: null, inbox: new Map(), busy: false, selectedContactId: null, selectedRequestId: null,
+  tree = PeopleSearch({ account, query, contacts: contactsOverride ?? [MARA], contactsLoaded, contactsError: null, inbox: new Map(), busy: false, selectedContactId: null, selectedRequestId: null,
     shipTakenDown: false, onOpenContact: vi.fn(), onOpenRequest: vi.fn(), onCompose });
   return null;
 }
@@ -62,6 +63,7 @@ beforeEach(() => {
   cache = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   root = createTestRoot("people search");
   onCompose.mockReset();
+  contactsOverride = undefined;
 });
 afterEach(async () => { await root.unmount(); cache.clear(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -134,6 +136,20 @@ describe("searching People", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     await vi.waitFor(() => expect(collectText(tree)).toContain("cannot send message requests"));
     expect(collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "send a message request")).toBeUndefined();
+  });
+
+  it("offers no request to an account that may not choose who handles it", async () => {
+    await search("juno.ship.space", { account: { ...ACCOUNT, capabilities: ["profile.resolve", "approach.create", "contact.list", "approach.list", "contact.block.list"] }, resolve: async () => ({ data: { profile: JUNO } }) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    await vi.waitFor(() => expect(collectText(tree)).toContain("cannot send message requests"));
+  });
+
+  it("offers a request, not an ended conversation, to someone whose connection ended", async () => {
+    const ended = { ...MARA, id: "contact-juno", remoteDid: JUNO.did, remoteName: "J. Park", remoteHandle: "jpark.example", state: "revoked" as const };
+    contactsOverride = [MARA, ended];
+    await search("juno.ship.space", { resolve: async () => ({ data: { profile: JUNO } }) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "send a message request")).toBeDefined());
   });
 
   it("says when there is no public profile at that address", async () => {
