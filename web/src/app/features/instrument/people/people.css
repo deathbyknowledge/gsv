@@ -46,7 +46,8 @@
 /* Touch has no hover, so the tag says both and takes its own line under the preview. */
 @media (hover: none) {
   .people-rows > li.has-tag .people-row-preview { padding-right: 0; }
-  .people .people-contact-tag { position: static; display: block; max-width: none; margin: -14px 24px 18px; }
+  /* The extra 2px matches the row's selection border, so the tag lines up with the name. */
+  .people .people-contact-tag { position: static; display: block; max-width: none; margin: -14px 24px 18px 26px; }
   .people-contact-tag-action { display: inline; color: var(--accent); }
   .people-contact-tag-action::before { content: " · "; color: var(--text-dim); }
   .people-contact-tag:not(:disabled):is(:hover, :focus-visible) .people-contact-tag-state { display: inline; }
@@ -161,7 +162,7 @@
   .people-list-tools { padding: 4px 18px 12px; }
   .people .people-row { min-height: 104px; padding: 24px 18px; gap: 8px 12px; }
   .people .people-contact-tag { right: 18px; bottom: 24px; }
-  @media (hover: none) { .people .people-contact-tag { margin-inline: 18px; } }
+  @media (hover: none) { .people .people-contact-tag { margin-inline: 20px 18px; } }
   .people-blocked { padding-inline: 18px; }
   .people-load-on-scroll { padding-inline: 18px; }
   .people-list-footer { padding: 4px 8px 4px 18px; }
