@@ -7,7 +7,7 @@ import { LoadingState } from "../../../components/ui/Spinner";
 import { canConfigure } from "../settings/settingsModel";
 import { INSTRUMENT_APPROACHES_KEY } from "../wire/queryKeys";
 import { useT } from "../../../i18n/locale";
-import { BlockedPeople } from "./BlockedPeople";
+import { BlockedPeople, useBlockedPeople } from "./BlockedPeople";
 import { ContactRow, RequestRow } from "./PeopleRows";
 import { handleLabel, matchesPerson, profileAddress } from "./peopleModel";
 import { usePersonLookup } from "./usePersonLookup";
@@ -61,6 +61,8 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
     .filter((request) => matchesPerson([request.displayName, request.peerHandle], query))
     .sort((a, b) => b.createdAtMs - a.createdAtMs);
   const requestsLoading = incoming.isFetching || outgoing.isFetching;
+  // Blocked people are listed below the results, so they count before calling the search empty.
+  const blocked = useBlockedPeople(account, query, false);
   const address = profileAddress(query);
   const mayLookup = connected && !!account && canConfigure(account, "profile.resolve");
   const wantsProfile = !!address && mayLookup && !conversations.length && !requests.length && !requestsLoading;
@@ -74,7 +76,7 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
   const existing = profile ? contacts.find((contact) => contact.remoteDid === profile.did) : undefined;
   // While typing pauses and the lookup runs, the profile is still on its way rather than missing.
   const awaitingProfile = wantsProfile && !profile && !lookup.error;
-  const nothing = !conversations.length && !requests.length && !requestsLoading && !wantsProfile;
+  const nothing = !conversations.length && !requests.length && !requestsLoading && !wantsProfile && !blocked.entries.length && !blocked.searching;
 
   return <section class="people-search-results" aria-label={t("people.search.results")}>
     {conversations.length > 0 && <>
@@ -88,7 +90,12 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
         shipTakenDown={shipTakenDown} onOpen={() => onOpenRequest(request.id, request.direction)} />)}</ul>
     </>}
     {requestsLoading && <LoadingState variant="panel">{t("people.search.loadingRequests")}</LoadingState>}
-    {(incoming.error ?? outgoing.error) && <p class="people-error" role="alert">{(incoming.error ?? outgoing.error)?.message}</p>}
+    {(incoming.error ?? outgoing.error) && <p class="people-error people-search-note" role="alert">{(incoming.error ?? outgoing.error)?.message}{" "}
+      {/* Loading stops at a failed page until the person asks again. */}
+      {(incoming.isFetchNextPageError || outgoing.isFetchNextPageError) && <button class="people-action" onClick={() => {
+        if (incoming.isFetchNextPageError) void incoming.fetchNextPage();
+        if (outgoing.isFetchNextPageError) void outgoing.fetchNextPage();
+      }}>{t("people.retry")}</button>}</p>}
     {awaitingProfile && <LoadingState variant="panel">{t("people.search.lookingUp")}</LoadingState>}
     {profile && <div class="people-search-profile">
       <span class="people-kicker">{handleLabel(profile.handle)}</span>
