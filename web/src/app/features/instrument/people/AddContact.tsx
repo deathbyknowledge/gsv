@@ -48,6 +48,8 @@ export function AddContact({ account, draft, onChange, onSent, onBusy, contacts,
   // A block is kept by DID, so someone found under any name may still be blocked.
   const blocked = useBlockedPeople(account, "", false);
   const foundBlocked = !!found && !!blocked.blocks.data?.pages.some((page) => page.blocks.some((block) => block.did === found.did));
+  // A request needs its handling choice too, which takes contact.preferences.update.
+  const maySendRequest = !!account && canConfigure(account, "approach.create") && canConfigure(account, "contact.preferences.update");
   const looking = !!address && mayLookup && !lookup.profile && !lookup.error;
   const missing = !!query && !known.length && !found && !looking;
 
@@ -71,6 +73,7 @@ export function AddContact({ account, draft, onChange, onSent, onBusy, contacts,
       {found && <li>
         <span><strong>{found.displayName}</strong><small>{handleLabel(found.handle)}</small>{found.about && <em>{found.about}</em>}</span>
         {foundBlocked ? <small>{t("people.search.blockedProfile")}</small>
+          : !maySendRequest ? <small>{t("people.compose.noSend")}</small>
           : <button class="people-action is-accent" onClick={() => onChange({ ...draft, profile: found })}>{t("people.add.message", { name: found.displayName })}</button>}
       </li>}
     </ul>}

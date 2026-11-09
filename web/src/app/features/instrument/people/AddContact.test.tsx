@@ -15,13 +15,14 @@ const MARA: ContactSummary = { id: "contact-mara", ownerUid: 1000, state: "activ
   remoteName: "Mara", remoteHandle: "mara.ship.space", conversationId: "conversation-mara", createdAtMs: 1, updatedAtMs: 2 };
 const JUNO: PublicProfile = { did: "did:plc:juno", handle: "juno.ship.space", cid: "bafyjuno", displayName: "Juno", about: "", contactPolicy: "requests", url: "https://juno.ship.space/profile" };
 let tree: ComponentChildren;
+let account = ACCOUNT;
 let root: ReturnType<typeof createTestRoot>;
 let cache: QueryClient;
 const onChange = vi.fn();
 const onOpen = vi.fn();
 
 function Harness({ draft }: { draft: ApproachDraft }) {
-  tree = AddContact({ account: ACCOUNT, draft, onChange, onSent: vi.fn(), onBusy: vi.fn(), contacts: [MARA], onOpen, onInvite: vi.fn(), onHaveInvitation: vi.fn() });
+  tree = AddContact({ account, draft, onChange, onSent: vi.fn(), onBusy: vi.fn(), contacts: [MARA], onOpen, onInvite: vi.fn(), onHaveInvitation: vi.fn() });
   return null;
 }
 
@@ -46,7 +47,7 @@ beforeEach(() => {
   vi.spyOn(GSVClient.prototype, "onStatus").mockImplementation(() => () => {});
   cache = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   root = createTestRoot("add contact");
-  onChange.mockReset(); onOpen.mockReset();
+  onChange.mockReset(); onOpen.mockReset(); account = ACCOUNT;
 });
 afterEach(async () => { await root.unmount(); cache.clear(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -69,6 +70,13 @@ describe("adding a contact", () => {
   it("won't offer a request to someone you blocked", async () => {
     await type("juno.ship.space", async () => ({ data: { profile: JUNO } }), [{ did: JUNO.did, displayName: "Old name", createdAtMs: 1 }]);
     await vi.waitFor(() => expect(collectText(tree)).toContain("You blocked this person."));
+    expect(messageButton()).toBeUndefined();
+  });
+
+  it("offers no request to an account that may not send one", async () => {
+    account = { ...ACCOUNT, capabilities: ["profile.resolve", "approach.create", "contact.list", "contact.block.list"] };
+    await type("juno.ship.space", async () => ({ data: { profile: JUNO } }));
+    await vi.waitFor(() => expect(collectText(tree)).toContain("cannot send message requests"));
     expect(messageButton()).toBeUndefined();
   });
 
