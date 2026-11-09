@@ -52,6 +52,12 @@
   .people-contact-tag-action::before { content: " · "; color: var(--text-dim); }
   .people-contact-tag:not(:disabled):is(:hover, :focus-visible) .people-contact-tag-state { display: inline; }
 }
+/* Search results group under small labels; a looked-up profile reads like the compose preview. */
+.people-search-heading { margin: 8px 24px 4px; color: var(--label); font: 11px/1.5 var(--gsv-font-mono); }
+.people-search-profile { margin: 8px 24px 16px; padding: 18px 0; border-block: 1px solid var(--border); }
+.people-search-profile h2 { margin: 8px 0; color: var(--text-title); font: 500 18px/1.3 var(--gsv-font-prose); overflow-wrap: anywhere; }
+.people-search-profile > p:not(.people-note) { margin: 0 0 8px; color: var(--text); font: 14px/1.55 var(--gsv-font-prose); white-space: pre-wrap; overflow-wrap: anywhere; }
+.people-search-note { padding-inline: 24px; }
 .people-blocked { margin-top: 12px; padding: 24px 24px 12px; border-top: 1px solid var(--border); }
 .people-blocked h2 { margin: 0; color: var(--text-title); font: 500 16px/1.3 var(--gsv-font-prose); }
 .people-blocked > .people-load-on-scroll { padding-inline: 0; }
@@ -164,6 +170,8 @@
   .people .people-contact-tag { right: 18px; bottom: 24px; }
   @media (hover: none) { .people .people-contact-tag { margin-inline: 20px 18px; } }
   .people-blocked { padding-inline: 18px; }
+  .people-search-heading, .people-search-profile { margin-inline: 18px; }
+  .people-search-note { padding-inline: 18px; }
   .people-load-on-scroll { padding-inline: 18px; }
   .people-list-footer { padding: 4px 8px 4px 18px; }
   .people-list-footer .people-self > span { font-size: 14px; }

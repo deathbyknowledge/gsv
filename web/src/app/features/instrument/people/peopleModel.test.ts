@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ApproachSummary, PublicProfile } from "@humansandmachines/gsv/protocol";
-import { approachSendIntent, approachStatus, contactProfileUrl, emptyApproachDraft, handleLabel as label, profileAddress as address, requestMayReport } from "./peopleModel";
+import { approachSendIntent, approachStatus, contactProfileUrl, emptyApproachDraft, handleLabel as label, matchesPerson, profileAddress as address, requestMayReport } from "./peopleModel";
 
 const deployment = { primaryDomain: "fleet.example", legacyDomains: ["old.example"] };
 const profileAddress = (value: string) => address(value, deployment);
@@ -103,5 +103,14 @@ describe("message request status", () => {
     expect(requestMayReport({ ...received, state: "accepted" })).toBe(false);
     expect(requestMayReport({ ...received, reportedAtMs: 5 })).toBe(false);
     expect(requestMayReport({ ...sent, messageSequence: 1 })).toBe(false);
+  });
+});
+
+describe("finding a person by what was typed", () => {
+  it("matches any name or handle, ignoring case, spaces and a leading @", () => {
+    expect(matchesPerson(["Mara Lin", "mara.ship.space"], "mara")).toBe(true);
+    expect(matchesPerson(["Mara Lin", "mara.ship.space"], " LIN ")).toBe(true);
+    expect(matchesPerson(["Mara Lin", "mara.ship.space"], "@mara.ship")).toBe(true);
+    expect(matchesPerson(["Mara Lin", undefined], "juno")).toBe(false);
   });
 });

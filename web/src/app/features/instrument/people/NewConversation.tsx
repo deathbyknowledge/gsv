@@ -6,7 +6,8 @@ import { useViewActive } from "../../../services/navigation/ViewActivity";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { canConfigure } from "../settings/settingsModel";
 import { LoadingState } from "../../../components/ui/Spinner";
-import { approachSendIntent, handleLabel, profileAddress as resolveProfileAddress, type ApproachDraft } from "./peopleModel";
+import { approachSendIntent, handleLabel, matchesPerson, profileAddress as resolveProfileAddress, type ApproachDraft } from "./peopleModel";
+import { usePersonLookup } from "./usePersonLookup";
 import { ContactHandlingChoice } from "./ContactHandlingChoice";
 import { submitOnEnter } from "../shared/enterToSend";
 import { useT } from "../../../i18n/locale";
@@ -29,12 +30,9 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   latest.current = draft;
   const displayName = draft.displayName ?? (account?.displayName || account?.gecos || account?.username || "");
   const saved = contacts.filter((contact) => contact.state === "active" && contact.preferences?.saved !== false
-    && `${contactDisplayName(contact)} ${contact.remoteHandle ?? ""}`.toLocaleLowerCase().includes(draft.url.trim().replace(/^@/, "").toLocaleLowerCase()))
+    && matchesPerson([contactDisplayName(contact), contact.remoteHandle], draft.url))
     .sort((a, b) => contactDisplayName(a).localeCompare(contactDisplayName(b)));
-  const resolve = useMutation({
-    mutationFn: (address: string) => client.profile.resolve({ address }),
-    onSuccess: ({ profile }) => onChange({ ...latest.current, profile, url: profile.url }),
-  });
+  const resolve = usePersonLookup((profile) => onChange({ ...latest.current, profile, url: profile.url }));
   const send = useMutation({
     mutationFn: (intent: ApproachCreateArgs) => client.approach.create(intent),
     onSuccess: ({ approach }) => onSent(approach),
@@ -43,9 +41,9 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   useEffect(() => {
     if (initial.current || !active || !connected || !account) return;
     initial.current = true;
-    if (profileAddress && !draft.profile && canConfigure(account, "profile.resolve")) resolve.mutate(profileAddress);
+    if (profileAddress && !draft.profile && canConfigure(account, "profile.resolve")) resolve.lookup(profileAddress);
   }, [active, connected, account]);
-  const busy = resolve.isPending || send.isPending;
+  const busy = resolve.pending || send.isPending;
   useEffect(() => { onBusy(busy); return () => onBusy(false); }, [busy, onBusy]);
   const profile = draft.profile;
   const existing = profile ? contacts.find((contact) => contact.state === "active" && contact.remoteDid === profile.did) : undefined;
@@ -59,12 +57,12 @@ export function NewConversation({ account, draft, onChange, onSent, onBusy, cont
   return <section class="people-compose" aria-label={t("people.compose.label")}>
     <form class="people-form" onSubmit={(event) => {
       event.preventDefault();
-      if (canResolve && profileAddress && !busy) resolve.mutate(profileAddress);
+      if (canResolve && profileAddress && !busy) resolve.lookup(profileAddress);
     }}>
       <label>{t("people.compose.to")}<input value={draft.url} placeholder={t("people.compose.toPlaceholder")} spellcheck={false} autoCapitalize="none" autoComplete="off" disabled={busy} onInput={(event) => {
         resolve.reset(); send.reset(); onChange({ ...draft, url: event.currentTarget.value, profile: null, shipHandlesMessages: null });
       }} /></label>
-      {profileAddress && <button class="people-action" type="submit" disabled={!canResolve || busy}>{resolve.isPending ? <LoadingState>{t("people.compose.openingProfile")}</LoadingState> : t("people.compose.openProfile")}</button>}
+      {profileAddress && <button class="people-action" type="submit" disabled={!canResolve || busy}>{resolve.pending ? <LoadingState>{t("people.compose.openingProfile")}</LoadingState> : t("people.compose.openProfile")}</button>}
     </form>
     {!profile && <>
       {saved.length > 0 ? <ul class="people-recipient-list" aria-label={t("people.compose.saved")}>{saved.map((contact) => <li key={contact.id}>

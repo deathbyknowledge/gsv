@@ -11,7 +11,8 @@ import { TextInput } from "../../../components/ui/TextInput";
 import { Hint } from "../../../components/ui/Tooltip";
 import { LINE_ICONS, LineIcon } from "../shared/lineIcons";
 import { LoadOnScroll } from "./LoadOnScroll";
-import { SaveContactTag } from "./SaveContactTag";
+import { ContactRow, RequestRow } from "./PeopleRows";
+import { PeopleSearch } from "./PeopleSearch";
 import { ContactAttentionNotice, ContactInspector, useContacts } from "./Contacts";
 import { InviteContact, type InvitationDraft } from "./InviteContact";
 import { PeopleWelcome } from "./PeopleWelcome";
@@ -26,7 +27,7 @@ import { useShipTakedowns } from "./ProfileTakedowns";
 import { NewConversation } from "./NewConversation";
 import { MessageRequest } from "./MessageRequest";
 import { BlockedPeople } from "./BlockedPeople";
-import { approachStatus, contactAsk, emptyApproachDraft, inboxPreview } from "./peopleModel";
+import { contactAsk, emptyApproachDraft } from "./peopleModel";
 import { shipTakenDown } from "./profileModel";
 import { usePeopleRoute, type PeopleRoute } from "./peopleNavigation";
 import { navigateApp } from "../../../services/navigation/appNavigation";
@@ -107,8 +108,8 @@ export function People({ onDirtyChange, onAsk }: {
     queryFn: async () => (await client.approach.get({ approachId: requestId! })).approach,
   });
   const selectedContact = contacts.find((contact) => contact.id === inboxContact.current);
-  const visible = contacts.filter((contact) => (view === "contacts" ? contact.preferences?.saved !== false : inboxByContact.has(contact.id))
-    && `${contactDisplayName(contact)} ${contact.remoteName} ${contact.remoteHandle ?? ""}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))
+  const query = searching ? filter.trim() : "";
+  const visible = contacts.filter((contact) => view === "contacts" ? contact.preferences?.saved !== false : inboxByContact.has(contact.id))
     .sort((a, b) => view === "contacts" ? contactDisplayName(a).localeCompare(contactDisplayName(b)) : (inboxByContact.get(b.id)?.conversation.updatedAt ?? 0) - (inboxByContact.get(a.id)?.conversation.updatedAt ?? 0));
   const items = requests.data?.pages.flatMap((page) => page.approaches) ?? [];
   const hasSelection = view === "profile" || (view === "requests" ? !!requestId : view === "inbox" && !!contactId);
@@ -148,23 +149,27 @@ export function People({ onDirtyChange, onAsk }: {
     <aside class="people-list" aria-label={t("people.listLabel")}>
       <div class="people-list-scroll" data-scroll-edge>
       <header class="people-list-heading">
-        {searching && listView !== "requests" ? <div class="people-search">
-          <TextInput label="" size="small" value={filter} placeholder={t(listView === "contacts" ? "people.contacts.findPlaceholder" : "people.search.placeholder")} prefix={<LineIcon path={LINE_ICONS.search} size={16} />} clearable onChange={setFilter}
-            inputProps={{ "aria-label": t(listView === "contacts" ? "people.contacts.find" : "people.search.label"), autoFocus: true, onKeyDown: (event) => { if (event.key === "Escape") closeSearch(); } }} />
+        {searching ? <div class="people-search">
+          <TextInput label="" size="small" value={filter} placeholder={t("people.search.placeholder")} prefix={<LineIcon path={LINE_ICONS.search} size={16} />} clearable onChange={setFilter}
+            inputProps={{ "aria-label": t("people.search.label"), autoComplete: "off", autoCapitalize: "none", spellcheck: false, autoFocus: true, onKeyDown: (event) => { if (event.key === "Escape") closeSearch(); } }} />
           <Hint text={t("people.search.close")} position="bottom"><IconButton glyph="close" variant="floating" size={36} ariaLabel={t("people.search.close")} onClick={closeSearch} /></Hint>
         </div> : <>
           <h1>{t(listView === "inbox" ? archived ? "people.inbox.archivedTitle" : "people.inbox.title" : listView === "contacts" ? "people.contacts.title" : history ? "people.requests.pastTitle" : direction === "outgoing" ? "people.requests.sentTitle" : "people.requests.title")}</h1>
-          {listView !== "requests" && <Hint text={t(listView === "contacts" ? "people.contacts.find" : "people.search.label")} position="bottom"><IconButton icon={<LineIcon path={LINE_ICONS.search} />} variant="floating" size={36} ariaLabel={t(listView === "contacts" ? "people.contacts.find" : "people.search.label")} disabled={busy} onClick={() => setSearching(true)} /></Hint>}
+          <Hint text={t("people.search.label")} position="bottom"><IconButton icon={<LineIcon path={LINE_ICONS.search} />} variant="floating" size={36} ariaLabel={t("people.search.label")} disabled={busy} onClick={() => setSearching(true)} /></Hint>
         </>}
       </header>
       {(listView !== "inbox" || archived) && <button class="people-action people-list-back" aria-label={t("people.back.label")} disabled={busy} onClick={() => { closeSearch(); open({ view: "inbox", contactId: null, requestId: null, archived: false }); }}>{t("people.back.conversations")}</button>}
-      {listView === "requests" ? <>
+      {query ? <PeopleSearch account={account} query={query} contacts={contacts} inbox={inboxByContact} busy={busy} selectedContactId={view === "inbox" ? selectedContact?.id ?? null : null}
+        selectedRequestId={view === "requests" ? requestId : null} shipTakenDown={takenDown} onOpenContact={openContact}
+        onOpenRequest={(id, to) => { closeSearch(); open({ view: "requests", direction: to, history: false, requestId: id, contactId: null }); }}
+        onCompose={(found) => { setCompose({ ...emptyApproachDraft(found.url), profile: found }); setDialog("profile"); }} />
+      : listView === "requests" ? <>
         {account && !canConfigure(account, "approach.list") && <p class="people-note people-access-note">{t("people.requests.noAccess")}</p>}
         <div class="people-list-tools"><button class="people-action" disabled={busy} onClick={() => { open({ direction: direction === "incoming" ? "outgoing" : "incoming", requestId: null }); }}>{t(direction === "incoming" ? "people.requests.showSent" : "people.requests.showReceived")}</button><button class="people-action" disabled={busy} onClick={() => { open({ history: !history, requestId: null }); }}>{t(history ? "people.requests.showCurrent" : "people.requests.showHistory")}</button></div>
         {requests.isFetching && !requests.data && <LoadingState variant="panel">{t("people.requests.loading")}</LoadingState>}
         {requests.error && <p class="people-error" role="alert">{requests.error.message}</p>}
         {requests.data && !items.length && <div class="people-empty-list"><p>{t(history ? "people.requests.noneHistory" : direction === "incoming" ? "people.requests.noneIncoming" : "people.requests.noneOutgoing")}</p><span>{t(direction === "incoming" ? "people.requests.reachHint" : "people.requests.startHint")}</span></div>}
-        <ul class="people-rows">{items.map((item) => <li key={item.id}><button class={`people-row${requestId === item.id ? " is-selected" : ""}`} disabled={busy} aria-current={requestId === item.id ? "true" : undefined} onClick={() => open({ requestId: item.id })}><span class="people-row-name">{item.displayName}</span><time>{new Date(item.createdAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time><span class="people-row-preview">{t(approachStatus(item, takenDown))}</span></button></li>)}</ul>
+        <ul class="people-rows">{items.map((item) => <RequestRow key={item.id} request={item} selected={requestId === item.id} busy={busy} shipTakenDown={takenDown} onOpen={() => open({ requestId: item.id })} />)}</ul>
         {requests.hasNextPage && <LoadOnScroll pages={requests.data?.pages.length ?? 0} loading={requests.isFetchingNextPage} onLoad={() => void requests.fetchNextPage()} />}
       </> : <>
         {listView === "inbox" && account && !canConfigure(account, "conversation.inbox") && <p class="people-note people-access-note">{t("people.inbox.noAccess")}</p>}
@@ -172,16 +177,11 @@ export function People({ onDirtyChange, onAsk }: {
         {(contactsQuery.isFetching && !contactsQuery.data || listView === "inbox" && inbox.isFetching && !inbox.data) && <LoadingState variant="panel">{t("people.inbox.loading")}</LoadingState>}
         {listView === "inbox" && inbox.error && <p class="people-error" role="alert">{inbox.error.message}</p>}
         {contactsQuery.error && <p class="people-error" role="alert">{contactsQuery.error.message}</p>}
-        {contactsQuery.data && (listView === "contacts" || inbox.data) && !visible.length && <div class="people-empty-list"><p>{t(filter ? "people.inbox.noMatch" : listView === "contacts" ? "people.contacts.empty" : archived ? "people.inbox.noArchived" : "people.inbox.empty")}</p><span>{t(filter ? "people.inbox.tryName" : "people.inbox.emptyHint")}</span></div>}
-        <ul class="people-rows">{visible.map((contact) => {
-          const entry = listView === "inbox" ? inboxByContact.get(contact.id) : undefined;
-          const selected = view === "inbox" && selectedContact?.id === contact.id;
-          const unsaved = listView === "inbox" && contact.preferences?.saved === false && contact.state === "active" && !contact.blocked;
-          return <li key={contact.id} class={unsaved ? "has-tag" : undefined}><button class={`people-row${selected ? " is-selected" : ""}${entry?.unread ? " is-unread" : ""}`} disabled={busy} aria-current={selected ? "true" : undefined} onClick={() => openContact(contact.id)}><span class="people-row-name">{contactDisplayName(contact)}{entry?.unread && <span class="people-unread" aria-label={t("people.inbox.unread")} />}</span>{listView === "inbox" && <time>{new Date(entry?.conversation.updatedAt ?? contact.updatedAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time>}<span class="people-row-preview">{inboxPreview(contact, entry)}</span></button>
-            {unsaved && <SaveContactTag contact={contact} account={account} disabled={busy} />}</li>;
-        })}</ul>
+        {contactsQuery.data && (listView === "contacts" || inbox.data) && !visible.length && <div class="people-empty-list"><p>{t(listView === "contacts" ? "people.contacts.empty" : archived ? "people.inbox.noArchived" : "people.inbox.empty")}</p><span>{t("people.inbox.emptyHint")}</span></div>}
+        <ul class="people-rows">{visible.map((contact) => <ContactRow key={contact.id} contact={contact} entry={listView === "inbox" ? inboxByContact.get(contact.id) : undefined} dated={listView === "inbox"}
+          selected={view === "inbox" && selectedContact?.id === contact.id} busy={busy} account={account} onOpen={() => openContact(contact.id)} />)}</ul>
         {listView === "inbox" && inbox.hasNextPage && <LoadOnScroll pages={inbox.data?.pages.length ?? 0} loading={inbox.isFetchingNextPage} onLoad={() => void inbox.fetchNextPage()} />}
-        {listView === "contacts" && <BlockedPeople account={account} filter={filter} />}
+        {listView === "contacts" && <BlockedPeople account={account} filter="" />}
       </>}
       </div>
       <footer class="people-list-footer">

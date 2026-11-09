@@ -2,8 +2,12 @@
 
 **People** holds conversations with people on other Ships. Open it with `p`.
 It opens **Recent**, your conversations newest first; older ones load as you scroll.
-The search icon beside the heading filters the list by name or handle; **Escape**
-or the close button puts the heading back. The icons at the bottom of the list, beside
+The search icon beside the heading searches all of People by name or handle,
+whichever list it opens from: recent and archived conversations, pending requests
+you received or sent, and blocked people. When nothing matches and what you typed
+is a handle or profile address, People looks it up and shows that public profile,
+with **open your conversation** or **send a message request**. **Escape** or the
+close button puts the heading back. The icons at the bottom of the list, beside
 your handle, open **archived**, **contacts**, **requests** and **add contact**. Requests are first messages from new people; the count on its icon
 shows the loaded active requests, with `+` when more remain. Each list has a
 **← recent** action to return to Recent.

@@ -32,6 +32,12 @@ export function profileAddress(value: string, deployment: PublicDeploymentConfig
   } catch { return null; }
 }
 
+/** Whether any of a person's names or handles contains what was typed, ignoring case and a leading @. */
+export function matchesPerson(names: ReadonlyArray<string | undefined>, query: string): boolean {
+  const wanted = query.trim().replace(/^@/, "").toLocaleLowerCase();
+  return names.some((name) => !!name && name.toLocaleLowerCase().includes(wanted));
+}
+
 /** A handle as People shows it: short for a Ship on this deployment's own domains, whole for one elsewhere. */
 export function handleLabel(handle: string, deployment: PublicDeploymentConfig = publicDeployment()): string {
   const domain = deploymentDomains(deployment)
