@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { collectText, createTestRoot } from "../../../testing/testHarness";
-import { BlockedPeople } from "./BlockedPeople";
+import { BlockedPeople, useBlockedPeople } from "./BlockedPeople";
 
 const ACCOUNT: ConsoleAccount = { uid: 1000, username: "sam", displayName: "Sam", relation: "self", runnable: false, gecos: "Sam", capabilities: ["*"] };
 const BLOCKS = [{ did: "did:plc:spam", displayName: "Spam Account", createdAtMs: 1 }, { did: "did:plc:troll", displayName: "Troll", createdAtMs: 2 }];
@@ -15,15 +15,18 @@ let tree: ComponentChildren;
 let root: ReturnType<typeof createTestRoot>;
 let cache: QueryClient;
 
-function Harness({ filter }: { filter: string }) { tree = BlockedPeople({ account: ACCOUNT, filter }); return null; }
+let search: ReturnType<typeof useBlockedPeople> | undefined;
+function Harness({ filter }: { filter: string }) { tree = BlockedPeople({ account: ACCOUNT, filter }); search = useBlockedPeople(ACCOUNT, filter, false); return null; }
 
 type Block = { did: string; displayName?: string; createdAtMs: number };
 
-/** Shows the blocked section over `blocks`, narrowed by `filter`; `later` is a second page behind it. */
-async function mount(blocks: Block[], filter = "", later?: Block[]) {
+/** Shows the blocked section over `blocks`, narrowed by `filter`; `later` is a second page behind it, or a page that fails. */
+async function mount(blocks: Block[], filter = "", later?: Block[] | Error) {
   const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
     if (call !== "contact.block.list") throw new Error(`Unexpected request ${call}`);
-    const page = z.object({ cursor: z.string().optional() }).parse(args).cursor === "page-2" ? { blocks: later ?? [] } : { blocks, nextCursor: later ? "page-2" : undefined };
+    const second = z.object({ cursor: z.string().optional() }).parse(args).cursor === "page-2";
+    if (second && later instanceof Error) throw later;
+    const page = second ? { blocks: later instanceof Error ? [] : later ?? [] } : { blocks, nextCursor: later ? "page-2" : undefined };
     return { data: page };
   });
   await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness filter={filter} /></QueryClientProvider></GatewayProvider>);
@@ -63,6 +66,14 @@ describe("blocked people under the contacts list", () => {
     await act(async () => {});
     expect(collectText(tree)).toContain("Quiet Neighbour");
     expect(collectText(tree)).not.toContain("Spam Account");
+  });
+
+  it("keeps a filtered search unresolved while a later page has failed", async () => {
+    await mount(BLOCKS, "quiet", new Error("Blocked list unavailable"));
+    await vi.waitFor(() => expect(search?.blocks.isFetchNextPageError).toBe(true));
+    await act(async () => {});
+    expect(search?.entries).toEqual([]);
+    expect(search?.searching).toBe(true);
   });
 
   it("narrows to the names the search matches", async () => {

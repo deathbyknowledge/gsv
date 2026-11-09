@@ -45,6 +45,17 @@ describe("the not a contact tag", () => {
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("contact.preferences.update", { contactId: "contact-mara", expectedRevision: 4, patch: { saved: true } }));
   });
 
+  it("says when saving fails and rereads the contact so a retry uses its current revision", async () => {
+    const request = vi.spyOn(GSVClient.prototype, "request").mockRejectedValue(new Error("Contact preferences changed"));
+    const invalidate = vi.spyOn(cache, "invalidateQueries");
+    await mount();
+    await act(async () => { await collectNodes(tree).find((node) => node.type === "button")!.props.onClick!(); });
+    await vi.waitFor(() => expect(collectNodes(tree).find((node) => node.props.role === "alert")).toBeDefined());
+    expect(collectText(tree)).toContain("couldn’t add · try again");
+    expect(request).toHaveBeenCalledWith("contact.preferences.update", expect.anything());
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["instrument", "contacts"] });
+  });
+
   it("can't save for someone who may not change contact preferences", async () => {
     await mount({ ...ACCOUNT, capabilities: ["contact.list"] });
     expect(collectNodes(tree).find((node) => node.type === "button")?.props.disabled).toBe(true);

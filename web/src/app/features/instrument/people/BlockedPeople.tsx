@@ -29,7 +29,8 @@ export function useBlockedPeople(account: ConsoleAccount | undefined, filter: st
   }, [loadAll, query, blocks.hasNextPage, blocks.isFetchingNextPage, blocks.isFetchNextPageError]);
   const entries = (blocks.data?.pages.flatMap((page) => page.blocks) ?? [])
     .filter((entry) => (entry.displayName ?? t("people.blocked.unknown")).toLocaleLowerCase().includes(query));
-  return { blocks, entries, searching: !!query && blocks.isFetching };
+  // A filtered search is unresolved until every page arrived; a failed page keeps it so until its retry succeeds.
+  return { blocks, entries, searching: !!query && (blocks.isFetching || blocks.hasNextPage || blocks.isError) };
 }
 
 /** The people you blocked, under the contacts list; it shows only once someone is blocked. */

@@ -103,6 +103,16 @@ export function People({ onDirtyChange, onAsk }: {
     queryFn: ({ pageParam }) => client.approach.list({ direction: requestDirection, status: requestHistory ? "history" : "active", before: pageParam, limit: 30 }),
     getNextPageParam: (page) => page.next,
   });
+  // The badge counts active received requests, whichever request list is open; this shares that list's cache.
+  const pendingIncoming = useInfiniteQuery({
+    queryKey: [...INSTRUMENT_APPROACHES_KEY, "list", "incoming", false],
+    enabled: connected && human && canConfigure(account!, "approach.list"),
+    initialPageParam: NO_CURSOR,
+    queryFn: ({ pageParam }) => client.approach.list({ direction: "incoming", status: "active", before: pageParam, limit: 30 }),
+    getNextPageParam: (page) => page.next,
+  });
+  const pendingCount = pendingIncoming.data?.pages.reduce((total, page) => total + page.approaches.length, 0) ?? 0;
+  const pendingLabel = `${pendingCount}${pendingIncoming.hasNextPage ? "+" : ""}`;
   const request = useQuery({
     queryKey: [...INSTRUMENT_APPROACHES_KEY, "detail", requestId], enabled: connected && view === "requests" && !!requestId && human && canConfigure(account!, "approach.get"),
     queryFn: async () => (await client.approach.get({ approachId: requestId! })).approach,
@@ -159,7 +169,7 @@ export function People({ onDirtyChange, onAsk }: {
         </>}
       </header>
       {(listView !== "inbox" || archived) && <button class="people-action people-list-back" aria-label={t("people.back.label")} disabled={busy} onClick={() => { closeSearch(); open({ view: "inbox", contactId: null, requestId: null, archived: false }); }}>{t("people.back.conversations")}</button>}
-      {query ? <PeopleSearch account={account} query={query} contacts={contacts} inbox={inboxByContact} busy={busy} selectedContactId={view === "inbox" ? selectedContact?.id ?? null : null}
+      {query ? <PeopleSearch account={account} query={query} contacts={contacts} contactsLoaded={!!contactsQuery.data} contactsError={contactsQuery.error} inbox={inboxByContact} busy={busy} selectedContactId={view === "inbox" ? selectedContact?.id ?? null : null}
         selectedRequestId={view === "requests" ? requestId : null} shipTakenDown={takenDown} onOpenContact={openContact}
         onOpenRequest={(id, to) => { closeSearch(); open({ view: "requests", direction: to, history: false, requestId: id, contactId: null }); }}
         onCompose={(found) => { setCompose({ ...emptyApproachDraft(query), profile: found }); setDialog("add"); }} />
@@ -191,8 +201,8 @@ export function People({ onDirtyChange, onAsk }: {
             onClick={() => { closeSearch(); open({ view: "inbox", contactId: null, requestId: null, archived: !(listView === "inbox" && archived) }); }} /></Hint>
           <Hint text={t("people.contacts.open")}><IconButton icon={<LineIcon path={LINE_ICONS.contacts} />} variant="floating" size={40} ariaLabel={t("people.contacts.open")} pressed={listView === "contacts"} disabled={busy} onClick={() => openList(listView === "contacts" ? "inbox" : "contacts")} /></Hint>
           <span class="people-nav-item">
-            <Hint text={t("people.requests.open")}><IconButton icon={<LineIcon path={LINE_ICONS.requests} />} variant="floating" size={40} ariaLabel={items.length ? t("people.requests.openCount", { total: `${items.length}${requests.hasNextPage ? "+" : ""}` }) : t("people.requests.open")} pressed={listView === "requests"} disabled={busy || !account || !canConfigure(account, "approach.list")} onClick={() => openList(listView === "requests" ? "inbox" : "requests")} /></Hint>
-            {items.length > 0 && <span class="people-nav-count" aria-hidden="true">{items.length}{requests.hasNextPage ? "+" : ""}</span>}
+            <Hint text={t("people.requests.open")}><IconButton icon={<LineIcon path={LINE_ICONS.requests} />} variant="floating" size={40} ariaLabel={pendingCount ? t("people.requests.openCount", { total: pendingLabel }) : t("people.requests.open")} pressed={listView === "requests"} disabled={busy || !account || !canConfigure(account, "approach.list")} onClick={() => openList(listView === "requests" ? "inbox" : "requests")} /></Hint>
+            {pendingCount > 0 && <span class="people-nav-count" aria-hidden="true">{pendingLabel}</span>}
           </span>
           <Hint text={t("people.connect.add")}><IconButton icon={<LineIcon path={LINE_ICONS.connect} />} variant="floating" size={40} ariaLabel={t("people.connect.add")} disabled={!connected || busy || !mayStart} onClick={() => setDialog("add")} /></Hint>
         </nav>

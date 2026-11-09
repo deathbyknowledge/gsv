@@ -37,10 +37,13 @@ function usePendingRequests(account: ConsoleAccount | undefined, direction: Appr
  * One search across People, whichever list it was opened from: conversations, recent or archived,
  * pending requests, blocked people and, when nothing here matches, the public profile an address names.
  */
-export function PeopleSearch({ account, query, contacts, inbox, busy, selectedContactId, selectedRequestId, shipTakenDown, onOpenContact, onOpenRequest, onCompose }: {
+export function PeopleSearch({ account, query, contacts, contactsLoaded, contactsError, inbox, busy, selectedContactId, selectedRequestId, shipTakenDown, onOpenContact, onOpenRequest, onCompose }: {
   account: ConsoleAccount | undefined;
   query: string;
   contacts: ContactSummary[];
+  /** Whether the contact list has arrived; until it has, nothing here can be ruled out. */
+  contactsLoaded: boolean;
+  contactsError: Error | null;
   inbox: Map<string, ConversationInboxEntry>;
   busy: boolean;
   selectedContactId: string | null;
@@ -64,9 +67,16 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
   // Blocked people are listed below the results, so they count as a match here.
   const blocked = useBlockedPeople(account, query, false);
   const blockedMatch = blocked.entries.length > 0 || blocked.searching;
+  // Every local list this account may read has fully and successfully arrived; one still loading, cut short or failed
+  // may hold the person. A list it may not read can't be checked here; the Kernel still refuses a request to someone blocked.
+  const settled = (list: { isSuccess: boolean; isError: boolean; hasNextPage: boolean }, call: string) =>
+    !account || !canConfigure(account, call) || (list.isSuccess && !list.isError && !list.hasNextPage);
+  const mayListContacts = !!account && canConfigure(account, "contact.list");
+  const localComplete = (!mayListContacts || (contactsLoaded && !contactsError)) && settled(incoming, "approach.list") && settled(outgoing, "approach.list")
+    && settled(blocked.blocks, "contact.block.list");
   const address = profileAddress(query);
   const mayLookup = connected && !!account && canConfigure(account, "profile.resolve");
-  const wantsProfile = !!address && mayLookup && !conversations.length && !requests.length && !requestsLoading && !blockedMatch;
+  const wantsProfile = !!address && mayLookup && localComplete && !conversations.length && !requests.length && !requestsLoading && !blockedMatch;
   useEffect(() => {
     lookup.reset();
     if (!wantsProfile) return;
@@ -75,9 +85,11 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
   }, [address, wantsProfile]);
   const profile = wantsProfile ? lookup.profile : undefined;
   const existing = profile ? contacts.find((contact) => contact.remoteDid === profile.did) : undefined;
+  // A block is kept by DID with the name it had then, so a profile found under another name can still be blocked.
+  const blockedProfile = !!profile && !!blocked.blocks.data?.pages.some((page) => page.blocks.some((block) => block.did === profile.did));
   // While typing pauses and the lookup runs, the profile is still on its way rather than missing.
   const awaitingProfile = wantsProfile && !profile && !lookup.error;
-  const nothing = !conversations.length && !requests.length && !requestsLoading && !wantsProfile && !blockedMatch;
+  const nothing = localComplete && !conversations.length && !requests.length && !requestsLoading && !wantsProfile && !blockedMatch;
 
   return <section class="people-search-results" aria-label={t("people.search.results")}>
     {conversations.length > 0 && <>
@@ -90,6 +102,8 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
       <ul class="people-rows">{requests.map((request) => <RequestRow key={request.id} request={request} selected={selectedRequestId === request.id} busy={busy}
         shipTakenDown={shipTakenDown} onOpen={() => onOpenRequest(request.id, request.direction)} />)}</ul>
     </>}
+    {mayListContacts && !contactsLoaded && !contactsError && <LoadingState variant="panel">{t("people.inbox.loading")}</LoadingState>}
+    {contactsError && <p class="people-error people-search-note" role="alert">{contactsError.message}</p>}
     {requestsLoading && <LoadingState variant="panel">{t("people.search.loadingRequests")}</LoadingState>}
     {(incoming.error ?? outgoing.error) && <p class="people-error people-search-note" role="alert">{(incoming.error ?? outgoing.error)?.message}{" "}
       {/* Loading stops at a failed page until the person asks again. */}
@@ -102,8 +116,11 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
       <span class="people-kicker">{handleLabel(profile.handle)}</span>
       <h2>{profile.displayName}</h2>
       {profile.about && <p>{profile.about}</p>}
-      {existing ? <button class="people-action is-accent" disabled={busy} onClick={() => onOpenContact(existing.id)}>{t("people.compose.openExisting")}</button>
-        : profile.contactPolicy === "requests" ? <button class="people-action is-accent" disabled={busy} onClick={() => onCompose(profile)}>{t("people.search.sendRequest")}</button>
+      {blockedProfile ? <p class="people-note">{t("people.search.blockedProfile")}</p>
+        : existing ? <button class="people-action is-accent" disabled={busy} onClick={() => onOpenContact(existing.id)}>{t("people.compose.openExisting")}</button>
+        : profile.contactPolicy === "requests" ? account && canConfigure(account, "approach.create")
+          ? <button class="people-action is-accent" disabled={busy} onClick={() => onCompose(profile)}>{t("people.search.sendRequest")}</button>
+          : <p class="people-note">{t("people.compose.noSend")}</p>
         : <p class="people-note">{t(profile.contactPolicy === "invitation" ? "people.compose.byInvitation" : "people.compose.closed")}</p>}
     </div>}
     {wantsProfile && lookup.missing && <p class="people-note people-search-note">{t("people.search.noProfile", { handle: query.trim().replace(/^@?/, "@") })}</p>}

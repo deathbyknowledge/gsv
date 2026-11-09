@@ -14,9 +14,12 @@ export function SaveContactTag({ contact, account, disabled }: { contact: Contac
   const save = useMutation({
     mutationFn: () => client.contact.preferences.update({ contactId: contact.id, expectedRevision: contact.preferences!.revision, patch: { saved: true } }),
     onSuccess: () => cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACTS_KEY }),
+    // A stale revision or a failed request leaves the contact as it was; reread it so a retry uses the current revision.
+    onError: () => cache.invalidateQueries({ queryKey: INSTRUMENT_CONTACTS_KEY }),
   });
   const allowed = connected && !!account && account.uid === contact.ownerUid && canConfigure(account, "contact.preferences.update");
-  return <button class="people-contact-tag" disabled={disabled || !allowed || save.isPending} aria-label={t("people.contact.addContactLabel", { name: contactDisplayName(contact) })} title={save.error?.message} onClick={() => save.mutate()}>
-    <span class="people-contact-tag-state">{t("people.contact.notContact")}</span><span class="people-contact-tag-action">{t("people.contact.addContact")}</span>
+  return <button class={`people-contact-tag${save.isError ? " is-failed" : ""}`} disabled={disabled || !allowed || save.isPending} aria-label={t("people.contact.addContactLabel", { name: contactDisplayName(contact) })} onClick={() => save.mutate()}>
+    {save.isError ? <span class="people-contact-tag-failed" role="alert" title={save.error.message}>{t("people.contact.addFailed")}</span>
+      : <><span class="people-contact-tag-state">{t("people.contact.notContact")}</span><span class="people-contact-tag-action">{t("people.contact.addContact")}</span></>}
   </button>;
 }
