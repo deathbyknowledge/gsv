@@ -5,7 +5,13 @@ const marketingOrigin = "https://ship.space";
 export const attributionKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"] as const;
 type Milestone = "CompleteRegistration" | "FirstTaskSubmitted";
 type AcquisitionClient = { track(name: Milestone, eventId: string, occurredAt: number): void };
-type AcquisitionWindow = Window & { shipAcquisition?: AcquisitionClient; shipAcquisitionReady?: Promise<void> };
+type HistoryClient = { conversation: Pick<GSVClient["conversation"], "history"> };
+declare global {
+  interface Window {
+    shipAcquisition?: AcquisitionClient;
+    shipAcquisitionReady?: Promise<void>;
+  }
+}
 let ready: Promise<AcquisitionClient | undefined> | undefined;
 
 /** Only campaign tags travel onward; onboarding tokens and invitation fragments stay intact. */
@@ -21,11 +27,11 @@ export function attributedDestination(destination: string, source: string): stri
 
 /** First-party coordinator only. No Meta SDK, cookies or form inspection in the product. */
 export function startAcquisition(): void {
-  if (ready || import.meta.env.VITE_ACQUISITION_ENABLED !== "true" || typeof window === "undefined") return;
-  const url = new URL(window.location.href);
+  const target = globalThis.window;
+  if (ready || import.meta.env.VITE_ACQUISITION_ENABLED !== "true" || !target) return;
+  const url = new URL(target.location.href);
   if (url.protocol !== "https:" || !(url.hostname === "ship.space" || url.hostname.endsWith(".ship.space"))) return;
   ready = new Promise((resolve) => {
-    const target = window as AcquisitionWindow;
     const script = document.createElement("script");
     script.async = true;
     script.src = `${marketingOrigin}/acquisition-client.js`;
@@ -61,7 +67,7 @@ export function captureRegistration(uid: number): void {
  * Earlier user messages from other browsers/messengers also prevent a false first task.
  * Content is read only through the owner's existing authenticated history API; it is
  * never copied into the acquisition payload. */
-export async function isFirstUserSubmission(client: Pick<GSVClient, "conversation">, message: ConversationMessage): Promise<boolean> {
+export async function isFirstUserSubmission(client: HistoryClient, message: ConversationMessage): Promise<boolean> {
   if (message.author.kind !== "user" || message.origin.kind !== "client") return false;
   let beforeSequence = message.sequence;
   while (beforeSequence > 1) {
@@ -75,7 +81,7 @@ export async function isFirstUserSubmission(client: Pick<GSVClient, "conversatio
   return true;
 }
 
-export function captureFirstTask(client: Pick<GSVClient, "conversation">, message: ConversationMessage): void {
+export function captureFirstTask(client: HistoryClient, message: ConversationMessage): void {
   if (!ready) return;
   const occurredAt = Date.now();
   void (async () => {

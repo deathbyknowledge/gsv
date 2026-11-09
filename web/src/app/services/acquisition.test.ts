@@ -5,10 +5,12 @@ import { attributedDestination, isFirstUserSubmission, milestoneId } from "./acq
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 const message = { id: "message:opaque-id", conversationId: "canonical-ship", sequence: 4, text: "PRIVATE TASK", author: { kind: "user", uid: 1000 }, origin: { kind: "client" }, createdAt: 1 } satisfies ConversationMessage;
-function historyClient(pages: Partial<ConversationHistoryResult>[]) {
-  const history = vi.fn();
-  for (const page of pages) history.mockResolvedValueOnce(page);
-  return { client: { conversation: { history } } as unknown as Pick<GSVClient, "conversation">, history };
+function historyClient(pages: Pick<ConversationHistoryResult, "messages" | "hasMore">[]) {
+  const history = vi.fn<GSVClient["conversation"]["history"]>();
+  const conversation = { id: message.conversationId, ownerUid: 1000, title: null, latestSequence: 4,
+    createdAt: 1, updatedAt: 1, kind: "ship", handlerPid: "ship" } satisfies ConversationHistoryResult["conversation"];
+  for (const page of pages) history.mockResolvedValueOnce({ conversation, ...page });
+  return { client: { conversation: { history } }, history };
 }
 
 describe("acquisition boundary", () => {
