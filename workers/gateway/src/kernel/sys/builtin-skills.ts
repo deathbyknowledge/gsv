@@ -4,6 +4,7 @@ import contactsSkill from "../../../../../skills/contacts/SKILL.md";
 import eventSourcesSkill from "../../../../../skills/event-sources/SKILL.md";
 import gsvManualSkill from "../../../../../skills/gsv-manual/SKILL.md";
 import imageReadingSkill from "../../../../../skills/image-reading/SKILL.md";
+import journalSkill from "../../../../../skills/journal/SKILL.md";
 import memorySkill from "../../../../../skills/memory/SKILL.md";
 import processOrchestrationSkill from "../../../../../skills/process-orchestration/SKILL.md";
 import skillAuthoringSkill from "../../../../../skills/skill-authoring/SKILL.md";
@@ -19,6 +20,7 @@ const BUILTIN_SKILL_FILES = new Map<string, string>([
   ["event-sources/SKILL.md", eventSourcesSkill],
   ["gsv-manual/SKILL.md", gsvManualSkill],
   ["image-reading/SKILL.md", imageReadingSkill],
+  ["journal/SKILL.md", journalSkill],
   ["memory/SKILL.md", memorySkill],
   ["process-orchestration/SKILL.md", processOrchestrationSkill],
   ["skill-authoring/SKILL.md", skillAuthoringSkill],

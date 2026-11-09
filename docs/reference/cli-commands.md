@@ -284,6 +284,35 @@ gsv routines add "Pick up the parcel" "Remind me" --at "tomorrow 18:00"
 gsv routines edit 4410 --pause
 ```
 
+### Journal
+
+```bash
+gsv journal [today | yesterday | YYYY-MM-DD]
+gsv journal on [--hours FROM-TO]
+gsv journal off
+```
+
+`journal on` adds a routine named Journal. Your Ship then checks in every hour
+from 07:00 to 23:00 in your Ship's time zone, or the hours `--hours` gives,
+such as `--hours 8-22`. At each check-in it writes down what happened since the
+last one and asks what you would want done now. Usually the answer is nothing.
+`journal off` removes the routine; the journal stays in your personal wiki.
+
+`journal` draws a day as a strip of check-ins: `●` where your Ship did
+something, `·` where the hour was quiet, and the events that landed between
+them underneath. In a terminal, `←`/`→` move between check-ins to read each
+one, `↑`/`↓` move between days, and `q` quits. Piped output prints the strip
+followed by every check-in.
+
+```text
+Mon 9 Nov 2026  3 check-ins · 1 acted
+
+──·────────────●────────────·──▶
+   ╲✉     ⚑  ✓  ╲    ✉       ╲
+  08           09           10
+                ▲
+```
+
 ### Memory
 
 ```bash

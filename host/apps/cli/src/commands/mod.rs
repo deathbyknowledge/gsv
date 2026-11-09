@@ -5,6 +5,7 @@ pub(crate) mod approvals;
 pub(crate) mod contacts;
 pub(crate) mod event;
 pub(crate) mod files;
+pub(crate) mod journal;
 pub(crate) mod mail;
 pub(crate) mod memory;
 pub(crate) mod places;

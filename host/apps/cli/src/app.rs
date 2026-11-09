@@ -7,8 +7,8 @@ use crate::cli::{
     LegacyDeviceAction, LocalConfigAction, WorkAction, TOP_HELP,
 };
 use crate::commands::{
-    account, activity, contacts, event, files, mail, memory, places, requests, routines, run, ship,
-    tokens, work,
+    account, activity, contacts, event, files, journal, mail, memory, places, requests, routines,
+    run, ship, tokens, work,
 };
 use crate::desktop::run_desktop;
 use crate::device::{
@@ -86,6 +86,9 @@ pub(crate) async fn run() -> Result<(), DynError> {
         }
         Commands::Memory { action } => {
             signed_in!(|auth| memory::run(&url, auth, action.clone(), out))
+        }
+        Commands::Journal { day, action } => {
+            signed_in!(|auth| journal::run(&url, auth, action.clone(), day.clone(), out))
         }
         Commands::Mail { page, action } => {
             signed_in!(|auth| mail::run(&url, auth, page.clone(), action.clone(), out))
