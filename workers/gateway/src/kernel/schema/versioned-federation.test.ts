@@ -138,3 +138,37 @@ describe("message requests from before DIDs", () => {
     });
   });
 });
+
+describe("message requests from before the sender could save the person", () => {
+  it("keeps an earlier outgoing request unsaved, and records the choice on a new one", async () => {
+    await runWithRealKernelSql(async (sql, storage) => {
+      await storage.deleteAll();
+      runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS.filter((migration) => migration.id < 94));
+      const did = "did:plc:ewvi7nxzyoun6zhxrhs64oiz";
+      sql.exec(`INSERT INTO social_approaches (
+        approach_id, owner_uid, direction, request_id, remote_did, remote_display_name, local_display_name,
+        conversation_id, contact_id, thread_id, state, fingerprint, idempotency_key, profile_cid, message_id, sent_at,
+        delivery_state, ship_handles_messages, created_at, updated_at, expires_at
+      ) VALUES ('approach:old', 1000, 'outgoing', 'request:old', ?, 'Remote', 'Local', 'conv:old', 'contact:old', 'thread:old',
+        'pending', 'hash:old', 'send:old', 'bafyold', 'msg:old', 1, 'received', 1, 1, 2, 9999999999999)`, did);
+
+      runKernelSqlMigrations(storage);
+      runKernelSqlMigrations(storage);
+      const requests = new ApproachStore(storage);
+      expect(requests.get("approach:old")).toMatchObject({ shipHandlesMessages: true, saveContact: false });
+      expect(() => sql.exec("UPDATE social_approaches SET save_contact = 2 WHERE approach_id = 'approach:old'")).toThrow();
+
+      const now = Date.now();
+      const sent = requests.prepare({
+        ownerUid: 1000, direction: "outgoing", remoteDid: "did:plc:yk4dd2qkboz2yv6tpubpc6co", remoteDisplayName: "Other", localDisplayName: "Local",
+        conversationId: "conv:new", contactId: "contact:new", threadId: "thread:new", saveContact: true,
+        content: {
+          requestId: "request:new", profileCid: "bafyprofile", name: "Local", messageId: "msg:new",
+          text: "Keep me", createdAtMs: now, expiresAtMs: now + APPROACH_LIFETIME_MS,
+        },
+        fingerprint: "hash:new", idempotencyKey: "send:new",
+      }, () => {});
+      expect(sent).toMatchObject({ shipHandlesMessages: false, saveContact: true });
+    });
+  });
+});
