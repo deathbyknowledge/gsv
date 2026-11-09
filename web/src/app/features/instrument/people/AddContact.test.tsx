@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/preact-query";
 import type { ComponentChildren } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { ConsoleAccount } from "../../../domain/system/consoleModels";
 import { GatewayProvider } from "../../../services/gateway/GatewayProvider";
 import { collectNodes, collectText, createTestRoot } from "../../../testing/testHarness";
@@ -28,9 +29,12 @@ function Harness({ draft }: { draft: ApproachDraft }) {
 
 /** Types `text` into Add a contact, with `resolve` answering any profile lookup. */
 async function type(text: string, resolve?: () => Promise<{ data: { profile: PublicProfile } }>, blocks: Array<{ did: string; displayName: string; createdAtMs: number }> = []) {
-  const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call) => {
+  const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
     if (call === "profile.resolve" && resolve) return resolve();
-    if (call === "contact.block.list") return { data: { blocks } };
+    if (call === "contact.block.list") {
+      const { did } = z.object({ did: z.string().optional() }).parse(args);
+      return { data: { blocks: blocks.filter((block) => !did || block.did === did) } };
+    }
     throw new Error(`Unexpected request ${call}`);
   });
   await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness draft={emptyApproachDraft(text)} /></QueryClientProvider></GatewayProvider>);
@@ -68,8 +72,10 @@ describe("adding a contact", () => {
   });
 
   it("won't offer a request to someone you blocked", async () => {
-    await type("juno.ship.space", async () => ({ data: { profile: JUNO } }), [{ did: JUNO.did, displayName: "Old name", createdAtMs: 1 }]);
+    const request = await type("juno.ship.space", async () => ({ data: { profile: JUNO } }), [{ did: JUNO.did, displayName: "Old name", createdAtMs: 1 }]);
     await vi.waitFor(() => expect(collectText(tree)).toContain("You blocked this person."));
+    // Checked by the found person's DID, so a block on any later page of the list still counts.
+    expect(request).toHaveBeenCalledWith("contact.block.list", { did: JUNO.did });
     expect(messageButton()).toBeUndefined();
   });
 

@@ -10,7 +10,8 @@ import { useT } from "../../../i18n/locale";
 import { NewConversation } from "./NewConversation";
 import { handleLabel, matchesPerson, profileAddress, type ApproachDraft } from "./peopleModel";
 import { usePersonLookup } from "./usePersonLookup";
-import { useBlockedPeople } from "./BlockedPeople";
+import { useQuery } from "../../../services/navigation/viewQueries";
+import { INSTRUMENT_CONTACT_BLOCKS_KEY } from "../wire/queryKeys";
 
 /** How long typing pauses before a handle is looked up on the open network. */
 const LOOKUP_DELAY_MS = 400;
@@ -31,7 +32,7 @@ export function AddContact({ account, draft, onChange, onSent, onBusy, contacts,
   onHaveInvitation: () => void;
 }) {
   const t = useT();
-  const { connected } = useGateway();
+  const { client, connected } = useGateway();
   const lookup = usePersonLookup();
   const query = draft.url.trim();
   const address = profileAddress(query);
@@ -45,9 +46,16 @@ export function AddContact({ account, draft, onChange, onSent, onBusy, contacts,
     return () => window.clearTimeout(timer);
   }, [address, mayLookup, !!draft.profile]);
   const found = lookup.profile && !known.some((contact) => contact.remoteDid === lookup.profile!.did) ? lookup.profile : undefined;
-  // A block is kept by DID, so someone found under any name may still be blocked.
-  const blocked = useBlockedPeople(account, "", false);
-  const foundBlocked = !!found && !!blocked.blocks.data?.pages.some((page) => page.blocks.some((block) => block.did === found.did));
+  // A block is kept by DID, so whoever was found is checked by theirs, under whatever name they were blocked.
+  const mayCheckBlock = connected && !!account && canConfigure(account, "contact.block.list");
+  const blockCheck = useQuery({
+    queryKey: [...INSTRUMENT_CONTACT_BLOCKS_KEY, "did", found?.did],
+    enabled: mayCheckBlock && !!found,
+    queryFn: async () => (await client.contact.block.list({ did: found!.did })).blocks.length > 0,
+  });
+  const foundBlocked = blockCheck.data === true;
+  // Until the check answers, the person isn't offered a request; an account that may not check leaves it to the Kernel.
+  const blockSettled = !mayCheckBlock || blockCheck.isSuccess;
   // A request needs its handling choice too, which takes contact.preferences.update.
   const maySendRequest = !!account && canConfigure(account, "approach.create") && canConfigure(account, "contact.preferences.update");
   const looking = !!address && mayLookup && !lookup.profile && !lookup.error;
@@ -74,6 +82,8 @@ export function AddContact({ account, draft, onChange, onSent, onBusy, contacts,
         <span><strong>{found.displayName}</strong><small>{handleLabel(found.handle)}</small>{found.about && <em>{found.about}</em>}</span>
         {foundBlocked ? <small>{t("people.search.blockedProfile")}</small>
           : !maySendRequest ? <small>{t("people.compose.noSend")}</small>
+          : blockCheck.error ? <small class="people-error" role="alert">{blockCheck.error.message}</small>
+          : !blockSettled ? null
           : <button class="people-action is-accent" onClick={() => onChange({ ...draft, profile: found })}>{t("people.add.message", { name: found.displayName })}</button>}
       </li>}
     </ul>}
