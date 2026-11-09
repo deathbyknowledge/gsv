@@ -25,7 +25,7 @@ import { Profile } from "./Profile";
 import { useShipTakedowns } from "./ProfileTakedowns";
 import { NewConversation } from "./NewConversation";
 import { MessageRequest } from "./MessageRequest";
-import { BlockedPeople } from "./BlockedPeople";
+import { BlockedPeople, useBlockedPeople } from "./BlockedPeople";
 import { approachStatus, contactAsk, emptyApproachDraft, inboxPreview } from "./peopleModel";
 import { shipTakenDown } from "./profileModel";
 import { usePeopleRoute, type PeopleRoute } from "./peopleNavigation";
@@ -111,6 +111,9 @@ export function People({ onDirtyChange, onAsk }: {
     && `${contactDisplayName(contact)} ${contact.remoteName} ${contact.remoteHandle ?? ""}`.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()))
     .sort((a, b) => view === "contacts" ? contactDisplayName(a).localeCompare(contactDisplayName(b)) : (inboxByContact.get(b.id)?.conversation.updatedAt ?? 0) - (inboxByContact.get(a.id)?.conversation.updatedAt ?? 0));
   const items = requests.data?.pages.flatMap((page) => page.approaches) ?? [];
+  // A filter on Contacts also reaches blocked people; while they load or match, the list isn't empty.
+  const blocked = useBlockedPeople(account, listView === "contacts" ? filter : "", false);
+  const blockedFound = listView === "contacts" && !!filter.trim() && (blocked.entries.length > 0 || blocked.searching);
   const hasSelection = view === "profile" || (view === "requests" ? !!requestId : view === "inbox" && !!contactId);
   useLayoutEffect(() => { if (active && hasSelection) detail.current?.focus({ preventScroll: true }); }, [active, view, contactId, requestId]);
   const mayStart = !!account && (canConfigure(account, "contact.invite.create") || canConfigure(account, "contact.invite.accept") || canConfigure(account, "profile.resolve"));
@@ -165,14 +168,14 @@ export function People({ onDirtyChange, onAsk }: {
         {requests.error && <p class="people-error" role="alert">{requests.error.message}</p>}
         {requests.data && !items.length && <div class="people-empty-list"><p>{t(history ? "people.requests.noneHistory" : direction === "incoming" ? "people.requests.noneIncoming" : "people.requests.noneOutgoing")}</p><span>{t(direction === "incoming" ? "people.requests.reachHint" : "people.requests.startHint")}</span></div>}
         <ul class="people-rows">{items.map((item) => <li key={item.id}><button class={`people-row${requestId === item.id ? " is-selected" : ""}`} disabled={busy} aria-current={requestId === item.id ? "true" : undefined} onClick={() => open({ requestId: item.id })}><span class="people-row-name">{item.displayName}</span><time>{new Date(item.createdAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time><span class="people-row-preview">{t(approachStatus(item, takenDown))}</span></button></li>)}</ul>
-        {requests.hasNextPage && <LoadOnScroll pages={requests.data?.pages.length ?? 0} loading={requests.isFetchingNextPage} onLoad={() => void requests.fetchNextPage()} />}
+        {requests.hasNextPage && <LoadOnScroll pages={requests.data?.pages.length ?? 0} loading={requests.isFetchingNextPage} failed={requests.isFetchNextPageError} onLoad={() => void requests.fetchNextPage()} />}
       </> : <>
         {listView === "inbox" && account && !canConfigure(account, "conversation.inbox") && <p class="people-note people-access-note">{t("people.inbox.noAccess")}</p>}
         {account && !canConfigure(account, "contact.list") && <p class="people-note people-access-note">{t("people.contacts.noAccess")}</p>}
         {(contactsQuery.isFetching && !contactsQuery.data || listView === "inbox" && inbox.isFetching && !inbox.data) && <LoadingState variant="panel">{t("people.inbox.loading")}</LoadingState>}
         {listView === "inbox" && inbox.error && <p class="people-error" role="alert">{inbox.error.message}</p>}
         {contactsQuery.error && <p class="people-error" role="alert">{contactsQuery.error.message}</p>}
-        {contactsQuery.data && (listView === "contacts" || inbox.data) && !visible.length && <div class="people-empty-list"><p>{t(filter ? "people.inbox.noMatch" : listView === "contacts" ? "people.contacts.empty" : archived ? "people.inbox.noArchived" : "people.inbox.empty")}</p><span>{t(filter ? "people.inbox.tryName" : "people.inbox.emptyHint")}</span></div>}
+        {contactsQuery.data && (listView === "contacts" || inbox.data) && !visible.length && !blockedFound && <div class="people-empty-list"><p>{t(filter ? "people.inbox.noMatch" : listView === "contacts" ? "people.contacts.empty" : archived ? "people.inbox.noArchived" : "people.inbox.empty")}</p><span>{t(filter ? "people.inbox.tryName" : "people.inbox.emptyHint")}</span></div>}
         <ul class="people-rows">{visible.map((contact) => {
           const entry = listView === "inbox" ? inboxByContact.get(contact.id) : undefined;
           const selected = view === "inbox" && selectedContact?.id === contact.id;
@@ -180,7 +183,7 @@ export function People({ onDirtyChange, onAsk }: {
           return <li key={contact.id} class={unsaved ? "has-tag" : undefined}><button class={`people-row${selected ? " is-selected" : ""}${entry?.unread ? " is-unread" : ""}`} disabled={busy} aria-current={selected ? "true" : undefined} onClick={() => openContact(contact.id)}><span class="people-row-name">{contactDisplayName(contact)}{entry?.unread && <span class="people-unread" aria-label={t("people.inbox.unread")} />}</span>{listView === "inbox" && <time>{new Date(entry?.conversation.updatedAt ?? contact.updatedAtMs).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time>}<span class="people-row-preview">{inboxPreview(contact, entry)}</span></button>
             {unsaved && <SaveContactTag contact={contact} account={account} disabled={busy} />}</li>;
         })}</ul>
-        {listView === "inbox" && inbox.hasNextPage && <LoadOnScroll pages={inbox.data?.pages.length ?? 0} loading={inbox.isFetchingNextPage} onLoad={() => void inbox.fetchNextPage()} />}
+        {listView === "inbox" && inbox.hasNextPage && <LoadOnScroll pages={inbox.data?.pages.length ?? 0} loading={inbox.isFetchingNextPage} failed={inbox.isFetchNextPageError} onLoad={() => void inbox.fetchNextPage()} />}
         {listView === "contacts" && <BlockedPeople account={account} filter={filter} />}
       </>}
       </div>
