@@ -1,10 +1,15 @@
 # Contact people on other Ships
 
 **People** holds conversations with people on other Ships. Open it with `p`.
-It opens your conversations and unread messages. **Requests**, above the list, opens
-first messages from new people; its count shows the loaded active requests, with
-`+` when more remain. **contacts**, beside the heading, opens your private address
-book. Both have a **← conversations** action to return to the conversation list.
+It opens **Recent**, your conversations newest first; older ones load as you scroll.
+The search icon beside the heading filters the list by name or handle; **Escape**
+or the close button puts the heading back. The icons at the bottom of the list, beside
+your handle, open **archived**, **contacts**, **requests** and **add contact**. Requests are first messages from new people; the count on its icon
+shows the loaded active requests, with `+` when more remain. Each list has a
+**← recent** action to return to Recent.
+A conversation with someone you never saved, such as one that began with a message
+request, is marked **not a contact**. Hover over or focus it, or tap it on a touch
+screen, to **add contact**.
 Browser **Back** and **Forward** also restore the People list, selected conversation,
 requests and profile. These destinations have their own URLs; unsent drafts stay
 in the current session while you move between them.
@@ -18,7 +23,7 @@ your conversation opens, so you can turn it into a request to Ship.
 
 ## Start a conversation
 
-Choose **connect**, choose who should handle new messages, then **create invitation
+Choose **add contact**, choose who should handle new messages, then **create invitation
 link**. Share it wherever you already talk. The same link works for someone new
 to Ship or someone who already has a Ship. It connects one person and lasts seven
 days; you can cancel it before acceptance.
@@ -232,7 +237,8 @@ Blocking ends the connection, withdraws its attachment grants and refuses new
 messages and requests from that person. Unblocking permits a new connection;
 it does not restore the old one. Delivered messages remain in history. Both
 conversation Details and a message request's controls offer block and unblock.
-**Blocked people** keeps these controls available even after an old request expires.
+**Blocked people**, under **contacts** once you have blocked someone, keeps these
+controls available even after an old request expires.
 
 ## Report a message request {#report-a-message-request}
 
