@@ -289,6 +289,7 @@ gsv routines edit 4410 --pause
 ```bash
 gsv journal [today | yesterday | YYYY-MM-DD]
 gsv journal on [--hours FROM-TO]
+gsv journal now
 gsv journal off
 ```
 
@@ -296,7 +297,8 @@ gsv journal off
 from 07:00 to 23:00 in your Ship's time zone, or the hours `--hours` gives,
 such as `--hours 8-22`. At each check-in it writes down what happened since the
 last one and asks what you would want done now. Usually the answer is nothing.
-`journal off` removes the routine; the journal stays in your personal wiki.
+`journal now` runs a check-in straight away. `journal off` removes the routine;
+the journal stays in your personal wiki.
 
 `journal` draws a day as a strip of check-ins: `●` where your Ship did
 something, `·` where the hour was quiet, and the events that landed between

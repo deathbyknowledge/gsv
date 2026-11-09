@@ -525,6 +525,8 @@ pub(crate) enum JournalAction {
         #[arg(long, default_value = "7-23")]
         hours: String,
     },
+    /// Have your Ship check in now, without waiting for the hour
+    Now,
     /// Stop the hourly check-ins; the journal stays in your wiki
     Off,
 }

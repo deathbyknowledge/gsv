@@ -263,8 +263,8 @@ fn parse_date(value: Option<&str>, timezone: &str) -> Result<Date, DynError> {
     match value.map(str::trim) {
         None | Some("today") => Ok(today),
         Some("yesterday") => Ok(today.yesterday()?),
-        Some(value) => value.parse::<Date>().map_err(|error| {
-            format!("Give a day as today, yesterday or YYYY-MM-DD, not `{value}` ({error})").into()
+        Some(value) => value.parse::<Date>().map_err(|_unparsed| {
+            format!("Give a day as today, yesterday or YYYY-MM-DD, not `{value}`").into()
         }),
     }
 }
@@ -453,6 +453,39 @@ pub(crate) async fn run(
             );
             print!("{}", render::hint(&style, "See a day with: gsv journal"));
             Ok(())
+        }
+        Some(JournalAction::Now) => {
+            let schedule = journal_routines(&client)
+                .await?
+                .into_iter()
+                .next()
+                .ok_or("Your journal is off. Turn it on with: gsv journal on")?;
+            let result = call(
+                &client,
+                "sched.run",
+                json!({ "id": text(&schedule, "id"), "mode": "force" }),
+            )
+            .await?;
+            if out.json {
+                return render::print_json(&result);
+            }
+            match remote::items(&result, "results").first() {
+                Some(run) if text(run, "status") == "error" => {
+                    Err(format!("The check-in failed: {}", text(run, "error")).into())
+                }
+                Some(run) if text(run, "status") == "skipped" => {
+                    println!("A check-in is already running.");
+                    Ok(())
+                }
+                _ => {
+                    println!("Your Ship is checking in now.");
+                    print!(
+                        "{}",
+                        render::hint(&style, "See it in a moment with: gsv journal")
+                    );
+                    Ok(())
+                }
+            }
         }
         Some(JournalAction::Off) => {
             let found = journal_routines(&client).await?;
