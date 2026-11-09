@@ -71,7 +71,8 @@ export function PeopleSearch({ account, query, contacts, contactsLoaded, contact
   // may hold the person. A list it may not read can't be checked here; the Kernel still refuses a request to someone blocked.
   const settled = (list: { isSuccess: boolean; isError: boolean; hasNextPage: boolean }, call: string) =>
     !account || !canConfigure(account, call) || (list.isSuccess && !list.isError && !list.hasNextPage);
-  const localComplete = contactsLoaded && !contactsError && settled(incoming, "approach.list") && settled(outgoing, "approach.list")
+  const mayListContacts = !!account && canConfigure(account, "contact.list");
+  const localComplete = (!mayListContacts || (contactsLoaded && !contactsError)) && settled(incoming, "approach.list") && settled(outgoing, "approach.list")
     && settled(blocked.blocks, "contact.block.list");
   const address = profileAddress(query);
   const mayLookup = connected && !!account && canConfigure(account, "profile.resolve");
@@ -101,7 +102,7 @@ export function PeopleSearch({ account, query, contacts, contactsLoaded, contact
       <ul class="people-rows">{requests.map((request) => <RequestRow key={request.id} request={request} selected={selectedRequestId === request.id} busy={busy}
         shipTakenDown={shipTakenDown} onOpen={() => onOpenRequest(request.id, request.direction)} />)}</ul>
     </>}
-    {!contactsLoaded && !contactsError && <LoadingState variant="panel">{t("people.inbox.loading")}</LoadingState>}
+    {mayListContacts && !contactsLoaded && !contactsError && <LoadingState variant="panel">{t("people.inbox.loading")}</LoadingState>}
     {contactsError && <p class="people-error people-search-note" role="alert">{contactsError.message}</p>}
     {requestsLoading && <LoadingState variant="panel">{t("people.search.loadingRequests")}</LoadingState>}
     {(incoming.error ?? outgoing.error) && <p class="people-error people-search-note" role="alert">{(incoming.error ?? outgoing.error)?.message}{" "}
