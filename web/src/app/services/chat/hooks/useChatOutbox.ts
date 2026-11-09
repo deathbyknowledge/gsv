@@ -5,6 +5,7 @@ import type { ChatSendDraft } from "../domain/processes";
 import { useGateway } from "../../gateway/GatewayProvider";
 import { randomId } from "../../ids";
 import { t } from "../../../i18n/locale";
+import { captureFirstTask } from "../../acquisition";
 
 export type OutgoingChatMessage = {
   id: string;
@@ -16,14 +17,15 @@ export type OutgoingChatMessage = {
 };
 
 /** Own pending sends until acknowledgement; retries retain the original recipient, files and send identity. */
-export function useChatOutbox(acceptMessage: (message: ConversationMessage) => void) {
+export function useChatOutbox(acceptMessage: (message: ConversationMessage) => void, measureFirstTask = false) {
   const { client } = useGateway();
-  return useChatOutboxRuntime(acceptMessage, client);
+  return useChatOutboxRuntime(acceptMessage, client, measureFirstTask);
 }
 
 export function useChatOutboxRuntime(
   acceptMessage: (message: ConversationMessage) => void,
   client: Parameters<typeof sendChatMessage>[0],
+  measureFirstTask = false,
 ) {
   const [messages, setMessages] = useState<OutgoingChatMessage[]>([]);
   const active = useRef<{ id: string; controller: AbortController } | null>(null);
@@ -54,6 +56,7 @@ export function useChatOutboxRuntime(
           onPrepared: (messageId) => update({ messageId }),
           onUploaded: () => update({ status: "sending" }),
         });
+        if (measureFirstTask) captureFirstTask(client, result.message);
         if (mounted.current) {
           acceptMessage(result.message);
           setMessages((current) => current.filter((row) => row.id !== message.id));
@@ -67,7 +70,7 @@ export function useChatOutboxRuntime(
       }
     })();
     return true;
-  }, [acceptMessage, client]);
+  }, [acceptMessage, client, measureFirstTask]);
 
   const send = useCallback((draft: ChatSendDraft) => {
     const id = randomId();
@@ -90,3 +93,4 @@ export function useChatOutboxRuntime(
 
   return { messages, send, retry, cancelUpload, discard, sending: messages.some((row) => row.status !== "failed") };
 }
+

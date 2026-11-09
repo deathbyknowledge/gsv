@@ -371,7 +371,7 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   const pid = useZenProcess(pidProp, reportShipError);
   /* the conversation is what was actually said, both ways; the process transcript is what the ship did */
   const conversation = useChatConversation({ processId: pid ?? "", enabled: pid !== null });
-  const outbox = useChatOutbox(conversation.acceptMessage);
+  const outbox = useChatOutbox(conversation.acceptMessage, !pidProp);
   const processRuntime = useChatRuntime({ processId: pid ?? "", enabled: pid !== null, observe: true, historyLimit: HISTORY_LIMIT });
   const runtime = processRuntime.runtime;
   const [places, setPlaces] = useState<Place[]>([]);
@@ -1373,3 +1373,4 @@ export function Zen({ onFleet: navigateFleet, onMemory, initialTarget, prefill, 
   );
 }
 import { BrowserRequests, useBrowserControl } from "../browser/BrowserControl";
+

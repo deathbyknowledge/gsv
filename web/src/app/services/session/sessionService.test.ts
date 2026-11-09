@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GsvClientStatus } from "@humansandmachines/gsv/client";
 import type { SysSetupResult } from "@humansandmachines/gsv/protocol";
 import { createSessionService, type SessionClient } from "./sessionService";
+import * as acquisition from "../acquisition";
 
 type StatusListener = (status: GsvClientStatus) => void;
 
@@ -34,6 +35,7 @@ function installWindow(): void {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -65,6 +67,27 @@ describe("account setup", () => {
       sys: { token: { create: vi.fn(), revoke: vi.fn(), list: vi.fn() } },
     } satisfies SessionClient;
   }
+
+  it("measures managed registration only after successful account creation, not failed setup or sign-in", async () => {
+    installWindow();
+    const capture = vi.spyOn(acquisition, "captureRegistration").mockImplementation(() => {});
+    const client = createSetupClient();
+    const service = createSessionService(client, { onboarding: { token: onboardingToken, signup: true, complete: async () => {}, discard: async () => {} } });
+    client.requestOnce.mockRejectedValueOnce(new Error("Setup failed"));
+    await expect(service.setup({ username: "alice", password: "password123" })).rejects.toThrow("Setup failed");
+    expect(capture).not.toHaveBeenCalled();
+    await service.setup({ username: "alice", password: "password123" });
+    expect(capture).toHaveBeenCalledExactlyOnceWith(setupResult.user.uid);
+    await service.login({ username: "alice", password: "password123" });
+    expect(capture).toHaveBeenCalledOnce();
+  });
+
+  it("does not measure standalone or operator setup as paid campaign registration", async () => {
+    installWindow();
+    const capture = vi.spyOn(acquisition, "captureRegistration").mockImplementation(() => {});
+    await createSessionService(createSetupClient(), { onboarding: false }).setup({ username: "alice", password: "password123" });
+    expect(capture).not.toHaveBeenCalled();
+  });
 
   it("offers owner-verified recovery when another tab has no setup capability", async () => {
     installWindow();
@@ -457,3 +480,4 @@ describe("session lock", () => {
     expect(disconnect).not.toHaveBeenCalled();
   });
 });
+

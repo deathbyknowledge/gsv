@@ -4,6 +4,11 @@ GSV exposes an optional, provider-neutral telemetry seam for deployment
 operators. The open-source runtime does not select an analytics vendor and
 emits no telemetry unless the deployment explicitly enables and consumes it.
 
+Ship's optional browser acquisition measurement is a separate, disabled-by-default
+marketing integration. It does not change this runtime schema or export message
+content. See [web acquisition measurement](../how-to/acquisition-measurement.md) for
+the consent, successful-outcome boundaries and deployment review requirements.
+
 Telemetry records describe committed outcomes at the subsystem that owns the
 operation. For example, the Process reports a finished run after its terminal
 state is durable, the Kernel reports a Message after the Conversation accepts
@@ -237,3 +242,4 @@ billing ledger. Services persist their own usage before invoking providers and
 settle it independently of telemetry availability. Exporter outages and anonymous
 signup progress still require separate monitoring; forwarding arbitrary logs or
 whole exception objects would violate the privacy contract.
+

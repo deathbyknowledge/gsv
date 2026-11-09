@@ -5,15 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createTestRoot, deferred } from "../../../testing/testHarness";
 import { useChatOutboxRuntime } from "./useChatOutbox";
+import * as acquisition from "../../acquisition";
 
 beforeEach(() => { vi.stubGlobal("document", {}); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function mountedOutbox(client: GSVClient) {
+async function mountedOutbox(client: GSVClient, measureFirstTask = false) {
   const root = createTestRoot("chat outbox");
   const accepted = vi.fn();
   let current: ReturnType<typeof useChatOutboxRuntime>;
-  function Harness() { current = useChatOutboxRuntime(accepted, client); return null; }
+  function Harness() { current = useChatOutboxRuntime(accepted, client, measureFirstTask); return null; }
   await root.render(<Harness />);
   return { get current() { return current; }, accepted, unmount: () => root.unmount() };
 }
@@ -25,6 +26,22 @@ function result(text = "Read this"): ConversationSendResult {
 }
 
 describe("pending chat sends", () => {
+  it("measures a primary Ship submission after acknowledgement, never a failed send or click", async () => {
+    const client = new GSVClient();
+    const capture = vi.spyOn(acquisition, "captureFirstTask").mockImplementation(() => {});
+    const acknowledgement = deferred<ConversationSendResult>();
+    vi.spyOn(client.conversation, "send").mockRejectedValueOnce(new Error("Failed send")).mockReturnValueOnce(acknowledgement.promise);
+    const outbox = await mountedOutbox(client, true);
+    try {
+      await act(() => { outbox.current.send({ pid: "ship", conversationId: "ship-conversation", message: "PRIVATE TASK" }); });
+      await vi.waitFor(() => expect(outbox.current.messages[0]?.status).toBe("failed"));
+      expect(capture).not.toHaveBeenCalled();
+      await act(() => { outbox.current.retry(outbox.current.messages[0]!); });
+      expect(capture).not.toHaveBeenCalled();
+      await act(async () => { acknowledgement.resolve(result()); await acknowledgement.promise; });
+      await vi.waitFor(() => expect(capture).toHaveBeenCalledExactlyOnceWith(client, result().message));
+    } finally { await outbox.unmount(); }
+  });
   it("retains text, files, target and idempotency through a cancelled upload and retry", async () => {
     const client = new GSVClient();
     const upload = deferred<Awaited<ReturnType<GSVClient["request"]>>>();
@@ -112,3 +129,4 @@ describe("pending chat sends", () => {
     expect(outbox.accepted).not.toHaveBeenCalled();
   });
 });
+

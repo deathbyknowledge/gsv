@@ -9,6 +9,7 @@ import "../styles/gsv-scrollbar.css";
 import { render } from "preact";
 import { App } from "./App";
 import { applyLanguagePreference } from "./i18n/locale";
+import { startAcquisition } from "./services/acquisition";
 
 const app = document.querySelector<HTMLElement>("#app");
 
@@ -17,4 +18,6 @@ if (!app) {
 }
 
 // The first screen waits for its language, so it never shows English before a translation arrives.
+startAcquisition();
 void applyLanguagePreference().then(() => render(<App />, app));
+

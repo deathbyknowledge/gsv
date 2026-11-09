@@ -127,6 +127,7 @@ export default defineConfig({
             { text: "Deploy / Update / Remove", link: "/how-to/deploy" },
             { text: "Deploy with Alchemy", link: "/how-to/deploy-with-alchemy" },
             { text: "Operate a Ship Deployment", link: "/how-to/operate-gsv" },
+            { text: "Web Acquisition Measurement", link: "/how-to/acquisition-measurement" },
             { text: "Retire a Standalone Deployment", link: "/how-to/standalone-retirement" },
             { text: "Run Ship for Your Organisation", link: "/how-to/organisations" },
             { text: "Personal Access", link: "/how-to/invite-people" },
@@ -224,3 +225,4 @@ export default defineConfig({
     },
   },
 });
+

@@ -11,6 +11,7 @@ import { captureContactInvitation } from "./invitation";
 import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
 import { pendingContactInvitation, contactInvitationPreview, clearContactInvitation } from "../app/services/session/contactInvitationIntent";
 import { t } from "../app/i18n/locale";
+import { attributedDestination } from "../app/services/acquisition";
 
 export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise<WelcomeSnapshot> }, accountsOrigin: string): Promise<VNode> {
   let contactInvitation = pendingContactInvitation();
@@ -47,7 +48,7 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
   const connect = async (origin: string, onboardingToken?: string | null) => {
     const destination = onboardingToken ? signupDestination(origin, onboardingToken, contactInvitation)
       : contactInvitation ? contactInvitationDestination(origin, contactInvitation) : signupDestination(origin);
-    await leave(destination);
+    await leave(attributedDestination(destination, window.location.href));
   };
   // A friend's invitation opens as a centered card; ordinary signup lives on the page so the rest of it stays usable.
   const Frame = contactInvitation ? SignupDialog : Fragment;
@@ -62,3 +63,4 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
       addressPanel={contactInvitation ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
       load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</Frame>;
 }
+

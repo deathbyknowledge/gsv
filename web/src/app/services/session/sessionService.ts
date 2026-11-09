@@ -8,6 +8,7 @@ import type {
   SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
 import type { TextKey } from "../../i18n/locale";
+import { captureRegistration } from "../acquisition";
 import { clearLinkPreviewCache } from "../chat/backend/linkPreviewCache";
 import {
   clearInstallationOnboardingToken,
@@ -833,6 +834,7 @@ export function createSessionService(client: SessionClient, options: SessionServ
       throw error;
     }
 
+    if (signupArrival) captureRegistration(result.user.uid);
     if (installationOnboardingToken) {
       installationOnboardingToken = null;
       try {
@@ -961,3 +963,4 @@ export function createSessionService(client: SessionClient, options: SessionServ
     },
   };
 }
+
