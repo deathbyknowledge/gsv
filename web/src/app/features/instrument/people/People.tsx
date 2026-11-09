@@ -169,7 +169,7 @@ export function People({ onDirtyChange, onAsk }: {
         </>}
       </header>
       {(listView !== "inbox" || archived) && <button class="people-action people-list-back" aria-label={t("people.back.label")} disabled={busy} onClick={() => { closeSearch(); open({ view: "inbox", contactId: null, requestId: null, archived: false }); }}>{t("people.back.conversations")}</button>}
-      {query ? <PeopleSearch account={account} query={query} contacts={contacts} inbox={inboxByContact} busy={busy} selectedContactId={view === "inbox" ? selectedContact?.id ?? null : null}
+      {query ? <PeopleSearch account={account} query={query} contacts={contacts} contactsLoaded={!!contactsQuery.data} contactsError={contactsQuery.error} inbox={inboxByContact} busy={busy} selectedContactId={view === "inbox" ? selectedContact?.id ?? null : null}
         selectedRequestId={view === "requests" ? requestId : null} shipTakenDown={takenDown} onOpenContact={openContact}
         onOpenRequest={(id, to) => { closeSearch(); open({ view: "requests", direction: to, history: false, requestId: id, contactId: null }); }}
         onCompose={(found) => { setCompose({ ...emptyApproachDraft(found.url), profile: found }); setDialog("profile"); }} />

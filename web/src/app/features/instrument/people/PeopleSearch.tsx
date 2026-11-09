@@ -37,10 +37,13 @@ function usePendingRequests(account: ConsoleAccount | undefined, direction: Appr
  * One search across People, whichever list it was opened from: conversations, recent or archived,
  * pending requests, blocked people and, when nothing here matches, the public profile an address names.
  */
-export function PeopleSearch({ account, query, contacts, inbox, busy, selectedContactId, selectedRequestId, shipTakenDown, onOpenContact, onOpenRequest, onCompose }: {
+export function PeopleSearch({ account, query, contacts, contactsLoaded, contactsError, inbox, busy, selectedContactId, selectedRequestId, shipTakenDown, onOpenContact, onOpenRequest, onCompose }: {
   account: ConsoleAccount | undefined;
   query: string;
   contacts: ContactSummary[];
+  /** Whether the contact list has arrived; until it has, nothing here can be ruled out. */
+  contactsLoaded: boolean;
+  contactsError: Error | null;
   inbox: Map<string, ConversationInboxEntry>;
   busy: boolean;
   selectedContactId: string | null;
@@ -64,9 +67,12 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
   // Blocked people are listed below the results, so they count as a match here.
   const blocked = useBlockedPeople(account, query, false);
   const blockedMatch = blocked.entries.length > 0 || blocked.searching;
+  // Every local list has fully arrived; a list still loading, cut short or failed may hold the person.
+  const localComplete = contactsLoaded && !contactsError && !incoming.error && !outgoing.error && !incoming.hasNextPage && !outgoing.hasNextPage
+    && !blocked.blocks.error && !blocked.blocks.hasNextPage;
   const address = profileAddress(query);
   const mayLookup = connected && !!account && canConfigure(account, "profile.resolve");
-  const wantsProfile = !!address && mayLookup && !conversations.length && !requests.length && !requestsLoading && !blockedMatch;
+  const wantsProfile = !!address && mayLookup && localComplete && !conversations.length && !requests.length && !requestsLoading && !blockedMatch;
   useEffect(() => {
     lookup.reset();
     if (!wantsProfile) return;
@@ -77,7 +83,7 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
   const existing = profile ? contacts.find((contact) => contact.remoteDid === profile.did) : undefined;
   // While typing pauses and the lookup runs, the profile is still on its way rather than missing.
   const awaitingProfile = wantsProfile && !profile && !lookup.error;
-  const nothing = !conversations.length && !requests.length && !requestsLoading && !wantsProfile && !blockedMatch;
+  const nothing = localComplete && !conversations.length && !requests.length && !requestsLoading && !wantsProfile && !blockedMatch;
 
   return <section class="people-search-results" aria-label={t("people.search.results")}>
     {conversations.length > 0 && <>
@@ -90,6 +96,8 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
       <ul class="people-rows">{requests.map((request) => <RequestRow key={request.id} request={request} selected={selectedRequestId === request.id} busy={busy}
         shipTakenDown={shipTakenDown} onOpen={() => onOpenRequest(request.id, request.direction)} />)}</ul>
     </>}
+    {!contactsLoaded && !contactsError && <LoadingState variant="panel">{t("people.inbox.loading")}</LoadingState>}
+    {contactsError && <p class="people-error people-search-note" role="alert">{contactsError.message}</p>}
     {requestsLoading && <LoadingState variant="panel">{t("people.search.loadingRequests")}</LoadingState>}
     {(incoming.error ?? outgoing.error) && <p class="people-error people-search-note" role="alert">{(incoming.error ?? outgoing.error)?.message}{" "}
       {/* Loading stops at a failed page until the person asks again. */}

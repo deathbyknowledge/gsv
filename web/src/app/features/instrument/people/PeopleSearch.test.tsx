@@ -23,14 +23,14 @@ let root: ReturnType<typeof createTestRoot>;
 let cache: QueryClient;
 const onCompose = vi.fn();
 
-function Harness({ query }: { query: string }) {
-  tree = PeopleSearch({ account: ACCOUNT, query, contacts: [MARA], inbox: new Map(), busy: false, selectedContactId: null, selectedRequestId: null,
+function Harness({ query, contactsLoaded }: { query: string; contactsLoaded: boolean }) {
+  tree = PeopleSearch({ account: ACCOUNT, query, contacts: [MARA], contactsLoaded, contactsError: null, inbox: new Map(), busy: false, selectedContactId: null, selectedRequestId: null,
     shipTakenDown: false, onOpenContact: vi.fn(), onOpenRequest: vi.fn(), onCompose });
   return null;
 }
 
 /** Searches for `query` against Mara's conversation and the given pending requests and lookup answer. */
-async function search(query: string, { incoming = [[]], outgoing = [[]], blocks = [], resolve }: { incoming?: ApproachSummary[][]; outgoing?: ApproachSummary[][]; blocks?: Array<{ did: string; displayName: string; createdAtMs: number }>; resolve?: () => Promise<{ data: { profile: PublicProfile } }> } = {}) {
+async function search(query: string, { incoming = [[]], outgoing = [[]], blocks = [], resolve, contactsLoaded = true }: { incoming?: ApproachSummary[][]; outgoing?: ApproachSummary[][]; blocks?: Array<{ did: string; displayName: string; createdAtMs: number }>; resolve?: () => Promise<{ data: { profile: PublicProfile } }>; contactsLoaded?: boolean } = {}) {
   const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
     if (call === "approach.list") {
       const { direction, before } = z.object({ direction: z.enum(["incoming", "outgoing"]), before: z.object({ id: z.string() }).optional() }).parse(args);
@@ -44,7 +44,7 @@ async function search(query: string, { incoming = [[]], outgoing = [[]], blocks 
     if (call === "profile.resolve" && resolve) return resolve();
     throw new Error(`Unexpected request ${call}`);
   });
-  await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness query={query} /></QueryClientProvider></GatewayProvider>);
+  await root.render(<GatewayProvider><QueryClientProvider client={cache}><Harness query={query} contactsLoaded={contactsLoaded} /></QueryClientProvider></GatewayProvider>);
   await vi.waitFor(() => expect(cache.isFetching()).toBe(0));
   await act(async () => {});
   return request;
@@ -95,6 +95,13 @@ describe("searching People", () => {
 
   it("treats a blocked person as a match and looks no one up", async () => {
     const request = await search("troll.example", { blocks: [{ did: "did:plc:troll", displayName: "troll.example", createdAtMs: 1 }], resolve: async () => ({ data: { profile: JUNO } }) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(request).not.toHaveBeenCalledWith("profile.resolve", expect.anything());
+    expect(collectText(tree)).not.toContain("No matching people.");
+  });
+
+  it("waits for your contacts before looking anyone up", async () => {
+    const request = await search("juno.ship.space", { contactsLoaded: false, resolve: async () => ({ data: { profile: JUNO } }) });
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(request).not.toHaveBeenCalledWith("profile.resolve", expect.anything());
     expect(collectText(tree)).not.toContain("No matching people.");
