@@ -67,9 +67,12 @@ export function PeopleSearch({ account, query, contacts, contactsLoaded, contact
   // Blocked people are listed below the results, so they count as a match here.
   const blocked = useBlockedPeople(account, query, false);
   const blockedMatch = blocked.entries.length > 0 || blocked.searching;
-  // Every local list has fully arrived; a list still loading, cut short or failed may hold the person.
-  const localComplete = contactsLoaded && !contactsError && !incoming.error && !outgoing.error && !incoming.hasNextPage && !outgoing.hasNextPage
-    && !blocked.blocks.error && !blocked.blocks.hasNextPage;
+  // Every local list this account may read has fully and successfully arrived; one still loading, cut short or failed
+  // may hold the person. A list it may not read can't be checked here; the Kernel still refuses a request to someone blocked.
+  const settled = (list: { isSuccess: boolean; isError: boolean; hasNextPage: boolean }, call: string) =>
+    !account || !canConfigure(account, call) || (list.isSuccess && !list.isError && !list.hasNextPage);
+  const localComplete = contactsLoaded && !contactsError && settled(incoming, "approach.list") && settled(outgoing, "approach.list")
+    && settled(blocked.blocks, "contact.block.list");
   const address = profileAddress(query);
   const mayLookup = connected && !!account && canConfigure(account, "profile.resolve");
   const wantsProfile = !!address && mayLookup && localComplete && !conversations.length && !requests.length && !requestsLoading && !blockedMatch;

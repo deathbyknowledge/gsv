@@ -30,7 +30,7 @@ function Harness({ query, contactsLoaded }: { query: string; contactsLoaded: boo
 }
 
 /** Searches for `query` against Mara's conversation and the given pending requests and lookup answer. */
-async function search(query: string, { incoming = [[]], outgoing = [[]], blocks = [], resolve, contactsLoaded = true }: { incoming?: ApproachSummary[][]; outgoing?: ApproachSummary[][]; blocks?: Array<{ did: string; displayName: string; createdAtMs: number }>; resolve?: () => Promise<{ data: { profile: PublicProfile } }>; contactsLoaded?: boolean } = {}) {
+async function search(query: string, { incoming = [[]], outgoing = [[]], blocks = [], blocksError, resolve, contactsLoaded = true }: { incoming?: ApproachSummary[][]; outgoing?: ApproachSummary[][]; blocks?: Array<{ did: string; displayName: string; createdAtMs: number }>; blocksError?: Error; resolve?: () => Promise<{ data: { profile: PublicProfile } }>; contactsLoaded?: boolean } = {}) {
   const request = vi.spyOn(GSVClient.prototype, "request").mockImplementation(async (call, args) => {
     if (call === "approach.list") {
       const { direction, before } = z.object({ direction: z.enum(["incoming", "outgoing"]), before: z.object({ id: z.string() }).optional() }).parse(args);
@@ -40,7 +40,10 @@ async function search(query: string, { incoming = [[]], outgoing = [[]], blocks 
       if (index + 1 < pages.length) page.next = { createdAtMs: 1, id: String(index + 1) };
       return { data: page };
     }
-    if (call === "contact.block.list") return { data: { blocks } };
+    if (call === "contact.block.list") {
+      if (blocksError) throw blocksError;
+      return { data: { blocks } };
+    }
     if (call === "profile.resolve" && resolve) return resolve();
     throw new Error(`Unexpected request ${call}`);
   });
@@ -112,6 +115,12 @@ describe("searching People", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     await vi.waitFor(() => expect(collectText(tree)).toContain("You blocked this person."));
     expect(collectNodes(tree).find((node) => node.type === "button" && collectText(node) === "send a message request")).toBeUndefined();
+  });
+
+  it("waits for the blocked list before looking anyone up", async () => {
+    const request = await search("juno.ship.space", { resolve: async () => ({ data: { profile: JUNO } }), blocksError: new Error("Blocked list unavailable") });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(request).not.toHaveBeenCalledWith("profile.resolve", expect.anything());
   });
 
   it("says when there is no public profile at that address", async () => {
