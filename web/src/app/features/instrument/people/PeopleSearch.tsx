@@ -61,11 +61,12 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
     .filter((request) => matchesPerson([request.displayName, request.peerHandle], query))
     .sort((a, b) => b.createdAtMs - a.createdAtMs);
   const requestsLoading = incoming.isFetching || outgoing.isFetching;
-  // Blocked people are listed below the results, so they count before calling the search empty.
+  // Blocked people are listed below the results, so they count as a match here.
   const blocked = useBlockedPeople(account, query, false);
+  const blockedMatch = blocked.entries.length > 0 || blocked.searching;
   const address = profileAddress(query);
   const mayLookup = connected && !!account && canConfigure(account, "profile.resolve");
-  const wantsProfile = !!address && mayLookup && !conversations.length && !requests.length && !requestsLoading;
+  const wantsProfile = !!address && mayLookup && !conversations.length && !requests.length && !requestsLoading && !blockedMatch;
   useEffect(() => {
     lookup.reset();
     if (!wantsProfile) return;
@@ -76,7 +77,7 @@ export function PeopleSearch({ account, query, contacts, inbox, busy, selectedCo
   const existing = profile ? contacts.find((contact) => contact.remoteDid === profile.did) : undefined;
   // While typing pauses and the lookup runs, the profile is still on its way rather than missing.
   const awaitingProfile = wantsProfile && !profile && !lookup.error;
-  const nothing = !conversations.length && !requests.length && !requestsLoading && !wantsProfile && !blocked.entries.length && !blocked.searching;
+  const nothing = !conversations.length && !requests.length && !requestsLoading && !wantsProfile && !blockedMatch;
 
   return <section class="people-search-results" aria-label={t("people.search.results")}>
     {conversations.length > 0 && <>
