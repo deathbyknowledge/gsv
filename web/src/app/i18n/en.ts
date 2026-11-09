@@ -902,6 +902,7 @@ export const en = {
   "people.contact.notContact": "not a contact",
   "people.contact.addContact": "add contact",
   "people.contact.addContactLabel": "Add {name} to your contacts",
+  "people.contact.addFailed": "couldn’t add · try again",
   "people.contacts.open": "contacts",
   "people.contacts.noAccess": "This account cannot read contacts.",
   "people.contacts.find": "Find a contact",

@@ -908,6 +908,7 @@ export const ptBR = {
   "people.contact.notContact": "não é um contato",
   "people.contact.addContact": "adicionar contato",
   "people.contact.addContactLabel": "Adicionar {name} aos seus contatos",
+  "people.contact.addFailed": "não deu para adicionar · tentar de novo",
   "people.contacts.open": "contatos",
   "people.contacts.noAccess": "Esta conta não pode ler os contatos.",
   "people.contacts.find": "Encontrar um contato",

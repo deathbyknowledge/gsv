@@ -40,6 +40,7 @@
 .people-rows > li.has-tag .people-row-preview { padding-right: 132px; }
 .people .people-contact-tag { position: absolute; right: 24px; bottom: 20px; max-width: 124px; padding: 2px 8px; border: 1px solid var(--border); color: var(--text-dim); font: 10px/1.5 var(--gsv-font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .people-contact-tag-action { display: none; }
+.people .people-contact-tag.is-failed { border-color: var(--error); color: var(--error); }
 .people .people-contact-tag:not(:disabled):is(:hover, :focus-visible) { border-color: var(--accent); color: var(--accent); }
 .people-contact-tag:not(:disabled):is(:hover, :focus-visible) .people-contact-tag-state { display: none; }
 .people-contact-tag:not(:disabled):is(:hover, :focus-visible) .people-contact-tag-action { display: inline; }
