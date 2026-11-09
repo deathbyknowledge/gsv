@@ -84,7 +84,10 @@ export function PeopleSearch({ account, query, contacts, contactsLoaded, contact
     return () => window.clearTimeout(timer);
   }, [address, wantsProfile]);
   const profile = wantsProfile ? lookup.profile : undefined;
-  const existing = profile ? contacts.find((contact) => contact.remoteDid === profile.did) : undefined;
+  // Only a live connection is a conversation to open; an ended one can be reconnected with a request.
+  const existing = profile ? contacts.find((contact) => contact.remoteDid === profile.did && contact.state === "active") : undefined;
+  // A request also needs its handling choice, which takes contact.preferences.update.
+  const maySendRequest = !!account && canConfigure(account, "approach.create") && canConfigure(account, "contact.preferences.update");
   // A block is kept by DID with the name it had then, so a profile found under another name can still be blocked.
   const blockedProfile = !!profile && !!blocked.blocks.data?.pages.some((page) => page.blocks.some((block) => block.did === profile.did));
   // While typing pauses and the lookup runs, the profile is still on its way rather than missing.
@@ -118,7 +121,7 @@ export function PeopleSearch({ account, query, contacts, contactsLoaded, contact
       {profile.about && <p>{profile.about}</p>}
       {blockedProfile ? <p class="people-note">{t("people.search.blockedProfile")}</p>
         : existing ? <button class="people-action is-accent" disabled={busy} onClick={() => onOpenContact(existing.id)}>{t("people.compose.openExisting")}</button>
-        : profile.contactPolicy === "requests" ? account && canConfigure(account, "approach.create")
+        : profile.contactPolicy === "requests" ? maySendRequest
           ? <button class="people-action is-accent" disabled={busy} onClick={() => onCompose(profile)}>{t("people.search.sendRequest")}</button>
           : <p class="people-note">{t("people.compose.noSend")}</p>
         : <p class="people-note">{t(profile.contactPolicy === "invitation" ? "people.compose.byInvitation" : "people.compose.closed")}</p>}
