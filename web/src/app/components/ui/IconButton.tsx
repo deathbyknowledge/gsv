@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import "./IconButton.css";
 
 export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab" | "attach" | "transcribe" | "mic" | "send" | "stop" | "sidepanel" | "edit" | "copy" | "arrowUp" | "arrowDown" | "delete" | "grip";
@@ -11,6 +12,8 @@ export type IconButtonVariant = "default" | "floating";
 
 export interface IconButtonProps {
   glyph?: IconButtonGlyph;
+  /** A caller's own mark in place of a glyph, such as a feature's line icon. */
+  icon?: ComponentChildren;
   size?: IconButtonSize;
   disabled?: boolean;
   /** Visual treatment (see IconButtonVariant). Ignored when `ghost` is set. */
@@ -35,6 +38,8 @@ export interface IconButtonProps {
    *  what Tooltip/Hint injects via cloneElement). */
   ariaDescribedBy?: string;
   "aria-describedby"?: string;
+  /** On/off state of a toggle, announced as pressed and shown in the accent colour. */
+  pressed?: boolean;
   onClick?: () => void;
 }
 
@@ -226,7 +231,7 @@ const VARIANT_BASE = {
 /** IconButton — ported from IconButton.dc.html. Square icon button with inline
  *  SVG glyphs, named or numeric size, disabled + title + onClick. `variant`
  *  selects the visual treatment (default filled / floating borderless). */
-export function IconButton({ glyph = "back", size = "medium", disabled = false, variant = "default", ghost = false, className, title = "", ariaLabel, ariaDescribedBy, "aria-describedby": injectedDescribedBy, onClick }: IconButtonProps) {
+export function IconButton({ glyph = "back", icon, size = "medium", disabled = false, variant = "default", ghost = false, className, title = "", ariaLabel, ariaDescribedBy, "aria-describedby": injectedDescribedBy, pressed, onClick }: IconButtonProps) {
   const numericSize = Number(size);
   const px = Number.isFinite(numericSize) && numericSize > 0
     ? numericSize
@@ -244,11 +249,12 @@ export function IconButton({ glyph = "back", size = "medium", disabled = false, 
       title={title || undefined}
       aria-label={ariaLabel || title || undefined}
       aria-describedby={describedBy}
+      aria-pressed={pressed}
       disabled={disabled}
       onClick={disabled ? undefined : onClick}
       style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", width: `${px}px`, height: `${px}px` }}
     >
-      {GLYPHS[glyph]}
+      {icon ?? GLYPHS[glyph]}
     </button>
   );
 }
