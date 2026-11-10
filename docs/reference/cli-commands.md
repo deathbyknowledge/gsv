@@ -991,7 +991,7 @@ remote confirmation; use `message delivery show` with its delivery id.
 When Ship contacts someone for an existing task, pass `--responsibility ID` to
 associate replies with that open Ship responsibility. A reply continues the same
 work without enabling permanent handling of that contact. Acceptance and new
-messages stay in People unless the person chooses **Let Ship handle them**.
+messages stay in People unless the person chooses **Let Ship answer their messages**.
 
 Use `contact request create` and `contact request update` when the exchange has
 a durable lifecycle rather than being only a message. Request revisions prevent

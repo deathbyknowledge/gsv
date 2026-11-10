@@ -10,11 +10,13 @@ export type ApproachDraft = {
   displayName: string | null;
   text: string;
   shipHandlesMessages: boolean | null;
+  /** Keep them in your contacts once they accept; on unless the person unticks it. */
+  saveContact: boolean;
   intent: ApproachCreateArgs | null;
 };
 
 export function emptyApproachDraft(url = ""): ApproachDraft {
-  return { url, profile: null, displayName: null, text: "", shipHandlesMessages: null, intent: null };
+  return { url, profile: null, displayName: null, text: "", shipHandlesMessages: null, saveContact: true, intent: null };
 }
 
 export function profileAddress(value: string, deployment: PublicDeploymentConfig = publicDeployment()): string | null {
@@ -67,9 +69,9 @@ export function approachSendIntent(draft: ApproachDraft): ApproachCreateArgs {
   const previous = draft.intent;
   if (previous && previous.did === draft.profile.did && previous.profileCid === draft.profile.cid
     && previous.displayName === displayName && previous.text === draft.text.trim()
-    && previous.shipHandlesMessages === draft.shipHandlesMessages) return previous;
+    && previous.shipHandlesMessages === draft.shipHandlesMessages && previous.saveContact === draft.saveContact) return previous;
   return { did: draft.profile.did, profileCid: draft.profile.cid,
-    displayName, text: draft.text.trim(), shipHandlesMessages: draft.shipHandlesMessages, idempotencyKey: randomId() };
+    displayName, text: draft.text.trim(), shipHandlesMessages: draft.shipHandlesMessages, saveContact: draft.saveContact, idempotencyKey: randomId() };
 }
 
 /** A request's status; while the person's whole Ship is taken down, that is why its delivery or connection failed. */

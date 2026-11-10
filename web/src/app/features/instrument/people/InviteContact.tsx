@@ -14,12 +14,14 @@ import { useT, type TextKey } from "../../../i18n/locale";
 
 export type InvitationDraft = { code: string; issued: ContactInviteCreateResult | null; shipHandlesMessages: boolean | null };
 
-export function InviteContact({ account, draft, onChange, onAdded, onBusy, onProfile }: {
+export function InviteContact({ account, draft, onChange, onAdded, onBusy, accepting: startAccepting = false, onProfile }: {
   account: ConsoleAccount | undefined;
   draft: InvitationDraft;
   onChange: (draft: InvitationDraft) => void;
   onAdded: (contactId: string) => void;
   onBusy: (busy: boolean) => void;
+  /** Open on pasting an invitation someone sent, rather than on making one. */
+  accepting?: boolean;
   onProfile: () => void;
 }) {
   const t = useT();
@@ -27,7 +29,7 @@ export function InviteContact({ account, draft, onChange, onAdded, onBusy, onPro
   const { client, connected } = useGateway();
   const cache = useQueryClient();
   const [copyStatus, setCopyStatus] = useState<TextKey | null>(null);
-  const [accepting, setAccepting] = useState(!!draft.code);
+  const [accepting, setAccepting] = useState(startAccepting || !!draft.code);
   const [entering, setEntering] = useState(!draft.code);
   const [now, setNow] = useState(Date.now());
   const allowed = (name: string) => connected && !!account && canConfigure(account, name);

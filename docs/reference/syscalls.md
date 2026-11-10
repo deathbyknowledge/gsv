@@ -1195,7 +1195,10 @@ the profile as Bluesky shows it, an `app.bsky.actor.profile` record (record key 
 deletes both. Profile mutations and first-contact decisions require the direct signed-in human. The owner's canonical Ship
 may resolve a profile and create, read, list and retry outgoing message requests (`approach.create`,
 `approach.get`, `approach.list`, `approach.retry`) on their behalf. A Ship's `approach.create` asks the
-owner first unless an approval rule matches it, and a replay of a request already sent does not ask again. Incoming requests, publishing a
+owner first unless an approval rule matches it, and a replay of a request already sent does not ask again. Its optional
+`saveContact` keeps the person in the sender's contacts once the request is accepted; without it they stay unsaved. Like
+`shipHandlesMessages`, it is the sender's own choice, retained with the request and never sent to the other Ship; a replay
+must repeat both. The person who accepts a request decides separately and starts unsaved. Incoming requests, publishing a
 profile and every decision stay with the signed-in human; a process reading or listing an incoming
 request is rejected.
 
@@ -1241,6 +1244,7 @@ type ProfileAndApproachSyscalls = {
       text: string;
       idempotencyKey: string;
       shipHandlesMessages?: boolean;
+      saveContact?: boolean;
     };
     result: { approach: ApproachSummary };
   };

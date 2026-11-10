@@ -63,6 +63,8 @@ describe("first-message approval", () => {
     expect(approachSendIntent({ ...draft, profile: { ...profile }, intent })).toBe(intent);
     expect(emptyApproachDraft(profile.url).displayName).toBeNull();
     expect(emptyApproachDraft(profile.url).shipHandlesMessages).toBeNull();
+    expect(emptyApproachDraft(profile.url).saveContact).toBe(true);
+    expect(approachSendIntent({ ...draft, saveContact: false }).saveContact).toBe(false);
     expect(() => approachSendIntent({ ...draft, shipHandlesMessages: null })).toThrow("Choose who");
   });
 
@@ -71,7 +73,7 @@ describe("first-message approval", () => {
     const intent = approachSendIntent(draft);
     for (const change of [
       { text: "Different message" }, { displayName: "A different name" },
-      { shipHandlesMessages: true },
+      { shipHandlesMessages: true }, { saveContact: false },
       { profile: { ...profile, cid: "bafyreiprofiletwo" } },
       { profile: { ...profile, did: "did:plc:otheraaaaaaaaaaaaaaaaaaa" } },
     ]) expect(approachSendIntent({ ...draft, intent, ...change }).idempotencyKey).not.toBe(intent.idempotencyKey);

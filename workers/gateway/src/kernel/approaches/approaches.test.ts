@@ -37,12 +37,17 @@ afterEach(async () => {
 });
 
 describe("message requests", () => {
-  it.each([false, true])("connects two people once a request is accepted, through lost answers (sender's Ship handles messages=%s)", async (shipHandlesMessages) => {
-    const input = { ...request(profile), shipHandlesMessages };
+  it.each([
+    { shipHandlesMessages: false, saveContact: undefined },
+    { shipHandlesMessages: true, saveContact: true },
+  ])("connects two people once a request is accepted, through lost answers (sender's Ship handles messages=$shipHandlesMessages, saves them=$saveContact)", async ({ shipHandlesMessages, saveContact }) => {
+    const input: ApproachCreateArgs = { ...request(profile), shipHandlesMessages };
+    if (saveContact !== undefined) input.saveContact = saveContact;
     const created = (await alice.run((ctx) => handleApproachCreate(input, held(ctx)))).approach;
     expect(created).toMatchObject({ state: "preparing", direction: "outgoing", peerDid: bob.account.did, peerHandle: "bob.ship.test", displayName: "Bob Builder" });
     expect((await alice.run((ctx) => handleApproachCreate(input, held(ctx)))).approach.id).toBe(created.id);
     await expect(alice.run((ctx) => handleApproachCreate({ ...input, shipHandlesMessages: !shipHandlesMessages }, held(ctx)))).rejects.toThrow("different content");
+    await expect(alice.run((ctx) => handleApproachCreate({ ...input, saveContact: !saveContact }, held(ctx)))).rejects.toThrow("different content");
 
     // Bob's Ship takes the request in, but its answer never reaches Alice's.
     loseNextAnswer(network, bob, SEND_MESSAGE_REQUEST);
@@ -80,7 +85,7 @@ describe("message requests", () => {
 
     expect(await alice.run((ctx) => ctx.federation.getByRemote(SPACE_OWNER_UID, bob.account.did))).toMatchObject({
       state: "active", remoteName: "Bob Builder", remoteHandle: "bob.ship.test", generation: sent.generation, threadId: sent.threadId,
-      preferences: { saved: false, shipHandlesMessages },
+      preferences: { saved: saveContact ?? false, shipHandlesMessages },
     });
     expect(await bob.run((ctx) => ctx.federation.getByRemote(SPACE_OWNER_UID, alice.account.did))).toMatchObject({
       state: "active", remoteName: "Alice in the open", remoteHandle: "alice.ship.test", generation: sent.generation, threadId: sent.threadId,

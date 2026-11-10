@@ -249,6 +249,21 @@
 .people-welcome-actions button > span { margin-left: 20px; }
 .people-welcome-footnote { margin: 18px 0 0; color: var(--text-dim); font: 13px/1.6 var(--gsv-font-prose); }
 .people-invite { max-width: 540px; margin: 8px auto; }
+/* Add a contact: one large handle field, the invitation links under it, then whoever it finds. */
+.people-add { display: grid; gap: 14px; max-width: 540px; margin: 8px auto; }
+.people .people-add .gsv-ti-input { font-family: var(--gsv-font-prose); letter-spacing: normal; }
+.people .people-add .gsv-ti-input::placeholder { font-family: var(--gsv-font-prose); letter-spacing: normal; }
+.people-add-links { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 20px; }
+.people-add-results { list-style: none; margin: 8px 0 0; padding: 0; border-top: 1px solid var(--border); }
+.people-add-results li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.people-add-results li > span { display: grid; gap: 2px; min-width: 0; }
+.people-add-results strong { color: var(--text-title); font: 500 16px/1.4 var(--gsv-font-prose); overflow-wrap: anywhere; }
+.people-add-results small { color: var(--text-dim); font: 11px/1.5 var(--gsv-font-mono); }
+.people-add-results em { color: var(--text-dim); font: normal 13px/1.5 var(--gsv-font-prose); }
+.people-add-results .people-action { flex-shrink: 0; }
+/* The request form's stacked labels must not reach the checkbox; it keeps its box beside prose text, as on the profile form. */
+:is(.people, .chat-person) .people-compose .people-form label.gsv-cb { display: inline-flex; align-items: center; width: auto; gap: 12px; margin-top: 4px; color: var(--text); }
+:is(.people, .chat-person) .people-compose .gsv-cb-label { font: 16px/1.5 var(--gsv-font-prose); letter-spacing: normal; text-transform: none; }
 .people-invite h2 { margin: 12px 0 16px; color: var(--text-title); font: 400 30px/1.15 var(--gsv-font-prose); letter-spacing: -.025em; }
 .people-invite > .people-note { margin-bottom: 28px; font-size: 16px; }
 .people-invite-link { border-top: 1px solid var(--border); padding-top: 24px; }

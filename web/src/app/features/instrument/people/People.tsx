@@ -24,7 +24,7 @@ import { FleetDialog } from "../fleet/FleetDialog";
 import { INSTRUMENT_APPROACHES_KEY, INSTRUMENT_CONTACTS_KEY, INSTRUMENT_INBOX_KEY, INSTRUMENT_PROFILE_KEY } from "../wire/queryKeys";
 import { Profile } from "./Profile";
 import { useShipTakedowns } from "./ProfileTakedowns";
-import { NewConversation } from "./NewConversation";
+import { AddContact } from "./AddContact";
 import { MessageRequest } from "./MessageRequest";
 import { BlockedPeople } from "./BlockedPeople";
 import { contactAsk, emptyApproachDraft } from "./peopleModel";
@@ -56,7 +56,7 @@ export function People({ onDirtyChange, onAsk }: {
   const [{ view, contactId, requestId, direction, history, archived, edit, focusBio }, open] = usePeopleRoute();
   const inboxContact = useRef(contactId);
   if (view === "inbox") inboxContact.current = contactId;
-  const [dialog, setDialog] = useState<"profile" | "invitation" | null>(() => invitation.code ? "invitation" : compose.url ? "profile" : null);
+  const [dialog, setDialog] = useState<"add" | "invitation" | "accept" | null>(() => invitation.code ? "accept" : compose.url ? "add" : null);
   const firstDestination = useRef(true);
   useLayoutEffect(() => {
     if (firstDestination.current) { firstDestination.current = false; return; }
@@ -172,7 +172,7 @@ export function People({ onDirtyChange, onAsk }: {
       {query ? <PeopleSearch account={account} query={query} contacts={contacts} contactsLoaded={!!contactsQuery.data} contactsError={contactsQuery.error} inbox={inboxByContact} busy={busy} selectedContactId={view === "inbox" ? selectedContact?.id ?? null : null}
         selectedRequestId={view === "requests" ? requestId : null} shipTakenDown={takenDown} onOpenContact={openContact}
         onOpenRequest={(id, to) => { closeSearch(); open({ view: "requests", direction: to, history: false, requestId: id, contactId: null }); }}
-        onCompose={(found) => { setCompose({ ...emptyApproachDraft(found.url), profile: found }); setDialog("profile"); }} />
+        onCompose={(found) => { setCompose({ ...emptyApproachDraft(query), profile: found }); setDialog("add"); }} />
       : listView === "requests" ? <>
         {account && !canConfigure(account, "approach.list") && <p class="people-note people-access-note">{t("people.requests.noAccess")}</p>}
         <div class="people-list-tools"><button class="people-action" disabled={busy} onClick={() => { open({ direction: direction === "incoming" ? "outgoing" : "incoming", requestId: null }); }}>{t(direction === "incoming" ? "people.requests.showSent" : "people.requests.showReceived")}</button><button class="people-action" disabled={busy} onClick={() => { open({ history: !history, requestId: null }); }}>{t(history ? "people.requests.showCurrent" : "people.requests.showHistory")}</button></div>
@@ -204,7 +204,7 @@ export function People({ onDirtyChange, onAsk }: {
             <Hint text={t("people.requests.open")}><IconButton icon={<LineIcon path={LINE_ICONS.requests} />} variant="floating" size={40} ariaLabel={pendingCount ? t("people.requests.openCount", { total: pendingLabel }) : t("people.requests.open")} pressed={listView === "requests"} disabled={busy || !account || !canConfigure(account, "approach.list")} onClick={() => openList(listView === "requests" ? "inbox" : "requests")} /></Hint>
             {pendingCount > 0 && <span class="people-nav-count" aria-hidden="true">{pendingLabel}</span>}
           </span>
-          <Hint text={t("people.connect.add")}><IconButton icon={<LineIcon path={LINE_ICONS.connect} />} variant="floating" size={40} ariaLabel={t("people.connect.add")} disabled={!connected || busy || !mayStart} onClick={() => setDialog("invitation")} /></Hint>
+          <Hint text={t("people.connect.add")}><IconButton icon={<LineIcon path={LINE_ICONS.connect} />} variant="floating" size={40} ariaLabel={t("people.connect.add")} disabled={!connected || busy || !mayStart} onClick={() => setDialog("add")} /></Hint>
         </nav>
         {!connected && <span class="people-reconnecting" role="status">{t("people.reconnecting")}</span>}
       </footer>
@@ -215,7 +215,7 @@ export function People({ onDirtyChange, onAsk }: {
         {selectedContact ? <ContactInspector key={selectedContact.id} contact={selectedContact} account={account} onBack={() => open({ contactId: null })} idea={chosenIdea?.contactId === selectedContact.id ? chosenIdea.index : null} onAsk={(task) => onAsk(contactAsk(selectedContact, task))} draft={drafts.drafts.get(selectedContact.id) ?? EMPTY_CONTACT_DRAFT} onDraft={(change) => drafts.update(selectedContact.id, change)} onSend={() => void drafts.send(selectedContact)} onRetry={(id) => void drafts.send(selectedContact, id)} onObserved={(ids) => drafts.observed(selectedContact.id, ids)} />
           : contactId ? contactsQuery.isFetching ? <LoadingState variant="panel">{t("people.inbox.opening")}</LoadingState> : <p class="people-note">{t("people.inbox.unavailable")}</p>
           : firstVisit ? <PeopleWelcome idea={idea} onIdea={setIdea} disabled={busy || !connected || !mayStart} onConnect={() => { setChosenIdea({ index: idea, contactId: null }); setDialog("invitation"); }} />
-          : <div class="people-empty"><h2>{t("people.inbox.resume")}</h2><p>{t("people.inbox.resumeHint")}</p><button class="people-action" disabled={busy || !connected || !mayStart} onClick={() => setDialog("invitation")}>{t("people.connect.prompt")}</button></div>}
+          : <div class="people-empty"><h2>{t("people.inbox.resume")}</h2><p>{t("people.inbox.resumeHint")}</p><button class="people-action" disabled={busy || !connected || !mayStart} onClick={() => setDialog("add")}>{t("people.connect.prompt")}</button></div>}
         {!contactId && contactsQuery.data?.attentionNotice && <ContactAttentionNotice account={account} />}
       </RetainedView>
       <RetainedView active={active && view === "requests"}>
@@ -225,9 +225,10 @@ export function People({ onDirtyChange, onAsk }: {
       <RetainedView active={active && view === "profile"}>{account && <Profile key={account.uid} account={account} active={active && view === "profile"} edit={edit} focusBio={focusBio} onDirty={setProfileDirty} onEdit={(focus) => open({ view: "profile", edit: true, focusBio: focus === "bio" })} onBack={() => edit ? open({ view: "profile", edit: false, focusBio: false }) : open({ view: "inbox", contactId: null })} />}</RetainedView>
       {view === "contacts" && <div class="people-empty"><p>{t("people.contacts.select")}</p></div>}
     </section>
-    <FleetDialog open={active && dialog !== null} title={t(dialog === "invitation" ? "people.connect.title" : "people.compose.title")} onClose={() => { if (!busy) { clearContactInvitation(); setDialog(null); } }}>
-      {dialog === "invitation" ? <InviteContact account={account} draft={invitation} onChange={setInvitation} onAdded={showConversation} onBusy={setBusy} onProfile={() => setDialog("profile")} />
-        : dialog === "profile" ? <NewConversation account={account} draft={compose} onChange={setCompose} onSent={sent} onBusy={setBusy} contacts={contacts} onOpen={openContact} onInvitation={() => setDialog("invitation")} /> : null}
+    <FleetDialog open={active && dialog !== null} title={t(dialog === "add" ? "people.add.title" : "people.connect.title")} onClose={() => { if (!busy) { clearContactInvitation(); setDialog(null); } }}>
+      {dialog === "invitation" || dialog === "accept" ? <InviteContact key={dialog} account={account} draft={invitation} onChange={setInvitation} onAdded={showConversation} onBusy={setBusy} accepting={dialog === "accept"} onProfile={() => setDialog("add")} />
+        : dialog === "add" ? <AddContact account={account} draft={compose} onChange={setCompose} onSent={sent} onBusy={setBusy} contacts={contacts} onOpen={openContact}
+          onInvite={() => setDialog("invitation")} onHaveInvitation={() => setDialog("accept")} /> : null}
     </FleetDialog>
   </main>;
 }
