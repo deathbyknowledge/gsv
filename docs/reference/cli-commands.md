@@ -284,36 +284,22 @@ gsv routines add "Pick up the parcel" "Remind me" --at "tomorrow 18:00"
 gsv routines edit 4410 --pause
 ```
 
-### Journal
+### Clock
 
 ```bash
-gsv journal [today | yesterday | YYYY-MM-DD]
-gsv journal on [--hours FROM-TO]
-gsv journal now
-gsv journal off
+gsv clock
+gsv clock on [--hours FROM-TO]
+gsv clock now
+gsv clock off
 ```
 
-`journal on` adds a routine named Journal. Your Ship then checks in every hour
+`clock on` adds a routine named Clock. Your Ship then checks in every hour
 from 07:00 to 23:00 in your Ship's time zone, or the hours `--hours` gives,
-such as `--hours 8-22`. At each check-in it writes down what happened since the
-last one and asks what you would want done now. Usually the answer is nothing.
-`journal now` runs a check-in straight away. `journal off` removes the routine;
-the journal stays in your personal wiki.
-
-`journal` draws a day as a strip of check-ins: `●` where your Ship did
-something, `·` where the hour was quiet, and the events that landed between
-them underneath. In a terminal, `←`/`→` move between check-ins to read each
-one, `↑`/`↓` move between days, and `q` quits. Piped output prints the strip
-followed by every check-in.
-
-```text
-Mon 9 Nov 2026  3 check-ins · 1 acted
-
-──·────────────●────────────·──▶
-   ╲✉     ⚑  ✓  ╲    ✉       ╲
-  08           09           10
-                ▲
-```
+such as `--hours 8-22`. At each tick it looks at what happened since the last
+one and asks what you would want done now. Usually the answer is nothing, and
+it stays quiet. `clock now` ticks straight away, `clock off` removes the
+routine, and `clock` says whether it is on, when it next ticks and how the last
+tick went. Messages, mail and events still wake your Ship either way.
 
 ### Memory
 

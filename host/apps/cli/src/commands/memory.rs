@@ -13,10 +13,10 @@ use crate::render::{self, Cell, Table, Tone};
 const WIKI_MANIFEST_KIND: &str = "gsv.wiki";
 
 #[derive(Clone, Debug)]
-pub(crate) struct Wiki {
+struct Wiki {
     id: String,
     title: String,
-    pub(crate) repo: String,
+    repo: String,
     updated_at: Option<i64>,
 }
 
@@ -59,7 +59,7 @@ fn manifest_wiki(repo: &Value, manifest: &Value) -> Option<Wiki> {
     })
 }
 
-pub(crate) async fn wikis(client: &KernelClient) -> Result<Vec<Wiki>, DynError> {
+async fn wikis(client: &KernelClient) -> Result<Vec<Wiki>, DynError> {
     let repos = call(client, "repo.list", json!({})).await?;
     let mut found = Vec::new();
     for repo in items(&repos, "repos") {
@@ -86,7 +86,7 @@ pub(crate) async fn wikis(client: &KernelClient) -> Result<Vec<Wiki>, DynError> 
     Ok(found)
 }
 
-pub(crate) fn find_wiki<'a>(wikis: &'a [Wiki], id: &str) -> Option<&'a Wiki> {
+fn find_wiki<'a>(wikis: &'a [Wiki], id: &str) -> Option<&'a Wiki> {
     let id = id.trim().trim_matches('/');
     wikis
         .iter()

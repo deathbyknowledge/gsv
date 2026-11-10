@@ -1740,7 +1740,6 @@ dependencies = [
  "chrono",
  "clap",
  "cliclack",
- "console 0.15.11",
  "daemon-protocol",
  "desktop-protocol",
  "dirs 5.0.1",

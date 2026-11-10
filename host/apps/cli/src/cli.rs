@@ -20,7 +20,7 @@ Look after things
   routines           Things your Ship does on a schedule
   event              Tell your Ship something happened, from a script
   memory             Your wiki, and the notes your Ship always reads
-  journal [DAY]      Your Ship's hourly check-ins, as a strip of the day
+  clock              Your Ship checks in every hour, on its own
   activity           What ran, where, and how it went
 
 Places
@@ -122,14 +122,10 @@ pub(crate) enum Commands {
         action: Option<MemoryAction>,
     },
 
-    /// Your Ship's hourly check-ins, as a strip of the day
-    #[command(args_conflicts_with_subcommands = true)]
-    Journal {
-        /// today, yesterday or YYYY-MM-DD
-        day: Option<String>,
-
+    /// Your Ship checks in every hour, on its own
+    Clock {
         #[command(subcommand)]
-        action: Option<JournalAction>,
+        action: Option<ClockAction>,
     },
 
     /// Your Ship's mailbox, newest first
@@ -518,8 +514,8 @@ pub(crate) enum RequestsAction {
 }
 
 #[derive(Subcommand, Clone)]
-pub(crate) enum JournalAction {
-    /// Have your Ship check in every hour and write it down
+pub(crate) enum ClockAction {
+    /// Have your Ship check in every hour and act on what you'd want done
     On {
         /// The hours it checks in, in your Ship's time zone
         #[arg(long, default_value = "7-23")]
@@ -527,7 +523,7 @@ pub(crate) enum JournalAction {
     },
     /// Have your Ship check in now, without waiting for the hour
     Now,
-    /// Stop the hourly check-ins; the journal stays in your wiki
+    /// Stop the hourly check-ins; your Ship still wakes for messages and events
     Off,
 }
 

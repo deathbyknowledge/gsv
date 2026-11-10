@@ -76,29 +76,6 @@ Each human receives a `personal` wiki. It is a normal registered ripgit repo:
 journal entries. `inbox/` is only for information that cannot yet be placed.
 Additional wikis use the same manifest and repository convention.
 
-### Journal check-ins
-
-The journal gives the Ship a baseline in time. An ordinary Ship routine named
-Journal, a `cron` schedule with a `responsibility` target, wakes the Ship every
-hour while the owner is usually awake. The built-in `journal` skill defines a
-check-in: record what happened since the previous one, decide whether the owner
-would want anything done now, and resolve the responsibility. Events still wake
-the Ship when they happen; the clock only bounds how long it stays unaware.
-
-Each check-in appends one entry to that day's journal page:
-
-```markdown
-## 10:00 ●
-Reminded you about the dentist at 15:00.
-
-- 09:42 ✉ Ana asked about Saturday
-- 09:55 ✓ Flight search finished
-```
-
-`●` marks an hour where the Ship acted and `·` a quiet one. Entries with other
-headings on the same page are ordinary journal notes. The file belongs to the
-owner like the rest of the wiki; `gsv journal` reads it to draw the day.
-
 ## Wiki semantics
 
 The `wiki` shell command provides semantic operations over registered wiki
