@@ -812,6 +812,23 @@ and a reply quotes the original below it.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
 
+`cal` writes and reads iCalendar (`.ics`) event files:
+
+```bash
+cal add --title TITLE --start WHEN [--end WHEN | --duration LENGTH] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]... --out PATH
+cal update PATH [--title TITLE] [--start WHEN] [--end WHEN | --duration LENGTH] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]...
+cal cancel PATH
+cal show PATH [--timezone ZONE]
+```
+
+`add` gives a new event a fresh UID, the account's managed mail address as its
+organizer, and each `--attendee` as an invited guest. It reads local times in
+the owner's time zone, or `--timezone`, and stores them in UTC; a date makes an
+all-day event. `update` and `cancel` rewrite the file in place with the same
+UID and the next SEQUENCE, so a calendar that already has the event replaces
+it. Only the event's organizer can change it, and `cal` never changes the times
+of a repeating event. `show` prints any calendar file, one field per line.
+
 `skills list` shows the built-in skills, served read-only from `/sys/skills.d`,
 before the owner's and the agent's own. `skills create` writes to the current
 account's `~/skills.d` and refuses a built-in name. `man --search` ranks a

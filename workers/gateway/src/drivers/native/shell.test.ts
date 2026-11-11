@@ -1110,6 +1110,8 @@ describe("native shell capability discovery", () => {
     ["sign up for a website with an email address", "mail"],
     ["find the verification email", "mail"],
     ["track my parcel delivery", "mail"],
+    ["make a calendar invite for a meeting", "cal"],
+    ["reschedule the dinner event", "cal"],
     ["start a new chat in this conversation", "message"],
   ])("maps a plain-language task '%s' to %s", async (query, expectedCommand) => {
     const result = await handleShellExec(
