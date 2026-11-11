@@ -25,6 +25,7 @@ export function adminPageResponse(input: {
     <header class="topbar">
       <a class="brand" href="/admin/installations"><strong>Ship</strong><span>administration</span></a>
       <nav aria-label="Operator navigation">
+        ${navLink("/admin/overview", "Overview", input.section === "overview")}
         ${navLink("/admin/installations", "Ships", input.section === "installations")}
         ${navLink("/admin/reports", "Reports", input.section === "reports")}
         ${(input.navigation ?? []).map((item) => navLink(item.href, item.label, input.section === item.section)).join("")}
@@ -100,11 +101,10 @@ export function formatDate(timestamp: number | null): string {
   if (timestamp === null) return "Not yet";
   const date = new Date(timestamp);
   const fallback = escapeHtml(new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short",
+    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
     timeZone: "UTC",
-  }).format(date)) + " UTC";
-  return `<time datetime="${date.toISOString()}" data-local-time="date">${fallback}</time>`;
+  }).format(date));
+  return `<time datetime="${date.toISOString()}" title="${date.toISOString()}" data-local-time="date">${fallback}</time>`;
 }
 
 export function formatTime(timestamp: number): string {
@@ -114,11 +114,22 @@ export function formatTime(timestamp: number): string {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
     hourCycle: "h23",
     timeZone: "UTC",
-  }).format(date)) + " UTC";
+  }).format(date));
   return `<time datetime="${date.toISOString()}" data-local-time="time">${fallback}</time>`;
+}
+
+/** Compact activity age; the precise local timestamp remains in the hover title. */
+export function formatRelativeDate(timestamp: number): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+  const label = minutes < 1 ? "now" : minutes < 60 ? `${minutes}m ago` : minutes < 1440 ? `${Math.floor(minutes / 60)}h ago` : `${Math.floor(minutes / 1440)}d ago`;
+  return `<time datetime="${new Date(timestamp).toISOString()}" title="${new Date(timestamp).toISOString()}" data-local-time="relative">${label}</time>`;
+}
+
+export function formatDateOnly(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `<time datetime="${date.toISOString()}" title="${date.toISOString()}" data-local-time="day">${escapeHtml(new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(date))}</time>`;
 }
 
 /** Durations as an operator reads them: 200ms, 3s, 6m 15s, 2h 4m. */
@@ -188,15 +199,21 @@ function adminHeaders(contentType: string): Headers {
 
 const ADMIN_TIME_SCRIPT = `
 (() => {
-  const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  const timeFormatter = new Intl.DateTimeFormat(undefined, {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-  });
-  const timezone = dateFormatter.resolvedOptions().timeZone;
-  for (const time of document.querySelectorAll('time[data-local-time]')) {
-    const formatter = time.dataset.localTime === 'time' ? timeFormatter : dateFormatter;
-    time.textContent = formatter.format(new Date(time.dateTime)) + ' ' + timezone;
+  const compact = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const day = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+  const exact = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'long' });
+  function render() {
+    for (const time of document.querySelectorAll('time[data-local-time]')) {
+      const date = new Date(time.dateTime);
+      time.title = exact.format(date);
+      const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
+      time.textContent = time.dataset.localTime === 'relative'
+        ? minutes < 1 ? 'now' : minutes < 60 ? minutes + 'm ago' : minutes < 1440 ? Math.floor(minutes / 60) + 'h ago' : Math.floor(minutes / 1440) + 'd ago'
+        : (time.dataset.localTime === 'day' ? day : compact).format(date);
+    }
   }
+  render();
+  setInterval(render, 60000);
 })();
 `;
 
@@ -213,9 +230,9 @@ a { color: #b9b6ff; }
 .topbar nav a { display: flex; align-items: center; padding: 0 14px; color: #9d9daa; text-decoration: none; border-bottom: 2px solid transparent; }
 .topbar nav a[aria-current="page"] { color: #fff; border-bottom-color: #8f8aff; }
 .topbar small { margin-left: auto; text-transform: uppercase; }
-main { width: min(1180px, 100%); margin: auto; padding: 48px 28px 80px; }
+main { width: min(1600px, 100%); margin: auto; padding: 48px 28px 80px; }
 .narrow { width: min(760px, 100%); margin-inline: auto; }
-.stack { display: grid; gap: 24px; }
+.stack { display: grid; gap: 24px; min-width: 0; }
 .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
 .page-heading .actions { display: flex; align-items: center; gap: 10px; }
 h1 { margin: 7px 0 0; font: 500 34px system-ui, sans-serif; } h2 { margin: 7px 0 10px; font: 500 18px system-ui, sans-serif; }
@@ -229,11 +246,11 @@ label { display: grid; gap: 8px; color: #c4c4ce; font-size: 12px; }
 input, select, textarea { width: 100%; border: 1px solid #3a3a46; padding: 11px 12px; color: #fff; background: #08080c; font: inherit; }
 button, .button { display: inline-block; border: 1px solid #716bea; padding: 10px 14px; color: #fff; background: #34306f; font: inherit; line-height: normal; text-align: center; text-decoration: none; cursor: pointer; }
 button.secondary, .button.secondary { border-color: #3d3d49; background: #17171e; } button.danger, .button.danger { border-color: #743b42; background: #481f25; }
-.table-wrap { overflow-x: auto; border: 1px solid #292932; }
+.table-wrap { min-width: 0; overflow-x: auto; border: 1px solid #292932; }
 table { width: 100%; border-collapse: collapse; text-align: left; } th, td { padding: 15px 16px; border-bottom: 1px solid #292932; font-size: 12px; vertical-align: middle; }
 tbody tr:last-child td { border-bottom: 0; } th { color: #858593; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
 td strong, td small { display: block; } td small { margin-top: 6px; color: #858593; } td a { color: #ecebff; }
-.installations { min-width: 980px; } .installations td { vertical-align: top; } .installations .ship-id { font-size: 10px; color: #6f6f7c; }
+.installations { min-width: 1280px; } .installations td { vertical-align: top; } .installations .ship-id { font-size: 10px; color: #6f6f7c; }
 .badge { display: inline-block; border: 1px solid #4b485e; padding: 4px 7px; color: #d8d6ef; background: #181720; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
 .badge-active, .badge-enabled { border-color: #315f4b; color: #9de0be; background: #0d1713; } .badge-restricted, .badge-failed, .badge-past-due, .badge-disabled, .badge-paused { border-color: #743b42; color: #efafb5; background: #1a0e10; }
 .empty { border: 1px solid #292932; padding: 50px 20px; color: #858593; text-align: center; }
@@ -261,5 +278,18 @@ details summary { cursor: pointer; color: #c4c4ce; } .flag { color: #f1c48a; }
 .reported-message { white-space: pre-wrap; overflow-wrap: anywhere; color: #e8e8ef; }
 .steps { margin: 10px 0 0; padding-left: 18px; font: 11px/1.7 ui-monospace, monospace; color: #a7a7b2; }
 .steps span { color: #6f6f7c; } .steps .step-slow { color: #f1c48a; } .steps .step-error { color: #efafb5; }
+.muted { color: #858593; font-size: 11px; }
+.growth-metrics, .usage-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 18px; }
+.usage-metrics .metric { padding: 16px; } .usage-metrics strong { font-size: 20px; }
+.growth-chart { display: block; width: 100%; min-height: 180px; } .growth-chart text { fill: #858593; font: 12px ui-monospace, monospace; }
+.chart-grid { stroke: #292932; } .chart-signups, .chart-active { fill: none; stroke-width: 2.5; }
+.chart-signups { stroke: #a39bff; } .chart-active { stroke: #78d8b3; } .series-signups { color: #a39bff; } .series-active { color: #78d8b3; }
+.chart-legend { display: flex; gap: 20px; font-size: 12px; }
+.user-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; } .user-filters label { min-width: 130px; flex: 1; }
+.user-filters label:first-child { min-width: 230px; flex: 2; } .advanced-filters > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding-top: 16px; }
+.installations th a { color: inherit; white-space: nowrap; } .installations .count { font-variant-numeric: tabular-nums; text-align: right; }
+.plan-details > summary { display: flex; align-items: center; gap: 16px; cursor: pointer; } .plan-details > summary::before { content: '▸'; color: #8f8aff; }
+.plan-details[open] > summary::before { content: '▾'; } .plan-details > summary strong { font: 500 18px system-ui, sans-serif; } .plan-details > div { margin-top: 24px; }
+.internal-note { white-space: pre-wrap; overflow-wrap: anywhere; } .outreach-history { padding-left: 20px; font-size: 12px; } .outreach-history li + li { border-top: 1px solid #292932; padding-top: 12px; }
 @media (max-width: 760px) { .topbar { flex-wrap: wrap; gap: 8px 18px; padding: 12px 18px 0; } .topbar nav { order: 3; width: 100%; height: 44px; } .topbar nav a { padding: 0 10px; } .topbar small { display: none; } main { padding: 32px 16px 60px; } .page-heading { align-items: start; flex-direction: column; } .filters { grid-template-columns: 1fr; } .grid, .metrics { grid-template-columns: 1fr; } .metric { border-right: 0; border-bottom: 1px solid #292932; } .metric:last-child { border-bottom: 0; } .notice { grid-template-columns: 1fr; } .notice .button, .notice code, .notice small { grid-column: 1; } .definition-list { grid-template-columns: 1fr; } .definition-list dt { padding-bottom: 3px; border-bottom: 0; } .definition-list dd { padding-top: 3px; } }
 `;

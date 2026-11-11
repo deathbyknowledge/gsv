@@ -168,7 +168,7 @@ export async function handleConversationSend(
     createdAt: Date.now(),
   });
   const { message } = appended;
-  ctx.conversations.recordSequence(conversation.id, message.sequence);
+  ctx.conversations.recordSequence(conversation.id, message.sequence, { messageId: message.id, runId, at: message.createdAt });
   if (appended.created) {
     ctx.broadcastToUserUid(conversation.ownerUid, "message.committed", {
       message,

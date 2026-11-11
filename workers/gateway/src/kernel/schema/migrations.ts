@@ -1,3 +1,4 @@
+import { KERNEL_V094_OPERATOR_ACTIVITY } from "./v094_operator_activity";
 import { KERNEL_V064_SHIP_REPLY_ROUTES } from "./v064_ship_reply_routes";
 import { KERNEL_V066_BROWSER_HANDOFF_LINKS } from "./v066_browser_handoff_links";
 import { KERNEL_V067_CONTACT_HANDLING_CHOICE } from "./v067_contact_handling_choice";
@@ -236,6 +237,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V091_OUTSIDE_TEXT_LABELS,
   KERNEL_V092_OUTBOUND_MAIL_COPIES,
   KERNEL_V093_AUTOMATIC_MAIL,
+  KERNEL_V094_OPERATOR_ACTIVITY,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

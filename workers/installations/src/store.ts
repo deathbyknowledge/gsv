@@ -148,9 +148,9 @@ export class AccountStore {
         this.db.prepare(
           `INSERT INTO installations (
              id, owner_principal_id, handle, canonical_origin, state,
-             provision_version, reservation_expires_at, created_at, owner_setup, signup_context_json
+             provision_version, reservation_expires_at, created_at, owner_setup, signup_context_json, signup_at
            )
-           SELECT ?, id, ?, ?, 'reserved', ?, ?, ?, ?, ?
+           SELECT ?, id, ?, ?, 'reserved', ?, ?, ?, ?, ?, ?
            FROM principals
            WHERE id = ? AND state = 'active' AND email_verified_at IS NOT NULL
              AND NOT EXISTS (SELECT 1 FROM username_policy WHERE normalized_handle = ?
@@ -166,6 +166,7 @@ export class AccountStore {
           now,
           input.ownerSetup ? 1 : 0,
           input.signupContext ? JSON.stringify(input.signupContext) : null,
+          now,
           principalId,
           normalizeUsernamePolicy(handle),
           input.allowReservedHandle ? 1 : 0,
@@ -324,11 +325,11 @@ export class AccountStore {
       this.db.prepare(
         `INSERT INTO installations (
            id, owner_principal_id, handle, canonical_origin, state,
-           provision_version, reservation_expires_at, created_at
+           provision_version, reservation_expires_at, created_at, signup_at, signup_context_json
          )
          SELECT r.replacement_installation_id, i.owner_principal_id,
                 r.handle, r.canonical_origin, 'reserved',
-                i.provision_version, NULL, ?
+                i.provision_version, NULL, ?, COALESCE(i.signup_at, i.created_at), i.signup_context_json
          FROM installation_reset_operations r
          JOIN installations i ON i.id = r.previous_installation_id
          WHERE r.operation_id = ? AND r.previous_installation_id = ?

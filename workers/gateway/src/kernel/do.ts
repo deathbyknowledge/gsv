@@ -1,3 +1,4 @@
+import { OperatorActivityStore } from "./operator-activity";
 import type { OperatorShipSnapshot, ProfileCopyChange } from "@humansandmachines/gsv/services/operator";
 import { buildOperatorShipSnapshot } from "./operator-snapshot";
 import { getProcessByPid } from "../shared/utils";
@@ -870,7 +871,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
   /** Operator Ship page: metadata only, reached through the Accounts-bound operator entrypoint. */
   async operatorShipSnapshot(runLimit: number): Promise<OperatorShipSnapshot> {
     this.retirement.assertActive();
-    return await buildOperatorShipSnapshot({
+    const snapshot = await buildOperatorShipSnapshot({
       installationId: this.installationId,
       procs: this.procs,
       identityLinks: this.adapters.identityLinks,
@@ -880,6 +881,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       shipSummary: async (pid) => await (await getProcessByPid(pid, this.installationId)).operatorRunSummary(runLimit),
       now: () => Date.now(),
     });
+    return { ...snapshot, usage: new OperatorActivityStore(this.ctx.storage.sql).snapshot() };
   }
 
   /** Brings Bluesky's copy of the published profile in line with the host's takedowns, which the operator has just changed. */

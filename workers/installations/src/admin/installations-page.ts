@@ -1,6 +1,10 @@
+import { usagePanel, outreachPanel } from "./monitoring-page";
+import { userSegment, SEGMENTS, OUTREACH_STATUSES, segmentLabels, outreachLabels } from "./monitoring";
+import { USER_SORTS } from "./user-query";
 import type {
   AdminInstallation,
   AdminInstallationList,
+  AdminInstallationListQuery,
   AdminInstallationSummary,
 } from "../administration";
 import { ADMIN_VISIBLE_INSTALLATION_STATES } from "../administration";
@@ -16,6 +20,8 @@ import {
   errorNotice,
   escapeHtml,
   formatDate,
+  formatDateOnly,
+  formatRelativeDate,
   formatDuration,
   formatInteger,
   formatTime,
@@ -59,7 +65,7 @@ export function adminInstallationsPage<Summary extends AdminInstallationSummary>
       </div>
       ${error ? errorNotice(error) : ""}
       ${installationFilters(list)}
-      ${installationTable(list.installations, presentation.summaryColumn)}
+      ${installationTable(list.installations, presentation.summaryColumn, list)}
       ${pagination(list)}
     </section>`,
   });
@@ -127,11 +133,15 @@ export function adminInstallationPage<Detail extends AdminInstallation>(
       ${error ? errorNotice(error, retry ? lifecycleRetryForm(installationPath, retry) : "") : ""}
       ${issued ? onboardingNotice(issued) : ""}
       ${presentation.overview?.(installation) ?? ""}
+      ${usagePanel(installation.activity, ship?.health.kind === "ok" ? ship.health.snapshot.usage : undefined,
+        ship?.health.kind === "ok" && ship.health.snapshot.usage ? userSegment(installation.signedUpAt ?? installation.createdAt, { ...ship.health.snapshot.usage, capturedAt: ship.health.snapshot.capturedAt, availability: "ok" }) : installation.segment)}
+      ${outreachPanel(installationPath, installation.outreach, installation.outreachHistory)}
       <div class="grid">
         ${identityPanel(installation, ship?.context)}
         ${ship ? healthPanel(ship.health) : ""}
       </div>
       ${ship?.health.kind === "ok" ? timelinePanel(ship.health.snapshot) : ""}
+      ${ship?.health.kind === "ok" && ship.health.snapshot.runs?.some((run) => run.status === "error" || run.steps.some((step) => step.status === "error")) ? `<section class="notice error"><p class="eyebrow">RECENT FAILURES</p><p>${ship.health.snapshot.runs.filter((run) => run.status === "error").length} failed requests · ${ship.health.snapshot.runs.reduce((count, run) => count + run.steps.filter((step) => step.status === "error").length, 0)} failed steps. Expand the timeline steps to inspect failed tools and provider requests.</p></section>` : ""}
       <div class="grid">
         ${presentation.panel?.(installation) ?? ""}
         ${ship ? recentActionsPanel(ship.context.audit) : ""}
@@ -241,22 +251,38 @@ function hostOf(origin: string): string {
 }
 
 function installationFilters(list: AdminInstallationList): string {
-  return `<form class="panel filters" method="get" action="/admin/installations">
-    <label><span>Search handle, owner email or Ship ID</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="hank, email or inst_…"></label>
-    <label><span>Lifecycle state</span><select name="state"><option value="">All states</option>${ADMIN_VISIBLE_INSTALLATION_STATES.map((state) => `<option value="${state}"${list.state === state ? " selected" : ""}>${escapeHtml(state.replaceAll("_", " "))}</option>`).join("")}</select></label>
-    <button type="submit">Search</button>
-    <a class="button secondary" href="/admin/installations">Reset</a>
+  const options = (values: readonly string[], current: string | undefined, labels?: Readonly<Record<string, string>>) => values.map((value) => `<option value="${value}"${current === value ? " selected" : ""}>${escapeHtml(labels?.[value] ?? value.replaceAll("_", " "))}</option>`).join("");
+  const input = (name: keyof AdminInstallationList, label: string, type = "date") => `<label><span>${label}</span><input type="${type}" name="${name}" value="${escapeHtml(String(list[name] ?? ""))}"${type === "number" ? ' min="0"' : ""}></label>`;
+  return `<form class="panel stack" method="get" action="/admin/installations">
+    <div class="user-filters">
+      <label><span>Search users, email, notes or channel</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="Handle, email, note…"></label>
+      <label><span>User segment</span><select name="segment"><option value="">All segments</option>${options(SEGMENTS, list.segment, segmentLabels)}</select></label>
+      <label><span>Outreach</span><select name="outreach"><option value="">All statuses</option>${options(OUTREACH_STATUSES, list.outreach, outreachLabels)}</select></label>
+      <label><span>Lifecycle</span><select name="state"><option value="">All states</option>${options(ADMIN_VISIBLE_INSTALLATION_STATES, list.state ?? undefined)}</select></label>
+      <button type="submit">Filter</button><a class="button secondary" href="/admin/installations">Reset</a>
+    </div>
+    <details class="advanced-filters"><summary>Dates, usage, acquisition and sorting</summary><div>
+      ${input("signupFrom", "Signed up from")}${input("signupTo", "Signed up through")}
+      ${input("activeFrom", "Last active from")}${input("activeTo", "Last active through")}
+      ${input("contactFrom", "Contacted from")}${input("contactTo", "Contacted through")}
+      ${input("minMessages", "Minimum messages", "number")}${input("minTasks", "Minimum tasks", "number")}${input("minSuccessfulTasks", "Minimum successful", "number")}
+      ${input("channel", "Acquisition channel", "text")}${input("country", "Country code", "text")}
+      <label><span>Sort by</span><select name="sort">${options(USER_SORTS, list.sort ?? "signup")}</select></label>
+      <label><span>Order</span><select name="direction">${options(["desc", "asc"], list.direction ?? "desc", { desc: "Descending", asc: "Ascending" })}</select></label>
+    </div></details>
   </form>`;
 }
 
 function installationTable<Summary extends AdminInstallationSummary>(
   installations: Summary[],
   column?: InstallationAdminPresentation<AdminInstallation, Summary>["summaryColumn"],
+  list: AdminInstallationListQuery = { query: "", state: null, page: 1 },
 ): string {
   if (installations.length === 0) {
     return `<div class="empty">No Ships match this view.</div>`;
   }
-  return `<div class="table-wrap"><table class="installations"><thead><tr><th>Ship / owner</th><th>State</th><th>Signup location</th><th>Signup origin</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}<th>Created</th></tr></thead>
+  const heading = (label: string, sort: typeof USER_SORTS[number]) => `<th><a href="${escapeHtml(registryHref({ ...list, sort, direction: list?.sort === sort && list.direction !== "asc" ? "asc" : "desc" }, 1))}">${label}${list?.sort === sort ? list.direction === "asc" ? " ↑" : " ↓" : ""}</a></th>`;
+  return `<div class="table-wrap"><table class="installations"><thead><tr><th>Ship / owner</th>${heading("Signup", "signup")}${heading("Last activity", "last_active")}${heading("Messages", "messages")}${heading("Tasks", "tasks")}${heading("Successful", "successful_tasks")}${heading("Segment", "segment")}${heading("Acquisition", "channel")}${heading("Outreach", "outreach")}${heading("Contacted", "last_contacted")}<th>State</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}</tr></thead>
     <tbody>${installations.map((installation) => installationRow(installation, column)).join("")}</tbody></table></div>`;
 }
 
@@ -265,25 +291,36 @@ function installationRow<Summary extends AdminInstallationSummary>(
   column?: InstallationAdminPresentation<AdminInstallation, Summary>["summaryColumn"],
 ): string {
   const href = `/admin/installations/${encodeURIComponent(installation.installationId)}`;
+  const count = (value?: number | null) => value === null || value === undefined ? "—" : formatInteger(value);
+  const acquisition = installation.signup?.acquisition;
+  const channel = acquisition?.source ?? acquisition?.referral ?? acquisition?.referrerHost ?? "Unknown";
+  const segment = installation.segment ?? "unknown";
+  const outreach = installation.outreach;
   return `<tr>
-    <td><strong><a href="${href}">${escapeHtml(installation.handle)}</a></strong>${installation.ownerEmail ? `<small>${escapeHtml(installation.ownerEmail)}</small>` : ""}<small class="ship-id">${escapeHtml(installation.installationId)}</small></td>
-    <td>${stateBadge(installation.state)}<small>provisioning: ${escapeHtml(installation.operationState)}</small></td>
-    <td>${signupLocation(installation.signup)}</td>
-    <td>${signupOrigin(installation.signup)}</td>
+    <td><strong><a href="${href}">${escapeHtml(installation.handle)}</a></strong>${installation.ownerEmail ? `<small>${escapeHtml(installation.ownerEmail)}</small>` : ""}<small>${signupLocation(installation.signup, true)}</small>
+      ${outreach?.notes ? `<small title="${escapeHtml(outreach.notes)}">✎ ${escapeHtml(outreach.notes.slice(0, 70))}${outreach.notes.length > 70 ? "…" : ""}</small>` : ""}</td>
+    <td>${formatDateOnly(installation.signedUpAt ?? installation.createdAt)}</td>
+    <td>${installation.activity?.lastActiveAt ? formatRelativeDate(installation.activity.lastActiveAt) : "—"}${installation.activity?.capturedAt ? `<small title="Activity snapshot">sync ${formatRelativeDate(installation.activity.capturedAt)}</small>` : ""}</td>
+    <td class="count">${count(installation.activity?.messages)}</td><td class="count">${count(installation.activity?.tasks)}</td><td class="count">${count(installation.activity?.successfulTasks)}</td>
+    <td>${stateBadge(segmentLabels[segment])}</td>
+    <td>${escapeHtml(channel)}${!acquisition && installation.signup?.origin ? `<small title="Signup origin">via ${signupOrigin(installation.signup)}</small>` : ""}${acquisition?.medium ? `<small>${escapeHtml(acquisition.medium)}</small>` : ""}${acquisition?.campaign ? `<small>${escapeHtml(acquisition.campaign)}</small>` : ""}</td>
+    <td><a href="${href}#outreach">${escapeHtml(outreachLabels[outreach?.status ?? "not_contacted"])}</a></td>
+    <td>${outreach?.lastContactedAt ? formatDateOnly(outreach.lastContactedAt) : "—"}</td>
+    <td>${stateBadge(installation.state)}</td>
     ${column ? `<td>${column.render(installation)}</td>` : ""}
-    <td>${formatDate(installation.createdAt)}</td>
   </tr>`;
 }
 
 const countryNames = new Intl.DisplayNames(["en"], { type: "region", fallback: "none" });
 
-function signupLocation(signup?: SignupContext | null): string {
+function signupLocation(signup?: SignupContext | null, compact = false): string {
   const code = signup?.country;
   const name = code && /^[A-Z]{2}$/.test(code) ? countryNames.of(code) : undefined;
   const country = code && name
     ? `<strong><span aria-hidden="true">${Array.from(code, (letter) => String.fromCodePoint(127397 + letter.charCodeAt(0))).join("")}</span> ${escapeHtml(name)}</strong>`
     : "Not recorded";
   const place = [...new Set([signup?.city, signup?.region].filter((value): value is string => Boolean(value)))].join(", ");
+  if (compact) return `<span title="Signup location: ${escapeHtml(place || "Approximate signup location")}">${country}</span>`;
   return `${country}${place ? `<small>${escapeHtml(place)}</small>` : ""}${name || place ? "<small>Approximate at signup</small>" : ""}`;
 }
 
@@ -302,10 +339,13 @@ function pagination(list: AdminInstallationList): string {
   return `<nav class="pagination" aria-label="Ship pages"><span>Page ${formatInteger(list.page)} of ${formatInteger(list.totalPages)}</span><div>${previous}${next}</div></nav>`;
 }
 
-function registryHref(list: AdminInstallationList, page: number): string {
+function registryHref(list: AdminInstallationListQuery, page: number): string {
   const params = new URLSearchParams();
   if (list.query) params.set("q", list.query);
   if (list.state) params.set("state", list.state);
+  for (const key of ["sort", "direction", "segment", "outreach", "channel", "country", "signupFrom", "signupTo", "activeFrom", "activeTo", "minMessages", "minTasks", "minSuccessfulTasks", "contactFrom", "contactTo"] as const) {
+    if (list[key] !== undefined) params.set(key, String(list[key]));
+  }
   if (page > 1) params.set("page", String(page));
   const query = params.toString();
   return `/admin/installations${query ? `?${query}` : ""}`;

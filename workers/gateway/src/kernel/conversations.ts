@@ -1,3 +1,4 @@
+import { OperatorActivityStore, type OwnerRequestActivity } from "./operator-activity";
 import type {
   ConversationKind,
   ConversationMember,
@@ -249,7 +250,8 @@ export class ConversationRegistry {
     if (updated.rowsWritten === 0) throw new Error("Conversation does not exist");
   }
 
-  recordSequence(id: string, sequence: number): void {
+  recordSequence(id: string, sequence: number, activity?: OwnerRequestActivity): void {
+    if (activity && this.get(id)?.kind === "ship") new OperatorActivityStore(this.sql).receive(activity);
     this.sql.exec(
       `UPDATE conversations
        SET latest_sequence = MAX(latest_sequence, ?), updated_at = ?

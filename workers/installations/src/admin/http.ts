@@ -1,8 +1,11 @@
+import { z } from "zod";
+import { outreachInputSchema } from "./monitoring";
+import { adminOverviewPage } from "./monitoring-page";
 import type { UsernamePolicyInput, UsernamePolicyLists } from "../username-policy";
 import { adminSignupPage } from "./signup-page";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { AdminInstallation, AdminInstallationList, AdminInstallationListQuery, AdminInstallationSummary } from "../administration";
-import { hasExpectedOrigin, json, noStoreHeaders, readRequestBody, requireString } from "../http";
+import { hasExpectedOrigin, json, noStoreHeaders, readJsonObject, readRequestBody, requireString } from "../http";
 import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
 import { InstallationAdminApi, readConfirmedAction, readInstallationListQuery, UnconfirmedActionError } from "./api";
 import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type LifecycleRetry, type ShipView } from "./installations-page";
@@ -72,6 +75,42 @@ export class InstallationAdminHttp<
     let usernamePolicyInput: UsernamePolicyInput | undefined;
     let lifecycleRetry: LifecycleRetry | undefined;
     try {
+      if (["/admin/overview", "/admin", "/admin/"].includes(url.pathname) && (request.method === "GET" || head) && this.insight) {
+        return adminOverviewPage(await this.insight.monitoring.overview(), head, this.presentation.navigation);
+      }
+      if (url.pathname === "/admin/overview" && (request.method === "GET" || head)) return adminOverviewPage(null, head, this.presentation.navigation);
+      if (url.pathname === "/admin/monitoring/refresh" && request.method === "POST") {
+        requireAdminMutationOrigin(request, this.origin);
+        if (!this.insight) throw new Error("installation monitoring is unavailable");
+        await this.audited(request, { name: "monitoring.refresh" }, () => this.insight!.refreshActivity());
+        return adminRedirect("/admin/overview");
+      }
+      const outreachRoute = /^\/admin\/(api\/)?installations\/([^/]+)\/outreach$/.exec(url.pathname);
+      if (outreachRoute) {
+        if (!this.insight) throw new Error("installation monitoring is unavailable");
+        const installationId = decodeInstallationId(outreachRoute[2]);
+        if (!await this.service.getInstallation(installationId)) return adminText("Not Found", 404);
+        if (request.method === "GET" && outreachRoute[1]) return Response.json({
+          outreach: await this.insight.monitoring.outreach(installationId), history: await this.insight.monitoring.history(installationId),
+        }, { headers: noStoreHeaders() });
+        if (request.method === "POST") {
+          requireAdminMutationOrigin(request, this.origin);
+          let input;
+          if (outreachRoute[1]) input = outreachInputSchema.parse(await readJsonObject(request));
+          else {
+            const form = await readAdminForm(request);
+            const date = form.get("lastContactedDate");
+            if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) throw new Error("request contact date is invalid");
+            input = outreachInputSchema.parse({ status: form.get("status"), notes: form.get("notes") ?? "",
+              lastContactedAt: date ? Date.parse(date) : null, revision: Number(form.get("revision")) });
+          }
+          const actor = this.access.operatorIdentity ? await this.access.operatorIdentity(request) : "operator";
+          if (actor === null) throw new AdminForbiddenError();
+          await this.audited(request, { name: "ship.outreach.update", installationId },
+            () => this.insight!.monitoring.saveOutreach(installationId, input, actor));
+          return outreachRoute[1] ? Response.json({ ok: true }, { headers: noStoreHeaders() }) : adminRedirect(`/admin/installations/${encodeURIComponent(installationId)}#outreach`);
+        }
+      }
       if (url.pathname === "/admin/styles.css" && (request.method === "GET" || head)) return adminStylesheet(head);
       if (url.pathname === "/admin/time.js" && (request.method === "GET" || head)) return adminTimeScript(head);
       if (["/admin", "/admin/", "/admin/installations", "/admin/installations/"].includes(url.pathname)
@@ -156,7 +195,7 @@ export class InstallationAdminHttp<
       if (error instanceof AdminForbiddenError) {
         return isAdminApiPath(url.pathname) ? json({ error: "Forbidden" }, 403) : adminText("Forbidden", 403);
       }
-      const failure = installationAdminFailure(error instanceof Error ? error : new Error("request failed"));
+      const failure = error instanceof z.ZodError ? { message: "Check the filter or outreach details.", status: 400 } : installationAdminFailure(error instanceof Error ? error : new Error("request failed"));
       if (failure.status >= 500) console.warn("[Operator] Admin request failed:", url.pathname, exceptionDiagnostics(error));
       if (isAdminApiPath(url.pathname)) return json({ error: failure.message }, failure.status);
       if (request.method === "POST" && url.pathname === "/admin/signup" && usernamePolicyInput !== undefined) {
@@ -207,6 +246,7 @@ export class InstallationAdminHttp<
         this.insight.health(installation.installationId),
         this.takedowns?.view(installation.installationId),
       ]);
+      if (health.kind === "ok" && health.snapshot.usage) await this.insight.monitoring.capture(health.snapshot);
       return openNetwork ? { context, health, openNetwork } : { context, health };
     } catch (error) {
       console.warn("[Operator] Ship page details unavailable:", installation.installationId, exceptionDiagnostics(error));
@@ -254,6 +294,7 @@ function isAdminApiPath(pathname: string): boolean {
 
 export function installationAdminFailure(error: Error) {
   const message = error.message;
+  if (message.startsWith("installation outreach changed")) return { message, status: 409 };
   if (error instanceof UnconfirmedActionError) return { message, status: 400 };
   if (error instanceof OpenNetworkFollowError) return { message, status: 503 };
   if (["handle ", "installation", "operationId ", "request ", "form ", "query ", "state ", "page "]
