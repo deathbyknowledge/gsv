@@ -12,6 +12,25 @@ const MAIL: ComposedMail = {
   html: "<!doctype html><html><body><p>See you then.</p></body></html>\n",
 };
 
+const INVITE = [
+  "BEGIN:VCALENDAR",
+  "PRODID:-//GSV//cal//EN",
+  "VERSION:2.0",
+  "METHOD:REQUEST",
+  "BEGIN:VEVENT",
+  "UID:3b0f2f9e-2d7c-4a51-9a8e-6f1c1f0d5e21@ship.space",
+  "DTSTAMP:20261111T120000Z",
+  "DTSTART:20261127T201500Z",
+  "DTEND:20261127T221500Z",
+  "SUMMARY:Cena en Casa Lucio",
+  "ORGANIZER;CN=Hank Hill:mailto:hank@ship.space",
+  "ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:anna@e",
+  " xample.com",
+  "END:VEVENT",
+  "END:VCALENDAR",
+  "",
+].join("\r\n");
+
 /** A part's text as written: PostalMime keeps the line break that belongs to the next boundary. */
 function partText(text: string | undefined): string | undefined {
   return text?.replace(/\n$/, "");
@@ -80,6 +99,24 @@ describe("composeMail", () => {
     expect(partText(accented.text)).toBe(text);
     expect(quoted.from).toEqual({ address: "hank@ship.space", name: 'Hank "The Tank" Hill \\ Co' });
     expect(lookalike.subject).toBe("=?UTF-8?B?SGk=?= is literal");
+  });
+
+  it("carries an invite beside the text and HTML, and again as an attachment", async () => {
+    const mime = composeMail({ ...MAIL, invite: { method: "REQUEST", text: INVITE } });
+    const parsed = await PostalMime.parse(mime);
+
+    expect(mime).toMatch(/^Content-Type: multipart\/mixed;\r\n boundary="=_gsv_[0-9a-f]{32}"\r\n\r\n/m);
+    expect(mime.split("\r\n").filter((line) => line.length > 78)).toEqual([]);
+    expect(partText(parsed.text)).toBe("See you then.\n");
+    expect(partText(parsed.html)).toBe(MAIL.html);
+    expect(parsed.attachments.map(({ mimeType, method, filename, disposition }) => ({ mimeType, method, filename, disposition }))).toEqual([
+      { mimeType: "text/calendar", method: "REQUEST", filename: null, disposition: null },
+      { mimeType: "application/ics", method: undefined, filename: "invite.ics", disposition: "attachment" },
+    ]);
+    // PostalMime hands calendars back with LF lines; the parts themselves keep the file's CRLF.
+    const parts = [...mime.matchAll(/Content-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+?)\r\n--/g)];
+    expect(parts.map(([, body]) => new TextDecoder().decode(Uint8Array.from(atob(body.replaceAll("\r\n", "")), (character) => character.charCodeAt(0)))))
+      .toEqual([INVITE, INVITE]);
   });
 
   it("writes a bare address when the owner has no display name", () => {

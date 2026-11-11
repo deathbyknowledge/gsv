@@ -1617,3 +1617,67 @@ describe("outbound mail sending", () => {
     expect(JSON.stringify(records)).not.toContain("test-email-sending-token");
   });
 });
+
+const INVITE = [
+  "BEGIN:VCALENDAR",
+  "PRODID:-//GSV//cal//EN",
+  "VERSION:2.0",
+  "METHOD:REQUEST",
+  "BEGIN:VEVENT",
+  "UID:dinner@gsv.space",
+  "DTSTAMP:20261111T120000Z",
+  "DTSTART:20261127T201500Z",
+  "DTEND:20261127T221500Z",
+  "SUMMARY:Dinner",
+  "ORGANIZER:mailto:hank@gsv.space",
+  "ATTENDEE;RSVP=TRUE:mailto:recipient@example.com",
+  "END:VEVENT",
+  "END:VCALENDAR",
+  "",
+].join("\r\n");
+
+describe("outbound mail invites", () => {
+  it("sends the invite a version 2 draft carries", async () => {
+    const installationId = `installation_outbound_invite_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-invite");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "Here is the invite.", {
+      version: 2,
+      invite: { method: "REQUEST", text: INVITE },
+    }));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "accepted", error_code: null })]);
+    });
+
+    const request = sendRawRequest(fixture.send.mock.calls[0]);
+    expect(request.body.mime_message).toContain("Content-Type: text/calendar; charset=UTF-8; method=REQUEST\r\n");
+    const message = await PostalMime.parse(request.body.mime_message);
+    expect(partText(message.text)).toBe("Here is the invite.\n");
+    expect(message.attachments.map(({ mimeType, method }) => ({ mimeType, method }))).toEqual([
+      { mimeType: "text/calendar", method: "REQUEST" },
+      { mimeType: "application/ics", method: undefined },
+    ]);
+  });
+
+  it.each([
+    { problem: "an invite on a version 1 draft", draft: { invite: { method: "REQUEST" as const, text: INVITE } } },
+    { problem: "a version 2 draft without an invite", draft: { version: 2 as const } },
+    { problem: "an invite whose calendar has another method", draft: { version: 2 as const, invite: { method: "CANCEL" as const, text: INVITE } } },
+    { problem: "an invite with bare line feeds", draft: { version: 2 as const, invite: { method: "REQUEST" as const, text: INVITE.replaceAll("\r\n", "\n") } } },
+  ])("fails $problem without sending it", async ({ draft }) => {
+    const installationId = `installation_outbound_bad_invite_${crypto.randomUUID()}`;
+    const stub = env.MAIL_INSTALLATIONS.getByName(installationId);
+    const fixture = outboundAdmissionFixture(installationId, "active");
+    const value = reference("outbound-bad-invite");
+    fixture.claimOutboundMail.mockImplementationOnce(() => readyClaim(value, "Here is the invite.", draft));
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      await new MailInstallation(state, fixture.bindings).deliverOutbound(context(installationId), value);
+      expect(deliveryRows(state)).toEqual([expect.objectContaining({ state: "failed", error_code: "invalid_draft" })]);
+    });
+    expect(fixture.send).not.toHaveBeenCalled();
+  });
+});

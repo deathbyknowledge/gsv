@@ -28,6 +28,18 @@ export function callArgumentList(request: Pick<DescribedCall, "args">, key: stri
   return (Array.isArray(value) ? value : [value]).map((entry) => entry.trim()).filter(Boolean).join(", ") || null;
 }
 
+/**
+ * The method of the invite a mail request carries: an approval names it with the event,
+ * while the call itself holds the iCalendar text.
+ */
+export function mailInviteMethod(request: Pick<DescribedCall, "args">): "REQUEST" | "CANCEL" | null {
+  const approval = z.object({ invite: z.object({ method: z.enum(["REQUEST", "CANCEL"]) }) }).safeParse(request.args);
+  if (approval.success) return approval.data.invite.method;
+  const call = z.object({ invite: z.string() }).safeParse(request.args);
+  if (!call.success) return null;
+  return /^METHOD:CANCEL\r?$/m.test(call.data.invite) ? "CANCEL" : "REQUEST";
+}
+
 /** Each verb phrase alone, in the cloud home, and on any other place. */
 type PlacedCall = readonly [alone: TextKey, inHome: TextKey, onPlace: TextKey];
 
@@ -54,6 +66,8 @@ export function describeCall(request: DescribedCall, place?: string): string {
       const copies = callArgumentList(request, "cc");
       const to = recipients && copies ? t("chat.call.mailCopying", { to: recipients, cc: copies }) : recipients;
       const subject = callArgumentText(request, "subject");
+      const invite = mailInviteMethod(request);
+      if (to && invite) return t(invite === "CANCEL" ? "chat.call.mailCancel" : "chat.call.mailInvite", { to });
       if (to && subject) return t("chat.call.mailAbout", { to, subject });
       if (to) return t("chat.call.mailTo", { to });
       if (callArgumentText(request, "replyToMessageId")) return t("chat.call.mailReply");

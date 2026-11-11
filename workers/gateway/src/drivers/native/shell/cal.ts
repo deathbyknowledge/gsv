@@ -4,8 +4,11 @@ import type { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
+  addDays,
   calendarEvents,
+  calendarInstant,
   calendarProperty,
+  calendarWhen,
   dateValue,
   escapeText,
   firstProperty,
@@ -16,12 +19,10 @@ import {
   type CalendarComponent,
   type CalendarEvent,
   type CalendarPerson,
-  type CalendarTime,
 } from "../../../kernel/icalendar";
 import { managedMailAddressForOwner } from "../../../kernel/mailbox";
 import { ownerDisplayName } from "../../../kernel/profiles";
 import {
-  formatLocalTime,
   isLocalTime,
   normalizeTimezone,
   ownerTimezone,
@@ -43,6 +44,7 @@ const CAL_USAGE = `Usage:
 
 WHEN is a local time such as 2026-11-27T21:15 in --timezone (default: your time zone),
 or a date such as 2026-11-27 for an all-day event. LENGTH is like 45m, 2h or 1h30m.
+Send an event to its guests with: mail send --invite PATH --subject SUBJECT --message TEXT
 `;
 
 type EventOptions = {
@@ -288,20 +290,9 @@ function currentSpan(event: CalendarEvent, timeZone: string): Span | undefined {
     const end = event.end?.kind === "date" ? event.end.date : addDays(event.start.date, 1);
     return { kind: "date", start: event.start.date, end };
   }
-  const start = instant(event.start, timeZone);
-  const end = event.end ? instant(event.end, timeZone) : start === undefined ? undefined : start + HOUR_MS;
+  const start = calendarInstant(event.start, timeZone);
+  const end = event.end ? calendarInstant(event.end, timeZone) : start === undefined ? undefined : start + HOUR_MS;
   return start === undefined || end === undefined ? undefined : { kind: "time", start, end };
-}
-
-/** A DATE-TIME as an instant: floating times are read in `timeZone`, TZIDs when they name an IANA zone. */
-function instant(time: CalendarTime, timeZone: string): number | undefined {
-  if (time.kind === "utc") return time.ms;
-  if (time.kind === "date") return undefined;
-  try {
-    return resolveLocalTime(time.local, time.timeZone ? normalizeTimezone(time.timeZone) : timeZone);
-  } catch {
-    return undefined;
-  }
 }
 
 function writeSpan(event: CalendarComponent, span: Span): void {
@@ -364,16 +355,11 @@ function describeEvent(event: CalendarEvent, timeZone: string): string[] {
   const lines = [`uid=${event.uid}`, `sequence=${event.sequence}`];
   if (event.status) lines.push(`status=${event.status}`);
   if (event.title) lines.push(`title=${oneLine(event.title)}`);
-  if (event.start.kind === "date") {
-    lines.push("all_day=true", `start=${event.start.date}`);
-    if (event.end?.kind === "date") lines.push(`end=${addDays(event.end.date, -1)}`);
-    else if (event.duration) lines.push(`duration=${event.duration}`);
-    else lines.push(`end=${event.start.date}`);
-  } else {
-    lines.push(`start=${describeTime(event.start, timeZone)}`);
-    if (event.end && event.end.kind !== "date") lines.push(`end=${describeTime(event.end, timeZone)}`);
-    else if (event.duration) lines.push(`duration=${event.duration}`);
-  }
+  const when = calendarWhen(event, timeZone);
+  if (when.allDay) lines.push("all_day=true");
+  lines.push(`start=${when.start}`);
+  if (when.end) lines.push(`end=${when.end}`);
+  else if (when.duration) lines.push(`duration=${when.duration}`);
   if (event.recurrence) lines.push(`repeats=${event.recurrence}`);
   if (event.location) lines.push(`location=${oneLine(event.location)}`);
   if (event.organizer) lines.push(`organizer=${person(event.organizer)}`);
@@ -382,12 +368,6 @@ function describeEvent(event: CalendarEvent, timeZone: string): string[] {
   }
   if (event.description) lines.push(`description=${event.description.trim().replace(/\r\n|\r|\n/g, "\n  ")}`);
   return lines;
-}
-
-function describeTime(time: Exclude<CalendarTime, { kind: "date" }>, timeZone: string): string {
-  const ms = instant(time, timeZone);
-  if (ms !== undefined) return formatLocalTime(ms, timeZone);
-  return time.kind === "local" ? `${time.local} ${time.timeZone ?? "floating"}` : utcValue(time.ms);
 }
 
 function person(value: CalendarPerson): string {
@@ -423,11 +403,6 @@ function parseLength(value: string): number {
 function wholeDays(ms: number): number {
   if (ms % DAY_MS !== 0) throw new Error("an all-day event lasts whole days, such as 2d");
   return ms / DAY_MS;
-}
-
-function addDays(date: string, days: number): string {
-  const [year, month, day] = date.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
 function dayCount(start: string, end: string): number {

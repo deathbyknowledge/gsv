@@ -123,13 +123,14 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]",
   ]),
   yield: command("Finish the active agent run.", "Yield control after the current work is complete while keeping the durable Process available for future input.", ["finish", "complete", "done", "stop", "silent"], [], ["yield"]),
-  mail: command("Read, send, reply to, and inspect this GSV's own email.", "Find this GSV's email address for a sign-up, verification code, receipt, parcel tracking or bill, read an inbox message, search received email, send email, reply to a message, list sent email, or check whether a queued email was accepted.", ["email", "inbox", "address", "signup", "sign-up", "register", "verification", "account", "receipt", "tracking", "read", "message", "search", "send", "sent", "outbox", "reply", "status", "delivery"], [], [
+  mail: command("Read, send, reply to, and inspect this GSV's own email.", "Find this GSV's email address for a sign-up, verification code, receipt, parcel tracking or bill, read an inbox message, search received email, send email or a calendar invitation, reply to a message, list sent email, or check whether a queued email was accepted.", ["email", "inbox", "address", "signup", "sign-up", "register", "verification", "account", "receipt", "tracking", "read", "message", "search", "send", "sent", "outbox", "reply", "status", "delivery"], [], [
     "mail address",
     "mail list [--limit N] [--before CURSOR]",
     "mail search QUERY [--limit N] [--before CURSOR]",
     "mail show MESSAGE_ID [--raw]",
-    "mail send --to ADDRESS... [--cc ADDRESS...] --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]",
-    "mail reply MESSAGE_ID [--all] [--cc ADDRESS...] [--subject SUBJECT] (--message TEXT | --body PATH) [--delivery-id ID]",
+    "mail send --to ADDRESS... [--cc ADDRESS...] --subject SUBJECT (--message TEXT | --body PATH) [--invite PATH] [--delivery-id ID]",
+    "mail send --invite PATH [--cc ADDRESS...] --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]",
+    "mail reply MESSAGE_ID [--all] [--cc ADDRESS...] [--subject SUBJECT] (--message TEXT | --body PATH) [--invite PATH] [--delivery-id ID]",
     "mail sent [--limit N] [--before CURSOR]",
     "mail status DELIVERY_ID",
   ]),

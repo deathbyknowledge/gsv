@@ -373,6 +373,7 @@ mail send --to person@example.com --subject "Hello" --message "Hello from GSV"
 mail send --to anna@example.com,mike@example.com --cc bob@example.com --subject "Friday" --body ./plan.md
 mail reply MESSAGE_ID --body ./reply.txt
 mail reply MESSAGE_ID --all --message "Count me in."
+mail send --invite ./dinner.ics --subject "Dinner on Friday" --message "Here is the invite."
 mail status DELIVERY_ID
 ```
 
@@ -387,7 +388,7 @@ ordinal.
 
 `mail.send` is the explicit managed-email send primitive. It accepts a
 non-empty text body of at most 1 MiB. `to` and `cc` each take one address or a
-list; together they reach at most 10 people, each listed once. It does not accept HTML, BCC, or attachments. Write the body as in chat:
+list; together they reach at most 10 people, each listed once. It does not accept HTML, BCC, or attachments other than a calendar `invite`. Write the body as in chat:
 recipients get an HTML part rendered from its Markdown and a plain-text part
 without the marks. Raw HTML stays visible text, only web and mail links
 survive, and images become links. The From line carries the owner's display
@@ -401,6 +402,33 @@ may add `cc`. `replyAll: true` also copies everyone else the original was sent
 to or copied, except this Ship under any of its addresses. The approval request
 names the resolved recipients and subject, so a reply's approval shows who
 gets it.
+
+`invite` sends a calendar invitation with the message: the iCalendar text of
+one event that happens once, at most 32 KiB, such as a file the `cal` command
+writes; the Kernel refuses `RRULE`, `RDATE`, `EXRULE`, `EXDATE` and
+`RECURRENCE-ID`, since the approval shows one date. Its
+`METHOD` is `REQUEST` to invite or update, or `CANCEL` to withdraw the event;
+the event needs a `UID`, `DTSTART` and `DTSTAMP`, gives any end as `DTEND`
+rather than `DURATION`, and its `ORGANIZER` must be the sender's managed
+address, so guests' answers come back as mail. The
+message goes to exactly the event's guests, its attendees other than the
+sender: without `to` they become the recipients, less any in `cc`; otherwise
+`to` and `cc`, or a reply's derived recipients, must name the same people.
+The Kernel rewrites the event with CRLF lines before it fingerprints and stores
+it; the rewritten text must still fit in 32 KiB and hold no control character
+besides tabs and its line breaks. The approval request replaces the iCalendar
+text with the event as the owner reads it:
+
+```ts
+type MailInviteApproval = {
+  method: "REQUEST" | "CANCEL";
+  title?: string;
+  allDay: boolean;
+  start: string; // "2026-11-27T21:15:00+01:00[Europe/Amsterdam]", or a date when allDay
+  end?: string;  // an all-day event's last day
+  location?: string;
+};
+```
 
 The caller must have the `mail.send` capability and resolve to an active human
 mailbox owner. The Kernel derives `from` from that owner's managed mailbox; the
@@ -444,6 +472,7 @@ type MailSyscalls = {
       subject?: string;
       replyToMessageId?: string;
       replyAll?: boolean;
+      invite?: string; // iCalendar text of one event the sender organizes
       deliveryId: string;
     };
     result:

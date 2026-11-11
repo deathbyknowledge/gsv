@@ -1,6 +1,6 @@
 import type { JsonValue, ProcHilRequest } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
-import { t, type TextKey } from "../../../i18n/locale";
+import { currentLocale, t, type TextKey } from "../../../i18n/locale";
 import { callArgumentList, callArgumentText as argText, describeCall, normalizeCallPurpose } from "./callDescription";
 
 type HilWireValue = string | number | boolean | null | HilWireValue[] | HilWireRecord;
@@ -128,9 +128,12 @@ export function hilRequestLine(request: ProcHilRequest): HilRequestLine | null {
       const to = recipients && copies ? t("chat.hil.mailCopying", { to: recipients, cc: copies }) : recipients;
       const subject = argText(request, "subject");
       const replyTo = argText(request, "replyToMessageId");
-      if (to) return { lead: "none", text: subject ? t("chat.hil.mailToAbout", { to, subject }) : t("chat.hil.mailTo", { to }) };
-      if (replyTo) return { lead: "none", text: subject ? t("chat.hil.replyAbout", { message: replyTo, subject }) : t("chat.hil.reply", { message: replyTo }) };
-      return subject ? { lead: "none", text: subject } : null;
+      const event = hilInvite(request);
+      const line = to ? (subject ? t("chat.hil.mailToAbout", { to, subject }) : t("chat.hil.mailTo", { to }))
+        : replyTo ? (subject ? t("chat.hil.replyAbout", { message: replyTo, subject }) : t("chat.hil.reply", { message: replyTo }))
+        : subject;
+      if (!line) return null;
+      return { lead: "none", text: event ? `${line} · ${event}` : line };
     }
     default: {
       const name = request.syscall === "sys.mcp.call" ? argText(request, "name") ?? plainToolName(request.toolName) : plainToolName(request.toolName);
@@ -140,6 +143,44 @@ export function hilRequestLine(request: ProcHilRequest): HilRequestLine | null {
       return { lead: "place", text: [name, ...args].join(" ") };
     }
   }
+}
+
+const inviteSchema = z.object({
+  method: z.enum(["REQUEST", "CANCEL"]),
+  title: z.string().optional(),
+  allDay: z.boolean(),
+  start: z.string(),
+  end: z.string().optional(),
+});
+
+/** The event an email invites to or cancels, at the times the owner reads them. */
+function hilInvite(request: ProcHilRequest): string | null {
+  const invite = inviteSchema.safeParse(request.args.invite);
+  if (!invite.success) return null;
+  const { method, title, allDay, start, end } = invite.data;
+  const when = eventTimes(start, end, allDay);
+  return t(method === "CANCEL" ? "chat.hil.inviteCancel" : "chat.hil.invite", { event: title ? `${title}, ${when}` : when });
+}
+
+/**
+ * Times arrive as the owner's wall clock, such as 2026-11-27T21:15:00+01:00[Europe/Amsterdam],
+ * so they are formatted as written rather than converted to this device's zone.
+ */
+function eventTimes(start: string, end: string | undefined, allDay: boolean): string {
+  const from = wallClock(start);
+  if (!from) return start;
+  const format = new Intl.DateTimeFormat(currentLocale(), allDay
+    ? { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }
+    : { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+  const to = end ? wallClock(end) : null;
+  return to && to.getTime() !== from.getTime() ? format.formatRange(from, to) : format.format(from);
+}
+
+function wallClock(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/.exec(value);
+  if (!match) return null;
+  const [year, month, day, hour = "0", minute = "0"] = match.slice(1);
+  return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)));
 }
 
 /** A file a published record references, as the Ship uploaded it. */

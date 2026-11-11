@@ -18,6 +18,27 @@ export type MailSendArgs = {
   replyToMessageId?: string;
   /** With `replyToMessageId`, also copy everyone else the original was sent to. */
   replyAll?: boolean;
+  /**
+   * iCalendar text of an event this account organizes, with METHOD:REQUEST to
+   * invite or update and METHOD:CANCEL to withdraw it. Mail apps show it as an
+   * invitation. The message goes to the event's guests: without `to`, they become
+   * the recipients; otherwise To and Cc, or a reply's recipients, must be them.
+   */
+  invite?: string;
+};
+
+/**
+ * How an approval for `mail.send` shows its invite: the event as the owner reads
+ * it, times like 2026-11-27T21:15:00+01:00[Europe/Amsterdam] in their time zone
+ * and all-day events by their first and last day.
+ */
+export type MailInviteApproval = {
+  method: "REQUEST" | "CANCEL";
+  title?: string;
+  allDay: boolean;
+  start: string;
+  end?: string;
+  location?: string;
 };
 
 export type MailSendResult =

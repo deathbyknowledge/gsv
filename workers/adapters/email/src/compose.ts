@@ -2,6 +2,8 @@
  * Writes the MIME message the email Worker hands to Email Sending. Bodies are quoted-printable
  * and header text outside ASCII becomes RFC 2047 encoded words, so the message survives any
  * relay. Email Sending adds Date, Message-ID and its signature, so the message carries none.
+ * An invite travels as RFC 6047 describes, beside the text and HTML, and again as an attachment
+ * for mail apps that only look there, as calendar services send theirs.
  */
 
 const CRLF = "\r\n";
@@ -26,15 +28,25 @@ export type ComposedMail = {
   references?: string;
   text: string;
   html: string;
+  invite?: { method: "REQUEST" | "CANCEL"; text: string };
 };
 
 type Part = { headers: string[]; body: string };
 
 export function composeMail(mail: ComposedMail): string {
-  const body = multipart("alternative", [
-    textPart("text/plain", mail.text),
-    textPart("text/html", mail.html),
-  ]);
+  const views = [textPart("text/plain", mail.text), textPart("text/html", mail.html)];
+  const body = mail.invite
+    ? multipart("mixed", [
+      multipart("alternative", [
+        ...views,
+        base64Part([`Content-Type: text/calendar; charset=UTF-8; method=${mail.invite.method}`], mail.invite.text),
+      ]),
+      base64Part([
+        'Content-Type: application/ics; name="invite.ics"',
+        'Content-Disposition: attachment; filename="invite.ics"',
+      ], mail.invite.text),
+    ])
+    : multipart("alternative", views);
   const headers = [
     header("From", mail.fromName ? `${phrase(mail.fromName)} <${mail.from}>` : mail.from),
     header("To", mail.to.join(", ")),
@@ -62,6 +74,16 @@ function textPart(type: "text/plain" | "text/html", text: string): Part {
     headers: [`Content-Type: ${type}; charset=UTF-8`, "Content-Transfer-Encoding: quoted-printable"],
     body: quotedPrintable(text),
   };
+}
+
+/** Base64 keeps an iCalendar object's own CRLF lines exactly as written. */
+function base64Part(headers: readonly string[], text: string): Part {
+  const encoded = base64(TEXT_ENCODER.encode(text));
+  const lines: string[] = [];
+  for (let index = 0; index < encoded.length; index += MAX_ENCODED_LINE) {
+    lines.push(encoded.slice(index, index + MAX_ENCODED_LINE));
+  }
+  return { headers: [...headers, "Content-Transfer-Encoding: base64"], body: lines.join(CRLF) };
 }
 
 /** One header, folded before spaces so its lines stay short. */

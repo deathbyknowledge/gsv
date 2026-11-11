@@ -1,4 +1,5 @@
 import {
+  MAIL_MAX_INVITE_BYTES,
   MAIL_MAX_OUTBOUND_TEXT_BYTES as ABSOLUTE_MAX_TEXT_BYTES,
   MAIL_MAX_QUOTE_BYTES,
   MAIL_MAX_RECIPIENTS,
@@ -446,7 +447,7 @@ export class OutboundDeliveryCoordinator {
     const draft = claim.draft;
     if (
       !draft
-      || draft.version !== 1
+      || !validVersion(draft)
       || draft.outboundId !== reference.outboundId
       || draft.fingerprint !== reference.fingerprint
       || !validFingerprint(draft.bodyDigest)
@@ -509,6 +510,7 @@ export class OutboundDeliveryCoordinator {
       references: draft.references,
       text: rendered.text,
       html: rendered.html,
+      invite: draft.invite,
     });
     return { draft, recipients, mime };
   }
@@ -1085,6 +1087,27 @@ function validOptionalQuote(value: ManagedOutboundMailDraft["quote"]): boolean {
     && String(value.text) === value.text
     && value.text.length > 0
     && TEXT_ENCODER.encode(value.text).byteLength <= MAIL_MAX_QUOTE_BYTES;
+}
+
+/** Version 1 is a plain message; version 2 carries an invite, and only version 2 does. */
+function validVersion(draft: ManagedOutboundMailDraft): boolean {
+  return draft.version === 1
+    ? draft.invite === undefined
+    : draft.version === 2 && validInvite(draft.invite);
+}
+
+/** An iCalendar object with CRLF lines whose METHOD matches the one the message declares. */
+function validInvite(value: ManagedOutboundMailDraft["invite"]): boolean {
+  if (!value || value.constructor !== Object) return false;
+  const { method, text } = value;
+  return (method === "REQUEST" || method === "CANCEL")
+    && String(text) === text
+    && TEXT_ENCODER.encode(text).byteLength <= MAIL_MAX_INVITE_BYTES
+    && text.startsWith("BEGIN:VCALENDAR\r\n")
+    && text.endsWith("\r\nEND:VCALENDAR\r\n")
+    && text.includes(`\r\nMETHOD:${method}\r\n`)
+    // eslint-disable-next-line no-control-regex -- Its lines end in CRLF, with no other control character.
+    && !/\r(?!\n)|(?<!\r)\n|[\0-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text);
 }
 
 function validTimeZone(value: ExternalValue): boolean {

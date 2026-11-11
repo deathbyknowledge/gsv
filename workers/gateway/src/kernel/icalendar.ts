@@ -3,6 +3,8 @@
  * so a file read and written again keeps everything this module doesn't interpret.
  */
 
+import { formatLocalTime, normalizeTimezone, resolveLocalTime } from "./timezone";
+
 export type CalendarProperty = {
   name: string;
   params: Record<string, string[]>;
@@ -165,6 +167,41 @@ export function calendarTime(property: CalendarProperty): CalendarTime {
   return timeZone ? { kind: "local", local, timeZone } : { kind: "local", local };
 }
 
+/** When an event happens as read in a time zone: an all-day event by its first and last day. */
+export type CalendarWhen = { allDay: boolean; start: string; end?: string; duration?: string };
+
+/** A DATE-TIME as an instant, floating times read in `timeZone`; none for a date or a TZID outside IANA. */
+export function calendarInstant(time: CalendarTime, timeZone: string): number | undefined {
+  if (time.kind === "utc") return time.ms;
+  if (time.kind === "date") return undefined;
+  try {
+    return resolveLocalTime(time.local, time.timeZone ? normalizeTimezone(time.timeZone) : timeZone);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Times read like 2026-11-27T21:15:00+01:00[Europe/Amsterdam]; a time this can't place keeps its TZID. */
+export function calendarWhen(event: CalendarEvent, timeZone: string): CalendarWhen {
+  if (event.start.kind === "date") {
+    const when: CalendarWhen = { allDay: true, start: event.start.date };
+    if (event.end?.kind === "date") when.end = addDays(event.end.date, -1);
+    else if (event.duration) when.duration = event.duration;
+    else when.end = event.start.date;
+    return when;
+  }
+  const when: CalendarWhen = { allDay: false, start: describeTime(event.start, timeZone) };
+  if (event.end && event.end.kind !== "date") when.end = describeTime(event.end, timeZone);
+  else if (event.duration) when.duration = event.duration;
+  return when;
+}
+
+/** A YYYY-MM-DD date `days` later, or earlier when negative. */
+export function addDays(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
 /** A UTC DATE-TIME value: 20261127T201500Z. */
 export function utcValue(ms: number): string {
   return new Date(ms).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
@@ -179,6 +216,12 @@ export function dateValue(date: string): string {
 export function calendarAddress(value: string): string | undefined {
   const match = /^mailto:(.+)$/i.exec(value.trim());
   return match ? match[1].trim() : undefined;
+}
+
+function describeTime(time: Exclude<CalendarTime, { kind: "date" }>, timeZone: string): string {
+  const ms = calendarInstant(time, timeZone);
+  if (ms !== undefined) return formatLocalTime(ms, timeZone);
+  return time.kind === "local" ? `${time.local} ${time.timeZone ?? "floating"}` : utcValue(time.ms);
 }
 
 function calendarPerson(property: CalendarProperty): CalendarPerson {

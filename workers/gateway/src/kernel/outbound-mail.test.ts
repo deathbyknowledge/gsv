@@ -1164,6 +1164,144 @@ describe("outbound mail recipients", () => {
 });
 
 /** Records the message a reply answers, with its rendered message.txt unless `text` is null. */
+/** An event hand-written with LF lines: the Ship organizes it and also lists itself. */
+const INVITE = [
+  "BEGIN:VCALENDAR",
+  "VERSION:2.0",
+  "PRODID:-//GSV//cal//EN",
+  "METHOD:REQUEST",
+  "BEGIN:VEVENT",
+  "UID:dinner@gsv.space",
+  "DTSTAMP:20261111T120000Z",
+  "DTSTART:20261127T201500Z",
+  "DTEND:20261127T221500Z",
+  "SUMMARY:Dinner",
+  "LOCATION:Casa Lucio",
+  "ORGANIZER;CN=Hank:mailto:hank@gsv.space",
+  "ATTENDEE;PARTSTAT=ACCEPTED:mailto:hank@gsv.space",
+  "ATTENDEE;RSVP=TRUE:mailto:anna@example.com",
+  "ATTENDEE;RSVP=TRUE:mailto:Mike@Example.com",
+  "END:VEVENT",
+  "END:VCALENDAR",
+  "",
+].join("\n");
+
+describe("outbound mail invites", () => {
+  it("sends an invite to its guests, asks approval for the event, and claims it as version 2", async () => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, {
+          config: new Map([["users/1000/locale/timezone", "Europe/Amsterdam"]]),
+        });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+        const args: MailSendArgs = { invite: INVITE, subject: "Dinner on Friday", text: "Here is the invite.", deliveryId: "dinner" };
+
+        const sent = await handleMailSend(args, ctx);
+        const replayed = await handleMailSend(args, ctx);
+        const moved = await handleMailSend({ ...args, invite: INVITE.replace("T201500Z", "T204500Z") }, ctx);
+
+        expect(sent).toMatchObject({ ok: true, to: "anna@example.com, Mike@example.com", replayed: false });
+        expect(replayed).toMatchObject({ ok: true, replayed: true });
+        expect(moved).toMatchObject({ ok: false, error: expect.stringContaining("conflicts with durable state") });
+        expect(approvals[0].args).toStrictEqual({
+          subject: "Dinner on Friday",
+          text: "Here is the invite.",
+          deliveryId: "dinner",
+          to: ["anna@example.com", "Mike@example.com"],
+          invite: {
+            method: "REQUEST",
+            allDay: false,
+            start: "2026-11-27T21:15:00+01:00[Europe/Amsterdam]",
+            end: "2026-11-27T23:15:00+01:00[Europe/Amsterdam]",
+            title: "Dinner",
+            location: "Casa Lucio",
+          },
+        });
+        if (!sent.ok) throw new Error(sent.error);
+        const claim = await claimOutbound(ctx, sent.outboundId);
+        expect(claim.draft).toMatchObject({
+          version: 2,
+          to: ["anna@example.com", "Mike@example.com"],
+          invite: { method: "REQUEST", text: INVITE.replaceAll("\n", "\r\n") },
+        });
+        expect(claim.draft.fingerprint).toBe(await sha256Text(JSON.stringify({
+          version: 1, from: "hank@gsv.space", to: "anna@example.com, Mike@example.com", subject: "Dinner on Friday",
+          textSize: 19, bodyDigest: await sha256Text("Here is the invite."), replyToMessageId: null, inReplyTo: null,
+          references: null, inviteDigest: await sha256Text(INVITE.replaceAll("\n", "\r\n")),
+        })));
+      });
+    });
+  });
+
+  it("writes the method the way the email Worker reads it, however the invite spelled it", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+
+      const claim = await sendAndClaim(ctx, {
+        invite: INVITE.replace("METHOD:REQUEST", "METHOD;X-NOTE=1:request"), subject: "Dinner", text: "Invite.", deliveryId: "spelled",
+      });
+
+      expect(claim.draft.invite?.method).toBe("REQUEST");
+      expect(claim.draft.invite?.text).toContain("\r\nMETHOD:REQUEST\r\n");
+    });
+  });
+
+  it("copies the guests a message names in Cc and sends the rest in To", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+
+      const sent = await handleMailSend({ invite: INVITE, cc: "mike@example.com", subject: "Dinner", text: "Invite.", deliveryId: "copied" }, ctx);
+
+      expect(sent).toMatchObject({ ok: true, to: "anna@example.com", cc: "mike@example.com" });
+    });
+  });
+
+  it("sends a cancellation as a reply when the reply reaches exactly the guests", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) });
+      await recordSource(ctx, storage, "Can we meet?");
+      const cancel = INVITE.replace("METHOD:REQUEST", "METHOD:CANCEL").replace(/ATTENDEE;RSVP=TRUE:mailto:anna@example.com\n/, "");
+
+      const sent = await sendAndClaim(ctx, { replyToMessageId: "mail:source", invite: cancel, text: "Sorry, I can't.", deliveryId: "cancel" });
+      const wrong = await handleMailSend({ replyToMessageId: "mail:source", invite: INVITE, text: "Here.", deliveryId: "wrong" }, ctx);
+
+      expect(sent.draft).toMatchObject({ version: 2, to: "mike@example.com", invite: { method: "CANCEL" }, inReplyTo: "<source@example.com>" });
+      expect(wrong).toEqual({
+        ok: false,
+        error: "An invite goes to exactly its guests (anna@example.com, Mike@example.com); this message goes to mike@example.com",
+        retryable: false,
+      });
+    });
+  });
+
+  it.each([
+    { refusal: "an event someone else organizes", invite: INVITE.replace("mailto:hank@gsv.space", "mailto:mike@example.com"), error: "invite must be organized by hank@gsv.space, so replies come back to it" },
+    { refusal: "a calendar that publishes rather than invites", invite: INVITE.replace("METHOD:REQUEST", "METHOD:PUBLISH"), error: "invite must have METHOD:REQUEST to invite or METHOD:CANCEL to cancel" },
+    { refusal: "two events", invite: INVITE.replace("END:VCALENDAR", "BEGIN:VEVENT\nUID:other\nDTSTART:20261128T100000Z\nEND:VEVENT\nEND:VCALENDAR"), error: "invite must hold exactly one event" },
+    { refusal: "an event without guests", invite: INVITE.replace(/ATTENDEE;RSVP=TRUE:.*\n/g, ""), error: "invite has no guests" },
+    { refusal: "an event without a DTSTAMP", invite: INVITE.replace("DTSTAMP:20261111T120000Z\n", ""), error: "invite event has no DTSTAMP" },
+    { refusal: "a length given as DURATION", invite: INVITE.replace("DTEND:20261127T221500Z", "DURATION:PT2H"), error: "invite gives its length as DURATION, which GSV can't send; write DTEND" },
+    { refusal: "a repeating event", invite: INVITE.replace("DTSTAMP:20261111T120000Z", "DTSTAMP:20261111T120000Z\nRRULE:FREQ=WEEKLY"), error: "invite must be an event that happens once" },
+    { refusal: "a date changed from a series", invite: INVITE.replace("DTSTAMP:20261111T120000Z", "DTSTAMP:20261111T120000Z\nRECURRENCE-ID:20261127T201500Z"), error: "invite must be an event that happens once" },
+    { refusal: "a file that isn't a calendar", invite: "Dinner on Friday at nine", error: "invite is not a valid calendar" },
+    { refusal: "a calendar over 32 KiB", invite: INVITE.replace("LOCATION:Casa Lucio", `LOCATION:${"x".repeat(32 * 1024)}`), error: "invite must be iCalendar text of at most 32768 bytes" },
+    { refusal: "recipients other than the guests", invite: INVITE, to: "bob@example.com", error: "An invite goes to exactly its guests (anna@example.com, Mike@example.com); this message goes to bob@example.com" },
+    { refusal: "a control character", invite: INVITE.replace("SUMMARY:Dinner", "SUMMARY:Din\u0001ner"), error: "invite holds a control character" },
+    { refusal: "a calendar over 32 KiB with CRLF lines", invite: INVITE.replace("LOCATION:Casa Lucio", Array.from({ length: 5000 }, () => "X-A:1").join("\n")), error: "invite is more than 32768 bytes once written to send" },
+  ])("refuses $refusal before recording anything", async ({ invite, to, error }) => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+
+      const sent = await handleMailSend({ invite, to, subject: "Dinner", text: "Invite.", deliveryId: "refused" }, ctx);
+
+      expect(sent).toMatchObject({ ok: false, error: expect.stringContaining(error), retryable: false });
+      expect(ctx.mailboxes.getOutboundForDelivery(1000, "refused")).toBeNull();
+    });
+  });
+});
+
 async function recordSource(
   ctx: KernelContext,
   storage: MemoryR2Bucket,

@@ -808,7 +808,9 @@ public service), which the runtime facts also list; `man --search` ranks `mail`
 for sign-up, verification code, receipt and tracking questions, and reports it
 unavailable when the installation has no mailbox. `mail send` and `mail reply`
 take the body in Markdown: recipients see it formatted, with a plain-text copy,
-and a reply quotes the original below it.
+and a reply quotes the original below it. `--invite PATH` sends an event file
+from `cal` as a calendar invitation to exactly that event's guests; without
+`--to` they are the recipients.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
 
@@ -828,6 +830,7 @@ all-day event. `update` and `cancel` rewrite the file in place with the same
 UID and the next SEQUENCE, so a calendar that already has the event replaces
 it. Only the event's organizer can change it, and `cal` never changes the times
 of a repeating event. `show` prints any calendar file, one field per line.
+Send a new or changed event to its guests with `mail send --invite PATH`.
 
 `skills list` shows the built-in skills, served read-only from `/sys/skills.d`,
 before the owner's and the agent's own. `skills create` writes to the current

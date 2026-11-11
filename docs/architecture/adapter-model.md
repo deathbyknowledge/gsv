@@ -383,6 +383,17 @@ optionally an HTTPS `MAIL_FOOTER_URL`, to add one line under every message,
 above any quote. An invalid footer configuration pauses claims instead of
 sending without it.
 
+A message with a calendar invite reaches the Worker as a version 2 draft holding
+the invite's iTIP method and iCalendar text, which the Kernel has already
+checked against its organizer and guests. The Worker sends it as calendar
+services do: a `multipart/mixed` message whose `multipart/alternative` part
+carries `text/calendar; method=REQUEST` or `method=CANCEL` beside the text and
+HTML, followed by the same calendar as an `invite.ics` attachment, both in
+base64 so the calendar's own CRLF lines survive. A version 1 draft never carries
+an invite, and a version 2 draft always does; a Worker that predates invites
+refuses version 2 as `invalid_draft` rather than sending the message without its
+invite, so deploy the email Worker before a Gateway that sends them.
+
 Email is an optional operator-composed service. The Humans & Machines graph
 supplies the email Worker, Queue, Email Sending credentials, and `mail.send` transport;
 chat pairing does not implicitly enable a mailbox.
