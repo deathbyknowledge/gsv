@@ -809,6 +809,48 @@ describe("managed outbound mail", () => {
     });
   });
 
+  it("replies without threading when the original's Message-ID isn't plain ASCII", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(
+        sql,
+        new MemoryR2Bucket(),
+        { send: vi.fn(async () => undefined) },
+      );
+      ctx.mailboxes.ensureMailbox("mailbox:1000:primary", 1000, "hank@gsv.space");
+      ctx.mailboxes.recordMessage({
+        messageId: "mail:source-unicode-id",
+        mailboxId: "mailbox:1000:primary",
+        intakeId: "intake-source-unicode-id",
+        digest: `sha256:${"c".repeat(64)}`,
+        envelopeFrom: "mike@example.com",
+        envelopeTo: "hank@gsv.space",
+        headerMessageId: "<sôurce@example.com>",
+        displayFrom: "Mike <mike@example.com>",
+        to: ["hank@gsv.space"],
+        cc: [],
+        replyTo: [],
+        subject: "Contract",
+        sentAt: 1,
+        receivedAt: 2,
+        rawPath: "/home/hank/.gsv/mail/inbox/mail:source-unicode-id/raw.eml",
+        textPath: "/home/hank/.gsv/mail/inbox/mail:source-unicode-id/message.txt",
+        sizeBytes: 100,
+        attachments: [],
+      });
+
+      const result = await handleMailSend({
+        replyToMessageId: "mail:source-unicode-id",
+        text: "Thanks.",
+        deliveryId: "reply-unicode-id",
+      }, ctx);
+      if (!result.ok) throw new Error(result.error);
+      const outbound = ctx.mailboxes.getOutbound(result.outboundId);
+      expect(outbound).toMatchObject({ replyToMessageId: "mail:source-unicode-id", subject: "Re: Contract" });
+      expect(outbound?.inReplyTo).toBeUndefined();
+      expect(outbound?.references).toBeUndefined();
+    });
+  });
+
   it("replies to the message From header before the SMTP envelope sender", async () => {
     await runWithRealKernelSql(async (sql) => {
       const ctx = outboundContext(

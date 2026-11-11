@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createPairingCredential, createPairingSecret } from "@humansandmachines/gsv/protocol/pairing";
 import type { SysPairRedeemArgs } from "@humansandmachines/gsv/protocol/syscalls/pairing";
 import { z } from "zod";
-import { deletionStackHarness, NAMESPACES, SCOPES, serveTestPlc, STACK } from "./fixtures/deletion-stack-harness.ts";
+import { deletionStackHarness, NAMESPACES, SCOPES, serveTestNetwork, STACK } from "./fixtures/deletion-stack-harness.ts";
 import { administerOperatorBootstrap } from "../src/operator-bootstrap.ts";
 import { captureInstallationDeletionObjects, deletionCaptureEpochSchema, deletionCaptureInspectionResultSchema } from "../src/installation-deletion-capture.ts";
 import type { MigrationD1Row } from "../src/installation-migration-d1.ts";
@@ -34,10 +34,10 @@ const password = "local-acceptance-fixture-password";
 describe("public multi-worker deletion acceptance", () => {
   let harness: Harness;
   let operatorToken: string;
-  let plc: ReturnType<typeof serveTestPlc>;
+  let plc: ReturnType<typeof serveTestNetwork>;
   const sockets: Socket[] = [];
   beforeAll(async () => {
-    plc = serveTestPlc();
+    plc = serveTestNetwork();
     harness = deletionStackHarness();
     await harness.listen();
     await harness.getWorker(STACK.accounts).applyD1Migrations("INSTALLATIONS_DB");

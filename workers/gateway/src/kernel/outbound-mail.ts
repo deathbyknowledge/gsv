@@ -611,10 +611,11 @@ function optionalIdentifier(value: string | undefined, name: string): string | u
   return value === undefined ? undefined : normalizeIdentifier(value, name);
 }
 
+/** A Message-ID to thread on: printable ASCII, as mail headers carry it unencoded. */
 function optionalThreadHeader(value: string | null): string | undefined {
   return value
-    && !containsAsciiControl(value)
-    && TEXT_ENCODER.encode(value).byteLength <= MAX_OUTBOUND_HEADER_BYTES
+    && /^[\x20-\x7e]+$/.test(value)
+    && value.length <= MAX_OUTBOUND_HEADER_BYTES
     ? value
     : undefined;
 }
