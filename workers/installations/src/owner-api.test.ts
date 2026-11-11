@@ -9,6 +9,8 @@ import { InstallationSignup } from "./signup";
 import { InstallationOwnerApi } from "./owner-api";
 import type { JsonObject } from "@humansandmachines/gsv/protocol";
 import { runProductEmailJobs } from "./product-email";
+import { InstallationAdminStore } from "./administration";
+import { adminInstallationPage, adminInstallationsPage } from "./admin/installations-page";
 
 const ORIGIN = "https://accounts.example.com";
 const secret = () => crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
@@ -29,13 +31,15 @@ async function fixture() {
   });
   const makeApi = () => new InstallationOwnerApi(auth, owners, signup, { send }, { from: "accounts@example.com" }, ORIGIN, "example.com");
   let api = makeApi();
-  const request = async (path: string, token?: string, body?: JsonObject, headers: Record<string, string> = {}) => {
+  const request = async (path: string, token?: string, body?: JsonObject, headers: Record<string, string> = {}, cf?: Record<string, unknown>) => {
     const requestHeaders = new Headers({ "content-type": "application/json", "cf-connecting-ip": registry, ...headers });
     if (token) requestHeaders.set("authorization", `Bearer ${token}`);
-    const response = await api.handle(new Request(`${ORIGIN}/owner/api${path}`, {
+    const incoming = new Request(`${ORIGIN}/owner/api${path}`, {
       method: body === undefined ? "GET" : "POST", headers: requestHeaders,
       body: body === undefined ? undefined : JSON.stringify(body),
-    }));
+    });
+    if (cf) Object.defineProperty(incoming, "cf", { value: cf });
+    const response = await api.handle(incoming);
     if (!response) throw new Error("Missing API response");
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.has("access-control-allow-credentials")).toBe(false);
@@ -55,6 +59,52 @@ async function fixture() {
 }
 
 describe("desktop owner API", () => {
+  it("keeps the first signup snapshot through retries and exposes it only in authenticated administration", async () => {
+    const f = await fixture();
+    await f.signIn();
+    const input = { operationId: crypto.randomUUID(), handle: `geo-${crypto.randomUUID()}` };
+    const geo = { country: "CH", city: "Zürich", region: "Zurich" };
+    const headers = { origin: "https://signup.example.com/path?token=private" };
+    expect((await f.request("/spaces", undefined, input, headers, geo)).status).toBe(401);
+    expect(await f.accounts.getReservationByOperation(input.operationId)).toBeNull();
+    const created = await f.request("/spaces", f.sessionSecret, input, headers, geo);
+    expect(created.status).toBe(200);
+    const reply = await created.json<{ onboardingToken: string }>();
+    expect(reply).not.toHaveProperty("signup");
+    const reservation = (await f.accounts.getReservationByOperation(input.operationId))!;
+    const admin = new InstallationAdminStore(env.INSTALLATIONS_DB);
+    const expected = { ...geo, origin: "https://signup.example.com" };
+    await expect(admin.getInstallation(reservation.installationId)).resolves.toMatchObject({ signup: expected });
+    f.restart();
+    expect((await f.request("/spaces", f.sessionSecret, input, { origin: "https://other.example" }, { country: "US" })).status).toBe(200);
+    await expect(admin.getInstallation(reservation.installationId)).resolves.toMatchObject({ signup: expected });
+    const list = await admin.listInstallations({ query: f.challenge.email.toUpperCase(), state: "provisioning", page: 1 });
+    expect(list.total).toBe(1);
+    expect(list.installations[0]).toMatchObject({ ownerEmail: f.challenge.email, signup: expected });
+    const html = await adminInstallationsPage(list).text();
+    for (const value of ["🇨🇭", "Switzerland", "Zürich", "signup.example.com", f.challenge.email, "Signup location", "Signup origin"]) expect(html).toContain(value);
+    expect(html).not.toContain("token=private");
+    expect(await adminInstallationPage((await admin.getInstallation(reservation.installationId))!).text()).toContain("Switzerland");
+    const authorization = await f.onboarding.authorize({ installationId: reservation.installationId, token: reply.onboardingToken });
+    if (!authorization.ok) throw new Error("Expected setup authorization");
+    await f.onboarding.complete({ installationId: reservation.installationId, claimId: authorization.claimId });
+    expect((await f.request("/spaces", f.sessionSecret, input, {}, { country: "DE" })).status).toBe(200);
+    await expect(admin.getInstallation(reservation.installationId)).resolves.toMatchObject({ signup: expected });
+  });
+
+  it("renders missing historic signup metadata without inventing a country", async () => {
+    const f = await fixture();
+    await f.signIn();
+    const owner = (await f.auth.session(f.sessionSecret))!;
+    const reservation = await f.accounts.reserveInstallation({ principalId: owner.principalId,
+      operationId: crypto.randomUUID(), handle: `historic-${crypto.randomUUID()}`, ownerSetup: true });
+    const admin = new InstallationAdminStore(env.INSTALLATIONS_DB);
+    const list = await admin.listInstallations({ query: reservation.handle, state: null, page: 1 });
+    expect(list.installations[0].signup).toBeNull();
+    expect(await adminInstallationsPage(list).text()).toContain("Not recorded");
+    await expect(admin.getInstallation(reservation.installationId)).resolves.toMatchObject({ signup: null });
+  });
+
   it.each([false, true])("replays verified signup without duplicating mail, spaces or optional marketing (opt-in: %s)", async (optedIn) => {
     const f = await fixture();
     const verify = await f.signIn();

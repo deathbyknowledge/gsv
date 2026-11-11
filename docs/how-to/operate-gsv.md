@@ -170,6 +170,19 @@ for matching rules and terms that require contextual review.
 Administration timestamps use your device's timezone, including audit entries and
 run times. With JavaScript disabled, they use the labelled UTC fallback.
 
+The **Ships** listing shows owner emails, country flags, approximate signup
+locations and the web origin used to create each Ship. Search by handle, owner
+email or Ship ID; lifecycle filters and pagination apply to the same results.
+The Ship detail page also shows its signup location and origin. Accounts saves
+this snapshot atomically with the initial self-service reservation, using
+Cloudflare's country, region and city metadata and the request's web origin.
+It stores no IP address or coordinates in the snapshot. Location describes the
+network at signup, so a VPN may affect it; the web origin identifies the signup
+interface, not a marketing referral. Retries and later sign-ins preserve the
+original snapshot. Earlier signups, manually created Ships and clients without
+location or origin data show **Not recorded** for the missing fields.
+Apply directory migration `0035_signup_context.sql` before deploying Accounts.
+
 To let people sign up themselves, enable `GSV_SIGNUP_ENABLED` and configure
 owner email delivery. They choose a handle and verify their email at
 `<admin-origin>/owner/signup/`, the configured public signup alias, or in

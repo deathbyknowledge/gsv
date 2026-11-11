@@ -233,6 +233,7 @@ button.secondary, .button.secondary { border-color: #3d3d49; background: #17171e
 table { width: 100%; border-collapse: collapse; text-align: left; } th, td { padding: 15px 16px; border-bottom: 1px solid #292932; font-size: 12px; vertical-align: middle; }
 tbody tr:last-child td { border-bottom: 0; } th { color: #858593; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
 td strong, td small { display: block; } td small { margin-top: 6px; color: #858593; } td a { color: #ecebff; }
+.installations { min-width: 980px; } .installations td { vertical-align: top; } .installations .ship-id { font-size: 10px; color: #6f6f7c; }
 .badge { display: inline-block; border: 1px solid #4b485e; padding: 4px 7px; color: #d8d6ef; background: #181720; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
 .badge-active, .badge-enabled { border-color: #315f4b; color: #9de0be; background: #0d1713; } .badge-restricted, .badge-failed, .badge-past-due, .badge-disabled, .badge-paused { border-color: #743b42; color: #efafb5; background: #1a0e10; }
 .empty { border: 1px solid #292932; padding: 50px 20px; color: #858593; text-align: center; }

@@ -121,6 +121,9 @@ describe("Ship page", () => {
     expect(body).not.toContain("valent-old.gsv.space");
     expect(body).toContain("Ship ID");
     expect(body).not.toContain("Installation ID");
+    const listing = await service.listInstallations({ query: "VALENTIN@EXAMPLE.ORG", state: null, page: 1 });
+    expect(listing).toMatchObject({ total: 1, installations: [{ installationId, ownerEmail: "valentin@example.org" }] });
+    expect(await page(http, "/admin/installations?q=valentin%40example.org")).toContain("valentin@example.org");
   });
 
   it("still renders the Ship when its health cannot be read", async () => {

@@ -8,6 +8,7 @@ import { RESET_CONSEQUENCES, type IssuedAdminInstallation } from "./service";
 import type { AdminNavigationItem } from "./page";
 import type { OperatorRun, OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
 import type { OperatorAuditEvent, ShipContext, ShipHealth } from "./insight";
+import type { SignupContext } from "../signup-context";
 import { takedownSubjectKey, takedownSubjectKind, type ShipOpenNetwork, type TakedownSubjectKind } from "./takedowns";
 import {
   adminPageResponse,
@@ -163,6 +164,8 @@ function identityPanel(installation: AdminInstallation, context?: ShipContext): 
       <dt>Provisioning</dt><dd>${stateBadge(installation.operationState)}</dd>
       <dt>Created</dt><dd>${formatDate(installation.createdAt)}</dd>
       <dt>Activated</dt><dd>${formatDate(installation.activatedAt)}</dd>
+      <dt>Signup location</dt><dd>${signupLocation(installation.signup)}</dd>
+      <dt>Signup origin</dt><dd>${signupOrigin(installation.signup)}</dd>
       ${installation.reset ? `<dt>Reset from</dt><dd>${escapeHtml(installation.reset.previousInstallationId)}</dd><dt>Old data deletion</dt><dd>${stateBadge(installation.reset.dataDeletionState)}</dd>` : ""}
     </dl>
   </section>`;
@@ -239,7 +242,7 @@ function hostOf(origin: string): string {
 
 function installationFilters(list: AdminInstallationList): string {
   return `<form class="panel filters" method="get" action="/admin/installations">
-    <label><span>Search handle or Ship ID</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="hank or inst_…"></label>
+    <label><span>Search handle, owner email or Ship ID</span><input type="search" name="q" maxlength="100" value="${escapeHtml(list.query)}" placeholder="hank, email or inst_…"></label>
     <label><span>Lifecycle state</span><select name="state"><option value="">All states</option>${ADMIN_VISIBLE_INSTALLATION_STATES.map((state) => `<option value="${state}"${list.state === state ? " selected" : ""}>${escapeHtml(state.replaceAll("_", " "))}</option>`).join("")}</select></label>
     <button type="submit">Search</button>
     <a class="button secondary" href="/admin/installations">Reset</a>
@@ -253,7 +256,7 @@ function installationTable<Summary extends AdminInstallationSummary>(
   if (installations.length === 0) {
     return `<div class="empty">No Ships match this view.</div>`;
   }
-  return `<div class="table-wrap"><table><thead><tr><th>Ship</th><th>State</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}<th>Created</th></tr></thead>
+  return `<div class="table-wrap"><table class="installations"><thead><tr><th>Ship / owner</th><th>State</th><th>Signup location</th><th>Signup origin</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}<th>Created</th></tr></thead>
     <tbody>${installations.map((installation) => installationRow(installation, column)).join("")}</tbody></table></div>`;
 }
 
@@ -263,11 +266,29 @@ function installationRow<Summary extends AdminInstallationSummary>(
 ): string {
   const href = `/admin/installations/${encodeURIComponent(installation.installationId)}`;
   return `<tr>
-    <td><strong><a href="${href}">${escapeHtml(installation.handle)}</a></strong><small>${escapeHtml(installation.installationId)}</small></td>
+    <td><strong><a href="${href}">${escapeHtml(installation.handle)}</a></strong>${installation.ownerEmail ? `<small>${escapeHtml(installation.ownerEmail)}</small>` : ""}<small class="ship-id">${escapeHtml(installation.installationId)}</small></td>
     <td>${stateBadge(installation.state)}<small>provisioning: ${escapeHtml(installation.operationState)}</small></td>
+    <td>${signupLocation(installation.signup)}</td>
+    <td>${signupOrigin(installation.signup)}</td>
     ${column ? `<td>${column.render(installation)}</td>` : ""}
     <td>${formatDate(installation.createdAt)}</td>
   </tr>`;
+}
+
+const countryNames = new Intl.DisplayNames(["en"], { type: "region", fallback: "none" });
+
+function signupLocation(signup?: SignupContext | null): string {
+  const code = signup?.country;
+  const name = code && /^[A-Z]{2}$/.test(code) ? countryNames.of(code) : undefined;
+  const country = code && name
+    ? `<strong><span aria-hidden="true">${Array.from(code, (letter) => String.fromCodePoint(127397 + letter.charCodeAt(0))).join("")}</span> ${escapeHtml(name)}</strong>`
+    : "Not recorded";
+  const place = [...new Set([signup?.city, signup?.region].filter((value): value is string => Boolean(value)))].join(", ");
+  return `${country}${place ? `<small>${escapeHtml(place)}</small>` : ""}${name || place ? "<small>Approximate at signup</small>" : ""}`;
+}
+
+function signupOrigin(signup?: SignupContext | null): string {
+  return signup?.origin ? escapeHtml(new URL(signup.origin).host) : "Not recorded";
 }
 
 function pagination(list: AdminInstallationList): string {

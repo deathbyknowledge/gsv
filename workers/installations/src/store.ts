@@ -1,4 +1,5 @@
 import { normalizeUsernamePolicy } from "./username-policy";
+import type { SignupContext } from "./signup-context";
 import type {
   InstallationDirectoryResult,
   InstallationIdentity,
@@ -117,6 +118,7 @@ export class AccountStore {
     handle: string;
     provisionVersion?: number;
     ownerSetup?: boolean;
+    signupContext?: SignupContext;
     /** Trusted operator allocation only; public request bodies never supply this. */
     allowReservedHandle?: boolean;
   }): Promise<InstallationReservation> {
@@ -146,9 +148,9 @@ export class AccountStore {
         this.db.prepare(
           `INSERT INTO installations (
              id, owner_principal_id, handle, canonical_origin, state,
-             provision_version, reservation_expires_at, created_at, owner_setup
+             provision_version, reservation_expires_at, created_at, owner_setup, signup_context_json
            )
-           SELECT ?, id, ?, ?, 'reserved', ?, ?, ?, ?
+           SELECT ?, id, ?, ?, 'reserved', ?, ?, ?, ?, ?
            FROM principals
            WHERE id = ? AND state = 'active' AND email_verified_at IS NOT NULL
              AND NOT EXISTS (SELECT 1 FROM username_policy WHERE normalized_handle = ?
@@ -163,6 +165,7 @@ export class AccountStore {
           reservationExpiresAt,
           now,
           input.ownerSetup ? 1 : 0,
+          input.signupContext ? JSON.stringify(input.signupContext) : null,
           principalId,
           normalizeUsernamePolicy(handle),
           input.allowReservedHandle ? 1 : 0,

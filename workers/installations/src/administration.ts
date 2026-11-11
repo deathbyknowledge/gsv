@@ -1,5 +1,6 @@
 import type { InstallationState } from "@humansandmachines/gsv/services/directory";
 import { parseOpaqueId } from "./domain";
+import { signupContextSchema, type SignupContext } from "./signup-context";
 import type { InstallationDataDeletionState } from "./store";
 
 export const ADMIN_INSTALLATIONS_PAGE_SIZE = 50;
@@ -28,6 +29,8 @@ export type AdminInstallationSummary = {
   state: InstallationState;
   operationState: AdminOperationState;
   createdAt: number;
+  ownerEmail?: string | null;
+  signup?: SignupContext | null;
 };
 
 export type AdminInstallationListQuery = {
@@ -52,6 +55,7 @@ export type AdminInstallation = {
   onboardingExpiresAt: number | null;
   createdAt: number;
   activatedAt: number | null;
+  signup?: SignupContext | null;
   reset: {
     previousInstallationId: string;
     dataDeletionState: InstallationDataDeletionState;
@@ -68,6 +72,7 @@ type AdminInstallationRow = {
   onboarding_expires_at: number | null;
   created_at: number;
   activated_at: number | null;
+  signup_context_json: string | null;
   previous_installation_id?: string | null;
   data_deletion_state?: InstallationDataDeletionState | null;
 };
@@ -79,7 +84,14 @@ type AdminInstallationSummaryRow = Pick<
   | "state"
   | "operation_state"
   | "created_at"
->;
+  | "signup_context_json"
+> & { owner_email: string | null };
+
+// Match the Ship detail page: the active owner wins; an unfinished signup uses its verified owner.
+const OWNER_JOIN = `LEFT JOIN principals owner ON owner.id = COALESCE((
+  SELECT m.principal_id FROM memberships m
+  WHERE m.installation_id = i.id AND m.role = 'owner' AND m.state = 'active'
+  ORDER BY m.created_at LIMIT 1), CASE WHEN i.owner_setup = 1 THEN i.owner_principal_id END)`;
 
 export class InstallationAdminStore {
   constructor(private readonly db: D1Database) {}
@@ -108,8 +120,8 @@ export class InstallationAdminStore {
     ];
     const bindings: Array<string | number> = [];
     if (query) {
-      predicates.push("(instr(i.handle, ?) > 0 OR instr(i.id, ?) > 0)");
-      bindings.push(query, query);
+      predicates.push("(instr(i.handle, ?) > 0 OR instr(i.id, ?) > 0 OR instr(lower(owner.primary_email), ?) > 0)");
+      bindings.push(query, query, query);
     }
     if (input.state !== null) {
       predicates.push("i.state = ?");
@@ -123,6 +135,7 @@ export class InstallationAdminStore {
       this.db.prepare(
         `SELECT COUNT(*) AS total
          FROM installations i
+         ${OWNER_JOIN}
          WHERE ${where}`,
       ).bind(...bindings).first<{ total: number }>(),
       this.db.prepare(
@@ -135,8 +148,9 @@ export class InstallationAdminStore {
              ORDER BY p.updated_at DESC
              LIMIT 1
            ) AS operation_state,
-           i.created_at
+           i.created_at, i.signup_context_json, owner.primary_email AS owner_email
          FROM installations i
+         ${OWNER_JOIN}
          WHERE ${where}
          ORDER BY i.created_at DESC, i.id DESC
          LIMIT ? OFFSET ?`,
@@ -197,7 +211,7 @@ export class InstallationAdminStore {
          (SELECT p.state FROM provisioning_operations p
           WHERE p.installation_id = i.id AND p.kind = 'create'
           ORDER BY p.updated_at DESC LIMIT 1) AS operation_state,
-         c.expires_at AS onboarding_expires_at, i.created_at, i.activated_at,
+         c.expires_at AS onboarding_expires_at, i.created_at, i.activated_at, i.signup_context_json,
          reset.previous_installation_id, reset.data_deletion_state
        FROM installations i
        LEFT JOIN installation_onboarding_claims c ON c.installation_id = i.id
@@ -217,6 +231,8 @@ function adminInstallationSummaryFromRow(
     state: row.state,
     operationState: row.operation_state,
     createdAt: row.created_at,
+    ownerEmail: row.owner_email,
+    signup: row.signup_context_json ? signupContextSchema.parse(JSON.parse(row.signup_context_json)) : null,
   };
 }
 
@@ -232,6 +248,7 @@ function adminInstallationFromRow(
     onboardingExpiresAt: row.onboarding_expires_at,
     createdAt: row.created_at,
     activatedAt: row.activated_at,
+    signup: row.signup_context_json ? signupContextSchema.parse(JSON.parse(row.signup_context_json)) : null,
     reset: row.previous_installation_id && row.data_deletion_state
       ? {
           previousInstallationId: row.previous_installation_id,

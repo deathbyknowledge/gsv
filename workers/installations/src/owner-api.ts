@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { signupContextFromRequest } from "./signup-context";
 import { productEmailChoice } from "./product-email";
 import { readJsonObject } from "./http";
 import { InstallationOwnerAuthStore, OwnerAuthError, type OwnerAuthErrorCode } from "./owner-auth-store";
@@ -65,7 +66,7 @@ export class InstallationOwnerApi {
       if (request.method === "POST" && url.pathname === "/owner/api/spaces") {
         const input = z.strictObject({ operationId: z.string().min(1).max(128), handle, productEmails: productEmailChoice.optional() }).parse(await readJsonObject(request));
         return json(await this.signup.prepare(input.operationId, session.principalId, input.handle, input.productEmails,
-          request.headers.get("cf-connecting-ip") ?? undefined));
+          request.headers.get("cf-connecting-ip") ?? undefined, signupContextFromRequest(request)));
       }
       return json({ error: "Not found" }, 404);
     } catch (error) {
