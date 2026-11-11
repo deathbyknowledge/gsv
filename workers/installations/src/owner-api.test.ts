@@ -31,7 +31,8 @@ async function fixture() {
   });
   const makeApi = () => new InstallationOwnerApi(auth, owners, signup, { send }, { from: "accounts@example.com" }, ORIGIN, "example.com");
   let api = makeApi();
-  const request = async (path: string, token?: string, body?: JsonObject, headers: Record<string, string> = {}, cf?: Record<string, unknown>) => {
+  const request = async (path: string, token?: string, body?: JsonObject, headers: Record<string, string> = {},
+    cf?: { country?: string; city?: string; region?: string }) => {
     const requestHeaders = new Headers({ "content-type": "application/json", "cf-connecting-ip": registry, ...headers });
     if (token) requestHeaders.set("authorization", `Bearer ${token}`);
     const incoming = new Request(`${ORIGIN}/owner/api${path}`, {

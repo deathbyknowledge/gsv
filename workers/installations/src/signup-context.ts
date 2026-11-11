@@ -9,9 +9,16 @@ export const signupContextSchema = z.object({
 });
 export type SignupContext = z.infer<typeof signupContextSchema>;
 
+const placeSchema = z.string().trim().transform((value) => value.slice(0, 100) || null).nullable().catch(null);
+const edgeLocationSchema = z.object({
+  country: z.string().regex(/^(?!XX$)[A-Z]{2}$/).nullable().catch(null),
+  region: placeSchema,
+  city: placeSchema,
+});
+
 /** Only edge geolocation is trusted; a caller's country headers/body are ignored. */
 export function signupContextFromRequest(request: Request): SignupContext {
-  const country = request.cf?.country;
+  const location = edgeLocationSchema.parse(request.cf ?? {});
   let origin: string | null = null;
   const value = request.headers.get("origin");
   if (value) {
@@ -20,11 +27,5 @@ export function signupContextFromRequest(request: Request): SignupContext {
       if (["https:", "http:"].includes(url.protocol) && url.origin.length <= 255) origin = url.origin;
     } catch { /* Native clients and opaque origins may have no web origin. */ }
   }
-  const place = (value: unknown) => typeof value === "string" && value.trim() ? value.trim().slice(0, 100) : null;
-  return {
-    country: typeof country === "string" && /^[A-Z]{2}$/.test(country) && country !== "XX" ? country : null,
-    region: place(request.cf?.region),
-    city: place(request.cf?.city),
-    origin,
-  };
+  return { ...location, origin };
 }
