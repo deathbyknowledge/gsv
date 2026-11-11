@@ -11,7 +11,7 @@ import { InstallationAdminApi, readConfirmedAction, readInstallationListQuery, U
 import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type LifecycleRetry, type ShipView } from "./installations-page";
 import { adminAuditPage } from "./audit-page";
 import type { AdminAuditRecorder, OperatorAuditResult, ShipInsight } from "./insight";
-import { adminErrorPage, adminStylesheet, adminTimeScript } from "./page";
+import { adminErrorPage, adminStylesheet, adminTimeScript, adminUiScript } from "./page";
 import { OpenNetworkFollowError, type IssuedAdminInstallation } from "./service";
 import { InstallationDeletionHttp } from "../deletion-http";
 import type { AccountsDeletionRuntime } from "../deletion-runtime";
@@ -76,9 +76,9 @@ export class InstallationAdminHttp<
     let lifecycleRetry: LifecycleRetry | undefined;
     try {
       if (["/admin/overview", "/admin", "/admin/"].includes(url.pathname) && (request.method === "GET" || head) && this.insight) {
-        return adminOverviewPage(await this.insight.monitoring.overview(), head, this.presentation.navigation);
+        return adminOverviewPage(await this.insight.monitoring.overview(), head, this.presentation.navigation, this.presentation.overviewLinks);
       }
-      if (url.pathname === "/admin/overview" && (request.method === "GET" || head)) return adminOverviewPage(null, head, this.presentation.navigation);
+      if (url.pathname === "/admin/overview" && (request.method === "GET" || head)) return adminOverviewPage(null, head, this.presentation.navigation, this.presentation.overviewLinks);
       if (url.pathname === "/admin/monitoring/refresh" && request.method === "POST") {
         requireAdminMutationOrigin(request, this.origin);
         if (!this.insight) throw new Error("installation monitoring is unavailable");
@@ -113,6 +113,7 @@ export class InstallationAdminHttp<
       }
       if (url.pathname === "/admin/styles.css" && (request.method === "GET" || head)) return adminStylesheet(head);
       if (url.pathname === "/admin/time.js" && (request.method === "GET" || head)) return adminTimeScript(head);
+      if (url.pathname === "/admin/ui.js" && (request.method === "GET" || head)) return adminUiScript(head);
       if (["/admin", "/admin/", "/admin/installations", "/admin/installations/"].includes(url.pathname)
         && (request.method === "GET" || head)) {
         return adminInstallationsPage(await this.service.listInstallations(readInstallationListQuery(url)), undefined, head, 200, this.presentation);

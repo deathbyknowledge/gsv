@@ -1,8 +1,10 @@
 import { noStoreFormHeaders } from "../http";
 import type { IssuedAdminInstallation } from "./service";
 import type { OperatorAuditEvent } from "./insight";
+import { ADMIN_UI_SCRIPT } from "./ui-script";
 
 export type AdminNavigationItem = { section: string; href: string; label: string };
+export type AdminPageLink = { href: string; label: string };
 
 export function adminPageResponse(input: {
   title: string;
@@ -20,6 +22,7 @@ export function adminPageResponse(input: {
     <title>${escapeHtml(input.title)} · GSV registry</title>
     <link rel="stylesheet" href="/admin/styles.css">
     <script src="/admin/time.js" defer></script>
+    <script src="/admin/ui.js" defer></script>
   </head>
   <body>
     <header class="topbar">
@@ -73,6 +76,15 @@ export function adminTimeScript(head: boolean): Response {
   return new Response(head ? null : ADMIN_TIME_SCRIPT, {
     headers: adminHeaders("text/javascript; charset=utf-8"),
   });
+}
+
+export function adminUiScript(head: boolean): Response {
+  return new Response(head ? null : ADMIN_UI_SCRIPT, { headers: adminHeaders("text/javascript; charset=utf-8") });
+}
+
+export function copyEmailButton(email: string): string {
+  const value = escapeHtml(email);
+  return `<button class="copy-email" type="button" data-copy-email="${value}" aria-label="Copy email address ${value}" title="Copy email address"><span data-email-text>${value}</span><span class="copy-feedback" data-copy-feedback aria-live="polite">Copy</span></button>`;
 }
 
 export function onboardingNotice(issued: IssuedAdminInstallation): string {
@@ -241,7 +253,7 @@ main { width: min(1600px, 100%); margin: auto; padding: 48px 28px 80px; }
 .narrow { width: min(760px, 100%); margin-inline: auto; }
 .stack { display: grid; gap: 24px; min-width: 0; }
 .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
-.page-heading .actions { display: flex; align-items: center; gap: 10px; }
+.page-heading .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 h1 { margin: 7px 0 0; font: 500 34px system-ui, sans-serif; } h2 { margin: 7px 0 10px; font: 500 18px system-ui, sans-serif; }
 p { color: #a7a7b2; font: 13px/1.55 system-ui, sans-serif; }
 .eyebrow { margin: 0; color: #8f8aff; font: 11px/1.3 ui-monospace, monospace; letter-spacing: .08em; }
@@ -257,7 +269,14 @@ button.secondary, .button.secondary { border-color: #3d3d49; background: #17171e
 table { width: 100%; border-collapse: collapse; text-align: left; } th, td { padding: 15px 16px; border-bottom: 1px solid #292932; font-size: 12px; vertical-align: middle; }
 tbody tr:last-child td { border-bottom: 0; } th { color: #858593; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
 td strong, td small { display: block; } td small { margin-top: 6px; color: #858593; } td a { color: #ecebff; }
-.installations { min-width: 1280px; } .installations td { vertical-align: top; } .installations .ship-id { font-size: 10px; color: #6f6f7c; }
+.installations td { vertical-align: top; } .installations .ship-id { font-size: 10px; color: #6f6f7c; }
+.copy-email { display: inline-flex; align-items: baseline; gap: 8px; max-width: 100%; padding: 0; border: 0; color: #a7a7b2; background: transparent; text-align: left; overflow-wrap: anywhere; }
+.copy-email:hover, .copy-email:focus-visible { color: #ecebff; } .copy-email:hover [data-email-text] { text-decoration: underline; }
+.copy-feedback { flex: none; color: #8f8aff; font-size: 10px; } .clipboard-copy-target { position: fixed; left: -10000px; top: 0; }
+.column-picker { position: relative; } .column-picker > summary::after { content: ' ▾'; }
+.column-picker-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 10; width: min(350px, calc(100vw - 32px)); padding: 18px; border: 1px solid #3d3d49; background: #111118; box-shadow: 0 12px 32px #0008; }
+.column-picker fieldset { display: grid; gap: 12px; margin: 0 0 18px; padding: 0; border: 0; } .column-picker legend { margin-bottom: 16px; font-size: 12px; }
+.column-picker label { display: flex; align-items: center; gap: 10px; } .column-picker input { width: auto; margin: 0; accent-color: #8f8aff; } .column-picker .muted { display: block; margin-top: 12px; }
 .badge { display: inline-block; border: 1px solid #4b485e; padding: 4px 7px; color: #d8d6ef; background: #181720; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
 .badge-active, .badge-enabled { border-color: #315f4b; color: #9de0be; background: #0d1713; } .badge-restricted, .badge-failed, .badge-past-due, .badge-disabled, .badge-paused { border-color: #743b42; color: #efafb5; background: #1a0e10; }
 .empty { border: 1px solid #292932; padding: 50px 20px; color: #858593; text-align: center; }

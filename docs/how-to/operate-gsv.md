@@ -217,6 +217,14 @@ expanded filters cover signup, activity and contact dates, minimum usage,
 country, acquisition, lifecycle, segment and outreach. Filters apply before
 pagination and remain in sorting and page links.
 
+Use **Columns** above the table to choose which fields to display, or **Show all
+columns** to reset the view. The Ship/owner column always remains visible. Choices
+are saved in this browser and survive filtering, sorting and pagination. Click an
+owner email in the list or detail page to copy it; **Copied** confirms success.
+If clipboard access is blocked, the address is selected for manual copying.
+Operators may supply external dashboard/site shortcuts on Overview through
+the administration presentation's `overviewLinks` setting.
+
 Acquisition is shown only when supplied at signup. The owner API accepts an
 optional `acquisition` object with bounded `source`, `medium`, `campaign`,
 `referral` and `referrerHost` fields; the client that supplies marketing metadata

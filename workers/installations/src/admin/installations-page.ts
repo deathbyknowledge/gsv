@@ -9,13 +9,14 @@ import type {
 } from "../administration";
 import { ADMIN_VISIBLE_INSTALLATION_STATES } from "../administration";
 import { RESET_CONSEQUENCES, type IssuedAdminInstallation } from "./service";
-import type { AdminNavigationItem } from "./page";
+import type { AdminNavigationItem, AdminPageLink } from "./page";
 import type { OperatorRun, OperatorShipSnapshot } from "@humansandmachines/gsv/services/operator";
 import type { OperatorAuditEvent, ShipContext, ShipHealth } from "./insight";
 import type { SignupContext } from "../signup-context";
 import { takedownSubjectKey, takedownSubjectKind, type ShipOpenNetwork, type TakedownSubjectKind } from "./takedowns";
 import {
   adminPageResponse,
+  copyEmailButton,
   auditTable,
   errorNotice,
   escapeHtml,
@@ -41,6 +42,7 @@ export type InstallationAdminPresentation<
   Summary extends AdminInstallationSummary = AdminInstallationSummary,
 > = {
   navigation?: readonly AdminNavigationItem[];
+  overviewLinks?: readonly AdminPageLink[];
   summaryColumn?: { label: string; render: (installation: Summary) => string };
   overview?: (installation: Detail) => string;
   panel?: (installation: Detail) => string;
@@ -62,7 +64,12 @@ export function adminInstallationsPage<Summary extends AdminInstallationSummary>
     content: `<section class="stack">
       <div class="page-heading">
         <div><p class="eyebrow">OPERATOR</p><h1>Ships</h1></div>
-        <div class="actions"><span>${formatInteger(list.total)} ${list.total === 1 ? "result" : "results"}</span><a class="button secondary" href="/admin/installations/new">Create a Ship manually</a></div>
+        <div class="actions"><span>${formatInteger(list.total)} ${list.total === 1 ? "result" : "results"}</span><a class="button secondary" href="/admin/installations/new">Create a Ship manually</a>
+          <details class="column-picker" data-column-picker hidden><summary class="button secondary">Columns</summary>
+            <div class="column-picker-panel"><fieldset data-column-options><legend>Visible columns</legend></fieldset>
+              <button class="secondary" type="button" data-reset-columns>Show all columns</button><small class="muted">Saved in this browser.</small></div>
+          </details>
+        </div>
       </div>
       ${error ? errorNotice(error) : ""}
       ${installationFilters(list)}
@@ -163,7 +170,7 @@ function identityPanel(installation: AdminInstallation, context?: ShipContext): 
     ? context.owner.operatorIssued
       ? "Not linked (issued by an operator)"
       : `${context.owner.email
-        ? `<a class="select-all" href="mailto:${escapeHtml(context.owner.email)}">${escapeHtml(context.owner.email)}</a>`
+        ? copyEmailButton(context.owner.email)
         : "Unknown"}${context.owner.signIn.length ? ` <small>${context.owner.signIn.map(escapeHtml).join(", ")}</small>` : ""}`
     : "";
   return `<section class="panel"><p class="eyebrow">IDENTITY</p><h2>Ship details</h2>
@@ -282,8 +289,8 @@ function installationTable<Summary extends AdminInstallationSummary>(
   if (installations.length === 0) {
     return `<div class="empty">No Ships match this view.</div>`;
   }
-  const heading = (label: string, sort: typeof USER_SORTS[number]) => `<th><a href="${escapeHtml(registryHref({ ...list, sort, direction: list?.sort === sort && list.direction !== "asc" ? "asc" : "desc" }, 1))}">${label}${list?.sort === sort ? list.direction === "asc" ? " ↑" : " ↓" : ""}</a></th>`;
-  return `<div class="table-wrap"><table class="installations"><thead><tr><th>Ship / owner</th>${heading("Signup", "signup")}${heading("Last activity", "last_active")}${heading("Messages", "messages")}${heading("Tasks", "tasks")}${heading("Successful", "successful_tasks")}${heading("Segment", "segment")}${heading("Acquisition", "channel")}${heading("Outreach", "outreach")}${heading("Contacted", "last_contacted")}<th>State</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}</tr></thead>
+  const heading = (label: string, sort: typeof USER_SORTS[number]) => `<th data-column="${sort}" data-column-label="${escapeHtml(label)}"><a href="${escapeHtml(registryHref({ ...list, sort, direction: list?.sort === sort && list.direction !== "asc" ? "asc" : "desc" }, 1))}">${label}${list?.sort === sort ? list.direction === "asc" ? " ↑" : " ↓" : ""}</a></th>`;
+  return `<div class="table-wrap"><table class="installations" data-user-table><thead><tr><th data-column="identity" data-column-label="Ship / owner">Ship / owner</th>${heading("Signup", "signup")}${heading("Last activity", "last_active")}${heading("Messages", "messages")}${heading("Tasks", "tasks")}${heading("Successful", "successful_tasks")}${heading("Segment", "segment")}${heading("Acquisition", "channel")}${heading("Outreach", "outreach")}${heading("Contacted", "last_contacted")}<th data-column="state" data-column-label="State">State</th>${column ? `<th data-column="operator" data-column-label="${escapeHtml(column.label)}">${escapeHtml(column.label)}</th>` : ""}</tr></thead>
     <tbody>${installations.map((installation) => installationRow(installation, column)).join("")}</tbody></table></div>`;
 }
 
@@ -298,17 +305,17 @@ function installationRow<Summary extends AdminInstallationSummary>(
   const segment = installation.segment ?? "unknown";
   const outreach = installation.outreach;
   return `<tr>
-    <td><strong><a href="${href}">${escapeHtml(installation.handle)}</a></strong>${installation.ownerEmail ? `<small>${escapeHtml(installation.ownerEmail)}</small>` : ""}<small>${signupLocation(installation.signup, true)}</small>
+    <td data-column="identity"><strong><a href="${href}">${escapeHtml(installation.handle)}</a></strong>${installation.ownerEmail ? `<small>${copyEmailButton(installation.ownerEmail)}</small>` : ""}<small>${signupLocation(installation.signup, true)}</small>
       ${outreach?.notes ? `<small title="${escapeHtml(outreach.notes)}">✎ ${escapeHtml(outreach.notes.slice(0, 70))}${outreach.notes.length > 70 ? "…" : ""}</small>` : ""}</td>
-    <td>${formatDateOnly(installation.signedUpAt ?? installation.createdAt)}</td>
-    <td>${installation.activity?.lastActiveAt ? formatRelativeDate(installation.activity.lastActiveAt) : "—"}${installation.activity?.capturedAt ? `<small title="Activity snapshot">sync ${formatRelativeDate(installation.activity.capturedAt)}</small>` : ""}</td>
-    <td class="count">${count(installation.activity?.messages)}</td><td class="count">${count(installation.activity?.tasks)}</td><td class="count">${count(installation.activity?.successfulTasks)}</td>
-    <td>${stateBadge(segment, segmentLabels[segment])}</td>
-    <td>${escapeHtml(channel)}${!acquisition && installation.signup?.origin ? `<small title="Signup origin">via ${signupOrigin(installation.signup)}</small>` : ""}${acquisition?.medium ? `<small>${escapeHtml(acquisition.medium)}</small>` : ""}${acquisition?.campaign ? `<small>${escapeHtml(acquisition.campaign)}</small>` : ""}</td>
-    <td><a href="${href}#outreach">${escapeHtml(outreachLabels[outreach?.status ?? "not_contacted"])}</a></td>
-    <td>${outreach?.lastContactedAt ? formatCalendarDate(outreach.lastContactedAt) : "—"}</td>
-    <td>${stateBadge(installation.state)}</td>
-    ${column ? `<td>${column.render(installation)}</td>` : ""}
+    <td data-column="signup">${formatDateOnly(installation.signedUpAt ?? installation.createdAt)}</td>
+    <td data-column="last_active">${installation.activity?.lastActiveAt ? formatRelativeDate(installation.activity.lastActiveAt) : "—"}${installation.activity?.capturedAt ? `<small title="Activity snapshot">sync ${formatRelativeDate(installation.activity.capturedAt)}</small>` : ""}</td>
+    <td data-column="messages" class="count">${count(installation.activity?.messages)}</td><td data-column="tasks" class="count">${count(installation.activity?.tasks)}</td><td data-column="successful_tasks" class="count">${count(installation.activity?.successfulTasks)}</td>
+    <td data-column="segment">${stateBadge(segment, segmentLabels[segment])}</td>
+    <td data-column="channel">${escapeHtml(channel)}${!acquisition && installation.signup?.origin ? `<small title="Signup origin">via ${signupOrigin(installation.signup)}</small>` : ""}${acquisition?.medium ? `<small>${escapeHtml(acquisition.medium)}</small>` : ""}${acquisition?.campaign ? `<small>${escapeHtml(acquisition.campaign)}</small>` : ""}</td>
+    <td data-column="outreach"><a href="${href}#outreach">${escapeHtml(outreachLabels[outreach?.status ?? "not_contacted"])}</a></td>
+    <td data-column="last_contacted">${outreach?.lastContactedAt ? formatCalendarDate(outreach.lastContactedAt) : "—"}</td>
+    <td data-column="state">${stateBadge(installation.state)}</td>
+    ${column ? `<td data-column="operator">${column.render(installation)}</td>` : ""}
   </tr>`;
 }
 

@@ -1,8 +1,8 @@
-import { adminPageResponse, escapeHtml, formatCalendarDate, formatDate, formatInteger, formatRelativeDate, stateBadge, type AdminNavigationItem } from "./page";
+import { adminPageResponse, escapeHtml, formatCalendarDate, formatDate, formatInteger, formatRelativeDate, stateBadge, type AdminNavigationItem, type AdminPageLink } from "./page";
 import { outreachLabels, segmentLabels, OUTREACH_STATUSES, type ActivitySummary, type GrowthOverview, type Outreach, type OutreachEvent, type UserSegment } from "./monitoring";
 import type { OperatorUsage } from "@humansandmachines/gsv/services/operator";
 
-export function adminOverviewPage(value: GrowthOverview | null, head: boolean, navigation: readonly AdminNavigationItem[] = []): Response {
+export function adminOverviewPage(value: GrowthOverview | null, head: boolean, navigation: readonly AdminNavigationItem[] = [], links: readonly AdminPageLink[] = []): Response {
   const percent = (count: number, eligible: number) => eligible ? `${Math.round(count / eligible * 100)}%` : "—";
   const metrics = value ? [
     ["Total users", formatInteger(value.totalUsers)], ["New today / 7d", `${value.newToday} / ${value.newWeek}`],
@@ -11,7 +11,8 @@ export function adminOverviewPage(value: GrowthOverview | null, head: boolean, n
   ] : [];
   return adminPageResponse({ title: "Overview", section: "overview", navigation, head, content: `<section class="stack">
     <div class="page-heading"><div><p class="eyebrow">GROWTH & ACTIVITY</p><h1>Overview</h1></div>
-      <form method="post" action="/admin/monitoring/refresh"><button class="secondary" type="submit">Refresh activity</button></form></div>
+      <div class="actions">${links.map((link) => `<a class="button secondary" href="${escapeHtml(link.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.label)} ↗</a>`).join("")}
+        <form method="post" action="/admin/monitoring/refresh"><button class="secondary" type="submit">Refresh activity</button></form></div></div>
     ${value ? `<div class="metrics growth-metrics">${metrics.map(([label, count]) => `<div class="metric"><small>${label}</small><strong>${count}</strong></div>`).join("")}</div>
     <p class="muted">${value.monitored} of ${value.totalUsers} users measured · ${value.latestSync ? `latest sync ${formatRelativeDate(value.latestSync)}` : "awaiting activity sync"}.
       Unknown history is excluded from activation and retention rates. Counts describe owner messages and their Ship runs.</p>
