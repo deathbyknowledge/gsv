@@ -42,7 +42,7 @@ function growthChart(days: GrowthOverview["days"]): string {
 export function usagePanel(activity?: ActivitySummary, live?: OperatorUsage, segment?: UserSegment): string {
   const usage = live ?? activity;
   const count = (value?: number | null) => value === null || value === undefined ? "—" : formatInteger(value);
-  return `<section class="panel"><div class="page-heading"><div><p class="eyebrow">USER ACTIVITY</p><h2>Usage and outcomes</h2></div>${segment ? stateBadge(segmentLabels[segment]) : ""}</div>
+  return `<section class="panel"><div class="page-heading"><div><p class="eyebrow">USER ACTIVITY</p><h2>Usage and outcomes</h2></div>${segment ? stateBadge(segment, segmentLabels[segment]) : ""}</div>
     <div class="metrics usage-metrics">${[
       ["Last active", usage?.lastActiveAt ? formatRelativeDate(usage.lastActiveAt) : "Not recorded"],
       ["User messages", count(usage?.messages)], ["Finished tasks", count(usage?.tasks)], ["Successful", count(usage?.successfulTasks)], ["Failed", count(usage?.failedTasks)],

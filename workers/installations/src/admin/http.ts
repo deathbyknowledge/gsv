@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { outreachInputSchema } from "./monitoring";
+import { outreachInputSchema, type OutreachUpdate } from "./monitoring";
 import { adminOverviewPage } from "./monitoring-page";
 import type { UsernamePolicyInput, UsernamePolicyLists } from "../username-policy";
 import { adminSignupPage } from "./signup-page";
@@ -95,7 +95,7 @@ export class InstallationAdminHttp<
         }, { headers: noStoreHeaders() });
         if (request.method === "POST") {
           requireAdminMutationOrigin(request, this.origin);
-          let input;
+          let input: OutreachUpdate;
           if (outreachRoute[1]) input = outreachInputSchema.parse(await readJsonObject(request));
           else {
             const form = await readAdminForm(request);

@@ -37,5 +37,7 @@ export function signupContextFromRequest(request: Request, acquisition?: SignupA
       if (["https:", "http:"].includes(url.protocol) && url.origin.length <= 255) origin = url.origin;
     } catch { /* Native clients and opaque origins may have no web origin. */ }
   }
-  return { ...location, origin, ...(acquisition ? { acquisition } : {}) };
+  const context: SignupContext = { ...location, origin };
+  if (acquisition) context.acquisition = acquisition;
+  return context;
 }

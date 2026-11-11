@@ -5,12 +5,12 @@ import { parseOpaqueId } from "../domain";
 export const DAY_MS = 86_400_000;
 export const SEGMENTS = ["never_used", "tried_once", "active", "inactive", "previously_active", "unknown"] as const;
 export const OUTREACH_STATUSES = ["not_contacted", "emailed", "replied", "follow_up", "not_applicable"] as const;
-export const outreachLabels: Record<typeof OUTREACH_STATUSES[number], string> = {
+export const outreachLabels = {
   not_contacted: "Not contacted", emailed: "Emailed", replied: "Replied", follow_up: "Follow-up needed", not_applicable: "Not applicable",
-};
-export const segmentLabels: Record<typeof SEGMENTS[number], string> = {
+} satisfies Record<typeof OUTREACH_STATUSES[number], string>;
+export const segmentLabels = {
   never_used: "Never used", tried_once: "Tried once", active: "Active", inactive: "Inactive", previously_active: "Previously active", unknown: "Unknown",
-};
+} satisfies Record<typeof SEGMENTS[number], string>;
 export type UserSegment = typeof SEGMENTS[number];
 export type ActivitySummary = {
   capturedAt: number | null; trackedFrom: number | null; firstActiveAt: number | null; lastActiveAt: number | null;
@@ -56,13 +56,12 @@ export class AdminMonitoring {
     const usage = operatorUsageSchema.parse(snapshot.usage);
     const id = parseOpaqueId(snapshot.installationId, "installationId");
     // Absolute daily counts and capture-time leases make retries and reordered responses safe.
-    for (const day of usage.days) {
-      await this.db.prepare(`INSERT INTO installation_activity_days (installation_id, day, messages, captured_at)
-        SELECT id, ?, ?, ? FROM installations WHERE id = ? AND state NOT IN ('retained', 'deleting', 'deleted')
-        ON CONFLICT (installation_id, day) DO UPDATE SET messages = excluded.messages, captured_at = excluded.captured_at
-        WHERE excluded.captured_at > installation_activity_days.captured_at`)
-        .bind(day.day, day.messages, snapshot.capturedAt, id).run();
-    }
+    await this.db.prepare(`INSERT INTO installation_activity_days (installation_id, day, messages, captured_at)
+      SELECT i.id, json_extract(d.value, '$.day'), json_extract(d.value, '$.messages'), ?
+      FROM json_each(?) d JOIN installations i ON i.id = ? WHERE i.state NOT IN ('retained', 'deleting', 'deleted')
+      ON CONFLICT (installation_id, day) DO UPDATE SET messages = excluded.messages, captured_at = excluded.captured_at
+      WHERE excluded.captured_at > installation_activity_days.captured_at`)
+      .bind(snapshot.capturedAt, JSON.stringify(usage.days), id).run();
     await this.db.prepare(`INSERT INTO installation_activity (installation_id, captured_at, attempted_at, tracked_from,
       first_active_at, last_active_at, messages, tasks, successful_tasks, failed_tasks, aborted_tasks, availability)
       SELECT id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok' FROM installations WHERE id = ? AND state NOT IN ('retained', 'deleting', 'deleted')

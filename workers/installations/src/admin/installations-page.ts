@@ -302,7 +302,7 @@ function installationRow<Summary extends AdminInstallationSummary>(
     <td>${formatDateOnly(installation.signedUpAt ?? installation.createdAt)}</td>
     <td>${installation.activity?.lastActiveAt ? formatRelativeDate(installation.activity.lastActiveAt) : "—"}${installation.activity?.capturedAt ? `<small title="Activity snapshot">sync ${formatRelativeDate(installation.activity.capturedAt)}</small>` : ""}</td>
     <td class="count">${count(installation.activity?.messages)}</td><td class="count">${count(installation.activity?.tasks)}</td><td class="count">${count(installation.activity?.successfulTasks)}</td>
-    <td>${stateBadge(segmentLabels[segment])}</td>
+    <td>${stateBadge(segment, segmentLabels[segment])}</td>
     <td>${escapeHtml(channel)}${!acquisition && installation.signup?.origin ? `<small title="Signup origin">via ${signupOrigin(installation.signup)}</small>` : ""}${acquisition?.medium ? `<small>${escapeHtml(acquisition.medium)}</small>` : ""}${acquisition?.campaign ? `<small>${escapeHtml(acquisition.campaign)}</small>` : ""}</td>
     <td><a href="${href}#outreach">${escapeHtml(outreachLabels[outreach?.status ?? "not_contacted"])}</a></td>
     <td>${outreach?.lastContactedAt ? formatDateOnly(outreach.lastContactedAt) : "—"}</td>

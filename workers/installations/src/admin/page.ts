@@ -93,8 +93,8 @@ export function errorNotice(message: string, action = ""): string {
   return `<section class="notice error" role="alert"><p class="eyebrow">REQUEST NOT COMPLETED</p><p>${escapeHtml(message)}</p>${action}</section>`;
 }
 
-export function stateBadge(value: string): string {
-  return `<span class="badge badge-${escapeHtml(value.replaceAll("_", "-"))}">${escapeHtml(value.replaceAll("_", " "))}</span>`;
+export function stateBadge(value: string, label = value): string {
+  return `<span class="badge badge-${escapeHtml(value.replaceAll("_", "-"))}">${escapeHtml(label.replaceAll("_", " "))}</span>`;
 }
 
 export function formatDate(timestamp: number | null): string {
