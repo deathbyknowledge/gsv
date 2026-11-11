@@ -1,4 +1,4 @@
-import { adminPageResponse, escapeHtml, formatDate, formatInteger, formatRelativeDate, stateBadge, type AdminNavigationItem } from "./page";
+import { adminPageResponse, escapeHtml, formatCalendarDate, formatDate, formatInteger, formatRelativeDate, stateBadge, type AdminNavigationItem } from "./page";
 import { outreachLabels, segmentLabels, OUTREACH_STATUSES, type ActivitySummary, type GrowthOverview, type Outreach, type OutreachEvent, type UserSegment } from "./monitoring";
 import type { OperatorUsage } from "@humansandmachines/gsv/services/operator";
 
@@ -22,7 +22,7 @@ export function adminOverviewPage(value: GrowthOverview | null, head: boolean, n
       <tbody>${value.days.map((day) => `<tr><td>${escapeHtml(day.day)}</td><td>${day.signups}</td><td>${day.activeUsers}</td></tr>`).join("")}</tbody></table></div></details>
     </section>
     <section class="panel"><h2>What these numbers mean</h2><p>DAU: owners who sent Ship a message in the last 24 hours. WAU: the last 7 days.
-      Activation: at least one owner message after signup. Retention: another message on the seventh UTC calendar day after signup, among mature, measurable signups.
+      Activation: at least one owner message after signup. Retention: another message on the seventh UTC calendar day after signup, among mature, measurable signups from the last 90 days.
       Counts include verified self-service signups and activated operator-issued Ships. Retired reset copies are excluded; replacements keep their original signup date.</p>
       <p><a href="/admin/installations?sort=last_active">Manage users →</a></p></section>` : `<div class="empty">Activity monitoring is not connected.</div>`}
   </section>` });
@@ -47,7 +47,7 @@ export function usagePanel(activity?: ActivitySummary, live?: OperatorUsage, seg
       ["Last active", usage?.lastActiveAt ? formatRelativeDate(usage.lastActiveAt) : "Not recorded"],
       ["User messages", count(usage?.messages)], ["Finished tasks", count(usage?.tasks)], ["Successful", count(usage?.successfulTasks)], ["Failed", count(usage?.failedTasks)],
     ].map(([label, value]) => `<div class="metric"><small>${label}</small><strong>${value}</strong></div>`).join("")}</div>
-    <p class="muted">${usage?.trackedFrom ? `Measured since ${formatDate(usage.trackedFrom)}.` : "Awaiting a Gateway with activity tracking."}
+    <p class="muted">${usage?.trackedFrom === 0 ? "Measured since this Ship was created." : usage?.trackedFrom ? `Measured since ${formatDate(usage.trackedFrom)}.` : "Awaiting a Gateway with activity tracking."}
       A task is an owner-requested Ship run; scheduled and background work is excluded. Success means the run completed normally.</p>
     ${activity?.capturedAt ? `<small class="muted">Snapshot ${formatRelativeDate(activity.capturedAt)}${activity.availability !== "ok" ? " · latest refresh unavailable" : ""}</small>` : ""}
   </section>`;
@@ -64,6 +64,6 @@ export function outreachPanel(path: string, current?: Outreach, history: Outreac
     </form>
     <details><summary>Outreach history (${history.length}${history.length === 50 ? "+" : ""})</summary>
       ${history.length ? `<ol class="outreach-history">${history.map((entry) => `<li><div>${formatDate(entry.at)} · ${escapeHtml(entry.actor)} · ${escapeHtml(outreachLabels[entry.status])}</div>
-        ${entry.lastContactedAt ? `<small>Last contacted ${formatDate(entry.lastContactedAt)}</small>` : ""}<p class="internal-note">${escapeHtml(entry.notes) || "No notes"}</p></li>`).join("")}</ol>` : "<p>No outreach recorded.</p>"}</details>
+        ${entry.lastContactedAt ? `<small>Last contacted ${formatCalendarDate(entry.lastContactedAt)}</small>` : ""}<p class="internal-note">${escapeHtml(entry.notes) || "No notes"}</p></li>`).join("")}</ol>` : "<p>No outreach recorded.</p>"}</details>
   </section>`;
 }

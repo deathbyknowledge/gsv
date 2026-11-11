@@ -127,12 +127,12 @@ export class AdminMonitoring {
       COALESCE(SUM(a.messages > 0),0) AS activated,
       COALESCE(SUM(a.messages > 0 OR COALESCE(i.signup_at, i.created_at) >= a.tracked_from),0) AS activationEligible,
       COALESCE(SUM(a.messages IS NOT NULL),0) AS monitored, MAX(a.captured_at) AS latestSync,
-      COALESCE(SUM(COALESCE(i.signup_at, i.created_at) < ? AND COALESCE(i.signup_at, i.created_at) >= a.tracked_from),0) AS retentionEligible,
-      COALESCE(SUM(COALESCE(i.signup_at, i.created_at) < ? AND COALESCE(i.signup_at, i.created_at) >= a.tracked_from AND EXISTS (
+      COALESCE(SUM(COALESCE(i.signup_at, i.created_at) < ? AND COALESCE(i.signup_at, i.created_at) >= ? AND COALESCE(i.signup_at, i.created_at) >= a.tracked_from),0) AS retentionEligible,
+      COALESCE(SUM(COALESCE(i.signup_at, i.created_at) < ? AND COALESCE(i.signup_at, i.created_at) >= ? AND COALESCE(i.signup_at, i.created_at) >= a.tracked_from AND EXISTS (
         SELECT 1 FROM installation_activity_days d WHERE d.installation_id = i.id AND d.messages > 0
           AND d.day = date(COALESCE(i.signup_at, i.created_at) / 1000, 'unixepoch', '+7 days'))),0) AS retained
       FROM installations i LEFT JOIN installation_activity a ON a.installation_id = i.id WHERE ${population}`)
-      .bind(today, now - 7 * DAY_MS, now - DAY_MS, now - 7 * DAY_MS, today - 7 * DAY_MS, today - 7 * DAY_MS).first<Omit<GrowthOverview, "days">>();
+      .bind(today, now - 7 * DAY_MS, now - DAY_MS, now - 7 * DAY_MS, today - 7 * DAY_MS, today - 90 * DAY_MS, today - 7 * DAY_MS, today - 90 * DAY_MS).first<Omit<GrowthOverview, "days">>();
     const signups = (await this.db.prepare(`SELECT date(COALESCE(i.signup_at, i.created_at) / 1000,'unixepoch') AS day, COUNT(*) AS count
       FROM installations i WHERE ${population} AND COALESCE(i.signup_at, i.created_at) >= ? GROUP BY day`).bind(today - 29 * DAY_MS).all<{ day: string; count: number }>()).results;
     const active = (await this.db.prepare(`SELECT d.day, COUNT(*) AS count FROM installation_activity_days d JOIN installations i ON i.id = d.installation_id

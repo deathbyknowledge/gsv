@@ -241,5 +241,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {
+  const fresh = storage.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'passwd'").toArray().length === 0;
   runSqlMigrations(storage, KERNEL_SCHEMA_COMPONENT, KERNEL_MIGRATIONS);
+  if (fresh) storage.sql.exec("UPDATE operator_activity_epoch SET tracked_from = 0 WHERE id = 1");
 }

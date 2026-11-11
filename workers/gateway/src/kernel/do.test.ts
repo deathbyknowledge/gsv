@@ -29,6 +29,7 @@ import {
 // SAFETY: tests assign the exact collaborators each scenario asserts on.
 const bareKernel = (): any => {
   const kernel = Object.create(Kernel.prototype);
+  kernel.ctx = { storage: { sql: { exec: vi.fn() } } };
   kernel.shipReplies = { activeConnection: vi.fn(() => null), revision: vi.fn(() => null), recordClient: vi.fn(), recordAdapter: vi.fn() };
   kernel.manual = { ensureCurrent: vi.fn(async () => {}) };
   kernel.retirement = { assertActive: vi.fn(), state: undefined };

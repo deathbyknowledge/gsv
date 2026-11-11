@@ -21,6 +21,7 @@ import {
   escapeHtml,
   formatDate,
   formatDateOnly,
+  formatCalendarDate,
   formatRelativeDate,
   formatDuration,
   formatInteger,
@@ -305,7 +306,7 @@ function installationRow<Summary extends AdminInstallationSummary>(
     <td>${stateBadge(segment, segmentLabels[segment])}</td>
     <td>${escapeHtml(channel)}${!acquisition && installation.signup?.origin ? `<small title="Signup origin">via ${signupOrigin(installation.signup)}</small>` : ""}${acquisition?.medium ? `<small>${escapeHtml(acquisition.medium)}</small>` : ""}${acquisition?.campaign ? `<small>${escapeHtml(acquisition.campaign)}</small>` : ""}</td>
     <td><a href="${href}#outreach">${escapeHtml(outreachLabels[outreach?.status ?? "not_contacted"])}</a></td>
-    <td>${outreach?.lastContactedAt ? formatDateOnly(outreach.lastContactedAt) : "—"}</td>
+    <td>${outreach?.lastContactedAt ? formatCalendarDate(outreach.lastContactedAt) : "—"}</td>
     <td>${stateBadge(installation.state)}</td>
     ${column ? `<td>${column.render(installation)}</td>` : ""}
   </tr>`;

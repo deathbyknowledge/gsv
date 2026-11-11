@@ -41,6 +41,7 @@ export type OperatorRun = z.infer<typeof operatorRunSchema>;
 
 /** Counts of owner messages and their terminal Ship runs, since tracking began. */
 export const operatorUsageSchema = z.strictObject({
+  /** Zero means complete history since this Kernel's creation; otherwise the upgrade time. */
   trackedFrom: timestamp,
   firstActiveAt: timestamp.nullable(),
   lastActiveAt: timestamp.nullable(),

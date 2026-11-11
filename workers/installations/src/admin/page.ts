@@ -132,6 +132,12 @@ export function formatDateOnly(timestamp: number): string {
   return `<time datetime="${date.toISOString()}" title="${date.toISOString()}" data-local-time="day">${escapeHtml(new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(date))}</time>`;
 }
 
+/** Contact dates are calendar dates, stored at UTC midnight without a time-of-day meaning. */
+export function formatCalendarDate(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `<time datetime="${date.toISOString().slice(0, 10)}" data-local-time="calendar">${escapeHtml(new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(date))}</time>`;
+}
+
 /** Durations as an operator reads them: 200ms, 3s, 6m 15s, 2h 4m. */
 export function formatDuration(ms: number): string {
   if (ms < 1_000) return `${ms}ms`;
@@ -201,15 +207,16 @@ const ADMIN_TIME_SCRIPT = `
 (() => {
   const compact = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   const day = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+  const calendar = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
   const exact = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'long' });
   function render() {
     for (const time of document.querySelectorAll('time[data-local-time]')) {
       const date = new Date(time.dateTime);
-      time.title = exact.format(date);
+      time.title = time.dataset.localTime === 'calendar' ? 'Recorded contact date: ' + time.dateTime : exact.format(date);
       const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
       time.textContent = time.dataset.localTime === 'relative'
         ? minutes < 1 ? 'now' : minutes < 60 ? minutes + 'm ago' : minutes < 1440 ? Math.floor(minutes / 60) + 'h ago' : Math.floor(minutes / 1440) + 'd ago'
-        : (time.dataset.localTime === 'day' ? day : compact).format(date);
+        : (time.dataset.localTime === 'calendar' ? calendar : time.dataset.localTime === 'day' ? day : compact).format(date);
     }
   }
   render();
