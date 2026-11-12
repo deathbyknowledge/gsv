@@ -30,6 +30,30 @@ export interface InstallationResetService {
   prepareInstallationReset(input: InstallationResetPreparation): Promise<InstallationResetPrepared>;
 }
 
+export const installationStateChangedRequestSchema = z.strictObject({
+  version: z.literal(1),
+  installationId: identity,
+});
+export type InstallationStateChangedRequest = z.infer<typeof installationStateChangedRequestSchema>;
+
+/**
+ * The revision the installation's Kernel holds once it has read the change,
+ * or the directory's own when no Kernel needs to hear of it.
+ */
+export type InstallationStateChangedResult =
+  | { found: true; stateRevision: number }
+  | { found: false };
+
+/**
+ * Bound only to Accounts, with deployment-owned props. Accounts calls it after
+ * each change of an installation's state until the answer reaches that
+ * change's revision. The Gateway reads the state from the directory itself,
+ * so a call carries none, and repeating one changes nothing.
+ */
+export interface InstallationAdmissionService {
+  installationStateChanged(input: InstallationStateChangedRequest): Promise<InstallationStateChangedResult>;
+}
+
 export const installationDeletionRequestSchema = z.strictObject({
   version: z.literal(1),
   operationId: identity,

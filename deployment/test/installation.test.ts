@@ -256,6 +256,9 @@ describe("public operator composition", () => {
     expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryGatewayDeletionBinding", bindings: [{ type: "service",
       name: "DELETION_OWNER_GATEWAY", service: "gateway", entrypoint: "GatewayLifecycleEntrypoint",
       props: { authority: "installation-deletion" } }] });
+    expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryAdmissionGatewayBinding", bindings: [{ type: "service",
+      name: "ADMISSION_GATEWAY", service: "gateway", entrypoint: "GatewayAdmissionEntrypoint",
+      props: { authority: "installation-admission" } }] });
     expect(recorded.bindings).toContainEqual({ id: "FixtureDirectoryInferenceDeletionBinding", bindings: [{ type: "service",
       name: "DELETION_OWNER_INFERENCE", service: "inference", entrypoint: "InferenceLifecycleEntrypoint",
       props: { authority: "installation-deletion" } }] });

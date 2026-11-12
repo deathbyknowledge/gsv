@@ -1,17 +1,23 @@
 import type {
   InstallationDirectoryResult,
 } from "@humansandmachines/gsv/protocol";
-import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
+import type { InstallationDirectoryService, InstallationState } from "@humansandmachines/gsv/services/directory";
 import { exceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import { parseInstallationId } from "./identity";
 
 export const MANAGED_LIFECYCLE_RECHECK_MS = 60_000;
+
+/** Where a Kernel keeps the state Accounts last reported for its installation. */
+export const MANAGED_INSTALLATION_STATE_KEY = "managed_installation_state";
 
 type SetupRecoveryDetails = { setupRecovery: true; setupUrl?: string; setupFeatures: string[] };
 
 export type ManagedInstallationWorkGate =
   | { allowed: true }
   | { allowed: false; code: 423 | 503; message: string; details?: SetupRecoveryDetails };
+
+/** A Kernel's answer to one of its Processes: an allowed answer it remembered from Accounts stands only until `until`. */
+export type KernelWorkGate = ManagedInstallationWorkGate & { until?: number };
 
 type ResolvedManagedInstallation = Extract<
   InstallationDirectoryResult,
@@ -31,7 +37,7 @@ export function setupFeatures(bindings: Pick<ManagedInstallationLifecycleBinding
 
 export function setupRecoveryDetails(
   bindings: Pick<ManagedInstallationLifecycleBindings, "GSV_OWNER_SIGNUP_URL" | "PDS">,
-  installation: ResolvedManagedInstallation,
+  installation: Pick<ResolvedManagedInstallation, "ownerSetupRecovery">,
 ): SetupRecoveryDetails {
   const details: SetupRecoveryDetails = { setupRecovery: true, setupFeatures: setupFeatures(bindings) };
   if (installation.ownerSetupRecovery && bindings.GSV_OWNER_SIGNUP_URL) {
@@ -59,43 +65,43 @@ export async function managedInstallationWorkGate(
   bindings: ManagedInstallationLifecycleBindings,
   installationId: string,
 ): Promise<ManagedInstallationWorkGate> {
-  return await lookupManagedWorkGate(bindings, installationId);
+  const installation = await lookupManagedInstallation(bindings, installationId);
+  return "allowed" in installation ? installation : workGate(bindings, installation);
 }
 
 /** How long a confirmed-active answer stands before Accounts is asked again. */
 const ACTIVE_CONFIRMATION_MS = 60_000;
 const LOOKUP_TIMEOUT_MS = 2_000;
 
-const UNAVAILABLE: ManagedInstallationWorkGate = {
+export const UNAVAILABLE: ManagedInstallationWorkGate = {
   allowed: false,
   code: 503,
   message: "Managed installation is unavailable",
 };
 /** What a request hears when Accounts cannot answer for its Ship in time. */
 export const SHIP_UNREACHABLE_MESSAGE = "Ship is briefly unreachable; try again in a moment";
-const UNREACHABLE: ManagedInstallationWorkGate = {
+export const UNREACHABLE: ManagedInstallationWorkGate = {
   allowed: false,
   code: 503,
   message: SHIP_UNREACHABLE_MESSAGE,
 };
 
 /**
- * One Durable Object's view of its Accounts admission. It remembers an active
+ * One Durable Object's view of its admission, which `ask` answers: from
+ * Accounts for a Kernel, or from its Kernel for a Process. It remembers an active
  * answer for a minute and shares one lookup among concurrent callers. A refusal
  * or a failed lookup is never remembered, so an outage fails closed.
  */
 export class ManagedInstallationGate {
-  private confirmedAt?: number;
+  private confirmedUntil?: number;
   private lookup?: Promise<ManagedInstallationWorkGate>;
 
-  constructor(
-    private readonly bindings: ManagedInstallationLifecycleBindings,
-    private readonly installationId: () => string,
-  ) {}
+  /** `ask` answers for the installation without throwing; a failure is a refusal. An answer's `until` shortens the minute. */
+  constructor(private readonly ask: () => Promise<KernelWorkGate>) {}
 
-  /** `fresh` asks Accounts even after a recent confirmation, for calls that grant new authority. */
+  /** `fresh` asks again even after a recent confirmation, for calls that grant new authority. */
   async check(options: { fresh?: boolean } = {}): Promise<ManagedInstallationWorkGate> {
-    if (!options.fresh && this.confirmedAt !== undefined && Date.now() - this.confirmedAt < ACTIVE_CONFIRMATION_MS) {
+    if (!options.fresh && this.confirmedUntil !== undefined && Date.now() < this.confirmedUntil) {
       return { allowed: true };
     }
     if (options.fresh) return await this.refresh();
@@ -103,22 +109,128 @@ export class ManagedInstallationGate {
     return await this.lookup;
   }
 
-  /** Forgets the last confirmation, so the next check asks Accounts. */
+  /** When the last confirmation stops standing, if one does. */
+  get standsUntil(): number | undefined {
+    return this.confirmedUntil;
+  }
+
+  /** Forgets the last confirmation, so the next check asks again. */
   invalidate(): void {
-    this.confirmedAt = undefined;
+    this.confirmedUntil = undefined;
   }
 
   private async refresh(): Promise<ManagedInstallationWorkGate> {
-    const gate = await lookupManagedWorkGate(this.bindings, this.installationId());
-    this.confirmedAt = gate.allowed ? Date.now() : undefined;
-    return gate;
+    const gate = await this.ask();
+    if (!gate.allowed) {
+      this.confirmedUntil = undefined;
+      return gate;
+    }
+    this.confirmedUntil = Math.min(Date.now() + ACTIVE_CONFIRMATION_MS, gate.until ?? Infinity);
+    return { allowed: true };
   }
 }
 
-async function lookupManagedWorkGate(
+type RecordedInstallationState = { state: InstallationState; revision: number; recordedAt: number };
+
+/**
+ * How long a record stands before the Kernel asks Accounts again. Accounts
+ * tells the Kernel of every change, so this only bounds how long a Kernel can
+ * miss that Accounts stopped telling it, as after a rollback.
+ */
+const RECORD_TTL_MS = 24 * 60 * 60_000;
+
+/** A Kernel being set up keeps asking Accounts, whose answer carries setup details that change without a change of state. */
+const UNRECORDED_STATES: ReadonlySet<InstallationState> = new Set(["reserved", "provisioning"]);
+
+/**
+ * A Kernel's record of its installation's state in Accounts. Accounts tells
+ * the Kernel of every change of state and gives each a higher revision, so
+ * the Kernel answers from its record and replaces it only with a higher
+ * revision: a late notice never undoes a newer one.
+ * A Kernel without a record, or with one older than a day, asks Accounts
+ * through its gate and keeps the answer. An answer without a revision comes from an Accounts that doesn't
+ * tell Kernels of changes, so the Kernel keeps none and only the gate's
+ * minute applies.
+ */
+export class RecordedInstallationGate {
+  private readonly gate: ManagedInstallationGate;
+
+  constructor(
+    private readonly bindings: ManagedInstallationLifecycleBindings,
+    private readonly installationId: () => string,
+    private readonly kv: SyncKvStorage,
+  ) {
+    this.gate = new ManagedInstallationGate(() => this.askAccounts());
+  }
+
+  /** `fresh` asks Accounts even with a record, for calls that grant new authority. */
+  async check(options: { fresh?: boolean } = {}): Promise<ManagedInstallationWorkGate> {
+    const recorded = options.fresh ? undefined : this.recorded();
+    return recorded && this.recordStands()
+      ? workGate(this.bindings, recorded)
+      : await this.gate.check(options);
+  }
+
+  private recordStands(): boolean {
+    const recorded = this.recorded();
+    return recorded !== undefined && Date.now() - recorded.recordedAt < RECORD_TTL_MS;
+  }
+
+  /** Keeps a directory answer newer than the record, and returns the revision the Kernel then holds. */
+  follow(installation: ResolvedManagedInstallation): number | undefined {
+    const recorded = this.recorded();
+    const revision = installation.stateRevision;
+    if (revision === undefined) {
+      // Accounts no longer reports revisions, so it won't tell the Kernel of the next change.
+      if (recorded) this.kv.delete(MANAGED_INSTALLATION_STATE_KEY);
+      return undefined;
+    }
+    if (recorded && recorded.revision > revision) return recorded.revision;
+    if (UNRECORDED_STATES.has(installation.state)) {
+      if (recorded) this.kv.delete(MANAGED_INSTALLATION_STATE_KEY);
+    } else {
+      // The same revision renews the record: Accounts still numbers changes.
+      this.kv.put(MANAGED_INSTALLATION_STATE_KEY, { state: installation.state, revision, recordedAt: Date.now() });
+    }
+    return revision;
+  }
+
+  /**
+   * What a Process hears when it asks its Kernel. A record follows every change, so an answer from it carries no
+   * expiry; an answer the gate remembers from Accounts carries the gate's, so the two minutes never stack.
+   */
+  async processCheck(): Promise<KernelWorkGate> {
+    const gate = await this.check();
+    const until = this.recordStands() ? undefined : this.gate.standsUntil;
+    return gate.allowed && until !== undefined ? { allowed: true, until } : gate;
+  }
+
+  /** Forgets the gate's last confirmation; a record stands until Accounts reports a newer one or it is a day old. */
+  invalidate(): void {
+    this.gate.invalidate();
+  }
+
+  private recorded(): RecordedInstallationState | undefined {
+    return this.kv.get<RecordedInstallationState>(MANAGED_INSTALLATION_STATE_KEY);
+  }
+
+  private async askAccounts(): Promise<ManagedInstallationWorkGate> {
+    const installation = await lookupManagedInstallation(this.bindings, this.installationId());
+    if ("allowed" in installation) return installation;
+    const held = this.follow(installation);
+    // A notice that arrived while Accounts answered may already hold a newer state.
+    const newer = held !== undefined && installation.stateRevision !== undefined && held > installation.stateRevision
+      ? this.recorded()
+      : undefined;
+    return workGate(this.bindings, newer ?? installation);
+  }
+}
+
+/** Accounts' entry for the installation, or the refusal that stands in for one. */
+async function lookupManagedInstallation(
   bindings: ManagedInstallationLifecycleBindings,
   installationIdValue: string,
-): Promise<ManagedInstallationWorkGate> {
+): Promise<ResolvedManagedInstallation | ManagedInstallationWorkGate> {
   const directory = bindings.INSTALLATION_DIRECTORY;
   if (!directory) return UNAVAILABLE;
   const installationId = parseInstallationId(installationIdValue);
@@ -138,11 +250,18 @@ async function lookupManagedWorkGate(
     clearTimeout(timer);
   }
   if (!result.found || result.installationId !== installationId) return UNAVAILABLE;
-  if (result.state === "active") return { allowed: true };
-  if (result.state === "provisioning") {
-    return { allowed: false, code: 503, message: "Finish setting up your Ship", details: setupRecoveryDetails(bindings, result) };
+  return result;
+}
+
+function workGate(
+  bindings: ManagedInstallationLifecycleBindings,
+  installation: Pick<ResolvedManagedInstallation, "state" | "ownerSetupRecovery">,
+): ManagedInstallationWorkGate {
+  if (installation.state === "active") return { allowed: true };
+  if (installation.state === "provisioning") {
+    return { allowed: false, code: 503, message: "Finish setting up your Ship", details: setupRecoveryDetails(bindings, installation) };
   }
-  return result.state === "restricted"
+  return installation.state === "restricted"
     ? { allowed: false, code: 423, message: "Managed installation is suspended" }
     : UNAVAILABLE;
 }

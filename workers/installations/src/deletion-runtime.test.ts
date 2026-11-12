@@ -6,6 +6,7 @@ import type { InstallationDeletionReceipt, InstallationDeletionRequest, Installa
 import { RequestReports } from "./request-reports";
 import { AccountStore } from "./store";
 import { InstallationResetCoordinator } from "./reset-preparation";
+import { InstallationStateNotices } from "./state-notices";
 import { AccountsDeletionRuntime } from "./deletion-runtime";
 import { InstallationDeletionHttp } from "./deletion-http";
 import type { InstallationDeletionManifest, InstallationDeletionInventoryResolver } from "./deletion-inventory";
@@ -239,7 +240,8 @@ describe("Accounts deletion runtime", () => {
     expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "retained" });
   });
 
-  it("has the PDS follow once a Ship is retired, and again whenever the retirement is repeated", async () => {
+  it("tells the PDS once a Ship is retired, and the cron tells it when it can't be told at once", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const state = await fixture();
     const followed: Array<{ installationId: string; state: string | null }> = [];
     const pds = {
@@ -248,22 +250,24 @@ describe("Accounts deletion runtime", () => {
       getSubjectStatus: vi.fn(async () => null),
       locateRepository: vi.fn(async () => null),
       reconcileAccountStatus: vi.fn(async (installationId: string) => {
-        followed.push({ installationId, state: (await state.accounts.resolveInstallation(installationId)).found
-          ? (await state.db.prepare("SELECT state FROM installations WHERE id = ?").bind(installationId).first<{ state: string }>())?.state ?? null : null });
+        followed.push({ installationId, state: (await state.db.prepare("SELECT state FROM installations WHERE id = ?")
+          .bind(installationId).first<{ state: string }>())?.state ?? null });
       }),
     } satisfies PdsModerationService;
-    const runtime = new AccountsDeletionRuntime(state.db, state.owners, state.resolver, 20, Date.now, {}, undefined, pds);
+    const notices = new InstallationStateNotices(state.db, { pds });
+    const runtime = new AccountsDeletionRuntime(state.db, state.owners, state.resolver, 20, Date.now, {}, undefined, notices);
     const input = { operationId: state.operationId, confirmHandle: state.old.handle };
+    const ours = () => followed.filter((entry) => entry.installationId === state.old.installationId);
 
     pds.reconcileAccountStatus.mockRejectedValueOnce(new Error("PDS unavailable"));
-    await expect(runtime.retire(state.old.installationId, input)).rejects.toThrow("The Ship is retired, but its open-network host could not be told.");
+    await runtime.retire(state.old.installationId, input);
     expect(await state.accounts.resolveInstallation(state.old.installationId)).toMatchObject({ state: "retained" });
+    expect(ours()).toEqual([]);
+    await notices.resumePending();
+    expect(ours()).toEqual([{ installationId: state.old.installationId, state: "retained" }]);
     await runtime.retire(state.old.installationId, input);
-    await runtime.retire(state.old.installationId, input);
-    expect(followed).toEqual([
-      { installationId: state.old.installationId, state: "retained" },
-      { installationId: state.old.installationId, state: "retained" },
-    ]);
+    await notices.resumePending();
+    expect(ours()).toEqual([{ installationId: state.old.installationId, state: "retained" }]);
   });
 
   it("erases the reports a deleted Ship's person filed, a hundred at a time, and keeps another Ship's", async () => {

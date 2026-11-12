@@ -1,5 +1,4 @@
 import type { InstallationDeletionService } from "@humansandmachines/gsv/services/lifecycle";
-import type { PdsModerationService } from "@humansandmachines/gsv/services/pds";
 import { installationDeletionInventoryImportSchema, installationDeletionInspectionResultSchema,
   type InstallationDeletionDiscoveryService, type InstallationDeletionInventoryImport } from "@humansandmachines/gsv/services/lifecycle-discovery";
 import { InstallationDeletionCoordinator, type InstallationDeletionProgress } from "./deletion";
@@ -7,16 +6,14 @@ import { AccountsDeletionOwner, DEFAULT_D1_BACKUP_RETENTION_MS } from "./deletio
 import { InstallationDeletionInventories, installationDeletionManifestSchema, type InstallationDeletionInventoryResolver, type InstallationDeletionManifest, type InstallationDeletionEvidence } from "./deletion-inventory";
 import { AccountsDeletionInspections, type AccountsDeletionInspection } from "./deletion-inspections";
 import { accountsDeletionNamespacesSchema, type AccountsDeletionDiscovery, type AccountsDeletionNamespaces } from "./deletion-discovery";
-import { followOnOpenNetwork } from "./admin/service";
 import { parseHandle, parseOpaqueId } from "./domain";
 import { AccountsOperatorResources } from "./operator-resources";
 import { OPERATOR_RESOURCE_OWNER, type OperatorResourceCatalog } from "./operator-resource-contracts";
+import { changeInstallationState, installationStateNotices, type InstallationStateNotices, type InstallationStateNoticeEnvironment } from "./state-notices";
 
 type DiscoverableDeletionOwner = InstallationDeletionService & Pick<InstallationDeletionDiscoveryService, "inspectInstallationDeletion">;
 
-export type AccountsDeletionEnvironment = {
-  /** The deployment's PDS, whose public repository for a Ship stops being served once the Ship is retired. */
-  PDS_MODERATION?: PdsModerationService;
+export type AccountsDeletionEnvironment = InstallationStateNoticeEnvironment & {
   DELETION_INVENTORY?: InstallationDeletionInventoryResolver;
   ACCOUNTS_D1_BACKUP_RETENTION_MS?: number;
   DELETION_OWNER_GATEWAY?: InstallationDeletionService & InstallationDeletionDiscoveryService;
@@ -40,7 +37,7 @@ export function createAccountsDeletionRuntime(db: D1Database, env: AccountsDelet
       gateway: env.DELETION_OWNER_GATEWAY,
       owners,
       namespaces: accountsDeletionNamespacesSchema.parse(env.DELETION_DISCOVERY_NAMESPACES ?? {}),
-    }, env.OPERATOR_DELETION_CATALOG, env.PDS_MODERATION);
+    }, env.OPERATOR_DELETION_CATALOG, installationStateNotices(db, env));
 }
 
 export class AccountsDeletionRuntime {
@@ -58,7 +55,7 @@ export class AccountsDeletionRuntime {
     clock: () => number = Date.now,
     private readonly discovery: AccountsDeletionDiscovery = {},
     operatorCatalog?: OperatorResourceCatalog,
-    private readonly openNetwork?: PdsModerationService,
+    private readonly notices?: InstallationStateNotices,
   ) {
     this.inspections = new AccountsDeletionInspections(db, clock);
     this.accountOwner = new AccountsDeletionOwner(db, backupRetentionMs, clock);
@@ -168,17 +165,18 @@ export class AccountsDeletionRuntime {
       .bind(installationId).first<{ operation_id: string }>();
     if (previous) {
       if (previous.operation_id !== operationId) throw new Error("installation deletion operation does not match");
-      await followOnOpenNetwork(this.openNetwork, installationId, "retained");
       return this.accountOwner.installationDeletionStatus({ version: 1, operationId, installationId });
     }
-    const changed = await this.db.prepare(`UPDATE installations SET state = 'retained', reservation_expires_at = NULL
-      WHERE id = ? AND handle = ? AND state IN ('active', 'restricted', 'reserved', 'provisioning', 'retained')
-        AND NOT EXISTS (SELECT 1 FROM installation_reset_operations r JOIN installation_reset_participants p USING(operation_id)
-          WHERE (r.previous_installation_id = installations.id OR r.replacement_installation_id = installations.id) AND p.state != 'prepared')`)
-      .bind(installationId, handle).run();
-    if (changed.meta.changes !== 1) throw new Error("installation cannot retire from its current state or reset preparation is pending");
-    // The Ship's public repository stops being served once the PDS follows.
-    await followOnOpenNetwork(this.openNetwork, installationId, "retained");
+    const [changed] = await changeInstallationState(this.db, installationId, [
+      this.db.prepare(`UPDATE installations SET state = 'retained', reservation_expires_at = NULL
+        WHERE id = ? AND handle = ? AND state IN ('active', 'restricted', 'reserved', 'provisioning', 'retained')
+          AND NOT EXISTS (SELECT 1 FROM installation_reset_operations r JOIN installation_reset_participants p USING(operation_id)
+            WHERE (r.previous_installation_id = installations.id OR r.replacement_installation_id = installations.id) AND p.state != 'prepared')`)
+        .bind(installationId, handle),
+    ]);
+    if (changed?.meta.changes !== 1) throw new Error("installation cannot retire from its current state or reset preparation is pending");
+    // The Ship stops its own work once told; the cron tells it if this can't.
+    await this.notices?.deliver(installationId);
     return this.accountOwner.quiesceInstallation({ version: 1, operationId, installationId });
   }
 
