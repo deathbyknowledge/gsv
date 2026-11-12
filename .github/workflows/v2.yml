@@ -1,0 +1,49 @@
+name: v2
+
+on:
+  push:
+    branches: [main, feat/gsv-2]
+    paths: ['v2/**', '.github/workflows/v2.yml']
+  pull_request:
+    paths: ['v2/**', '.github/workflows/v2.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: 2.0 runtime
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v2
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: v2/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Check the catalog and types
+        run: npm run check
+
+      - name: Build the UI
+        run: npm run build --workspace @gsv/ship
+
+      - name: Test on workerd, with the S3 contract on versitygw
+        run: tools/with-s3.sh npm test
+
+      - name: Check the Cloudflare config
+        run: node tools/src/cli.ts deploy --config config/test.gsv.config.ts --dry-run
