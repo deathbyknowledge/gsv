@@ -209,7 +209,9 @@ without granting those adapters ownership of another component's application eve
   `contact.invite.signup`, with no properties, under the inviting Ship's own
   pseudonym, so invitations that became Ships count for the inviter there.
   Neither record names the other Ship: the two series share no key, and
-  Accounts keeps no record of who invited whom. The signup page reads the placement slugs from the signup
+  Accounts keeps no record of who invited whom. Both leave the same request,
+  so a reader of the raw stream could pair them by time; the breakdowns need no
+  pairing, and the operator's own deployment is the only reader. The signup page reads the placement slugs from the signup
   link's fragment and the campaign tags from its query, keeps them in its own
   signup state until the space request and takes them off the URL; the owner
   API bounds every value to one slug shape and classifies the placement and

@@ -49,13 +49,15 @@ export class InstallationSignup {
     const existing = await this.accounts.getReservationByOperation(operationId);
     if (!existing && !this.enabled) throw new Error("Registration is currently closed.");
     if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
+    // The inviter is resolved before the reservation commits: a lookup that fails here fails the request
+    // before anything is reserved, so the retry still creates the reservation and reports it.
+    const inviterInstallationId = !existing && inviter ? await this.inviterInstallation(inviter, principalId) : undefined;
     const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true });
     // Where the signup came from is reported once, by the request that created the reservation; a retry
     // or resumed signup replays the reservation and reports nothing. Nothing is stored: the records are
     // the only copy. An inviting Ship learns of the signup under its own pseudonym and the new Ship's
     // record says only that it was invited, so neither record names the other.
     if (space.created) {
-      const inviterInstallationId = inviter ? await this.inviterInstallation(inviter, principalId) : undefined;
       if (inviterInstallationId) emitTelemetry(this.telemetry, { component: "accounts", installationId: inviterInstallationId,
         event: { stream: "product", name: "contact.invite.signup", properties: {} } });
       emitTelemetry(this.telemetry, { component: "accounts", installationId: space.installationId,
