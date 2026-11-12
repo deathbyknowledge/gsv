@@ -17,7 +17,7 @@ async function inComputer(work: (fixture: {
   computer: ComputerInstance; ctx: DurableObjectState; identity: ComputerIdentity;
   provider: { running: boolean; bootId: string; start: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> };
   peers: WebSocket[]; handshakeSignals: AbortSignal[];
-}) => Promise<void>, options: { responseDelayMs?: number; stallHandshake?: boolean; reply?: (frame: { args: { start?: boolean; sessionId?: string; input?: string; background?: boolean } }) => JsonValue | undefined; machine?: FakeMachine } = {}) {
+}) => Promise<void>, options: { responseDelayMs?: number; stallHandshake?: boolean; reply?: (frame: { args: { start?: boolean; sessionId?: string; input?: string; background?: boolean } }) => JsonValue | undefined; execStatusFirst?: JsonValue; machine?: FakeMachine } = {}) {
   const identity = { installationId: crypto.randomUUID(), instanceId: crypto.randomUUID(), targetId: "1234abcd", ownerUid: 1000, expiresAt: Date.now() + 300_000 };
   const peers: WebSocket[] = [];
   const handshakeSignals: AbortSignal[] = [];
@@ -48,6 +48,8 @@ async function inComputer(work: (fixture: {
         if (typeof message.data !== "string") return;
         const frame = JSON.parse(message.data);
         if (frame.type === "req") {
+          // gsvd forwards exec events apart from responses, so one can arrive first.
+          if (options.execStatusFirst) pair[1].send(JSON.stringify({ type: "sig", signal: "exec.status", payload: options.execStatusFirst }));
           const data = options.reply?.(frame) ?? { status: "completed", output: "ok", exitCode: 0 };
           const reply = () => { if (pair[1].readyState === WebSocket.OPEN) pair[1].send(JSON.stringify({ type: "res", id: frame.id, ok: true, data })); };
           if (options.responseDelayMs) responseTimers.push(setTimeout(reply, options.responseDelayMs));
@@ -177,6 +179,12 @@ describe("cloud computer lifecycle", () => {
     expect(await computer.status()).toEqual({ state: "ready", busy: true });
   }, { reply: frame => frame.args.input === "python train.py" || frame.args.sessionId === "train" ? { status: "running", output: "", sessionId: "train" }
     : frame.args.background ? { status: "running", output: "", sessionId: "serve" } : undefined }));
+
+  it("does not count a command whose end overtakes its launch's answer", () => inComputer(async ({ computer, identity }) => {
+    await computer.provision(identity); await computer.status();
+    await computer.execute({ type: "req", id: "quick", call: "shell.exec", args: { input: "true", background: true, timeout: 0 } }, Date.now() + 5000);
+    expect(await computer.status()).toEqual({ state: "ready" });
+  }, { reply: () => ({ status: "running", output: "", sessionId: "quick" }), execStatusFirst: { sessionId: "quick", event: "finished", exitCode: 0 } }));
 
   it("expires and erases the computer without retaining credentials or reopening its identity", () => inComputer(async ({ computer, identity, provider, ctx }) => {
     await computer.provision(identity); await computer.status();

@@ -51,6 +51,8 @@ export class ComputerInstance extends DurableObject<Environment> {
   private publishing: Promise<void> | undefined;
   private stopping: Promise<void> | undefined;
   private restoring: Promise<void> | undefined;
+  /** Sessions whose end event arrived untracked while a request was in flight; their launch's answer may still follow. */
+  private readonly ended = new Set<string>();
   private readonly requests = new Map<string, ComputerRequest>();
 
   constructor(ctx: DurableObjectState, env: Environment) {
@@ -124,7 +126,10 @@ export class ComputerInstance extends DurableObject<Environment> {
       if (this.requests.has(frame.id)) throw new Error("Computer request is already running");
       deadlineAt = Math.min(deadlineAt, lease.expiresAt);
       if (deadlineAt <= Date.now()) throw new Error("Computer request deadline exceeded");
-      const request = new ComputerRequest(frame, deadlineAt, () => this.cancel(frame.id), () => { this.requests.delete(frame.id); });
+      const request = new ComputerRequest(frame, deadlineAt, () => this.cancel(frame.id), () => {
+        this.requests.delete(frame.id);
+        if (!this.requests.size) this.ended.clear();
+      });
       this.requests.set(frame.id, request);
       return await request.run(async signal => {
         const connection = await this.attach();
@@ -343,7 +348,7 @@ export class ComputerInstance extends DurableObject<Environment> {
     // A poll names its session without starting it, and keeps the deadline its launch set.
     const launched = frame.args.start === true || !frame.args.sessionId;
     if (result.data.status !== "running") sessions.delete(sessionId);
-    else if (launched && !sessions.has(sessionId) && sessions.size < 256) {
+    else if (launched && !this.ended.delete(sessionId) && !sessions.has(sessionId) && sessions.size < 256) {
       const timeout = frame.args.timeout ?? DEFAULT_SHELL_EXEC_TIMEOUT_MS;
       sessions.set(sessionId, timeout === 0 ? Number.POSITIVE_INFINITY : Date.now() + timeout);
     }
@@ -357,6 +362,7 @@ export class ComputerInstance extends DurableObject<Environment> {
     if (event.event !== "started") {
       const sessions = this.running();
       if (sessions.delete(event.sessionId)) this.ctx.storage.kv.put("sessions", sessions);
+      else if (this.requests.size) this.ended.add(event.sessionId);
     }
     const pending = this.ctx.storage.kv.get<Map<string, InstanceExecChange>>("events") ?? new Map();
     const previous = pending.get(event.sessionId);
