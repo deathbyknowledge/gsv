@@ -421,8 +421,10 @@ changes, with the same organizer and guests and any end as `DTEND`. The rule
 must be one the approval can say in words: `FREQ` of `DAILY`, `WEEKLY` with
 plain `BYDAY` days, `MONTHLY` with `BYMONTHDAY` (`-1` the last day) or `BYDAY`
 such as `4FR` or `-1FR`, or `YEARLY` with `BYMONTH` and `BYMONTHDAY`;
-`INTERVAL`, `WKST`, and `COUNT` or `UNTIL`, which is a date beside an all-day
-start and UTC otherwise.
+`INTERVAL`, and `COUNT` or `UNTIL`, which is a date beside an all-day start and
+UTC otherwise. The approval counts weeks from Monday, so `WKST` must not change
+the dates: on a rule for every other Saturday and Sunday, `WKST=SU` puts the two
+days in different weekends, and the Kernel refuses it.
 The start must be a date the rule includes, and each `EXDATE` and
 `RECURRENCE-ID` must name a date it has, written the way `DTSTART` is. The
 Kernel refuses `RDATE`, `EXRULE`, `RANGE`, and a `CANCEL` that holds changed
@@ -448,7 +450,7 @@ type MailInviteApproval = {
   changed?: Array<{ from: string; start: string; end?: string }>; // a changed date, and when it happens now
 };
 
-// The rule with what it leaves to the start written out, such as a weekly rule's day.
+// The rule with what it leaves to the start written out, such as a weekly rule's day; weeks start on Monday.
 type MailInviteRepeat = {
   freq: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
   interval: number;

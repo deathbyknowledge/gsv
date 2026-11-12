@@ -1392,6 +1392,11 @@ describe("outbound mail invites", () => {
       invite: repeating("DTSTART;VALUE=DATE:20270312", "FREQ=YEARLY"),
       repeats: { freq: "YEARLY", interval: 1, byMonth: [3], byMonthDay: [12] },
     },
+    {
+      rule: "a fortnightly TU,TH with WKST=SU",
+      invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261124T211500", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;WKST=SU"),
+      repeats: { freq: "WEEKLY", interval: 2, byDay: ["TU", "TH"] },
+    },
   ])("shows $rule with the rule's implied days written out", async ({ invite, repeats }) => {
     await withApprovals(async (approvals) => {
       await runWithRealKernelSql(async (sql) => {
@@ -1461,6 +1466,7 @@ describe("outbound mail invites", () => {
     { refusal: "extra dates on an event that doesn't repeat", invite: INVITE.replace("SUMMARY:Dinner", "RDATE:20261204T201500Z\nSUMMARY:Dinner"), error: "invite repeats by RDATE, which GSV can't send" },
     { refusal: "a start the rule leaves out", invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=WEEKLY;BYDAY=MO"), error: "invite starts on 2026-11-27, a date its repeat rule leaves out" },
     { refusal: "UNTIL as a date beside times", invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=WEEKLY;UNTIL=20270131"), error: "invite repeat UNTIL must be a UTC time such as 20270628T215959Z" },
+    { refusal: "a week start that splits the weekends", invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261128T100000", "FREQ=WEEKLY;INTERVAL=2;BYDAY=SA,SU;WKST=SU"), error: "invite repeat WKST=SU gives it other dates than weeks from Monday would, which GSV can't send; drop WKST" },
     { refusal: "a skipped date on an event that doesn't repeat", invite: INVITE.replace("SUMMARY:Dinner", "EXDATE:20261204T201500Z\nSUMMARY:Dinner"), error: "invite skips or changes dates of an event that doesn't repeat" },
     { refusal: "a skipped date the rule doesn't have", invite: SERIES_INVITE.replace("EXDATE;TZID=Europe/Amsterdam:20261228T090000", "EXDATE;TZID=Europe/Amsterdam:20261228T100000"), error: "invite skips 2026-12-28T10:00:00+01:00[Europe/Amsterdam], which isn't a date the event happens on" },
     { refusal: "a skipped date by DATE beside times", invite: SERIES_INVITE.replace("EXDATE;TZID=Europe/Amsterdam:20261228T090000", "EXDATE;VALUE=DATE:20261228"), error: "invite names a skipped or changed date unlike its DTSTART" },

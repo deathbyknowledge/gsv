@@ -45,6 +45,7 @@ import {
   parseRepeatRule,
   ruleIncludesStart,
   wallClock,
+  weekStartMovesDates,
   type CalendarSeries,
   type OccurrenceChange,
   type RepeatRule,
@@ -617,6 +618,10 @@ function inviteRepeats(
         : "invite repeat UNTIL must be a UTC time such as 20270628T215959Z, as the event has times",
       false,
     );
+  }
+  // The approval names no week start, so it counts weeks from Monday.
+  if (weekStartMovesDates(rule)) {
+    throw new MailSendError(`invite repeat WKST=${rule.weekStart} gives it other dates than weeks from Monday would, which GSV can't send; drop WKST`, false);
   }
   if (!ruleIncludesStart(event.start, rule)) {
     throw new MailSendError(`invite starts on ${wallClock(event.start).date}, a date its repeat rule leaves out; start it on a date the rule includes`, false);

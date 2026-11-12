@@ -192,6 +192,18 @@ export function ruleIncludesStart(start: CalendarTime, rule: RepeatRule): boolea
   return false;
 }
 
+/**
+ * Whether a rule's WKST gives it other dates than weeks from Monday, as RFC 5545 counts them
+ * without one: it repeats every few weeks on days that week start puts in other weeks.
+ */
+export function weekStartMovesDates(rule: RepeatRule): boolean {
+  const days = (rule.byDay ?? []).map(({ day }) => WEEKDAYS.indexOf(day));
+  if (rule.freq !== "WEEKLY" || rule.interval === 1 || !rule.weekStart || days.length < 2) return false;
+  // Two week starts put the days in the same weeks when a week from each begins on the same one of them.
+  const firstFrom = (start: number) => days.reduce((first, day) => (mod(day - start, 7) < mod(first - start, 7) ? day : first));
+  return firstFrom(WEEKDAYS.indexOf(rule.weekStart)) !== firstFrom(0);
+}
+
 /** Groups events by UID: each series' own event and the occurrences changed from it (RECURRENCE-ID). */
 export function calendarSeries(events: CalendarEvent[]): CalendarSeries[] {
   const groups = new Map<string, CalendarSeries>();

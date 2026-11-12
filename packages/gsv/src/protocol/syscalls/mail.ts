@@ -56,6 +56,7 @@ export type MailInviteApproval = {
 /**
  * An invite's repeat rule (RFC 5545 RRULE) with what it leaves to the start written
  * out: a weekly rule's day, a monthly rule's day of the month, a yearly rule's date.
+ * Its weeks start on Monday.
  */
 export type MailInviteRepeat = {
   freq: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
