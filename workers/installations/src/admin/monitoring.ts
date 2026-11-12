@@ -69,7 +69,7 @@ export class AdminMonitoring {
       tracked_from = excluded.tracked_from, first_active_at = excluded.first_active_at, last_active_at = excluded.last_active_at,
       messages = excluded.messages, tasks = excluded.tasks, successful_tasks = excluded.successful_tasks,
       failed_tasks = excluded.failed_tasks, aborted_tasks = excluded.aborted_tasks, availability = 'ok'
-      WHERE excluded.captured_at > installation_activity.captured_at`)
+      WHERE installation_activity.captured_at IS NULL OR excluded.captured_at > installation_activity.captured_at`)
       .bind(snapshot.capturedAt, Date.now(), usage.trackedFrom, usage.firstActiveAt, usage.lastActiveAt,
         usage.messages, usage.tasks, usage.successfulTasks, usage.failedTasks, usage.abortedTasks, id).run();
   }

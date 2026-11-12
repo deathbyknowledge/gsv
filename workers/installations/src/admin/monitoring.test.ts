@@ -28,6 +28,27 @@ function snapshot(installationId: string, at: number, messages = 2): OperatorShi
 }
 
 describe("operator monitoring", () => {
+  it.each(["unavailable", "missing usage"])("recovers after an initial %s refresh", async (failure) => {
+    const { monitoring, admin, db, space } = await fixture();
+    const now = Date.now();
+    await monitoring.refresh(async (id) => failure === "unavailable" ? null : { ...snapshot(id, now), usage: undefined });
+    expect((await admin.getInstallation(space.installationId))?.activity).toMatchObject({
+      capturedAt: null, messages: null, availability: "unavailable",
+    });
+    await db.prepare("UPDATE installation_activity SET attempted_at = 1 WHERE installation_id = ?").bind(space.installationId).run();
+
+    await monitoring.refresh(async (id) => snapshot(id, now, 7));
+    expect((await admin.getInstallation(space.installationId))?.activity).toMatchObject({
+      capturedAt: now, messages: 7, tasks: 2, successfulTasks: 1, availability: "ok",
+    });
+    const row = await db.prepare("SELECT attempted_at FROM installation_activity WHERE installation_id = ?")
+      .bind(space.installationId).first<{ attempted_at: number }>();
+    expect(row?.attempted_at).toBeGreaterThan(1);
+
+    await monitoring.capture(snapshot(space.installationId, now - 1000, 1));
+    expect((await admin.getInstallation(space.installationId))?.activity).toMatchObject({ capturedAt: now, messages: 7 });
+  });
+
   it("materializes absolute usage idempotently and ignores older captures", async () => {
     const { monitoring, admin, space } = await fixture();
     const now = Date.now();

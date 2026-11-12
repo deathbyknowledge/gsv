@@ -206,6 +206,8 @@ reconstructed from the latest few runs. An em dash means the count is unavailabl
 Each row shows when its snapshot was captured. **Refresh activity** collects up
 to 25 of the least recently checked Ships; Accounts' existing scheduled handler
 does the same. A failed refresh preserves earlier counts and records availability.
+If the first refresh is unavailable, a later successful refresh fills in the
+unknown counts and returns the activity status to available.
 
 Segments are mutually exclusive: **Never used** has zero messages and complete
 tracking since signup; **Active** has a message in the last seven days; **Tried
