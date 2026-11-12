@@ -324,8 +324,9 @@ export class ComputerInstance extends DurableObject<Environment> {
     return this.connecting;
   }
   /**
-   * Detached commands keep the computer in use until they end. A lost end event
-   * holds it no longer than the command's own timeout.
+   * Commands still running keep the computer in use until they end, whether
+   * detached or past their yield window. A lost end event holds it no longer
+   * than the command's own timeout; one without a timeout, until the lifetime maximum.
    */
   private running(): Map<string, number> {
     const sessions = this.ctx.storage.kv.get<Map<string, number>>("sessions") ?? new Map();
@@ -338,8 +339,14 @@ export class ComputerInstance extends DurableObject<Environment> {
     const result = sessionResultSchema.safeParse(response.data);
     if (!result.success || !result.data.sessionId) return;
     const sessions = this.running();
-    if (result.data.status !== "running") sessions.delete(result.data.sessionId);
-    else if (frame.args.start && sessions.size < 256) sessions.set(result.data.sessionId, Date.now() + (frame.args.timeout ?? DEFAULT_SHELL_EXEC_TIMEOUT_MS));
+    const sessionId = result.data.sessionId;
+    // A poll names its session without starting it, and keeps the deadline its launch set.
+    const launched = frame.args.start === true || !frame.args.sessionId;
+    if (result.data.status !== "running") sessions.delete(sessionId);
+    else if (launched && !sessions.has(sessionId) && sessions.size < 256) {
+      const timeout = frame.args.timeout ?? DEFAULT_SHELL_EXEC_TIMEOUT_MS;
+      sessions.set(sessionId, timeout === 0 ? Number.POSITIVE_INFINITY : Date.now() + timeout);
+    }
     this.ctx.storage.kv.put("sessions", sessions);
   }
   private execChanged(payload: JsonValue | undefined): void {

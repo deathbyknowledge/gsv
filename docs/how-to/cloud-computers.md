@@ -67,9 +67,9 @@ instance stop <targetId>
 
 ## How long a computer stays up
 
-A computer stays up while it is in use. Each command, and each detached command
-that is still running, keeps it up for 30 more minutes, up to its maximum
-lifetime and the remaining monthly allowance. Its `expiresAt` shows the current
+A computer stays up while it is in use. Each command, and each command that is
+still running, detached or not, keeps it up for 30 more minutes, up to its
+maximum lifetime and the remaining monthly allowance. Its `expiresAt` shows the current
 expiry. `--seconds` sets the first expiry; use extends it from there.
 
 A computer costs time while it runs, whether or not anything uses it. Stop it as
