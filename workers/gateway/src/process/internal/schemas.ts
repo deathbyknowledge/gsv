@@ -150,28 +150,18 @@ const federationResponsibilityBaseSchema = {
   remoteDisplayName: z.string().optional(),
 };
 
-export const federationResponsibilityDetailsSchema = z.discriminatedUnion("eventType", [
-  z.strictObject({
-    ...federationResponsibilityBaseSchema,
-    eventType: z.literal("federation.message.received"),
-    deliveryId: z.string(),
-    messageId: z.string(),
-    resourceCount: z.number().int().nonnegative(),
-    contentTrust: z.literal("untrusted"),
-  }),
-  z.strictObject({
-    ...federationResponsibilityBaseSchema,
-    eventType: z.literal("federation.request"),
-    requestId: z.string(),
-    direction: z.enum(["incoming", "outgoing"]),
-    requestKind: z.string(),
-    requestTitle: z.string(),
-    state: z.string(),
-    revision: z.number().int().positive(),
-    contentTrust: z.enum(["local", "untrusted"]),
-    latestDeliveryId: z.string().optional(),
-  }),
-]);
+export const federationResponsibilityDetailsSchema = z.strictObject({
+  ...federationResponsibilityBaseSchema,
+  eventType: z.literal("federation.request"),
+  requestId: z.string(),
+  direction: z.enum(["incoming", "outgoing"]),
+  requestKind: z.string(),
+  requestTitle: z.string(),
+  state: z.string(),
+  revision: z.number().int().positive(),
+  contentTrust: z.enum(["local", "untrusted"]),
+  latestDeliveryId: z.string().optional(),
+});
 
 export const ipcReplyPayloadSchema = z.object({
   callId: z.string().optional(),
