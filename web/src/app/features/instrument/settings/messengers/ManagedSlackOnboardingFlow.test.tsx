@@ -125,17 +125,16 @@ describe("ManagedSlackOnboardingFlow", () => {
       node.props.href === "https://slack.gsv.example/slack/install"
     ));
     expect(install?.props.label).toBe("INSTALL Ship IN SLACK");
-    expect(install?.props.variant).toBe("primary");
+    expect(install?.props.variant).toBe("secondary");
     expect(install?.props.href)
       .toBe("https://slack.gsv.example/slack/install");
   });
 
   it("pairs the Slack author and opens the workspace account detail", async () => {
-    await click("I HAVE A CODE");
     await act(() => {
-      nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcd-efgh-jklm");
+      nodeWithLabel(nodes(), "SLACK CODE").props.onChange?.("abcd-efgh-jklm");
     });
-    await click("CHECK CODE");
+    await click("CONNECT");
 
     expect(mocks.inspect).toHaveBeenCalledWith({
       adapter: "slack",

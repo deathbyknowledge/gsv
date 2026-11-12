@@ -31,11 +31,10 @@ it("opens server installation and requires explicit confirmation of the Discord 
     await root.render(<SharedDiscordOnboardingFlow dependencies={dependencies} onBack={() => undefined} onConnected={() => undefined} />);
     const install = nodes().find((node) => node.props.href?.startsWith("https://discord.com/oauth2/authorize"));
     expect(install?.props.label).toBe("INSTALL Ship IN DISCORD");
-    expect(install?.props.variant).toBe("primary");
+    expect(install?.props.variant).toBe("secondary");
     expect(nodes().some((node) => node.props.label === "BOT TOKEN")).toBe(false);
-    await click("I HAVE A CODE");
-    await act(() => { nodeWithLabel(nodes(), "PAIRING CODE").props.onChange?.("abcd-efgh-jklm"); });
-    await click("CHECK CODE");
+    await act(() => { nodeWithLabel(nodes(), "DISCORD CODE").props.onChange?.("abcd-efgh-jklm"); });
+    await click("CONNECT");
     expect(inspect).toHaveBeenCalledWith({ adapter: "discord", code: "ABCD-EFGH-JKLM" });
     expect(confirm).not.toHaveBeenCalled();
     expect(nodeWithLabel(nodes(), "Discord user discord:user:2001").props.sub).toContain("application:1000:guild:4001");
