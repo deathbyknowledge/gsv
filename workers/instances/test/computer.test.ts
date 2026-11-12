@@ -163,6 +163,25 @@ describe("computer admission", () => {
     });
   });
 
+  it("checks a starting computer again within a second instead of on the next maintenance pass", async () => {
+    vi.spyOn(InstancePolicy.prototype, "requireActive").mockResolvedValue();
+    vi.spyOn(InstancePolicy.prototype, "computerLimits").mockResolvedValue({ enabled: true, concurrentInstances: 1, periodSeconds: 600, maxInstanceSeconds: 300 });
+    vi.spyOn(ComputerInstance.prototype, "provision").mockResolvedValue();
+    const status = vi.spyOn(ComputerInstance.prototype, "status").mockResolvedValueOnce({ state: "starting" }).mockResolvedValue({ state: "ready" });
+    await runInDurableObject(env.INSTANCES.getByName(crypto.randomUUID()), async (object, ctx) => {
+      const actor = { ownerUid: 1000, human: true };
+      const { instance } = await object.start(actor, { requestId: "computer", templateId: "computer" });
+      await ctx.storage.deleteAlarm();
+      await object.alarm();
+      expect(status).toHaveBeenCalledOnce();
+      expect((await object.get(actor, { instanceId: instance.instanceId })).instance?.state).toBe("starting");
+      expect(await ctx.storage.getAlarm()).toBeLessThanOrEqual(Date.now() + 1_000);
+      await object.alarm();
+      expect((await object.get(actor, { instanceId: instance.instanceId })).instance?.state).toBe("ready");
+      expect(await ctx.storage.getAlarm()).toBeGreaterThan(Date.now() + 1_000);
+    });
+  });
+
   it("lists both kinds but does not expose browser profiles on computers", async () => {
     vi.spyOn(InstancePolicy.prototype, "requireActive").mockResolvedValue();
     vi.spyOn(InstancePolicy.prototype, "computerLimits").mockResolvedValue({ enabled: true, concurrentInstances: 1, periodSeconds: 600, maxInstanceSeconds: 300 });

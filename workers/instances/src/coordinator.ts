@@ -24,6 +24,7 @@ import type { InstallationDeletionRequest } from "@humansandmachines/gsv/service
 const QUIET_ALLOCATION_MS = 180_000;
 const PROVIDER_RECOVERY_MS = 60_000;
 const MAINTENANCE_BUDGET_MS = 20_000;
+const STARTING_POLL_MS = 1_000;
 const PENDING_CHANGES_KEY = "pending_instance_changes";
 const humanInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("tab"), tabId: z.number().int().positive() }),
@@ -627,6 +628,11 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     await this.#profiles.cleanup();
     this.#store.pruneDiagnostics([...this.#saves.keys()]);
     this.ctx.waitUntil(this.publishChanges());
+    // A starting instance is checked again soon: its readiness must not wait for the next maintenance pass.
+    if (this.#store.activeRows().some(row => instance(row).state === "starting")) {
+      const next = await this.ctx.storage.getAlarm();
+      if (next === null || next > Date.now() + STARTING_POLL_MS) await this.ctx.storage.setAlarm(Date.now() + STARTING_POLL_MS);
+    }
     if (!this.#store.activeRows().length && !deleting && !this.#attachments.size && !this.#profiles.hasPendingCleanup() && !this.pendingChanges().size) await this.ctx.storage.deleteAlarm();
   }
   async quiesceInstallation(input: InstallationDeletionRequest) {
