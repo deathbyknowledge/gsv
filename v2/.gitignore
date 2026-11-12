@@ -1,2 +1,5 @@
 # Builds, local data and dev secrets written by gsv build, dev and deploy.
 .gsv/
+
+# The repository ignores Rust target/ directories; this one is the Target Durable Object.
+!runtime/src/target/
