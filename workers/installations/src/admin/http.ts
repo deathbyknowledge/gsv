@@ -6,9 +6,10 @@ import { hasExpectedOrigin, json, noStoreHeaders, readRequestBody, requireString
 import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
 import { InstallationAdminApi, readConfirmedAction, readInstallationListQuery, UnconfirmedActionError } from "./api";
 import { adminInstallationPage, adminInstallationsPage, adminNewInstallationPage, type InstallationAdminPresentation, type LifecycleRetry, type ShipView } from "./installations-page";
+import { adminOverviewPage } from "./overview-page";
 import { adminAuditPage } from "./audit-page";
 import type { AdminAuditRecorder, OperatorAuditResult, ShipInsight } from "./insight";
-import { adminErrorPage, adminStylesheet, adminTimeScript } from "./page";
+import { adminErrorPage, adminStylesheet, adminTimeScript, adminUiScript } from "./page";
 import { OpenNetworkFollowError, type IssuedAdminInstallation } from "./service";
 import { InstallationDeletionHttp } from "../deletion-http";
 import type { AccountsDeletionRuntime } from "../deletion-runtime";
@@ -72,6 +73,10 @@ export class InstallationAdminHttp<
     let usernamePolicyInput: UsernamePolicyInput | undefined;
     let lifecycleRetry: LifecycleRetry | undefined;
     try {
+      if (url.pathname === "/admin/overview" && (request.method === "GET" || head)) {
+        return adminOverviewPage(head, this.presentation.navigation, this.presentation.overviewLinks);
+      }
+      if (url.pathname === "/admin/ui.js" && (request.method === "GET" || head)) return adminUiScript(head);
       if (url.pathname === "/admin/styles.css" && (request.method === "GET" || head)) return adminStylesheet(head);
       if (url.pathname === "/admin/time.js" && (request.method === "GET" || head)) return adminTimeScript(head);
       if (["/admin", "/admin/", "/admin/installations", "/admin/installations/"].includes(url.pathname)

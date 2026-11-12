@@ -175,8 +175,23 @@ accents and separators, but checks the whole name. Existing Ships and unfinished
 activations keep their names. See the [username policy](../architecture/installation-directory.md#open-registration)
 for matching rules and terms that require contextual review.
 
-Administration timestamps use your device's timezone, including audit entries and
-run times. With JavaScript disabled, they use the labelled UTC fallback.
+Administration dates and times are compact. Hover a timestamp for the full date,
+time and timezone. They use your device's timezone, including audit entries and
+run times; without JavaScript, they use UTC.
+
+The **Ships** table shows the owner email from the existing account records.
+Search by handle, owner email or installation ID. Click an email in the list or
+Ship details to copy it; **Copied** confirms success. If clipboard access is
+blocked, the address is selected for manual copying.
+
+Use **Columns** above the table to choose which fields to display, or **Show all
+columns** to reset the view. Ship/owner always remains visible. Choices are saved
+in this browser and survive filtering and pagination.
+
+**Overview** links to the operator's analytics dashboards and website. Operators
+configure these shortcuts through the administration presentation's
+`overviewLinks` setting. Growth and behavior metrics remain in the analytics
+service; administration does not collect or store a second set of usage counters.
 
 To let people sign up themselves, enable `GSV_SIGNUP_ENABLED` and configure
 owner email delivery. They choose a handle and verify their email at
@@ -243,7 +258,7 @@ The operator API needs the same handle and reason. Without either it answers
 ## Check on a Ship {#check-on-a-ship}
 
 Each Ship's administration page shows its handle, mail address, hostnames and
-lifecycle state. It also shows the owner's full email, as a `mailto:` link,
+lifecycle state. It also shows the owner's full email, as a copy button,
 and their sign-in methods. Set `GSV_MAIL_DOMAIN` to show the Ship's mail
 address.
 
@@ -442,3 +457,4 @@ Rows with source `ship-existing-user-backfill` and
 `consent_basis=operator-confirmed-existing-opt-ins` come from a one-time import
 of opt-ins made before delivery existed. Their original consent time, wording
 and locale are unknown; `requested_at` records when they were queued.
+
