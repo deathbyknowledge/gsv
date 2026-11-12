@@ -48,11 +48,6 @@
       "entrypoint": "InferenceService"
     }
   ],
-  "send_email": [
-    {
-      "name": "EMAIL"
-    }
-  ],
   "queues": {
     "consumers": [
       {

@@ -273,7 +273,7 @@ plain-text recipient. The Kernel ignores caller-supplied sender identity because
 the syscall has no `from` argument: it resolves the active human owner and
 derives that owner's canonical managed address. The email Worker independently
 derives the same expected sender from the active Accounts handle and configured
-mail domain before using the provider binding.
+mail domain before sending through Email Sending.
 
 CodeMode exposes `mail.send` as a nested syscall, not as a fixed direct tool, and
 the default interactive policy asks for approval on each call. The native

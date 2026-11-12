@@ -1,4 +1,7 @@
-import { MAIL_MAX_OUTBOUND_TEXT_BYTES as MAX_OUTBOUND_TEXT_BYTES } from "@humansandmachines/gsv/services/mail";
+import {
+  MAIL_MAX_INVITE_BYTES as MAX_INVITE_BYTES,
+  MAIL_MAX_OUTBOUND_TEXT_BYTES as MAX_OUTBOUND_TEXT_BYTES,
+} from "@humansandmachines/gsv/services/mail";
 import { defineCommand } from "just-bash";
 import type { CommandContext, ExecResult } from "just-bash";
 import type {
@@ -28,6 +31,7 @@ type MailSendOptions = {
   subject?: string;
   message?: string;
   bodyPath?: string;
+  invitePath?: string;
   deliveryId?: string;
   replyToMessageId?: string;
 };
@@ -41,12 +45,14 @@ const MAIL_USAGE = `Usage:
   mail show <message-id> [--raw]
   mail sent [--limit N] [--before CURSOR]
   mail status <delivery-id>
-  mail send --to ADDRESS... [--cc ADDRESS...] --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]
-  mail reply <message-id> [--all] [--cc ADDRESS...] [--subject SUBJECT] (--message TEXT | --body PATH) [--delivery-id ID]
+  mail send --to ADDRESS... [--cc ADDRESS...] --subject SUBJECT (--message TEXT | --body PATH) [--invite PATH] [--delivery-id ID]
+  mail send --invite PATH [--cc ADDRESS...] --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]
+  mail reply <message-id> [--all] [--cc ADDRESS...] [--subject SUBJECT] (--message TEXT | --body PATH) [--invite PATH] [--delivery-id ID]
 
 Write bodies in Markdown; recipients see it formatted. A reply quotes the original below it.
 Repeat --to or --cc, or separate addresses with commas; a message reaches at most 10 people.
 --all also copies everyone else the original was sent to.
+--invite sends a calendar event written with cal; the message goes to exactly its guests.
 `;
 
 export function buildMailCommand(fs: GsvFs, ctx: KernelContext) {
@@ -159,6 +165,16 @@ async function sendMail(
     text = await fs.readFile(path);
     requestCtx.requestSignal?.throwIfAborted();
   }
+  let invite: string | undefined;
+  if (options.invitePath) {
+    const path = shellCtx.fs.resolvePath(shellCtx.cwd, options.invitePath);
+    const stat = await fs.stat(path);
+    requestCtx.requestSignal?.throwIfAborted();
+    if (!stat.isFile) throw new Error(`mail invite is not a file: ${options.invitePath}`);
+    if (stat.size > MAX_INVITE_BYTES) throw new Error(`mail invite exceeds ${MAX_INVITE_BYTES} bytes`);
+    invite = await fs.readFile(path);
+    requestCtx.requestSignal?.throwIfAborted();
+  }
   const deliveryId = options.deliveryId
     ?? defaultDeliveryId(ctx.requestId, invocationOrdinal);
   const input: MailSendArgs = { text, deliveryId };
@@ -167,6 +183,7 @@ async function sendMail(
   if (options.replyAll) input.replyAll = true;
   if (options.subject !== undefined) input.subject = options.subject;
   if (options.replyToMessageId) input.replyToMessageId = options.replyToMessageId;
+  if (invite !== undefined) input.invite = invite;
   return formatSendResult(await handleMailSend(input, requestCtx), deliveryId);
 }
 
@@ -187,6 +204,7 @@ function parseSend(args: string[], reply: boolean): MailSendOptions {
   let subject: string | undefined;
   let message: string | undefined;
   let bodyPath: string | undefined;
+  let invitePath: string | undefined;
   let deliveryId: string | undefined;
   let replyToMessageId: string | undefined;
 
@@ -203,6 +221,7 @@ function parseSend(args: string[], reply: boolean): MailSendOptions {
       || current === "--subject"
       || current === "--message"
       || current === "--body"
+      || current === "--invite"
       || current === "--delivery-id"
     ) {
       index += 1;
@@ -218,6 +237,8 @@ function parseSend(args: string[], reply: boolean): MailSendOptions {
         message = value;
       } else if (current === "--body") {
         bodyPath = value;
+      } else if (current === "--invite") {
+        invitePath = value;
       } else {
         deliveryId = value.trim();
         if (!deliveryId) throw new Error("--delivery-id requires a value");
@@ -235,7 +256,8 @@ function parseSend(args: string[], reply: boolean): MailSendOptions {
   if (reply) {
     if (!replyToMessageId) throw new Error("mail reply requires a message id");
   } else {
-    if (to.length === 0) throw new Error("mail send requires --to");
+    // An invite names its own guests.
+    if (to.length === 0 && invitePath === undefined) throw new Error("mail send requires --to or --invite");
     if (subject === undefined) throw new Error("mail send requires --subject");
   }
   if (message === undefined && bodyPath === undefined) {
@@ -248,6 +270,7 @@ function parseSend(args: string[], reply: boolean): MailSendOptions {
   if (subject !== undefined) parsed.subject = subject;
   if (message !== undefined) parsed.message = message;
   if (bodyPath) parsed.bodyPath = bodyPath;
+  if (invitePath) parsed.invitePath = invitePath;
   if (deliveryId) parsed.deliveryId = deliveryId;
   if (replyToMessageId) parsed.replyToMessageId = replyToMessageId;
   return parsed;

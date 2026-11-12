@@ -528,6 +528,44 @@ describe("mail shell command", () => {
     expect(handleMailSend).not.toHaveBeenCalled();
   });
 
+  it("sends an event file as an invite to its guests, and refuses one too large to read", async () => {
+    const invite = "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n";
+    const sizes = new Map([["/home/hank/dinner.ics", invite.length], ["/home/hank/huge.ics", 32 * 1024 + 1]]);
+    // SAFETY: this fixture supplies the filesystem methods used by the command.
+    const fs = {
+      stat: vi.fn(async (path: string) => ({ isFile: true, isDirectory: false, size: sizes.get(path) ?? 0 })),
+      readFile: vi.fn(async () => invite),
+    // SAFETY: this fixture supplies the filesystem methods used by the command.
+    } as GsvFs;
+    const ctx = commandContext("shell-frame-invite");
+    handleMailSend.mockImplementation(async (input: MailSendArgs): Promise<MailSendResult> => ({
+      ok: true,
+      deliveryId: input.deliveryId!,
+      outboundId: `outbound:${input.deliveryId}`,
+      state: "queued",
+      from: "hank@gsv.space",
+      to: "anna@example.com",
+      subject: input.subject!,
+      replayed: false,
+    }));
+    const command = buildMailCommand(fs, ctx);
+    const shell = createCommandContext({ fs: new InMemoryFs(), cwd: "/home/hank" });
+
+    const sent = await command.execute(["send", "--invite", "dinner.ics", "--subject", "Dinner", "--message", "Here is the invite."], shell);
+    const huge = await command.execute(["send", "--invite", "huge.ics", "--subject", "Dinner", "--message", "Here."], shell);
+
+    expect(sent).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("to=anna@example.com\n") });
+    expect(handleMailSend).toHaveBeenCalledOnce();
+    expect(handleMailSend.mock.calls[0][0]).toStrictEqual({
+      text: "Here is the invite.",
+      deliveryId: expect.any(String),
+      subject: "Dinner",
+      invite,
+    });
+    expect(huge).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("mail invite exceeds 32768 bytes") });
+    expect(fs.readFile).toHaveBeenCalledTimes(1);
+  });
+
   it("stops a cancelled shell invocation before sending", async () => {
     const controller = new AbortController();
     controller.abort(new Error("shell request cancelled"));
