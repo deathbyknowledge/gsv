@@ -826,7 +826,9 @@ cal show PATH [--timezone ZONE] [--next COUNT]
 `add` gives a new event a fresh UID, the account's managed mail address as its
 organizer, and each `--attendee` as an invited guest. It reads local times in
 the owner's time zone, or `--timezone`, and stores a single event's times in
-UTC; a date makes an all-day event. `update` and `cancel` rewrite the file in
+UTC; a date makes an all-day event. A time a clock change skips reads as
+RFC 5545 has it, with the offset before the change: 02:30 on a night the clocks
+go from 02:00 to 03:00 is 03:30. `update` and `cancel` rewrite the file in
 place with the same UID and the next SEQUENCE, so a calendar that already has
 the event replaces it. Only the event's organizer can change it. `show` prints
 any calendar file, one field per line, with a repeating event's next dates.
@@ -837,7 +839,8 @@ weekly on given days, monthly on a day of the month (`-1` for the last) or a
 weekday such as `4FR` or `-1FR`, or yearly on a date, every `INTERVAL` of them,
 ending with `COUNT` or `UNTIL`. A repeating event is stored in its time zone,
 with that zone's VTIMEZONE, so it keeps its clock time across daylight saving
-changes. `--occurrence WHEN` names one of its dates: `update --occurrence`
+changes. A date whose clock time a change skips stays in the series, later by
+the gap. `--occurrence WHEN` names one of its dates: `update --occurrence`
 moves or changes that date alone, and `cancel --occurrence` skips it (EXDATE).
 When the whole series moves, each skipped or changed date follows its day, and
 one the new rule no longer has is dropped and reported.

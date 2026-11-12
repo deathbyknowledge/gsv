@@ -681,7 +681,8 @@ function parseWhen(value: string, timeZone: string): { kind: "date"; date: strin
     if (addDays(text, 0) !== text) throw new Error(`not a real date: ${value}`);
     return { kind: "date", date: text };
   }
-  if (isLocalTime(text)) return { kind: "time", ms: resolveLocalTime(text, timeZone) };
+  // A time a clock change skips reads as it would in the calendar file.
+  if (isLocalTime(text)) return { kind: "time", ms: resolveLocalTime(text, timeZone, "offset-before") };
   const ms = INSTANT.test(text) ? Date.parse(text) : Number.NaN;
   if (!Number.isFinite(ms)) {
     throw new Error(`invalid time: ${value}; use a local time such as 2026-11-27T21:15 or a date such as 2026-11-27`);

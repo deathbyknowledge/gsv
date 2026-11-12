@@ -413,7 +413,9 @@ message goes to exactly the event's guests, its attendees other than the
 sender: without `to` they become the recipients, less any in `cc`; otherwise
 `to` and `cc`, or a reply's derived recipients, must name the same people.
 Every time names its zone: a `TZID` from the IANA database or UTC, never a
-floating local time, which each guest would read in their own zone.
+floating local time, which each guest would read in their own zone. A time a
+clock change skips reads as RFC 5545 has it, with the offset before the change:
+02:30 on a night the clocks go from 02:00 to 03:00 is 03:30.
 
 A repeating event goes whole: one `RRULE` and the dates changed from it,
 each a `VEVENT` with the same `UID` and the `RECURRENCE-ID` of the date it

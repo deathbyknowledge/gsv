@@ -127,7 +127,7 @@ describe("cal shell command", () => {
 
   it.each([
     { day: "the day before summer time", start: "2026-03-28T02:30", utc: "20260328T013000Z" },
-    { day: "a time the change to summer time skips", start: "2026-03-29T02:30", utc: "20260329T010000Z" },
+    { day: "a time the change to summer time skips", start: "2026-03-29T02:30", utc: "20260329T013000Z" },
     { day: "a time the change back repeats", start: "2026-10-25T02:30", utc: "20261025T003000Z" },
     { day: "an exact instant", start: "2026-03-29T02:30:00Z", utc: "20260329T023000Z" },
   ])("resolves $day in the owner's time zone", async ({ start, utc }) => {

@@ -189,12 +189,16 @@ export function timeProperty(name: string, time: CalendarTime): CalendarProperty
 /** When an event happens as read in a time zone: an all-day event by its first and last day. */
 export type CalendarWhen = { allDay: boolean; start: string; end?: string; duration?: string };
 
-/** A DATE-TIME as an instant, floating times read in `timeZone`; none for a date or a TZID outside IANA. */
+/**
+ * A DATE-TIME as an instant, floating times read in `timeZone`; none for a date or a TZID outside
+ * IANA. A time a clock change skips reads with the offset before the gap, as RFC 5545 has it,
+ * so the approval shows the time guests' calendars read.
+ */
 export function calendarInstant(time: CalendarTime, timeZone: string): number | undefined {
   if (time.kind === "utc") return time.ms;
   if (time.kind === "date") return undefined;
   try {
-    return resolveLocalTime(time.local, time.timeZone ? normalizeTimezone(time.timeZone) : timeZone);
+    return resolveLocalTime(time.local, time.timeZone ? normalizeTimezone(time.timeZone) : timeZone, "offset-before");
   } catch {
     return undefined;
   }

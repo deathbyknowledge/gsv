@@ -1445,6 +1445,31 @@ describe("outbound mail invites", () => {
     });
   });
 
+  it("shows a start the change to summer time skips at the time guests' calendars read", async () => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, {
+          config: new Map([["users/1000/locale/timezone", "America/New_York"]]),
+        });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+        // New York's clocks go from 02:00 to 03:00 on 14 March 2027; RFC 5545 reads 02:30 with the offset before.
+        const invite = INVITE.replace(
+          "DTSTART:20261127T201500Z\nDTEND:20261127T221500Z",
+          "DTSTART;TZID=America/New_York:20270314T023000\nDTEND;TZID=America/New_York:20270314T043000",
+        );
+
+        const sent = await handleMailSend({ invite, subject: "Call", text: "Invite.", deliveryId: "gap" }, ctx);
+
+        expect(sent).toMatchObject({ ok: true });
+        expect(approvals[0].args.invite).toMatchObject({
+          start: "2027-03-14T03:30:00-04:00[America/New_York]",
+          end: "2027-03-14T04:30:00-04:00[America/New_York]",
+        });
+      });
+    });
+  });
+
   it.each([
     { refusal: "an event someone else organizes", invite: INVITE.replace("mailto:hank@gsv.space", "mailto:mike@example.com"), error: "invite must be organized by hank@gsv.space, so replies come back to it" },
     { refusal: "a calendar that publishes rather than invites", invite: INVITE.replace("METHOD:REQUEST", "METHOD:PUBLISH"), error: "invite must have METHOD:REQUEST to invite or METHOD:CANCEL to cancel" },

@@ -87,6 +87,17 @@ describe("repeat rules", () => {
     ]);
   });
 
+  it("keeps a date whose time the change to summer time skips, an hour later as calendars read it", () => {
+    // New York's clocks go from 02:00 to 03:00 on 14 March 2027; RFC 5545 reads 02:30 with the offset before.
+    const starts = [...repeatStarts(zoned("2027-03-13T02:30:00", NEW_YORK), parseRepeatRule("FREQ=DAILY;COUNT=3"), NEW_YORK)];
+
+    expect(starts.map((time) => new Date(calendarInstant(time, NEW_YORK) ?? 0).toISOString())).toEqual([
+      "2027-03-13T07:30:00.000Z",
+      "2027-03-14T07:30:00.000Z",
+      "2027-03-15T06:30:00.000Z",
+    ]);
+  });
+
   it("ends at a UTC UNTIL by instant in the hour a change to winter time repeats", () => {
     const start = zoned("2027-11-06T01:30:00", NEW_YORK);
 
