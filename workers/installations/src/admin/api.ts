@@ -1,4 +1,3 @@
-import { userQuerySchema } from "./user-query";
 import { ADMIN_VISIBLE_INSTALLATION_STATES, type AdminInstallationListQuery } from "../administration";
 import { hasExpectedOrigin, json, noStoreHeaders, readJsonObject, requireString, type JsonValue } from "../http";
 import { AdminForbiddenError, type InstallationAdminAccess } from "./access";
@@ -105,9 +104,7 @@ export function readInstallationListQuery(url: URL): AdminInstallationListQuery 
   if (pageValue && !/^[1-9]\d*$/.test(pageValue)) throw new Error("page is invalid");
   const page = pageValue ? Number(pageValue) : 1;
   if (!Number.isSafeInteger(page) || page < 1 || page > 1_000_000) throw new Error("page is invalid");
-  const options = userQuerySchema.safeParse(Object.fromEntries([...url.searchParams].filter(([key, value]) => value && !["q", "state", "page"].includes(key))));
-  if (!options.success) throw new Error("query filters are invalid");
-  return { ...options.data, query, state: state ?? null, page };
+  return { query, state: state ?? null, page };
 }
 
 /**

@@ -1,8 +1,5 @@
-import { AdminMonitoring, SEGMENT_SQL, userSegment, type ActivitySummary, type Outreach, type OutreachEvent, type UserSegment } from "./admin/monitoring";
-import { userQuerySchema, CHANNEL_SQL, MONITORING_JOINS, MONITORING_SELECT, type UserQuery } from "./admin/user-query";
 import type { InstallationState } from "@humansandmachines/gsv/services/directory";
 import { parseOpaqueId } from "./domain";
-import { signupContextSchema, type SignupContext } from "./signup-context";
 import type { InstallationDataDeletionState } from "./store";
 
 export const ADMIN_INSTALLATIONS_PAGE_SIZE = 50;
@@ -31,15 +28,10 @@ export type AdminInstallationSummary = {
   state: InstallationState;
   operationState: AdminOperationState;
   createdAt: number;
-  signedUpAt?: number;
   ownerEmail?: string | null;
-  signup?: SignupContext | null;
-  activity?: ActivitySummary;
-  segment?: UserSegment;
-  outreach?: Outreach;
 };
 
-export type AdminInstallationListQuery = UserQuery & {
+export type AdminInstallationListQuery = {
   query: string;
   state: AdminVisibleInstallationState | null;
   page: number;
@@ -60,13 +52,7 @@ export type AdminInstallation = {
   operationState: AdminOperationState;
   onboardingExpiresAt: number | null;
   createdAt: number;
-  signedUpAt?: number;
   activatedAt: number | null;
-  signup?: SignupContext | null;
-  activity?: ActivitySummary;
-  segment?: UserSegment;
-  outreach?: Outreach;
-  outreachHistory?: OutreachEvent[];
   reset: {
     previousInstallationId: string;
     dataDeletionState: InstallationDataDeletionState;
@@ -74,12 +60,7 @@ export type AdminInstallation = {
 
 };
 
-type MonitoringRow = {
-  captured_at: number | null; tracked_from: number | null; first_active_at: number | null; last_active_at: number | null;
-  messages: number | null; tasks: number | null; successful_tasks: number | null; failed_tasks: number | null; availability: string | null;
-  outreach_status: Outreach["status"] | null; notes: string | null; last_contacted_at: number | null; outreach_revision: number | null;
-};
-type AdminInstallationRow = MonitoringRow & {
+type AdminInstallationRow = {
   id: string;
   handle: string;
   canonical_origin: string;
@@ -88,8 +69,6 @@ type AdminInstallationRow = MonitoringRow & {
   onboarding_expires_at: number | null;
   created_at: number;
   activated_at: number | null;
-  signup_context_json: string | null;
-  signup_at: number | null;
   previous_installation_id?: string | null;
   data_deletion_state?: InstallationDataDeletionState | null;
 };
@@ -101,9 +80,7 @@ type AdminInstallationSummaryRow = Pick<
   | "state"
   | "operation_state"
   | "created_at"
-  | "signup_context_json"
-  | "signup_at"
-> & MonitoringRow & { owner_email: string | null };
+> & { owner_email: string | null };
 
 // Match the Ship detail page: the active owner wins; an unfinished signup uses its verified owner.
 const OWNER_JOIN = `LEFT JOIN principals owner ON owner.id = COALESCE((
@@ -117,7 +94,6 @@ export class InstallationAdminStore {
   async listInstallations(
     input: AdminInstallationListQuery,
   ): Promise<AdminInstallationList> {
-    const filters = userQuerySchema.parse(input);
     const query = input.query.trim().toLowerCase();
     if (query.length > 100) throw new Error("query is too long");
     if (
@@ -139,33 +115,13 @@ export class InstallationAdminStore {
     ];
     const bindings: Array<string | number> = [];
     if (query) {
-      predicates.push(`(instr(i.handle, ?) > 0 OR instr(i.id, ?) > 0 OR instr(lower(owner.primary_email), ?) > 0
-        OR instr(lower(outreach.notes), ?) > 0 OR instr(lower(${CHANNEL_SQL}), ?) > 0)`);
-      bindings.push(query, query, query, query, query);
+      predicates.push("(instr(i.handle, ?) > 0 OR instr(i.id, ?) > 0 OR instr(lower(COALESCE(owner.primary_email, '')), ?) > 0)");
+      bindings.push(query, query, query);
     }
     if (input.state !== null) {
       predicates.push("i.state = ?");
       bindings.push(input.state);
     }
-    if (filters.segment) { predicates.push(`(${SEGMENT_SQL}) = ?`); bindings.push(filters.segment); }
-    if (filters.outreach) { predicates.push("COALESCE(outreach.status, 'not_contacted') = ?"); bindings.push(filters.outreach); }
-    if (filters.channel) { predicates.push(`${CHANNEL_SQL} = ?`); bindings.push(filters.channel); }
-    if (filters.country) { predicates.push("json_extract(i.signup_context_json, '$.country') = ?"); bindings.push(filters.country); }
-    for (const [value, column, operator, offset] of [
-      [filters.signupFrom, "COALESCE(i.signup_at, i.created_at)", ">=", 0], [filters.signupTo, "COALESCE(i.signup_at, i.created_at)", "<", 86400000],
-      [filters.activeFrom, "a.last_active_at", ">=", 0], [filters.activeTo, "a.last_active_at", "<", 86400000],
-      [filters.contactFrom, "outreach.last_contacted_at", ">=", 0], [filters.contactTo, "outreach.last_contacted_at", "<", 86400000],
-    ] as const) {
-      if (value) { predicates.push(`${column} ${operator} ?`); bindings.push(Date.parse(value) + offset); }
-    }
-    for (const [value, column] of [[filters.minMessages, "a.messages"], [filters.minTasks, "a.tasks"], [filters.minSuccessfulTasks, "a.successful_tasks"]] as const) {
-      if (value !== undefined) { predicates.push(`${column} >= ?`); bindings.push(value); }
-    }
-    const sortColumns = { signup: "COALESCE(i.signup_at, i.created_at)", last_active: "a.last_active_at", messages: "a.messages", tasks: "a.tasks",
-      successful_tasks: "a.successful_tasks", last_contacted: "outreach.last_contacted_at", handle: "i.handle", segment: `(${SEGMENT_SQL})`,
-      outreach: "COALESCE(outreach.status, 'not_contacted')", channel: CHANNEL_SQL, country: "json_extract(i.signup_context_json, '$.country')" };
-    const sortColumn = sortColumns[filters.sort ?? "signup"];
-    const direction = filters.direction === "asc" ? "ASC" : "DESC";
     const where = predicates.join(" AND ");
     const offset = (input.page - 1) * ADMIN_INSTALLATIONS_PAGE_SIZE;
     if (!Number.isSafeInteger(offset)) throw new Error("page is invalid");
@@ -175,7 +131,6 @@ export class InstallationAdminStore {
         `SELECT COUNT(*) AS total
          FROM installations i
          ${OWNER_JOIN}
-         ${MONITORING_JOINS}
          WHERE ${where}`,
       ).bind(...bindings).first<{ total: number }>(),
       this.db.prepare(
@@ -188,12 +143,11 @@ export class InstallationAdminStore {
              ORDER BY p.updated_at DESC
              LIMIT 1
            ) AS operation_state,
-           i.created_at, i.signup_at, i.signup_context_json, owner.primary_email AS owner_email, ${MONITORING_SELECT}
+           i.created_at, owner.primary_email AS owner_email
          FROM installations i
          ${OWNER_JOIN}
-         ${MONITORING_JOINS}
          WHERE ${where}
-         ORDER BY ${sortColumn} IS NULL, ${sortColumn} ${direction}, i.id DESC
+         ORDER BY i.created_at DESC, i.id DESC
          LIMIT ? OFFSET ?`,
       ).bind(
         ...bindings,
@@ -203,7 +157,6 @@ export class InstallationAdminStore {
     ]);
     const total = count?.total ?? 0;
     return {
-      ...filters,
       query,
       state: input.state,
       page: input.page,
@@ -253,15 +206,14 @@ export class InstallationAdminStore {
          (SELECT p.state FROM provisioning_operations p
           WHERE p.installation_id = i.id AND p.kind = 'create'
           ORDER BY p.updated_at DESC LIMIT 1) AS operation_state,
-         c.expires_at AS onboarding_expires_at, i.created_at, i.signup_at, i.activated_at, i.signup_context_json,
-         reset.previous_installation_id, reset.data_deletion_state, ${MONITORING_SELECT}
+         c.expires_at AS onboarding_expires_at, i.created_at, i.activated_at,
+         reset.previous_installation_id, reset.data_deletion_state
        FROM installations i
-       ${MONITORING_JOINS}
        LEFT JOIN installation_onboarding_claims c ON c.installation_id = i.id
        LEFT JOIN installation_reset_operations reset ON reset.replacement_installation_id = i.id
        WHERE i.id = ? AND i.state != 'deleted' LIMIT 1`,
     ).bind(installationId).first<AdminInstallationRow>();
-    return row ? { ...adminInstallationFromRow(row), outreachHistory: await new AdminMonitoring(this.db).history(installationId) } : null;
+    return row ? adminInstallationFromRow(row) : null;
   }
 }
 
@@ -269,15 +221,12 @@ function adminInstallationSummaryFromRow(
   row: AdminInstallationSummaryRow,
 ): AdminInstallationSummary {
   return {
-    ...monitoringFromRow(row),
     installationId: row.id,
     handle: row.handle,
     state: row.state,
     operationState: row.operation_state,
     createdAt: row.created_at,
-    signedUpAt: row.signup_at ?? row.created_at,
     ownerEmail: row.owner_email,
-    signup: row.signup_context_json ? signupContextSchema.parse(JSON.parse(row.signup_context_json)) : null,
   };
 }
 
@@ -285,7 +234,6 @@ function adminInstallationFromRow(
   row: AdminInstallationRow,
 ): AdminInstallation {
   return {
-    ...monitoringFromRow(row),
     installationId: row.id,
     handle: row.handle,
     canonicalOrigin: row.canonical_origin,
@@ -293,9 +241,7 @@ function adminInstallationFromRow(
     operationState: row.operation_state,
     onboardingExpiresAt: row.onboarding_expires_at,
     createdAt: row.created_at,
-    signedUpAt: row.signup_at ?? row.created_at,
     activatedAt: row.activated_at,
-    signup: row.signup_context_json ? signupContextSchema.parse(JSON.parse(row.signup_context_json)) : null,
     reset: row.previous_installation_id && row.data_deletion_state
       ? {
           previousInstallationId: row.previous_installation_id,
@@ -303,13 +249,4 @@ function adminInstallationFromRow(
         }
       : null,
   };
-}
-
-function monitoringFromRow(row: MonitoringRow & { created_at: number; signup_at: number | null }) {
-  const activity: ActivitySummary = { capturedAt: row.captured_at, trackedFrom: row.tracked_from, firstActiveAt: row.first_active_at,
-    lastActiveAt: row.last_active_at, messages: row.messages, tasks: row.tasks, successfulTasks: row.successful_tasks,
-    failedTasks: row.failed_tasks, availability: row.availability ?? "unknown" };
-  const outreach: Outreach = { status: row.outreach_status ?? "not_contacted", notes: row.notes ?? "",
-    lastContactedAt: row.last_contacted_at, revision: row.outreach_revision ?? 0 };
-  return { activity, outreach, segment: userSegment(row.signup_at ?? row.created_at, activity) };
 }

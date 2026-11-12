@@ -35,7 +35,6 @@ export default class InstallationService extends WorkerEntrypoint<Env & Installa
     await createAccountsDeletionRuntime(this.env.INSTALLATIONS_DB, configuredDeletionEnvironment(this.env.INSTALLATIONS_DB, this.env)).resumePending();
     await new RequestReports(this.env.INSTALLATIONS_DB).forgetClosedMessages();
     await runProductEmailJobs(this.env.INSTALLATIONS_DB, this.env);
-    await new ShipInsight(this.env.INSTALLATIONS_DB, { gateway: this.env.OPERATOR_GATEWAY }).refreshActivity();
   }
 
   async fetch(request: Request): Promise<Response> {

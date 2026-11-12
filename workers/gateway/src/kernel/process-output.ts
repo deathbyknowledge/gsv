@@ -1,4 +1,3 @@
-import { OperatorActivityStore } from "./operator-activity";
 import type {
   SignalFrame,
 } from "../protocol/frames";
@@ -149,11 +148,6 @@ readonly pendingProcessSignals = new Map<string, Promise<void>>();
     }
 
     const runId = userFrame?.payload?.runId?.trim() || null;
-    const outcome = userFrame?.payload?.status;
-    if (frame.signal === "proc.run.finished" && runId && (outcome === "ok" || outcome === "error" || outcome === "aborted")) {
-      new OperatorActivityStore(this.host.ctx.storage.sql).finish(runId, outcome === "error" && userFrame?.payload?.aborted ? "aborted" : outcome, userFrame?.payload?.timestamp ?? Date.now());
-    }
-
 
     if (!userFrame) return;
 

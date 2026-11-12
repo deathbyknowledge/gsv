@@ -105,8 +105,8 @@ export function errorNotice(message: string, action = ""): string {
   return `<section class="notice error" role="alert"><p class="eyebrow">REQUEST NOT COMPLETED</p><p>${escapeHtml(message)}</p>${action}</section>`;
 }
 
-export function stateBadge(value: string, label = value): string {
-  return `<span class="badge badge-${escapeHtml(value.replaceAll("_", "-"))}">${escapeHtml(label.replaceAll("_", " "))}</span>`;
+export function stateBadge(value: string): string {
+  return `<span class="badge badge-${escapeHtml(value.replaceAll("_", "-"))}">${escapeHtml(value.replaceAll("_", " "))}</span>`;
 }
 
 export function formatDate(timestamp: number | null): string {
@@ -132,22 +132,9 @@ export function formatTime(timestamp: number): string {
   return `<time datetime="${date.toISOString()}" data-local-time="time">${fallback}</time>`;
 }
 
-/** Compact activity age; the precise local timestamp remains in the hover title. */
-export function formatRelativeDate(timestamp: number): string {
-  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
-  const label = minutes < 1 ? "now" : minutes < 60 ? `${minutes}m ago` : minutes < 1440 ? `${Math.floor(minutes / 60)}h ago` : `${Math.floor(minutes / 1440)}d ago`;
-  return `<time datetime="${new Date(timestamp).toISOString()}" title="${new Date(timestamp).toISOString()}" data-local-time="relative">${label}</time>`;
-}
-
 export function formatDateOnly(timestamp: number): string {
   const date = new Date(timestamp);
   return `<time datetime="${date.toISOString()}" title="${date.toISOString()}" data-local-time="day">${escapeHtml(new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(date))}</time>`;
-}
-
-/** Contact dates are calendar dates, stored at UTC midnight without a time-of-day meaning. */
-export function formatCalendarDate(timestamp: number): string {
-  const date = new Date(timestamp);
-  return `<time datetime="${date.toISOString().slice(0, 10)}" data-local-time="calendar">${escapeHtml(new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(date))}</time>`;
 }
 
 /** Durations as an operator reads them: 200ms, 3s, 6m 15s, 2h 4m. */
@@ -219,20 +206,12 @@ const ADMIN_TIME_SCRIPT = `
 (() => {
   const compact = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   const day = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-  const calendar = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
   const exact = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'long' });
-  function render() {
-    for (const time of document.querySelectorAll('time[data-local-time]')) {
-      const date = new Date(time.dateTime);
-      time.title = time.dataset.localTime === 'calendar' ? 'Recorded contact date: ' + time.dateTime : exact.format(date);
-      const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
-      time.textContent = time.dataset.localTime === 'relative'
-        ? minutes < 1 ? 'now' : minutes < 60 ? minutes + 'm ago' : minutes < 1440 ? Math.floor(minutes / 60) + 'h ago' : Math.floor(minutes / 1440) + 'd ago'
-        : (time.dataset.localTime === 'calendar' ? calendar : time.dataset.localTime === 'day' ? day : compact).format(date);
-    }
+  for (const time of document.querySelectorAll('time[data-local-time]')) {
+    const date = new Date(time.dateTime);
+    time.title = exact.format(date);
+    time.textContent = (time.dataset.localTime === 'day' ? day : compact).format(date);
   }
-  render();
-  setInterval(render, 60000);
 })();
 `;
 
@@ -249,7 +228,7 @@ a { color: #b9b6ff; }
 .topbar nav a { display: flex; align-items: center; padding: 0 14px; color: #9d9daa; text-decoration: none; border-bottom: 2px solid transparent; }
 .topbar nav a[aria-current="page"] { color: #fff; border-bottom-color: #8f8aff; }
 .topbar small { margin-left: auto; text-transform: uppercase; }
-main { width: min(1600px, 100%); margin: auto; padding: 48px 28px 80px; }
+main { width: min(1280px, 100%); margin: auto; padding: 48px 28px 80px; }
 .narrow { width: min(760px, 100%); margin-inline: auto; }
 .stack { display: grid; gap: 24px; min-width: 0; }
 .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
@@ -305,17 +284,7 @@ details summary { cursor: pointer; color: #c4c4ce; } .flag { color: #f1c48a; }
 .steps { margin: 10px 0 0; padding-left: 18px; font: 11px/1.7 ui-monospace, monospace; color: #a7a7b2; }
 .steps span { color: #6f6f7c; } .steps .step-slow { color: #f1c48a; } .steps .step-error { color: #efafb5; }
 .muted { color: #858593; font-size: 11px; }
-.growth-metrics, .usage-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 18px; }
-.usage-metrics .metric { padding: 16px; } .usage-metrics strong { font-size: 20px; }
-.growth-chart { display: block; width: 100%; min-height: 180px; } .growth-chart text { fill: #858593; font: 12px ui-monospace, monospace; }
-.chart-grid { stroke: #292932; } .chart-signups, .chart-active { fill: none; stroke-width: 2.5; }
-.chart-signups { stroke: #a39bff; } .chart-active { stroke: #78d8b3; } .series-signups { color: #a39bff; } .series-active { color: #78d8b3; }
-.chart-legend { display: flex; gap: 20px; font-size: 12px; }
-.user-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; } .user-filters label { min-width: 130px; flex: 1; }
-.user-filters label:first-child { min-width: 230px; flex: 2; } .advanced-filters > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding-top: 16px; }
-.installations th a { color: inherit; white-space: nowrap; } .installations .count { font-variant-numeric: tabular-nums; text-align: right; }
 .plan-details > summary { display: flex; align-items: center; gap: 16px; cursor: pointer; } .plan-details > summary::before { content: '▸'; color: #8f8aff; }
 .plan-details[open] > summary::before { content: '▾'; } .plan-details > summary strong { font: 500 18px system-ui, sans-serif; } .plan-details > div { margin-top: 24px; }
-.internal-note { white-space: pre-wrap; overflow-wrap: anywhere; } .outreach-history { padding-left: 20px; font-size: 12px; } .outreach-history li + li { border-top: 1px solid #292932; padding-top: 12px; }
 @media (max-width: 760px) { .topbar { flex-wrap: wrap; gap: 8px 18px; padding: 12px 18px 0; } .topbar nav { order: 3; width: 100%; height: 44px; } .topbar nav a { padding: 0 10px; } .topbar small { display: none; } main { padding: 32px 16px 60px; } .page-heading { align-items: start; flex-direction: column; } .filters { grid-template-columns: 1fr; } .grid, .metrics { grid-template-columns: 1fr; } .metric { border-right: 0; border-bottom: 1px solid #292932; } .metric:last-child { border-bottom: 0; } .notice { grid-template-columns: 1fr; } .notice .button, .notice code, .notice small { grid-column: 1; } .definition-list { grid-template-columns: 1fr; } .definition-list dt { padding-bottom: 3px; border-bottom: 0; } .definition-list dd { padding-top: 3px; } }
 `;

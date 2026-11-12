@@ -39,27 +39,10 @@ export const operatorRunSchema = z.strictObject({
 });
 export type OperatorRun = z.infer<typeof operatorRunSchema>;
 
-/** Counts of owner messages and their terminal Ship runs, since tracking began. */
-export const operatorUsageSchema = z.strictObject({
-  /** Zero means complete history since this Kernel's creation; otherwise the upgrade time. */
-  trackedFrom: timestamp,
-  firstActiveAt: timestamp.nullable(),
-  lastActiveAt: timestamp.nullable(),
-  messages: z.number().int().nonnegative(),
-  tasks: z.number().int().nonnegative(),
-  successfulTasks: z.number().int().nonnegative(),
-  failedTasks: z.number().int().nonnegative(),
-  abortedTasks: z.number().int().nonnegative(),
-  days: z.array(z.strictObject({ day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), messages: z.number().int().nonnegative() })).max(92),
-});
-export type OperatorUsage = z.infer<typeof operatorUsageSchema>;
-
 export const operatorShipSnapshotSchema = z.strictObject({
   version: z.literal(1),
   installationId: identity,
   capturedAt: timestamp,
-  /** Absent on Gateways that predate operational activity counters. */
-  usage: operatorUsageSchema.optional(),
   ship: z.strictObject({
     pid: label,
     state: label,

@@ -1,4 +1,3 @@
-import { AdminMonitoring } from "./monitoring";
 import {
   operatorShipSnapshotSchema,
   type OperatorGatewayService,
@@ -76,7 +75,6 @@ type ShipSnapshotSource = Pick<OperatorGatewayService, "operatorShipSnapshot">;
 /** Everything the Ship page shows beyond the installation record. */
 export class ShipInsight {
   readonly audit: OperatorAuditLog;
-  readonly monitoring: AdminMonitoring;
   private readonly gateway: ShipSnapshotSource | undefined;
   private readonly mailDomain: string | undefined;
   private readonly timeoutMs: number;
@@ -86,18 +84,9 @@ export class ShipInsight {
     options: { gateway?: ShipSnapshotSource; mailDomain?: string; timeoutMs?: number } = {},
   ) {
     this.audit = new OperatorAuditLog(db);
-    this.monitoring = new AdminMonitoring(db);
     this.gateway = options.gateway;
     this.mailDomain = options.mailDomain?.trim() || undefined;
     this.timeoutMs = options.timeoutMs ?? HEALTH_TIMEOUT_MS;
-  }
-
-  async refreshActivity(): Promise<number> {
-    if (!this.gateway) return 0;
-    return new AdminMonitoring(this.db).refresh(async (id) => {
-      const health = await this.health(id);
-      return health.kind === "ok" ? health.snapshot : null;
-    });
   }
 
   async context(installation: { installationId: string; handle: string }): Promise<ShipContext> {

@@ -46,16 +46,6 @@ not a guarantee that arbitrary application text is safe: producers must never
 put user content into exceptions intended for export. Invalid records are rejected without affecting user work.
 Managed telemetry does not export Process traces or conversation activity.
 
-The authenticated operator administration surface separately reads per-Ship
-operational counts through its Accounts-only Gateway binding. Kernel migration
-94 starts durable, deduplicated owner-message and terminal-request counts; the
-optional `usage` field on an operator snapshot carries totals and daily message
-counts without message text. Accounts materializes these for user management and
-growth reporting, with explicit collection coverage and timestamps. This does not
-change product-analytics consent, pseudonyms or export allowlists. Accounts-only
-outreach notes and their attributed revisions are never telemetry properties and
-are removed with the installation's directory data.
-
 Managed inference reports every admitted logical request at its terminal owner
 boundary. Failed and abandoned requests include a provider-neutral failure kind
 and stage alongside available redacted exception diagnostics. The provider HTTP status is included when

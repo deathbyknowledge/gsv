@@ -659,9 +659,7 @@ async function deliverAdapterInboundToProcess(input: {
   const appended = await getConversationById(ctx.installationId, conversation.id).append(
     appendRequest,
   );
-  ctx.conversations.recordSequence(conversation.id, appended.message.sequence, {
-    messageId: appended.message.id, runId, at: appended.message.createdAt,
-  });
+  ctx.conversations.recordSequence(conversation.id, appended.message.sequence);
   const messageScope = { ownerUid: uid, adapter, accountId, surface: message.surface };
   try {
     ctx.adapters.messageRefs.record(messageScope, {

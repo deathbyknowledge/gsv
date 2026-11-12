@@ -167,90 +167,23 @@ accents and separators, but checks the whole name. Existing Ships and unfinished
 activations keep their names. See the [username policy](../architecture/installation-directory.md#open-registration)
 for matching rules and terms that require contextual review.
 
-Administration timestamps use your device's timezone, including audit entries and
-run times. With JavaScript disabled, they use the labelled UTC fallback.
+Administration dates and times are compact. Hover a timestamp for the full date,
+time and timezone. They use your device's timezone, including audit entries and
+run times; without JavaScript, they use UTC.
 
-The **Ships** listing shows owner emails, country flags, approximate signup
-locations and the web origin used to create each Ship. Search by handle, owner
-email or Ship ID; lifecycle filters and pagination apply to the same results.
-The Ship detail page also shows its signup location and origin. Accounts saves
-this snapshot atomically with the initial self-service reservation, using
-Cloudflare's country, region and city metadata and the request's web origin.
-It stores no IP address or coordinates in the snapshot. Location describes the
-network at signup, so a VPN may affect it; the web origin identifies the signup
-interface, not a marketing referral. Retries and later sign-ins preserve the
-original snapshot. Earlier signups, manually created Ships and clients without
-location or origin data show **Not recorded** for the missing fields.
-Apply directory migration `0035_signup_context.sql` before deploying Accounts.
-
-### Monitor users and growth
-
-**Overview** shows the current user count, today's and the last seven
-days' signups, DAU/WAU, activation and day-7 retention, with a 30-day chart and
-accessible daily counts. Counts include self-service signups and activated
-operator-issued Ships. Reset replacements keep the original signup date and
-acquisition evidence; retired copies are excluded. Dates in charts use UTC. DAU and WAU mean an owner sent
-Ship a message in the last 24 hours or seven days. Activation means at least one
-owner message. Day-7 retention requires a message on the seventh UTC calendar day
-after signup and a mature, measured cohort from the last 90 days. Both retention
-counts require a successful snapshot covering the entire seventh
-UTC day, with tracking since signup. Older or partial-day snapshots remain unknown
-until refreshed; a collection outage does not count as non-retention. Unknown
-pre-tracking history is excluded from rate denominators. These are operational account counts, separate
-from the optional personless product-analytics stream.
-
-The **Ships** table shows signup and last-activity dates, owner message counts,
-finished and successful tasks, acquisition and outreach. A task is a finished
-owner-requested Ship run; background and scheduled runs are excluded. A successful
-task completed normally, which does not assert that a person accepted its result.
-New Ships have complete counters from their creation. For existing Ships,
-counts start when the Gateway's activity migration runs; older activity is not
-reconstructed from the latest few runs. An em dash means the count is unavailable.
-Each row shows when its snapshot was captured. **Refresh activity** collects up
-to 25 of the least recently checked Ships; Accounts' existing scheduled handler
-does the same. A failed refresh preserves earlier counts and records availability.
-If the first refresh is unavailable, a later successful refresh fills in the
-unknown counts and returns the activity status to available.
-
-Segments are mutually exclusive: **Never used** has zero messages and complete
-tracking since signup; **Active** has a message in the last seven days; **Tried
-once** has one message and no recent activity; **Previously active** has at least
-five messages and no recent activity; **Inactive** has two to four messages and
-no recent activity. Earlier users with no measured messages stay **Unknown**.
-Search handles, emails, notes and channels. Column headings sort the results;
-expanded filters cover signup, activity and contact dates, minimum usage,
-country, acquisition, lifecycle, segment and outreach. Filters apply before
-pagination and remain in sorting and page links.
+The **Ships** table shows the owner email from the existing account records.
+Search by handle, owner email or installation ID. Click an email in the list or
+Ship details to copy it; **Copied** confirms success. If clipboard access is
+blocked, the address is selected for manual copying.
 
 Use **Columns** above the table to choose which fields to display, or **Show all
-columns** to reset the view. The Ship/owner column always remains visible. Choices
-are saved in this browser and survive filtering, sorting and pagination. Click an
-owner email in the list or detail page to copy it; **Copied** confirms success.
-If clipboard access is blocked, the address is selected for manual copying.
-Operators may supply external dashboard/site shortcuts on Overview through
-the administration presentation's `overviewLinks` setting.
+columns** to reset the view. Ship/owner always remains visible. Choices are saved
+in this browser and survive filtering and pagination.
 
-Acquisition is shown only when supplied at signup. The owner API accepts an
-optional `acquisition` object with bounded `source`, `medium`, `campaign`,
-`referral` and `referrerHost` fields; the client that supplies marketing metadata
-owns its consent requirements. Accounts records the first reservation's snapshot
-and does not infer a marketing channel from the signup hostname. Existing
-unattributed signups remain **Unknown**.
-
-An individual Ship shows usage, the existing metadata-only request timeline,
-failed requests and steps, and **Outreach and notes**. Record **Not contacted**,
-**Emailed**, **Replied**, **Follow-up needed** or **Not applicable**, a last-contacted
-date and up to 4,000 characters of internal notes. Saving creates an attributed,
-timestamped history entry and an operator audit event. It never sends mail.
-Concurrent stale edits are refused so another operator's notes are not lost.
-Full timestamps are available on hover; visible dates are compact and last
-activity uses relative ages. The managed Plan card starts collapsed.
-
-Roll out directory migration `0036_admin_monitoring.sql` before the Accounts
-worker, then the Gateway with Kernel migration 94. The Accounts operator binding
-must point at that Gateway. Older Gateways remain readable and report usage as
-unavailable. Deploy the matching managed Accounts revision to enable scheduled
-collection. Installation deletion erases cached activity, outreach and its history.
+**Overview** links to the operator's analytics dashboards and website. Operators
+configure these shortcuts through the administration presentation's
+`overviewLinks` setting. Growth and behavior metrics remain in the analytics
+service; administration does not collect or store a second set of usage counters.
 
 To let people sign up themselves, enable `GSV_SIGNUP_ENABLED` and configure
 owner email delivery. They choose a handle and verify their email at
@@ -307,7 +240,7 @@ The operator API needs the same handle and reason. Without either it answers
 ## Check on a Ship {#check-on-a-ship}
 
 Each Ship's administration page shows its handle, mail address, hostnames and
-lifecycle state. It also shows the owner's full email, as a `mailto:` link,
+lifecycle state. It also shows the owner's full email, as a copy button,
 and their sign-in methods. Set `GSV_MAIL_DOMAIN` to show the Ship's mail
 address.
 

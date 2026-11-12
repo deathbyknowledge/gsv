@@ -468,7 +468,7 @@ describe("the profile on Bluesky", () => {
     // The Kernel is real; the conversation and the Ship's process take each message as delivered.
     vi.spyOn(utils, "getConversationById").mockReturnValue({
       initialize: vi.fn(async () => undefined),
-      append: vi.fn(async (input) => ({ created: true, message: { id: input.messageId, sequence: 1, createdAt: input.createdAt } })),
+      append: vi.fn(async (input) => ({ created: true, message: { id: input.messageId, sequence: 1 } })),
     });
     vi.spyOn(utils, "sendFrameToProcess").mockImplementation(async (_installationId, _pid, frame) => ({
       type: "res", id: frame.id, ok: true,

@@ -2,7 +2,6 @@ import { normalizeUsernamePolicy } from "./username-policy";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { parseOpaqueId } from "./domain";
-import type { SignupContext } from "./signup-context";
 import { OwnerAuthError } from "./owner-auth-store";
 import { queueProductEmail, type ProductEmailChoice } from "./product-email";
 import { emitTelemetry, exceptionDiagnostics, type TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
@@ -40,8 +39,7 @@ export class InstallationSignup {
       UNION ALL SELECT 1 FROM username_policy WHERE normalized_handle = ? LIMIT 1`).bind(handle, normalizeUsernamePolicy(handle)).first();
   }
 
-  async prepare(operationIdValue: string, principalIdValue: string, handle: string, productEmails?: ProductEmailChoice, ip?: string,
-    signupContext?: SignupContext) {
+  async prepare(operationIdValue: string, principalIdValue: string, handle: string, productEmails?: ProductEmailChoice, ip?: string) {
     const operationId = parseOpaqueId(operationIdValue, "operationId");
     const principalId = parseOpaqueId(principalIdValue, "principalId");
     const principal = await this.accounts.getPrincipal(principalId);
@@ -49,7 +47,7 @@ export class InstallationSignup {
     const existing = await this.accounts.getReservationByOperation(operationId);
     if (!existing && !this.enabled) throw new Error("Registration is currently closed.");
     if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
-    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true, signupContext });
+    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true });
     const owned = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_setup = 1 AND owner_principal_id = ?")
       .bind(space.installationId, principalId).first();
     if (!owned) throw new Error("Ship activation is unavailable.");
