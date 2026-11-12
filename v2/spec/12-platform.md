@@ -8,8 +8,10 @@ runs self-hosted, and how releases roll out while two versions run.
 Only what workerd runs: Workers, SQLite Durable Objects, alarms, hibernating
 WebSockets, the Worker Loader, fetch, and a blob store. No D1, KV, Queues,
 Workflows or Analytics Engine in the core. The directory (hostnames, handles,
-signup) is part of the runtime as DOs; the operator's commercial policy (plans)
-stays a binding `[D 11-11]`.
+signup) is part of the runtime; the operator's commercial policy (plans) stays
+a binding `[D 11-11]`. It is one DO, off the signed-in path (see
+[01](01-topology.md)). KV was considered as a read copy and rejected: it can't
+hold claims, so it would only add a second copy `[D 11-12]`.
 
 ### Blobs
 

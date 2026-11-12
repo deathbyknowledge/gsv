@@ -68,13 +68,13 @@ flowchart LR
     cm[CodeMode<br/>Dynamic Worker]
     inf[Inference Worker]
   end
-  dir[(Directory DOs<br/>hostnames, handles)]
+  dir[(Directory DO<br/>names, signups)]
   r2[(Blob store<br/>R2 or S3)]
   svc[Operator services<br/>mail, messengers, cloud,<br/>search, plans]
   dev[gsvd, extension,<br/>cloud instances]
 
   web & desk & cli -- WebSocket --> gw
-  gw --> dir
+  gw -. first contact by name .-> dir
   gw -- control socket --> ow
   gw -- run output SSE --> pr
   ow <--> pr

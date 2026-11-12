@@ -12,7 +12,7 @@ contracts `[D 11-09]`.
 
 | Class | Named by | Holds | Serves connections from |
 | --- | --- | --- | --- |
-| Directory | `dir:<shard>`, 256 shards by the first byte of SHA-256 of the name `[NEW]` | Hostnames, handles, mail addresses and verified company domains → (space id, owner id); signup provisioning operations `[D 11-11]` | Nobody; the edge reads it |
+| Directory | `directory`, one object; split by name hash only if load ever needs it, by copying its one table `[D 11-12]` | Hostnames, handles, mail addresses and verified company domains → (space id, owner id, generation); signup provisioning operations `[D 11-11]`; keyed email hashes → handles, for a forgotten handle `[D 11-12]` | Nobody; the edge and services read it for first contact by name |
 | Space | the space id (opaque) `[D 11-10]` | People, teams, membership and roles, agent accounts, grants (source of truth), sign-in methods and credentials, recovery, space settings and policy, the plan's limits, lifecycle state, the mount table, the owner registry `[D 11-09]` | Sign-in requests only |
 | Owner | the owner id `[D 11-11]` | Event log and subscriber cursors, due-work table, process table and the profile's long-lived agents, responsibilities, sources, conversation index and bindings, deliveries, channels and contacts, approvals, rules, settings, ledger, connections (MCP sessions, OAuth and own keys, sealed), the machine registry, usage meters, grant copies `[D 11-09]` | People's clients (control WebSocket) |
 | Process | `<owner id>/<pid>`, pid a random UUID `[1.0]` | Records, runs, epochs, inbox, parked calls, state, trace spans, Lifecycle jobs; the projection of rules and live facts; the ticket cache `[D 11-11]` | Run output readers (SSE) |
@@ -36,11 +36,36 @@ The Space DO is named by the space id. The directory is the only thing that
 turns a public name into ids. Public callers never choose a space id, owner id
 or pid `[1.0]`.
 
+### Routing
+
+`[D 11-12]`
+
+```mermaid
+flowchart LR
+  req[Request] --> tok{Session token?}
+  tok -- yes --> ver[Edge verifies the signature<br/>and that the token's host<br/>is this hostname] --> own[(Owner DO)]
+  tok -- no --> cache{Name in the<br/>60 s cache?}
+  cache -- yes --> obj[(Space or owner DO)]
+  cache -- no --> dir[(Directory DO)] --> obj
+```
+
+- Signed-in traffic (sockets, the SDK, uploads, run output) routes by the token
+  alone and never asks the directory. The token names the space, the person and
+  the hostname it was issued for (see [02](02-identity-and-permissions.md)).
+- Only first contact by name goes through the directory: sign-in pages, signup,
+  Public links, hooks, inbound mail and contact lookups by handle. These are
+  rare and cache for 60 s at the edge.
+- One Directory DO is enough because of this. A single object also makes a
+  signup's claims (handle, email key) one transaction, and operators list and
+  search spaces with plain SQL.
+- Cost: the object lives in one region, so an uncached lookup from far away
+  pays one long round trip. Signed-in traffic never does.
+
 ## Stateless Workers
 
 | Worker | Role |
 | --- | --- |
-| Edge (Gateway) | Resolves the hostname through the directory (60 s cache), checks the session token's signature, forwards the control WebSocket to the owner DO, run-output SSE to the Process DO, hooks to the owner DO. Holds no state. `[D 11-09]` |
+| Edge (Gateway) | Routes signed-in requests by the session token alone `[D 11-12]`; resolves a hostname through the directory (60 s cache) only for first contact by name. Forwards the control WebSocket to the owner DO, run-output SSE to the Process DO, hooks to the owner DO. Holds no state. `[D 11-09]` |
 | Upload | Takes 32 MiB parts with a ticket, streams each into the blob store while hashing it. A route in the same script. `[D 11-11]` |
 | gsv shell | A Dynamic Worker loaded under one stable id per release. Its only binding is the calling process's gate, with identity pinned in props; its outbound fetch goes through the gate. `[D 11-11]` |
 | CodeMode | A Dynamic Worker per script, `globalOutbound: null`, one syscall callback through the gate. `[1.0]` |
@@ -93,20 +118,25 @@ space is reactivated `[1.0]`.
 - **TOP-5** No DO reads another owner's state. Owners interact only through events. `[D 11-11]`
 - **TOP-6** A restricted space admits no new work and keeps all its data.
 - **TOP-7** No file bytes are stored in a control DO. Small files may be cached in a Volume's SQLite (see [03](03-volumes.md)). `[D 11-09]`
+- **TOP-8** A signed-in request never waits on the directory. `[D 11-12]`
+- **TOP-9** A session token is accepted only on the hostname it was issued for. `[D 11-12]`
 
 ## Failure cases
 
 | Case | Behaviour |
 | --- | --- |
-| A directory shard is unavailable | Cached entries keep routing for 60 s; misses return `unavailable` (retryable). |
+| The Directory DO is unavailable | Signed-in traffic is unaffected. Cached names keep routing for 60 s; uncached first contacts return `unavailable` (retryable) and signups wait. |
 | The Space DO is unavailable | New sign-ins fail with `unavailable`. Existing sessions keep working on the owner DO's grant copies. Grant pushes retry until confirmed. |
 | An owner DO restarts | Client sockets reconnect and resume from their cursors; due work resumes from its table. |
 | A Process DO restarts mid-run | The run resumes; see [05](05-process.md) and [12](12-platform.md). |
-| An owner moved to another space | Calls with the old generation get `moved`; the SDK re-resolves through the directory. |
+| An owner moved to another space | Calls with the old generation, and tokens naming the old space, get `moved` at the owner DO; the SDK signs in again through the directory. |
 
 ## Tests
 
-- Unknown hostname: the edge answers 404 and no DO beyond the directory shard is created.
+- Unknown hostname: the edge answers 404 and no DO beyond the directory is created.
+- Directory down: signed-in sockets, SDK calls and uploads keep working; a cold sign-in page returns `unavailable`.
+- A token issued for one hostname is refused on another, and a token with an edited space id fails its signature.
+- Two concurrent signups for the same handle: exactly one succeeds.
 - Space-link fence: bump a link generation, replay a call carrying the old one, expect `moved` and no state change.
 - Source check: no Dynamic Worker bundle references an owner, Process, Volume or Target DO binding.
 - Restricted space: every admission path (socket, append, inference, alarm, schedule) fails closed; an admitted run finishes its current step.

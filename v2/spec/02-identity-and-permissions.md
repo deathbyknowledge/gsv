@@ -15,7 +15,7 @@ resource's owner differ, both apply (the two-owner rule) `[D 11-09]`.
 
 | Actor | Lives in | Identity proven by |
 | --- | --- | --- |
-| Person | Space DO | Session token (uid, space, epoch) `[D 11-10]` |
+| Person | Space DO | Session token (uid, space, epoch) `[D 11-10]`, plus the hostname it was issued for `[D 11-12]` |
 | Team | Space DO | Acts only through its admins and members |
 | Agent account | Space DO, owned by a person or team | Acts only through processes |
 | Process | Its owner DO's process table | Identity passed as arguments between our own DOs `[D 11-10]` |
@@ -221,6 +221,12 @@ Checked in the Space DO `[D 11-10]`.
 
 - A person may hold several methods. Adding one needs a fresh check with an
   existing one. The last method can't be removed `[D 11-11]`.
+- A forgotten handle: on the deployment's own page a person enters an email
+  address, and the directory mails that address the handles it signs in to.
+  The page always answers the same way, so it reveals nothing about who has an
+  account `[D 11-12]`. The directory stores only a keyed hash of each address
+  (HMAC with a key from the deployment secret), written by the Space DO when an
+  email-code method is added or removed `[NEW]`.
 - No passwords `[D 11-10]`.
 - Sign-in identities are unique per space, not across the deployment, so
   linking spaces stays possible later `[D 11-12]`.
@@ -233,10 +239,20 @@ Checked in the Space DO `[D 11-10]`.
   chat, but a card naming the account behind the code completes only with a
   signed-in person's tap `[D 11-11]`.
 
-Session tokens `[NEW]`: `{uid, space, epoch, exp}` signed with K, valid 12
-hours; the SDK refreshes them from the sign-in session, which ends after 30
+Session tokens `[NEW]`: `{uid, space, host, epoch, exp}` signed with K, valid
+12 hours; the SDK refreshes them from the sign-in session, which ends after 30
 days without use. The owner DO checks the epoch against its copy of the grants
 and closes the socket at expiry and on revocation `[D 11-11]`.
+
+The edge only verifies a token, with no lookup `[D 11-12]`:
+
+- K comes from the deployment secret and the token's space id, cached per
+  space. An edited space id derives the wrong key and fails the signature.
+- `host` must be the request's hostname, so a token from one space's host is
+  refused on another's.
+- A valid token routes straight to the person's owner DO. Revocation isn't
+  checked at the edge; the owner DO checks the epoch, and the request goes
+  there anyway.
 
 Signup is `open` or `closed` per deployment. A new space comes from the signup
 template in `gsv.config.ts`. Operators are the admins of the space named
