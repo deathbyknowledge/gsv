@@ -1,6 +1,7 @@
 import runtime from "./system/context.d/00-runtime.md";
 import gsv from "./system/context.d/01-gsv.md";
 import interaction from "./system/context.d/02-interaction.md";
+import speakingForOwner from "./system/context.d/03-speaking-for-the-owner.md";
 import targets from "./system/context.d/05-targets.md";
 import responsibilities from "./system/context.d/10-responsibilities.md";
 import memory from "./system/context.d/15-memory.md";
@@ -19,6 +20,7 @@ export const CONTEXT_SOURCES = {
   // Used by ConfigStore defaults for config/ai/context.d/01-gsv.md.
   "system/context.d/01-gsv.md": gsv,
   "system/context.d/02-interaction.md": interaction,
+  "system/context.d/03-speaking-for-the-owner.md": speakingForOwner,
   // Used by ConfigStore defaults for config/ai/context.d/05-targets.md.
   "system/context.d/05-targets.md": targets,
   // Used by ConfigStore defaults for config/ai/context.d/10-responsibilities.md.

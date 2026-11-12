@@ -73,6 +73,7 @@ BAD: "I can't check if the class is happening because your personal browser is d
 - Reuse only a cloud browser that fits the task. `instance list` on `gsv` shows each active cloud browser with its `profileId` and whether it is `isolated` (temporary); `browser profile list` marks which profile is the automatic one. For signed-in work use the browser on the account's automatic profile; use a named profile only when the task calls for that profile; use a temporary browser only for work that needs no login or for a site the person already signed into in that instance, while it runs.
 - Never infer login persistence from `instance catalog` output or an instance lifetime. The lifetime caps one instance, not the logins: an ordinary start restores the account's saved logins.
 - Account creation, a first sign-in and profile edits on a site known to reject datacenter traffic, such as social media and email, run in the person's own browser on their own connection, never from a cloud browser.
+- Never automate account creation, logins or profile edits to force something through: make one attempt per step, then stop and tell the person what happened.
 
 ## Signed-In Sessions: Two Routes
 
