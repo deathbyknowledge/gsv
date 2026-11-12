@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
+import { hostname, networkInterfaces } from "node:os";
 import { createRequire } from "node:module";
 import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -105,11 +106,12 @@ export async function listWorkspaceFiles(workspace) {
 export function createSourceReviewServer(options = {}) {
   const workspaces = options.workspaces ?? createWorkspaceRegistry(options.manualRoot);
   const initialWorkspace = normalizeWorkspaceId(options.initialWorkspace ?? "prompts", workspaces);
+  const hosts = options.hosts ?? LOCAL_HOSTS;
   let writes = Promise.resolve();
   return createServer(async (request, response) => {
     try {
       setSecurityHeaders(response);
-      assertLocalRequest(request);
+      assertLocalRequest(request, hosts);
       const url = new URL(request.url ?? "/", "http://source-review.local");
       if (request.method === "GET" && url.pathname === "/") {
         return sendFile(response, resolve(TOOL_ROOT, "index.html"), "text/html; charset=utf-8");
@@ -326,11 +328,22 @@ function assertSameOrigin(request) {
   }
 }
 
-function assertLocalRequest(request) {
+// The Host check keeps other websites from reaching the server through DNS rebinding.
+function assertLocalRequest(request, hosts) {
   const port = request.socket.localPort;
-  if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(request.headers.host)) {
-    throw new HttpError(403, "Source review is only available on localhost.");
+  if (!hosts.some((host) => request.headers.host === `${host}:${port}`)) {
+    throw new HttpError(403, "Source review is only available on this machine's addresses.");
   }
+}
+
+const LOCAL_HOSTS = ["127.0.0.1", "localhost"];
+
+// Anyone who can reach these addresses can read and save files in every workspace.
+function networkHosts() {
+  const addresses = Object.values(networkInterfaces()).flat()
+    .filter((address) => address && address.family === "IPv4" && !address.internal)
+    .map((address) => address.address);
+  return [...LOCAL_HOSTS, hostname(), ...addresses];
 }
 
 function setSecurityHeaders(response) {
@@ -392,9 +405,13 @@ function isMainModule() {
 if (isMainModule()) {
   const initialWorkspace = process.argv[2] ?? "prompts";
   const port = Number.parseInt(process.env.GSV_REVIEW_PORT ?? "4178", 10);
-  const server = createSourceReviewServer({ initialWorkspace });
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`GSV source review: http://127.0.0.1:${port}`);
+  const network = process.env.GSV_REVIEW_NETWORK === "1";
+  const hosts = network ? networkHosts() : LOCAL_HOSTS;
+  const server = createSourceReviewServer({ initialWorkspace, hosts });
+  server.listen(port, network ? "0.0.0.0" : "127.0.0.1", () => {
+    for (const host of hosts.filter((host) => host !== "localhost")) {
+      console.log(`GSV source review: http://${host}:${port}`);
+    }
     console.log(`Prompt sources: ${resolve(REPO_ROOT, "workers/gateway/src/prompts")}`);
     console.log(`Manual sources: ${resolve(process.env.GSV_MANUAL_ROOT || resolve(REPO_ROOT, "../gsv-manual"))}`);
   });

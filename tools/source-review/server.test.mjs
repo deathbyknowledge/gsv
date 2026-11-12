@@ -200,6 +200,22 @@ test("source files cannot follow symlinks out of the workspace", async (context)
   await assert.rejects(resolveWorkspacePath({ root: join(root, "prompts"), extensions: new Set([".md"]) }, "linked.md"), /outside/);
 });
 
+test("network mode accepts only the machine's own addresses", async (context) => {
+  const server = createSourceReviewServer({ hosts: ["127.0.0.1", "localhost", "192.168.1.20"] });
+  context.after(() => server.close());
+  const { port } = new URL(await listen(server));
+  const status = (host) => new Promise((resolve, reject) => {
+    get(`http://127.0.0.1:${port}/api/config`, { headers: { host } }, (response) => {
+      response.resume();
+      resolve(response.statusCode);
+    }).on("error", reject);
+  });
+  assert.equal(await status(`192.168.1.20:${port}`), 200);
+  assert.equal(await status(`localhost:${port}`), 200);
+  assert.equal(await status(`attacker.example:${port}`), 403);
+  assert.equal(await status("192.168.1.20:1"), 403);
+});
+
 test("line diffs keep unchanged context and merge nearby changes", () => {
   assert.deepEqual(diffLines("a\nb\nc\n", "a\nc\nd\n").map(({ kind, text }) => `${kind}:${text}`),
     ["same:a", "del:b", "same:c", "add:d"]);

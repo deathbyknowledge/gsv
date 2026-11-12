@@ -11,6 +11,9 @@ npm run review:context
 ```
 
 Each command listens on `http://127.0.0.1:4178`. Set `GSV_REVIEW_PORT` to use another port.
+Set `GSV_REVIEW_NETWORK=1` to listen on every interface and accept this machine's
+hostname and IPv4 addresses. Anyone who can reach them can read and save files
+in every workspace, so use it only on a trusted network.
 
 The prompt workspace is for editing the repository's shipped instructions. Select
 an entry under its scope and edit it beside the **Entry** preview. Each source
