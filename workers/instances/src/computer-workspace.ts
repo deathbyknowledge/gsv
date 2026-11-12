@@ -17,12 +17,13 @@ const sentSchema = z.union([z.object({ ok: z.literal(true), size: z.number().int
 const receivedSchema = z.union([z.object({ ok: z.literal(true) }), z.object({ ok: z.literal(false), error: z.string() })]);
 
 async function run(connection: ComputerConnection, input: string, deadlineAt: number): Promise<void> {
-  let args: { input: string; yieldMs: number; timeout?: number; sessionId?: string } = { input, yieldMs: YIELD_MS, timeout: Math.max(1, deadlineAt - Date.now()) };
+  let sessionId: string | undefined;
   for (;;) {
+    const args = sessionId ? { input: "", yieldMs: YIELD_MS, sessionId } : { input, yieldMs: YIELD_MS, timeout: Math.max(1, deadlineAt - Date.now()) };
     const response = await connection.execute({ type: "req", id: crypto.randomUUID(), call: "shell.exec", args }, deadlineAt);
     if (!response.ok) throw new Error(response.error.message);
     const result = shellResultSchema.parse(response.data);
-    if (result.status === "running" && result.sessionId) { args = { input: "", yieldMs: YIELD_MS, sessionId: result.sessionId }; continue; }
+    if (result.status === "running" && result.sessionId) { sessionId = result.sessionId; continue; }
     if (result.status !== "completed" || result.exitCode !== 0) throw new Error(`Workspace command failed: ${(result.output ?? "").slice(-2000)}`);
     return;
   }
