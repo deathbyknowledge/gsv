@@ -149,7 +149,7 @@ describe("open registration", () => {
       const record = telemetryRecordSchema.safeParse(value);
       return record.success ? [record.data] : [];
     });
-    expect(records).toEqual([expect.objectContaining({
+    expect(records.filter((record) => record.event.stream === "operational")).toEqual([expect.objectContaining({
       component: "accounts", installationId: space.installationId,
       event: { stream: "operational", name: "installation.setup.failed", properties: expect.objectContaining({
         diagnosticId: JSON.parse(failure!.last_error).diagnosticId, stage: "activation", outcome: "failed",
@@ -162,26 +162,39 @@ describe("open registration", () => {
 });
 
 describe("signup attribution", () => {
-  it("keeps the first request's origin and never rewrites it on a resumed signup", async () => {
-    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
-    await signup.prepare(operationId, principalId, name, { placement: "hero", example: "tickets" });
-    await signup.prepare(operationId, principalId, name, { placement: "final-call" });
-    const stored = await db.prepare("SELECT attribution_json FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ attribution_json: string }>();
-    expect(JSON.parse(stored!.attribution_json)).toEqual({ placement: "hero", example: "tickets" });
+  const spyLog = () => vi.spyOn(console, "log").mockImplementation(() => {});
+  const recorded = (log: ReturnType<typeof spyLog>) => log.mock.calls.flatMap(([value]) => {
+    const record = telemetryRecordSchema.safeParse(value);
+    return record.success ? [record.data.event] : [];
+  });
+  const reporting = new InstallationSignup(db, accounts, onboarding, true, undefined, { GSV_TELEMETRY_ENABLED: "1" });
+
+  it("reports where a signup came from once, when the reservation is first created", async () => {
+    const log = spyLog();
+    try {
+      const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
+      await reporting.prepare(operationId, principalId, name, { placement: "hero", example: "tickets", utmSource: "facebook", utmCampaign: "launch" });
+      await reporting.prepare(operationId, principalId, name, { placement: "final-call" });
+      await reporting.prepare(operationId, principalId, name);
+      expect(recorded(log).filter((event) => event.name === "installation.attributed")).toEqual([{
+        stream: "product", name: "installation.attributed",
+        properties: { origin: "website", placement: "hero", example: "tickets", utmSource: "facebook", utmCampaign: "launch" },
+      }]);
+    } finally {
+      log.mockRestore();
+    }
   });
 
-  it("keeps an operation that started direct even when a retry carries an origin", async () => {
-    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
-    await signup.prepare(operationId, principalId, name);
-    await signup.prepare(operationId, principalId, name, { placement: "hero" });
-    const stored = await db.prepare("SELECT attribution_json FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ attribution_json: string | null }>();
-    expect(stored!.attribution_json).toBeNull();
-  });
-
-  it("stores nothing for a direct signup", async () => {
-    const principalId = await owner(), operationId = crypto.randomUUID();
-    await signup.prepare(operationId, principalId, handle());
-    const stored = await db.prepare("SELECT attribution_json FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ attribution_json: string | null }>();
-    expect(stored!.attribution_json).toBeNull();
+  it("reports a campaign signup and a direct signup by their origin", async () => {
+    const log = spyLog();
+    try {
+      await reporting.prepare(crypto.randomUUID(), await owner(), handle(), { utmSource: "facebook" });
+      await reporting.prepare(crypto.randomUUID(), await owner(), handle());
+      expect(recorded(log).filter((event) => event.name === "installation.attributed").map((event) => event.properties)).toEqual([
+        { origin: "campaign", utmSource: "facebook" }, { origin: "direct" },
+      ]);
+    } finally {
+      log.mockRestore();
+    }
   });
 });

@@ -4,7 +4,9 @@ import { InstallationOnboardingStore } from "./onboarding";
 import { parseOpaqueId } from "./domain";
 import { OwnerAuthError } from "./owner-auth-store";
 import { queueProductEmail, type ProductEmailChoice } from "./product-email";
-import { emitTelemetry, exceptionDiagnostics, type SignupAttribution, type TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
+import {
+  emitTelemetry, exceptionDiagnostics, installationAttributedProperties, type SignupAttribution, type TelemetryEnvironment,
+} from "@humansandmachines/gsv/telemetry";
 
 export type PendingSetup = { operationId: string; handle: string; origin: string };
 export type SignupPolicy = {
@@ -47,9 +49,12 @@ export class InstallationSignup {
     const existing = await this.accounts.getReservationByOperation(operationId);
     if (!existing && !this.enabled) throw new Error("Registration is currently closed.");
     if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
-    // The origin is written with the reservation itself, so the request that reserves the operation
-    // sets it once and a retry or resumed signup can neither lose nor rewrite it.
-    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true, attribution });
+    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true });
+    // Where the signup came from is reported once, by the request that created the reservation, under
+    // the Ship's own pseudonym; a retry or resumed signup replays the reservation and reports nothing.
+    // Nothing is stored: the record is the only copy.
+    if (space.created) emitTelemetry(this.telemetry, { component: "accounts", installationId: space.installationId,
+      event: { stream: "product", name: "installation.attributed", properties: installationAttributedProperties(attribution) } });
     const owned = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_setup = 1 AND owner_principal_id = ?")
       .bind(space.installationId, principalId).first();
     if (!owned) throw new Error("Ship activation is unavailable.");

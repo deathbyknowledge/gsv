@@ -10,18 +10,30 @@ export type WelcomeState = {
   operationId: string | null;
   handle: string | null;
   contactInvite?: string | null;
-  /** Where the signup link was clicked, as the website's closed slugs; reported once the Ship activates. */
+  /** The slugs the signup link carried: the website's placement and example, and the campaign tags; reported when the Ship is reserved. */
   attribution?: SignupAttribution | null;
 };
-export type SignupAttribution = { placement: string; example?: string };
+export type SignupAttribution = { placement?: string; example?: string; utmSource?: string; utmCampaign?: string };
 const ATTRIBUTION_SLUG = /^[a-z0-9-]{1,32}$/;
+/** The parameters a signup link may carry, and the field each one reports as. */
+export const SIGNUP_LINK_SLUGS = [
+  { key: "placement", name: "from", part: "fragment" }, { key: "example", name: "example", part: "fragment" },
+  { key: "utmSource", name: "utm_source", part: "query" }, { key: "utmCampaign", name: "utm_campaign", part: "query" },
+] as const satisfies ReadonlyArray<{ key: keyof SignupAttribution; name: string; part: "fragment" | "query" }>;
 
-/** Read `from` and `example` from a signup URL fragment; anything outside the slug shape is dropped. */
-export function signupAttributionFromFragment(fragment: URLSearchParams): SignupAttribution | null {
-  const placement = fragment.get("from");
-  if (!placement || !ATTRIBUTION_SLUG.test(placement)) return null;
-  const example = fragment.get("example");
-  return example && ATTRIBUTION_SLUG.test(example) ? { placement, example } : { placement };
+/**
+ * Read the website's `from` and `example` from a signup URL's fragment and the campaign's
+ * `utm_source` and `utm_campaign` from its query; anything outside the slug shape is dropped,
+ * and a tag is lowercased first so an ad's own casing does not lose it.
+ */
+export function signupAttributionFromLink(url: URL): SignupAttribution | null {
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  const attribution: SignupAttribution = {};
+  for (const slug of SIGNUP_LINK_SLUGS) {
+    const value = (slug.part === "fragment" ? fragment : url.searchParams).get(slug.name)?.trim().toLowerCase();
+    if (value && ATTRIBUTION_SLUG.test(value)) attribution[slug.key] = value;
+  }
+  return Object.keys(attribution).length ? attribution : null;
 }
 export type WelcomeSnapshot = { revision: string; value: WelcomeState | null };
 export type WelcomeStorage = { save(revision: string, value: WelcomeState | null): Promise<WelcomeSnapshot> };

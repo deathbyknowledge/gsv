@@ -93,13 +93,20 @@ describe("signup entrypoint recovery", () => {
 });
 
 describe("signup attribution", () => {
-  it("keeps the website's signup origin for activation and takes it off the URL", async () => {
-    window.location.href = `${origin}/#from=hero&example=plan-a-trip`;
+  it("keeps the website's placement and the campaign tags for the reservation and takes them off the URL", async () => {
+    window.location.href = `${origin}/?utm_source=Facebook&utm_campaign=launch-nov&utm_content=photo#from=hero&example=plan-a-trip`;
     const props = await screen();
-    expect((await props.load()).state.attribution).toEqual({ placement: "hero", example: "plan-a-trip" });
+    expect((await props.load()).state.attribution).toEqual({ placement: "hero", example: "plan-a-trip", utmSource: "facebook", utmCampaign: "launch-nov" });
     // SAFETY: the page passes the URL object it rewrote as the third replaceState argument.
     const replaced = vi.mocked(window.history.replaceState).mock.lastCall![2] as URL;
     expect(replaced.hash).toBe("");
+    expect(replaced.search).toBe("?utm_content=photo");
+  });
+
+  it("keeps a campaign tag from an ad link that never touched the website", async () => {
+    window.location.href = `${origin}/?utm_source=facebook`;
+    const props = await screen();
+    expect((await props.load()).state.attribution).toEqual({ utmSource: "facebook" });
   });
 
   it("drops an origin left over from an abandoned attributed visit when signup starts again directly", async () => {
@@ -119,8 +126,8 @@ describe("signup attribution", () => {
     expect((await props.load()).state.attribution).toEqual({ placement: "hero" });
   });
 
-  it("ignores an origin that is not a plain slug", async () => {
-    window.location.href = `${origin}/#from=Hero%20Banner&example=x`;
+  it("ignores slugs that are not plain", async () => {
+    window.location.href = `${origin}/?utm_source=face%20book&utm_campaign=${"x".repeat(33)}#from=Hero%20Banner&example=Plan%20A`;
     const props = await screen();
     expect((await props.load()).state.attribution).toBeNull();
   });

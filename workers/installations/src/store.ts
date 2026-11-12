@@ -1,5 +1,4 @@
 import { normalizeUsernamePolicy } from "./username-policy";
-import type { SignupAttribution } from "@humansandmachines/gsv/telemetry";
 import type {
   InstallationDirectoryResult,
   InstallationIdentity,
@@ -120,9 +119,7 @@ export class AccountStore {
     ownerSetup?: boolean;
     /** Trusted operator allocation only; public request bodies never supply this. */
     allowReservedHandle?: boolean;
-    /** Where the signup link was clicked, already classified; written with the reservation, never updated. */
-    attribution?: SignupAttribution;
-  }): Promise<InstallationReservation> {
+  }): Promise<InstallationReservation & { created: boolean }> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
     const operationId = parseOpaqueId(input.operationId, "operationId");
     const handle = this.validateHandle(input.handle);
@@ -131,7 +128,7 @@ export class AccountStore {
       if (existing.ownerPrincipalId !== principalId || existing.handle !== handle) {
         throw new Error("operationId was already used for a different reservation");
       }
-      return existing;
+      return { ...existing, created: false };
     }
 
     const identity = installationIdentity(
@@ -184,9 +181,9 @@ export class AccountStore {
         this.db.prepare(
           `INSERT INTO provisioning_operations (
              operation_id, installation_id, principal_id, kind, state,
-             attempt, last_error, updated_at, attribution_json
-           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?, ?)`,
-        ).bind(operationId, identity.installationId, principalId, now, input.attribution ? JSON.stringify(input.attribution) : null),
+             attempt, last_error, updated_at
+           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?)`,
+        ).bind(operationId, identity.installationId, principalId, now),
       ]);
     } catch (error) {
       const replay = await this.getReservationByOperation(operationId);
@@ -194,7 +191,7 @@ export class AccountStore {
         if (replay.ownerPrincipalId !== principalId || replay.handle !== handle) {
           throw new Error("operationId was already used for a different reservation");
         }
-        return replay;
+        return { ...replay, created: false };
       }
       const claimed = await this.db.prepare(
         "SELECT id FROM installations WHERE handle = ? OR canonical_origin = ? LIMIT 1",
@@ -216,7 +213,7 @@ export class AccountStore {
     if (!reservation) {
       throw new Error("installation reservation was not committed");
     }
-    return reservation;
+    return { ...reservation, created: true };
   }
 
   async resetInstallation(input: {
