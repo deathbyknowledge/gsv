@@ -106,6 +106,14 @@ describe("repeat rules", () => {
     expect(dates(start, "FREQ=DAILY;UNTIL=20271107T052959Z")).toEqual(["2027-11-06T01:30:00"]);
   });
 
+  it("ends at a UTC UNTIL by instant for a date the change to summer time moves later", () => {
+    const start = zoned("2027-03-13T02:30:00", NEW_YORK);
+
+    // 02:30 on 14 March doesn't exist in New York and reads as 03:30, at 07:30Z, after an UNTIL at 03:00.
+    expect(dates(start, "FREQ=DAILY;UNTIL=20270314T070000Z")).toEqual(["2027-03-13T02:30:00"]);
+    expect(dates(start, "FREQ=DAILY;UNTIL=20270314T073000Z")).toEqual(["2027-03-13T02:30:00", "2027-03-14T02:30:00"]);
+  });
+
   it("skips months without the day and years without 29 February", () => {
     expect(dates(zoned("2027-01-31T18:00:00", AMSTERDAM), "FREQ=MONTHLY;COUNT=4", AMSTERDAM)).toEqual([
       "2027-01-31T18:00:00", "2027-03-31T18:00:00", "2027-05-31T18:00:00", "2027-07-31T18:00:00",
@@ -211,6 +219,29 @@ describe("a series and its changed dates", () => {
     // 01:30 on 7 November comes first, at 05:30Z; by 06:15Z New York reads 01:15 a second time.
     expect(next("2027-11-07T05:15:00Z")).toEqual([zoned("2027-11-07T01:30:00", NEW_YORK), zoned("2027-11-08T01:30:00", NEW_YORK)]);
     expect(next("2027-11-07T06:15:00Z")).toEqual([zoned("2027-11-08T01:30:00", NEW_YORK), zoned("2027-11-09T01:30:00", NEW_YORK)]);
+  });
+
+  it("lists a date the change to summer time moves later until that later time has passed", () => {
+    const [nightly] = calendarSeries(calendarEvents(parseCalendar([
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:nightly@ship.space",
+      "DTSTAMP:20270301T120000Z",
+      "DTSTART;TZID=America/New_York:20270313T023000",
+      "RRULE:FREQ=DAILY",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      "",
+    ].join("\r\n"))));
+    const { event } = nightly;
+    if (!event?.recurrence) throw new Error("expected a repeating event");
+    const rule = parseRepeatRule(event.recurrence);
+    const next = (now: string) => nextOccurrences({ ...nightly, event }, rule, NEW_YORK, Date.parse(now), 2)
+      .map((occurrence) => occurrence.start);
+
+    // 02:30 on 14 March reads as 03:30, at 07:30Z; at 07:00Z New York's clocks read 03:00.
+    expect(next("2027-03-14T07:00:00Z")).toEqual([zoned("2027-03-14T02:30:00", NEW_YORK), zoned("2027-03-15T02:30:00", NEW_YORK)]);
+    expect(next("2027-03-14T07:31:00Z")).toEqual([zoned("2027-03-15T02:30:00", NEW_YORK), zoned("2027-03-16T02:30:00", NEW_YORK)]);
   });
 
   it("finds an occurrence by date or instant, or the dates either side", () => {

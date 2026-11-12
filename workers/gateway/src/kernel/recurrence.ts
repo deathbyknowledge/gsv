@@ -4,7 +4,7 @@
  * clock of the first in its own time zone, as RFC 5545 expands a start with a TZID.
  */
 
-import { calendarInstant, calendarTime, type CalendarEvent, type CalendarTime } from "./icalendar";
+import { addDays, calendarInstant, calendarTime, type CalendarEvent, type CalendarTime } from "./icalendar";
 import { formatLocalTime, resolveLocalTime } from "./timezone";
 
 export const WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] as const;
@@ -379,8 +379,9 @@ function monthDays(year: number, month: number, rule: RepeatRule): number[] {
 
 /**
  * Whether an occurrence starts after UNTIL, in the start's own terms. UNTIL is UTC beside a zoned
- * start, so it is read as that zone's wall clock; a start past that wall clock can still come
- * first in an hour a clock change repeats, so that start is compared by instant. Null when that
+ * start, so it is read as that zone's wall clock. Near it the wall clock can mislead: a start past
+ * it can still come first in an hour a clock change repeats, and one a change skips reads later,
+ * by up to a day. So a start from the day before UNTIL on is compared by instant. Null when that
  * zone can't be read.
  */
 function afterUntil(start: CalendarTime, until: CalendarTime, timeZone: string): ((time: CalendarTime) => boolean) | null {
@@ -390,13 +391,13 @@ function afterUntil(start: CalendarTime, until: CalendarTime, timeZone: string):
     return (next) => pastWall(next, last);
   }
   const zone = start.timeZone ?? timeZone;
-  let last: string;
+  let near: string;
   try {
-    last = formatLocalTime(until.ms, zone).slice(0, 19);
+    near = addDays(formatLocalTime(until.ms, zone).slice(0, 10), -1);
   } catch {
     return null;
   }
-  return (next) => pastWall(next, last) && (calendarInstant(next, zone) ?? Number.POSITIVE_INFINITY) > until.ms;
+  return (next) => wallClock(next).date >= near && (calendarInstant(next, zone) ?? Number.POSITIVE_INFINITY) > until.ms;
 }
 
 function pastWall(time: CalendarTime, last: string): boolean {
@@ -405,9 +406,10 @@ function pastWall(time: CalendarTime, last: string): boolean {
 }
 
 /**
- * Whether a time starts at or after an instant, compared as wall clocks where it was written. A
- * time that reads at or after the instant's wall clock can still have passed in an hour a clock
- * change repeats, so that one is compared by instant.
+ * Whether a time starts at or after an instant. A time dated two or more days before the instant,
+ * where it was written, has passed; a later one is compared by instant, as the wall clock can
+ * mislead near it: a time in an hour a clock change repeats can have passed, and one a change
+ * skips reads later, by up to a day.
  */
 function notBefore(after: number, timeZone: string): (time: CalendarTime) => boolean {
   const walls = new Map<string, string | null>();
@@ -427,7 +429,7 @@ function notBefore(after: number, timeZone: string): (time: CalendarTime) => boo
     const now = wallIn(zone);
     if (now === null) return false;
     if (time.kind === "date") return time.date >= now.slice(0, 10);
-    return time.local >= now && (calendarInstant(time, zone) ?? Number.POSITIVE_INFINITY) >= after;
+    return time.local.slice(0, 10) >= addDays(now.slice(0, 10), -1) && (calendarInstant(time, zone) ?? Number.POSITIVE_INFINITY) >= after;
   };
 }
 
