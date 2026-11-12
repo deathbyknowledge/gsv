@@ -1,4 +1,10 @@
-import { MAIL_MAX_OUTBOUND_TEXT_BYTES as ABSOLUTE_MAX_TEXT_BYTES } from "@humansandmachines/gsv/services/mail";
+import {
+  MAIL_MAX_INVITE_BYTES,
+  MAIL_MAX_OUTBOUND_TEXT_BYTES as ABSOLUTE_MAX_TEXT_BYTES,
+  MAIL_MAX_QUOTE_BYTES,
+  MAIL_MAX_RECIPIENTS,
+  MAIL_MAX_SENDER_NAME_BYTES,
+} from "@humansandmachines/gsv/services/mail";
 import { configuredDomainAliases } from "@humansandmachines/gsv/services/deployment";
 import {
   bodyToBytes,
@@ -9,10 +15,13 @@ import {
   type ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
 import { mailAddressForHandle } from "./address";
-import type { MailEnv, MailLimits } from "./env";
+import { composeMail } from "./compose";
+import { mailFooter, mailSending, type MailEnv, type MailLimits, type MailSending } from "./env";
 import type { MailPolicy } from "./policy";
-import { emitTelemetry } from "@humansandmachines/gsv/telemetry";
+import { emitTelemetry, exceptionDiagnostics, type ExceptionDiagnostics } from "@humansandmachines/gsv/telemetry";
 import type { MailRetirement } from "./retirement";
+import { renderMail, type MailFooter, type RenderedMail } from "./render";
+import { EmailSendingError, sendRawMail, type SentMail } from "./sending";
 interface ExternalObject { [key: string]: ExternalValue; }
 type ExternalValue = string | number | boolean | ExternalObject | null | undefined;
 
@@ -26,7 +35,14 @@ const MAX_ADDRESS_LENGTH = 320;
 const MAX_SUBJECT_LENGTH = 998;
 const MAX_HEADER_LENGTH = 998;
 const MAX_OPAQUE_ID_LENGTH = 256;
+// A stored sender is a bounded name and address: `Name <address>`.
+const MAX_QUOTE_SENDER_BYTES = 2048;
 const TEXT_ENCODER = new TextEncoder();
+const RATE_LIMITED = "provider_rate_limited";
+/** Codes for mail Email Sending refused, or took and could deliver to nobody. */
+const PROVIDER_FAILURES: ReadonlySet<string> = new Set([
+  RATE_LIMITED, "sender_unavailable", "provider_rejected", "recipient_suppressed", "recipient_rejected",
+]);
 
 type OutboundState =
   | "claiming"
@@ -56,8 +72,10 @@ type OutboundRow = {
 
 type ValidatedOutbound = {
   draft: ManagedOutboundMailDraft;
-  text: string;
-  headers?: Record<string, string>;
+  /** To and Cc together; each counts toward the daily message allowance. */
+  recipients: string[];
+  /** The message as recipients see it, in MIME: HTML and plain text, footer and quote included. */
+  mime: string;
 };
 
 export class OutboundDeliveryCoordinator {
@@ -242,11 +260,13 @@ export class OutboundDeliveryCoordinator {
     let expectedFrom: string;
     let allowedSenders: ReadonlySet<string>;
     let limits: MailLimits;
+    let footer: MailFooter | undefined;
     try {
       const [installation, allowance] = await Promise.all([
         this.env.ACCOUNTS.resolveInstallation(this.installationId), this.policy.limits(),
       ]);
       limits = allowance;
+      footer = mailFooter(this.env);
       if (this.retirement.retired) return;
       if (!installation.found) {
         this.setTerminal(reference, "failed", "installation_inactive");
@@ -281,6 +301,13 @@ export class OutboundDeliveryCoordinator {
     if (!limits.outboundEnabled) {
       this.setTerminal(reference, "failed", "outbound_disabled");
       await this.notify(this.requireByReference(reference));
+      return;
+    }
+    let sending: MailSending;
+    try {
+      sending = mailSending(this.env);
+    } catch (error) {
+      this.deferClaim(reference, reserved.claim_attempts, String(error));
       return;
     }
     if (reserved.expected_from === null) {
@@ -335,6 +362,7 @@ export class OutboundDeliveryCoordinator {
           claim,
           allowedSenders,
           limits,
+          footer,
         );
       } catch (error) {
         if (this.retirement.retired) return;
@@ -360,7 +388,7 @@ export class OutboundDeliveryCoordinator {
         await this.notify(this.requireByReference(reference));
         return;
       }
-      if (!this.reserveAttempt(reference, outbound.draft.textSize, limits)) {
+      if (!this.reserveAttempt(reference, outbound.draft.textSize, outbound.recipients.length, limits)) {
         this.emitTerminal(this.requireByReference(reference));
         await this.notify(this.requireByReference(reference));
         return;
@@ -369,17 +397,34 @@ export class OutboundDeliveryCoordinator {
       try {
         await this.scheduleNextAlarm();
         this.retirement.requireLive();
-        const result = await this.send(outbound);
+        const sent = await this.send(outbound, sending);
         if (this.retirement.retired) return;
-        const messageId = parseProviderMessageId(result.messageId);
-        this.setTerminal(reference, "accepted", null, messageId);
-      } catch {
+        const undeliverable = undelivered(sent);
+        if (undeliverable === "recipient_suppressed") {
+          // Email Sending dropped every recipient before delivery, so nothing left.
+          this.refuseAttempt(reference, outbound, undeliverable, reserved.claim_attempts, {});
+        } else if (undeliverable) {
+          this.setTerminal(reference, "failed", undeliverable);
+        } else {
+          this.setTerminal(reference, "accepted", null, parseProviderMessageId(sent.messageId));
+        }
+      } catch (error) {
         if (this.retirement.retired) return;
-        this.setTerminal(
-          reference,
-          "unknown",
-          "delivery_outcome_unknown",
-        );
+        const diagnostics = exceptionDiagnostics(error);
+        console.warn(JSON.stringify({
+          service: "managed_mail",
+          event: "provider_error",
+          phase: "outbound_send",
+          errorType: diagnostics.exceptionName ?? "Error",
+          errorCode: diagnostics.errorCode,
+        }));
+        const refusal = error instanceof EmailSendingError ? providerRefusal(error) : undefined;
+        if (refusal) {
+          this.refuseAttempt(reference, outbound, refusal, reserved.claim_attempts, diagnostics);
+          await this.scheduleNextAlarm();
+        } else {
+          this.setTerminal(reference, "unknown", "delivery_outcome_unknown", null, diagnostics);
+        }
       }
       await this.notify(this.requireByReference(reference));
     } finally {
@@ -394,6 +439,7 @@ export class OutboundDeliveryCoordinator {
     claim: ManagedOutboundMailClaim,
     allowedSenders: ReadonlySet<string>,
     limits: MailLimits,
+    footer: MailFooter | undefined,
   ): Promise<ValidatedOutbound> {
     if (!claim || claim.constructor !== Object) {
       throw new InvalidDraftError();
@@ -401,7 +447,7 @@ export class OutboundDeliveryCoordinator {
     const draft = claim.draft;
     if (
       !draft
-      || draft.version !== 1
+      || !validVersion(draft)
       || draft.outboundId !== reference.outboundId
       || draft.fingerprint !== reference.fingerprint
       || !validFingerprint(draft.bodyDigest)
@@ -415,16 +461,19 @@ export class OutboundDeliveryCoordinator {
       )
       || !validAddress(draft.from)
       || !allowedSenders.has(draft.from)
-      || !validAddress(draft.to)
       || !validSubject(draft.subject)
       || !validOptionalHeader(draft.inReplyTo)
       || !validOptionalHeader(draft.references)
       || !validOptionalOpaqueId(draft.replyToMessageId)
+      || !validOptionalSenderName(draft.fromName)
+      || !validOptionalQuote(draft.quote)
       || !claim.body
       || claim.body.length !== draft.textSize
     ) {
       throw new InvalidDraftError();
     }
+    const recipients = recipientList(draft.to, draft.cc);
+    if (recipients === null) throw new InvalidDraftError();
     const bytes = await bodyToBytes(
       claim.body,
       Math.min(ABSOLUTE_MAX_TEXT_BYTES, limits.maxOutboundTextBytes),
@@ -445,30 +494,39 @@ export class OutboundDeliveryCoordinator {
     } catch {
       throw new InvalidDraftError();
     }
-    const headers: Record<string, string> = {};
-    if (draft.inReplyTo) headers["In-Reply-To"] = draft.inReplyTo;
-    if (draft.references) headers.References = draft.references;
-    const validated: ValidatedOutbound = {
-      draft,
-      text,
-    };
-    if (Object.keys(headers).length > 0) validated.headers = headers;
-    return validated;
+    let rendered: RenderedMail;
+    try {
+      rendered = renderMail(text, { footer, quote: draft.quote });
+    } catch {
+      throw new InvalidDraftError();
+    }
+    const mime = composeMail({
+      from: draft.from,
+      fromName: draft.fromName,
+      to: Array.isArray(draft.to) ? draft.to : [draft.to],
+      cc: draft.cc,
+      subject: draft.subject,
+      inReplyTo: draft.inReplyTo,
+      references: draft.references,
+      text: rendered.text,
+      html: rendered.html,
+      invite: draft.invite,
+    });
+    return { draft, recipients, mime };
   }
 
-  private async send(outbound: ValidatedOutbound): Promise<EmailSendResult> {
-    return await this.env.EMAIL.send({
-      to: outbound.draft.to,
-      from: outbound.draft.from,
-      subject: outbound.draft.subject,
-      text: outbound.text,
-      headers: outbound.headers,
-    });
+  private async send(outbound: ValidatedOutbound, sending: MailSending): Promise<SentMail> {
+    return await sendRawMail(
+      sending,
+      { from: outbound.draft.from, recipients: outbound.recipients, mime: outbound.mime },
+      this.retirement.cancellation.signal,
+    );
   }
 
   private reserveAttempt(
     reference: ManagedOutboundMailReference,
     textSize: number,
+    recipients: number,
     limits: MailLimits,
   ): boolean {
     return this.ctx.storage.transactionSync(() => {
@@ -492,7 +550,7 @@ export class OutboundDeliveryCoordinator {
         day,
       ).one();
       if (
-        usage.outbound_messages + 1 > limits.dailyOutboundMessages
+        usage.outbound_messages + recipients > limits.dailyOutboundMessages
         || usage.outbound_bytes + textSize > limits.dailyOutboundBytes
       ) {
         this.ctx.storage.sql.exec(
@@ -511,9 +569,10 @@ export class OutboundDeliveryCoordinator {
       }
       this.ctx.storage.sql.exec(
         `UPDATE mail_daily_usage
-         SET outbound_messages = outbound_messages + 1,
+         SET outbound_messages = outbound_messages + ?,
              outbound_bytes = outbound_bytes + ?
          WHERE day = ?`,
+        recipients,
         textSize,
         day,
       );
@@ -531,6 +590,53 @@ export class OutboundDeliveryCoordinator {
         reference.fingerprint,
       );
       return true;
+    });
+  }
+
+  /**
+   * The provider refused the send before handing it on, so the attempt stops counting toward
+   * the daily allowance. A rate limit returns the delivery to claiming for a later attempt;
+   * any other refusal fails it.
+   */
+  private refuseAttempt(
+    reference: ManagedOutboundMailReference,
+    outbound: ValidatedOutbound,
+    errorCode: string,
+    attempts: number,
+    diagnostics: ExceptionDiagnostics,
+  ): void {
+    this.ctx.storage.transactionSync(() => {
+      const row = this.requireByReference(reference);
+      if (row.state !== "attempting") return;
+      this.ctx.storage.sql.exec(
+        `UPDATE mail_daily_usage
+         SET outbound_messages = outbound_messages - ?,
+             outbound_bytes = outbound_bytes - ?
+         WHERE day = ?`,
+        outbound.recipients.length,
+        outbound.draft.textSize,
+        row.usage_day,
+      );
+      if (errorCode !== RATE_LIMITED) {
+        this.setTerminal(reference, "failed", errorCode, null, diagnostics);
+        return;
+      }
+      const now = Date.now();
+      this.ctx.storage.sql.exec(
+        `UPDATE mail_outbound_deliveries
+         SET state = 'claiming', error_code = ?, usage_day = NULL,
+             attempting_expires_at = NULL, claim_next_attempt_at = ?,
+             updated_at = ?
+         WHERE outbound_id = ? AND fingerprint = ? AND state = 'attempting'`,
+        errorCode,
+        now + claimRetryDelay(attempts),
+        now,
+        reference.outboundId,
+        reference.fingerprint,
+      );
+      emitTelemetry(this.env, { installationId: this.installationId, component: "mail", event: {
+        stream: "operational", name: "mail.work.deferred", properties: { stage: "outbound_send", reason: "rate_limited" },
+      } });
     });
   }
 
@@ -717,6 +823,7 @@ export class OutboundDeliveryCoordinator {
     state: "accepted" | "failed" | "unknown",
     errorCode: string | null,
     providerMessageId: string | null = null,
+    diagnostics: ExceptionDiagnostics = {},
   ): void {
     const previous = this.requireByReference(reference);
     const now = Date.now();
@@ -735,17 +842,18 @@ export class OutboundDeliveryCoordinator {
       reference.outboundId,
       reference.fingerprint,
     );
-    if (!isTerminal(previous.state)) this.emitTerminal(this.requireByReference(reference));
+    if (!isTerminal(previous.state)) this.emitTerminal(this.requireByReference(reference), diagnostics);
   }
 
-  private emitTerminal(row: OutboundRow): void {
+  private emitTerminal(row: OutboundRow, diagnostics: ExceptionDiagnostics = {}): void {
     if (!isTerminal(row.state)) return;
     const reason = row.state === "accepted" ? "none" : row.state === "unknown" ? "provider_unknown"
       : row.error_code === "outbound_disabled" ? "disabled" : row.error_code === "outbound_quota" ? "quota"
-      : row.error_code === "installation_inactive" ? "inactive" : "invalid";
+      : row.error_code === "installation_inactive" ? "inactive"
+      : PROVIDER_FAILURES.has(row.error_code ?? "") ? "provider_refused" : "invalid";
     emitTelemetry(this.env, { installationId: this.installationId, component: "mail",
       event: { stream: "operational", name: "mail.delivery.finished", properties: {
-        outcome: row.state, reason, durationMs: Math.max(0, row.updated_at - row.created_at),
+        ...diagnostics, outcome: row.state, reason, durationMs: Math.max(0, row.updated_at - row.created_at),
       } } });
   }
 
@@ -912,16 +1020,104 @@ function validSubject(value: ExternalValue): value is string {
     && !/\p{Cc}/u.test(value);
 }
 
+/** A threading header: message ids are printable ASCII, so the header needs no encoding. */
 function validOptionalHeader(value: ExternalValue): boolean {
   return value === undefined
     || (String(value) === value
       && value.length > 0
-      && TEXT_ENCODER.encode(value).byteLength <= MAX_HEADER_LENGTH
-      && !/\p{Cc}/u.test(value));
+      && value.length <= MAX_HEADER_LENGTH
+      && /^[\x20-\x7e]+$/.test(value));
 }
 
 function validOptionalOpaqueId(value: ExternalValue): boolean {
   return value === undefined || validOpaqueId(value);
+}
+
+/** Everyone a draft reaches, or null unless each is a distinct valid address within the limit. */
+function recipientList(
+  to: ManagedOutboundMailDraft["to"],
+  cc: ManagedOutboundMailDraft["cc"],
+): string[] | null {
+  if (Array.isArray(to) && to.length === 0) return null;
+  if (cc !== undefined && !Array.isArray(cc)) return null;
+  const addresses = [...(Array.isArray(to) ? to : [to]), ...(cc ?? [])];
+  if (addresses.length > MAIL_MAX_RECIPIENTS || !addresses.every(validAddress)) return null;
+  const distinct = new Set(addresses.map((address) => address.toLowerCase()));
+  return distinct.size === addresses.length ? addresses : null;
+}
+
+/**
+ * The code the owner sees for a send Email Sending refused. A refused request was never handed
+ * on: a rate limit returns it to claiming, and a credential, account or request problem fails
+ * it. A server error or a lost answer stays unknown, since the message may already have left.
+ */
+function providerRefusal(error: EmailSendingError): string | undefined {
+  if (error.status < 400 || error.status >= 500) return undefined;
+  if (error.status === 429) return RATE_LIMITED;
+  return [401, 403, 404].includes(error.status) ? "sender_unavailable" : "provider_rejected";
+}
+
+/** Why nobody will get a message Email Sending took, or undefined while someone may. */
+function undelivered(sent: SentMail): "recipient_suppressed" | "recipient_rejected" | undefined {
+  if (sent.delivered.length > 0 || sent.queued.length > 0) return undefined;
+  if (sent.permanentBounces.length > 0) return "recipient_rejected";
+  return sent.suppressed.length > 0 ? "recipient_suppressed" : undefined;
+}
+
+function validOptionalSenderName(value: ExternalValue): boolean {
+  return value === undefined
+    || (String(value) === value
+      && value.length > 0
+      && value.trim() === value
+      && TEXT_ENCODER.encode(value).byteLength <= MAIL_MAX_SENDER_NAME_BYTES
+      && !/\p{Cc}/u.test(value));
+}
+
+function validOptionalQuote(value: ManagedOutboundMailDraft["quote"]): boolean {
+  if (value === undefined) return true;
+  return Boolean(value)
+    && value.constructor === Object
+    && String(value.from) === value.from
+    && value.from.length > 0
+    && TEXT_ENCODER.encode(value.from).byteLength <= MAX_QUOTE_SENDER_BYTES
+    && !/\p{Cc}/u.test(value.from)
+    && Number.isSafeInteger(value.sentAt)
+    && value.sentAt >= 0
+    && validTimeZone(value.timeZone)
+    && String(value.text) === value.text
+    && value.text.length > 0
+    && TEXT_ENCODER.encode(value.text).byteLength <= MAIL_MAX_QUOTE_BYTES;
+}
+
+/** Version 1 is a plain message; version 2 carries an invite, and only version 2 does. */
+function validVersion(draft: ManagedOutboundMailDraft): boolean {
+  return draft.version === 1
+    ? draft.invite === undefined
+    : draft.version === 2 && validInvite(draft.invite);
+}
+
+/** An iCalendar object with CRLF lines whose METHOD matches the one the message declares. */
+function validInvite(value: ManagedOutboundMailDraft["invite"]): boolean {
+  if (!value || value.constructor !== Object) return false;
+  const { method, text } = value;
+  return (method === "REQUEST" || method === "CANCEL")
+    && String(text) === text
+    && TEXT_ENCODER.encode(text).byteLength <= MAIL_MAX_INVITE_BYTES
+    && text.startsWith("BEGIN:VCALENDAR\r\n")
+    && text.endsWith("\r\nEND:VCALENDAR\r\n")
+    && text.includes(`\r\nMETHOD:${method}\r\n`)
+    // eslint-disable-next-line no-control-regex -- Its lines end in CRLF, with no other control character.
+    && !/\r(?!\n)|(?<!\r)\n|[\0-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text);
+}
+
+function validTimeZone(value: ExternalValue): boolean {
+  if (String(value) !== value || value.length === 0 || value.length > 64) return false;
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: value }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseProviderMessageId(value: ExternalValue): string {

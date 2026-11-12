@@ -7,6 +7,7 @@ import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { FsDeviceTransport } from "../fs";
 import { buildAtprotoCommand } from "./atproto";
+import { buildCalCommand } from "./cal";
 import { buildCodeModeCommand } from "./codemode";
 import { buildContactCommand } from "./contact";
 import { buildCoreCommands } from "./core";
@@ -57,6 +58,7 @@ export function buildCustomCommands(
   const ls = buildLsCommand(fs, identity, ctx);
   const llm = buildLlmCommand(ctx, options?.netFetchTransport);
   const mail = buildMailCommand(fs, ctx);
+  const cal = buildCalCommand(fs, ctx);
   const stat = buildStatCommand(fs, identity, ctx);
   const cp = buildCpCommand(ctx, options?.fsTransport);
   const dd = buildDdCommand(fs);
@@ -114,6 +116,7 @@ export function buildCustomCommands(
     oauth,
     llm,
     mail,
+    cal,
     ...mediaCommands,
     message,
     messenger,

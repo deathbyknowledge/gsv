@@ -123,14 +123,22 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "message send --to DESTINATION [--message TEXT] [--attach PATH]... [--mime TYPE] [--delivery-id ID] [--responsibility ID] [--also]",
   ]),
   yield: command("Finish the active agent run.", "Yield control after the current work is complete while keeping the durable Process available for future input.", ["finish", "complete", "done", "stop", "silent"], [], ["yield"]),
-  mail: command("Read, send, reply to, and inspect this GSV's own email.", "Find this GSV's email address for a sign-up, verification code, receipt, parcel tracking or bill, read an inbox message, search received email, send email, reply to a message, or check whether a queued email was accepted.", ["email", "inbox", "address", "signup", "sign-up", "register", "verification", "account", "receipt", "tracking", "read", "message", "search", "send", "reply", "status", "delivery"], [], [
+  mail: command("Read, send, reply to, and inspect this GSV's own email.", "Find this GSV's email address for a sign-up, verification code, receipt, parcel tracking or bill, read an inbox message, search received email, send email or a calendar invitation, reply to a message, list sent email, or check whether a queued email was accepted.", ["email", "inbox", "address", "signup", "sign-up", "register", "verification", "account", "receipt", "tracking", "read", "message", "search", "send", "sent", "outbox", "reply", "status", "delivery"], [], [
     "mail address",
     "mail list [--limit N] [--before CURSOR]",
     "mail search QUERY [--limit N] [--before CURSOR]",
     "mail show MESSAGE_ID [--raw]",
-    "mail send --to ADDRESS --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]",
-    "mail reply MESSAGE_ID [--subject SUBJECT] (--message TEXT | --body PATH) [--delivery-id ID]",
+    "mail send --to ADDRESS... [--cc ADDRESS...] --subject SUBJECT (--message TEXT | --body PATH) [--invite PATH] [--delivery-id ID]",
+    "mail send --invite PATH [--cc ADDRESS...] --subject SUBJECT (--message TEXT | --body PATH) [--delivery-id ID]",
+    "mail reply MESSAGE_ID [--all] [--cc ADDRESS...] [--subject SUBJECT] (--message TEXT | --body PATH) [--invite PATH] [--delivery-id ID]",
+    "mail sent [--limit N] [--before CURSOR]",
     "mail status DELIVERY_ID",
+  ]),
+  cal: command("Write and read calendar event files.", "Create an event or meeting with a time, place and guests as an .ics file, make it repeat weekly or monthly, move, skip or cancel an event or one of its dates, or read an invite or calendar file someone sent.", ["calendar", "event", "meeting", "appointment", "invite", "invitation", "ics", "ical", "icalendar", "attendee", "guest", "reschedule", "cancel", "repeat", "repeating", "recurring", "weekly", "occurrence", "skip"], [], [
+    "cal add --title TITLE --start WHEN [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]... --out PATH",
+    "cal update PATH [--occurrence WHEN] [--title TITLE] [--start WHEN] [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]...",
+    "cal cancel PATH [--occurrence WHEN]",
+    "cal show PATH [--timezone ZONE] [--next COUNT]",
   ]),
   rgit: command("Inspect and commit staged ripgit repository changes.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["ripgit"]),
   ripgit: command("Alias for the rgit repository command.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["rgit"]),
@@ -426,7 +434,10 @@ function discoveryScore(
     } else if (primaryTokens.has(token)) {
       score += 10;
       matched += 1;
-    } else if ([...primaryTokens].some((candidate) => candidate.startsWith(token) || token.startsWith(candidate))) {
+    } else if ([...primaryTokens].some((candidate) =>
+      // A prefix needs three letters, or "or" would match "organize".
+      Math.min(candidate.length, token.length) >= 3 && (candidate.startsWith(token) || token.startsWith(candidate))
+    )) {
       score += 5;
       matched += 1;
     } else if (bodyTokens.has(token)) {
@@ -438,8 +449,10 @@ function discoveryScore(
   return score;
 }
 
+// A lone letter is what's left of a possessive or abbreviation ("person's",
+// "e.g."); as a prefix it would match every word that starts with it.
 function significantTokens(value: string): string[] {
-  return [...new Set(value.split(/\s+/).map(normalizeToken).filter((token) => token && !STOP_WORDS.has(token)))];
+  return [...new Set(value.split(/\s+/).map(normalizeToken).filter((token) => token.length > 1 && !STOP_WORDS.has(token)))];
 }
 
 function normalizeText(value: string): string {

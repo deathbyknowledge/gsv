@@ -199,7 +199,7 @@ describe("installation resource retirement", () => {
         const bytes = new TextEncoder().encode(text);
         const digest = `sha256:${[...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
         instance.mailboxes.ensureOutbound({ version: 1, outboundId: "retry", ownerUid: 1000, deliveryId: "retry", fingerprint: digest,
-          from: "person@example.test", to: "recipient@example.test", subject: "Fixture", bodyDigest: digest,
+          from: "person@example.test", to: ["recipient@example.test"], cc: [], subject: "Fixture", bodyDigest: digest,
           bodyPath: "/home/person/outbox/retry.txt", textSize: bytes.byteLength, createdAt: Date.now() });
         await instance.bindings.STORAGE.put("home/person/outbox/retry.txt", bytes);
         const retry = instance.onManagedOutboundEnqueue("retry");

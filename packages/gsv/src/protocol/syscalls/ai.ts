@@ -212,8 +212,6 @@ export type AiConfigResult = {
     timezone: string;
     language?: string;
   };
-  skillIndex?: AiSkillIndexEntry[];
-  skillIndexMode?: AiSkillIndexMode;
   accountApprovalPolicy?: string | null;
   capabilities: string[];
   maxContextBytes: number;

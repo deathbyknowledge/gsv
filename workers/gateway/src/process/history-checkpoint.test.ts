@@ -11,7 +11,7 @@ const handover = "The user corrected the deadline to Friday. The report is in /r
 async function prepare(process: Process, historySize = 100) {
   vi.spyOn(process, "sendSignal").mockResolvedValue();
   vi.spyOn(process.kernel, "kernelRpc").mockResolvedValue({ responsibilities: [], count: 0, revision: 0 });
-  const run = { runId, tools: [], targets: [], mcpServers: [], config: { ...terminalTestConfig(process.pid), contextWindowTokens: 20_000, maxTokens: 1_000, skillIndexMode: "off" as const } };
+  const run = { runId, tools: [], targets: [], mcpServers: [], config: { ...terminalTestConfig(process.pid), contextWindowTokens: 20_000, maxTokens: 1_000 } };
   process.runs.active = run;
   const epoch = await process.history.ensureContextEpoch(runId, run, run.config);
   if (!epoch) throw new Error("Missing initial epoch");

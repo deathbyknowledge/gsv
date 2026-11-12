@@ -26,6 +26,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "mail.status",
     "mail.list",
     "mail.search",
+    "mail.sent",
     "mail.read",
     "notify.rule.*",
     "event.*",

@@ -190,7 +190,8 @@ request; `decline` on your own request withdraws it.
 gsv mail [--page N] [-n N]
 gsv mail search WORDS [--page N] [-n N]
 gsv mail read ID
-gsv mail send TO [-s SUBJECT] [MESSAGE]
+gsv mail send TO [--cc ADDRESS]... [-s SUBJECT] [MESSAGE]
+gsv mail sent [--page N] [-n N]
 gsv mail status DELIVERY_ID
 ```
 
@@ -204,9 +205,15 @@ can follow the `next` cursor of a `--json` result with the hidden
 `--before CURSOR` option instead. `search` uses `mail.search` with the same
 paging. `read` prints the message's header, then its body.
 
-`send` sends from your Ship's address. The body comes from `MESSAGE` or, when
-it is omitted, from stdin. It prints a delivery id for `status`. Sending
-follows the ordinary `mail.send` approval policy.
+`send` sends from your Ship's address. Separate several recipients in `TO`
+with commas; `--cc` copies someone and can repeat. A message reaches at most
+10 people. The body comes from `MESSAGE` or, when it is omitted, from stdin. It
+prints a delivery id for `status`. Sending follows the ordinary `mail.send`
+approval policy.
+
+`sent` lists what your Ship sent, newest first, with the same paging, using
+`mail.sent`: who got each message, its subject, and whether the mail service
+took it, with the reason when it failed.
 
 ## Look After Things
 
@@ -288,6 +295,8 @@ gsv memory standing
 
 `memory` lists your wikis. `read` prints a page, such as
 `gsv memory read notes/index.md`, and `search` searches every wiki or one.
+It finds pages that hold all of your words, in any order and ignoring case and
+accents, and shows each line where one of them appears.
 `standing` shows the notes your Ship reads in every conversation, from your
 `~/context.d`.
 
@@ -797,9 +806,44 @@ Ship responsibility for each message; enabling it affects future completions.
 installation's managed-mail domain (for example `<handle>@gsv.space` on the
 public service), which the runtime facts also list; `man --search` ranks `mail`
 for sign-up, verification code, receipt and tracking questions, and reports it
-unavailable when the installation has no mailbox.
+unavailable when the installation has no mailbox. `mail send` and `mail reply`
+take the body in Markdown: recipients see it formatted, with a plain-text copy,
+and a reply quotes the original below it. `--invite PATH` sends an event file
+from `cal` as a calendar invitation to exactly that event's guests; without
+`--to` they are the recipients.
 Other configurable sources cover federation ingress, new contacts, new machines,
 connected adapters, and adapter authentication loss.
+
+`cal` writes and reads iCalendar (`.ics`) event files:
+
+```bash
+cal add --title TITLE --start WHEN [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]... --out PATH
+cal update PATH [--occurrence WHEN] [--title TITLE] [--start WHEN] [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]...
+cal cancel PATH [--occurrence WHEN]
+cal show PATH [--timezone ZONE] [--next COUNT]
+```
+
+`add` gives a new event a fresh UID, the account's managed mail address as its
+organizer, and each `--attendee` as an invited guest. It reads local times in
+the owner's time zone, or `--timezone`, and stores a single event's times in
+UTC; a date makes an all-day event. A time a clock change skips reads as
+RFC 5545 has it, with the offset before the change: 02:30 on a night the clocks
+go from 02:00 to 03:00 is 03:30. `update` and `cancel` rewrite the file in
+place with the same UID and the next SEQUENCE, so a calendar that already has
+the event replaces it. Only the event's organizer can change it. `show` prints
+any calendar file, one field per line, with a repeating event's next dates.
+Send a new or changed event to its guests with `mail send --invite PATH`.
+
+`--repeat` takes an RFC 5545 RRULE in the forms calendar apps offer: daily,
+weekly on given days, monthly on a day of the month (`-1` for the last) or a
+weekday such as `4FR` or `-1FR`, or yearly on a date, every `INTERVAL` of them,
+ending with `COUNT` or `UNTIL`. A repeating event is stored in its time zone,
+with that zone's VTIMEZONE, so it keeps its clock time across daylight saving
+changes. A date whose clock time a change skips stays in the series, later by
+the gap. `--occurrence WHEN` names one of its dates: `update --occurrence`
+moves or changes that date alone, and `cancel --occurrence` skips it (EXDATE).
+When the whole series moves, each skipped or changed date follows its day, and
+one the new rule no longer has is dropped and reported.
 
 `skills list` shows the built-in skills, served read-only from `/sys/skills.d`,
 before the owner's and the agent's own. `skills create` writes to the current

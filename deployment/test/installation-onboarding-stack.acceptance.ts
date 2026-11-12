@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { administerOperatorBootstrap } from "../src/operator-bootstrap.ts";
 import type { MigrationD1Row } from "../src/installation-migration-d1.ts";
-import { deletionStackHarness, serveTestPlc, STACK } from "./fixtures/deletion-stack-harness.ts";
+import { deletionStackHarness, serveTestNetwork, STACK } from "./fixtures/deletion-stack-harness.ts";
 
 type Harness = ReturnType<typeof deletionStackHarness>;
 type Worker = ReturnType<Harness["getWorker"]>;
@@ -17,7 +17,7 @@ describe("public onboarding activation recovery", () => {
   let harness: Harness;
   let socket: Socket | undefined;
   beforeAll(async () => {
-    serveTestPlc();
+    serveTestNetwork();
     harness = deletionStackHarness();
     await harness.listen();
     await harness.getWorker(STACK.accounts).applyD1Migrations("INSTALLATIONS_DB");

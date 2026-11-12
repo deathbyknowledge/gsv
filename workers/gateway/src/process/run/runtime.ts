@@ -55,7 +55,7 @@ import {
   isRetryableGenerationErrorMessage,
 } from "../../inference/output";
 import { extractCompletedText } from "../../inference/generated-text";
-import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, contextSnapshotFromRun, withRunControlInstructions } from "./helpers";
+import { incrementRunControlFailure, isRunControlFailureExhausted, runControlFailureAttempt, PROCESS_TASK_SCHEMA, type ProcessTask, type ProcessTaskCallback, withRunControlInstructions } from "./helpers";
 import { deliverMemoryReview } from "../memory-review";
 import { formatRunControlToolResult, renderToolExecutionError, renderHistoryEvent } from "../history/event-renderer";
 import { ProcessStore, stringifyAssistantMessageMeta, type MessageMetadata, type ContextEpochRecord } from "../store";
@@ -2196,6 +2196,13 @@ export class ProcessRun {
     settledRun: RunState,
   ): Promise<RunTickInputs | null> {
     let run = settledRun;
+    // Configuration, tools and context are separate Kernel reads, so ask for them at
+    // once. They still apply in this order, and a stopped tick leaves the rest unread.
+    const loadTools = () => this.traced(runId, "Load tools", () => this.host.kernel.kernelRpc("ai.tools", {}));
+    const contextSnapshot = this.host.settings.resolveAiContext(this.runAbortSignal(runId));
+    const pendingTools = run.tools ? null : loadTools();
+    contextSnapshot.catch(() => {});
+    pendingTools?.catch(() => {});
     if (!run.config) {
       const aiTextGenerateConfig = this.host.settings.aiTextGenerateConfig;
       const config = await this.traced(runId, "Load configuration",
@@ -2212,7 +2219,8 @@ export class ProcessRun {
     if (!activeConfig) throw new Error("Process AI configuration was not loaded");
 
     if (!run.tools) {
-      const toolsResult = await this.traced(runId, "Load tools", () => this.host.kernel.kernelRpc("ai.tools", {}));
+      // Tools cleared while configuration loaded were not asked for above.
+      const toolsResult = await (pendingTools ?? loadTools());
       const updated = this.host.mutateActiveRun(runId, (current) => ({
         ...current,
         tools: toolsResult.tools,
@@ -2241,7 +2249,7 @@ export class ProcessRun {
       offeredToolNames,
     }));
     if (!offeredRun) return null;
-    return { run: offeredRun, activeConfig, workTools, tools };
+    return { run: offeredRun, activeConfig, workTools, tools, contextSnapshot };
   }
 
   /** One context span around a Kernel read that precedes the first generation. */
@@ -2348,10 +2356,13 @@ export class ProcessRun {
     runId: string,
     state: RunTickContextState,
   ): Promise<ContextEpochRecord | null> {
-    const contextSnapshot = await this.host.settings.resolveAiContext(this.runAbortSignal(runId));
+    // Only the tick's first build uses the context asked for with its inputs; rebuilds ask again.
+    const prefetched = state.contextSnapshot;
+    delete state.contextSnapshot;
+    const contextSnapshot = await (prefetched ?? this.host.settings.resolveAiContext(this.runAbortSignal(runId)));
     const fallbackProjection =
       parseContextProjection(this.host.store.epochs.getLiveContextEpoch()?.observedProjection) ??
-      createContextProjection(contextSnapshotFromRun(state.run, state.activeConfig));
+      { targets: state.run.devices ?? [] };
     const currentProjection = createContextProjection(
       contextSnapshot,
       new Date(),

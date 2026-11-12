@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { testPeer } from "../../test-support/peers";
+import { recordStorageCalls } from "../../test-support/storage-calls";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
 import { GsvFs } from "../../fs/gsv-fs";
@@ -218,6 +219,7 @@ function makeContext(options?: {
   identity?: ProcessIdentity;
   media?: InferenceExecutor["media"];
   ripgit?: Fetcher;
+  storage?: R2Bucket;
   requestSignal?: AbortSignal;
 }): KernelContext {
   const identity = options?.identity ?? IDENTITY;
@@ -265,7 +267,7 @@ function makeContext(options?: {
     resolveGids: vi.fn(() => [...identity.gids]),
   };
   const testEnv = focusedFixture<Env>({
-    STORAGE: env.STORAGE,
+    STORAGE: options?.storage ?? env.STORAGE,
     RIPGIT: options?.ripgit ?? focusedFixture<Fetcher>({}),
     LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
   });
@@ -744,6 +746,39 @@ describe("native shell execution", () => {
     });
   });
 
+  it("keeps built-in commands when storage holds files under /usr/bin", async () => {
+    await env.STORAGE.put("usr/bin/marker", "x");
+    try {
+      const result = await handleShellExec({ input: "printf 'a\\nb\\n' | wc -l" }, makeContext());
+      expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(result.stdout.trim()).toBe("2");
+    } finally {
+      await env.STORAGE.delete("usr/bin/marker");
+    }
+  });
+
+  it("looks for commands only where storage can hold them, one round trip each", async () => {
+    const storage = recordStorageCalls(env.STORAGE);
+    const result = await handleShellExec(
+      { input: "echo hi | sed s/hi/ho/" },
+      makeContext({ storage: storage.bucket }),
+    );
+
+    expect(result).toMatchObject({ status: "completed", stdout: "ho\n" });
+    expect(storage.calls.map(({ method, key }) => `${method} ${key}`).sort()).toEqual([
+      "head usr/local/bin/echo",
+      "head usr/local/bin/sed",
+      "list usr/local/bin/echo/",
+      "list usr/local/bin/sed/",
+    ]);
+    for (const name of ["echo", "sed"]) {
+      const head = storage.calls.find((call) => call.method === "head" && call.key === `usr/local/bin/${name}`);
+      const list = storage.calls.find((call) => call.method === "list" && call.key === `usr/local/bin/${name}/`);
+      // The directory listing goes out before the object lookup answers.
+      expect(list?.started).toBeLessThan(head?.settled ?? -1);
+    }
+  });
+
   it("keeps command stderr visible on non-zero exits", async () => {
     const result = await handleShellExec(
       { input: "printf 'real failure\\n' >&2; exit 7" },
@@ -1075,6 +1110,8 @@ describe("native shell capability discovery", () => {
     ["sign up for a website with an email address", "mail"],
     ["find the verification email", "mail"],
     ["track my parcel delivery", "mail"],
+    ["make a calendar invite for a meeting", "cal"],
+    ["reschedule the dinner event", "cal"],
     ["start a new chat in this conversation", "message"],
   ])("maps a plain-language task '%s' to %s", async (query, expectedCommand) => {
     const result = await handleShellExec(
@@ -6348,6 +6385,67 @@ describe("native administration shell commands", () => {
     expect(result.exitCode).toBe(0);
     expect(searchPrefixes).toEqual(["index.md"]);
     expect(result.stdout).toContain("/src/repos/root/gsv-manual/index.md\t4\tAuth overview.");
+  });
+
+  it("searches every wiki at once and keeps each wiki in the results", async () => {
+    const wikis = new Map([
+      ["root/gsv-manual", { id: "gsv-manual", title: "GSV Manual", matches: 40 }],
+      ["root/personal", { id: "personal", title: "Personal", matches: 2 }],
+    ]);
+    const active = { read: 0, search: 0 };
+    const peak = { read: 0, search: 0 };
+    const ripgit = focusedFixture<Fetcher>({
+      async fetch(input: RequestInfo | URL) {
+        const url = new URL(String(input));
+        const [, repo = "", action = ""] = /^\/hyperspace\/repos\/([^/]+\/[^/]+)\/([a-z]+)$/.exec(url.pathname) ?? [];
+        const kind = action === "read" ? "read" : action === "search" ? "search" : null;
+        if (!kind) return new Response(`unexpected ${url.pathname}`, { status: 500 });
+        active[kind] += 1;
+        peak[kind] = Math.max(peak[kind], active[kind]);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active[kind] -= 1;
+        const wiki = wikis.get(repo);
+        if (kind === "read") {
+          if (!wiki || url.searchParams.get("path") !== "wiki.json") return new Response("missing", { status: 404 });
+          return new Response(JSON.stringify({ kind: "gsv.wiki", version: 1, id: wiki.id, title: wiki.title }), {
+            headers: { "Content-Type": "text/plain", "X-Blob-Size": "80" },
+          });
+        }
+        if (!wiki) return new Response(`unexpected ${url.pathname}`, { status: 500 });
+        return Response.json({
+          ok: true,
+          matches: Array.from({ length: wiki.matches }, (_, index) => ({
+            path: `pages/${wiki.id}-${index}.md`,
+            line: 1,
+            content: `${wiki.title} birthday ${index}`,
+          })),
+        });
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "wiki search birthday" },
+      makeContext({
+        capabilities: ["repo.list", "repo.read", "repo.search"],
+        config: {
+          "repos/root/gsv-manual/created_at": "1",
+          "repos/root/gsv-manual/visibility": "public",
+          "repos/root/personal/created_at": "1",
+          "repos/root/personal/visibility": "public",
+        },
+        ripgit,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect({ exitCode: result.exitCode, stderr: result.stderr }).toEqual({ exitCode: 0, stderr: "" });
+    const rows = result.stdout.trim().split("\n").slice(1);
+    expect(rows).toHaveLength(30);
+    expect(rows).toContain("/src/repos/root/personal/pages/personal-0.md\t1\tPersonal birthday 0");
+    expect(rows).toContain("/src/repos/root/personal/pages/personal-1.md\t1\tPersonal birthday 1");
+    expect(rows[0]).toBe("/src/repos/root/gsv-manual/pages/gsv-manual-0.md\t1\tGSV Manual birthday 0");
+    expect(peak.read).toBeGreaterThan(1);
+    expect(peak.search).toBe(2);
   });
 
   it("aborts native shell execution with its request", async () => {

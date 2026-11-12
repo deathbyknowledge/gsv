@@ -1,11 +1,11 @@
 import { Fragment, type VNode } from "preact";
-import { AuthLayout } from "../app/features/session/AuthLayout";
+import { AuthLayout, AuthScene } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
 import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
 import { OwnerWelcome, SIGNUP_LINK_SLUGS, signupAttributionFromLink, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
 import { DesktopAppLink } from "./DesktopAppLink";
 import { SignupDialog } from "./SignupDialog";
-import { presumedSpaceDomain, signupDestination } from "./navigation";
+import { presumedSpaceDomain, signupDestination, signupHomepage } from "./navigation";
 import { publicDeployment } from "../app/services/deployment";
 import { captureContactInvitation } from "./invitation";
 import { contactInvitationDestination } from "@humansandmachines/gsv/protocol";
@@ -13,6 +13,7 @@ import { pendingContactInvitation, contactInvitationPreview, clearContactInvitat
 import { t } from "../app/i18n/locale";
 
 export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise<WelcomeSnapshot> }, accountsOrigin: string): Promise<VNode> {
+  const welcome = new URLSearchParams(window.location.search).get("view") === "welcome";
   let contactInvitation = pendingContactInvitation();
   let client: OwnerWelcome | undefined;
   let load: () => Promise<OwnerWelcome>;
@@ -25,7 +26,7 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
     // The signup link names where it was clicked and which campaign brought it; that rides along until the Ship is reserved.
     const attribution = signupAttributionFromLink(new URL(window.location.href));
     // A new signup takes this link's origin or none; only a resumed one keeps what was stored.
-    if (!resume || contactInvitation) await candidate.save({ flow: "create", attribution });
+    if (!resume || contactInvitation) await candidate.save({ flow: welcome && !contactInvitation ? "open" : "create", attribution });
     else if (attribution) await candidate.save({ attribution });
     client = candidate;
     load = async () => candidate;
@@ -61,14 +62,16 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
   };
   // A friend's invitation opens as a centered card; ordinary signup lives on the page so the rest of it stays usable.
   const Frame = contactInvitation ? SignupDialog : Fragment;
-  return <Frame>{invitationError
+  return <AuthScene layout="welcome" homeHref={signupHomepage(accountsOrigin)} headerActions={!contactInvitation && !welcome
+    ? <a class="gsv-auth-link" href="/owner/signup/?view=welcome">{t("session.welcome.alreadyHaveShip")}</a> : undefined}><Frame>{invitationError
     ? <AuthLayout visible><section class="desktop-welcome"><h1>{t("session.contact.title")}</h1><p role="alert">{invitationError}</p>
       <a class="gsv-auth-link" href="/owner/signup/?resume=1" onClick={async (event) => {
         event.preventDefault(); await leave("/owner/signup/?resume=1");
       }}>{t("signup.openShip")}</a></section></AuthLayout>
-    : <OwnerWelcomeScreen ready resume initialStep={contactInvitation ? "email" : "claim"} compact={!!contactInvitation}
+    : <OwnerWelcomeScreen ready resume={!welcome} initialStep={contactInvitation ? "email" : welcome ? "welcome" : "claim"} compact={!!contactInvitation}
+      homeHref={contactInvitation ? undefined : signupHomepage(accountsOrigin)}
       spaceDomain={publicDeployment().primaryDomain ?? presumedSpaceDomain(new URL(accountsOrigin).hostname)}
       invitation={preview && "name" in preview ? preview : undefined} chooseSpace={!!contactInvitation}
-      addressPanel={contactInvitation ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
-      load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</Frame>;
+      addressPanel={contactInvitation || welcome ? ({ connect, disabled }) => <SpaceAddressForm disabled={disabled} onConnect={connect} /> : undefined}
+      load={load} onConnect={connect} />}{!contactInvitation && <DesktopAppLink />}</Frame></AuthScene>;
 }

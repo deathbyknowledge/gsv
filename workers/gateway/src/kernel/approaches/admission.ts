@@ -128,7 +128,7 @@ async function createApproach(args: z.infer<typeof createSchema>, ownerUid: numb
       conversationId: peerContact?.conversationId ?? `conv:${crypto.randomUUID()}`, contactId: peerContact?.id ?? `contact:${crypto.randomUUID()}`,
       threadId, content, fingerprint, idempotencyKey: args.idempotencyKey,
     }, () => consumeLocalRateLimits(ctx, [
-      { scope: `owner:${ownerUid}`, operation: "approach.outgoing.day", maximum: 10, windowMs: 86_400_000 },
+      { scope: `owner:${ownerUid}`, operation: "approach.outgoing.day", maximum: 50, windowMs: 86_400_000 },
     ], now, "Daily message request limit reached"));
   });
   await ctx.scheduleApproachMaintenance();
