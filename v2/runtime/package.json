@@ -1,0 +1,17 @@
+{
+  "name": "@gsv/runtime",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./config": "./src/config.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@gsv/catalog": "*",
+    "zod": "4.3.6"
+  }
+}

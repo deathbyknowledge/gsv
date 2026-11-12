@@ -1,0 +1,458 @@
+{
+  "protocol": 5,
+  "errors": {
+    "bad_request": {
+      "retryable": false,
+      "meaning": "Arguments failed the catalog schema"
+    },
+    "unauthorized": {
+      "retryable": false,
+      "meaning": "Missing or expired token; the SDK refreshes"
+    },
+    "forbidden": {
+      "retryable": false,
+      "meaning": "No grant, or a rule denied"
+    },
+    "approval_denied": {
+      "retryable": false,
+      "meaning": "An approval was answered no"
+    },
+    "not_found": {
+      "retryable": false,
+      "meaning": "No such resource"
+    },
+    "conflict": {
+      "retryable": false,
+      "meaning": "Base revision or source changed"
+    },
+    "moved": {
+      "retryable": true,
+      "meaning": "The owner moved spaces; re-resolve"
+    },
+    "target_offline": {
+      "retryable": false,
+      "meaning": "The machine is offline"
+    },
+    "outcome_unknown": {
+      "retryable": false,
+      "meaning": "An effect may or may not have happened"
+    },
+    "quota_exhausted": {
+      "retryable": false,
+      "meaning": "Meter and resetsAt in details"
+    },
+    "rate_limited": {
+      "retryable": true,
+      "meaning": "With retryAfterMs"
+    },
+    "storage_full": {
+      "retryable": false,
+      "meaning": "Volume or quota full"
+    },
+    "too_large": {
+      "retryable": false,
+      "meaning": "Over a size limit"
+    },
+    "timeout": {
+      "retryable": "catalog",
+      "meaning": "The call's deadline passed"
+    },
+    "cancelled": {
+      "retryable": false,
+      "meaning": "Cancelled by its owner"
+    },
+    "unavailable": {
+      "retryable": true,
+      "meaning": "A dependency is down"
+    },
+    "upgrade_required": {
+      "retryable": false,
+      "meaning": "Client below the minimum version"
+    },
+    "internal": {
+      "retryable": false,
+      "meaning": "A bug; ref points at the stored diagnostic"
+    }
+  },
+  "error": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "code": {
+        "type": "string",
+        "enum": [
+          "bad_request",
+          "unauthorized",
+          "forbidden",
+          "approval_denied",
+          "not_found",
+          "conflict",
+          "moved",
+          "target_offline",
+          "outcome_unknown",
+          "quota_exhausted",
+          "rate_limited",
+          "storage_full",
+          "too_large",
+          "timeout",
+          "cancelled",
+          "unavailable",
+          "upgrade_required",
+          "internal"
+        ]
+      },
+      "message": {
+        "type": "string"
+      },
+      "retryable": {
+        "type": "boolean"
+      },
+      "retryAfterMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "ref": {
+        "type": "string"
+      },
+      "details": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      }
+    },
+    "required": [
+      "code",
+      "message",
+      "retryable"
+    ],
+    "additionalProperties": false
+  },
+  "frame": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "type": "object",
+        "properties": {
+          "t": {
+            "type": "string",
+            "const": "req"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 64
+          },
+          "op": {
+            "type": "string"
+          },
+          "args": {},
+          "traceparent": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "t",
+          "id",
+          "op",
+          "args"
+        ]
+      },
+      {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "t": {
+                "type": "string",
+                "const": "res"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 64
+              },
+              "ok": {
+                "type": "boolean",
+                "const": true
+              },
+              "result": {}
+            },
+            "required": [
+              "t",
+              "id",
+              "ok",
+              "result"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "t": {
+                "type": "string",
+                "const": "res"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 64
+              },
+              "ok": {
+                "type": "boolean",
+                "const": false
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "bad_request",
+                      "unauthorized",
+                      "forbidden",
+                      "approval_denied",
+                      "not_found",
+                      "conflict",
+                      "moved",
+                      "target_offline",
+                      "outcome_unknown",
+                      "quota_exhausted",
+                      "rate_limited",
+                      "storage_full",
+                      "too_large",
+                      "timeout",
+                      "cancelled",
+                      "unavailable",
+                      "upgrade_required",
+                      "internal"
+                    ]
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "retryAfterMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "ref": {
+                    "type": "string"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ]
+              }
+            },
+            "required": [
+              "t",
+              "id",
+              "ok",
+              "error"
+            ]
+          }
+        ]
+      },
+      {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "t": {
+                "type": "string",
+                "const": "sig"
+              },
+              "feed": {
+                "type": "string",
+                "pattern": "^(events|ledger|fs:[^:]+:.+|proc:[^:]+|debug:.+)$"
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "event": {}
+            },
+            "required": [
+              "t",
+              "feed",
+              "seq",
+              "event"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "t": {
+                "type": "string",
+                "const": "sig"
+              },
+              "feed": {
+                "type": "string",
+                "pattern": "^(events|ledger|fs:[^:]+:.+|proc:[^:]+|debug:.+)$"
+              },
+              "head": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "t",
+              "feed",
+              "head"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "operations": {
+    "connect": {
+      "kind": "owner",
+      "verb": "read",
+      "effect": "read",
+      "errors": [
+        "bad_request",
+        "unauthorized",
+        "moved",
+        "upgrade_required",
+        "unavailable"
+      ],
+      "timeoutMs": 10000,
+      "secretFields": [],
+      "doc": "The first request on a control socket: names the client, resumes cursors and declares watches.",
+      "args": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "protocol": {
+            "type": "number",
+            "const": 5
+          },
+          "client": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "version": {
+                "type": "string",
+                "maxLength": 32
+              },
+              "platform": {
+                "type": "string",
+                "maxLength": 32
+              }
+            },
+            "required": [
+              "name",
+              "version",
+              "platform"
+            ]
+          },
+          "since": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "ledger": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            }
+          },
+          "watches": {
+            "maxItems": 64,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(events|ledger|fs:[^:]+:.+|proc:[^:]+|debug:.+)$"
+            }
+          }
+        },
+        "required": [
+          "protocol",
+          "client"
+        ]
+      },
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "person": {
+            "type": "string"
+          },
+          "resumed": {
+            "anyOf": [
+              {
+                "type": "boolean",
+                "const": true
+              },
+              {
+                "type": "string",
+                "const": "reset"
+              }
+            ]
+          },
+          "minVersion": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "deprecations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string"
+                },
+                "until": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "until"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "owner",
+          "person",
+          "resumed",
+          "minVersion",
+          "deprecations"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

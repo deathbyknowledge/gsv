@@ -1,0 +1,27 @@
+// The runtime as the config compiler emits it, with test values. test/config.test.ts keeps the two in step.
+{
+  "name": "gsv-runtime-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "DIRECTORY", "class_name": "Directory" },
+      { "name": "SPACE", "class_name": "Space" },
+      { "name": "OWNER", "class_name": "Owner" },
+      { "name": "PROCESS", "class_name": "Process" },
+      { "name": "VOLUME", "class_name": "Volume" },
+      { "name": "TARGET", "class_name": "Target" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Directory", "Space", "Owner", "Process", "Volume", "Target"] }],
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "gsv-blobs-test" }],
+  "assets": { "directory": "test/assets", "binding": "ASSETS", "run_worker_first": true },
+  "vars": {
+    "GSV_DOMAIN": "gsv.test",
+    "GSV_RELEASE": "test",
+    "GSV_OPERATOR_SPACE": "ops",
+    "GSV_SECRET": "test-secret-not-for-deployments-0123456789",
+    "GSV_SETUP": ""
+  }
+}

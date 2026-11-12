@@ -1,0 +1,14 @@
+{
+  "name": "@gsv/tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@gsv/catalog": "*",
+    "@gsv/runtime": "*",
+    "@gsv/sdk": "*"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "gsv-v2",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "catalog",
+    "runtime",
+    "sdk",
+    "ship",
+    "tools"
+  ],
+  "scripts": {
+    "catalog:generate": "node catalog/src/codegen.ts",
+    "catalog:check": "node catalog/src/codegen.ts --check",
+    "check": "npm run catalog:check && npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "dev": "node tools/src/cli.ts dev",
+    "deploy": "node tools/src/cli.ts deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@cloudflare/workers-types": "5.20261006.1",
+    "@types/node": "25.6.2",
+    "typescript": "5.9.3",
+    "vitest": "4.1.9",
+    "wrangler": "4.147.0"
+  },
+  "dependencies": {
+    "zod": "4.3.6"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20260815.1": true,
+    "workerd@1.20261001.1": true
+  }
+}

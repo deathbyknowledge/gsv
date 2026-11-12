@@ -1,0 +1,16 @@
+{
+  "name": "@gsv/ship",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./profile": "./profile.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "node ../tools/src/cli.ts build-ui ."
+  },
+  "dependencies": {
+    "@gsv/runtime": "*",
+    "@gsv/sdk": "*"
+  }
+}
