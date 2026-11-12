@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
-import { cancelBinaryBody, type JsonValue } from "@humansandmachines/gsv/protocol";
+import { cancelBinaryBody, DEFAULT_SHELL_EXEC_TIMEOUT_MS, type JsonValue } from "@humansandmachines/gsv/protocol";
 import { instanceExecChangeSchema, type InstanceExecChange, type InstanceTargetRequest, type InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
 import { COMPUTER_IMPLEMENTATIONS, type Environment } from "./config";
 import { ComputerConnection } from "./computer-connection";
@@ -12,7 +12,9 @@ type Lease = ComputerIdentity & { state: "starting" | "ready" | "stopping" | "st
 type Tombstone = { installationId: string; instanceId: string };
 export interface ComputerControl {
   provision(identity: ComputerIdentity): Promise<void>;
-  status(): Promise<{ state: Lease["state"] }>;
+  /** `busy` reports a detached command that is still running. */
+  status(): Promise<{ state: Lease["state"]; busy?: true }>;
+  extend(expiresAt: number): Promise<boolean>;
   execute(frame: InstanceTargetRequest, deadlineAt: number): Promise<InstanceTargetResponse>;
   cancel(requestId: string): void | Promise<void>;
   stop(identity?: Tombstone): Promise<void>;
@@ -20,6 +22,7 @@ export interface ComputerControl {
 }
 const healthSchema = z.object({ protocol: z.literal(4), version: z.string(), targetId: z.string(), bootId: z.string().uuid(), implements: z.array(z.string()) });
 const execSchema = instanceExecChangeSchema.pick({ sessionId: true, event: true, exitCode: true, signal: true }).strip();
+const sessionResultSchema = z.object({ status: z.enum(["completed", "running", "failed"]), sessionId: z.string().optional() });
 const START_TIMEOUT_MS = 120_000;
 
 export const computerName = (installationId: string, instanceId: string): string => JSON.stringify([installationId, instanceId]);
@@ -51,7 +54,7 @@ export class ComputerInstance extends DurableObject<Environment> {
     await this.ctx.storage.setAlarm(Date.now() + 1);
   }
 
-  async status(): Promise<{ state: Lease["state"] }> {
+  async status(): Promise<{ state: Lease["state"]; busy?: true }> {
     let lease = this.lease();
     if (lease.state === "stopped") return { state: lease.state };
     if (lease.state === "stopping" || lease.expiresAt <= Date.now()) { await this.stop(); return { state: "stopped" }; }
@@ -78,7 +81,7 @@ export class ComputerInstance extends DurableObject<Environment> {
         || COMPUTER_IMPLEMENTATIONS.some(call => !health.implements.some(pattern => pattern === call || (pattern.endsWith(".*") && call.startsWith(pattern.slice(0, -1)))))) throw new Error("Computer identity or protocol changed");
       this.ctx.storage.kv.put("lease", { ...current, state: "ready", bootId: health.bootId });
       await this.attach();
-      return { state: "ready" };
+      return this.running().size ? { state: "ready", busy: true } : { state: "ready" };
     } catch (cause) {
       this.liveLease();
       if (!lease.bootId && Date.now() - lease.createdAt < START_TIMEOUT_MS) return { state: "starting" };
@@ -100,15 +103,25 @@ export class ComputerInstance extends DurableObject<Environment> {
         const connection = await this.attach();
         this.liveLease();
         signal.throwIfAborted();
-        return connection.execute(frame, deadlineAt);
+        const response = await connection.execute(frame, deadlineAt);
+        this.trackSession(frame, response);
+        return response;
       });
     } catch (cause) { void cancelBinaryBody(frame.body, "Computer request failed"); throw cause; }
+  }
+
+  /** Use moves a ready computer's expiry later. The lease never moves to another boot or to an earlier expiry. */
+  async extend(expiresAt: number): Promise<boolean> {
+    const lease = this.ctx.storage.kv.get<Lease>("lease");
+    if (!lease || lease.state !== "ready" || lease.expiresAt <= Date.now()) return false;
+    if (expiresAt > lease.expiresAt) this.ctx.storage.kv.put<Lease>("lease", { ...lease, expiresAt });
+    return true;
   }
 
   cancel(requestId: string): void {
     const lease = this.ctx.storage.kv.get<Lease>("lease");
     if (lease && lease.state !== "stopped" && lease.state !== "stopping" && lease.expiresAt > Date.now()) {
-      // Keep the receipt for this immutable lease, including cancellation before execute arrives.
+      // Keep the receipt for this lease, including cancellation before execute arrives.
       this.ctx.storage.kv.put(`cancelled:${requestId}`, lease.expiresAt);
     }
     // Expiry prevents new admission; active work still needs cancellation before teardown finishes.
@@ -139,6 +152,7 @@ export class ComputerInstance extends DurableObject<Environment> {
     await this.ctx.container?.destroy();
     this.ctx.storage.kv.put("lease", { ...lease, state: "stopped", secret: "" });
     this.ctx.storage.kv.delete("events");
+    this.ctx.storage.kv.delete("sessions");
     for (const [key] of this.ctx.storage.kv.list({ prefix: "cancelled:" })) this.ctx.storage.kv.delete(key);
     await this.ctx.storage.deleteAlarm();
   }
@@ -205,9 +219,32 @@ export class ComputerInstance extends DurableObject<Environment> {
     })().finally(() => { this.connecting = undefined; });
     return this.connecting;
   }
+  /**
+   * Detached commands keep the computer in use until they end. A lost end event
+   * holds it no longer than the command's own timeout.
+   */
+  private running(): Map<string, number> {
+    const sessions = this.ctx.storage.kv.get<Map<string, number>>("sessions") ?? new Map();
+    const now = Date.now();
+    for (const [sessionId, endsAt] of sessions) if (endsAt <= now) sessions.delete(sessionId);
+    return sessions;
+  }
+  private trackSession(frame: InstanceTargetRequest, response: InstanceTargetResponse): void {
+    if (frame.call !== "shell.exec" || !response.ok) return;
+    const result = sessionResultSchema.safeParse(response.data);
+    if (!result.success || !result.data.sessionId) return;
+    const sessions = this.running();
+    if (result.data.status !== "running") sessions.delete(result.data.sessionId);
+    else if (frame.args.start && sessions.size < 256) sessions.set(result.data.sessionId, Date.now() + (frame.args.timeout ?? DEFAULT_SHELL_EXEC_TIMEOUT_MS));
+    this.ctx.storage.kv.put("sessions", sessions);
+  }
   private execChanged(payload: JsonValue | undefined): void {
     const lease = this.liveLease();
     const event = execSchema.parse(payload);
+    if (event.event !== "started") {
+      const sessions = this.running();
+      if (sessions.delete(event.sessionId)) this.ctx.storage.kv.put("sessions", sessions);
+    }
     const pending = this.ctx.storage.kv.get<Map<string, InstanceExecChange>>("events") ?? new Map();
     const previous = pending.get(event.sessionId);
     if (previous && previous.event !== "started" && event.event === "started") return;

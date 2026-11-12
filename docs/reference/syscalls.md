@@ -2002,6 +2002,11 @@ the browser allowance for existing clients. See [cloud computers](/how-to/cloud-
 The service verifies each machine boot before admitting requests and never
 starts a replacement for a lost instance. Detached shell sessions survive
 connection loss within that instance's lifetime; physical stop terminates them.
+A computer's `expiresAt` moves later while it is in use: each request, and each
+detached session still running within its own timeout, keeps it up for 30 more
+minutes, within the template's `maxLifetimeSeconds` from admission and the
+remaining allowance. `lifetimeSeconds` sets the first expiry. Each extension
+reserves its added time.
 
 A start requires a persisted request ID. Repeating the same ID and arguments
 returns the same instance, including after it becomes terminal. With a new request

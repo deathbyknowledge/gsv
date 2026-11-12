@@ -47,7 +47,7 @@ This document is the root engineering contract for the repository. It explains h
 - Live syscall ledger rows require both the ledger signal grant and `sys.ledger.list`, scoped to the owning human or root. Clients merge pushed rows and completion updates by sequence; ordinary ledger changes must not trigger another ledger read.
 - Whoever accepts a body, request, media object, or background operation owns its completion, cancellation, and cleanup.
 - The instance service owns cloud browser save ordering, profile leases, encrypted snapshots and forgetting. Browser profile syscalls expose metadata and deletion under the same owner and browser capabilities. Ordinary stop requires a successful final save, while explicit force, expiry and deletion remain available.
-- Cloud computers use the ordinary machine protocol over a private instance-owned connection. One immutable lease owns one boot; loss never replays or recreates a machine's work. Stop, expiry and deletion destroy the computer before releasing its reservation. Browser and computer allowances remain separate.
+- Cloud computers use the ordinary machine protocol over a private instance-owned connection. One lease owns one boot; use moves its expiry later within the maximum lifetime and allowance, and the computer accepts a new expiry before the coordinator records it. Loss never replays or recreates a machine's work. Stop, expiry and deletion destroy the computer before releasing its reservation. Browser and computer allowances remain separate.
 
 ### Treat targets as Unix-shaped capability environments
 

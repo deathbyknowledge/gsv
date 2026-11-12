@@ -64,6 +64,17 @@ instance get <targetId>
 instance stop <targetId>
 ```
 
+## How long a computer stays up
+
+A computer stays up while it is in use. Each command, and each detached command
+that is still running, keeps it up for 30 more minutes, up to its maximum
+lifetime and the remaining monthly allowance. Its `expiresAt` shows the current
+expiry. `--seconds` sets the first expiry; use extends it from there.
+
+A computer costs time while it runs, whether or not anything uses it. Stop it as
+soon as its work is done and the needed files are saved on `gsv`. A forgotten
+computer stops 30 minutes after its last use.
+
 ## Permissions and limits
 
 Default permissions allow Ship's shell, filesystem and network work on cloud
@@ -72,8 +83,9 @@ Personal computers retain their separate approval rules, and existing custom
 policies are preserved.
 
 Computer concurrency and monthly seconds are separate from browser limits.
-A start reserves its lifetime. Time is charged from readiness until stop or
-expiry; unused reservation is released after physical termination is confirmed.
+A start reserves its first lifetime, and each extension reserves the added time.
+Time is charged from readiness until stop or expiry; unused reservation is
+released after physical termination is confirmed.
 Computers belong to their initiating human account and installation.
 
 ## Try computers locally
@@ -92,7 +104,7 @@ stop the computer. Model calls still need a configured inference provider.
 
 This selects `workers/instances/wrangler.computer.dev.jsonc`, which builds the
 normal computer image and runs it locally through Wrangler. Each Ship allows
-one computer at a time, up to 30 minutes per computer and two hours per month.
+one computer at a time, up to four hours per computer and two hours per month.
 Stop computers before ending the dev session; their files are temporary.
 The default `npm run dev` keeps computers disabled and does not require Docker.
 
@@ -117,6 +129,8 @@ Without an entitlement service, configure `COMPUTER_LIMITS` with `enabled`,
 `computer.enabled`, `computer.concurrent_instances`, `computer.period_seconds`
 and `computer.max_instance_seconds`. Missing values disable creation without
 preventing existing computers from being stopped. Browser limits remain separate.
+The maximum is a computer's whole lifetime from its start, including every
+extension; without a configured value it is four hours.
 
 Build the image from the repository root. The Dockerfile copies host sources;
 the final image contains the daemon and development tools, without enrollment

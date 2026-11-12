@@ -61,7 +61,7 @@ async function coordinatorFixture(work: (object: InstanceCoordinator, id: string
 
 function fakeControl() {
   return {
-    provision: vi.fn(async () => {}), status: vi.fn(async () => ({ state: "ready" as const })),
+    provision: vi.fn(async () => {}), status: vi.fn(async () => ({ state: "ready" as const })), extend: vi.fn(async () => true),
     execute: vi.fn(async (): Promise<InstanceTargetResponse> => response), cancel: vi.fn(async () => {}),
     stop: vi.fn(async () => {}), erase: vi.fn(async () => {}),
   } satisfies ComputerControl;

@@ -1,6 +1,7 @@
 import { reset, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { JsonValue } from "@humansandmachines/gsv/protocol";
 import { ComputerInstance, computerName, type ComputerIdentity } from "../src/computer";
 import type { Environment } from "../src/config";
 import { InstancePolicy } from "../src/config";
@@ -12,7 +13,7 @@ async function inComputer(work: (fixture: {
   computer: ComputerInstance; ctx: DurableObjectState; identity: ComputerIdentity;
   provider: { running: boolean; bootId: string; start: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> };
   peers: WebSocket[]; handshakeSignals: AbortSignal[];
-}) => Promise<void>, options: { responseDelayMs?: number; stallHandshake?: boolean } = {}) {
+}) => Promise<void>, options: { responseDelayMs?: number; stallHandshake?: boolean; reply?: (frame: { args: { start?: boolean; sessionId?: string } }) => JsonValue | undefined } = {}) {
   const identity = { installationId: crypto.randomUUID(), instanceId: crypto.randomUUID(), targetId: "1234abcd", ownerUid: 1000, expiresAt: Date.now() + 300_000 };
   const peers: WebSocket[] = [];
   const handshakeSignals: AbortSignal[] = [];
@@ -42,7 +43,8 @@ async function inComputer(work: (fixture: {
         if (typeof message.data !== "string") return;
         const frame = JSON.parse(message.data);
         if (frame.type === "req") {
-          const reply = () => { if (pair[1].readyState === WebSocket.OPEN) pair[1].send(JSON.stringify({ type: "res", id: frame.id, ok: true, data: { status: "completed", output: "ok", exitCode: 0 } })); };
+          const data = options.reply?.(frame) ?? { status: "completed", output: "ok", exitCode: 0 };
+          const reply = () => { if (pair[1].readyState === WebSocket.OPEN) pair[1].send(JSON.stringify({ type: "res", id: frame.id, ok: true, data })); };
           if (options.responseDelayMs) responseTimers.push(setTimeout(reply, options.responseDelayMs));
           else reply();
         }
@@ -128,6 +130,31 @@ describe("cloud computer lifecycle", () => {
     await expect(computer.status()).rejects.toThrow("identity or protocol changed");
   }));
 
+  it("moves a ready lease's expiry later, never earlier, and not after it stops", () => inComputer(async ({ computer, identity, ctx }) => {
+    await computer.provision(identity); await computer.status();
+    expect(await computer.extend(identity.expiresAt + 60_000)).toBe(true);
+    expect(await computer.extend(identity.expiresAt)).toBe(true);
+    expect(ctx.storage.kv.get<ComputerIdentity>("lease")?.expiresAt).toBe(identity.expiresAt + 60_000);
+    vi.spyOn(Date, "now").mockReturnValue(identity.expiresAt + 1);
+    expect(await computer.status()).toEqual({ state: "ready" });
+    await computer.stop();
+    expect(await computer.extend(identity.expiresAt + 120_000)).toBe(false);
+  }));
+
+  it("reports a detached command as busy until it ends or its own timeout passes", () => inComputer(async ({ computer, identity, peers }) => {
+    await computer.provision(identity); await computer.status();
+    const start = (sessionId: string, timeout: number) => computer.execute({ type: "req", id: sessionId, call: "shell.exec", args: { input: "make", sessionId, start: true, timeout } }, Date.now() + 5000);
+    await start("build", 600_000);
+    expect(await computer.status()).toEqual({ state: "ready", busy: true });
+    peers[0]!.send(JSON.stringify({ type: "sig", signal: "exec.status", payload: { sessionId: "build", event: "finished", exitCode: 0 } }));
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(await computer.status()).toEqual({ state: "ready" });
+    await start("lost-end-event", 60_000);
+    expect(await computer.status()).toEqual({ state: "ready", busy: true });
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_001);
+    expect(await computer.status()).toEqual({ state: "ready" });
+  }, { reply: frame => frame.args.start ? { status: "running", output: "", sessionId: frame.args.sessionId ?? "" } : undefined }));
+
   it("expires and erases the computer without retaining credentials or reopening its identity", () => inComputer(async ({ computer, identity, provider, ctx }) => {
     await computer.provision(identity); await computer.status();
     vi.spyOn(Date, "now").mockReturnValue(identity.expiresAt + 1);
@@ -179,6 +206,78 @@ describe("computer admission", () => {
       await object.alarm();
       expect((await object.get(actor, { instanceId: instance.instanceId })).instance?.state).toBe("ready");
       expect(await ctx.storage.getAlarm()).toBeGreaterThan(Date.now() + 1_000);
+    });
+  });
+
+  it("keeps a used computer up for 30 minutes after each command, within its maximum lifetime", async () => {
+    const limits = { enabled: true, concurrentInstances: 1, periodSeconds: 36_000, maxInstanceSeconds: 3600 };
+    vi.spyOn(InstancePolicy.prototype, "requireActive").mockResolvedValue();
+    vi.spyOn(InstancePolicy.prototype, "computerLimits").mockResolvedValue(limits);
+    const extend = vi.spyOn(ComputerInstance.prototype, "extend").mockResolvedValue(true);
+    vi.spyOn(ComputerInstance.prototype, "execute").mockImplementation(async frame => ({ type: "res", id: frame.id, ok: true, data: { status: "completed", output: "", exitCode: 0 } }));
+    await runInDurableObject(env.INSTANCES.getByName(crypto.randomUUID()), async (object, ctx) => {
+      const actor = { ownerUid: 1000, human: true }, store = new InstanceStore(ctx.storage);
+      const { instance } = await object.start(actor, { requestId: "computer", templateId: "computer" });
+      store.update({ ...instance, state: "ready", readyAt: instance.createdAt });
+      const run = (afterMs: number) => {
+        vi.spyOn(Date, "now").mockReturnValue(instance.createdAt + afterMs);
+        return object.execute(actor, instance.instanceId, { type: "req", id: `at-${afterMs}`, call: "shell.exec", args: { input: "true" } }, Date.now() + 10_000);
+      };
+      const expiry = async () => (await object.get(actor, { instanceId: instance.instanceId })).instance!.expiresAt - instance.createdAt;
+      expect(await expiry()).toBe(1_800_000);
+      await run(1_200_000);
+      expect(await expiry()).toBe(3_000_000);
+      expect(extend).toHaveBeenLastCalledWith(instance.createdAt + 3_000_000);
+      await run(1_230_000);
+      expect(extend).toHaveBeenCalledOnce();
+      await run(2_400_000);
+      expect(await expiry()).toBe(3_600_000);
+      expect(store.usage(limits, Date.now(), "linux").reservedSeconds).toBe(3600);
+      await run(3_000_000);
+      expect(extend).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("never extends a computer past the period allowance", async () => {
+    const limits = { enabled: true, concurrentInstances: 1, periodSeconds: 2400, maxInstanceSeconds: 3600 };
+    vi.spyOn(InstancePolicy.prototype, "requireActive").mockResolvedValue();
+    vi.spyOn(InstancePolicy.prototype, "computerLimits").mockResolvedValue(limits);
+    vi.spyOn(ComputerInstance.prototype, "extend").mockResolvedValue(true);
+    vi.spyOn(ComputerInstance.prototype, "execute").mockImplementation(async frame => ({ type: "res", id: frame.id, ok: true, data: { status: "completed", output: "", exitCode: 0 } }));
+    await runInDurableObject(env.INSTANCES.getByName(crypto.randomUUID()), async (object, ctx) => {
+      const actor = { ownerUid: 1000, human: true }, store = new InstanceStore(ctx.storage);
+      const { instance } = await object.start(actor, { requestId: "computer", templateId: "computer" });
+      store.update({ ...instance, state: "ready", readyAt: instance.createdAt });
+      vi.spyOn(Date, "now").mockReturnValue(instance.createdAt + 1_200_000);
+      await object.execute(actor, instance.instanceId, { type: "req", id: "near-allowance", call: "shell.exec", args: { input: "true" } }, Date.now() + 10_000);
+      expect((await object.get(actor, { instanceId: instance.instanceId })).instance!.expiresAt).toBe(instance.createdAt + 2_400_000);
+      expect(store.usage(limits, Date.now(), "linux").reservedSeconds).toBe(2400);
+    });
+  });
+
+  it("keeps a computer with a running job up through maintenance, and only while the computer accepts", async () => {
+    const limits = { enabled: true, concurrentInstances: 1, periodSeconds: 36_000, maxInstanceSeconds: 3600 };
+    vi.spyOn(InstancePolicy.prototype, "requireActive").mockResolvedValue();
+    vi.spyOn(InstancePolicy.prototype, "computerLimits").mockResolvedValue(limits);
+    const status = vi.spyOn(ComputerInstance.prototype, "status").mockResolvedValue({ state: "ready", busy: true });
+    const extend = vi.spyOn(ComputerInstance.prototype, "extend").mockResolvedValue(true);
+    await runInDurableObject(env.INSTANCES.getByName(crypto.randomUUID()), async (object, ctx) => {
+      const actor = { ownerUid: 1000, human: true }, store = new InstanceStore(ctx.storage);
+      const { instance } = await object.start(actor, { requestId: "computer", templateId: "computer" });
+      store.update({ ...instance, state: "ready", readyAt: instance.createdAt });
+      const expiry = async () => (await object.get(actor, { instanceId: instance.instanceId })).instance!.expiresAt - instance.createdAt;
+      vi.spyOn(Date, "now").mockReturnValue(instance.createdAt + 1_200_000);
+      await object.alarm();
+      expect(await expiry()).toBe(3_000_000);
+      extend.mockResolvedValue(false);
+      vi.spyOn(Date, "now").mockReturnValue(instance.createdAt + 1_500_000);
+      await object.alarm();
+      expect(await expiry()).toBe(3_000_000);
+      status.mockResolvedValue({ state: "ready" });
+      extend.mockResolvedValue(true);
+      vi.spyOn(Date, "now").mockReturnValue(instance.createdAt + 1_800_000);
+      await object.alarm();
+      expect(await expiry()).toBe(3_000_000);
     });
   });
 

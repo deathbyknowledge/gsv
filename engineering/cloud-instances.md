@@ -128,11 +128,15 @@ type Instance = {
 };
 ```
 
-Times are epoch milliseconds. `expiresAt` is fixed at admission and covers the
-whole allocation, including startup. The catalog defines lifetime defaults and
-bounds; the admitted record makes the accepted deadline explicit. The first
-version has no lease-extension API. A longer job must request enough time or
-checkpoint its outputs before expiry.
+Times are epoch milliseconds. `expiresAt` covers the whole allocation,
+including startup. The catalog defines lifetime defaults and bounds; the
+admitted record makes the accepted deadline explicit. A browser's expiry is
+fixed at admission. A computer's moves later while it is in use: each command,
+or a detached command that is still running, keeps it up for the idle window
+(30 minutes), within the maximum lifetime counted from admission and the period
+allowance. Each extension reserves its added time. The computer accepts a new
+expiry before the coordinator records it, so it never stops before the recorded
+expiry. There is no extension API; use is the only signal.
 
 ### Start and readiness
 
@@ -425,7 +429,7 @@ following are proposed keys, not existing allowances or product prices:
 | `browser.enabled`, `compute.enabled` | Admit the corresponding resource kind. |
 | `browser.concurrent_instances`, `compute.concurrent_instances` | Maximum admitted instances, including startup and unconfirmed shutdown. |
 | `browser.period_seconds`, `compute.period_unit_seconds` | Usage allowance per service-owned billing period. |
-| `browser.max_instance_seconds`, `compute.max_instance_seconds` | Maximum admitted lifetime. |
+| `browser.max_instance_seconds`, `compute.max_instance_seconds` | Maximum lifetime from admission, including a computer's extensions. |
 | `browser.saved_profiles`, `browser.profile_storage_bytes` | Count and total retained storage bounds, including retained revisions. |
 | `compute.capacity_units`, `compute.template.<id>` | Concurrent compute capacity and permitted templates. |
 

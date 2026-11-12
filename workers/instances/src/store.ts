@@ -1,6 +1,6 @@
 import type { BrowserHandoff, BrowserProfile, BrowserProfileSummary, CloudInstance, CloudInstanceKind, InstanceSelector, InstanceUsage, SysBrowserProfileListResult, SysInstanceStartArgs } from "@humansandmachines/gsv/protocol";
 import type { InstanceActor } from "@humansandmachines/gsv/services/instances";
-import { browserTemplate, computerTemplate, type BrowserLimits, type ComputerLimits } from "./config";
+import { browserTemplate, COMPUTER_IDLE_SECONDS, computerTemplate, type BrowserLimits, type ComputerLimits } from "./config";
 import { boundBrowserStorageUsage } from "./browser-storage-summary";
 
 export type InstanceRow = {
@@ -103,6 +103,33 @@ export class InstanceStore {
       return value;
     });
   }
+  /** The latest expiry a ready computer may move to now: the idle window, within its maximum lifetime and the period allowance. */
+  extensionTarget(id: string, limits: ComputerLimits, now = Date.now()): number | null {
+    const row = this.byId(id), value = instance(row);
+    if (!row.active || value.kind !== "linux" || value.state !== "ready" || value.expiresAt <= now) return null;
+    const usage = this.usage(limits, now, value.kind);
+    // The reservation counts from admission, so the allowance bounds the expiry the same way.
+    const available = limits.periodSeconds - usage.usedSeconds - (usage.reservedSeconds - row.reservation);
+    const target = Math.min(
+      now + Math.min(COMPUTER_IDLE_SECONDS, limits.maxInstanceSeconds) * 1000,
+      value.createdAt + limits.maxInstanceSeconds * 1000,
+      value.createdAt + available * 1000,
+    );
+    return target > value.expiresAt ? target : null;
+  }
+  /** Moves a ready computer's expiry later, never past its current target, and reserves the added time. */
+  extend(id: string, expiresAt: number, limits: ComputerLimits, now = Date.now()): CloudInstance {
+    return this.storage.transactionSync(() => {
+      const value = instance(this.byId(id)), target = this.extensionTarget(id, limits, now);
+      if (target === null) return value;
+      const next = Math.min(expiresAt, target);
+      if (next <= value.expiresAt) return value;
+      const extended: CloudInstance = { ...value, expiresAt: next, revision: value.revision + 1 };
+      this.sql.exec("UPDATE instances SET record = ?, reservation = ? WHERE id = ?", JSON.stringify(extended), Math.ceil((next - value.createdAt) / 1000), id);
+      this.changed?.(value.ownerUid);
+      return extended;
+    });
+  }
   cancelStart(actor: InstanceActor, requestId: string): void {
     this.sql.exec("INSERT OR IGNORE INTO cancelled_starts (owner_uid, request_id) VALUES (?, ?)", actor.ownerUid, requestId);
   }
@@ -115,7 +142,7 @@ export class InstanceStore {
       const row = this.byId(id), previous = instance(row);
       if (!row.active) return previous;
       const value: CloudInstance = { ...previous, state: failed ? "failed" : "stopped", stoppedAt: now, revision: previous.revision + 1 };
-      // Cleanup retains the reservation until termination; usable runtime ends at the fixed expiry.
+      // Cleanup retains the reservation until termination; usable runtime ends at the expiry.
       const charge = previous.readyAt === undefined ? 0 : Math.min(row.reservation, Math.max(0, Math.ceil((Math.min(now, previous.expiresAt) - previous.readyAt) / 1000)));
       // Round runtime once; each started second belongs to the UTC month where it starts.
       let remaining = charge, cursor = previous.readyAt ?? now;

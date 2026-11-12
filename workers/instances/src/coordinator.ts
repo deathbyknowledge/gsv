@@ -7,7 +7,7 @@ import {
 } from "@humansandmachines/gsv/services/instances";
 import type { InstallationInstances, InstanceActor, InstanceTargetRequest, InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
 import { z } from "zod";
-import { browserTemplate, computerTemplate, COMPUTER_IMPLEMENTATIONS, IMPLEMENTATIONS, InstancePolicy, type Environment } from "./config";
+import { browserTemplate, COMPUTER_IDLE_SECONDS, computerTemplate, COMPUTER_IMPLEMENTATIONS, IMPLEMENTATIONS, InstancePolicy, type Environment } from "./config";
 import { CloudBrowser } from "./browser";
 import { computerName, type ComputerControl } from "./computer";
 import { ComputerRequest } from "./computer-request";
@@ -25,6 +25,8 @@ const QUIET_ALLOCATION_MS = 180_000;
 const PROVIDER_RECOVERY_MS = 60_000;
 const MAINTENANCE_BUDGET_MS = 20_000;
 const STARTING_POLL_MS = 1_000;
+// Commands extend a computer at most once a minute, not on every request.
+const EXTENSION_STEP_MS = 60_000;
 const PENDING_CHANGES_KEY = "pending_instance_changes";
 const humanInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("tab"), tabId: z.number().int().positive() }),
@@ -410,7 +412,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       const value = instance(this.#store.byId(id));
       if (value.kind === "linux") {
         if (!COMPUTER_IMPLEMENTATIONS.some(call => call === frame.call)) throw new Error("Unsupported computer syscall");
-        deadlineAt = Math.min(deadlineAt, value.expiresAt);
+        // Use may move the expiry before dispatch; expiry itself aborts the request through fenceStop.
         if (deadlineAt <= Date.now()) throw new Error("Computer request deadline exceeded");
         let operations = this.#operations.get(id);
         if (!operations) { operations = new Map(); this.#operations.set(id, operations); }
@@ -428,8 +430,9 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
           return await request.run(async signal => {
             await this.#policy.requireActive();
             this.requireInstance(actor, id, true);
+            await this.extendComputer(id);
             signal.throwIfAborted();
-            return this.computer(id).execute(frame, deadlineAt);
+            return this.computer(id).execute(frame, Math.min(deadlineAt, instance(this.#store.byId(id)).expiresAt));
           });
         }
         catch (cause) {
@@ -687,6 +690,19 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- Workers RPC recursively maps the syscall union beyond TypeScript's instantiation limit.
     return this.env.COMPUTERS.getByName(computerName(this.#installationId, id)) as unknown as ComputerControl;
   }
+  /**
+   * A command or running job keeps its computer up for the idle window, within
+   * its maximum lifetime and the allowance. The computer accepts the new expiry
+   * before it is recorded, so it never stops before the recorded expiry.
+   */
+  private async extendComputer(id: string): Promise<void> {
+    const now = Date.now();
+    if (instance(this.#store.byId(id)).expiresAt + EXTENSION_STEP_MS > now + COMPUTER_IDLE_SECONDS * 1000) return;
+    const limits = await this.#policy.computerLimits();
+    const target = this.#store.extensionTarget(id, limits, now);
+    if (target === null || !await this.computer(id).extend(target)) return;
+    this.#store.extend(id, target, limits);
+  }
   private async maintainComputer(id: string): Promise<void> {
     let value = instance(this.expireIfDue(id));
     const computer = this.computer(id);
@@ -713,6 +729,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         this.#store.update({ ...value, diagnosticRef: undefined, revision: value.revision + 1 });
       }
       this.#store.sql.exec("UPDATE instances SET provider_failed_at = NULL WHERE id = ?", id);
+      if (status.busy) await this.extendComputer(id);
     } catch (cause) {
       value = instance(this.expireIfDue(id));
       this.#store.update({ ...value, diagnosticRef: this.#store.diagnostic(id, cause), revision: value.revision + 1 });
