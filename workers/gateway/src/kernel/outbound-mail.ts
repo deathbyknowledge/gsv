@@ -9,6 +9,7 @@ import {
 import type {
   JsonObject,
   MailInviteApproval,
+  MailInviteRepeat,
   MailSendArgs,
   MailSendResult,
   ManagedOutboundMailClaimOutcome,
@@ -24,11 +25,33 @@ import * as z from "zod/mini";
 import { isLocked } from "../auth/shadow";
 import { stableOpaqueId } from "../shared/stable-id";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
-import { calendarEvents, calendarWhen, firstProperty, parseCalendar, serializeCalendar } from "./icalendar";
+import {
+  calendarEvents,
+  calendarTimeText,
+  calendarWhen,
+  firstProperty,
+  parseCalendar,
+  serializeCalendar,
+  type CalendarEvent,
+  type CalendarTime,
+} from "./icalendar";
 import { MAIL_NO_TEXT_BODY, managedMailAddressForOwner } from "./mailbox";
 import { ownerDisplayName } from "./profiles";
+import {
+  calendarSeries,
+  explicitRule,
+  formatRepeatDay,
+  matchOccurrences,
+  parseRepeatRule,
+  ruleIncludesStart,
+  wallClock,
+  type CalendarSeries,
+  type OccurrenceChange,
+  type RepeatRule,
+} from "./recurrence";
 import { normalizeTimezone, ownerTimezone } from "./timezone";
 import { authorizeNestedOperation } from "./tool-approval";
+import { writeTimeZones } from "./vtimezone";
 import type {
   MailMessageRecord,
   MailOutboundRecord,
@@ -457,18 +480,20 @@ function normalizeMailSend(
 }
 
 /**
- * An event this account organizes, as one VEVENT with REQUEST or CANCEL, rewritten
- * with CRLF lines. Its organizer must be the sender, so replies come back here.
+ * An event this account organizes, with REQUEST or CANCEL: one VEVENT, or a repeating one
+ * with the dates changed from it under its UID. It is rewritten with CRLF lines and the
+ * VTIMEZONEs its times name, and says only what its approval can show. Its organizer must be
+ * the sender, so replies come back here.
  */
 function normalizeInvite(value: string, from: string, timeZone: string): NormalizedInvite {
   if (String(value) !== value || TEXT_ENCODER.encode(value).byteLength > MAX_INVITE_BYTES) {
     throw new MailSendError(`invite must be iCalendar text of at most ${MAX_INVITE_BYTES} bytes`, false);
   }
   let calendar: ReturnType<typeof parseCalendar>;
-  let events: ReturnType<typeof calendarEvents>;
+  let series: CalendarSeries[];
   try {
     calendar = parseCalendar(value);
-    events = calendarEvents(calendar);
+    series = calendarSeries(calendarEvents(calendar));
   } catch (error) {
     throw new MailSendError(`invite is not a valid calendar: ${errorMessage(error)}`, false);
   }
@@ -480,36 +505,50 @@ function normalizeInvite(value: string, from: string, timeZone: string): Normali
   // The email Worker finds the method in the text, written as the approval names it.
   methodProperty.params = {};
   methodProperty.value = method;
-  if (events.length !== 1 || calendar.components.some((component) => !["VEVENT", "VTIMEZONE"].includes(component.name))) {
+  if (series.length !== 1 || calendar.components.some((component) => !["VEVENT", "VTIMEZONE"].includes(component.name))) {
     throw new MailSendError("invite must hold exactly one event", false);
   }
-  const [event] = events;
-  if (!firstProperty(event.component, "DTSTAMP")) throw new MailSendError("invite event has no DTSTAMP", false);
-  // The approval shows one date, so the event may not repeat or stand for a date of a series.
-  if (["RRULE", "RDATE", "EXRULE", "EXDATE", "RECURRENCE-ID"].some((name) => firstProperty(event.component, name))) {
-    throw new MailSendError("invite must be an event that happens once, without RRULE, RDATE, EXRULE, EXDATE or RECURRENCE-ID", false);
+  const [{ event, changes }] = series;
+  if (!event) throw new MailSendError("invite must hold the event itself, not only dates changed from it", false);
+  if (method === "CANCEL" && changes.length > 0) {
+    throw new MailSendError("a cancellation withdraws the whole event; to cancel one date, send a REQUEST that skips it with EXDATE", false);
   }
-  // The approval shows when the event ends, which DURATION leaves each calendar to work out.
-  if (firstProperty(event.component, "DURATION")) {
-    throw new MailSendError("invite gives its length as DURATION, which GSV can't send; write DTEND", false);
-  }
-  if (event.organizer?.address.toLowerCase() !== from.toLowerCase()) {
-    throw new MailSendError(`invite must be organized by ${from}, so replies come back to it`, false);
-  }
-  const guests = recipientLists(
-    event.attendees
-      .map((attendee) => normalizeAddress(attendee.address, "invite"))
-      .filter((address) => address.toLowerCase() !== from.toLowerCase()),
-    [],
-  ).to;
+  const guests = inviteGuests(event, from);
   if (guests.length === 0) throw new MailSendError("invite has no guests", false);
-  const when = calendarWhen(event, timeZone);
+  for (const each of [event, ...changes]) {
+    if (!firstProperty(each.component, "DTSTAMP")) throw new MailSendError("invite event has no DTSTAMP", false);
+    if (each.organizer?.address.toLowerCase() !== from.toLowerCase()) {
+      throw new MailSendError(`invite must be organized by ${from}, so replies come back to it`, false);
+    }
+    // The approval shows when each date ends, which DURATION leaves each calendar to work out.
+    if (firstProperty(each.component, "DURATION")) {
+      throw new MailSendError("invite gives its length as DURATION, which GSV can't send; write DTEND", false);
+    }
+    // A time without a zone reads as each guest's own clock, which the owner can't approve.
+    const times = [each.start, each.end, each.recurrenceId, ...each.skipped];
+    if (times.some((time) => time?.kind === "local" && !time.timeZone)) {
+      throw new MailSendError("invite times need a time zone: give each a TZID, or write it in UTC such as 20261127T201500Z", false);
+    }
+    if (!sameAddresses(inviteGuests(each, from), guests)) {
+      throw new MailSendError("every date of an invite goes to the same guests", false);
+    }
+  }
+  try {
+    writeTimeZones(calendar);
+  } catch (error) {
+    throw new MailSendError(`invite can't be sent: ${errorMessage(error)}`, false);
+  }
+  // A repeating event shows in the clock its rule counts days in, so its days and times agree.
+  const shownZone = ruleTimeZone(event) ?? timeZone;
+  const when = calendarWhen(event, shownZone);
   const approval: MailInviteApproval = { method, allDay: when.allDay, start: when.start };
+  if (shownZone !== timeZone) approval.timeZone = shownZone;
   if (event.title) approval.title = event.title;
   if (when.end) approval.end = when.end;
   if (event.location) approval.location = event.location;
+  Object.assign(approval, inviteRepeats(event, changes, shownZone));
   const text = serializeCalendar(calendar);
-  // CRLF lines and folding can carry a calendar past the size the email Worker accepts.
+  // CRLF lines, folding and the time zones written in can carry a calendar past the size the email Worker accepts.
   if (TEXT_ENCODER.encode(text).byteLength > MAX_INVITE_BYTES) {
     throw new MailSendError(`invite is more than ${MAX_INVITE_BYTES} bytes once written to send`, false);
   }
@@ -518,17 +557,144 @@ function normalizeInvite(value: string, from: string, timeZone: string): Normali
   return { method, text, guests, approval };
 }
 
+/** The zone a repeating event's rule counts days in: its start's TZID, or UTC. Undefined unless it repeats at a time. */
+function ruleTimeZone(event: CalendarEvent): string | undefined {
+  if (!firstProperty(event.component, "RRULE")) return undefined;
+  if (event.start.kind === "local") return event.start.timeZone;
+  return event.start.kind === "utc" ? "UTC" : undefined;
+}
+
+/** The addresses an event invites, less its organizer, each once. */
+function inviteGuests(event: CalendarEvent, from: string): string[] {
+  return recipientLists(
+    event.attendees
+      .map((attendee) => normalizeAddress(attendee.address, "invite"))
+      .filter((address) => address.toLowerCase() !== from.toLowerCase()),
+    [],
+  ).to;
+}
+
+/**
+ * How a repeating invite repeats, once it is known to say only what its approval shows: one
+ * RRULE in the forms GSV says in words, starting on a date it includes, and skipping or
+ * changing only dates it has.
+ */
+function inviteRepeats(
+  event: CalendarEvent,
+  changes: OccurrenceChange[],
+  timeZone: string,
+): Pick<MailInviteApproval, "repeats" | "skipped" | "changed"> {
+  // These add or remove dates whether or not the event has a rule, and the approval names neither.
+  for (const name of ["RDATE", "EXRULE"]) {
+    if (firstProperty(event.component, name)) throw new MailSendError(`invite repeats by ${name}, which GSV can't send; use RRULE and EXDATE`, false);
+  }
+  const rules = event.component.properties.filter((property) => property.name === "RRULE");
+  if (rules.length === 0) {
+    if (event.skipped.length > 0 || changes.length > 0) {
+      throw new MailSendError("invite skips or changes dates of an event that doesn't repeat", false);
+    }
+    return {};
+  }
+  if (changes.some((change) => ["RRULE", "RDATE", "EXRULE", "EXDATE"].some((name) => firstProperty(change.component, name)))) {
+    throw new MailSendError("a changed date of an invite can't repeat or skip dates of its own", false);
+  }
+  if (changes.some((change) => firstProperty(change.component, "RECURRENCE-ID")?.params.RANGE)) {
+    throw new MailSendError("invite changes a date and the ones after it (RANGE), which GSV can't send", false);
+  }
+  let rule: RepeatRule;
+  try {
+    if (rules.length > 1) throw new Error("it has more than one RRULE");
+    rule = parseRepeatRule(rules[0].value);
+  } catch (error) {
+    throw new MailSendError(`invite repeats by a rule GSV can't send: ${errorMessage(error)}`, false);
+  }
+  const allDay = event.start.kind === "date";
+  // RFC 5545 writes UNTIL as a date beside a date, and in UTC beside a zoned time.
+  if (rule.until && rule.until.kind !== (allDay ? "date" : "utc")) {
+    throw new MailSendError(
+      allDay
+        ? "invite repeat UNTIL must be a date such as 20270628, as the event is all day"
+        : "invite repeat UNTIL must be a UTC time such as 20270628T215959Z, as the event has times",
+      false,
+    );
+  }
+  if (!ruleIncludesStart(event.start, rule)) {
+    throw new MailSendError(`invite starts on ${wallClock(event.start).date}, a date its repeat rule leaves out; start it on a date the rule includes`, false);
+  }
+  const named = [...event.skipped, ...changes.map((change) => change.recurrenceId)];
+  if (named.some((time) => (time.kind === "date") !== allDay)) {
+    throw new MailSendError("invite names a skipped or changed date unlike its DTSTART; write EXDATE and RECURRENCE-ID as DTSTART is written", false);
+  }
+  const ids = matchOccurrences(event.start, rule, named, timeZone);
+  const text = (time: CalendarTime) => calendarTimeText(time, timeZone);
+  const skipped = new Map<string, CalendarTime>();
+  const changed = new Map<string, { id: CalendarTime; change: OccurrenceChange }>();
+  named.forEach((time, index) => {
+    const id = ids[index];
+    const change = index < event.skipped.length ? undefined : changes[index - event.skipped.length];
+    if (!id) throw new MailSendError(`invite ${change ? "changes" : "skips"} ${text(time)}, which isn't a date the event happens on`, false);
+    const key = occurrenceKey(id);
+    if (!change) {
+      skipped.set(key, id);
+    } else if (changed.has(key)) {
+      throw new MailSendError(`invite changes ${text(id)} twice`, false);
+    } else {
+      changed.set(key, { id, change });
+    }
+  });
+  for (const [key, { id, change }] of changed) {
+    if (skipped.has(key)) throw new MailSendError(`invite both skips and changes ${text(id)}`, false);
+    // A date cancelled within a REQUEST is skipped like an EXDATE.
+    if (change.status === "CANCELLED") {
+      skipped.set(key, id);
+      changed.delete(key);
+    }
+  }
+  const sorted = <Entry>(entries: Map<string, Entry>) => [...entries].sort(([a], [b]) => a.localeCompare(b)).map(([, entry]) => entry);
+  const repeats: Pick<MailInviteApproval, "repeats" | "skipped" | "changed"> = { repeats: inviteRepeat(rule, event.start, timeZone) };
+  if (skipped.size > 0) repeats.skipped = sorted(skipped).map(text);
+  if (changed.size > 0) {
+    repeats.changed = sorted(changed).map(({ id, change }) => {
+      const when = calendarWhen(change, timeZone);
+      return when.end ? { from: text(id), start: when.start, end: when.end } : { from: text(id), start: when.start };
+    });
+  }
+  return repeats;
+}
+
+/** A rule as its approval shows it, with what it leaves to the start written out. */
+function inviteRepeat(rule: RepeatRule, start: CalendarTime, timeZone: string): MailInviteRepeat {
+  const explicit = explicitRule(rule, wallClock(start).date);
+  const repeat: MailInviteRepeat = { freq: explicit.freq, interval: explicit.interval };
+  if (explicit.byDay) repeat.byDay = explicit.byDay.map(formatRepeatDay);
+  if (explicit.byMonthDay) repeat.byMonthDay = explicit.byMonthDay;
+  if (explicit.byMonth) repeat.byMonth = explicit.byMonth;
+  if (explicit.count !== undefined) repeat.count = explicit.count;
+  if (explicit.until) repeat.until = calendarTimeText(explicit.until, timeZone);
+  return repeat;
+}
+
+/** An occurrence's start as its series writes it, which orders the occurrences of one series. */
+function occurrenceKey(time: CalendarTime): string {
+  if (time.kind === "date") return time.date;
+  return time.kind === "utc" ? new Date(time.ms).toISOString() : time.local;
+}
+
 /** Everyone the invite lists gets it, and nobody else. */
 function requireGuests(invite: NormalizedInvite, to: readonly string[], cc: readonly string[]): NormalizedInvite {
   const recipients = [...to, ...cc];
-  const sorted = (addresses: readonly string[]) => addresses.map((address) => address.toLowerCase()).sort().join(", ");
-  if (sorted(recipients) !== sorted(invite.guests)) {
+  if (!sameAddresses(recipients, invite.guests)) {
     throw new MailSendError(
       `An invite goes to exactly its guests (${invite.guests.join(", ")}); this message goes to ${recipients.join(", ")}`,
       false,
     );
   }
   return invite;
+}
+
+function sameAddresses(a: readonly string[], b: readonly string[]): boolean {
+  const sorted = (addresses: readonly string[]) => addresses.map((address) => address.toLowerCase()).sort().join(", ");
+  return sorted(a) === sorted(b);
 }
 
 function addressList(value: MailSendArgs["to"], field: "to" | "cc"): string[] {

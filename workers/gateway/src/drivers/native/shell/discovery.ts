@@ -134,11 +134,11 @@ const NATIVE_COMMAND_DESCRIPTORS = defineNativeCommandDescriptors({
     "mail sent [--limit N] [--before CURSOR]",
     "mail status DELIVERY_ID",
   ]),
-  cal: command("Write and read calendar event files.", "Create an event or meeting with a time, place and guests as an .ics file, move or cancel an event the Ship organizes, or read an invite or calendar file someone sent.", ["calendar", "event", "meeting", "appointment", "invite", "invitation", "ics", "ical", "icalendar", "attendee", "guest", "reschedule", "cancel"], [], [
-    "cal add --title TITLE --start WHEN [--end WHEN | --duration LENGTH] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]... --out PATH",
-    "cal update PATH [--title TITLE] [--start WHEN] [--end WHEN | --duration LENGTH] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]...",
-    "cal cancel PATH",
-    "cal show PATH [--timezone ZONE]",
+  cal: command("Write and read calendar event files.", "Create an event or meeting with a time, place and guests as an .ics file, make it repeat weekly or monthly, move, skip or cancel an event or one of its dates, or read an invite or calendar file someone sent.", ["calendar", "event", "meeting", "appointment", "invite", "invitation", "ics", "ical", "icalendar", "attendee", "guest", "reschedule", "cancel", "repeat", "repeating", "recurring", "weekly", "occurrence", "skip"], [], [
+    "cal add --title TITLE --start WHEN [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]... --out PATH",
+    "cal update PATH [--occurrence WHEN] [--title TITLE] [--start WHEN] [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]...",
+    "cal cancel PATH [--occurrence WHEN]",
+    "cal show PATH [--timezone ZONE] [--next COUNT]",
   ]),
   rgit: command("Inspect and commit staged ripgit repository changes.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["ripgit"]),
   ripgit: command("Alias for the rgit repository command.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["rgit"]),

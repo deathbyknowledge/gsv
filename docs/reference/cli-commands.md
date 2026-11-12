@@ -817,20 +817,30 @@ connected adapters, and adapter authentication loss.
 `cal` writes and reads iCalendar (`.ics`) event files:
 
 ```bash
-cal add --title TITLE --start WHEN [--end WHEN | --duration LENGTH] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]... --out PATH
-cal update PATH [--title TITLE] [--start WHEN] [--end WHEN | --duration LENGTH] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]...
-cal cancel PATH
-cal show PATH [--timezone ZONE]
+cal add --title TITLE --start WHEN [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]... --out PATH
+cal update PATH [--occurrence WHEN] [--title TITLE] [--start WHEN] [--end WHEN | --duration LENGTH] [--repeat RULE] [--timezone ZONE] [--location PLACE] [--description TEXT] [--attendee ADDRESS]...
+cal cancel PATH [--occurrence WHEN]
+cal show PATH [--timezone ZONE] [--next COUNT]
 ```
 
 `add` gives a new event a fresh UID, the account's managed mail address as its
 organizer, and each `--attendee` as an invited guest. It reads local times in
-the owner's time zone, or `--timezone`, and stores them in UTC; a date makes an
-all-day event. `update` and `cancel` rewrite the file in place with the same
-UID and the next SEQUENCE, so a calendar that already has the event replaces
-it. Only the event's organizer can change it, and `cal` never changes the times
-of a repeating event. `show` prints any calendar file, one field per line.
+the owner's time zone, or `--timezone`, and stores a single event's times in
+UTC; a date makes an all-day event. `update` and `cancel` rewrite the file in
+place with the same UID and the next SEQUENCE, so a calendar that already has
+the event replaces it. Only the event's organizer can change it. `show` prints
+any calendar file, one field per line, with a repeating event's next dates.
 Send a new or changed event to its guests with `mail send --invite PATH`.
+
+`--repeat` takes an RFC 5545 RRULE in the forms calendar apps offer: daily,
+weekly on given days, monthly on a day of the month (`-1` for the last) or a
+weekday such as `4FR` or `-1FR`, or yearly on a date, every `INTERVAL` of them,
+ending with `COUNT` or `UNTIL`. A repeating event is stored in its time zone,
+with that zone's VTIMEZONE, so it keeps its clock time across daylight saving
+changes. `--occurrence WHEN` names one of its dates: `update --occurrence`
+moves or changes that date alone, and `cancel --occurrence` skips it (EXDATE).
+When the whole series moves, each skipped or changed date follows its day, and
+one the new rule no longer has is dropped and reported.
 
 `skills list` shows the built-in skills, served read-only from `/sys/skills.d`,
 before the owner's and the agent's own. `skills create` writes to the current

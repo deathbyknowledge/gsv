@@ -40,6 +40,10 @@ export type CalendarEvent = {
   organizer?: CalendarPerson;
   attendees: CalendarPerson[];
   recurrence?: string;
+  /** The occurrence of a repeating event this one changes. */
+  recurrenceId?: CalendarTime;
+  /** Occurrences a repeating event skips (EXDATE). */
+  skipped: CalendarTime[];
 };
 
 const MAX_DEPTH = 8;
@@ -104,6 +108,7 @@ export function calendarEvents(root: CalendarComponent): CalendarEvent[] {
       sequence,
       start: calendarTime(start),
       attendees: component.properties.filter((property) => property.name === "ATTENDEE").map(calendarPerson),
+      skipped: component.properties.filter((property) => property.name === "EXDATE").flatMap(calendarTimes),
     };
     if (end) event.end = calendarTime(end);
     if (organizer) event.organizer = calendarPerson(organizer);
@@ -116,6 +121,8 @@ export function calendarEvents(root: CalendarComponent): CalendarEvent[] {
     if (duration) event.duration = duration;
     const recurrence = firstProperty(component, "RRULE")?.value;
     if (recurrence) event.recurrence = recurrence;
+    const recurrenceId = firstProperty(component, "RECURRENCE-ID");
+    if (recurrenceId) event.recurrenceId = calendarTime(recurrenceId);
     return event;
   });
 }
@@ -167,6 +174,18 @@ export function calendarTime(property: CalendarProperty): CalendarTime {
   return timeZone ? { kind: "local", local, timeZone } : { kind: "local", local };
 }
 
+/** Each value of a property that may list several, such as EXDATE:20261228T090000,20270104T090000. */
+export function calendarTimes(property: CalendarProperty): CalendarTime[] {
+  return property.value.split(",").map((value) => calendarTime({ ...property, value: value.trim() }));
+}
+
+/** A time as a property value: 20261127, 20261127T201500Z, or a wall clock with its TZID. */
+export function timeProperty(name: string, time: CalendarTime): CalendarProperty {
+  if (time.kind === "date") return calendarProperty(name, dateValue(time.date), { VALUE: ["DATE"] });
+  if (time.kind === "utc") return calendarProperty(name, utcValue(time.ms));
+  return calendarProperty(name, time.local.replace(/[-:]/g, ""), time.timeZone ? { TZID: [time.timeZone] } : {});
+}
+
 /** When an event happens as read in a time zone: an all-day event by its first and last day. */
 export type CalendarWhen = { allDay: boolean; start: string; end?: string; duration?: string };
 
@@ -181,7 +200,7 @@ export function calendarInstant(time: CalendarTime, timeZone: string): number | 
   }
 }
 
-/** Times read like 2026-11-27T21:15:00+01:00[Europe/Amsterdam]; a time this can't place keeps its TZID. */
+/** Times read like 2026-11-27T21:15:00+01:00[Europe/Amsterdam]. */
 export function calendarWhen(event: CalendarEvent, timeZone: string): CalendarWhen {
   if (event.start.kind === "date") {
     const when: CalendarWhen = { allDay: true, start: event.start.date };
@@ -190,10 +209,18 @@ export function calendarWhen(event: CalendarEvent, timeZone: string): CalendarWh
     else when.end = event.start.date;
     return when;
   }
-  const when: CalendarWhen = { allDay: false, start: describeTime(event.start, timeZone) };
-  if (event.end && event.end.kind !== "date") when.end = describeTime(event.end, timeZone);
+  const when: CalendarWhen = { allDay: false, start: calendarTimeText(event.start, timeZone) };
+  if (event.end && event.end.kind !== "date") when.end = calendarTimeText(event.end, timeZone);
   else if (event.duration) when.duration = event.duration;
   return when;
+}
+
+/** A date as written, or a time like 2026-11-27T21:15:00+01:00[Europe/Amsterdam]; a time this can't place keeps its TZID. */
+export function calendarTimeText(time: CalendarTime, timeZone: string): string {
+  if (time.kind === "date") return time.date;
+  const ms = calendarInstant(time, timeZone);
+  if (ms !== undefined) return formatLocalTime(ms, timeZone);
+  return time.kind === "local" ? `${time.local} ${time.timeZone ?? "floating"}` : utcValue(time.ms);
 }
 
 /** A YYYY-MM-DD date `days` later, or earlier when negative. */
@@ -216,12 +243,6 @@ export function dateValue(date: string): string {
 export function calendarAddress(value: string): string | undefined {
   const match = /^mailto:(.+)$/i.exec(value.trim());
   return match ? match[1].trim() : undefined;
-}
-
-function describeTime(time: Exclude<CalendarTime, { kind: "date" }>, timeZone: string): string {
-  const ms = calendarInstant(time, timeZone);
-  if (ms !== undefined) return formatLocalTime(ms, timeZone);
-  return time.kind === "local" ? `${time.local} ${time.timeZone ?? "floating"}` : utcValue(time.ms);
 }
 
 function calendarPerson(property: CalendarProperty): CalendarPerson {
