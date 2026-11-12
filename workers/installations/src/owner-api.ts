@@ -16,8 +16,9 @@ const handle = z.string().trim().toLowerCase().max(63);
 // Slugs the signup link carried: bounded in shape here, classified into the closed allowlist before they are reported.
 const attributionSlug = z.string().regex(/^[a-z0-9-]{1,32}$/).optional();
 const signupAttributionSchema = z.strictObject({ placement: attributionSlug, example: attributionSlug, utmSource: attributionSlug, utmCampaign: attributionSlug });
-// The inviting Ship's address as the signup link carried it; Accounts resolves it, and an unknown Ship is dropped.
-const inviterHostname = z.string().max(253).transform((value) => normalizeHostname(value)).pipe(z.string());
+// The inviting Ship's address as the signup link carried it. It is an optional claim from the link, so a value that is
+// not a hostname is dropped here rather than failing the signup; Accounts then resolves it, and an unknown Ship is dropped too.
+const inviterHostname = z.string().max(253).transform((value) => normalizeHostname(value) ?? undefined);
 const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-headers": "Authorization, Content-Type", "cache-control": "no-store" };
 type OwnerApiReply = Awaited<ReturnType<typeof sendOwnerVerification>>

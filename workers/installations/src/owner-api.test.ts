@@ -178,7 +178,7 @@ describe("signup attribution body", () => {
 });
 
 describe("signup inviter body", () => {
-  it("accepts the inviting Ship's hostname and rejects anything that is not one with the request", async () => {
+  it("accepts the inviting Ship's hostname and drops a claim that is not one without refusing the signup", async () => {
     const f = await fixture();
     await f.signIn();
     const inviterOwner = await f.accounts.createPrincipal({ email: `inviter-${crypto.randomUUID()}@example.com`, displayName: "Inviter", verified: true });
@@ -188,12 +188,21 @@ describe("signup inviter body", () => {
       env.INSTALLATIONS_DB.prepare("UPDATE hostnames SET state = 'active' WHERE installation_id = ?").bind(inviter.installationId),
     ]);
     const handle = `inv-${crypto.randomUUID()}`;
-    for (const value of ["a".repeat(250) + ".com", `https://${inviter.handle}.example.com`, `${inviter.handle}.example.com/profile`, "", 42]) {
+    for (const value of ["a".repeat(250) + ".com", 42]) {
       const operationId = crypto.randomUUID();
       const rejected = await f.request("/spaces", f.sessionSecret, { operationId, handle, inviter: value });
       expect(rejected.status).toBe(400);
       expect(await f.accounts.getReservationByOperation(operationId)).toBeNull();
     }
+    // A forged or garbled claim is dropped, not a reason to refuse the signup: the Ship is still reserved.
+    const spy = vi.spyOn(f.signup, "prepare");
+    for (const value of [`https://${inviter.handle}.example.com`, `${inviter.handle}.example.com/profile`, ""]) {
+      const operationId = crypto.randomUUID(), own = `inv-${crypto.randomUUID()}`;
+      expect((await f.request("/spaces", f.sessionSecret, { operationId, handle: own, inviter: value })).status).toBe(200);
+      expect(spy.mock.lastCall?.[4]).toBeUndefined();
+      await env.INSTALLATIONS_DB.prepare("UPDATE installations SET state = 'cancelled' WHERE handle = ?").bind(own).run();
+    }
+    spy.mockRestore();
     const operationId = crypto.randomUUID();
     const accepted = await f.request("/spaces", f.sessionSecret, { operationId, handle, inviter: `${inviter.handle.toUpperCase()}.Example.com.` });
     expect(accepted.status).toBe(200);
