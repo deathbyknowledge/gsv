@@ -77,6 +77,31 @@ describe("operator monitoring", () => {
     expect(html).toContain("Daily counts");
   });
 
+  it.each([false, true])("requires coverage through the completed seventh UTC day (returned: %s)", async (returned) => {
+    const { monitoring, db, space } = await fixture();
+    const now = Date.now();
+    const coverageEnd = Math.floor(now / DAY_MS) * DAY_MS;
+    const signedUpAt = coverageEnd - 8 * DAY_MS + 13 * 60 * 60 * 1000;
+    const baseline = await monitoring.overview(now);
+    await db.prepare("UPDATE installations SET created_at = ?, signup_at = ? WHERE id = ?")
+      .bind(signedUpAt, signedUpAt, space.installationId).run();
+    const initial = snapshot(space.installationId, signedUpAt + DAY_MS, 1);
+    const usage = { ...initial.usage!, trackedFrom: signedUpAt, firstActiveAt: signedUpAt, lastActiveAt: signedUpAt,
+      days: [{ day: new Date(signedUpAt).toISOString().slice(0, 10), messages: 1 }] };
+    await monitoring.capture({ ...initial, usage });
+    await monitoring.refresh(async () => null);
+    expect(await monitoring.overview(now)).toMatchObject({ retentionEligible: baseline.retentionEligible, retained: baseline.retained });
+
+    const measured = { ...initial, capturedAt: coverageEnd - 1, usage: { ...usage,
+      messages: returned ? 2 : 1, lastActiveAt: returned ? coverageEnd - 1 : signedUpAt,
+      days: [...usage.days, ...(returned ? [{ day: new Date(coverageEnd - 1).toISOString().slice(0, 10), messages: 1 }] : [])] } };
+    await monitoring.capture(measured);
+    expect(await monitoring.overview(now)).toMatchObject({ retentionEligible: baseline.retentionEligible, retained: baseline.retained });
+
+    await monitoring.capture({ ...measured, capturedAt: coverageEnd });
+    expect(await monitoring.overview(now)).toMatchObject({ retentionEligible: baseline.retentionEligible + 1, retained: baseline.retained + Number(returned) });
+  });
+
   it("saves outreach atomically with immutable history and refuses stale edits", async () => {
     const { monitoring, admin, space } = await fixture();
     await monitoring.saveOutreach(space.installationId, { status: "emailed", notes: "Needs help with setup <script>", lastContactedAt: Date.now(), revision: 0 }, "operator-one");

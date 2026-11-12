@@ -121,14 +121,18 @@ export class AdminMonitoring {
     // Count current Ships, including activated operator-issued accounts, without counting retired reset copies.
     const population = `(i.owner_setup = 1 OR i.state IN ('active', 'restricted')) AND i.state NOT IN ('deleted', 'retained', 'deleting', 'cancelled')
       AND NOT EXISTS (SELECT 1 FROM installation_reset_operations r WHERE r.previous_installation_id = i.id)`;
+    // Coverage must reach the UTC midnight after day seven, including users who did not return.
+    const retentionEligible = `COALESCE(i.signup_at, i.created_at) < ? AND COALESCE(i.signup_at, i.created_at) >= ?
+      AND COALESCE(i.signup_at, i.created_at) >= a.tracked_from
+      AND a.captured_at >= (CAST(COALESCE(i.signup_at, i.created_at) / ${DAY_MS} AS INTEGER) + 8) * ${DAY_MS}`;
     const totals = await this.db.prepare(`SELECT COUNT(*) AS totalUsers,
       COALESCE(SUM(COALESCE(i.signup_at, i.created_at) >= ?),0) AS newToday, COALESCE(SUM(COALESCE(i.signup_at, i.created_at) >= ?),0) AS newWeek,
       COALESCE(SUM(a.last_active_at >= ?),0) AS dau, COALESCE(SUM(a.last_active_at >= ?),0) AS wau,
       COALESCE(SUM(a.messages > 0),0) AS activated,
       COALESCE(SUM(a.messages > 0 OR COALESCE(i.signup_at, i.created_at) >= a.tracked_from),0) AS activationEligible,
       COALESCE(SUM(a.messages IS NOT NULL),0) AS monitored, MAX(a.captured_at) AS latestSync,
-      COALESCE(SUM(COALESCE(i.signup_at, i.created_at) < ? AND COALESCE(i.signup_at, i.created_at) >= ? AND COALESCE(i.signup_at, i.created_at) >= a.tracked_from),0) AS retentionEligible,
-      COALESCE(SUM(COALESCE(i.signup_at, i.created_at) < ? AND COALESCE(i.signup_at, i.created_at) >= ? AND COALESCE(i.signup_at, i.created_at) >= a.tracked_from AND EXISTS (
+      COALESCE(SUM(${retentionEligible}),0) AS retentionEligible,
+      COALESCE(SUM(${retentionEligible} AND EXISTS (
         SELECT 1 FROM installation_activity_days d WHERE d.installation_id = i.id AND d.messages > 0
           AND d.day = date(COALESCE(i.signup_at, i.created_at) / 1000, 'unixepoch', '+7 days'))),0) AS retained
       FROM installations i LEFT JOIN installation_activity a ON a.installation_id = i.id WHERE ${population}`)

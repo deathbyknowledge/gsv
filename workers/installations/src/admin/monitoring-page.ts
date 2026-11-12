@@ -24,6 +24,7 @@ export function adminOverviewPage(value: GrowthOverview | null, head: boolean, n
     </section>
     <section class="panel"><h2>What these numbers mean</h2><p>DAU: owners who sent Ship a message in the last 24 hours. WAU: the last 7 days.
       Activation: at least one owner message after signup. Retention: another message on the seventh UTC calendar day after signup, among mature, measurable signups from the last 90 days.
+      Retention includes only users tracked since signup with a successful snapshot covering that entire seventh day.
       Counts include verified self-service signups and activated operator-issued Ships. Retired reset copies are excluded; replacements keep their original signup date.</p>
       <p><a href="/admin/installations?sort=last_active">Manage users →</a></p></section>` : `<div class="empty">Activity monitoring is not connected.</div>`}
   </section>` });

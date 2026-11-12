@@ -192,8 +192,11 @@ operator-issued Ships. Reset replacements keep the original signup date and
 acquisition evidence; retired copies are excluded. Dates in charts use UTC. DAU and WAU mean an owner sent
 Ship a message in the last 24 hours or seven days. Activation means at least one
 owner message. Day-7 retention requires a message on the seventh UTC calendar day
-after signup and a mature, measured cohort from the last 90 days. Unknown pre-tracking history is
-excluded from rate denominators. These are operational account counts, separate
+after signup and a mature, measured cohort from the last 90 days. Both retention
+counts require a successful snapshot covering the entire seventh
+UTC day, with tracking since signup. Older or partial-day snapshots remain unknown
+until refreshed; a collection outage does not count as non-retention. Unknown
+pre-tracking history is excluded from rate denominators. These are operational account counts, separate
 from the optional personless product-analytics stream.
 
 The **Ships** table shows signup and last-activity dates, owner message counts,
