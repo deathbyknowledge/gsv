@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { presumedSpaceDomain, signupDestination } from "./navigation";
+import { presumedSpaceDomain, signupDestination, signupHomepage } from "./navigation";
 
 describe("browser signup handoff", () => {
+  it("links signup home to the operator domain", () => {
+    expect(signupHomepage("https://accounts.example.com")).toBe("https://example.com/");
+    expect(signupHomepage("http://localhost:1507")).toBeUndefined();
+  });
   it("carries a friend's invitation alongside setup authorization without query credentials", () => {
     const destination = new URL(signupDestination("https://new.gsv.space", `onboard_${"x".repeat(43)}`, "contact-invitation"));
     const fragment = new URLSearchParams(destination.hash.slice(1));
