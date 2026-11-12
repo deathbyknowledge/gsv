@@ -322,6 +322,22 @@ select { color: inherit; background: var(--panel); border: 1px solid var(--borde
 
 #diff { padding: 0 12px 12px; color: #cfc7cc; }
 
+.diff-view {
+  margin: 0;
+  color: #cfc7cc;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+#diff .diff-view { padding: 0; }
+.diff-view span { display: block; }
+.diff-view .diff-hunk { margin-top: 10px; color: var(--system); }
+.diff-view .diff-hunk:first-child { margin-top: 0; }
+.diff-view .diff-add { background: rgba(120, 200, 140, 0.14); color: #b9f0c8; }
+.diff-view .diff-del { background: rgba(255, 155, 155, 0.13); color: var(--danger); }
+.diff-view .diff-same { color: var(--muted); }
+
 dialog {
   max-width: min(620px, 90vw);
   border: 1px solid var(--border);

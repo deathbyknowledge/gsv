@@ -7,7 +7,8 @@ import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import Ajv from "ajv";
-import { loadPromptPreview } from "./prompt-loader.mjs";
+import { unifiedHunks } from "./line-diff.mjs";
+import { loadDraftComparison, loadPromptPreview } from "./prompt-loader.mjs";
 
 const execFileAsync = promisify(execFile);
 const TOOL_ROOT = dirname(fileURLToPath(import.meta.url));
@@ -44,6 +45,11 @@ const validatePromptPreview = ajv.compile({
     },
   },
 });
+const validateContextFileDiff = ajv.compile({
+  type: "object", additionalProperties: false, required: ["path", "content"],
+  properties: { path: { type: "string", minLength: 1 }, content: { type: "string" } },
+});
+const CONTEXT_SCOPES = { system: "shared", ship: "ship", crew: "crew", user: "owner" };
 
 export function createWorkspaceRegistry(manualRoot = process.env.GSV_MANUAL_ROOT) {
   return new Map([
@@ -58,6 +64,12 @@ export function createWorkspaceRegistry(manualRoot = process.env.GSV_MANUAL_ROOT
       label: "GSV Manual",
       root: resolve(manualRoot || resolve(REPO_ROOT, "../gsv-manual")),
       extensions: new Set([".md", ".json"]),
+    }],
+    ["context", {
+      id: "context",
+      label: "2.0 Context Draft",
+      root: resolve(REPO_ROOT, "design/context-2.0"),
+      extensions: new Set([".md"]),
     }],
   ]);
 }
@@ -182,6 +194,41 @@ export function createSourceReviewServer(options = {}) {
         }
         return sendJson(response, 200, preview);
       }
+      if (request.method === "POST" && url.pathname === "/api/context-preview") {
+        assertSameOrigin(request);
+        const body = await readJsonBody(request);
+        if (!validatePromptPreview(body)) throw invalidJsonBody(validatePromptPreview.errors);
+        const workspace = requireWorkspace("context", workspaces);
+        const unsaved = body.draft && {
+          path: (await resolveWorkspacePath(workspace, body.draft.path)).relativePath, content: body.draft.content,
+        };
+        const catalog = await readDraftCatalog(workspace, unsaved);
+        const { baseline, draft } = await loadDraftComparison(body.account, catalog);
+        const parseMarkdown = await markdownParser();
+        for (const section of draft.sections) section.html = await parseMarkdown(section.text);
+        const standingBytes = (sources) => byteLength(sources.filter((source) => source.scope !== "task").map((source) => source.text).join(""));
+        return sendJson(response, 200, {
+          account: body.account,
+          baseline: { bytes: byteLength(baseline.prompt), standingBytes: standingBytes(baseline.catalog) },
+          draft: {
+            prompt: draft.prompt, sections: draft.sections,
+            bytes: byteLength(draft.prompt), standingBytes: standingBytes(catalog),
+          },
+          diff: unifiedHunks(baseline.prompt, draft.prompt),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/api/context-file-diff") {
+        assertSameOrigin(request);
+        const body = await readJsonBody(request);
+        if (!validateContextFileDiff(body)) throw invalidJsonBody(validateContextFileDiff.errors);
+        const file = await resolveWorkspacePath(requireWorkspace("context", workspaces), body.path);
+        const baseline = await readBaselineSource(requireWorkspace("prompts", workspaces), file.relativePath);
+        return sendJson(response, 200, {
+          baselinePath: baseline && `workers/gateway/src/prompts/${file.relativePath}`,
+          baseline: baseline ?? null,
+          ...unifiedHunks(baseline ?? "", body.content),
+        });
+      }
       if (request.method === "POST" && url.pathname === "/api/render-markdown") {
         assertSameOrigin(request);
         const body = await readJsonBody(request);
@@ -211,6 +258,33 @@ async function walk(root, prefix, extensions, output) {
       output.push({ path, bytes: metadata.size, modifiedAt: metadata.mtimeMs });
     }
   }
+}
+
+// The draft mirrors `prompts/`: standing files under `<scope>/context.d/` enter the prompt;
+// everything else in it (notes, moved text) does not.
+async function readDraftCatalog(workspace, unsaved) {
+  const catalog = [];
+  for (const file of await listWorkspaceFiles(workspace)) {
+    const [directory, folder] = file.path.split("/");
+    const scope = folder === "context.d" ? CONTEXT_SCOPES[directory] : undefined;
+    if (!scope) continue;
+    const text = unsaved?.path === file.path ? unsaved.content : await readFile(resolve(workspace.root, file.path), "utf8");
+    catalog.push({ path: file.path, text, scope });
+  }
+  return catalog;
+}
+
+async function readBaselineSource(prompts, path) {
+  try {
+    return await readFile((await resolveWorkspacePath(prompts, path)).absolutePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function byteLength(text) {
+  return Buffer.byteLength(text, "utf8");
 }
 
 function requireWorkspace(id, workspaces) {

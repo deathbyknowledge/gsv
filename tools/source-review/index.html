@@ -60,13 +60,14 @@
           </div>
           <div class="source-actions">
             <span id="save-state" class="save-state"></span>
+            <button id="reset-baseline" type="button" hidden>Reset to 1.0</button>
             <button id="save" type="button" disabled>Save</button>
           </div>
         </header>
         <textarea id="source" aria-label="Markdown source" spellcheck="true" disabled></textarea>
-        <details class="diff-panel">
-          <summary>GIT DIFF</summary>
-          <pre id="diff">No file selected.</pre>
+        <details id="diff-panel" class="diff-panel">
+          <summary id="diff-label">GIT DIFF</summary>
+          <div id="diff">No file selected.</div>
         </details>
       </section>
     </main>

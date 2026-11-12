@@ -1,13 +1,28 @@
 import DOMPurify from "/sanitize.js";
 
-const promptCategories = new Map([
-  ["system", "System"],
-  ["ship", "Ship"],
-  ["crew", "Crew"],
-  ["user", "Owner"],
-  ["tasks", "Task prompts"],
-  ["onboarding", "Onboarding"],
-]);
+const fileGroups = {
+  prompts: new Map([
+    ["system", "System"],
+    ["ship", "Ship"],
+    ["crew", "Crew"],
+    ["user", "Owner"],
+    ["tasks", "Task prompts"],
+    ["onboarding", "Onboarding"],
+  ]),
+  // The 2.0 draft keeps 1.0's directory names so it renders with the same assembler.
+  context: new Map([
+    ["", "Notes"],
+    ["system", "Runtime (1.0 system)"],
+    ["ship", "Ship"],
+    ["crew", "Crew"],
+    ["user", "Owner"],
+    ["moved", "Moved out of standing context"],
+  ]),
+};
+const previewViews = {
+  prompts: [["category", "Entry"], ["sections", "Sections"], ["exact", "Exact text"], ["catalog", "All sources"]],
+  context: [["diff", "Diff vs 1.0"], ["sections", "Sections"], ["exact", "Exact text"]],
+};
 
 const elements = {
   tabs: document.querySelector("#workspace-tabs"),
@@ -27,6 +42,9 @@ const elements = {
   source: document.querySelector("#source"),
   save: document.querySelector("#save"),
   saveState: document.querySelector("#save-state"),
+  resetBaseline: document.querySelector("#reset-baseline"),
+  diffPanel: document.querySelector("#diff-panel"),
+  diffLabel: document.querySelector("#diff-label"),
   diff: document.querySelector("#diff"),
   errorDialog: document.querySelector("#error-dialog"),
   errorMessage: document.querySelector("#error-message"),
@@ -45,6 +63,7 @@ const state = {
   selectionVersion: 0,
   saving: false,
   promptSources: new Map(),
+  baselineText: null,
 };
 
 await initialize().catch(showError);
@@ -58,8 +77,9 @@ async function initialize() {
   elements.search.addEventListener("input", renderFileList);
   elements.source.addEventListener("input", sourceChanged);
   elements.save.addEventListener("click", () => void saveSource());
-  elements.account.addEventListener("change", () => void renderPromptPreview().catch(showError));
-  elements.view.addEventListener("change", () => void renderPromptPreview().catch(showError));
+  elements.resetBaseline.addEventListener("click", resetToBaseline);
+  elements.account.addEventListener("change", () => void renderPreview().catch(showError));
+  elements.view.addEventListener("change", () => void renderPreview().catch(showError));
   elements.preview.addEventListener("click", previewClicked);
   document.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
@@ -98,7 +118,13 @@ async function selectWorkspace(workspace) {
   elements.source.value = "";
   elements.source.disabled = true;
   setDirty(false);
-  elements.promptControls.hidden = workspace !== "prompts";
+  elements.promptControls.hidden = !previewViews[workspace];
+  if (previewViews[workspace]) {
+    elements.view.replaceChildren(...previewViews[workspace].map(([value, label]) => new Option(label, value)));
+  }
+  elements.diffLabel.textContent = workspace === "context" ? "DIFF VS 1.0" : "GIT DIFF";
+  elements.diffPanel.open = workspace === "context";
+  elements.resetBaseline.hidden = true;
   renderTabs();
   await refresh();
 }
@@ -122,9 +148,8 @@ async function refresh() {
   renderFileList();
 
   const currentExists = state.files.some((file) => file.path === state.selectedPath);
-  const preferred = state.workspace === "manual"
-    ? state.files.find((file) => file.path === "index.md")?.path
-    : state.files.find((file) => file.path === "system/context.d/01-gsv.md")?.path;
+  const preferredPath = { manual: "index.md", prompts: "system/context.d/01-gsv.md", context: "NOTES.md" }[state.workspace];
+  const preferred = state.files.find((file) => file.path === preferredPath)?.path;
   if (!currentExists) {
     await selectFile(preferred ?? state.files[0]?.path ?? null, true);
   } else if (state.selectedPath) {
@@ -135,17 +160,19 @@ async function refresh() {
 function renderFileList() {
   const query = elements.search.value.trim().toLowerCase();
   const files = state.files.filter((file) => !query || file.path.toLowerCase().includes(query));
-  const groups = state.workspace === "prompts"
-    ? [...new Set([...promptCategories.keys(), ...files.map((file) => file.path.split("/")[0])])]
-      .map((category) => [category, files.filter((file) => file.path.startsWith(`${category}/`))])
+  const categories = fileGroups[state.workspace];
+  const groupOf = (path) => path.includes("/") ? path.split("/")[0] : "";
+  const groups = categories
+    ? [...new Set([...categories.keys(), ...files.map((file) => groupOf(file.path))])]
+      .map((category) => [category, files.filter((file) => groupOf(file.path) === category)])
     : [[null, files]];
   const rows = [];
   for (const [category, entries] of groups) {
     if (entries.length === 0) continue;
-    if (category) {
+    if (category !== null) {
       const heading = document.createElement("h3");
       heading.className = "file-group";
-      heading.textContent = promptCategories.get(category) ?? category;
+      heading.textContent = categories.get(category) ?? category;
       rows.push(heading);
     }
     for (const file of entries) {
@@ -195,10 +222,18 @@ async function selectFile(path, force = false) {
     if (scope === "ship") elements.account.value = "ship";
     if (scope === "crew") elements.account.value = "crew";
     if (path.startsWith("tasks/")) elements.view.value = "category";
-    await renderPromptPreview();
-  } else {
-    await renderManualPreview(data.content);
   }
+  if (state.workspace === "context") {
+    if (path.startsWith("ship/")) elements.account.value = "ship";
+    if (path.startsWith("crew/")) elements.account.value = "crew";
+  }
+  await renderPreview();
+}
+
+function renderPreview() {
+  if (state.workspace === "prompts") return renderPromptPreview();
+  if (state.workspace === "context") return renderContextPreview();
+  return renderManualPreview(elements.source.value);
 }
 
 function sourceChanged() {
@@ -206,9 +241,15 @@ function sourceChanged() {
   state.previewVersion++;
   clearTimeout(state.renderTimer);
   state.renderTimer = setTimeout(() => {
-    const rendering = state.workspace === "prompts" ? renderPromptPreview() : renderManualPreview(elements.source.value);
-    void rendering.catch(showError);
+    void renderPreview().catch(showError);
+    if (state.workspace === "context") void refreshDiff().catch(showError);
   }, 200);
+}
+
+function resetToBaseline() {
+  if (state.baselineText === null) return;
+  elements.source.value = state.baselineText;
+  sourceChanged();
 }
 
 function setDirty(dirty) {
@@ -246,7 +287,7 @@ async function saveSource() {
     elements.save.disabled = !state.dirty || !state.selectedPath;
   }
   void refreshDiff().catch(showError);
-  if (state.workspace === "prompts") void renderPromptPreview().catch(showError);
+  if (state.workspace !== "manual") void renderPreview().catch(showError);
 }
 
 async function renderPromptPreview() {
@@ -277,40 +318,100 @@ async function renderPromptPreview() {
     pre.textContent = data.prompt;
     elements.preview.replaceChildren(pre);
   } else {
-    elements.preview.replaceChildren(...blocks.map((block) => {
-      const section = document.createElement("section");
-      const root = block.contextRoot?.key;
-      const paths = block.path ? [block.path] : block.paths;
-      section.className = `prompt-block is-${root === "system" || block.scope === "shared" ? "system" : "personal"}`;
-      section.classList.toggle("is-selected", paths.includes(state.selectedPath));
-      const header = document.createElement("header");
-      const names = document.createElement("div");
-      names.className = "source-links";
-      if (paths.length > 0) {
-        for (const path of paths) {
-          const name = document.createElement("button");
-          name.type = "button";
-          name.dataset.sourcePath = path;
-          name.textContent = path;
-          names.append(name);
-        }
-      } else {
-        const name = document.createElement("strong");
-        name.textContent = "Available skills · generated";
-        names.append(name);
-      }
-      const meta = document.createElement("small");
-      meta.textContent = `${block.scope ? `${block.scope.toUpperCase()} · ` : ""}${formatCount(new TextEncoder().encode(block.text).length)} B`;
-      header.append(names, meta);
-      const article = document.createElement(paths.length > 0 ? "article" : "pre");
-      article.className = "manual-article";
-      if (paths.length > 0) article.innerHTML = DOMPurify.sanitize(block.html);
-      else article.textContent = block.text;
-      section.append(header, article);
-      return section;
-    }));
+    elements.preview.replaceChildren(...sectionBlocks(blocks));
   }
   elements.preview.scrollTop = scrollTop;
+}
+
+// Draft standing files rendered with 1.0's assembler, next to the repository prompt they replace.
+async function renderContextPreview() {
+  const version = ++state.previewVersion;
+  const account = elements.account.value;
+  const view = elements.view.value;
+  const body = { account };
+  if (state.dirty) body.draft = { path: state.selectedPath, content: elements.source.value };
+  const data = await requestJson("/api/context-preview", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (version !== state.previewVersion) return;
+  elements.account.disabled = false;
+  const name = account === "ship" ? "Ship" : "Crew";
+  elements.kind.textContent = "2.0 DRAFT · RENDERED WITH THE 1.0 ASSEMBLER";
+  elements.title.textContent = view === "diff" ? `${name} · prompt diff vs 1.0` : `${name} · draft prompt`;
+  elements.note.textContent = "Sample account and runtime. Ship placeholders get sample values. "
+    + `All standing files: 1.0 ${formatSize(data.baseline.standingBytes)} → draft ${formatSize(data.draft.standingBytes)}. `
+    + "Files under moved/ and NOTES.md are not in the prompt.";
+  elements.stats.textContent = `${name.toUpperCase()} PROMPT · 1.0 ${formatSize(data.baseline.bytes)} → DRAFT ${formatSize(data.draft.bytes)} · `
+    + `${formatChange(data.baseline.bytes, data.draft.bytes)} · +${data.diff.added} −${data.diff.removed} LINES`;
+  const scrollTop = elements.preview.scrollTop;
+  if (view === "diff") {
+    elements.preview.replaceChildren(diffView(data.diff.hunks, "The draft renders the same prompt as 1.0."));
+  } else if (view === "exact") {
+    const pre = document.createElement("pre");
+    pre.className = "exact-prompt";
+    pre.textContent = data.draft.prompt;
+    elements.preview.replaceChildren(pre);
+  } else {
+    elements.preview.replaceChildren(...sectionBlocks(data.draft.sections));
+  }
+  elements.preview.scrollTop = scrollTop;
+}
+
+function sectionBlocks(blocks) {
+  return blocks.map((block) => {
+    const section = document.createElement("section");
+    const root = block.contextRoot?.key;
+    const paths = block.path ? [block.path] : block.paths;
+    section.className = `prompt-block is-${root === "system" || block.scope === "shared" ? "system" : "personal"}`;
+    section.classList.toggle("is-selected", paths.includes(state.selectedPath));
+    const header = document.createElement("header");
+    const names = document.createElement("div");
+    names.className = "source-links";
+    if (paths.length > 0) {
+      for (const path of paths) {
+        const name = document.createElement("button");
+        name.type = "button";
+        name.dataset.sourcePath = path;
+        name.textContent = path;
+        names.append(name);
+      }
+    } else {
+      const name = document.createElement("strong");
+      name.textContent = "Available skills · generated";
+      names.append(name);
+    }
+    const meta = document.createElement("small");
+    meta.textContent = `${block.scope ? `${block.scope.toUpperCase()} · ` : ""}${formatCount(new TextEncoder().encode(block.text).length)} B`;
+    header.append(names, meta);
+    const article = document.createElement(paths.length > 0 ? "article" : "pre");
+    article.className = "manual-article";
+    if (paths.length > 0) article.innerHTML = DOMPurify.sanitize(block.html);
+    else article.textContent = block.text;
+    section.append(header, article);
+    return section;
+  });
+}
+
+function diffView(hunks, emptyText) {
+  const pre = document.createElement("div");
+  pre.className = "diff-view";
+  if (hunks.length === 0) {
+    pre.textContent = emptyText;
+    return pre;
+  }
+  for (const hunk of hunks) {
+    const header = document.createElement("span");
+    header.className = "diff-hunk";
+    header.textContent = `@@ 1.0 line ${hunk.oldStart} · draft line ${hunk.newStart} @@`;
+    pre.append(header);
+    for (const line of hunk.lines) {
+      const row = document.createElement("span");
+      row.className = `diff-${line.kind}`;
+      row.textContent = `${{ add: "+", del: "-", same: " " }[line.kind]} ${line.text}`;
+      pre.append(row);
+    }
+  }
+  return pre;
 }
 
 async function renderManualPreview(content) {
@@ -344,6 +445,21 @@ async function refreshDiff() {
     return;
   }
   const version = state.selectionVersion;
+  if (state.workspace === "context") {
+    const content = elements.source.value;
+    const data = await requestJson("/api/context-file-diff", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: state.selectedPath, content }),
+    });
+    if (version !== state.selectionVersion || content !== elements.source.value) return;
+    state.baselineText = data.baseline;
+    elements.resetBaseline.hidden = data.baseline === null || data.baseline === content;
+    elements.diffLabel.textContent = data.baselinePath
+      ? `DIFF VS 1.0 · ${data.baselinePath} · +${data.added} −${data.removed}`
+      : "DIFF VS 1.0 · no file at this path in 1.0";
+    elements.diff.replaceChildren(diffView(data.hunks, "Same as the 1.0 file."));
+    return;
+  }
   const data = await requestJson(
     `/api/diff?workspace=${encodeURIComponent(state.workspace)}&path=${encodeURIComponent(state.selectedPath)}`,
   );
@@ -391,4 +507,15 @@ function showError(error) {
 
 function formatCount(value) {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+// Tokens are estimated at four bytes each; the real count depends on the model's tokenizer.
+function formatSize(bytes) {
+  return `${formatCount(bytes)} B ≈${formatCount(Math.round(bytes / 4))} TOK`;
+}
+
+function formatChange(before, after) {
+  if (before === 0) return "NEW";
+  const percent = Math.round(((after - before) / before) * 100);
+  return `${percent > 0 ? "+" : ""}${percent}%`;
 }

@@ -15,17 +15,23 @@ type PromptPreview = PromptAssemblySnapshot & {
   catalog: PromptSource[];
 };
 
+const SAMPLE_SHIP = { handle: "preview", origin: "https://preview.ship.space", domain: "ship.space" };
+const SAMPLE_MAILBOX = { address: "preview@ship.space" };
+
 // This fixture uses the production defaults and providers, with local sample identities.
-// It never contacts a space or reads customer context.
-export async function createPromptPreview(account: PreviewAccount): Promise<PromptPreview> {
-  const systemContextFiles = Object.entries(SYSTEM_CONFIG_DEFAULTS)
+// It never contacts a space or reads customer context. A draft catalog (paths laid out like
+// `prompts/`) replaces the repository's standing files, so a proposed layout renders the same way.
+export async function createPromptPreview(account: PreviewAccount, draft?: PromptSource[]): Promise<PromptPreview> {
+  const systemContextFiles = draft ? draftFiles(draft, "system") : Object.entries(SYSTEM_CONFIG_DEFAULTS)
     .filter(([key]) => key.startsWith("config/ai/context.d/"))
     .map(([key, text]) => ({ name: key.slice("config/ai/context.d/".length), text }));
-  const catalog = PROMPT_SOURCES;
-  const program = account === "ship" ? shipContextFiles("crew") : contextFiles("crew");
+  const catalog = draft ?? PROMPT_SOURCES;
+  const program = draft ? draftFiles(draft, account).map(withSampleValues)
+    : account === "ship" ? shipContextFiles("crew") : contextFiles("crew");
+  const owner = draft ? draftFiles(draft, "user").map(withSampleValues) : contextFiles("user");
   const files = new Map<string, string>([
     ...program.map(({ name, text }) => [`home/${account}/context.d/${name}`, text] as const),
-    ...contextFiles("user").map(({ name, text }) => [`home/alex/context.d/${name}`, text] as const),
+    ...owner.map(({ name, text }) => [`home/alex/context.d/${name}`, text] as const),
   ]);
   const identity = (username: string, uid: number) => ({
     username, uid, gid: uid, gids: [uid, 100], home: `/home/${username}`, cwd: `/home/${username}`,
@@ -49,8 +55,8 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
       }),
     },
     runtime: { date: "2026-01-01", timezone: "UTC" },
-    ship: { handle: "preview", origin: "https://preview.ship.space", domain: "ship.space" },
-    mailbox: { address: "preview@ship.space" },
+    ship: SAMPLE_SHIP,
+    mailbox: SAMPLE_MAILBOX,
     targets: [{ id: "laptop", label: "Laptop", implements: ["shell.exec", "fs.read"] }],
     mcpServers: [],
     r12y: "No unresolved responsibilities.",
@@ -89,4 +95,28 @@ export async function createPromptPreview(account: PreviewAccount): Promise<Prom
   }));
   const snapshot = await assembleSystemPromptSnapshot(input, providers);
   return { ...snapshot, sections, catalog };
+}
+
+function draftFiles(draft: PromptSource[], scope: string): Array<{ name: string; text: string }> {
+  const prefix = `${scope}/context.d/`;
+  return draft
+    .filter((source) => source.path.startsWith(prefix))
+    .map((source) => ({ name: source.path.slice(prefix.length), text: source.text }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+// 1.0 expands placeholders only in system files and fills the Crew name when seeding a home.
+// A draft may move placeholder text into account files, so fill the same sample values there.
+function withSampleValues(file: { name: string; text: string }) {
+  const values = new Map([
+    ["crew.username", "crew"],
+    ["ship.handle", SAMPLE_SHIP.handle],
+    ["ship.address", SAMPLE_SHIP.origin],
+    ["ship.domain", SAMPLE_SHIP.domain],
+    ["mailbox.address", SAMPLE_MAILBOX.address],
+  ]);
+  return {
+    name: file.name,
+    text: file.text.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (match, key: string) => values.get(key) ?? match),
+  };
 }

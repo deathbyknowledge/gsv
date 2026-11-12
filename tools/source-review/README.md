@@ -7,9 +7,10 @@ From the GSV repository root:
 ```bash
 npm run review:prompts
 npm run review:manual
+npm run review:context
 ```
 
-Both commands listen on `http://127.0.0.1:4178`. Set `GSV_REVIEW_PORT` to use another port.
+Each command listens on `http://127.0.0.1:4178`. Set `GSV_REVIEW_PORT` to use another port.
 
 The prompt workspace is for editing the repository's shipped instructions. Select
 an entry under its scope and edit it beside the **Entry** preview. Each source
@@ -74,6 +75,20 @@ When splitting `01-gsv.md`, the schema migration preserves existing explicit
 overrides by leaving `02-interaction.md` empty for those installations unless
 it already has its own override. Removing that empty override opts into the new
 shared interaction default.
+
+## Context draft
+
+`npm run review:context` opens a draft of standing context in
+`design/context-2.0/`. Its files mirror `prompts/`: `<scope>/context.d/*.md`
+enters the prompt, while `NOTES.md` and `moved/` record notes and text moved
+out of standing context. The source pane shows a live diff of the edited
+file against the same path under `prompts/`; **Reset to 1.0** loads that
+file into the editor without saving. The preview has three views for Ship
+or Crew: **Diff vs 1.0** compares the whole assembled prompt, **Sections**
+and **Exact text** render the draft. Its header gives bytes and an
+approximate token count (bytes ÷ 4) for both. The draft uses the same
+assembler and sample values as the prompt workspace, and fills account-file
+placeholders too.
 
 The manual view reads the sibling `../gsv-manual` worktree by default. Set `GSV_MANUAL_ROOT` when the manual lives elsewhere:
 

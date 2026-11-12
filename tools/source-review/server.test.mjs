@@ -12,6 +12,7 @@ import {
   resolveWorkspacePath,
 } from "./server.mjs";
 import { loadPromptPreview } from "./prompt-loader.mjs";
+import { diffLines, unifiedHunks } from "./line-diff.mjs";
 
 async function listen(server) {
   await new Promise((resolve, reject) => {
@@ -197,4 +198,74 @@ test("source files cannot follow symlinks out of the workspace", async (context)
   await writeFile(join(root, "outside.md"), "outside\n");
   await symlink(join(root, "outside.md"), join(root, "prompts", "linked.md"));
   await assert.rejects(resolveWorkspacePath({ root: join(root, "prompts"), extensions: new Set([".md"]) }, "linked.md"), /outside/);
+});
+
+test("line diffs keep unchanged context and merge nearby changes", () => {
+  assert.deepEqual(diffLines("a\nb\nc\n", "a\nc\nd\n").map(({ kind, text }) => `${kind}:${text}`),
+    ["same:a", "del:b", "same:c", "add:d"]);
+  assert.deepEqual(unifiedHunks("same\n", "same\n"), { added: 0, removed: 0, hunks: [] });
+  const before = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n");
+  const after = before.replace("line 2\n", "line two\n").replace("line 4\n", "").replace("line 18", "line eighteen");
+  const { added, removed, hunks } = unifiedHunks(before, after, 2);
+  assert.deepEqual([added, removed], [2, 3]);
+  assert.equal(hunks.length, 2);
+  assert.deepEqual([hunks[0].oldStart, hunks[0].newStart], [1, 1]);
+  assert.deepEqual([hunks[1].oldStart, hunks[1].newStart], [16, 15]);
+  assert.deepEqual(unifiedHunks("", "new\n").hunks[0].lines, [{ kind: "add", text: "new" }]);
+});
+
+test("the context draft renders its own standing files and diffs them against the repository", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "gsv-context-draft-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  for (const directory of ["system/context.d", "ship/context.d", "crew/context.d", "moved"]) {
+    await mkdir(join(root, directory), { recursive: true });
+  }
+  const runtime = await readFile(join(REPO_ROOT, "workers/gateway/src/prompts/system/context.d/00-runtime.md"), "utf8");
+  await writeFile(join(root, "system/context.d/00-runtime.md"), runtime);
+  await writeFile(join(root, "ship/context.d/00-role.md"), "# Draft Ship\n\nShip at {{ship.address}}.\n");
+  await writeFile(join(root, "crew/context.d/00-role.md"), "# Draft Crew\n");
+  await writeFile(join(root, "moved/note.md"), "Moved out of standing context.\n");
+  await writeFile(join(root, "NOTES.md"), "Notes stay out of the prompt.\n");
+  const registry = createWorkspaceRegistry();
+  assert.match(registry.get("context").root, /design\/context-2\.0$/);
+  registry.set("context", { ...registry.get("context"), root });
+  const server = createSourceReviewServer({ initialWorkspace: "context", workspaces: registry });
+  context.after(() => server.close());
+  const origin = await listen(server);
+  const post = (path, body) => fetch(`${origin}${path}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+
+  const ship = await post("/api/context-preview", { account: "ship" }).then((response) => response.json());
+  assert.match(ship.draft.prompt, /Ship at https:\/\/preview\.ship\.space\./);
+  assert.doesNotMatch(ship.draft.prompt, /Draft Crew|Moved out|Notes stay|\{\{/);
+  assert.doesNotMatch(ship.draft.prompt, /<user path=/);
+  assert.ok(ship.draft.sections.some((section) => section.html.includes("<h1>Draft Ship</h1>")));
+  assert.ok(ship.baseline.bytes > ship.draft.bytes);
+  assert.ok(ship.baseline.standingBytes > ship.draft.standingBytes);
+  assert.ok(ship.diff.removed > 0 && ship.diff.added > 0);
+  assert.ok(ship.diff.hunks.flatMap((hunk) => hunk.lines).some((line) => line.kind === "add" && line.text === "# Draft Ship"));
+
+  const unsaved = await post("/api/context-preview", {
+    account: "crew", draft: { path: "crew/context.d/00-role.md", content: "# Unsaved Crew\n" },
+  }).then((response) => response.json());
+  assert.match(unsaved.draft.prompt, /# Unsaved Crew/);
+  assert.doesNotMatch(unsaved.draft.prompt, /Draft Ship/);
+  assert.equal(await readFile(join(root, "crew/context.d/00-role.md"), "utf8"), "# Draft Crew\n");
+
+  const same = await post("/api/context-file-diff", { path: "system/context.d/00-runtime.md", content: runtime })
+    .then((response) => response.json());
+  assert.equal(same.baselinePath, "workers/gateway/src/prompts/system/context.d/00-runtime.md");
+  assert.deepEqual([same.added, same.removed, same.hunks.length], [0, 0, 0]);
+  const edited = await post("/api/context-file-diff", {
+    path: "system/context.d/00-runtime.md", content: runtime.replace("# Initial runtime facts", "# Runtime"),
+  }).then((response) => response.json());
+  assert.deepEqual([edited.added, edited.removed], [1, 1]);
+  const moved = await post("/api/context-file-diff", { path: "moved/note.md", content: "Moved.\n" })
+    .then((response) => response.json());
+  assert.deepEqual([moved.baselinePath, moved.baseline, moved.added], [undefined, null, 1]);
+  assert.equal((await post("/api/context-file-diff", { path: "../../package.json", content: "" })).status, 403);
+  assert.equal((await post("/api/context-preview", {
+    account: "ship", draft: { path: "../prompts/system/context.d/00-runtime.md", content: "bad" },
+  })).status, 403);
 });
