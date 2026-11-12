@@ -84,6 +84,14 @@ describe("native instance readiness", () => {
     expect(result.stderr).toContain("instance get --request-id 'saved'");
     expect(request).toHaveBeenCalledTimes(1);
   });
+  it("names a computer, not a browser, when its readiness wait times out", async () => {
+    const computer = { ...instance, kind: "linux" as const, templateId: "computer", label: "Computer" };
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { instance: computer, disposition: "created" } }));
+    const result = await fixture(request).exec("instance start computer --request-id saved --wait --timeout 100");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Computer readiness wait timed out");
+    expect(result.stderr).not.toContain("Browser");
+  });
   it("stops waiting when startup fails and includes the diagnostic", async () => {
     const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { instance: { ...instance, state: "failed", diagnosticRef: "diagnostic-1" }, disposition: "created" } }));
     const result = await fixture(request).exec("instance start browser --request-id saved --wait");

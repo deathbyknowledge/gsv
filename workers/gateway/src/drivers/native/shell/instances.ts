@@ -164,7 +164,8 @@ export function buildInstanceCommands(ctx: KernelContext, request?: NativeShellC
       } catch (error) {
         if (signal.aborted && frame.call === "sys.instance.start") {
           const recoveryId = `'${frame.args.requestId.replaceAll("'", "'\\''")}'`;
-          throw new Error(`${deadline.signal.aborted ? "Browser readiness wait timed out" : "Browser readiness wait cancelled"}. The instance was not stopped. Inspect with instance get --request-id ${recoveryId}; do not start again with a new ID.`, { cause: error });
+          const kind = frame.args.templateId === "computer" ? "Computer" : "Browser";
+          throw new Error(`${kind} readiness wait ${deadline.signal.aborted ? "timed out" : "cancelled"}. The instance was not stopped. Inspect with instance get --request-id ${recoveryId}; do not start again with a new ID.`, { cause: error });
         }
         throw error;
       } finally { clearTimeout(timer); }
