@@ -30,6 +30,20 @@ describe("native instance readiness", () => {
     }), expect.any(AbortSignal));
   });
 
+  it("starts a computer from an earlier computer's saved workspace only on request", async () => {
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({
+      type: "res", id: frame.id, ok: true, data: { instance: { ...instance, kind: "linux", templateId: "computer" }, disposition: "created" },
+    }));
+    const shell = fixture(request);
+    expect((await shell.exec("instance start computer --request-id build-2 --from 87654321")).exitCode).toBe(0);
+    expect((await shell.exec("instance start computer --request-id build-3")).exitCode).toBe(0);
+    expect(request.mock.calls.map(([frame]) => frame.args)).toEqual([
+      expect.objectContaining({ requestId: "build-2", fromInstanceId: "87654321" }),
+      expect.objectContaining({ requestId: "build-3", fromInstanceId: undefined }),
+    ]);
+    expect((await shell.exec("instance stop 12345678 --from 87654321")).exitCode).toBe(1);
+  });
+
   it("passes profile pagination through the ordinary syscall and rejects invalid offsets", async () => {
     const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { profiles: [], total: 64 } }));
     const shell = fixture(request);

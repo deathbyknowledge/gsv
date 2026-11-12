@@ -658,10 +658,12 @@ logins, recovery after a lost response, and the complete sign-in flow.
 
 When computers are enabled, `instance start computer --request-id ID --wait`
 creates a temporary Linux target. `--name NAME` and `--seconds N` choose its label
-and lifetime. A new request ID creates a new computer; retrying the same request
+and first expiry. A new request ID creates a new computer; retrying the same request
 recovers that operation. Computers do not accept browser profile or `--new`
 options. Use the same list, get and stop commands; stopping destroys the files
-and running commands. See [cloud computers](/how-to/cloud-computers).
+and running commands. A computer whose lifetime expires saves `/workspace` for
+7 days first, and `--from ID` starts a new computer with that save. See
+[cloud computers](/how-to/cloud-computers).
 
 Inside the Ship's shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --ship`

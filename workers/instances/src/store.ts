@@ -53,7 +53,7 @@ export class InstanceStore {
   }
   admit(actor: InstanceActor, args: SysInstanceStartArgs, limits: BrowserLimits | ComputerLimits, now = Date.now(), stopping?: ReadonlySet<string>): CloudInstance {
     return this.storage.transactionSync(() => {
-      const fingerprint = JSON.stringify([args.templateId, args.label ?? null, args.lifetimeSeconds ?? null, args.profileId ?? null, args.fresh ?? false]);
+      const fingerprint = JSON.stringify([args.templateId, args.label ?? null, args.lifetimeSeconds ?? null, args.profileId ?? null, args.fresh ?? false, ...(args.fromInstanceId ? [args.fromInstanceId] : [])]);
       const existing = this.sql.exec<{ instance_id: string; fingerprint: string }>("SELECT instance_id, fingerprint FROM start_requests WHERE owner_uid = ? AND request_id = ?", actor.ownerUid, args.requestId).toArray()[0];
       if (existing) {
         if (existing.fingerprint !== fingerprint) throw new Error("Start requestId has already been used with different arguments");
@@ -64,6 +64,8 @@ export class InstanceStore {
       const template = browser ? browserTemplate(limits) : args.templateId === "computer" ? computerTemplate(limits) : null;
       if (!template || !limits.enabled) throw new Error("Requested instance template is not enabled");
       if (!browser && (args.profileId || args.fresh !== undefined)) throw new Error("Profiles and fresh apply only to browser instances");
+      if (browser && args.fromInstanceId) throw new Error("A saved workspace applies only to computers");
+      const restoreFrom = args.fromInstanceId ? this.savedWorkspace(actor, args.fromInstanceId, now) : undefined;
       const lifetime = args.lifetimeSeconds ?? template.defaultLifetimeSeconds;
       if (lifetime < 60 || lifetime > limits.maxInstanceSeconds) throw new Error("Requested instance lifetime is outside the allowed range");
       const automatic = browser && !args.profileId && !args.fresh ? this.defaultProfile(actor.ownerUid) : null;
@@ -95,6 +97,7 @@ export class InstanceStore {
         ownerUid: actor.ownerUid, templateId: template.templateId, templateRevision: template.revision, kind: template.kind, implements: template.implements,
         label: args.label ?? `${browser ? "Browser" : "Computer"} ${id.slice(0, 8)}`, state: "starting", revision: 1, profileId, isolated: browser ? args.fresh === true && !profileId : undefined,
         createdAt: now, expiresAt: now + lifetime * 1000,
+        restore: restoreFrom ? { fromInstanceId: restoreFrom, status: "pending" } : undefined,
       };
       this.sql.exec("INSERT INTO instances (id, owner_uid, record, active, reservation) VALUES (?, ?, ?, 1, ?)", id, actor.ownerUid, JSON.stringify(value), lifetime);
       this.sql.exec("INSERT INTO start_requests VALUES (?, ?, ?, ?)", actor.ownerUid, args.requestId, id, fingerprint);
@@ -102,6 +105,17 @@ export class InstanceStore {
       this.changed?.(value.ownerUid);
       return value;
     });
+  }
+  /** The owner's computer, by instance or target ID, whose saved workspace is still kept. */
+  private savedWorkspace(actor: InstanceActor, id: string, now: number): string {
+    const row = this.sql.exec<{ id: string; status: string | null; expires_at: number | null }>(`SELECT i.id, json_extract(i.record, '$.workspace.saveStatus') AS status, w.expires_at
+      FROM instances i LEFT JOIN workspaces w ON w.instance_id = i.id
+      WHERE i.owner_uid = ? AND (i.id = ? OR json_extract(i.record, '$.targetId') = ?)`, actor.ownerUid, id, id).toArray()[0];
+    if (row?.status === "saving") throw new Error("That computer is still saving its workspace; retry when instance get shows it saved");
+    if (row?.status !== "saved" || row.expires_at === null || row.expires_at <= now) {
+      throw new Error("That computer has no saved workspace. A computer saves /workspace only when its lifetime expires, and keeps it for 7 days");
+    }
+    return row.id;
   }
   /** The latest expiry a ready computer may move to now: the idle window, within its maximum lifetime and the period allowance. */
   extensionTarget(id: string, limits: ComputerLimits, now = Date.now()): number | null {
@@ -254,7 +268,7 @@ export class InstanceStore {
   pruneDiagnostics(savingInstances: string[] = []): void {
     // In-flight saves may have created site diagnostics whose profile commit is still pending.
     this.sql.exec(`WITH records(record) AS (
-      SELECT json_object('diagnosticRef', json_extract(record, '$.diagnosticRef'), 'persistence', json_extract(record, '$.persistence')) FROM instances WHERE retained = 1
+      SELECT json_object('diagnosticRef', json_extract(record, '$.diagnosticRef'), 'persistence', json_extract(record, '$.persistence'), 'workspace', json_extract(record, '$.workspace')) FROM instances WHERE retained = 1
       UNION ALL SELECT json_remove(record, '$.usage') FROM profiles WHERE json_extract(record, '$.state') != 'deleted'
       UNION ALL SELECT record FROM handoffs
     ), referenced(ref) AS (
