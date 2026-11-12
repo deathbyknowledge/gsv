@@ -6,6 +6,8 @@ import {
   type Unstable_RawConfig,
   unstable_readConfig,
 } from "wrangler";
+import { vi } from "vitest";
+import { z } from "zod";
 
 const GATEWAY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEPENDENCY_WORKER = "gsv-test-dependencies";
@@ -22,6 +24,9 @@ const EMAIL_CONFIG_PATH = resolve(
   "../adapters/email/wrangler.test.jsonc",
 );
 type ServiceBinding = NonNullable<Unstable_RawConfig["services"]>[number];
+/** The Email Sending account the managed mail stack sends through; only this process answers for it. */
+const TEST_MAIL_SENDING = { accountId: "0".repeat(32), apiToken: "local-email-sending-token" };
+const sendRawSchema = z.object({ recipients: z.array(z.string()) });
 
 /** The open network a federation test serves from its own process: a DID directory, and each Ship under its own domain. */
 export type TestNetworkOptions = { domain: string };
@@ -397,9 +402,31 @@ export function createManagedMailServiceStackTestHarness(
         vars: {
           MAIL_DOMAIN: serviceConfigs.mail?.domain ?? "gsv.space",
           MAIL_SENDING_DOMAINS: JSON.stringify(serviceConfigs.mail?.sendingDomains ?? []),
+          MAIL_SENDING_ACCOUNT_ID: TEST_MAIL_SENDING.accountId,
+          MAIL_SENDING_API_TOKEN: TEST_MAIL_SENDING.apiToken,
         },
       },
     ],
+  });
+}
+
+/**
+ * The managed mail stack's Workers fetch through this process, so it serves their
+ * Email Sending: every message reaches each of its recipients and nothing reaches the Cloudflare API.
+ */
+export function serveEmailSending(): void {
+  const fetch = globalThis.fetch;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (new URL(input instanceof Request ? input.url : input).origin !== "https://api.cloudflare.com") return fetch(input, init);
+    const request = new Request(input, init);
+    const { pathname } = new URL(request.url);
+    if (pathname !== `/client/v4/accounts/${TEST_MAIL_SENDING.accountId}/email/sending/send_raw`
+      || request.headers.get("authorization") !== `Bearer ${TEST_MAIL_SENDING.apiToken}`) {
+      throw new Error(`The managed mail stack must not reach the Cloudflare API: ${request.method} ${pathname}`);
+    }
+    const { recipients } = sendRawSchema.parse(await request.json());
+    return Response.json({ success: true, errors: [], messages: [], result: { message_id: `local-${crypto.randomUUID()}`,
+      delivered: recipients, queued: [], permanent_bounces: [], suppressed_recipients: [] } });
   });
 }
 
