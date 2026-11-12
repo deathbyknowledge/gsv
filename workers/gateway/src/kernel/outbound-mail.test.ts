@@ -12,6 +12,7 @@ import { MAIL_MAX_QUOTE_BYTES } from "@humansandmachines/gsv/services/mail";
 import type { MailSendArgs, ManagedOutboundMailClaim } from "@humansandmachines/gsv/protocol";
 import * as sharedUtils from "../shared/utils";
 import type { ProcessToolAuthorizeArgs } from "../protocol/process-frames";
+import { serializeCalendar } from "./icalendar";
 import { MAIL_NO_TEXT_BODY } from "./mailbox";
 import { MailboxStore } from "./mailbox-store";
 import {
@@ -22,6 +23,7 @@ import {
   resolveOutboundMailReference,
   outboundEnqueueRetryDelay,
 } from "./outbound-mail";
+import { timeZoneComponent } from "./vtimezone";
 
 describe("managed outbound mail", () => {
   it("converges interrupted current and successor tasks into one chain after Kernel eviction", async () => {
@@ -1163,7 +1165,6 @@ describe("outbound mail recipients", () => {
   });
 });
 
-/** Records the message a reply answers, with its rendered message.txt unless `text` is null. */
 /** An event hand-written with LF lines: the Ship organizes it and also lists itself. */
 const INVITE = [
   "BEGIN:VCALENDAR",
@@ -1185,6 +1186,73 @@ const INVITE = [
   "END:VCALENDAR",
   "",
 ].join("\n");
+
+/**
+ * A weekly sync in Amsterdam with a stale zone: one Monday skipped, one moved to Tuesday, and
+ * one cancelled by a change named in UTC.
+ */
+const SERIES_INVITE = [
+  "BEGIN:VCALENDAR",
+  "VERSION:2.0",
+  "PRODID:-//GSV//cal//EN",
+  "METHOD:REQUEST",
+  "BEGIN:VTIMEZONE",
+  "TZID:Europe/Amsterdam",
+  "BEGIN:STANDARD",
+  "TZOFFSETFROM:+0000",
+  "TZOFFSETTO:+0000",
+  "DTSTART:19700101T000000",
+  "END:STANDARD",
+  "END:VTIMEZONE",
+  "BEGIN:VEVENT",
+  "UID:sync@gsv.space",
+  "DTSTAMP:20261111T120000Z",
+  "SEQUENCE:2",
+  "DTSTART;TZID=Europe/Amsterdam:20261130T090000",
+  "DTEND;TZID=Europe/Amsterdam:20261130T093000",
+  "RRULE:FREQ=WEEKLY;UNTIL=20270628T215959Z",
+  "EXDATE;TZID=Europe/Amsterdam:20261228T090000",
+  "SUMMARY:Team sync",
+  "ORGANIZER;CN=Hank:mailto:hank@gsv.space",
+  "ATTENDEE;RSVP=TRUE:mailto:anna@example.com",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:sync@gsv.space",
+  "RECURRENCE-ID;TZID=Europe/Amsterdam:20270104T090000",
+  "DTSTAMP:20261111T120000Z",
+  "SEQUENCE:2",
+  "DTSTART;TZID=Europe/Amsterdam:20270105T100000",
+  "DTEND;TZID=Europe/Amsterdam:20270105T103000",
+  "SUMMARY:Team sync",
+  "ORGANIZER;CN=Hank:mailto:hank@gsv.space",
+  "ATTENDEE;RSVP=TRUE:mailto:anna@example.com",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:sync@gsv.space",
+  "RECURRENCE-ID:20261207T080000Z",
+  "DTSTAMP:20261111T120000Z",
+  "SEQUENCE:2",
+  "STATUS:CANCELLED",
+  "DTSTART;TZID=Europe/Amsterdam:20261207T090000",
+  "DTEND;TZID=Europe/Amsterdam:20261207T093000",
+  "SUMMARY:Team sync",
+  "ORGANIZER;CN=Hank:mailto:hank@gsv.space",
+  "ATTENDEE;RSVP=TRUE:mailto:anna@example.com",
+  "END:VEVENT",
+  "END:VCALENDAR",
+  "",
+].join("\n");
+
+/** The dinner invite starting at `start` and repeating by `rule`. */
+function repeating(start: string, rule: string): string {
+  return INVITE.replace("DTSTART:20261127T201500Z\nDTEND:20261127T221500Z", `${start}\nRRULE:${rule}`);
+}
+
+const AMSTERDAM_OWNER = new Map([["users/1000/locale/timezone", "Europe/Amsterdam"]]);
+const ZONES = [
+  "Europe/Amsterdam", "Europe/London", "America/New_York", "Asia/Tokyo", "Australia/Sydney",
+  "Africa/Cairo", "Asia/Kolkata", "America/Sao_Paulo", "Pacific/Auckland",
+];
 
 describe("outbound mail invites", () => {
   it("sends an invite to its guests, asks approval for the event, and claims it as version 2", async () => {
@@ -1276,6 +1344,102 @@ describe("outbound mail invites", () => {
     });
   });
 
+  it("sends a repeating invite with the zones it names, and asks approval for its dates", async () => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, { config: AMSTERDAM_OWNER });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+
+        const sent = await sendAndClaim(ctx, { invite: SERIES_INVITE, subject: "Team sync", text: "Weekly.", deliveryId: "sync" });
+
+        expect(approvals[0].args.invite).toStrictEqual({
+          method: "REQUEST",
+          allDay: false,
+          start: "2026-11-30T09:00:00+01:00[Europe/Amsterdam]",
+          end: "2026-11-30T09:30:00+01:00[Europe/Amsterdam]",
+          title: "Team sync",
+          repeats: { freq: "WEEKLY", interval: 1, byDay: ["MO"], until: "2027-06-28T23:59:59+02:00[Europe/Amsterdam]" },
+          skipped: ["2026-12-07T09:00:00+01:00[Europe/Amsterdam]", "2026-12-28T09:00:00+01:00[Europe/Amsterdam]"],
+          changed: [{
+            from: "2027-01-04T09:00:00+01:00[Europe/Amsterdam]",
+            start: "2027-01-05T10:00:00+01:00[Europe/Amsterdam]",
+            end: "2027-01-05T10:30:00+01:00[Europe/Amsterdam]",
+          }],
+        });
+        const text = sent.draft.invite?.text ?? "";
+        expect(sent.draft).toMatchObject({ version: 2, to: "anna@example.com", invite: { method: "REQUEST" } });
+        expect(text).toContain(`METHOD:REQUEST\r\n${serializeCalendar(timeZoneComponent("Europe/Amsterdam", 2026))}BEGIN:VEVENT\r\n`);
+        expect(text).not.toContain("TZOFFSETTO:+0000");
+        expect(text.match(/BEGIN:VTIMEZONE/g)).toHaveLength(1);
+      });
+    });
+  });
+
+  it.each([
+    {
+      rule: "the last Friday of six months",
+      invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=MONTHLY;BYDAY=-1FR;COUNT=6"),
+      repeats: { freq: "MONTHLY", interval: 1, byDay: ["-1FR"], count: 6 },
+    },
+    {
+      rule: "a fortnightly Friday, until a date written in UTC",
+      invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=WEEKLY;INTERVAL=2;UNTIL=20270131T225959Z"),
+      repeats: { freq: "WEEKLY", interval: 2, byDay: ["FR"], until: "2027-01-31T23:59:59+01:00[Europe/Amsterdam]" },
+    },
+    {
+      rule: "an all-day date each year",
+      invite: repeating("DTSTART;VALUE=DATE:20270312", "FREQ=YEARLY"),
+      repeats: { freq: "YEARLY", interval: 1, byMonth: [3], byMonthDay: [12] },
+    },
+  ])("shows $rule with the rule's implied days written out", async ({ invite, repeats }) => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, { config: AMSTERDAM_OWNER });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+
+        const sent = await handleMailSend({ invite, subject: "Dinner", text: "Invite.", deliveryId: "repeating" }, ctx);
+
+        expect(sent).toMatchObject({ ok: true });
+        expect(approvals[0].args.invite).toMatchObject({ repeats });
+        expect(approvals[0].args.invite).not.toHaveProperty("skipped");
+      });
+    });
+  });
+
+  it.each([
+    {
+      series: "in another zone than the owner's",
+      owner: "America/New_York",
+      times: "DTSTART;TZID=Asia/Tokyo:20261130T003000\nDTEND;TZID=Asia/Tokyo:20261130T010000\nEXDATE;TZID=Asia/Tokyo:20261207T003000",
+      shown: { start: "2026-11-30T00:30:00+09:00[Asia/Tokyo]", end: "2026-11-30T01:00:00+09:00[Asia/Tokyo]", timeZone: "Asia/Tokyo",
+        skipped: ["2026-12-07T00:30:00+09:00[Asia/Tokyo]"] },
+    },
+    {
+      series: "in UTC",
+      owner: "Europe/Amsterdam",
+      times: "DTSTART:20261130T233000Z\nDTEND:20261201T000000Z\nEXDATE:20261207T233000Z",
+      shown: { start: "2026-11-30T23:30:00+00:00[UTC]", end: "2026-12-01T00:00:00+00:00[UTC]", timeZone: "UTC",
+        skipped: ["2026-12-07T23:30:00+00:00[UTC]"] },
+    },
+  ])("shows a series $series in the clock its rule counts days in, and names that zone", async ({ owner, times, shown }) => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, {
+          config: new Map([["users/1000/locale/timezone", owner]]),
+        });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+
+        const sent = await handleMailSend({ invite: repeating(times, "FREQ=WEEKLY;COUNT=4"), subject: "Sync", text: "Invite.", deliveryId: "zoned" }, ctx);
+
+        expect(sent).toMatchObject({ ok: true });
+        expect(approvals[0].args.invite).toMatchObject({ ...shown, repeats: { freq: "WEEKLY", interval: 1, byDay: ["MO"], count: 4 } });
+      });
+    });
+  });
+
   it.each([
     { refusal: "an event someone else organizes", invite: INVITE.replace("mailto:hank@gsv.space", "mailto:mike@example.com"), error: "invite must be organized by hank@gsv.space, so replies come back to it" },
     { refusal: "a calendar that publishes rather than invites", invite: INVITE.replace("METHOD:REQUEST", "METHOD:PUBLISH"), error: "invite must have METHOD:REQUEST to invite or METHOD:CANCEL to cancel" },
@@ -1283,16 +1447,34 @@ describe("outbound mail invites", () => {
     { refusal: "an event without guests", invite: INVITE.replace(/ATTENDEE;RSVP=TRUE:.*\n/g, ""), error: "invite has no guests" },
     { refusal: "an event without a DTSTAMP", invite: INVITE.replace("DTSTAMP:20261111T120000Z\n", ""), error: "invite event has no DTSTAMP" },
     { refusal: "a length given as DURATION", invite: INVITE.replace("DTEND:20261127T221500Z", "DURATION:PT2H"), error: "invite gives its length as DURATION, which GSV can't send; write DTEND" },
-    { refusal: "a repeating event", invite: INVITE.replace("DTSTAMP:20261111T120000Z", "DTSTAMP:20261111T120000Z\nRRULE:FREQ=WEEKLY"), error: "invite must be an event that happens once" },
-    { refusal: "a date changed from a series", invite: INVITE.replace("DTSTAMP:20261111T120000Z", "DTSTAMP:20261111T120000Z\nRECURRENCE-ID:20261127T201500Z"), error: "invite must be an event that happens once" },
     { refusal: "a file that isn't a calendar", invite: "Dinner on Friday at nine", error: "invite is not a valid calendar" },
     { refusal: "a calendar over 32 KiB", invite: INVITE.replace("LOCATION:Casa Lucio", `LOCATION:${"x".repeat(32 * 1024)}`), error: "invite must be iCalendar text of at most 32768 bytes" },
     { refusal: "recipients other than the guests", invite: INVITE, to: "bob@example.com", error: "An invite goes to exactly its guests (anna@example.com, Mike@example.com); this message goes to bob@example.com" },
+    { refusal: "a time without a zone", invite: INVITE.replace("DTSTART:20261127T201500Z", "DTSTART:20261127T211500"), error: "invite times need a time zone" },
+    { refusal: "a zone outside IANA", invite: INVITE.replace("DTSTART:20261127T201500Z", "DTSTART;TZID=W. Europe Standard Time:20261127T211500"), error: "invite can't be sent: time zone W. Europe Standard Time isn't an IANA time zone" },
+    { refusal: "more zones than GSV writes", invite: INVITE.replace("SUMMARY:Dinner", ["SUMMARY:Dinner", ...ZONES.map((zone) => `X-WHEN;TZID=${zone}:20261127T211500`)].join("\n")), error: "invite can't be sent: calendar names 9 time zones; GSV writes at most 8" },
     { refusal: "a control character", invite: INVITE.replace("SUMMARY:Dinner", "SUMMARY:Din\u0001ner"), error: "invite holds a control character" },
     { refusal: "a calendar over 32 KiB with CRLF lines", invite: INVITE.replace("LOCATION:Casa Lucio", Array.from({ length: 5000 }, () => "X-A:1").join("\n")), error: "invite is more than 32768 bytes once written to send" },
+    { refusal: "a repeat rule GSV can't say", invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1"), error: "invite repeats by a rule GSV can't send: repeat rule BYSETPOS isn't supported" },
+    { refusal: "two repeat rules", invite: SERIES_INVITE.replace("RRULE:FREQ=WEEKLY;UNTIL=20270628T215959Z", "RRULE:FREQ=WEEKLY;UNTIL=20270628T215959Z\nRRULE:FREQ=DAILY"), error: "invite repeats by a rule GSV can't send: it has more than one RRULE" },
+    { refusal: "extra dates", invite: SERIES_INVITE.replace("EXDATE;", "RDATE;TZID=Europe/Amsterdam:20261201T090000\nEXDATE;"), error: "invite repeats by RDATE, which GSV can't send" },
+    { refusal: "extra dates on an event that doesn't repeat", invite: INVITE.replace("SUMMARY:Dinner", "RDATE:20261204T201500Z\nSUMMARY:Dinner"), error: "invite repeats by RDATE, which GSV can't send" },
+    { refusal: "a start the rule leaves out", invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=WEEKLY;BYDAY=MO"), error: "invite starts on 2026-11-27, a date its repeat rule leaves out" },
+    { refusal: "UNTIL as a date beside times", invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=WEEKLY;UNTIL=20270131"), error: "invite repeat UNTIL must be a UTC time such as 20270628T215959Z" },
+    { refusal: "a skipped date on an event that doesn't repeat", invite: INVITE.replace("SUMMARY:Dinner", "EXDATE:20261204T201500Z\nSUMMARY:Dinner"), error: "invite skips or changes dates of an event that doesn't repeat" },
+    { refusal: "a skipped date the rule doesn't have", invite: SERIES_INVITE.replace("EXDATE;TZID=Europe/Amsterdam:20261228T090000", "EXDATE;TZID=Europe/Amsterdam:20261228T100000"), error: "invite skips 2026-12-28T10:00:00+01:00[Europe/Amsterdam], which isn't a date the event happens on" },
+    { refusal: "a skipped date by DATE beside times", invite: SERIES_INVITE.replace("EXDATE;TZID=Europe/Amsterdam:20261228T090000", "EXDATE;VALUE=DATE:20261228"), error: "invite names a skipped or changed date unlike its DTSTART" },
+    { refusal: "a changed date the rule doesn't have", invite: SERIES_INVITE.replace("RECURRENCE-ID;TZID=Europe/Amsterdam:20270104T090000", "RECURRENCE-ID;TZID=Europe/Amsterdam:20270105T090000"), error: "invite changes 2027-01-05T09:00:00+01:00[Europe/Amsterdam], which isn't a date the event happens on" },
+    { refusal: "a date changed twice", invite: SERIES_INVITE.replace("RECURRENCE-ID:20261207T080000Z", "RECURRENCE-ID:20270104T080000Z"), error: "invite changes 2027-01-04T09:00:00+01:00[Europe/Amsterdam] twice" },
+    { refusal: "a date both skipped and changed", invite: SERIES_INVITE.replace("EXDATE;TZID=Europe/Amsterdam:20261228T090000", "EXDATE;TZID=Europe/Amsterdam:20270104T090000"), error: "invite both skips and changes 2027-01-04T09:00:00+01:00[Europe/Amsterdam]" },
+    { refusal: "a change to every date after one", invite: SERIES_INVITE.replace("RECURRENCE-ID;TZID", "RECURRENCE-ID;RANGE=THISANDFUTURE;TZID"), error: "invite changes a date and the ones after it (RANGE)" },
+    { refusal: "a changed date whose length is a DURATION", invite: SERIES_INVITE.replace("DTEND;TZID=Europe/Amsterdam:20270105T103000", "DURATION:PT30M"), error: "invite gives its length as DURATION, which GSV can't send; write DTEND" },
+    { refusal: "a changed date with guests of its own", invite: SERIES_INVITE.replace("DTSTART;TZID=Europe/Amsterdam:20270105T100000", "DTSTART;TZID=Europe/Amsterdam:20270105T100000\nATTENDEE:mailto:bob@example.com"), error: "every date of an invite goes to the same guests" },
+    { refusal: "a changed date without the event", invite: INVITE.replace("UID:dinner@gsv.space", "UID:dinner@gsv.space\nRECURRENCE-ID:20261127T201500Z"), error: "invite must hold the event itself, not only dates changed from it" },
+    { refusal: "a cancellation of one date", invite: SERIES_INVITE.replace("METHOD:REQUEST", "METHOD:CANCEL"), error: "a cancellation withdraws the whole event" },
   ])("refuses $refusal before recording anything", async ({ invite, to, error }) => {
     await runWithRealKernelSql(async (sql) => {
-      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, { config: AMSTERDAM_OWNER });
 
       const sent = await handleMailSend({ invite, to, subject: "Dinner", text: "Invite.", deliveryId: "refused" }, ctx);
 
@@ -1302,6 +1484,7 @@ describe("outbound mail invites", () => {
   });
 });
 
+/** Records the message a reply answers, with its rendered message.txt unless `text` is null. */
 async function recordSource(
   ctx: KernelContext,
   storage: MemoryR2Bucket,

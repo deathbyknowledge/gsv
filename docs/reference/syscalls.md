@@ -404,9 +404,7 @@ names the resolved recipients and subject, so a reply's approval shows who
 gets it.
 
 `invite` sends a calendar invitation with the message: the iCalendar text of
-one event that happens once, at most 32 KiB, such as a file the `cal` command
-writes; the Kernel refuses `RRULE`, `RDATE`, `EXRULE`, `EXDATE` and
-`RECURRENCE-ID`, since the approval shows one date. Its
+one event, at most 32 KiB, such as a file the `cal` command writes. Its
 `METHOD` is `REQUEST` to invite or update, or `CANCEL` to withdraw the event;
 the event needs a `UID`, `DTSTART` and `DTSTAMP`, gives any end as `DTEND`
 rather than `DURATION`, and its `ORGANIZER` must be the sender's managed
@@ -414,10 +412,27 @@ address, so guests' answers come back as mail. The
 message goes to exactly the event's guests, its attendees other than the
 sender: without `to` they become the recipients, less any in `cc`; otherwise
 `to` and `cc`, or a reply's derived recipients, must name the same people.
-The Kernel rewrites the event with CRLF lines before it fingerprints and stores
-it; the rewritten text must still fit in 32 KiB and hold no control character
-besides tabs and its line breaks. The approval request replaces the iCalendar
-text with the event as the owner reads it:
+Every time names its zone: a `TZID` from the IANA database or UTC, never a
+floating local time, which each guest would read in their own zone.
+
+A repeating event goes whole: one `RRULE` and the dates changed from it,
+each a `VEVENT` with the same `UID` and the `RECURRENCE-ID` of the date it
+changes, with the same organizer and guests and any end as `DTEND`. The rule
+must be one the approval can say in words: `FREQ` of `DAILY`, `WEEKLY` with
+plain `BYDAY` days, `MONTHLY` with `BYMONTHDAY` (`-1` the last day) or `BYDAY`
+such as `4FR` or `-1FR`, or `YEARLY` with `BYMONTH` and `BYMONTHDAY`;
+`INTERVAL`, `WKST`, and `COUNT` or `UNTIL`, which is a date beside an all-day
+start and UTC otherwise.
+The start must be a date the rule includes, and each `EXDATE` and
+`RECURRENCE-ID` must name a date it has, written the way `DTSTART` is. The
+Kernel refuses `RDATE`, `EXRULE`, `RANGE`, and a `CANCEL` that holds changed
+dates; to cancel one date, send a `REQUEST` that skips it.
+
+The Kernel rewrites the event with CRLF lines and replaces its `VTIMEZONE`s
+with ones written from the runtime's zone data, at most eight, before it
+fingerprints and stores it; the result must still fit in 32 KiB and hold no
+control character besides tabs and its line breaks. The approval request
+replaces the iCalendar text with the event as the owner reads it:
 
 ```ts
 type MailInviteApproval = {
@@ -426,9 +441,29 @@ type MailInviteApproval = {
   allDay: boolean;
   start: string; // "2026-11-27T21:15:00+01:00[Europe/Amsterdam]", or a date when allDay
   end?: string;  // an all-day event's last day
+  timeZone?: string; // the zone every time is in, when it isn't the owner's
   location?: string;
+  repeats?: MailInviteRepeat;
+  skipped?: string[]; // each date the rule skips, by the start it would have had
+  changed?: Array<{ from: string; start: string; end?: string }>; // a changed date, and when it happens now
+};
+
+// The rule with what it leaves to the start written out, such as a weekly rule's day.
+type MailInviteRepeat = {
+  freq: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
+  interval: number;
+  byDay?: string[];       // "MO", or within a month "4FR" or "-1FR"
+  byMonthDay?: number[];  // -1 for the last day
+  byMonth?: number[];
+  count?: number;
+  until?: string;         // as start reads
 };
 ```
+
+Times read in the owner's zone, except a repeating event's: its rule counts
+days in the zone of its `DTSTART` (or UTC), so all its times are shown there and
+`timeZone` names that zone when it isn't the owner's. A date changed with
+`STATUS:CANCELLED` is listed as skipped.
 
 The caller must have the `mail.send` capability and resolve to an active human
 mailbox owner. The Kernel derives `from` from that owner's managed mailbox; the
