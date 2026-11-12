@@ -56,8 +56,7 @@ export type AdminInstallation = {
     previousInstallationId: string;
     dataDeletionState: InstallationDataDeletionState;
   } | null;
-  invitedBy: { installationId: string; handle: string } | null;
-  invitations: { total: number; active: number };
+
 };
 
 type AdminInstallationRow = {
@@ -71,10 +70,6 @@ type AdminInstallationRow = {
   activated_at: number | null;
   previous_installation_id?: string | null;
   data_deletion_state?: InstallationDataDeletionState | null;
-  inviter_installation_id?: string | null;
-  inviter_handle?: string | null;
-  invitations_total?: number;
-  invitations_active?: number;
 };
 
 type AdminInstallationSummaryRow = Pick<
@@ -203,20 +198,10 @@ export class InstallationAdminStore {
           WHERE p.installation_id = i.id AND p.kind = 'create'
           ORDER BY p.updated_at DESC LIMIT 1) AS operation_state,
          c.expires_at AS onboarding_expires_at, i.created_at, i.activated_at,
-         reset.previous_installation_id, reset.data_deletion_state,
-         inviter.id AS inviter_installation_id, inviter.handle AS inviter_handle,
-         (SELECT COUNT(*) FROM provisioning_operations p
-          WHERE p.kind = 'create' AND p.inviter_installation_id = i.id) AS invitations_total,
-         (SELECT COUNT(*) FROM provisioning_operations p
-          JOIN installations invited ON invited.id = p.installation_id AND invited.state = 'active'
-          WHERE p.kind = 'create' AND p.inviter_installation_id = i.id) AS invitations_active
+         reset.previous_installation_id, reset.data_deletion_state
        FROM installations i
        LEFT JOIN installation_onboarding_claims c ON c.installation_id = i.id
        LEFT JOIN installation_reset_operations reset ON reset.replacement_installation_id = i.id
-       LEFT JOIN installations inviter ON inviter.id = (
-         SELECT p.inviter_installation_id FROM provisioning_operations p
-         WHERE p.installation_id = i.id AND p.kind = 'create'
-         ORDER BY p.updated_at DESC LIMIT 1)
        WHERE i.id = ? AND i.state != 'deleted' LIMIT 1`,
     ).bind(installationId).first<AdminInstallationRow>();
     return row ? adminInstallationFromRow(row) : null;
@@ -253,9 +238,5 @@ function adminInstallationFromRow(
           dataDeletionState: row.data_deletion_state,
         }
       : null,
-    invitedBy: row.inviter_installation_id && row.inviter_handle
-      ? { installationId: row.inviter_installation_id, handle: row.inviter_handle }
-      : null,
-    invitations: { total: row.invitations_total ?? 0, active: row.invitations_active ?? 0 },
   };
 }

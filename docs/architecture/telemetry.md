@@ -205,9 +205,11 @@ without granting those adapters ownership of another component's application eve
   `utm_campaign` as `utmSource` and `utmCampaign`; `origin` is `invite` when the
   signup carried another Ship's contact invitation that Accounts resolved,
   `website` when the link carried a placement, `campaign` when it carried only
-  a campaign tag, otherwise `direct`. Which Ship invited the new one stays in
-  Accounts; the record never names it, so two installations' product series
-  cannot be joined through it. The signup page reads the placement slugs from the signup
+  a campaign tag, otherwise `direct`. The same request reports
+  `contact.invite.signup`, with no properties, under the inviting Ship's own
+  pseudonym, so invitations that became Ships count for the inviter there.
+  Neither record names the other Ship: the two series share no key, and
+  Accounts keeps no record of who invited whom. The signup page reads the placement slugs from the signup
   link's fragment and the campaign tags from its query, keeps them in its own
   signup state until the space request and takes them off the URL; the owner
   API bounds every value to one slug shape and classifies the placement and

@@ -416,6 +416,14 @@ const contactInviteAcceptedSchema = z.strictObject({
   name: z.literal("contact.invite.accepted"),
   properties: z.strictObject({}),
 });
+// Accounts reports a signup that followed one of the Ship's invitations under the
+// inviting Ship's pseudonym; the new Ship's own record says only `origin: "invite"`,
+// so the two series share no key.
+const contactInviteSignupSchema = z.strictObject({
+  stream: z.literal("product"),
+  name: z.literal("contact.invite.signup"),
+  properties: z.strictObject({}),
+});
 
 const targetConnectedSchema = z.strictObject({
   stream: z.literal("product"),
@@ -582,6 +590,7 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   installationAttributedSchema,
   contactInviteCreatedSchema,
   contactInviteAcceptedSchema,
+  contactInviteSignupSchema,
   shipMessageCommittedSchema,
   shipMessageReceivedSchema,
   conversationReplyFailedSchema,
@@ -620,6 +629,7 @@ export const telemetryEventComponents = {
   "installation.attributed": ["accounts"],
   "contact.invite.created": ["gateway"],
   "contact.invite.accepted": ["gateway"],
+  "contact.invite.signup": ["accounts"],
   "ship.message.committed": ["gateway"],
   "ship.message.received": ["gateway"],
   "conversation.reply.failed": ["gateway"],

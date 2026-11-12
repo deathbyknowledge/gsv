@@ -197,8 +197,6 @@ describe("signup inviter body", () => {
     const operationId = crypto.randomUUID();
     const accepted = await f.request("/spaces", f.sessionSecret, { operationId, handle, inviter: `${inviter.handle.toUpperCase()}.Example.com.` });
     expect(accepted.status).toBe(200);
-    const stored = await env.INSTALLATIONS_DB.prepare("SELECT inviter_installation_id FROM provisioning_operations WHERE operation_id = ?")
-      .bind(operationId).first<{ inviter_installation_id: string | null }>();
-    expect(stored?.inviter_installation_id).toBe(inviter.installationId);
+    expect(await f.accounts.getReservationByOperation(operationId)).not.toBeNull();
   });
 });

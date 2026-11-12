@@ -49,14 +49,19 @@ export class InstallationSignup {
     const existing = await this.accounts.getReservationByOperation(operationId);
     if (!existing && !this.enabled) throw new Error("Registration is currently closed.");
     if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
-    const inviterInstallationId = !existing && inviter ? await this.inviterInstallation(inviter) : undefined;
-    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true, inviterInstallationId });
-    // Where the signup came from is reported once, by the request that created the reservation, under
-    // the Ship's own pseudonym; a retry or resumed signup replays the reservation and reports nothing.
-    // The inviter is kept with the reservation for the operator's counts; the slugs are not stored.
-    if (space.created) emitTelemetry(this.telemetry, { component: "accounts", installationId: space.installationId,
-      event: { stream: "product", name: "installation.attributed",
-        properties: installationAttributedProperties(attribution, await this.invited(operationId)) } });
+    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true });
+    // Where the signup came from is reported once, by the request that created the reservation; a retry
+    // or resumed signup replays the reservation and reports nothing. Nothing is stored: the records are
+    // the only copy. An inviting Ship learns of the signup under its own pseudonym and the new Ship's
+    // record says only that it was invited, so neither record names the other.
+    if (space.created) {
+      const inviterInstallationId = inviter ? await this.inviterInstallation(inviter, principalId) : undefined;
+      if (inviterInstallationId) emitTelemetry(this.telemetry, { component: "accounts", installationId: inviterInstallationId,
+        event: { stream: "product", name: "contact.invite.signup", properties: {} } });
+      emitTelemetry(this.telemetry, { component: "accounts", installationId: space.installationId,
+        event: { stream: "product", name: "installation.attributed",
+          properties: installationAttributedProperties(attribution, inviterInstallationId !== undefined) } });
+    }
     const owned = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_setup = 1 AND owner_principal_id = ?")
       .bind(space.installationId, principalId).first();
     if (!owned) throw new Error("Ship activation is unavailable.");
@@ -86,14 +91,15 @@ export class InstallationSignup {
    * The inviter is the signup's own claim: an unknown address is dropped silently here, and the
    * reservation keeps the Ship only if it is still active and owned by someone else when it is written.
    */
-  /** Whether the reservation kept an inviter: the insert drops one that is inactive or the owner's own Ship. */
-  private async invited(operationId: string): Promise<boolean> {
-    return !!await this.db.prepare("SELECT 1 FROM provisioning_operations WHERE operation_id = ? AND inviter_installation_id IS NOT NULL")
-      .bind(operationId).first();
-  }
-
-  private async inviterInstallation(hostname: string): Promise<string | undefined> {
+  /**
+   * The Ship a contact invitation named, only while it is an active installation someone else owns.
+   * The hostname is a claim from the link, not proof of who sent it, so anything else is dropped without error.
+   */
+  private async inviterInstallation(hostname: string, principalId: string): Promise<string | undefined> {
     const inviter = await this.accounts.resolveHostname(hostname);
-    return inviter.found ? inviter.installationId : undefined;
+    if (!inviter.found) return undefined;
+    const other = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND state = 'active' AND owner_principal_id != ?")
+      .bind(inviter.installationId, principalId).first();
+    return other ? inviter.installationId : undefined;
   }
 }

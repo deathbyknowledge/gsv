@@ -507,6 +507,9 @@ describe("contact invitations", () => {
     assert.equal(record("accounts", "contact.invite.created", {}).success, false);
     assert.equal(record("gateway", "contact.invite.created", { handle: "bob.ship.test" }).success, false);
     assert.equal(record("gateway", "contact.invite.accepted", { remoteDid: "did:plc:x" }).success, false);
+    assert.equal(record("accounts", "contact.invite.signup", {}).success, true);
+    assert.equal(record("gateway", "contact.invite.signup", {}).success, false);
+    assert.equal(record("accounts", "contact.invite.signup", { invitee: "inst_new" }).success, false);
   });
 });
 

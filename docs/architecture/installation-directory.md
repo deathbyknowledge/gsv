@@ -171,16 +171,13 @@ their shape, classifies the placement and example into a closed allowlist
 replayed request reports nothing, and they never identify a visitor.
 
 A signup that followed a contact invitation link may also name the inviting
-Ship's hostname. Accounts resolves it through its own directory and records the
-inviting installation on the create operation only when it is an active
-installation that the signing owner does not own; anything else is ignored
-without error, since the hostname is a claim from the link, not proof of who
-sent it. The link is written once with the reservation and cleared if the inviting
-installation is erased. A reset moves the inviter and the invitees to the
-replacement installation, which continues the same person and reports no new
-attribution. The reservation request reports `origin: "invite"` without naming
-the inviter. Administration shows who invited a Ship and how many Ships its
-invitations created.
+Ship's hostname. Accounts resolves it through its own directory and counts it
+only when it is an active installation that the signing owner does not own;
+anything else is ignored without error, since the hostname is a claim from the
+link, not proof of who sent it. The request that creates the reservation then
+reports `contact.invite.signup` under the inviting Ship and `origin: "invite"`
+on the new Ship's `installation.attributed`, and stores nothing: Accounts keeps
+no record of who invited whom, and administration shows none.
 
 The existing provisioning ledger owns progress and diagnostic references.
 `installations.owner_setup` identifies setups an owner may resume. The forward

@@ -209,62 +209,47 @@ describe("signup inviter", () => {
     ]);
     return { installationId: space.installationId, hostname: `${space.handle}.example.com` };
   }
-  const inviterOf = async (operationId: string) => (await db.prepare(
-    "SELECT inviter_installation_id FROM provisioning_operations WHERE operation_id = ?",
-  ).bind(operationId).first<{ inviter_installation_id: string | null }>())!;
+  const reporting = new InstallationSignup(db, accounts, onboarding, true, undefined, { GSV_TELEMETRY_ENABLED: "1" });
+  const spyLog = () => vi.spyOn(console, "log").mockImplementation(() => {});
+  const products = (log: ReturnType<typeof spyLog>) => log.mock.calls.flatMap(([value]) => {
+    const record = telemetryRecordSchema.safeParse(value);
+    return record.success && record.data.event.stream === "product" ? [record.data] : [];
+  });
 
-  it("records an active Ship someone else owns and reports the signup as invited, keeping the website's slugs", async () => {
+  it("tells the inviting Ship of the signup and marks the new Ship invited, naming neither to the other", async () => {
     const inviter = await ship();
-    const principalId = await owner(), operationId = crypto.randomUUID();
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
+    const log = spyLog();
     try {
-      const reporting = new InstallationSignup(db, accounts, onboarding, true, undefined, { GSV_TELEMETRY_ENABLED: "1" });
-      await reporting.prepare(operationId, principalId, handle(), { placement: "hero" }, inviter.hostname);
-      const events = log.mock.calls.flatMap(([value]) => {
-        const record = telemetryRecordSchema.safeParse(value);
-        return record.success && record.data.event.name === "installation.attributed" ? [record.data.event.properties] : [];
-      });
-      expect(events).toEqual([{ origin: "invite", placement: "hero" }]);
-      expect(JSON.stringify(log.mock.calls)).not.toContain(inviter.installationId);
+      await reporting.prepare(operationId, principalId, name, { placement: "hero" }, inviter.hostname);
+      const created = (await accounts.getReservationByOperation(operationId))!;
+      expect(products(log).map((record) => [record.installationId, record.event])).toEqual([
+        [inviter.installationId, { stream: "product", name: "contact.invite.signup", properties: {} }],
+        [created.installationId, { stream: "product", name: "installation.attributed", properties: { origin: "invite", placement: "hero" } }],
+      ]);
+      // A resumed signup replays the reservation and reports nothing again, whatever it carries.
+      await reporting.prepare(operationId, principalId, name, undefined, (await ship()).hostname);
+      await reporting.prepare(operationId, principalId, name);
+      expect(products(log)).toHaveLength(2);
     } finally {
       log.mockRestore();
     }
-    expect((await inviterOf(operationId)).inviter_installation_id).toBe(inviter.installationId);
   });
 
-  it("drops an unknown or inactive Ship without failing the signup", async () => {
+  it("drops an unknown or inactive Ship without failing the signup, which then reports as direct", async () => {
+    // The owner's own Ship cannot be offered through this path: owner setup refuses a second Ship first.
     const restricted = await ship("restricted");
     for (const hostname of ["nobody-here.example.com", restricted.hostname]) {
-      const principalId = await owner(), operationId = crypto.randomUUID();
-      await expect(signup.prepare(operationId, principalId, handle(), undefined, hostname)).resolves.toMatchObject({ onboardingToken: expect.any(String) });
-      expect((await inviterOf(operationId)).inviter_installation_id).toBeNull();
+      const log = spyLog();
+      try {
+        await expect(reporting.prepare(crypto.randomUUID(), await owner(), handle(), undefined, hostname))
+          .resolves.toMatchObject({ onboardingToken: expect.any(String) });
+        expect(products(log).map((record) => record.event)).toEqual([
+          { stream: "product", name: "installation.attributed", properties: { origin: "direct" } },
+        ]);
+      } finally {
+        log.mockRestore();
+      }
     }
-  });
-
-  it("never records a Ship as inviting its own owner, and keeps a reservation whose inviter vanished", async () => {
-    const principalId = await owner();
-    const own = await ship("active", principalId);
-    // Operator allocation has no one-Ship limit, so the owner's own Ship can be offered as inviter and must be dropped by the insert.
-    const operationId = crypto.randomUUID();
-    await accounts.reserveInstallation({ principalId, operationId, handle: handle(), inviterInstallationId: own.installationId });
-    expect((await inviterOf(operationId)).inviter_installation_id).toBeNull();
-    // An inviter erased between the lookup and the write leaves the reservation intact, without an inviter.
-    const gone = crypto.randomUUID();
-    await expect(accounts.reserveInstallation({ principalId, operationId: gone, handle: handle(), inviterInstallationId: "inst_gone" }))
-      .resolves.toMatchObject({ state: "reserved" });
-    expect((await inviterOf(gone)).inviter_installation_id).toBeNull();
-  });
-
-  it("keeps the first request's inviter when a resumed signup carries another or none", async () => {
-    const first = await ship(), second = await ship();
-    const principalId = await owner(), operationId = crypto.randomUUID(), name = handle();
-    await signup.prepare(operationId, principalId, name, undefined, first.hostname);
-    await signup.prepare(operationId, principalId, name, undefined, second.hostname);
-    await signup.prepare(operationId, principalId, name);
-    expect((await inviterOf(operationId)).inviter_installation_id).toBe(first.installationId);
-    const directOwner = await owner(), direct = crypto.randomUUID(), directName = handle();
-    await signup.prepare(direct, directOwner, directName);
-    await signup.prepare(direct, directOwner, directName, undefined, first.hostname);
-    expect((await inviterOf(direct)).inviter_installation_id).toBeNull();
   });
 });

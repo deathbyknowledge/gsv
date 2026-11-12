@@ -163,8 +163,6 @@ function identityPanel(installation: AdminInstallation, context?: ShipContext): 
       <dt>Provisioning</dt><dd>${stateBadge(installation.operationState)}</dd>
       <dt>Created</dt><dd>${formatDate(installation.createdAt)}</dd>
       <dt>Activated</dt><dd>${formatDate(installation.activatedAt)}</dd>
-      ${installation.invitedBy ? `<dt>Invited by</dt><dd><a href="/admin/installations/${encodeURIComponent(installation.invitedBy.installationId)}">${escapeHtml(installation.invitedBy.handle)}</a></dd>` : ""}
-      <dt>Invited</dt><dd>${formatInteger(installation.invitations.total)} ${installation.invitations.total === 1 ? "Ship" : "Ships"} (${formatInteger(installation.invitations.active)} active)</dd>
       ${installation.reset ? `<dt>Reset from</dt><dd>${escapeHtml(installation.reset.previousInstallationId)}</dd><dt>Old data deletion</dt><dd>${stateBadge(installation.reset.dataDeletionState)}</dd>` : ""}
     </dl>
   </section>`;
