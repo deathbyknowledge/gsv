@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { GsvResponse } from "@humansandmachines/gsv";
 import type { ProcHistoryResult } from "@humansandmachines/gsv/protocol";
-import { decodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
+import { bodyFromBytes, decodeDevicePairingCode } from "@humansandmachines/gsv/protocol";
 import { z } from "zod";
 import {
   startProcessRuntimeHarness,
@@ -367,6 +368,87 @@ describe("gateway process controls integration", () => {
       });
     });
   }
+
+  it("sends a file from a machine through the Send tool", async () => {
+    await withRuntime(async (runtime) => {
+      const targetId = "send-attach-laptop";
+      const path = "/home/person/report.pdf";
+      const bytes = new TextEncoder().encode("%PDF-1.7 quarterly report");
+      const resource = { type: "file", target: targetId, path, revision: "rev-report", contentType: "application/pdf", size: bytes.length };
+      const machine = await runtime.connectMachine(targetId, ["fs.read", "fs.transfer.send"]);
+      const machineCalls: Array<{ call: string; args: unknown }> = [];
+      machine.onRequest((frame): GsvResponse => {
+        machineCalls.push({ call: frame.call, args: frame.args });
+        if (frame.call === "fs.read") {
+          return { data: { ok: true, path, kind: "file", contentType: resource.contentType, size: resource.size, resource } };
+        }
+        if (frame.call === "fs.transfer.send") {
+          return {
+            data: { ok: true, path, size: resource.size, revision: resource.revision, contentType: resource.contentType },
+            body: bodyFromBytes(bytes),
+          };
+        }
+        throw new Error(`unexpected ${frame.call}`);
+      });
+      runtime.ai.enqueue({ kind: "tool-calls", calls: [{
+        id: "send-report", name: "Send", arguments: { text: "Here is the report.", attach: [`${targetId}:${path}`], yield: true },
+      }] });
+      const process = await runtime.spawn("send a machine file");
+      await runtime.configureAi(process.pid);
+      const sent = await runtime.client.proc.send({ pid: process.pid, message: "Send me the report from my laptop." });
+      if (!sent.ok) throw new Error(sent.error);
+      await waitForFinished(runtime, sent.runId);
+
+      const history = await processHistory(runtime, process.pid);
+      expect(history.messages.find(({ role }) => role === "toolResult")?.content)
+        .toMatchObject({ toolCallId: "send-report", outcome: "completed", output: "Message committed and run yielded" });
+      expect(machineCalls).toEqual([
+        { call: "fs.read", args: { path, representation: "reference" } },
+        { call: "fs.transfer.send", args: { path, revision: resource.revision } },
+      ]);
+      const { conversation } = await runtime.client.conversation.forProcess({ pid: process.pid });
+      const message = (await runtime.client.conversation.history({ conversationId: conversation.id })).messages.at(-1);
+      expect(message).toMatchObject({ text: "Here is the report." });
+      expect(message?.media).toEqual([expect.objectContaining({
+        type: "resource", mediaType: "document", filename: "report.pdf",
+        ref: expect.objectContaining({ contentType: "application/pdf", size: bytes.length }),
+      })]);
+      // both reads are the process's own calls on the ledger, closed with the machine's answer
+      const ledger = await runtime.client.sys.ledger.list({ pid: process.pid });
+      expect(ledger.lines).toEqual(expect.arrayContaining([
+        expect.objectContaining({ call: "fs.read", target: targetId, outcome: "ok" }),
+        expect.objectContaining({ call: "fs.transfer.send", target: targetId, runId: sent.runId, outcome: "ok" }),
+      ]));
+    });
+  });
+
+  it("cancels a machine read for a Send when its run is aborted", async () => {
+    await withRuntime(async (runtime) => {
+      const targetId = "send-abort-laptop";
+      const machine = await runtime.connectMachine(targetId);
+      let started!: () => void;
+      const reading = new Promise<void>((resolve) => { started = resolve; });
+      let cancelled: string | undefined;
+      machine.onRequest((_frame, _body, signal) => new Promise((_resolve, reject) => {
+        started();
+        signal?.addEventListener("abort", () => {
+          cancelled = signal.reason instanceof Error ? signal.reason.message : String(signal.reason);
+          reject(signal.reason);
+        }, { once: true });
+      }));
+      runtime.ai.enqueue({ kind: "tool-calls", calls: [{
+        id: "send-slow", name: "Send", arguments: { text: "Here it is.", attach: [`${targetId}:/home/person/big.bin`], yield: true },
+      }] });
+      const process = await runtime.spawn("abort a machine attachment");
+      await runtime.configureAi(process.pid);
+      const sent = await runtime.client.proc.send({ pid: process.pid, message: "Send me the big file." });
+      if (!sent.ok) throw new Error(sent.error);
+      await reading;
+      expect(await runtime.client.proc.abort({ pid: process.pid })).toMatchObject({ ok: true });
+      await runtime.waitFor(() => cancelled !== undefined, "the machine to see its read cancelled");
+      await waitForFinished(runtime, sent.runId);
+    });
+  });
 
   it("queues process IPC while the target generation is blocked", async () => {
     await withRuntime(async (runtime) => {

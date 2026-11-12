@@ -39,7 +39,7 @@ import {
 } from "../internal/lifecycle";
 import { encodeBase64Bytes } from "../../shared/base64";
 import { isVectorImageMimeType } from "../../inference/image-mime";
-import { cancelProcessRequests, sendFrameToKernel } from "../../shared/utils";
+import { cancelProcessRequests, requestFromKernel } from "../../shared/utils";
 import { cancelResponseBody } from "../internal/messages";
 import {
   extractFsReadResource, extractToolResultImages, replaceFsReadResource, wrapStoredToolResult,
@@ -215,7 +215,8 @@ export class ProcessResources {
       args: { target: source.target, path: source.path, revision: source.revision },
       runId: options.runId,
     };
-    const pending = sendFrameToKernel(this.host.installationId, this.host.pid, request);
+    // the source may be a target, whose answer the Kernel awaits for this call
+    const pending = requestFromKernel(this.host.installationId, this.host.pid, request);
     let cancellation: Promise<number> | undefined;
     let response: Awaited<typeof pending>;
     try {
@@ -234,7 +235,7 @@ export class ProcessResources {
           );
         },
         onLateResolve: (late) => {
-          if (late?.type === "res") void cancelResponseBody(late, "Resource request was cancelled");
+          void cancelResponseBody(late, "Resource request was cancelled");
         },
       });
     } catch (error) {
@@ -242,12 +243,8 @@ export class ProcessResources {
       throw error;
     }
     if (options.signal?.aborted) {
-      if (response?.type === "res")
-        await cancelResponseBody(response, "Resource request was cancelled");
+      await cancelResponseBody(response, "Resource request was cancelled");
       options.signal.throwIfAborted();
-    }
-    if (!response || response.type !== "res") {
-      throw new Error(`Resource source did not respond: ${source.target}:${source.path}`);
     }
     if (!options.current()) {
       await cancelResponseBody(response, "Resource is no longer pending");
