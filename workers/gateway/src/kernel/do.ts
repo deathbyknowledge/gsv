@@ -1221,6 +1221,27 @@ export class Kernel extends DurableObject<GatewayEnv> {
     return approvalTargetIdentity(target);
   }
 
+  /**
+   * RPC method — a Process request answered on this call, wherever it runs.
+   * It is the same dispatch as `recvFrame`, under the same grant, approval
+   * target and ledger line, except that a routed call's answer comes back here
+   * rather than to the Process later. The Process cancels it by request id,
+   * which also cancels the request on the target.
+   */
+  async requestProcessFrame(
+    processId: string,
+    frame: RequestFrame,
+    approvedTarget?: ProcessApprovalTarget,
+  ): Promise<ResponseFrame> {
+    try {
+      this.retirement.assertActive();
+      return await this.handleProcessReq(processId, frame, approvedTarget, true)
+        ?? errFrame(frame.id, 499, "Request cancelled");
+    } finally {
+      await cancelUnlockedBody(frame.body, "Process request completed");
+    }
+  }
+
   async requestProcessNetFetch(
     processId: string,
     target: string,
@@ -1613,7 +1634,12 @@ export class Kernel extends DurableObject<GatewayEnv> {
     };
   }
 
-                                      async handleProcessReq(processId: string, frame: RequestFrame, approvedTarget?: ProcessApprovalTarget): Promise<ResponseFrame | null> {
+                                      async handleProcessReq(
+    processId: string,
+    frame: RequestFrame,
+    approvedTarget?: ProcessApprovalTarget,
+    awaitRouted = false,
+  ): Promise<ResponseFrame | null> {
     const ctx = this.buildProcessContext(processId, frame.runId);
     if (!ctx) {
       return errFrame(frame.id, 404, "Unknown process");
@@ -1624,7 +1650,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       frame,
       { type: "process", id: processId },
       ctx,
-      { awaitRouted: false },
+      { awaitRouted },
     );
   }
 
@@ -1879,6 +1905,8 @@ export class Kernel extends DurableObject<GatewayEnv> {
     const pending = options.awaitRouted
       ? this.transport.createPendingKernelResponse(inputFrame.id)
       : null;
+    // an awaited request's routed answer comes back to the pending response here; cancelling stays with its origin
+    const routeOrigin: RouteOrigin = pending ? { type: "kernel", id: inputFrame.id } : origin;
     const cancel = () => {
       this.transport.cancelRequest(
         origin,
@@ -1893,7 +1921,7 @@ export class Kernel extends DurableObject<GatewayEnv> {
       const result = await raceWithAbort(
         dispatch(
           frame,
-          origin,
+          routeOrigin,
           { ...ctx, requestSignal },
           this.buildDispatchDeps(),
         ),

@@ -279,7 +279,7 @@ describe("proc.abort", () => {
     // SAFETY: test fixture is constructed with the asserted domain shape.
     const recvSpy = vi
       // SAFETY: test fixture is constructed with the asserted domain shape.
-      .spyOn(Kernel.prototype as any, "recvFrame")
+      .spyOn(Kernel.prototype as any, "requestProcessFrame")
       .mockImplementation(async (_processId: string, frame: RequestFrame) => {
         await requestBlocked;
         return { type: "res", id: frame.id, ok: true, data: {} };

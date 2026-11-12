@@ -31,7 +31,7 @@ export type ProcessRuntimeHarness = {
   signals: RunSignal[];
   spawn(label: string, args?: Omit<ProcSpawnArgs, "label">): Promise<Extract<ProcSpawnResult, { ok: true }>>;
   configureAi(pid: string, contextWindowTokens?: number): Promise<void>;
-  connectMachine(peerId: string): Promise<GSVClient>;
+  connectMachine(peerId: string, implementsCalls?: string[]): Promise<GSVClient>;
   /** Waits out the fresh owner's welcome, leaving it resolved and Ship idle. */
   settleWelcome(): Promise<void>;
   waitFor(
@@ -126,11 +126,11 @@ export async function startProcessRuntimeHarness(options: {
       spawnedPids.add(spawned.pid);
       return spawned;
     },
-    connectMachine: async (peerId) => {
+    connectMachine: async (peerId, implementsCalls = ["fs.read"]) => {
       const issued = await connectedClient.sys.token.create({ kind: "machine", peerId, label: "Integration machine" });
       const machine = new GSVClient({
         url: gatewayUrl, username: USERNAME, token: issued.token.token,
-        peer: { id: peerId, version: "fixture-machine", platform: "linux", implements: ["fs.read"] },
+        peer: { id: peerId, version: "fixture-machine", platform: "linux", implements: implementsCalls },
       });
       machineClients.add(machine);
       await machine.connect();

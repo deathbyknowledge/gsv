@@ -1054,6 +1054,100 @@ describe("Kernel nested dispatch", () => {
   });
 });
 
+describe("Kernel awaited Process requests", () => {
+  const routedReadKernel = () => {
+    const driver = {
+      id: "driver-connection",
+      state: { step: "connected", peer: connectedPeer("machine", "laptop", 1000, ["fs.read"]) },
+    };
+    let route: any = null;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const kernel = bareKernel();
+    kernel.transport.pendingKernelResponses = new Map();
+    kernel.transport.activeRequests = new Map();
+    kernel.transport.cancelledProcessRequests = new Map();
+    kernel.transport.routedBodies = new Map();
+    kernel.connections = new Map([[driver.id, driver]]);
+    kernel.shellSessions = { get: vi.fn() };
+    kernel.routes = {
+      get: vi.fn((id: string) => route?.id === id ? route : null),
+      remove: vi.fn((id: string) => {
+        if (route?.id !== id) return null;
+        const removed = { ...route };
+        route = null;
+        return removed;
+      }),
+    };
+    kernel.cancelSchedule = vi.fn(async () => {});
+    kernel.transport.registerRouteWithExpiry = vi.fn(async (input: any) => {
+      route = { ...input, scheduleId: null };
+      return { cancel: () => kernel.transport.cancelRoute(input.id), attachBody: vi.fn() };
+    });
+    kernel.transport.sendWebSocketFrame = vi.fn(() => null);
+    kernel.buildProcessContext = vi.fn(() => ({
+      defer: vi.fn(),
+      processId: "proc-1",
+      peer: {
+        peer: { ...connectedPeer("human", "proc-1"), grant: { calls: ["fs.read"], signals: [], implements: [] } },
+        provenance: { kind: "process-registry" },
+      },
+      targets: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => ({
+          target_id: "laptop", owner_uid: 1000, label: "Laptop", description: "", implements: ["fs.read"],
+          platform: "linux", version: "test", online: true, first_seen_at: 1, last_seen_at: 2, connected_at: 2,
+          disconnected_at: null,
+        })),
+      },
+      auth: { getPasswdByUid: vi.fn(() => null) },
+    }));
+    const request = kernel.requestProcessFrame("proc-1", {
+      type: "req",
+      id: "attach-read",
+      call: "fs.read",
+      args: { target: "laptop", path: "/home/me/report.pdf", representation: "reference" },
+    });
+    return { kernel, driver, request, route: () => route };
+  };
+
+  it("returns the answer of a request routed to a device on the same call", async () => {
+    sendFrameToProcessMock.mockClear();
+    const { kernel, driver, request, route } = routedReadKernel();
+    await vi.waitFor(() => expect(kernel.transport.sendWebSocketFrame).toHaveBeenCalledWith(driver, {
+      type: "req",
+      id: "attach-read",
+      call: "fs.read",
+      args: { path: "/home/me/report.pdf", representation: "reference" },
+    }));
+    // the device's answer comes back to the waiting call, not to the Process later
+    expect(route()).toMatchObject({ origin: { type: "kernel", id: "attach-read" } });
+    kernel.transport.handleRes(driver, { type: "res", id: "attach-read", ok: true, data: { ok: false, error: "no such file" } });
+
+    await expect(request).resolves.toMatchObject({ type: "res", id: "attach-read", ok: true, data: { ok: false, error: "no such file" } });
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    expect(kernel.transport.activeRequests.size).toBe(0);
+  });
+
+  it("cancels the request on the device when the Process cancels its request id", async () => {
+    const { kernel, driver, request, route } = routedReadKernel();
+    await vi.waitFor(() => expect(route()).not.toBeNull());
+
+    // the request is the Process's own: another process cannot cancel it
+    expect(kernel.cancelProcessRequests("proc-2", ["attach-read"], "not mine")).toBe(0);
+    expect(route()).not.toBeNull();
+    expect(kernel.cancelProcessRequests("proc-1", ["attach-read"], "run aborted")).toBe(1);
+
+    await expect(request).resolves.toMatchObject({ ok: false, error: { code: 499 } });
+    expect(kernel.transport.sendWebSocketFrame).toHaveBeenCalledWith(driver, {
+      type: "sig",
+      signal: "request.cancel",
+      payload: { id: "attach-read", reason: "run aborted" },
+    });
+    expect(route()).toBeNull();
+    expect(kernel.transport.activeRequests.size).toBe(0);
+  });
+});
+
 describe("Kernel device connection cleanup", () => {
   it("makes a replacement authoritative before closing the old connection", () => {
     const peer = connectedPeer("machine", "browser", 1000, ["fs.*"]);
