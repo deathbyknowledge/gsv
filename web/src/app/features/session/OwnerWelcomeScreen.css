@@ -58,3 +58,6 @@
     padding-block: 16px calc(16px + var(--instrument-safe-bottom));
   }
 }
+
+.gsv-auth-scene .desktop-welcome-identity .gsv-ti.is-success .gsv-ti-wrap { border-color: var(--online); }
+.gsv-auth-scene .desktop-welcome-identity .gsv-ti.is-success .gsv-ti-wrap:focus-within { outline-color: var(--online); box-shadow: none; }

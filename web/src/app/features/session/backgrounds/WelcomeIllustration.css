@@ -10,8 +10,8 @@
   user-select: none;
 }
 .welcome-illustration-scene.gsv-ascii-galaxy[data-ascii-palette] {
-  --ascii-nebula: color-mix(in srgb, var(--glyph) 56%, transparent);
-  --ascii-foreground: var(--glyph);
+  --ascii-nebula: color-mix(in srgb, var(--glyph) 72%, transparent);
+  --ascii-foreground: color-mix(in srgb, var(--glyph) 68%, var(--accent-bright));
   --ascii-stars: var(--accent-bright);
   --ascii-star-glow: none;
   --ascii-foreground-glow: none;
@@ -32,4 +32,10 @@
   font-family: "Departure Mono", monospace;
   font-size: min(5px, 1.05cqi, 1.35cqb);
   line-height: 1;
+}
+
+.welcome-illustration-scene.gsv-ascii-galaxy[data-ascii-palette="light"] {
+  --ascii-nebula: color-mix(in srgb, var(--accent-bright) 82%, transparent);
+  --ascii-foreground: var(--accent-bright);
+  --ascii-stars: var(--text-hi);
 }
