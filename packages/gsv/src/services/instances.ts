@@ -48,6 +48,7 @@ export const instanceStartSchema = z.strictObject({
   lifetimeSeconds: z.number().int().positive().optional(),
   profileId: id.optional(),
   fresh: z.boolean().optional(),
+  fromInstanceId: id.optional(),
 }) satisfies z.ZodType<SysInstanceStartArgs>;
 export const instanceSelectorSchema = z.union([
   z.strictObject({ instanceId: id }),

@@ -7,13 +7,14 @@ import {
 } from "@humansandmachines/gsv/services/instances";
 import type { InstallationInstances, InstanceActor, InstanceTargetRequest, InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
 import { z } from "zod";
-import { browserTemplate, computerTemplate, COMPUTER_IMPLEMENTATIONS, IMPLEMENTATIONS, InstancePolicy, type Environment } from "./config";
+import { browserTemplate, COMPUTER_IDLE_SECONDS, computerTemplate, COMPUTER_IMPLEMENTATIONS, IMPLEMENTATIONS, InstancePolicy, type Environment } from "./config";
 import { CloudBrowser } from "./browser";
 import { computerName, type ComputerControl } from "./computer";
 import { ComputerRequest } from "./computer-request";
 import { migrate } from "./schema";
 import { instance, InstanceStore, profile, type InstanceRow } from "./store";
 import { ProfileStorage } from "./profiles";
+import { ComputerWorkspaces } from "./workspaces";
 import { BrowserProvider } from "./provider";
 import { InstanceRetirement } from "./retirement";
 import { BrowserOperationGate, within } from "./browser-operation";
@@ -24,7 +25,12 @@ import type { InstallationDeletionRequest } from "@humansandmachines/gsv/service
 const QUIET_ALLOCATION_MS = 180_000;
 const PROVIDER_RECOVERY_MS = 60_000;
 const MAINTENANCE_BUDGET_MS = 20_000;
+const STARTING_POLL_MS = 1_000;
+// Commands extend a computer at most once a minute, not on every request.
+const EXTENSION_STEP_MS = 60_000;
 const PENDING_CHANGES_KEY = "pending_instance_changes";
+// Only expiry saves a computer's workspace; any other stop means the work is done.
+const COMPUTER_EXPIRED = "Computer lifetime expired";
 const humanInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("tab"), tabId: z.number().int().positive() }),
   z.strictObject({ kind: z.literal("click"), x: z.number().min(0).max(1280), y: z.number().min(0).max(800) }),
@@ -44,6 +50,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   readonly #store: InstanceStore;
   readonly #policy: InstancePolicy;
   readonly #profiles: ProfileStorage;
+  readonly #workspaces: ComputerWorkspaces;
   readonly #provider: BrowserProvider;
   readonly #retirement: InstanceRetirement;
   readonly #browsers = new Map<string, Promise<CloudBrowser>>();
@@ -67,6 +74,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     this.#store = new InstanceStore(ctx.storage, ownerUid => this.notifyChange(ownerUid));
     this.#policy = new InstancePolicy(env, this.#installationId);
     this.#profiles = new ProfileStorage(this.#installationId, env.PROFILES, this.#store);
+    this.#workspaces = new ComputerWorkspaces(this.#installationId, env.PROFILES, this.#store);
     this.#provider = new BrowserProvider(env.BROWSER);
     this.#retirement = new InstanceRetirement(ctx.storage, this.#installationId);
   }
@@ -134,6 +142,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     await this.ctx.storage.setAlarm(Date.now() + 1);
     this.#retirement.requireLive();
     const value = this.#store.admit(actor, args, limits, Date.now(), new Set(this.#stops.keys()));
+    if (value.kind === "linux" && value.state === "starting" && value.startRequestId === args.requestId) this.#workspaces.create(value);
     return { instance: value, disposition: value.startRequestId === args.requestId ? "created" as const : "reused" as const };
   }
   async list(raw: InstanceActor, rawArgs: Parameters<InstallationInstances["list"]>[1]) {
@@ -409,7 +418,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       const value = instance(this.#store.byId(id));
       if (value.kind === "linux") {
         if (!COMPUTER_IMPLEMENTATIONS.some(call => call === frame.call)) throw new Error("Unsupported computer syscall");
-        deadlineAt = Math.min(deadlineAt, value.expiresAt);
+        // Use may move the expiry before dispatch; expiry itself aborts the request through fenceStop.
         if (deadlineAt <= Date.now()) throw new Error("Computer request deadline exceeded");
         let operations = this.#operations.get(id);
         if (!operations) { operations = new Map(); this.#operations.set(id, operations); }
@@ -427,8 +436,9 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
           return await request.run(async signal => {
             await this.#policy.requireActive();
             this.requireInstance(actor, id, true);
+            await this.extendComputer(id);
             signal.throwIfAborted();
-            return this.computer(id).execute(frame, deadlineAt);
+            return this.computer(id).execute(frame, Math.min(deadlineAt, instance(this.#store.byId(id)).expiresAt));
           });
         }
         catch (cause) {
@@ -604,7 +614,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     const rows = this.#store.sql.exec<Pick<InstanceRow, "id">>("SELECT id FROM instances WHERE active = 1 ORDER BY rowid DESC").toArray();
     for (const row of rows) {
       const value = instance(this.#store.byId(row.id));
-      if (value.expiresAt <= started) this.fenceStop(value, value.kind === "browser" ? "Browser lifetime expired" : "Computer lifetime expired");
+      if (value.expiresAt <= started) this.fenceStop(value, value.kind === "browser" ? "Browser lifetime expired" : COMPUTER_EXPIRED);
     }
     const stopping = (row: Pick<InstanceRow, "id">) => instance(this.#store.byId(row.id)).state === "stopping";
     const prioritized = [...rows.filter(stopping), ...rows.filter(row => !stopping(row))];
@@ -625,9 +635,19 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
       if (!profile(saved).activeInstanceId && !this.profileSaving(saved.id)) await this.#profiles.erase(saved);
     }
     await this.#profiles.cleanup();
+    const workspaceExpiry = await this.#workspaces.sweep();
     this.#store.pruneDiagnostics([...this.#saves.keys()]);
     this.ctx.waitUntil(this.publishChanges());
-    if (!this.#store.activeRows().length && !deleting && !this.#attachments.size && !this.#profiles.hasPendingCleanup() && !this.pendingChanges().size) await this.ctx.storage.deleteAlarm();
+    // A starting instance is checked again soon: its readiness must not wait for the next maintenance pass.
+    if (this.#store.activeRows().some(row => instance(row).state === "starting")) {
+      const next = await this.ctx.storage.getAlarm();
+      if (next === null || next > Date.now() + STARTING_POLL_MS) await this.ctx.storage.setAlarm(Date.now() + STARTING_POLL_MS);
+    }
+    if (!this.#store.activeRows().length && !deleting && !this.#attachments.size && !this.#profiles.hasPendingCleanup() && !this.pendingChanges().size) {
+      // A kept workspace is deleted when its retention ends, even with nothing running.
+      if (workspaceExpiry === null) await this.ctx.storage.deleteAlarm();
+      else await this.ctx.storage.setAlarm(workspaceExpiry);
+    }
   }
   async quiesceInstallation(input: InstallationDeletionRequest) {
     this.#retirement.begin(input);
@@ -658,7 +678,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     for (const row of computers) await this.computer(row.id).erase();
     await this.ctx.storage.delete("maintenance_cursor");
     this.ctx.storage.transactionSync(() => {
-      for (const table of ["file_chunks", "files", "handoffs", "handoff_receipts", "profiles", "instance_usage", "instances", "diagnostics", "cancelled_starts", "start_requests", "obsolete_profile_objects"]) this.#store.sql.exec(`DELETE FROM ${table}`);
+      for (const table of ["file_chunks", "files", "handoffs", "handoff_receipts", "profiles", "workspaces", "instance_usage", "instances", "diagnostics", "cancelled_starts", "start_requests", "obsolete_profile_objects"]) this.#store.sql.exec(`DELETE FROM ${table}`);
       this.#retirement.phase("erased");
     });
     await this.ctx.storage.deleteAlarm();
@@ -671,7 +691,7 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
   private expireIfDue(id: string): InstanceRow {
     const row = this.#store.byId(id), value = instance(row);
     if (row.active && value.state !== "stopping" && value.expiresAt <= Date.now()) {
-      this.fenceStop(value, value.kind === "browser" ? "Browser lifetime expired" : "Computer lifetime expired");
+      this.fenceStop(value, value.kind === "browser" ? "Browser lifetime expired" : COMPUTER_EXPIRED);
       return this.#store.byId(id);
     }
     return row;
@@ -681,12 +701,28 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
     // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- Workers RPC recursively maps the syscall union beyond TypeScript's instantiation limit.
     return this.env.COMPUTERS.getByName(computerName(this.#installationId, id)) as unknown as ComputerControl;
   }
+  /**
+   * A command or running job keeps its computer up for the idle window, within
+   * its maximum lifetime and the allowance. The computer accepts the new expiry
+   * before it is recorded, so it never stops before the recorded expiry.
+   */
+  private async extendComputer(id: string): Promise<void> {
+    const now = Date.now();
+    if (instance(this.#store.byId(id)).expiresAt + EXTENSION_STEP_MS > now + COMPUTER_IDLE_SECONDS * 1000) return;
+    const limits = await this.#policy.computerLimits();
+    const target = this.#store.extensionTarget(id, limits, now);
+    if (target === null || !await this.computer(id).extend(target)) return;
+    this.#store.extend(id, target, limits);
+  }
   private async maintainComputer(id: string): Promise<void> {
     let value = instance(this.expireIfDue(id));
     const computer = this.computer(id);
     try {
       if (value.state === "stopping") {
-        await computer.stop({ installationId: this.#installationId, instanceId: id });
+        const stopped = await computer.stop({ installationId: this.#installationId, instanceId: id }, value.reason === COMPUTER_EXPIRED);
+        // The reservation is held while the computer saves; usable time already ended at the expiry.
+        if (stopped.state === "stopping") { this.#workspaces.saving(id); return; }
+        this.#workspaces.settle(id, stopped.workspace);
         this.#store.terminal(id, Boolean(value.diagnosticRef));
         return;
       }
@@ -695,24 +731,34 @@ export class InstanceCoordinator extends DurableObject<Environment> implements I
         this.#retirement.requireLive();
         value = instance(this.expireIfDue(id));
         if (value.state !== "starting") return;
-        await computer.provision({ installationId: this.#installationId, instanceId: id, targetId: value.targetId, ownerUid: value.ownerUid, expiresAt: value.expiresAt });
+        const restore = value.restore && this.#workspaces.address(value.restore.fromInstanceId);
+        if (value.restore && !restore) return this.failRestore(value, "The saved workspace was deleted before it was restored");
+        await computer.provision({ installationId: this.#installationId, instanceId: id, targetId: value.targetId, ownerUid: value.ownerUid, expiresAt: value.expiresAt,
+          workspace: this.#workspaces.address(id), restore });
       }
       const status = await computer.status();
       value = instance(this.expireIfDue(id));
       if (value.state === "stopping") return;
+      if (status.state === "stopped" && status.restoreError) return this.failRestore(value, status.restoreError);
       if (status.state === "stopped") throw new Error("Computer stopped unexpectedly");
       if (status.state === "ready" && value.state === "starting") {
-        this.#store.update({ ...value, state: "ready", readyAt: Date.now(), diagnosticRef: undefined, revision: value.revision + 1 });
+        this.#store.update({ ...value, state: "ready", readyAt: Date.now(), diagnosticRef: undefined, restore: value.restore && { ...value.restore, status: "restored" }, revision: value.revision + 1 });
       } else if (this.#store.byId(id).provider_failed_at !== null) {
         this.#store.update({ ...value, diagnosticRef: undefined, revision: value.revision + 1 });
       }
       this.#store.sql.exec("UPDATE instances SET provider_failed_at = NULL WHERE id = ?", id);
+      if (status.busy) await this.extendComputer(id);
     } catch (cause) {
       value = instance(this.expireIfDue(id));
       this.#store.update({ ...value, diagnosticRef: this.#store.diagnostic(id, cause), revision: value.revision + 1 });
       this.#store.sql.exec("UPDATE instances SET provider_failed_at = COALESCE(provider_failed_at, ?) WHERE id = ?", Date.now(), id);
       if (Date.now() - this.#store.byId(id).provider_failed_at! >= PROVIDER_RECOVERY_MS) this.fenceStop(instance(this.#store.byId(id)), "Computer provider failed");
     }
+  }
+  private failRestore(value: CloudInstance, error: string): void {
+    const diagnosticRef = this.#store.diagnostic(value.instanceId, new Error(error));
+    this.#store.update({ ...value, restore: value.restore && { ...value.restore, status: "failed", error: error.slice(0, 500) }, diagnosticRef, revision: value.revision + 1 });
+    this.fenceStop(instance(this.#store.byId(value.instanceId)), "The saved workspace could not be restored");
   }
   private async maintain(id: string): Promise<void> {
     if (instance(this.#store.byId(id)).kind === "linux") return this.maintainComputer(id);

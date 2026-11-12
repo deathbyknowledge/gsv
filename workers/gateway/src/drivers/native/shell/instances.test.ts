@@ -30,6 +30,20 @@ describe("native instance readiness", () => {
     }), expect.any(AbortSignal));
   });
 
+  it("starts a computer from an earlier computer's saved workspace only on request", async () => {
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({
+      type: "res", id: frame.id, ok: true, data: { instance: { ...instance, kind: "linux", templateId: "computer" }, disposition: "created" },
+    }));
+    const shell = fixture(request);
+    expect((await shell.exec("instance start computer --request-id build-2 --from 87654321")).exitCode).toBe(0);
+    expect((await shell.exec("instance start computer --request-id build-3")).exitCode).toBe(0);
+    expect(request.mock.calls.map(([frame]) => frame.args)).toEqual([
+      expect.objectContaining({ requestId: "build-2", fromInstanceId: "87654321" }),
+      expect.objectContaining({ requestId: "build-3", fromInstanceId: undefined }),
+    ]);
+    expect((await shell.exec("instance stop 12345678 --from 87654321")).exitCode).toBe(1);
+  });
+
   it("passes profile pagination through the ordinary syscall and rejects invalid offsets", async () => {
     const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { profiles: [], total: 64 } }));
     const shell = fixture(request);
@@ -83,6 +97,14 @@ describe("native instance readiness", () => {
     expect(result.stderr).toContain("wait timed out");
     expect(result.stderr).toContain("instance get --request-id 'saved'");
     expect(request).toHaveBeenCalledTimes(1);
+  });
+  it("names a computer, not a browser, when its readiness wait times out", async () => {
+    const computer = { ...instance, kind: "linux" as const, templateId: "computer", label: "Computer" };
+    const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { instance: computer, disposition: "created" } }));
+    const result = await fixture(request).exec("instance start computer --request-id saved --wait --timeout 100");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Computer readiness wait timed out");
+    expect(result.stderr).not.toContain("Browser");
   });
   it("stops waiting when startup fails and includes the diagnostic", async () => {
     const request = vi.fn<NonNullable<NativeShellCommandOptions["request"]>>(async frame => ({ type: "res", id: frame.id, ok: true, data: { instance: { ...instance, state: "failed", diagnosticRef: "diagnostic-1" }, disposition: "created" } }));
