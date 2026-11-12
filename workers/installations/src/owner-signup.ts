@@ -1,25 +1,35 @@
 import { noStoreHeaders } from "./http";
-import { deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
+import { configuredOriginAliases, deploymentPresentation, deploymentPresentationScript } from "@humansandmachines/gsv/services/deployment";
 import type { InstallationOwnerEnvironment } from "./owner-service";
 
 const PATH = "/owner/signup/";
 
-export async function handleOwnerSignupRequest(request: Request, env: Pick<InstallationOwnerEnvironment, "GSV_ADMIN_ORIGIN" | "GSV_OWNER_SIGNUP_ORIGIN" | "GSV_PUBLIC_CONFIG" | "ASSETS">, enabled: boolean): Promise<Response | null> {
+export async function handleOwnerSignupRequest(request: Request, env: Pick<InstallationOwnerEnvironment, "GSV_ADMIN_ORIGIN" | "GSV_OWNER_SIGNUP_ORIGIN" | "GSV_OWNER_SIGNUP_ORIGIN_ALIASES" | "GSV_PUBLIC_CONFIG" | "ASSETS">, enabled: boolean): Promise<Response | null> {
   const url = new URL(request.url);
   const alias = env.GSV_OWNER_SIGNUP_ORIGIN;
-  if (alias && alias !== env.GSV_ADMIN_ORIGIN && url.origin === alias) {
-    if (!["GET", "HEAD"].includes(request.method) || url.pathname !== "/") return new Response("Not Found", { status: 404 });
-    return new Response(null, { status: 302, headers: noStoreHeaders({ location: new URL(PATH, env.GSV_ADMIN_ORIGIN).href }) });
+  if (alias && url.origin !== alias && configuredOriginAliases(env.GSV_OWNER_SIGNUP_ORIGIN_ALIASES).includes(url.origin)) {
+    if (!["GET", "HEAD"].includes(request.method) || !["/", PATH, PATH.slice(0, -1)].includes(url.pathname)) {
+      return new Response("Not Found", { status: 404, headers: noStoreHeaders() });
+    }
+    return new Response(null, { status: 302, headers: noStoreHeaders({ location: new URL(`/${url.search}`, alias).href }) });
   }
-  if (url.pathname !== PATH.slice(0, -1) && !url.pathname.startsWith(PATH)) return null;
-  if (url.origin !== env.GSV_ADMIN_ORIGIN || !["GET", "HEAD"].includes(request.method)) {
+  const dedicated = Boolean(alias && alias !== env.GSV_ADMIN_ORIGIN && url.origin === alias);
+  if (dedicated && url.pathname.startsWith("/owner/api/")) return null;
+  if (dedicated && (url.pathname === PATH || url.pathname === PATH.slice(0, -1))) {
+    if (!["GET", "HEAD"].includes(request.method)) return new Response("Not Found", { status: 404, headers: noStoreHeaders() });
+    return new Response(null, { status: 302, headers: noStoreHeaders({ location: `/${url.search}` }) });
+  }
+  const index = dedicated ? url.pathname === "/" : url.pathname === PATH;
+  if (!index && url.pathname !== PATH.slice(0, -1) && !url.pathname.startsWith(PATH)) {
+    return dedicated ? new Response("Not Found", { status: 404, headers: noStoreHeaders() }) : null;
+  }
+  if ((!dedicated && url.origin !== env.GSV_ADMIN_ORIGIN) || !["GET", "HEAD"].includes(request.method)) {
     return new Response("Not Found", { status: 404, headers: noStoreHeaders() });
   }
   if (!enabled || !env.ASSETS) return new Response("Signup is not configured", { status: 503, headers: noStoreHeaders() });
   if (url.pathname === PATH.slice(0, -1)) {
     return new Response(null, { status: 302, headers: noStoreHeaders({ location: PATH }) });
   }
-  const index = url.pathname === PATH;
   url.pathname = `/owner-signup/${index ? "index.html" : url.pathname.slice(PATH.length)}`;
   url.search = "";
   const asset = await env.ASSETS.fetch(new Request(url, request));
