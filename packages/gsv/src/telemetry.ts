@@ -538,16 +538,17 @@ export const telemetryEventSchema = z.discriminatedUnion("name", [
   z.strictObject({
     stream: z.literal("operational"), name: z.literal("mail.delivery.finished"),
     properties: z.strictObject({
+      ...exceptionDiagnosticProperties,
       outcome: z.enum(["accepted", "failed", "unknown"]),
-      reason: z.enum(["none", "disabled", "quota", "inactive", "invalid", "provider_unknown"]),
+      reason: z.enum(["none", "disabled", "quota", "inactive", "invalid", "provider_refused", "provider_unknown"]),
       durationMs: nonNegativeIntegerSchema,
     }),
   }),
   z.strictObject({
     stream: z.literal("operational"), name: z.literal("mail.work.deferred"),
     properties: z.strictObject({
-      stage: z.enum(["storage", "summary", "completion", "outbound_claim", "outbound_callback"]),
-      reason: z.enum(["quota", "unavailable"]),
+      stage: z.enum(["storage", "summary", "completion", "outbound_claim", "outbound_send", "outbound_callback"]),
+      reason: z.enum(["quota", "rate_limited", "unavailable"]),
     }),
   }),
   processRunFinishedSchema,

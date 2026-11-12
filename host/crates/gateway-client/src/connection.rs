@@ -11,7 +11,7 @@ use std::fmt::{self, Display, Formatter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, oneshot, watch, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 type PendingRequests = Arc<Mutex<HashMap<String, PendingRequestEntry>>>;
@@ -210,6 +210,10 @@ pub struct Connection {
     frame_handler: FrameHandler,
     body_channel: BinaryBodyChannel,
     disconnected: DisconnectFlag,
+    /// Counts every message the peer has sent. A local socket can stay open
+    /// long after the peer is gone, for example across a system suspend, so
+    /// liveness is only what the peer proves by sending something.
+    inbound: watch::Receiver<u64>,
     shutdown: tokio_util::sync::CancellationToken,
     pub connect_result: Option<ConnectResult>,
 }
@@ -298,6 +302,7 @@ impl Connection {
         let body_channel_clone = body_channel.clone();
         let disconnected_clone = disconnected.clone();
         let shutdown_read = shutdown.clone();
+        let (inbound_tx, inbound) = watch::channel(0_u64);
 
         tokio::spawn(async move {
             loop {
@@ -312,6 +317,7 @@ impl Connection {
                 if shutdown_read.is_cancelled() {
                     break;
                 }
+                inbound_tx.send_modify(|count| *count = count.wrapping_add(1));
                 match msg {
                     Message::Text(text) => {
                         if let Ok(frame) = serde_json::from_str::<Frame>(&text) {
@@ -383,6 +389,7 @@ impl Connection {
             frame_handler,
             body_channel,
             disconnected,
+            inbound,
             shutdown,
             connect_result: None,
         };
@@ -411,16 +418,26 @@ impl Connection {
         Ok(())
     }
 
-    pub async fn send_ping(&self, payload: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+    /// Send a WebSocket ping and wait until the peer sends anything after it.
+    /// Callers bound the wait; queuing the ping alone proves nothing.
+    pub async fn ping(&self, payload: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
         if self.is_disconnected() {
             return Err("Connection is disconnected".into());
         }
+        let mut inbound = self.inbound.clone();
+        inbound.mark_unchanged();
         tokio::select! {
             biased;
             _ = self.shutdown.cancelled() => return Err("Connection is disconnected".into()),
             result = self.tx.send(Message::Ping(payload)) => result?,
         }
-        Ok(())
+        tokio::select! {
+            biased;
+            _ = self.shutdown.cancelled() => Err("Connection is disconnected".into()),
+            changed = inbound.changed() => {
+                changed.map_err(|_| "Connection closed while waiting for a pong".into())
+            }
+        }
     }
 
     pub fn is_disconnected(&self) -> bool {
@@ -714,6 +731,7 @@ mod tests {
                 frame_handler: Arc::new(RwLock::new(None)),
                 body_channel,
                 disconnected: Arc::new(AtomicBool::new(false)),
+                inbound: watch::channel(0).1,
                 shutdown: tokio_util::sync::CancellationToken::new(),
                 connect_result: None,
             },
@@ -750,6 +768,57 @@ mod tests {
         })
         .await
         .expect("terminal body frame");
+    }
+
+    /// Accepts one WebSocket and then serves it only when `answer` is set.
+    /// A silent peer is what a suspended laptop finds on wake: the socket
+    /// still looks open locally, but nothing on the other end replies.
+    async fn local_peer(answer: bool) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let mut socket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("handshake");
+            if answer {
+                while let Some(Ok(_)) = socket.next().await {}
+            } else {
+                std::future::pending::<()>().await;
+            }
+        });
+        format!("ws://{address}")
+    }
+
+    #[tokio::test]
+    async fn ping_waits_for_the_peer_to_answer() {
+        let url = local_peer(true).await;
+        let connection = Connection::connect_without_handshake(&url, |_| {})
+            .await
+            .expect("connect");
+        tokio::time::timeout(Duration::from_secs(2), connection.ping(b"probe".to_vec()))
+            .await
+            .expect("an answering peer replies to a ping")
+            .expect("ping succeeds");
+    }
+
+    #[tokio::test]
+    async fn ping_does_not_succeed_against_a_silent_peer() {
+        let url = local_peer(false).await;
+        let connection = Connection::connect_without_handshake(&url, |_| {})
+            .await
+            .expect("connect");
+        let result = tokio::time::timeout(
+            Duration::from_millis(300),
+            connection.ping(b"probe".to_vec()),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "a silent peer must not satisfy the keepalive"
+        );
     }
 
     #[tokio::test]
@@ -862,6 +931,7 @@ mod tests {
             })
             .expect("body channel"),
             disconnected: Arc::new(AtomicBool::new(false)),
+            inbound: watch::channel(0).1,
             shutdown: tokio_util::sync::CancellationToken::new(),
             connect_result: None,
         };
@@ -905,6 +975,7 @@ mod tests {
             })
             .expect("body channel"),
             disconnected: Arc::new(AtomicBool::new(false)),
+            inbound: watch::channel(0).1,
             shutdown: tokio_util::sync::CancellationToken::new(),
             connect_result: None,
         };

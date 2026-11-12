@@ -29,6 +29,9 @@
 .gsv-ibtn-floating:active {
   color: var(--text-title);
 }
+.gsv-ibtn-floating[aria-pressed="true"] {
+  color: var(--accent);
+}
 .gsv-ibtn-floating:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

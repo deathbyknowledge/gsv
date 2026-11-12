@@ -221,3 +221,71 @@ describe("managed mail MIME parsing", () => {
       .toBeLessThan(1024 * 1024);
   });
 });
+
+describe("automatic mail", () => {
+  function message(headers: string[], body: string[] = ["I'm away until Monday."]): Uint8Array {
+    return encoder.encode([...headers, "To: hank@gsv.space", "Subject: Away", "", ...body, ""].join("\r\n"));
+  }
+
+  const REPORT = [
+    "--report",
+    "Content-Type: text/plain",
+    "",
+    "Delivery to mike@example.com failed.",
+    "--report",
+    "Content-Type: message/delivery-status",
+    "",
+    "Reporting-MTA: dns; mail.example.net",
+    "--report--",
+  ];
+
+  it.each([
+    {
+      kind: "an out-of-office reply",
+      headers: ["From: Mike <mike@example.com>", "Auto-Submitted: auto-replied"],
+      automatic: "reply",
+    },
+    {
+      kind: "an automatic reply with parameters",
+      headers: ["From: Mike <mike@example.com>", "Auto-Submitted: Auto-Replied; owner-email=\"mike@example.com\""],
+      automatic: "reply",
+    },
+    {
+      kind: "a delivery status report",
+      headers: [
+        "From: Mail Delivery Subsystem <mailer-daemon@googlemail.com>",
+        "Content-Type: multipart/report; report-type=delivery-status; boundary=report",
+      ],
+      body: REPORT,
+      automatic: "delivery-report",
+    },
+    {
+      kind: "a report that names its type last",
+      headers: ["From: postmaster@example.net", "Content-Type: multipart/report; boundary=\"report\"; report-type=\"delivery-status\""],
+      body: REPORT,
+      automatic: "delivery-report",
+    },
+    {
+      kind: "a plain bounce from the mail daemon",
+      headers: ["From: MAILER-DAEMON@mail.example.net"],
+      automatic: "delivery-report",
+    },
+  ])("marks $kind", async ({ headers, body, automatic }) => {
+    const parsed = await parseMail(message(headers, body), input());
+
+    expect(parsed.metadata.automatic).toBe(automatic);
+  });
+
+  it.each([
+    { kind: "mail a person wrote", headers: ["From: Mike <mike@example.com>"] },
+    { kind: "Auto-Submitted: no", headers: ["From: Mike <mike@example.com>", "Auto-Submitted: no"] },
+    {
+      kind: "a generated notification such as a verification code",
+      headers: ["From: Acme <no-reply@acme.example>", "Auto-Submitted: auto-generated"],
+    },
+  ])("leaves $kind unmarked", async ({ headers }) => {
+    const parsed = await parseMail(message(headers), input());
+
+    expect(parsed.metadata.automatic).toBeUndefined();
+  });
+});

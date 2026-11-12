@@ -39,6 +39,18 @@ function expectContactNavigation() {
 }
 
 describe("signup entrypoint recovery", () => {
+  it.each([false, true])("opens signup or the shared welcome screen (welcome: %s)", async (welcome) => {
+    window.location.href = `${origin}/owner/signup/`;
+    window.location.search = welcome ? "?view=welcome" : "";
+    const props = await screen();
+    expect(props.initialStep).toBe(welcome ? "welcome" : "claim");
+    expect(props.resume).toBe(!welcome);
+    expect(props.homeHref).toBe("https://example.com/");
+    expect((await props.load()).state.flow).toBe(welcome ? "open" : "create");
+    if (welcome) expect(props.addressPanel).toBeTypeOf("function");
+    else expect(props.addressPanel).toBeUndefined();
+  });
+
   it.each([contact, encodeURIComponent(contact)])("accepts a legacy invitation fragment", async (value) => {
     window.location.href = `${origin}/#contact=${value}`;
     const props = await screen();

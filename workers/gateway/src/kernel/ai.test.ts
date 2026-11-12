@@ -581,7 +581,8 @@ describe("handleAiConfig", () => {
       config: { ...cachedConfig, systemContextFiles: snapshot.systemContextFiles },
       identity: principalOf(ctx)!.account,
       ownerIdentity: cachedConfig.owner!,
-      targets: [], mcpServers: [], runtime: { date: "2026-10-16", timezone: "UTC" }, r12y: "",
+      targets: [], mcpServers: [], skills: { mode: "off", entries: [] },
+      runtime: { date: "2026-10-16", timezone: "UTC" }, r12y: "",
       ripgit: new RipgitClient(ripgit),
       storage: { get: vi.fn(), list: vi.fn() },
     });
@@ -740,13 +741,32 @@ describe("handleAiConfig", () => {
     expect(ripgit.fetch).not.toHaveBeenCalled();
   });
 
+  it("leaves the prompt skill index to ai.context", async () => {
+    // SAFETY: fixture implements the single service-binding method used by RipgitClient.
+    const ripgit = {
+      fetch: vi.fn(async () => new Response("missing", { status: 404 })),
+    } as Fetcher;
+
+    const result = await handleAiConfig({}, makeAiConfigContext({}, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+      ripgit,
+    }));
+
+    expect(result).not.toHaveProperty("skillIndex");
+    expect(result).not.toHaveProperty("skillIndexMode");
+    expect(retireSeededSkillsMock).not.toHaveBeenCalled();
+    expect(ripgit.fetch).not.toHaveBeenCalled();
+  });
+
   it("resolves prompt skill enumeration independently from live skills", async () => {
-    await expect(handleAiConfig({}, makeAiConfigContext()))
+    await expect(handleAiContext({}, makeAiConfigContext()))
       .resolves.toMatchObject({ skillIndexMode: "summary" });
-    await expect(handleAiConfig({}, makeAiConfigContext({
+    await expect(handleAiContext({}, makeAiConfigContext({
       "config/ai/skills/index_mode": "off",
     }))).resolves.toMatchObject({ skillIndexMode: "off", skillIndex: [] });
-    await expect(handleAiConfig({}, makeAiConfigContext({
+    await expect(handleAiContext({}, makeAiConfigContext({
       "config/ai/skills/index_mode": "off",
       "users/1000/ai/skills/index_mode": "names",
     }))).resolves.toMatchObject({ skillIndexMode: "names" });
@@ -755,15 +775,18 @@ describe("handleAiConfig", () => {
   it("retires copied built-in skills from both homes before collecting the prompt index", async () => {
     let retired = 0;
     retireSeededSkillsMock.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
       retired += 1;
     });
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    const skillReads: number[] = [];
+    // SAFETY: fixture implements the single service-binding method used by RipgitClient.
     const ripgit = {
-      fetch: vi.fn(async () => {
-        expect(retired).toBe(2);
+      fetch: vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/refs")) return Response.json({ heads: { main: "existing" }, tags: {} });
+        if (url.searchParams.get("path")?.startsWith("skills.d")) skillReads.push(retired);
         return new Response("missing", { status: 404 });
       }),
-    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
     } as Fetcher;
     const ctx = makeAiConfigContext({}, {
       uid: 2000,
@@ -772,21 +795,22 @@ describe("handleAiConfig", () => {
       ripgit,
     });
 
-    await handleAiConfig({}, ctx);
+    await handleAiContext({}, ctx);
 
     expect(retireSeededSkillsMock).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ uid: 1000, username: "sam", home: "/home/sam" }),
     );
     expect(retireSeededSkillsMock).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ uid: 2000 }));
-    expect(ripgit.fetch).toHaveBeenCalled();
+    expect(skillReads.length).toBeGreaterThan(0);
+    expect(skillReads.every((retiredBeforeRead) => retiredBeforeRead === 2)).toBe(true);
   });
 
-  it("still builds the prompt when copied skills cannot be retired", async () => {
+  it("still builds the prompt context when copied skills cannot be retired", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     retireSeededSkillsMock.mockRejectedValue(new Error("ripgit temporarily unavailable"));
     try {
-      await expect(handleAiConfig({}, makeAiConfigContext({ "config/ai/skills/index_mode": "off" })))
+      await expect(handleAiContext({}, makeAiConfigContext({ "config/ai/skills/index_mode": "off" }, { processId: "task-1" })))
         .resolves.toMatchObject({ skillIndexMode: "off" });
       expect(warn).toHaveBeenCalledWith("[Prompt] failed to retire copied built-in skills:", expect.objectContaining({ exceptionMessage: "ripgit temporarily unavailable" }));
     } finally {

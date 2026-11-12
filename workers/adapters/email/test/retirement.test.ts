@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import type { InstallationDeletionRequest } from "@humansandmachines/gsv/services/lifecycle";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAIL_OWNED_TABLES } from "../src/retirement";
 import { MailInstallation } from "../src/mail-installation";
 import type { MailEnv } from "../src/env";
@@ -21,6 +21,10 @@ const runtimeBindings: unknown = env;
 const mailEnv = runtimeBindings as MailEnv;
 
 describe("mail installation retirement", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("recognizes exact runtime identity metadata while rejecting unknown application tables", async () => {
     const id = "installation_runtime_metadata";
     const stub = mailEnv.MAIL_INSTALLATIONS.getByName(id);
@@ -131,8 +135,13 @@ describe("mail installation retirement", () => {
       const entered = new Promise<void>((resolve) => { started = resolve; });
       let completions = 0;
       let sends = 0;
+      vi.stubGlobal("fetch", async () => {
+        sends++;
+        started();
+        await gate;
+        return Response.json({ success: true, result: { message_id: "provider_retirement", delivered: [], queued: [], permanent_bounces: [] } });
+      });
       const instance = new MailInstallation(state, { ...mailEnv,
-        EMAIL: { send: async () => { sends++; started(); await gate; return { messageId: "provider_retirement" }; } },
         GATEWAY: {
           acceptInboundMail: (...args) => mailEnv.GATEWAY.acceptInboundMail(...args),
           completeInboundMail: (...args) => mailEnv.GATEWAY.completeInboundMail(...args),

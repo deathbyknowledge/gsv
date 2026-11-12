@@ -76,3 +76,10 @@ export type {
 /** Transport safety ceilings; a space's plan may grant a smaller allowance. */
 export const MAIL_MAX_MESSAGE_BYTES = 25 * 1024 * 1024;
 export const MAIL_MAX_OUTBOUND_TEXT_BYTES = 1024 * 1024;
+/** To and Cc together; each recipient counts toward the daily message allowance. */
+export const MAIL_MAX_RECIPIENTS = 10;
+/** The iCalendar text of an invite sent with a message. */
+export const MAIL_MAX_INVITE_BYTES = 32 * 1024;
+/** Presentation the Kernel adds to an outbound draft: the From name and a reply's quoted original. */
+export const MAIL_MAX_SENDER_NAME_BYTES = 256;
+export const MAIL_MAX_QUOTE_BYTES = 32 * 1024;

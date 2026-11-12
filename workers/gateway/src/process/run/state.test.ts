@@ -3,7 +3,7 @@ import { generationRun, processTestConfig } from "../do-test-harness";
 import { runStateSchema } from "./state";
 
 describe("run state", () => {
-  it("keeps built-in skills in the configuration a run stores", () => {
+  it("still reads a stored run whose configuration carries the skill index", () => {
     const config = {
       ...processTestConfig("proc:state"),
       skillIndex: [{
@@ -12,9 +12,12 @@ describe("run state", () => {
         description: "Store and recall durable memory.",
         source: { kind: "system" as const, label: "system", writable: false },
       }],
+      skillIndexMode: "summary" as const,
     };
 
-    expect(runStateSchema.parse(generationRun("run-state", config)).config?.skillIndex?.[0]?.source)
-      .toEqual({ kind: "system", label: "system", writable: false });
+    const stored = runStateSchema.parse(generationRun("run-state", config)).config;
+    expect(stored).toMatchObject({ model: config.model });
+    expect(stored).not.toHaveProperty("skillIndex");
+    expect(stored).not.toHaveProperty("skillIndexMode");
   });
 });

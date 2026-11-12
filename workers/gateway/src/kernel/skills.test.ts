@@ -311,6 +311,48 @@ describe("collectKernelSkillDocuments", () => {
     expect(readKeys).toContain("sam/home:skills.d");
     expect(readKeys).toContain("friday/home:skills.d");
   });
+
+  it("reads both homes' skills together", async () => {
+    const ctx = makeAgentOwnedContext({
+      ripgitEntries: {
+        "sam/home:skills.d": [
+          { name: "zeta", mode: "040000", hash: "zeta", type: "tree" },
+          { name: "alpha.md", mode: "100644", hash: "alpha", type: "blob" },
+        ],
+        "sam/home:skills.d/alpha.md": skillMarkdown("owner-alpha", "First owner skill."),
+        "sam/home:skills.d/zeta/SKILL.md": skillMarkdown("owner-zeta", "Second owner skill."),
+        "friday/home:skills.d": [
+          { name: "beta.md", mode: "100644", hash: "beta", type: "blob" },
+          { name: "agent", mode: "040000", hash: "agent", type: "tree" },
+        ],
+        "friday/home:skills.d/beta.md": skillMarkdown("agent-beta", "Second agent skill."),
+        "friday/home:skills.d/agent/SKILL.md": skillMarkdown("agent-first", "First agent skill."),
+      },
+    });
+    const reads = { inFlight: 0, peak: 0 };
+    const ripgit = ctx.env.RIPGIT;
+    // SAFETY: test fixture is constructed with the asserted kernel domain shape.
+    ctx.env.RIPGIT = {
+      async fetch(input: RequestInfo | URL, init?: RequestInit) {
+        reads.inFlight += 1;
+        reads.peak = Math.max(reads.peak, reads.inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        reads.inFlight -= 1;
+        return ripgit.fetch(input, init);
+      },
+    } as Fetcher;
+
+    const index = await collectPromptSkillIndex(ctx);
+
+    // Both homes list skills.d at once, then read their skills at once.
+    expect(reads.peak).toBe(4);
+    expect(homeSkills(index).map((entry) => entry.name)).toEqual([
+      "owner-alpha",
+      "owner-zeta",
+      "agent-beta",
+      "agent-first",
+    ]);
+  });
 });
 
 describe("system skills", () => {

@@ -8,6 +8,12 @@ import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 import type { KernelContext } from "./context";
 import type { Kernel } from "./do";
 import type { InstallationDirectoryResult } from "@humansandmachines/gsv/services/directory";
+import { MAIL_MAX_QUOTE_BYTES } from "@humansandmachines/gsv/services/mail";
+import type { MailSendArgs, ManagedOutboundMailClaim } from "@humansandmachines/gsv/protocol";
+import * as sharedUtils from "../shared/utils";
+import type { ProcessToolAuthorizeArgs } from "../protocol/process-frames";
+import { serializeCalendar } from "./icalendar";
+import { MAIL_NO_TEXT_BODY } from "./mailbox";
 import { MailboxStore } from "./mailbox-store";
 import {
   claimManagedOutboundMail,
@@ -17,6 +23,7 @@ import {
   resolveOutboundMailReference,
   outboundEnqueueRetryDelay,
 } from "./outbound-mail";
+import { timeZoneComponent } from "./vtimezone";
 
 describe("managed outbound mail", () => {
   it("converges interrupted current and successor tasks into one chain after Kernel eviction", async () => {
@@ -27,7 +34,7 @@ describe("managed outbound mail", () => {
     const fingerprint = `sha256:${[...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
     const currentId = await runInDurableObject(stub, async (instance: Kernel, state) => {
       instance.mailboxes.ensureOutbound({ version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "interrupted-successor",
-        from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Interrupted fixture", bodyDigest: fingerprint,
+        from: "fixture@example.invalid", to: ["recipient@example.invalid"], cc: [], subject: "Interrupted fixture", bodyDigest: fingerprint,
         bodyPath: "/home/fixture/.gsv/mail/outbox/interrupted.txt", textSize: bytes.byteLength, createdAt: 1 });
       await instance.bindings.STORAGE.put("home/fixture/.gsv/mail/outbox/interrupted.txt", bytes);
       instance.mailboxes.markOutboundQueued(outboundId, fingerprint);
@@ -84,7 +91,7 @@ describe("managed outbound mail", () => {
     const fingerprint = `sha256:${"a".repeat(64)}`;
     await runInDurableObject(stub, (instance: Kernel) => {
       instance.mailboxes.ensureOutbound({ version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "legacy-pending",
-        from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Pending fixture", bodyDigest: fingerprint,
+        from: "fixture@example.invalid", to: ["recipient@example.invalid"], cc: [], subject: "Pending fixture", bodyDigest: fingerprint,
         bodyPath: "/home/fixture/.gsv/mail/outbox/pending.txt", textSize: 10, createdAt: 1 });
       instance.mailboxes.markOutboundQueued(outboundId, fingerprint);
       instance.mailboxes.markOutboundEnqueued(outboundId, fingerprint);
@@ -172,7 +179,7 @@ describe("managed outbound mail", () => {
       const outboundId = "mail-outbound:staging-body-missing";
       const fingerprint = `sha256:${"a".repeat(64)}`;
       ctx.mailboxes.ensureOutbound({ version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "staging-body-missing",
-        from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Incomplete staging", bodyDigest: fingerprint,
+        from: "fixture@example.invalid", to: ["recipient@example.invalid"], cc: [], subject: "Incomplete staging", bodyDigest: fingerprint,
         bodyPath: "/home/fixture/.gsv/mail/outbox/missing.txt", textSize: 10, createdAt: 1 });
       await recoverManagedOutboundEnqueue(outboundId, ctx, true);
       expect(queue.send).not.toHaveBeenCalled();
@@ -251,7 +258,7 @@ describe("managed outbound mail", () => {
       await runInDurableObject(kernel, (instance: Kernel) => {
         instance.mailboxes.ensureOutbound({
           version: 1, outboundId, fingerprint, ownerUid: 1000, deliveryId: "same-id",
-          from: "fixture@example.invalid", to: "recipient@example.invalid", subject: "Owned fixture",
+          from: "fixture@example.invalid", to: ["recipient@example.invalid"], cc: [], subject: "Owned fixture",
           bodyDigest: fingerprint, bodyPath: "/home/fixture/.gsv/mail/outbox/fixture/message.txt",
           textSize: 10, createdAt: 1,
         });
@@ -804,6 +811,48 @@ describe("managed outbound mail", () => {
     });
   });
 
+  it("replies without threading when the original's Message-ID isn't plain ASCII", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(
+        sql,
+        new MemoryR2Bucket(),
+        { send: vi.fn(async () => undefined) },
+      );
+      ctx.mailboxes.ensureMailbox("mailbox:1000:primary", 1000, "hank@gsv.space");
+      ctx.mailboxes.recordMessage({
+        messageId: "mail:source-unicode-id",
+        mailboxId: "mailbox:1000:primary",
+        intakeId: "intake-source-unicode-id",
+        digest: `sha256:${"c".repeat(64)}`,
+        envelopeFrom: "mike@example.com",
+        envelopeTo: "hank@gsv.space",
+        headerMessageId: "<sôurce@example.com>",
+        displayFrom: "Mike <mike@example.com>",
+        to: ["hank@gsv.space"],
+        cc: [],
+        replyTo: [],
+        subject: "Contract",
+        sentAt: 1,
+        receivedAt: 2,
+        rawPath: "/home/hank/.gsv/mail/inbox/mail:source-unicode-id/raw.eml",
+        textPath: "/home/hank/.gsv/mail/inbox/mail:source-unicode-id/message.txt",
+        sizeBytes: 100,
+        attachments: [],
+      });
+
+      const result = await handleMailSend({
+        replyToMessageId: "mail:source-unicode-id",
+        text: "Thanks.",
+        deliveryId: "reply-unicode-id",
+      }, ctx);
+      if (!result.ok) throw new Error(result.error);
+      const outbound = ctx.mailboxes.getOutbound(result.outboundId);
+      expect(outbound).toMatchObject({ replyToMessageId: "mail:source-unicode-id", subject: "Re: Contract" });
+      expect(outbound?.inReplyTo).toBeUndefined();
+      expect(outbound?.references).toBeUndefined();
+    });
+  });
+
   it("replies to the message From header before the SMTP envelope sender", async () => {
     await runWithRealKernelSql(async (sql) => {
       const ctx = outboundContext(
@@ -908,10 +957,640 @@ describe("managed outbound mail", () => {
   });
 });
 
+describe("outbound mail presentation", () => {
+  it.each([
+    { source: "the account's name", displayName: undefined, fromName: "Hank" },
+    { source: "the profile's display name", displayName: " Hank Hill ", fromName: "Hank Hill" },
+    { source: "no name when it holds a control character", displayName: "Hank\u0085Hill", fromName: undefined },
+  ])("signs the From line with $source, read at claim time", async ({ displayName, fromName }) => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, { displayName });
+
+      const claim = await sendAndClaim(ctx, { to: "mike@example.com", subject: "Contract", text: "Signed.", deliveryId: "named" });
+
+      expect(claim.draft.fromName).toBe(fromName);
+      expect(claim.draft.quote).toBeUndefined();
+    });
+  });
+
+  it("quotes a reply's original from the owner's copy, in the owner's timezone", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) }, {
+        config: new Map([["users/1000/locale/timezone", "Europe/Madrid"]]),
+      });
+      await recordSource(ctx, storage, "Can you sign by Friday?\n\nMike", { displayFrom: "Mike\tSmith <mike@example.com>" });
+
+      const claim = await sendAndClaim(ctx, { replyToMessageId: "mail:source", text: "Signed.", deliveryId: "reply" });
+
+      expect(claim.draft.quote).toEqual({
+        from: "Mike Smith <mike@example.com>",
+        sentAt: 1,
+        timeZone: "Europe/Madrid",
+        text: "Can you sign by Friday?\n\nMike",
+      });
+      expect(claim.draft.fromName).toBe("Hank");
+    });
+  });
+
+  it.each([
+    { original: "its copy is gone", text: null },
+    { original: "it had no plain text", text: MAIL_NO_TEXT_BODY },
+  ])("sends a reply without a quote when $original", async ({ text }) => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) });
+      await recordSource(ctx, storage, text);
+
+      const claim = await sendAndClaim(ctx, { replyToMessageId: "mail:source", text: "Signed.", deliveryId: "reply" });
+
+      expect(claim.draft.inReplyTo).toBe("<source@example.com>");
+      expect(claim.draft.quote).toBeUndefined();
+    });
+  });
+
+  it("cuts a long original and falls back to UTC for an invalid server timezone", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) }, {
+        config: new Map([["config/server/timezone", "Mars/Olympus_Mons"]]),
+      });
+      await recordSource(ctx, storage, "é".repeat(MAIL_MAX_QUOTE_BYTES), { sentAt: null });
+
+      const claim = await sendAndClaim(ctx, { replyToMessageId: "mail:source", text: "Signed.", deliveryId: "reply" });
+
+      const quote = claim.draft.quote;
+      expect(quote).toMatchObject({ sentAt: 2, timeZone: "UTC", text: expect.stringMatching(/^é+\n\[…\]$/) });
+      expect(new TextEncoder().encode(quote?.text).byteLength).toBeLessThanOrEqual(MAIL_MAX_QUOTE_BYTES);
+    });
+  });
+});
+
+describe("outbound mail recipients", () => {
+  it("sends to several people and copies, each once", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+
+      const sent = await handleMailSend({
+        to: ["mike@example.com", "anna@Example.COM"],
+        cc: ["bob@example.com", "Mike@example.com"],
+        subject: "Friday",
+        text: "Table for four.",
+        deliveryId: "group",
+      }, ctx);
+
+      expect(sent).toMatchObject({ ok: true, to: "mike@example.com, anna@example.com", cc: "bob@example.com" });
+      if (!sent.ok) throw new Error(sent.error);
+      const claim = await claimOutbound(ctx, sent.outboundId);
+      expect(claim.draft).toMatchObject({ to: ["mike@example.com", "anna@example.com"], cc: ["bob@example.com"] });
+    });
+  });
+
+  it("keeps a single recipient's fingerprint and draft as they were before copies", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+
+      const claim = await sendAndClaim(ctx, { to: "mike@example.com", subject: "Contract", text: "Signed.", deliveryId: "single" });
+
+      expect(claim.draft.fingerprint).toBe(await sha256Text(JSON.stringify({
+        version: 1, from: "hank@gsv.space", to: "mike@example.com", subject: "Contract", textSize: 7,
+        bodyDigest: await sha256Text("Signed."), replyToMessageId: null, inReplyTo: null, references: null,
+      })));
+      expect(claim.draft.to).toBe("mike@example.com");
+      expect(claim.draft).not.toHaveProperty("cc");
+    });
+  });
+
+  it("replies to all without the Ship, and asks approval for who gets it", async () => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const storage = new MemoryR2Bucket();
+        const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) }, {
+          publicConfig: JSON.stringify({ primaryDomain: "ship.space", legacyDomains: ["gsv.space"] }),
+        });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+        await recordSource(ctx, storage, "Who's in?", {
+          to: ["Hank <hank@gsv.space>", "Anna <anna@example.com>"],
+          cc: ["hank@ship.space", "bob@example.com"],
+        });
+
+        const sent = await handleMailSend({
+          replyToMessageId: "mail:source",
+          replyAll: true,
+          cc: ["carol@example.com"],
+          text: "Count me in.",
+          deliveryId: "reply-all",
+        }, ctx);
+
+        expect(sent).toMatchObject({
+          ok: true,
+          to: "mike@example.com",
+          cc: "anna@example.com, bob@example.com, carol@example.com",
+          subject: "Re: Contract",
+        });
+        expect(approvals).toEqual([expect.objectContaining({
+          syscall: "mail.send",
+          args: expect.objectContaining({
+            replyToMessageId: "mail:source",
+            to: "mike@example.com",
+            cc: ["anna@example.com", "bob@example.com", "carol@example.com"],
+            subject: "Re: Contract",
+          }),
+        })]);
+      });
+    });
+  });
+
+  it("asks approval without a copy that is already a recipient", async () => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+
+        const sent = await handleMailSend({
+          to: "mike@example.com",
+          cc: "Mike@example.com",
+          subject: "Friday",
+          text: "Table for four.",
+          deliveryId: "self-copy",
+        }, ctx);
+
+        expect(sent).toMatchObject({ ok: true, to: "mike@example.com" });
+        expect(sent).not.toHaveProperty("cc");
+        // Approval args reach the owner's clients as JSON, so the dropped copy leaves no cc field.
+        expect(approvals.map(({ args }) => args)).toStrictEqual([{
+          to: "mike@example.com",
+          subject: "Friday",
+          text: "Table for four.",
+          deliveryId: "self-copy",
+        }]);
+      });
+    });
+  });
+
+  it.each([
+    {
+      refusal: "more than ten people",
+      args: { to: ["mike@example.com"], cc: Array.from({ length: 10 }, (_, index) => `guest${index}@example.com`) },
+      error: "A message can go to at most 10 people; this one has 11",
+    },
+    { refusal: "a comma list in one address", args: { to: "mike@example.com, anna@example.com" }, error: "to: give several addresses as a list" },
+    { refusal: "reply-all on a new message", args: { to: "mike@example.com", replyAll: true }, error: "replyAll needs replyToMessageId" },
+    { refusal: "an invalid copy", args: { to: "mike@example.com", cc: ["anna at example"] }, error: "cc has an invalid email address: anna at example" },
+  ])("refuses $refusal before recording anything", async ({ args, error }) => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+
+      const sent = await handleMailSend({ subject: "Friday", text: "Hi.", deliveryId: "refused", ...args }, ctx);
+
+      expect(sent).toEqual({ ok: false, error, retryable: false });
+      expect(ctx.mailboxes.getOutboundForDelivery(1000, "refused")).toBeNull();
+    });
+  });
+
+  it("refuses a reply-all that would reach more than ten people", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) });
+      await recordSource(ctx, storage, "Party!", {
+        to: Array.from({ length: 10 }, (_, index) => `guest${index}@example.com`),
+      });
+
+      const sent = await handleMailSend({ replyToMessageId: "mail:source", replyAll: true, text: "Yes!", deliveryId: "too-many" }, ctx);
+
+      expect(sent).toMatchObject({ ok: false, error: "A message can go to at most 10 people; this one has 11" });
+    });
+  });
+});
+
+/** An event hand-written with LF lines: the Ship organizes it and also lists itself. */
+const INVITE = [
+  "BEGIN:VCALENDAR",
+  "VERSION:2.0",
+  "PRODID:-//GSV//cal//EN",
+  "METHOD:REQUEST",
+  "BEGIN:VEVENT",
+  "UID:dinner@gsv.space",
+  "DTSTAMP:20261111T120000Z",
+  "DTSTART:20261127T201500Z",
+  "DTEND:20261127T221500Z",
+  "SUMMARY:Dinner",
+  "LOCATION:Casa Lucio",
+  "ORGANIZER;CN=Hank:mailto:hank@gsv.space",
+  "ATTENDEE;PARTSTAT=ACCEPTED:mailto:hank@gsv.space",
+  "ATTENDEE;RSVP=TRUE:mailto:anna@example.com",
+  "ATTENDEE;RSVP=TRUE:mailto:Mike@Example.com",
+  "END:VEVENT",
+  "END:VCALENDAR",
+  "",
+].join("\n");
+
+/**
+ * A weekly sync in Amsterdam with a stale zone: one Monday skipped, one moved to Tuesday, and
+ * one cancelled by a change named in UTC.
+ */
+const SERIES_INVITE = [
+  "BEGIN:VCALENDAR",
+  "VERSION:2.0",
+  "PRODID:-//GSV//cal//EN",
+  "METHOD:REQUEST",
+  "BEGIN:VTIMEZONE",
+  "TZID:Europe/Amsterdam",
+  "BEGIN:STANDARD",
+  "TZOFFSETFROM:+0000",
+  "TZOFFSETTO:+0000",
+  "DTSTART:19700101T000000",
+  "END:STANDARD",
+  "END:VTIMEZONE",
+  "BEGIN:VEVENT",
+  "UID:sync@gsv.space",
+  "DTSTAMP:20261111T120000Z",
+  "SEQUENCE:2",
+  "DTSTART;TZID=Europe/Amsterdam:20261130T090000",
+  "DTEND;TZID=Europe/Amsterdam:20261130T093000",
+  "RRULE:FREQ=WEEKLY;UNTIL=20270628T215959Z",
+  "EXDATE;TZID=Europe/Amsterdam:20261228T090000",
+  "SUMMARY:Team sync",
+  "ORGANIZER;CN=Hank:mailto:hank@gsv.space",
+  "ATTENDEE;RSVP=TRUE:mailto:anna@example.com",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:sync@gsv.space",
+  "RECURRENCE-ID;TZID=Europe/Amsterdam:20270104T090000",
+  "DTSTAMP:20261111T120000Z",
+  "SEQUENCE:2",
+  "DTSTART;TZID=Europe/Amsterdam:20270105T100000",
+  "DTEND;TZID=Europe/Amsterdam:20270105T103000",
+  "SUMMARY:Team sync",
+  "ORGANIZER;CN=Hank:mailto:hank@gsv.space",
+  "ATTENDEE;RSVP=TRUE:mailto:anna@example.com",
+  "END:VEVENT",
+  "BEGIN:VEVENT",
+  "UID:sync@gsv.space",
+  "RECURRENCE-ID:20261207T080000Z",
+  "DTSTAMP:20261111T120000Z",
+  "SEQUENCE:2",
+  "STATUS:CANCELLED",
+  "DTSTART;TZID=Europe/Amsterdam:20261207T090000",
+  "DTEND;TZID=Europe/Amsterdam:20261207T093000",
+  "SUMMARY:Team sync",
+  "ORGANIZER;CN=Hank:mailto:hank@gsv.space",
+  "ATTENDEE;RSVP=TRUE:mailto:anna@example.com",
+  "END:VEVENT",
+  "END:VCALENDAR",
+  "",
+].join("\n");
+
+/** The dinner invite starting at `start` and repeating by `rule`. */
+function repeating(start: string, rule: string): string {
+  return INVITE.replace("DTSTART:20261127T201500Z\nDTEND:20261127T221500Z", `${start}\nRRULE:${rule}`);
+}
+
+const AMSTERDAM_OWNER = new Map([["users/1000/locale/timezone", "Europe/Amsterdam"]]);
+const ZONES = [
+  "Europe/Amsterdam", "Europe/London", "America/New_York", "Asia/Tokyo", "Australia/Sydney",
+  "Africa/Cairo", "Asia/Kolkata", "America/Sao_Paulo", "Pacific/Auckland",
+];
+
+describe("outbound mail invites", () => {
+  it("sends an invite to its guests, asks approval for the event, and claims it as version 2", async () => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, {
+          config: new Map([["users/1000/locale/timezone", "Europe/Amsterdam"]]),
+        });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+        const args: MailSendArgs = { invite: INVITE, subject: "Dinner on Friday", text: "Here is the invite.", deliveryId: "dinner" };
+
+        const sent = await handleMailSend(args, ctx);
+        const replayed = await handleMailSend(args, ctx);
+        const moved = await handleMailSend({ ...args, invite: INVITE.replace("T201500Z", "T204500Z") }, ctx);
+
+        expect(sent).toMatchObject({ ok: true, to: "anna@example.com, Mike@example.com", replayed: false });
+        expect(replayed).toMatchObject({ ok: true, replayed: true });
+        expect(moved).toMatchObject({ ok: false, error: expect.stringContaining("conflicts with durable state") });
+        expect(approvals[0].args).toStrictEqual({
+          subject: "Dinner on Friday",
+          text: "Here is the invite.",
+          deliveryId: "dinner",
+          to: ["anna@example.com", "Mike@example.com"],
+          invite: {
+            method: "REQUEST",
+            allDay: false,
+            start: "2026-11-27T21:15:00+01:00[Europe/Amsterdam]",
+            end: "2026-11-27T23:15:00+01:00[Europe/Amsterdam]",
+            title: "Dinner",
+            location: "Casa Lucio",
+          },
+        });
+        if (!sent.ok) throw new Error(sent.error);
+        const claim = await claimOutbound(ctx, sent.outboundId);
+        expect(claim.draft).toMatchObject({
+          version: 2,
+          to: ["anna@example.com", "Mike@example.com"],
+          invite: { method: "REQUEST", text: INVITE.replaceAll("\n", "\r\n") },
+        });
+        expect(claim.draft.fingerprint).toBe(await sha256Text(JSON.stringify({
+          version: 1, from: "hank@gsv.space", to: "anna@example.com, Mike@example.com", subject: "Dinner on Friday",
+          textSize: 19, bodyDigest: await sha256Text("Here is the invite."), replyToMessageId: null, inReplyTo: null,
+          references: null, inviteDigest: await sha256Text(INVITE.replaceAll("\n", "\r\n")),
+        })));
+      });
+    });
+  });
+
+  it("writes the method the way the email Worker reads it, however the invite spelled it", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+
+      const claim = await sendAndClaim(ctx, {
+        invite: INVITE.replace("METHOD:REQUEST", "METHOD;X-NOTE=1:request"), subject: "Dinner", text: "Invite.", deliveryId: "spelled",
+      });
+
+      expect(claim.draft.invite?.method).toBe("REQUEST");
+      expect(claim.draft.invite?.text).toContain("\r\nMETHOD:REQUEST\r\n");
+    });
+  });
+
+  it("copies the guests a message names in Cc and sends the rest in To", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) });
+
+      const sent = await handleMailSend({ invite: INVITE, cc: "mike@example.com", subject: "Dinner", text: "Invite.", deliveryId: "copied" }, ctx);
+
+      expect(sent).toMatchObject({ ok: true, to: "anna@example.com", cc: "mike@example.com" });
+    });
+  });
+
+  it("sends a cancellation as a reply when the reply reaches exactly the guests", async () => {
+    await runWithRealKernelSql(async (sql) => {
+      const storage = new MemoryR2Bucket();
+      const ctx = outboundContext(sql, storage, { send: vi.fn(async () => undefined) });
+      await recordSource(ctx, storage, "Can we meet?");
+      const cancel = INVITE.replace("METHOD:REQUEST", "METHOD:CANCEL").replace(/ATTENDEE;RSVP=TRUE:mailto:anna@example.com\n/, "");
+
+      const sent = await sendAndClaim(ctx, { replyToMessageId: "mail:source", invite: cancel, text: "Sorry, I can't.", deliveryId: "cancel" });
+      const wrong = await handleMailSend({ replyToMessageId: "mail:source", invite: INVITE, text: "Here.", deliveryId: "wrong" }, ctx);
+
+      expect(sent.draft).toMatchObject({ version: 2, to: "mike@example.com", invite: { method: "CANCEL" }, inReplyTo: "<source@example.com>" });
+      expect(wrong).toEqual({
+        ok: false,
+        error: "An invite goes to exactly its guests (anna@example.com, Mike@example.com); this message goes to mike@example.com",
+        retryable: false,
+      });
+    });
+  });
+
+  it("sends a repeating invite with the zones it names, and asks approval for its dates", async () => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, { config: AMSTERDAM_OWNER });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+
+        const sent = await sendAndClaim(ctx, { invite: SERIES_INVITE, subject: "Team sync", text: "Weekly.", deliveryId: "sync" });
+
+        expect(approvals[0].args.invite).toStrictEqual({
+          method: "REQUEST",
+          allDay: false,
+          start: "2026-11-30T09:00:00+01:00[Europe/Amsterdam]",
+          end: "2026-11-30T09:30:00+01:00[Europe/Amsterdam]",
+          title: "Team sync",
+          repeats: { freq: "WEEKLY", interval: 1, byDay: ["MO"], until: "2027-06-28T23:59:59+02:00[Europe/Amsterdam]" },
+          skipped: ["2026-12-07T09:00:00+01:00[Europe/Amsterdam]", "2026-12-28T09:00:00+01:00[Europe/Amsterdam]"],
+          changed: [{
+            from: "2027-01-04T09:00:00+01:00[Europe/Amsterdam]",
+            start: "2027-01-05T10:00:00+01:00[Europe/Amsterdam]",
+            end: "2027-01-05T10:30:00+01:00[Europe/Amsterdam]",
+          }],
+        });
+        const text = sent.draft.invite?.text ?? "";
+        expect(sent.draft).toMatchObject({ version: 2, to: "anna@example.com", invite: { method: "REQUEST" } });
+        expect(text).toContain(`METHOD:REQUEST\r\n${serializeCalendar(timeZoneComponent("Europe/Amsterdam", 2026))}BEGIN:VEVENT\r\n`);
+        expect(text).not.toContain("TZOFFSETTO:+0000");
+        expect(text.match(/BEGIN:VTIMEZONE/g)).toHaveLength(1);
+      });
+    });
+  });
+
+  it.each([
+    {
+      rule: "the last Friday of six months",
+      invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=MONTHLY;BYDAY=-1FR;COUNT=6"),
+      repeats: { freq: "MONTHLY", interval: 1, byDay: ["-1FR"], count: 6 },
+    },
+    {
+      rule: "a fortnightly Friday, until a date written in UTC",
+      invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=WEEKLY;INTERVAL=2;UNTIL=20270131T225959Z"),
+      repeats: { freq: "WEEKLY", interval: 2, byDay: ["FR"], until: "2027-01-31T23:59:59+01:00[Europe/Amsterdam]" },
+    },
+    {
+      rule: "an all-day date each year",
+      invite: repeating("DTSTART;VALUE=DATE:20270312", "FREQ=YEARLY"),
+      repeats: { freq: "YEARLY", interval: 1, byMonth: [3], byMonthDay: [12] },
+    },
+    {
+      rule: "a fortnightly TU,TH with WKST=SU",
+      invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261124T211500", "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;WKST=SU"),
+      repeats: { freq: "WEEKLY", interval: 2, byDay: ["TU", "TH"] },
+    },
+  ])("shows $rule with the rule's implied days written out", async ({ invite, repeats }) => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, { config: AMSTERDAM_OWNER });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+
+        const sent = await handleMailSend({ invite, subject: "Dinner", text: "Invite.", deliveryId: "repeating" }, ctx);
+
+        expect(sent).toMatchObject({ ok: true });
+        expect(approvals[0].args.invite).toMatchObject({ repeats });
+        expect(approvals[0].args.invite).not.toHaveProperty("skipped");
+      });
+    });
+  });
+
+  it.each([
+    {
+      series: "in another zone than the owner's",
+      owner: "America/New_York",
+      times: "DTSTART;TZID=Asia/Tokyo:20261130T003000\nDTEND;TZID=Asia/Tokyo:20261130T010000\nEXDATE;TZID=Asia/Tokyo:20261207T003000",
+      shown: { start: "2026-11-30T00:30:00+09:00[Asia/Tokyo]", end: "2026-11-30T01:00:00+09:00[Asia/Tokyo]", timeZone: "Asia/Tokyo",
+        skipped: ["2026-12-07T00:30:00+09:00[Asia/Tokyo]"] },
+    },
+    {
+      series: "in UTC",
+      owner: "Europe/Amsterdam",
+      times: "DTSTART:20261130T233000Z\nDTEND:20261201T000000Z\nEXDATE:20261207T233000Z",
+      shown: { start: "2026-11-30T23:30:00+00:00[UTC]", end: "2026-12-01T00:00:00+00:00[UTC]", timeZone: "UTC",
+        skipped: ["2026-12-07T23:30:00+00:00[UTC]"] },
+    },
+  ])("shows a series $series in the clock its rule counts days in, and names that zone", async ({ owner, times, shown }) => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, {
+          config: new Map([["users/1000/locale/timezone", owner]]),
+        });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+
+        const sent = await handleMailSend({ invite: repeating(times, "FREQ=WEEKLY;COUNT=4"), subject: "Sync", text: "Invite.", deliveryId: "zoned" }, ctx);
+
+        expect(sent).toMatchObject({ ok: true });
+        expect(approvals[0].args.invite).toMatchObject({ ...shown, repeats: { freq: "WEEKLY", interval: 1, byDay: ["MO"], count: 4 } });
+      });
+    });
+  });
+
+  it("shows a start the change to summer time skips at the time guests' calendars read", async () => {
+    await withApprovals(async (approvals) => {
+      await runWithRealKernelSql(async (sql) => {
+        const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, {
+          config: new Map([["users/1000/locale/timezone", "America/New_York"]]),
+        });
+        ctx.processId = "process-1";
+        ctx.toolOwner = { runId: "run-1", requestId: "tool-1" };
+        // New York's clocks go from 02:00 to 03:00 on 14 March 2027; RFC 5545 reads 02:30 with the offset before.
+        const invite = INVITE.replace(
+          "DTSTART:20261127T201500Z\nDTEND:20261127T221500Z",
+          "DTSTART;TZID=America/New_York:20270314T023000\nDTEND;TZID=America/New_York:20270314T043000",
+        );
+
+        const sent = await handleMailSend({ invite, subject: "Call", text: "Invite.", deliveryId: "gap" }, ctx);
+
+        expect(sent).toMatchObject({ ok: true });
+        expect(approvals[0].args.invite).toMatchObject({
+          start: "2027-03-14T03:30:00-04:00[America/New_York]",
+          end: "2027-03-14T04:30:00-04:00[America/New_York]",
+        });
+      });
+    });
+  });
+
+  it.each([
+    { refusal: "an event someone else organizes", invite: INVITE.replace("mailto:hank@gsv.space", "mailto:mike@example.com"), error: "invite must be organized by hank@gsv.space, so replies come back to it" },
+    { refusal: "a calendar that publishes rather than invites", invite: INVITE.replace("METHOD:REQUEST", "METHOD:PUBLISH"), error: "invite must have METHOD:REQUEST to invite or METHOD:CANCEL to cancel" },
+    { refusal: "two events", invite: INVITE.replace("END:VCALENDAR", "BEGIN:VEVENT\nUID:other\nDTSTART:20261128T100000Z\nEND:VEVENT\nEND:VCALENDAR"), error: "invite must hold exactly one event" },
+    { refusal: "an event without guests", invite: INVITE.replace(/ATTENDEE;RSVP=TRUE:.*\n/g, ""), error: "invite has no guests" },
+    { refusal: "an event without a DTSTAMP", invite: INVITE.replace("DTSTAMP:20261111T120000Z\n", ""), error: "invite event has no DTSTAMP" },
+    { refusal: "a length given as DURATION", invite: INVITE.replace("DTEND:20261127T221500Z", "DURATION:PT2H"), error: "invite gives its length as DURATION, which GSV can't send; write DTEND" },
+    { refusal: "a file that isn't a calendar", invite: "Dinner on Friday at nine", error: "invite is not a valid calendar" },
+    { refusal: "a calendar over 32 KiB", invite: INVITE.replace("LOCATION:Casa Lucio", `LOCATION:${"x".repeat(32 * 1024)}`), error: "invite must be iCalendar text of at most 32768 bytes" },
+    { refusal: "recipients other than the guests", invite: INVITE, to: "bob@example.com", error: "An invite goes to exactly its guests (anna@example.com, Mike@example.com); this message goes to bob@example.com" },
+    { refusal: "a time without a zone", invite: INVITE.replace("DTSTART:20261127T201500Z", "DTSTART:20261127T211500"), error: "invite times need a time zone" },
+    { refusal: "a zone outside IANA", invite: INVITE.replace("DTSTART:20261127T201500Z", "DTSTART;TZID=W. Europe Standard Time:20261127T211500"), error: "invite can't be sent: time zone W. Europe Standard Time isn't an IANA time zone" },
+    { refusal: "more zones than GSV writes", invite: INVITE.replace("SUMMARY:Dinner", ["SUMMARY:Dinner", ...ZONES.map((zone) => `X-WHEN;TZID=${zone}:20261127T211500`)].join("\n")), error: "invite can't be sent: calendar names 9 time zones; GSV writes at most 8" },
+    { refusal: "a control character", invite: INVITE.replace("SUMMARY:Dinner", "SUMMARY:Din\u0001ner"), error: "invite holds a control character" },
+    { refusal: "a calendar over 32 KiB with CRLF lines", invite: INVITE.replace("LOCATION:Casa Lucio", Array.from({ length: 5000 }, () => "X-A:1").join("\n")), error: "invite is more than 32768 bytes once written to send" },
+    { refusal: "a repeat rule GSV can't say", invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1"), error: "invite repeats by a rule GSV can't send: repeat rule BYSETPOS isn't supported" },
+    { refusal: "two repeat rules", invite: SERIES_INVITE.replace("RRULE:FREQ=WEEKLY;UNTIL=20270628T215959Z", "RRULE:FREQ=WEEKLY;UNTIL=20270628T215959Z\nRRULE:FREQ=DAILY"), error: "invite repeats by a rule GSV can't send: it has more than one RRULE" },
+    { refusal: "extra dates", invite: SERIES_INVITE.replace("EXDATE;", "RDATE;TZID=Europe/Amsterdam:20261201T090000\nEXDATE;"), error: "invite repeats by RDATE, which GSV can't send" },
+    { refusal: "extra dates on an event that doesn't repeat", invite: INVITE.replace("SUMMARY:Dinner", "RDATE:20261204T201500Z\nSUMMARY:Dinner"), error: "invite repeats by RDATE, which GSV can't send" },
+    { refusal: "a start the rule leaves out", invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=WEEKLY;BYDAY=MO"), error: "invite starts on 2026-11-27, a date its repeat rule leaves out" },
+    { refusal: "UNTIL as a date beside times", invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261127T211500", "FREQ=WEEKLY;UNTIL=20270131"), error: "invite repeat UNTIL must be a UTC time such as 20270628T215959Z" },
+    { refusal: "a week start that splits the weekends", invite: repeating("DTSTART;TZID=Europe/Amsterdam:20261128T100000", "FREQ=WEEKLY;INTERVAL=2;BYDAY=SA,SU;WKST=SU"), error: "invite repeat WKST=SU gives it other dates than weeks from Monday would, which GSV can't send; drop WKST" },
+    { refusal: "a skipped date on an event that doesn't repeat", invite: INVITE.replace("SUMMARY:Dinner", "EXDATE:20261204T201500Z\nSUMMARY:Dinner"), error: "invite skips or changes dates of an event that doesn't repeat" },
+    { refusal: "a skipped date the rule doesn't have", invite: SERIES_INVITE.replace("EXDATE;TZID=Europe/Amsterdam:20261228T090000", "EXDATE;TZID=Europe/Amsterdam:20261228T100000"), error: "invite skips 2026-12-28T10:00:00+01:00[Europe/Amsterdam], which isn't a date the event happens on" },
+    { refusal: "a skipped date by DATE beside times", invite: SERIES_INVITE.replace("EXDATE;TZID=Europe/Amsterdam:20261228T090000", "EXDATE;VALUE=DATE:20261228"), error: "invite names a skipped or changed date unlike its DTSTART" },
+    { refusal: "a changed date the rule doesn't have", invite: SERIES_INVITE.replace("RECURRENCE-ID;TZID=Europe/Amsterdam:20270104T090000", "RECURRENCE-ID;TZID=Europe/Amsterdam:20270105T090000"), error: "invite changes 2027-01-05T09:00:00+01:00[Europe/Amsterdam], which isn't a date the event happens on" },
+    { refusal: "a date changed twice", invite: SERIES_INVITE.replace("RECURRENCE-ID:20261207T080000Z", "RECURRENCE-ID:20270104T080000Z"), error: "invite changes 2027-01-04T09:00:00+01:00[Europe/Amsterdam] twice" },
+    { refusal: "a date both skipped and changed", invite: SERIES_INVITE.replace("EXDATE;TZID=Europe/Amsterdam:20261228T090000", "EXDATE;TZID=Europe/Amsterdam:20270104T090000"), error: "invite both skips and changes 2027-01-04T09:00:00+01:00[Europe/Amsterdam]" },
+    { refusal: "a change to every date after one", invite: SERIES_INVITE.replace("RECURRENCE-ID;TZID", "RECURRENCE-ID;RANGE=THISANDFUTURE;TZID"), error: "invite changes a date and the ones after it (RANGE)" },
+    { refusal: "a changed date whose length is a DURATION", invite: SERIES_INVITE.replace("DTEND;TZID=Europe/Amsterdam:20270105T103000", "DURATION:PT30M"), error: "invite gives its length as DURATION, which GSV can't send; write DTEND" },
+    { refusal: "a changed date with guests of its own", invite: SERIES_INVITE.replace("DTSTART;TZID=Europe/Amsterdam:20270105T100000", "DTSTART;TZID=Europe/Amsterdam:20270105T100000\nATTENDEE:mailto:bob@example.com"), error: "every date of an invite goes to the same guests" },
+    { refusal: "a changed date without the event", invite: INVITE.replace("UID:dinner@gsv.space", "UID:dinner@gsv.space\nRECURRENCE-ID:20261127T201500Z"), error: "invite must hold the event itself, not only dates changed from it" },
+    { refusal: "a cancellation of one date", invite: SERIES_INVITE.replace("METHOD:REQUEST", "METHOD:CANCEL"), error: "a cancellation withdraws the whole event" },
+  ])("refuses $refusal before recording anything", async ({ invite, to, error }) => {
+    await runWithRealKernelSql(async (sql) => {
+      const ctx = outboundContext(sql, new MemoryR2Bucket(), { send: vi.fn(async () => undefined) }, { config: AMSTERDAM_OWNER });
+
+      const sent = await handleMailSend({ invite, to, subject: "Dinner", text: "Invite.", deliveryId: "refused" }, ctx);
+
+      expect(sent).toMatchObject({ ok: false, error: expect.stringContaining(error), retryable: false });
+      expect(ctx.mailboxes.getOutboundForDelivery(1000, "refused")).toBeNull();
+    });
+  });
+});
+
+/** Records the message a reply answers, with its rendered message.txt unless `text` is null. */
+async function recordSource(
+  ctx: KernelContext,
+  storage: MemoryR2Bucket,
+  text: string | null,
+  overrides: { displayFrom?: string; sentAt?: number | null; to?: string[]; cc?: string[] } = {},
+): Promise<void> {
+  const textPath = "/home/hank/.gsv/mail/inbox/mail:source/message.txt";
+  ctx.mailboxes.ensureMailbox("mailbox:1000:primary", 1000, "hank@gsv.space");
+  ctx.mailboxes.recordMessage({
+    messageId: "mail:source",
+    mailboxId: "mailbox:1000:primary",
+    intakeId: "intake-source",
+    digest: `sha256:${"a".repeat(64)}`,
+    envelopeFrom: "bounce@example.net",
+    envelopeTo: "hank@gsv.space",
+    headerMessageId: "<source@example.com>",
+    displayFrom: overrides.displayFrom ?? "Mike <mike@example.com>",
+    to: overrides.to ?? ["hank@gsv.space"],
+    cc: overrides.cc ?? [],
+    replyTo: [],
+    subject: "Contract",
+    sentAt: overrides.sentAt === undefined ? 1 : overrides.sentAt,
+    receivedAt: 2,
+    rawPath: "/home/hank/.gsv/mail/inbox/mail:source/raw.eml",
+    textPath,
+    sizeBytes: 100,
+    attachments: [],
+  });
+  if (text !== null) {
+    await storage.put(textPath.slice(1), `From: Mike <mike@example.com>\nTo: hank@gsv.space\nSubject: Contract\n\n${text}\n`);
+  }
+}
+
+async function sendAndClaim(ctx: KernelContext, args: MailSendArgs): Promise<ManagedOutboundMailClaim> {
+  const sent = await handleMailSend(args, ctx);
+  if (!sent.ok) throw new Error(sent.error);
+  return await claimOutbound(ctx, sent.outboundId);
+}
+
+/** Runs with every approval request approved, collecting what the owner was asked. */
+async function withApprovals(run: (approvals: ProcessToolAuthorizeArgs[]) => Promise<void>): Promise<void> {
+  const approvals: ProcessToolAuthorizeArgs[] = [];
+  const sendFrame = vi.spyOn(sharedUtils, "sendFrameToProcess").mockImplementation(async (_installation, _pid, frame) => {
+    if (frame.type === "req" && frame.call === "proc.tool.authorize") approvals.push(frame.args);
+    // SAFETY: the approval caller reads only ok and data.approved.
+    return { type: "res", id: frame.type === "req" ? frame.id : "approval", ok: true, data: { approved: true } } as never;
+  });
+  try {
+    await run(approvals);
+  } finally {
+    sendFrame.mockRestore();
+  }
+}
+
+async function claimOutbound(ctx: KernelContext, outboundId: string): Promise<ManagedOutboundMailClaim> {
+  const claim = await claimManagedOutboundMail({
+    version: 1,
+    outboundId,
+    fingerprint: ctx.mailboxes.getOutbound(outboundId)!.fingerprint,
+  }, ctx);
+  if (claim.status !== "ready") throw new Error("Expected a ready mail claim");
+  await claim.body.stream.cancel();
+  return claim;
+}
+
+async function sha256Text(text: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 function outboundContext(
   sql: SqlStorage,
   storage: MemoryR2Bucket,
   queue: { send: ReturnType<typeof vi.fn> } | undefined,
+  owner: { displayName?: string; config?: ReadonlyMap<string, string>; publicConfig?: string } = {},
 ): KernelContext {
   const humans = [{
     username: "hank",
@@ -933,6 +1612,7 @@ function outboundContext(
       // SAFETY: test fixture is constructed with the asserted kernel domain shape.
       STORAGE: storage as R2Bucket,
       ...(queue ? { MANAGED_MAIL_OUTBOUND: queue } : undefined),
+      GSV_PUBLIC_CONFIG: owner.publicConfig,
     },
     installationId: "installation-1",
     installationIdentity: {
@@ -952,6 +1632,8 @@ function outboundContext(
       resolveGids: (_username: string, gid: number) => [gid, 100],
     },
     mailboxes: new MailboxStore(sql),
+    profiles: { draft: () => owner.displayName === undefined ? null : { fields: { displayName: owner.displayName } } },
+    config: { get: (key: string) => owner.config?.get(key) ?? null },
     procs: { getOwnerUid: () => 1000 },
     scheduleManagedOutboundEnqueue: vi.fn(async () => undefined),
   // SAFETY: test fixture is constructed with the asserted kernel domain shape.

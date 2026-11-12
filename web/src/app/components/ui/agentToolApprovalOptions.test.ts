@@ -4,7 +4,7 @@ import { capabilityLabelKey, humanToolCapabilityLabel, isCustomMatch, matchOptio
 /** The default `users` group (gid 100) in workers/gateway/src/kernel/capabilities.ts; keep the two in step. */
 const DEFAULT_USER_CAPABILITIES = [
   "codemode.*", "fs.*", "shell.*", "net.fetch", "web.search",
-  "mail.send", "mail.status", "mail.list", "mail.search", "mail.read",
+  "mail.send", "mail.status", "mail.list", "mail.search", "mail.sent", "mail.read",
   "conversation.*", "contact.*", "profile.*", "approach.*", "atproto.*", "proc.*", "signal.*",
   "repo.apply", "repo.compare", "repo.create", "repo.delete", "repo.diff", "repo.import", "repo.list",
   "repo.log", "repo.read", "repo.refs", "repo.search", "repo.visibility.set",
@@ -26,7 +26,7 @@ describe("agent tool approval options", () => {
   });
 
   it("names every capability a normal account holds in plain words", () => {
-    expect(DEFAULT_USER_CAPABILITIES).toHaveLength(74);
+    expect(DEFAULT_USER_CAPABILITIES).toHaveLength(75);
     expect(DEFAULT_USER_CAPABILITIES.filter((capability) => !capabilityLabelKey(capability))).toEqual([]);
     expect(humanToolCapabilityLabel("ai.text.generate")).toBe("Write with AI");
     expect(humanToolCapabilityLabel("r12y.*")).toBe("Responsibilities");

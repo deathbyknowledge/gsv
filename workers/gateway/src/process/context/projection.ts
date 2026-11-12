@@ -34,7 +34,7 @@ type ContextProjectionSkill = ContextProjection["skills"]["entries"][number];
 export function createContextProjection(
   snapshot: AiContextResult,
   now = new Date(),
-  fallback?: Pick<ContextProjection, "targets" | "skills">,
+  fallback?: Pick<ContextProjection, "targets"> & Partial<Pick<ContextProjection, "skills">>,
 ): ContextProjection {
   const timezone = normalizeContextTimezone(snapshot.system.timezone);
   const projection: ContextProjection = {

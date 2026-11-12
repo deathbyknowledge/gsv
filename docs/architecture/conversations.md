@@ -262,6 +262,8 @@ changing its draft. Use **Allow once**, **Always allow** or **Block** to decide,
 transcript row, independent of messages and runtime activity. Approvals from delegated work appear
 above the composer. Ship, delegated work and Work share one approval card: the
 action's purpose comes first, with command or request details folded underneath.
+A mail request lists everyone who gets the message, including copies and the
+recipients a reply derives.
 The **full request** fold preserves every argument, including structured MCP
 parameters, mail bodies and execution options. Requests without a readable
 summary still expose their complete request in the details fold.

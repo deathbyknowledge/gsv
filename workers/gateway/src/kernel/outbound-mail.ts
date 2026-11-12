@@ -1,20 +1,58 @@
-import { MAIL_MAX_OUTBOUND_TEXT_BYTES as MAX_OUTBOUND_TEXT_BYTES } from "@humansandmachines/gsv/services/mail";
+import { deploymentDomains, deploymentPresentation } from "@humansandmachines/gsv/services/deployment";
+import {
+  MAIL_MAX_INVITE_BYTES as MAX_INVITE_BYTES,
+  MAIL_MAX_OUTBOUND_TEXT_BYTES as MAX_OUTBOUND_TEXT_BYTES,
+  MAIL_MAX_QUOTE_BYTES as MAX_QUOTE_BYTES,
+  MAIL_MAX_RECIPIENTS as MAX_RECIPIENTS,
+  MAIL_MAX_SENDER_NAME_BYTES as MAX_SENDER_NAME_BYTES,
+} from "@humansandmachines/gsv/services/mail";
 import type {
+  JsonObject,
+  MailInviteApproval,
+  MailInviteRepeat,
   MailSendArgs,
   MailSendResult,
   ManagedOutboundMailClaimOutcome,
   ManagedOutboundMailCommand,
   ManagedOutboundMailCompletion,
   ManagedOutboundMailDraft,
+  ManagedOutboundMailInvite,
   ManagedOutboundMailLookup,
+  ManagedOutboundMailQuote,
   ManagedOutboundMailReference,
 } from "@humansandmachines/gsv/protocol";
 import * as z from "zod/mini";
 import { isLocked } from "../auth/shadow";
 import { stableOpaqueId } from "../shared/stable-id";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
-import { managedMailAddressForOwner } from "./mailbox";
+import {
+  calendarEvents,
+  calendarTimeText,
+  calendarWhen,
+  firstProperty,
+  parseCalendar,
+  serializeCalendar,
+  type CalendarEvent,
+  type CalendarTime,
+} from "./icalendar";
+import { MAIL_NO_TEXT_BODY, managedMailAddressForOwner } from "./mailbox";
+import { ownerDisplayName } from "./profiles";
+import {
+  calendarSeries,
+  explicitRule,
+  formatRepeatDay,
+  matchOccurrences,
+  parseRepeatRule,
+  ruleIncludesStart,
+  wallClock,
+  weekStartMovesDates,
+  type CalendarSeries,
+  type OccurrenceChange,
+  type RepeatRule,
+} from "./recurrence";
+import { normalizeTimezone, ownerTimezone } from "./timezone";
 import { authorizeNestedOperation } from "./tool-approval";
+import { writeTimeZones } from "./vtimezone";
 import type {
   MailMessageRecord,
   MailOutboundRecord,
@@ -33,11 +71,19 @@ type NormalizedMailSend = {
   deliveryId: string;
   text: string;
   textSize: number;
-  to: string;
+  to: string[];
+  cc: string[];
   subject: string;
   replyToMessageId?: string;
   inReplyTo?: string;
   references?: string;
+  invite?: NormalizedInvite;
+};
+
+/** An invite as sent, the guests who must receive it, and how its approval shows it. */
+type NormalizedInvite = ManagedOutboundMailInvite & {
+  guests: string[];
+  approval: MailInviteApproval;
 };
 
 export async function handleMailSend(
@@ -59,8 +105,20 @@ export async function handleMailSend(
     if (!from) {
       throw new MailSendError("Managed mail is not available for this account", false);
     }
-    const normalized = normalizeMailSend(value, ownerUid, ctx);
-    await authorizeNestedOperation(ctx, "mail.send", value);
+    const normalized = normalizeMailSend(value, ownerUid, from, ctx);
+    // The owner approves who actually gets the message, including a reply's derived recipients.
+    // One recipient stays a string, as clients that predate lists show it.
+    const approved: JsonObject = {
+      ...value,
+      to: normalized.to.length === 1 ? normalized.to[0] : normalized.to,
+      subject: normalized.subject,
+    };
+    // Approval args must be JSON: the Kernel drops an approval signal that carries an undefined field.
+    if (normalized.cc.length > 0) approved.cc = normalized.cc;
+    else delete approved.cc;
+    // The owner reads the event an invite carries, not its iCalendar text.
+    if (normalized.invite) approved.invite = normalized.invite.approval;
+    await authorizeNestedOperation(ctx, "mail.send", approved);
     ctx.requestSignal?.throwIfAborted();
     deliveryId = normalized.deliveryId;
     outboundId = await stableOpaqueId("mail-outbound", [
@@ -72,13 +130,17 @@ export async function handleMailSend(
     const fingerprint = await sha256(JSON.stringify({
       version: 1,
       from,
-      to: normalized.to,
+      to: normalized.to.join(", "),
+      // Left out without copies, so a single-recipient intent keeps its earlier fingerprint.
+      cc: normalized.cc.length > 0 ? normalized.cc.join(", ") : undefined,
       subject: normalized.subject,
       textSize: normalized.textSize,
       bodyDigest,
       replyToMessageId: normalized.replyToMessageId ?? null,
       inReplyTo: normalized.inReplyTo ?? null,
       references: normalized.references ?? null,
+      // Left out without an invite, so plain mail keeps its earlier fingerprint.
+      inviteDigest: normalized.invite ? await sha256(normalized.invite.text) : undefined,
     }));
     ctx.requestSignal?.throwIfAborted();
     const bodyPath = `${owner.home}/.gsv/mail/outbox/${outboundId}/${fingerprint.slice(7)}/message.txt`;
@@ -90,6 +152,7 @@ export async function handleMailSend(
       fingerprint,
       from,
       to: normalized.to,
+      cc: normalized.cc,
       subject: normalized.subject,
       bodyDigest,
       bodyPath,
@@ -99,6 +162,7 @@ export async function handleMailSend(
     if (normalized.replyToMessageId) input.replyToMessageId = normalized.replyToMessageId;
     if (normalized.inReplyTo) input.inReplyTo = normalized.inReplyTo;
     if (normalized.references) input.references = normalized.references;
+    if (normalized.invite) input.invite = { method: normalized.invite.method, text: normalized.invite.text };
     const existing = ctx.mailboxes.getOutboundForDelivery(ownerUid, deliveryId);
     let ensured: ReturnType<typeof ctx.mailboxes.ensureOutbound>;
     if (existing) {
@@ -157,10 +221,11 @@ export async function handleMailSend(
       outboundId: outbound.outboundId,
       state: outbound.state,
       from: outbound.from,
-      to: outbound.to,
+      to: outbound.to.join(", "),
       subject: outbound.subject,
       replayed: !ensured.created,
     };
+    if (outbound.cc.length > 0) result.cc = outbound.cc.join(", ");
     if (outbound.errorCode) result.errorCode = outbound.errorCode;
     return result;
   } catch (error) {
@@ -316,9 +381,16 @@ export async function claimManagedOutboundMail(
   if (await sha256Bytes(body) !== outbound.bodyDigest) {
     return settleUnavailableOutbound(outbound, ctx);
   }
+  const draft = outboundDraft(outbound);
+  const fromName = senderName(outbound.ownerUid, ctx);
+  if (fromName) draft.fromName = fromName;
+  const quote = outbound.replyToMessageId
+    ? await replyQuote(outbound.replyToMessageId, outbound.ownerUid, ctx)
+    : undefined;
+  if (quote) draft.quote = quote;
   return {
     status: "ready",
-    draft: outboundDraft(outbound),
+    draft,
     body: {
       stream: new Blob([body]).stream(),
       length: object.size,
@@ -337,6 +409,7 @@ export function completeManagedOutboundMail(
 function normalizeMailSend(
   value: MailSendArgs,
   ownerUid: number,
+  from: string,
   ctx: KernelContext,
 ): NormalizedMailSend {
   const deliveryId = normalizeIdentifier(
@@ -346,6 +419,13 @@ function normalizeMailSend(
   const text = normalizeText(value.text);
   const textSize = TEXT_ENCODER.encode(text).byteLength;
   const replySelector = optionalIdentifier(value.replyToMessageId, "replyToMessageId");
+  if (value.replyAll !== undefined && value.replyAll !== true && value.replyAll !== false) {
+    throw new MailSendError("replyAll must be true or false", false);
+  }
+  const copies = addressList(value.cc, "cc");
+  const invite = value.invite === undefined
+    ? undefined
+    : normalizeInvite(value.invite, from, displayTimeZone(ownerUid, ctx));
   if (replySelector) {
     if (value.to !== undefined) {
       throw new MailSendError("A reply derives its recipient from the original message", false);
@@ -353,7 +433,10 @@ function normalizeMailSend(
     const source = ctx.mailboxes.getMessage(ownerUid, replySelector);
     if (!source) throw new MailSendError(`Mail message not found: ${replySelector}`, false);
     const replyToMessageId = source.messageId;
-    const to = replyRecipient(source);
+    const { to, cc } = recipientLists(
+      [replyRecipient(source)],
+      value.replyAll ? [...originalRecipients(source, from, ctx), ...copies] : copies,
+    );
     const subject = value.subject === undefined
       ? replySubject(source.subject)
       : normalizeSubject(value.subject);
@@ -363,6 +446,7 @@ function normalizeMailSend(
       text,
       textSize,
       to,
+      cc,
       subject,
       replyToMessageId,
     };
@@ -370,21 +454,297 @@ function normalizeMailSend(
       reply.inReplyTo = inReplyTo;
       reply.references = inReplyTo;
     }
+    if (invite) reply.invite = requireGuests(invite, to, cc);
     return reply;
   }
 
   if (value.replyToMessageId !== undefined) {
     throw new MailSendError("replyToMessageId is invalid", false);
   }
-  if (value.to === undefined) throw new MailSendError("to is required", false);
+  if (value.replyAll) throw new MailSendError("replyAll needs replyToMessageId", false);
+  // Without To, an invite goes to its guests, less any the message copies.
+  const copied = new Set(copies.map((address) => address.toLowerCase()));
+  const to = value.to === undefined && invite
+    ? invite.guests.filter((guest) => !copied.has(guest.toLowerCase()))
+    : addressList(value.to, "to");
+  if (to.length === 0) throw new MailSendError("to is required", false);
   if (value.subject === undefined) throw new MailSendError("subject is required", false);
-  return {
+  const send: NormalizedMailSend = {
     deliveryId,
     text,
     textSize,
-    to: normalizeAddress(value.to),
+    ...recipientLists(to, copies),
     subject: normalizeSubject(value.subject),
   };
+  if (invite) send.invite = requireGuests(invite, send.to, send.cc);
+  return send;
+}
+
+/**
+ * An event this account organizes, with REQUEST or CANCEL: one VEVENT, or a repeating one
+ * with the dates changed from it under its UID. It is rewritten with CRLF lines and the
+ * VTIMEZONEs its times name, and says only what its approval can show. Its organizer must be
+ * the sender, so replies come back here.
+ */
+function normalizeInvite(value: string, from: string, timeZone: string): NormalizedInvite {
+  if (String(value) !== value || TEXT_ENCODER.encode(value).byteLength > MAX_INVITE_BYTES) {
+    throw new MailSendError(`invite must be iCalendar text of at most ${MAX_INVITE_BYTES} bytes`, false);
+  }
+  let calendar: ReturnType<typeof parseCalendar>;
+  let series: CalendarSeries[];
+  try {
+    calendar = parseCalendar(value);
+    series = calendarSeries(calendarEvents(calendar));
+  } catch (error) {
+    throw new MailSendError(`invite is not a valid calendar: ${errorMessage(error)}`, false);
+  }
+  const methodProperty = firstProperty(calendar, "METHOD");
+  const method = methodProperty?.value.trim().toUpperCase();
+  if (!methodProperty || (method !== "REQUEST" && method !== "CANCEL")) {
+    throw new MailSendError("invite must have METHOD:REQUEST to invite or METHOD:CANCEL to cancel", false);
+  }
+  // The email Worker finds the method in the text, written as the approval names it.
+  methodProperty.params = {};
+  methodProperty.value = method;
+  if (series.length !== 1 || calendar.components.some((component) => !["VEVENT", "VTIMEZONE"].includes(component.name))) {
+    throw new MailSendError("invite must hold exactly one event", false);
+  }
+  const [{ event, changes }] = series;
+  if (!event) throw new MailSendError("invite must hold the event itself, not only dates changed from it", false);
+  if (method === "CANCEL" && changes.length > 0) {
+    throw new MailSendError("a cancellation withdraws the whole event; to cancel one date, send a REQUEST that skips it with EXDATE", false);
+  }
+  const guests = inviteGuests(event, from);
+  if (guests.length === 0) throw new MailSendError("invite has no guests", false);
+  for (const each of [event, ...changes]) {
+    if (!firstProperty(each.component, "DTSTAMP")) throw new MailSendError("invite event has no DTSTAMP", false);
+    if (each.organizer?.address.toLowerCase() !== from.toLowerCase()) {
+      throw new MailSendError(`invite must be organized by ${from}, so replies come back to it`, false);
+    }
+    // The approval shows when each date ends, which DURATION leaves each calendar to work out.
+    if (firstProperty(each.component, "DURATION")) {
+      throw new MailSendError("invite gives its length as DURATION, which GSV can't send; write DTEND", false);
+    }
+    // A time without a zone reads as each guest's own clock, which the owner can't approve.
+    const times = [each.start, each.end, each.recurrenceId, ...each.skipped];
+    if (times.some((time) => time?.kind === "local" && !time.timeZone)) {
+      throw new MailSendError("invite times need a time zone: give each a TZID, or write it in UTC such as 20261127T201500Z", false);
+    }
+    if (!sameAddresses(inviteGuests(each, from), guests)) {
+      throw new MailSendError("every date of an invite goes to the same guests", false);
+    }
+  }
+  try {
+    writeTimeZones(calendar);
+  } catch (error) {
+    throw new MailSendError(`invite can't be sent: ${errorMessage(error)}`, false);
+  }
+  // A repeating event shows in the clock its rule counts days in, so its days and times agree.
+  const shownZone = ruleTimeZone(event) ?? timeZone;
+  const when = calendarWhen(event, shownZone);
+  const approval: MailInviteApproval = { method, allDay: when.allDay, start: when.start };
+  if (shownZone !== timeZone) approval.timeZone = shownZone;
+  if (event.title) approval.title = event.title;
+  if (when.end) approval.end = when.end;
+  if (event.location) approval.location = event.location;
+  Object.assign(approval, inviteRepeats(event, changes, shownZone));
+  const text = serializeCalendar(calendar);
+  // CRLF lines, folding and the time zones written in can carry a calendar past the size the email Worker accepts.
+  if (TEXT_ENCODER.encode(text).byteLength > MAX_INVITE_BYTES) {
+    throw new MailSendError(`invite is more than ${MAX_INVITE_BYTES} bytes once written to send`, false);
+  }
+  // eslint-disable-next-line no-control-regex -- The email Worker refuses any control character but CR, LF and tab.
+  if (/[\0-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text)) throw new MailSendError("invite holds a control character", false);
+  return { method, text, guests, approval };
+}
+
+/** The zone a repeating event's rule counts days in: its start's TZID, or UTC. Undefined unless it repeats at a time. */
+function ruleTimeZone(event: CalendarEvent): string | undefined {
+  if (!firstProperty(event.component, "RRULE")) return undefined;
+  if (event.start.kind === "local") return event.start.timeZone;
+  return event.start.kind === "utc" ? "UTC" : undefined;
+}
+
+/** The addresses an event invites, less its organizer, each once. */
+function inviteGuests(event: CalendarEvent, from: string): string[] {
+  return recipientLists(
+    event.attendees
+      .map((attendee) => normalizeAddress(attendee.address, "invite"))
+      .filter((address) => address.toLowerCase() !== from.toLowerCase()),
+    [],
+  ).to;
+}
+
+/**
+ * How a repeating invite repeats, once it is known to say only what its approval shows: one
+ * RRULE in the forms GSV says in words, starting on a date it includes, and skipping or
+ * changing only dates it has.
+ */
+function inviteRepeats(
+  event: CalendarEvent,
+  changes: OccurrenceChange[],
+  timeZone: string,
+): Pick<MailInviteApproval, "repeats" | "skipped" | "changed"> {
+  // These add or remove dates whether or not the event has a rule, and the approval names neither.
+  for (const name of ["RDATE", "EXRULE"]) {
+    if (firstProperty(event.component, name)) throw new MailSendError(`invite repeats by ${name}, which GSV can't send; use RRULE and EXDATE`, false);
+  }
+  const rules = event.component.properties.filter((property) => property.name === "RRULE");
+  if (rules.length === 0) {
+    if (event.skipped.length > 0 || changes.length > 0) {
+      throw new MailSendError("invite skips or changes dates of an event that doesn't repeat", false);
+    }
+    return {};
+  }
+  if (changes.some((change) => ["RRULE", "RDATE", "EXRULE", "EXDATE"].some((name) => firstProperty(change.component, name)))) {
+    throw new MailSendError("a changed date of an invite can't repeat or skip dates of its own", false);
+  }
+  if (changes.some((change) => firstProperty(change.component, "RECURRENCE-ID")?.params.RANGE)) {
+    throw new MailSendError("invite changes a date and the ones after it (RANGE), which GSV can't send", false);
+  }
+  let rule: RepeatRule;
+  try {
+    if (rules.length > 1) throw new Error("it has more than one RRULE");
+    rule = parseRepeatRule(rules[0].value);
+  } catch (error) {
+    throw new MailSendError(`invite repeats by a rule GSV can't send: ${errorMessage(error)}`, false);
+  }
+  const allDay = event.start.kind === "date";
+  // RFC 5545 writes UNTIL as a date beside a date, and in UTC beside a zoned time.
+  if (rule.until && rule.until.kind !== (allDay ? "date" : "utc")) {
+    throw new MailSendError(
+      allDay
+        ? "invite repeat UNTIL must be a date such as 20270628, as the event is all day"
+        : "invite repeat UNTIL must be a UTC time such as 20270628T215959Z, as the event has times",
+      false,
+    );
+  }
+  // The approval names no week start, so it counts weeks from Monday.
+  if (weekStartMovesDates(rule)) {
+    throw new MailSendError(`invite repeat WKST=${rule.weekStart} gives it other dates than weeks from Monday would, which GSV can't send; drop WKST`, false);
+  }
+  if (!ruleIncludesStart(event.start, rule)) {
+    throw new MailSendError(`invite starts on ${wallClock(event.start).date}, a date its repeat rule leaves out; start it on a date the rule includes`, false);
+  }
+  const named = [...event.skipped, ...changes.map((change) => change.recurrenceId)];
+  if (named.some((time) => (time.kind === "date") !== allDay)) {
+    throw new MailSendError("invite names a skipped or changed date unlike its DTSTART; write EXDATE and RECURRENCE-ID as DTSTART is written", false);
+  }
+  const ids = matchOccurrences(event.start, rule, named, timeZone);
+  const text = (time: CalendarTime) => calendarTimeText(time, timeZone);
+  const skipped = new Map<string, CalendarTime>();
+  const changed = new Map<string, { id: CalendarTime; change: OccurrenceChange }>();
+  named.forEach((time, index) => {
+    const id = ids[index];
+    const change = index < event.skipped.length ? undefined : changes[index - event.skipped.length];
+    if (!id) throw new MailSendError(`invite ${change ? "changes" : "skips"} ${text(time)}, which isn't a date the event happens on`, false);
+    const key = occurrenceKey(id);
+    if (!change) {
+      skipped.set(key, id);
+    } else if (changed.has(key)) {
+      throw new MailSendError(`invite changes ${text(id)} twice`, false);
+    } else {
+      changed.set(key, { id, change });
+    }
+  });
+  for (const [key, { id, change }] of changed) {
+    if (skipped.has(key)) throw new MailSendError(`invite both skips and changes ${text(id)}`, false);
+    // A date cancelled within a REQUEST is skipped like an EXDATE.
+    if (change.status === "CANCELLED") {
+      skipped.set(key, id);
+      changed.delete(key);
+    }
+  }
+  const sorted = <Entry>(entries: Map<string, Entry>) => [...entries].sort(([a], [b]) => a.localeCompare(b)).map(([, entry]) => entry);
+  const repeats: Pick<MailInviteApproval, "repeats" | "skipped" | "changed"> = { repeats: inviteRepeat(rule, event.start, timeZone) };
+  if (skipped.size > 0) repeats.skipped = sorted(skipped).map(text);
+  if (changed.size > 0) {
+    repeats.changed = sorted(changed).map(({ id, change }) => {
+      const when = calendarWhen(change, timeZone);
+      return when.end ? { from: text(id), start: when.start, end: when.end } : { from: text(id), start: when.start };
+    });
+  }
+  return repeats;
+}
+
+/** A rule as its approval shows it, with what it leaves to the start written out. */
+function inviteRepeat(rule: RepeatRule, start: CalendarTime, timeZone: string): MailInviteRepeat {
+  const explicit = explicitRule(rule, wallClock(start).date);
+  const repeat: MailInviteRepeat = { freq: explicit.freq, interval: explicit.interval };
+  if (explicit.byDay) repeat.byDay = explicit.byDay.map(formatRepeatDay);
+  if (explicit.byMonthDay) repeat.byMonthDay = explicit.byMonthDay;
+  if (explicit.byMonth) repeat.byMonth = explicit.byMonth;
+  if (explicit.count !== undefined) repeat.count = explicit.count;
+  if (explicit.until) repeat.until = calendarTimeText(explicit.until, timeZone);
+  return repeat;
+}
+
+/** An occurrence's start as its series writes it, which orders the occurrences of one series. */
+function occurrenceKey(time: CalendarTime): string {
+  if (time.kind === "date") return time.date;
+  return time.kind === "utc" ? new Date(time.ms).toISOString() : time.local;
+}
+
+/** Everyone the invite lists gets it, and nobody else. */
+function requireGuests(invite: NormalizedInvite, to: readonly string[], cc: readonly string[]): NormalizedInvite {
+  const recipients = [...to, ...cc];
+  if (!sameAddresses(recipients, invite.guests)) {
+    throw new MailSendError(
+      `An invite goes to exactly its guests (${invite.guests.join(", ")}); this message goes to ${recipients.join(", ")}`,
+      false,
+    );
+  }
+  return invite;
+}
+
+function sameAddresses(a: readonly string[], b: readonly string[]): boolean {
+  const sorted = (addresses: readonly string[]) => addresses.map((address) => address.toLowerCase()).sort().join(", ");
+  return sorted(a) === sorted(b);
+}
+
+function addressList(value: MailSendArgs["to"], field: "to" | "cc"): string[] {
+  if (value === undefined) return [];
+  const entries = Array.isArray(value) ? value : [value];
+  if (entries.length > MAX_RECIPIENTS) throw tooManyRecipients(entries.length);
+  return entries.map((entry) => {
+    if (String(entry) !== entry) throw new MailSendError(`${field} must list email addresses`, false);
+    if (entry.includes(",")) throw new MailSendError(`${field}: give several addresses as a list`, false);
+    return normalizeAddress(entry, field);
+  });
+}
+
+/** Each address once, To before Cc, within the recipient limit. */
+function recipientLists(to: readonly string[], cc: readonly string[]) {
+  const seen = new Set<string>();
+  const unique = (addresses: readonly string[]) => addresses.filter((address) => {
+    const key = address.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const lists = { to: unique(to), cc: unique(cc) };
+  const count = lists.to.length + lists.cc.length;
+  if (count > MAX_RECIPIENTS) throw tooManyRecipients(count);
+  return lists;
+}
+
+function tooManyRecipients(count: number): MailSendError {
+  return new MailSendError(`A message can go to at most ${MAX_RECIPIENTS} people; this one has ${count}`, false);
+}
+
+/** Everyone the original was sent to or copied, except this Ship under any of its addresses. */
+function originalRecipients(source: MailMessageRecord, from: string, ctx: KernelContext): string[] {
+  const handle = ctx.installationIdentity?.handle?.toLowerCase();
+  const domains = deploymentDomains(deploymentPresentation(ctx.env.GSV_PUBLIC_CONFIG));
+  const own = new Set([
+    from,
+    source.envelopeTo,
+    ...(handle ? domains.map((domain) => `${handle}@${domain}`) : []),
+  ].map((address) => address.toLowerCase()));
+  return [...source.to, ...source.cc]
+    .map((entry) => extractAddress(entry).trim())
+    .filter((address) => !own.has(address.toLowerCase()))
+    .map((address) => normalizeAddress(address, "cc"));
 }
 
 function normalizeReference(value: ManagedOutboundMailReference): ManagedOutboundMailReference {
@@ -443,7 +803,7 @@ function requireActiveHuman(ownerUid: number, ctx: KernelContext) {
 function replyRecipient(message: MailMessageRecord): string {
   return normalizeAddress(extractAddress(
     message.replyTo[0] ?? message.displayFrom ?? message.envelopeFrom,
-  ));
+  ), "to");
 }
 
 function extractAddress(value: string): string {
@@ -467,7 +827,7 @@ function truncateSubject(value: string): string {
   return normalizeSubject(`${new TextDecoder().decode(bytes.subarray(0, written))}${suffix}`);
 }
 
-function normalizeAddress(value: string): string {
+function normalizeAddress(value: string, field: "to" | "cc" | "invite"): string {
   const source = value.trim();
   const separator = source.lastIndexOf("@");
   const address = separator > 0
@@ -483,7 +843,7 @@ function normalizeAddress(value: string): string {
     || /[\s<>(),;:"]/.test(address)
     || address.includes("..")
   ) {
-    throw new MailSendError("to is not a valid single email address", false);
+    throw new MailSendError(`${field} has an invalid email address: ${source}`, false);
   }
   return address;
 }
@@ -524,10 +884,11 @@ function optionalIdentifier(value: string | undefined, name: string): string | u
   return value === undefined ? undefined : normalizeIdentifier(value, name);
 }
 
+/** A Message-ID to thread on: printable ASCII, as mail headers carry it unencoded. */
 function optionalThreadHeader(value: string | null): string | undefined {
   return value
-    && !containsAsciiControl(value)
-    && TEXT_ENCODER.encode(value).byteLength <= MAX_OUTBOUND_HEADER_BYTES
+    && /^[\x20-\x7e]+$/.test(value)
+    && value.length <= MAX_OUTBOUND_HEADER_BYTES
     ? value
     : undefined;
 }
@@ -584,20 +945,74 @@ async function sha256Bytes(value: BufferSource): Promise<string> {
 
 function outboundDraft(outbound: MailOutboundRecord): ManagedOutboundMailDraft {
   const draft: ManagedOutboundMailDraft = {
-    version: 1 as const,
+    version: outbound.invite ? 2 : 1,
     outboundId: outbound.outboundId,
     fingerprint: outbound.fingerprint,
     from: outbound.from,
-    to: outbound.to,
+    to: outbound.to.length === 1 && outbound.cc.length === 0 ? outbound.to[0] : [...outbound.to],
     subject: outbound.subject,
     bodyDigest: outbound.bodyDigest,
     textSize: outbound.textSize,
     createdAt: outbound.createdAt,
   };
+  if (outbound.cc.length > 0) draft.cc = [...outbound.cc];
   if (outbound.replyToMessageId) draft.replyToMessageId = outbound.replyToMessageId;
   if (outbound.inReplyTo) draft.inReplyTo = outbound.inReplyTo;
   if (outbound.references) draft.references = outbound.references;
+  if (outbound.invite) draft.invite = { ...outbound.invite };
   return draft;
+}
+
+/** The owner's name for the From line, as they show it to other people; read at send time. */
+function senderName(ownerUid: number, ctx: KernelContext): string | undefined {
+  const name = ownerDisplayName(ownerUid, ctx)?.trim();
+  return name
+    && !/\p{Cc}/u.test(name)
+    && TEXT_ENCODER.encode(name).byteLength <= MAX_SENDER_NAME_BYTES
+    ? name
+    : undefined;
+}
+
+/** The original of a reply, from the owner's stored copy; none once that copy is gone. */
+async function replyQuote(
+  messageId: string,
+  ownerUid: number,
+  ctx: KernelContext,
+): Promise<ManagedOutboundMailQuote | undefined> {
+  const source = ctx.mailboxes.getMessage(ownerUid, messageId);
+  if (source?.messageId !== messageId) return undefined;
+  const object = await ctx.env.STORAGE.get(pathToStorageKey(source.textPath));
+  if (!object) return undefined;
+  const rendered = new TextDecoder().decode(await object.arrayBuffer());
+  // message.txt is a header block, a blank line, then the text.
+  const boundary = rendered.indexOf("\n\n");
+  const text = boundary === -1 ? "" : rendered.slice(boundary + 2).trimEnd();
+  if (!text.trim() || text === MAIL_NO_TEXT_BODY) return undefined;
+  return {
+    // A received name may hold control characters; the attribution line can't.
+    from: (source.displayFrom ?? source.envelopeFrom).replace(/\p{Cc}+/gu, " "),
+    sentAt: source.sentAt ?? source.receivedAt,
+    timeZone: displayTimeZone(ownerUid, ctx),
+    text: truncateQuote(text),
+  };
+}
+
+// The server default isn't validated when written, and neither a reply's date line nor an
+// invite's approval may fail over it.
+function displayTimeZone(ownerUid: number, ctx: KernelContext): string {
+  try {
+    return normalizeTimezone(ownerTimezone(ctx.config, ownerUid));
+  } catch {
+    return "UTC";
+  }
+}
+
+function truncateQuote(text: string): string {
+  if (TEXT_ENCODER.encode(text).byteLength <= MAX_QUOTE_BYTES) return text;
+  const marker = "\n[…]";
+  const bytes = new Uint8Array(MAX_QUOTE_BYTES - TEXT_ENCODER.encode(marker).byteLength);
+  const { written = 0 } = TEXT_ENCODER.encodeInto(text, bytes);
+  return `${new TextDecoder().decode(bytes.subarray(0, written))}${marker}`;
 }
 
 function outboundCompletion(

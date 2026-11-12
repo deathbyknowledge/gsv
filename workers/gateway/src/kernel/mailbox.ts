@@ -19,6 +19,8 @@ import { accountIdentity } from "./accounts";
 import type { KernelContext } from "./context";
 
 const MAX_PARSED_MAIL_TEXT_BYTES = 4 * 1024 * 1024;
+/** What message.txt says in place of a body when the message had no text. */
+export const MAIL_NO_TEXT_BODY = "[No plain-text body. Read raw.eml for the original message.]";
 const MAX_MAIL_ATTACHMENTS = 256;
 const TEXT_ENCODER = new TextEncoder();
 
@@ -64,6 +66,7 @@ const inboundMailMetadataSchema = z.strictObject({
   text: z.string().optional(),
   html: z.string().optional(),
   attachments: z.array(mailAttachmentSchema),
+  automatic: z.enum(["reply", "delivery-report"]).optional(),
 });
 const inboundMailCompletionSchema = z.strictObject({
   version: z.literal(1),
@@ -146,6 +149,7 @@ export async function acceptManagedInboundMail(
       subject: metadata.subject ?? null,
       sentAt: metadata.sentAt ?? null,
       receivedAt: metadata.receivedAt,
+      automatic: metadata.automatic ?? null,
       rawPath,
       textPath,
       sizeBytes: metadata.rawSize,
@@ -187,7 +191,9 @@ export async function completeManagedInboundMail(
     }
     ctx.mailboxes.markEventDelivered(summarized.messageId);
   };
+  // An automatic reply or delivery report follows the owner's notice rule but is no work for the Ship.
   if (ctx.auth.isAccountDisabled(mailbox.ownerUid)
+    || summarized.automatic !== null
     || !ctx.responsibilitySources.isEnabled(mailbox.ownerUid, "mail.received")) {
     noteAndMarkDelivered();
     return;
@@ -405,6 +411,7 @@ function normalizeInboundMetadata(
   }
   if (text !== undefined) normalized.text = text;
   if (html !== undefined) normalized.html = html;
+  if (parsed.automatic !== undefined) normalized.automatic = parsed.automatic;
   return normalized;
 }
 
@@ -575,7 +582,7 @@ function renderMessageText(metadata: ManagedInboundMailMetadata): string {
     ...(metadata.subject === undefined ? [] : [`Subject: ${metadata.subject}`]),
     ...(metadata.rfcMessageId === undefined ? [] : [`Message-ID: ${metadata.rfcMessageId}`]),
   ];
-  return `${headers.join("\n")}\n\n${metadata.text ?? "[No plain-text body. Read raw.eml for the original message.]"}\n`;
+  return `${headers.join("\n")}\n\n${metadata.text ?? MAIL_NO_TEXT_BODY}\n`;
 }
 
 function pathToStorageKey(path: string): string {

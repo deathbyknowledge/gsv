@@ -29,19 +29,12 @@ const CONFIG: AiConfigResult = {
       text: "Running in GSV for {{identity.username}} at {{identity.cwd}}",
     },
   ],
-  skillIndex: [
-    {
-      id: "device-management",
-      name: "device-management",
-      description: "Manage connected devices.",
-      source: {
-        kind: "home",
-        label: "home:device-management",
-        writable: false,
-      },
-    },
-  ],
   maxContextBytes: 64,
+};
+
+const SKILLS: PromptAssemblyInput["skills"] = {
+  mode: "summary",
+  entries: [{ id: "device-management", description: "Manage connected devices." }],
 };
 
 const IDENTITY: ProcessIdentity = {
@@ -161,6 +154,39 @@ describe("assembleSystemPrompt", () => {
       "skill index",
       "</available_skills>",
     ].join("\n"));
+  });
+
+  it("reads both accounts' context files together and keeps their order", async () => {
+    const files = new Map([["context.d/a.md", "alpha"], ["context.d/b.md", "beta"]]);
+    let inFlight = 0;
+    let peak = 0;
+    const ripgit: PromptAssemblyInput["ripgit"] = {
+      async readPath(_repo, path) {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        if (path === "context.d") {
+          return {
+            kind: "tree",
+            entries: [
+              { name: "b.md", mode: "100644", hash: "b", type: "blob" },
+              { name: "a.md", mode: "100644", hash: "a", type: "blob" },
+            ],
+          };
+        }
+        const text = files.get(path);
+        return text ? { kind: "file", bytes: new TextEncoder().encode(text), size: text.length } : { kind: "missing" };
+      },
+    };
+
+    const snapshot = await assembleSystemPromptSnapshot(makeInput({ ripgit, ownerIdentity: OWNER_IDENTITY }));
+
+    // Both homes list context.d at once, then read their files at once.
+    expect(peak).toBe(4);
+    expect(snapshot.sources.flatMap((source) =>
+      source.contextRoot && source.contextRoot.key !== "system" ? [`${source.contextRoot.key}:${source.name}`] : []))
+      .toEqual(["program:a.md", "program:b.md", "user:a.md", "user:b.md"]);
   });
 
   it("records deterministic source hashes for epoch replay", async () => {
@@ -366,7 +392,7 @@ describe("createSkillIndexProvider", () => {
 
   it("renders names-only skill context when configured", async () => {
     const prompt = await assembleSystemPrompt(makeInput({
-      config: { ...CONFIG, skillIndexMode: "names" },
+      skills: { ...SKILLS, mode: "names" },
     }), resolvePromptProviders());
 
     expect(prompt).toContain("<name>device-management</name>");
@@ -375,7 +401,7 @@ describe("createSkillIndexProvider", () => {
 
   it("omits prompt skill enumeration without disabling live discovery", async () => {
     const prompt = await assembleSystemPrompt(makeInput({
-      config: { ...CONFIG, skillIndexMode: "off" },
+      skills: { ...SKILLS, mode: "off" },
     }), resolvePromptProviders());
 
     expect(prompt).not.toContain("<available_skills>");
@@ -437,6 +463,27 @@ describe("createHomeContextProvider", () => {
       "alpha",
     ]);
   });
+
+  it("stops reading context files once the budget is spent", async () => {
+    const names = Array.from({ length: 40 }, (_, index) => `${String(index).padStart(2, "0")}.md`);
+    const read: string[] = [];
+    const sections = await createHomeContextProvider().collect(makeInput({
+      config: { ...CONFIG, maxContextBytes: 20 },
+      ripgit: {
+        async readPath(_repo, path) {
+          if (path === "context.d") {
+            return { kind: "tree", entries: names.map((name) => ({ name, mode: "100644", hash: name, type: "blob" })) };
+          }
+          read.push(path);
+          const bytes = new TextEncoder().encode(`${path} ${"x".repeat(4)}`);
+          return { kind: "file", bytes, size: bytes.length };
+        },
+      },
+    }));
+
+    expect(sections.map((section) => section.name)).toEqual(["00.md"]);
+    expect(read.length).toBeLessThan(names.length / 2);
+  });
 });
 
 function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssemblyInput {
@@ -445,6 +492,7 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
     identity: IDENTITY,
     targets: [],
     mcpServers: [],
+    skills: SKILLS,
     runtime: {
       date: currentDateInTimezone("Europe/Amsterdam"),
       timezone: "Europe/Amsterdam",

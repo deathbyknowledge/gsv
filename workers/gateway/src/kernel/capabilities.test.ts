@@ -125,6 +125,7 @@ describe("CapabilityStore", () => {
         "mail.read",
         "mail.search",
         "mail.send",
+        "mail.sent",
         "mail.status",
         "net.fetch",
         "notify.rule.*",

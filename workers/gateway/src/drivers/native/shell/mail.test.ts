@@ -1,6 +1,7 @@
 import type {
   MailSendArgs,
   MailSendResult,
+  MailSentResult,
   MailStatusResult,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
@@ -19,6 +20,7 @@ import * as outboundStatus from "../../../kernel/outbound-status";
 
 const handleMailSend = vi.spyOn(outboundMail, "handleMailSend");
 const handleMailStatus = vi.spyOn(outboundStatus, "handleMailStatus");
+const handleMailSent = vi.spyOn(outboundStatus, "handleMailSent");
 
 function emptyFs(): GsvFs {
   // SAFETY: these command tests exercise argument and capability handling before filesystem access.
@@ -29,6 +31,7 @@ describe("mail shell command", () => {
   beforeEach(() => {
     handleMailSend.mockReset();
     handleMailStatus.mockReset();
+    handleMailSent.mockReset();
   });
 
   it("lists and reads only the calling human's indexed mail", async () => {
@@ -220,7 +223,7 @@ describe("mail shell command", () => {
       outboundId: `outbound:${input.deliveryId}`,
       state: "queued",
       from: "hank@gsv.space",
-      to: input.to ?? "mike@example.com",
+      to: [input.to ?? "mike@example.com"].flat().join(", "),
       subject: input.subject ?? "Re: Hello",
       replayed: false,
     }));
@@ -244,7 +247,7 @@ describe("mail shell command", () => {
 
     expect(handleMailSend).toHaveBeenNthCalledWith(1, {
       text: "Checking in.",
-      to: "mike@example.com",
+      to: ["mike@example.com"],
       subject: "Hello",
       deliveryId: "shell-frame-7:mail:1",
     }, ctx);
@@ -260,6 +263,46 @@ describe("mail shell command", () => {
     expect(replied.stdout).toContain("delivery_id=shell-frame-7:mail:2");
   });
 
+  it("sends to several people with copies, and replies to all", async () => {
+    const ctx = commandContext("shell-frame-copies");
+    handleMailSend.mockImplementation(async (input: MailSendArgs): Promise<MailSendResult> => ({
+      ok: true,
+      deliveryId: input.deliveryId!,
+      outboundId: `outbound:${input.deliveryId}`,
+      state: "queued",
+      from: "hank@gsv.space",
+      to: [input.to ?? "mike@example.com"].flat().join(", "),
+      cc: input.cc?.join(", "),
+      subject: input.subject ?? "Re: Hello",
+      replayed: false,
+    }));
+    const command = buildMailCommand(emptyFs(), ctx);
+
+    const sent = await command.execute([
+      "send", "--to", "anna@example.com, mike@example.com", "--to", "bob@example.com", "--cc", "carol@example.com",
+      "--subject", "Friday", "--message", "Table for four.",
+    ], shellCommandContext());
+    await command.execute([
+      "reply", "mail:aaaaaaaa", "--all", "--cc", "dave@example.com", "--message", "Count me in.",
+    ], shellCommandContext());
+    const misplaced = await command.execute([
+      "send", "--all", "--to", "anna@example.com", "--subject", "Friday", "--message", "Hi.",
+    ], shellCommandContext());
+
+    expect(handleMailSend).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      to: ["anna@example.com", "mike@example.com", "bob@example.com"],
+      cc: ["carol@example.com"],
+    }), ctx);
+    expect(handleMailSend).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      replyToMessageId: "mail:aaaaaaaa",
+      replyAll: true,
+      cc: ["dave@example.com"],
+    }), ctx);
+    expect(sent.stdout).toContain("to=anna@example.com, mike@example.com, bob@example.com\ncc=carol@example.com\n");
+    expect(misplaced).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("--all applies to mail reply") });
+    expect(handleMailSend).toHaveBeenCalledTimes(2);
+  });
+
   it("preserves explicit delivery ids while ordinals track every outbound command", async () => {
     const fs = emptyFs();
     const ctx = commandContext("shell-frame-explicit");
@@ -269,7 +312,7 @@ describe("mail shell command", () => {
       outboundId: `outbound:${input.deliveryId}`,
       state: "queued",
       from: "hank@gsv.space",
-      to: input.to!,
+      to: [input.to!].flat().join(", "),
       subject: input.subject!,
       replayed: false,
     }));
@@ -330,6 +373,7 @@ describe("mail shell command", () => {
         from: "hank@gsv.space",
         to: "mike@example.com",
         subject: "Hello\nthere",
+        textPath: "/home/hank/.gsv/mail/outbox/mail-outbound:1/message.txt",
         providerMessageId: "provider-1",
         createdAt: Date.parse("2026-08-13T12:00:00.000Z"),
         queuedAt: Date.parse("2026-08-13T12:00:01.000Z"),
@@ -344,10 +388,70 @@ describe("mail shell command", () => {
     expect(result).toMatchObject({ exitCode: 0, stderr: "" });
     expect(result.stdout).toContain("state=accepted");
     expect(result.stdout).toContain("subject=Hello there");
+    expect(result.stdout).toContain("text_path=/home/hank/.gsv/mail/outbox/mail-outbound:1/message.txt");
     expect(result.stdout).toContain("provider_message_id=provider-1");
     expect(result.stdout).toContain("created_at=2026-08-13T12:00:00.000Z");
     expect(result.stdout).toContain("queued_at=2026-08-13T12:00:01.000Z");
     expect(result.stdout).toContain("completed_at=2026-08-13T12:00:02.000Z");
+  });
+
+  it("lists sent mail one per line with its delivery id, state and recipients", async () => {
+    const ctx = commandContext("shell-sent-1", ["shell.exec", "mail.sent"]);
+    const sent = {
+      outboundId: "mail-outbound:1",
+      from: "hank@gsv.space",
+      textPath: "/home/hank/.gsv/mail/outbox/mail-outbound:1/message.txt",
+      queuedAt: null,
+      completedAt: null,
+    };
+    handleMailSent.mockReturnValue({
+      outbound: [
+        {
+          ...sent,
+          deliveryId: "delivery-2",
+          state: "failed",
+          errorCode: "recipient_suppressed",
+          to: "mike@example.com, anna@example.com",
+          cc: "bob@example.com",
+          subject: "Friday\nplans",
+          createdAt: Date.parse("2026-11-06T10:00:00.000Z"),
+        },
+        {
+          ...sent,
+          deliveryId: "delivery-1",
+          state: "accepted",
+          to: "mike@example.com",
+          subject: "Hello",
+          createdAt: Date.parse("2026-11-06T09:00:00.000Z"),
+        },
+      ],
+      next: "1793955600000.mail-outbound:1",
+    } satisfies MailSentResult);
+    const command = buildMailCommand(emptyFs(), ctx);
+
+    const result = await command.execute(["sent", "--limit", "2"]);
+
+    expect(handleMailSent).toHaveBeenCalledWith({ limit: 2 }, ctx);
+    expect(result).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: [
+        "delivery-2\t2026-11-06T10:00:00.000Z\tfailed recipient_suppressed\tmike@example.com, anna@example.com cc bob@example.com\tFriday plans",
+        "delivery-1\t2026-11-06T09:00:00.000Z\taccepted\tmike@example.com\tHello",
+        "More: mail sent --before 1793955600000.mail-outbound:1",
+        "",
+      ].join("\n"),
+    });
+  });
+
+  it("requires mail.sent capability before listing sent mail", async () => {
+    const command = buildMailCommand(emptyFs(), commandContext("shell-sent-denied"));
+
+    const result = await command.execute(["sent"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Permission denied: mail.sent");
+    expect(handleMailSent).not.toHaveBeenCalled();
   });
 
   it("reports missing outbound delivery status without disclosing ownership", async () => {
@@ -422,6 +526,44 @@ describe("mail shell command", () => {
     expect(fs.stat).toHaveBeenCalledWith("/large.txt");
     expect(fs.readFile).not.toHaveBeenCalled();
     expect(handleMailSend).not.toHaveBeenCalled();
+  });
+
+  it("sends an event file as an invite to its guests, and refuses one too large to read", async () => {
+    const invite = "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n";
+    const sizes = new Map([["/home/hank/dinner.ics", invite.length], ["/home/hank/huge.ics", 32 * 1024 + 1]]);
+    // SAFETY: this fixture supplies the filesystem methods used by the command.
+    const fs = {
+      stat: vi.fn(async (path: string) => ({ isFile: true, isDirectory: false, size: sizes.get(path) ?? 0 })),
+      readFile: vi.fn(async () => invite),
+    // SAFETY: this fixture supplies the filesystem methods used by the command.
+    } as GsvFs;
+    const ctx = commandContext("shell-frame-invite");
+    handleMailSend.mockImplementation(async (input: MailSendArgs): Promise<MailSendResult> => ({
+      ok: true,
+      deliveryId: input.deliveryId!,
+      outboundId: `outbound:${input.deliveryId}`,
+      state: "queued",
+      from: "hank@gsv.space",
+      to: "anna@example.com",
+      subject: input.subject!,
+      replayed: false,
+    }));
+    const command = buildMailCommand(fs, ctx);
+    const shell = createCommandContext({ fs: new InMemoryFs(), cwd: "/home/hank" });
+
+    const sent = await command.execute(["send", "--invite", "dinner.ics", "--subject", "Dinner", "--message", "Here is the invite."], shell);
+    const huge = await command.execute(["send", "--invite", "huge.ics", "--subject", "Dinner", "--message", "Here."], shell);
+
+    expect(sent).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("to=anna@example.com\n") });
+    expect(handleMailSend).toHaveBeenCalledOnce();
+    expect(handleMailSend.mock.calls[0][0]).toStrictEqual({
+      text: "Here is the invite.",
+      deliveryId: expect.any(String),
+      subject: "Dinner",
+      invite,
+    });
+    expect(huge).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("mail invite exceeds 32768 bytes") });
+    expect(fs.readFile).toHaveBeenCalledTimes(1);
   });
 
   it("stops a cancelled shell invocation before sending", async () => {

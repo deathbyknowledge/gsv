@@ -164,7 +164,7 @@ import {
 import { requestAdapterTarget } from "./adapter-targets";
 import { handleMailSend } from "./outbound-mail";
 import { handleMailList, handleMailRead, handleMailSearch } from "./inbound-mail-read";
-import { handleMailStatus } from "./outbound-status";
+import { handleMailSent, handleMailStatus } from "./outbound-status";
 import { handleNotifyRuleList, handleNotifyRuleReset, handleNotifyRuleSet } from "./notice-rules";
 import {
   handleEventEmit,
@@ -480,6 +480,9 @@ async function dispatchKernel(
         break;
       case "mail.search":
         data = handleMailSearch(frame.args, ctx);
+        break;
+      case "mail.sent":
+        data = handleMailSent(frame.args, ctx);
         break;
       case "mail.read":
         data = await handleMailRead(frame.args, ctx);

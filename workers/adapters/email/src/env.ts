@@ -4,6 +4,7 @@ import type {
 import type { InstallationDirectoryService } from "@humansandmachines/gsv/services/directory";
 import type { MailGatewayService } from "@humansandmachines/gsv/services/mail";
 import type { MailInstallation } from "./mail-installation";
+import type { MailFooter } from "./render";
 import type { EntitlementsService } from "@humansandmachines/gsv/services/entitlements";
 import type { TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
 
@@ -24,11 +25,18 @@ export type MailEnv = Omit<
   | "ACCOUNTS"
   | "GATEWAY"
   | "INFERENCE"
-  | "EMAIL"
 > & {
   MAIL_DOMAIN: string;
   MAIL_SENDING_DOMAINS?: string;
   MAIL_RECEIVING_DOMAINS?: string;
+  /** The operator's line under every sent message, e.g. "Sent from my Ship"; none when unset. */
+  MAIL_FOOTER_TEXT?: string;
+  /** Where the footer links, e.g. "https://ship.space". */
+  MAIL_FOOTER_URL?: string;
+  /** The Cloudflare account whose Email Sending sends this deployment's mail. */
+  MAIL_SENDING_ACCOUNT_ID?: string;
+  /** A token for that account with the Email Sending: Edit permission. */
+  MAIL_SENDING_API_TOKEN?: string;
   GSV_BASE_DOMAIN: string;
   ENTITLEMENTS?: EntitlementsService;
   MAIL_MAX_MESSAGE_BYTES?: number | string;
@@ -43,7 +51,6 @@ export type MailEnv = Omit<
   ACCOUNTS: InstallationDirectoryService;
   GATEWAY: MailGatewayService;
   INFERENCE: ManagedMailSummaryService;
-  EMAIL: SendEmail;
 } & TelemetryEnvironment;
 
 export type MailLimits = {
@@ -114,6 +121,47 @@ function booleanValue(
 
 export function outboundEnabled(env: Pick<MailEnv, "MAIL_OUTBOUND_ENABLED">): boolean {
   return booleanValue(env.MAIL_OUTBOUND_ENABLED, "MAIL_OUTBOUND_ENABLED");
+}
+
+const MAX_FOOTER_TEXT_LENGTH = 200;
+
+/** The operator's footer, or none when the deployment sets no footer text. */
+export function mailFooter(env: Pick<MailEnv, "MAIL_FOOTER_TEXT" | "MAIL_FOOTER_URL">): MailFooter | undefined {
+  const text = env.MAIL_FOOTER_TEXT?.trim();
+  const url = env.MAIL_FOOTER_URL?.trim();
+  if (!text) {
+    if (url) throw new Error("MAIL_FOOTER_URL requires MAIL_FOOTER_TEXT");
+    return undefined;
+  }
+  if (text.length > MAX_FOOTER_TEXT_LENGTH || /\p{Cc}/u.test(text)) {
+    throw new Error("MAIL_FOOTER_TEXT is invalid");
+  }
+  if (!url) return { text };
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("MAIL_FOOTER_URL must be an HTTPS URL");
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+    throw new Error("MAIL_FOOTER_URL must be an HTTPS URL");
+  }
+  return { text, url };
+}
+
+export type MailSending = { accountId: string; apiToken: string };
+
+/** The account and token Email Sending takes this deployment's mail under. */
+export function mailSending(
+  env: Pick<MailEnv, "MAIL_SENDING_ACCOUNT_ID" | "MAIL_SENDING_API_TOKEN">,
+): MailSending {
+  const accountId = env.MAIL_SENDING_ACCOUNT_ID?.trim() ?? "";
+  if (!/^[0-9a-f]{32}$/.test(accountId)) {
+    throw new Error("MAIL_SENDING_ACCOUNT_ID must be a Cloudflare account ID");
+  }
+  const apiToken = env.MAIL_SENDING_API_TOKEN?.trim() ?? "";
+  if (!/^[\x21-\x7e]+$/.test(apiToken)) throw new Error("MAIL_SENDING_API_TOKEN is required");
+  return { accountId, apiToken };
 }
 
 function positiveInteger(value: number | string | undefined, name: string): number {

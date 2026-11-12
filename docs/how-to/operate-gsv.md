@@ -148,6 +148,14 @@ without it, and introduces every Ship to it again once it's named anew. That
 run happens only while the deployment names another relay or a lexicon
 account.
 
+## Signup navigation
+
+The web signup header links to the configured primary domain. The handle/email
+form has no Back button; other public signup steps link Back to that homepage.
+**Already have a Ship?** in the center of the signup top bar links to
+`/owner/signup/?view=welcome`, which offers both creating a Ship and opening
+an existing one by email or space address.
+
 ## Give someone a Ship {#give-someone-a-space}
 
 Operator administration and owner sign-in have separate jobs. In `operator`
@@ -420,48 +428,7 @@ The managed Buttondown implementation enables delivery separately and appends
 the `user` tag to existing subscribers. Pending, unsubscribed, blocked and other
 suppressed addresses remain untouched.
 
-### Import earlier marketing signups
-
-An operator may fulfil earlier opt-ins when the delivery backend did not exist.
-Use a fixed cutoff covering that cohort and confirm the prior opt-ins when
-applying. Approval is separate from deployment and never runs during a migration.
-The preview selects verified active owners and active Ships created by the
-cutoff, once per address. Apply rechecks that ownership, address, verification
-and Ship eligibility still hold, and imports only the reviewed recipients.
-Future signups continue to require the checkbox.
-
-From the runtime checkout, using the Accounts Wrangler configuration and exact
-database name for the intended environment:
-
-```bash
-node scripts/product-email-backfill.mjs preview \
-  --database ACCOUNTS_DATABASE --config PATH_TO_ACCOUNTS_CONFIG \
-  --cutoff 2026-11-02T00:00:00Z --out /tmp/product-email-import.json --remote
-```
-
-Review the recipients in the private JSON manifest and its cutoff, database and
-remote mode. Then apply that same manifest:
-
-```bash
-node scripts/product-email-backfill.mjs apply \
-  --database ACCOUNTS_DATABASE --config PATH_TO_ACCOUNTS_CONFIG \
-  --manifest /tmp/product-email-import.json --confirm-existing-opt-ins --remote
-```
-
-The example cutoff must be replaced with the cohort boundary the operator has
-confirmed. Omit `--remote` for a local database. Preview writes no database
-state. The manifest is created with private file permissions; do not commit it.
-A changed manifest requires a fresh preview. Imports can be retried after an
-interruption: stable request IDs and the address key prevent duplicate requests,
-and completed deliveries and existing checkbox evidence remain unchanged.
-
-Imported rows carry source `ship-existing-user-backfill`, the import ID and
-`consent_basis=operator-confirmed-existing-opt-ins`. Their original consent time,
-wording and locale are unknown; `requested_at` records the queue insertion time,
-not the historical opt-in. New checkbox choices retain their actual recorded
-timestamp and wording. Migration 0034 creates an empty table: deploying never
-adds an existing owner, and only this import does.
-
-Keep delivery disabled while upgrading and importing. Then enable it,
-and verify one new opted-in signup and one imported owner with the provider before
-considering rollout complete.
+Rows with source `ship-existing-user-backfill` and
+`consent_basis=operator-confirmed-existing-opt-ins` come from a one-time import
+of opt-ins made before delivery existed. Their original consent time, wording
+and locale are unknown; `requested_at` records when they were queued.

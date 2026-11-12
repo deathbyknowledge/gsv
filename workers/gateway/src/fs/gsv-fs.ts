@@ -5,6 +5,7 @@
  *   /proc/*, /dev/*, /sys/*, /var/{spool,log}/*, /etc/{passwd,shadow,group,cron.d} → KernelMountBackend
  *   /var/media/*                                          → ProcessMediaMountBackend
  *   /src/repos/*                                       → Process source/ripgit repo backend
+ *   /bin, /usr/bin                                     → built-in commands: always absent, read-only
  *   everything else                                           → R2 backend
  *
  * Two paths remain hybrid in GsvFs itself:
@@ -37,6 +38,7 @@ import type {
   WriteFileStreamResult,
 } from "./mount";
 import { R2MountBackend } from "./backends/r2";
+import { CommandDirectoriesBackend } from "./backends/command-directories";
 import { KernelMountBackend } from "./backends/kernel";
 import { ProcessMediaMountBackend } from "./backends/process-media";
 import { isProcessMediaPath } from "../shared/process-media-path";
@@ -53,6 +55,7 @@ export class GsvFs implements IFileSystem {
   private readonly identity: ProcessIdentity;
   private readonly kernel: KernelRefs | null;
   private readonly r2Backend: MountBackend;
+  private readonly commandDirectoriesBackend: MountBackend;
   private readonly kernelBackend: MountBackend;
   private readonly processMediaBackend: MountBackend;
   private readonly sourceBackend: MountBackend | null;
@@ -69,6 +72,7 @@ export class GsvFs implements IFileSystem {
     this.identity = identity;
     this.kernel = kernel ?? null;
     this.r2Backend = new R2MountBackend(bucket, identity);
+    this.commandDirectoriesBackend = new CommandDirectoriesBackend();
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
     this.processMediaBackend = new ProcessMediaMountBackend(bucket, identity, this.kernel, selfPid ?? null);
     this.sourceBackend = sourceBackend ?? null;
@@ -345,7 +349,9 @@ export class GsvFs implements IFileSystem {
     if (!backend.readlink) {
       throw new Error(`EINVAL: invalid argument, readlink '${p}'`);
     }
-    return backend.readlink(p);
+    // Await rather than return: workerd reports a backend's immediate rejection as
+    // unhandled before a returned promise is adopted.
+    return await backend.readlink(p);
   }
 
   async realpath(path: string): Promise<string> {
@@ -408,13 +414,16 @@ export class GsvFs implements IFileSystem {
       return "/";
     }
 
+    // Ask about every component at once; the answers are still used in path order.
+    const components = parts.map((_part, index) => normalizePath(`/${parts.slice(0, index + 1).join("/")}`));
+    const pending = components.map((component) => this.lstatComponent(component));
     let current = "/";
     for (let index = 0; index < parts.length; index += 1) {
-      current = normalizePath(`${current}/${parts[index]}`);
+      current = components[index];
       const backend = this.backendForPath(current);
       let stat: ExtendedMountStat;
       try {
-        stat = backend.lstat ? await backend.lstat(current) : await backend.stat(current);
+        stat = await pending[index];
       } catch (error) {
         if (options?.allowMissingFinal) {
           return normalizePath(`/${parts.join("/")}`);
@@ -437,6 +446,17 @@ export class GsvFs implements IFileSystem {
       }
     }
     return current;
+  }
+
+  /** Starts a component's lstat; its failure surfaces only if the walk reaches it. */
+  private lstatComponent(path: string): Promise<ExtendedMountStat> {
+    const stat = (async () => {
+      const backend = this.backendForPath(path);
+      return backend.lstat ? await backend.lstat(path) : await backend.stat(path);
+    })();
+    // A missing or symlinked component ends the walk before later answers are read.
+    stat.catch(() => {});
+    return stat;
   }
 
   private resolveSymlinkTarget(linkPath: string, target: string): string {
@@ -470,6 +490,10 @@ export class GsvFs implements IFileSystem {
 
     if (this.accountHomeBackend && isAccountHomeReservedPath(path)) {
       throw new Error(`EACCES: permission denied, '${normalizePath(path)}'`);
+    }
+
+    if (this.commandDirectoriesBackend.handles(path)) {
+      return this.commandDirectoriesBackend;
     }
 
     if (this.kernelBackend.handles(path)) {
