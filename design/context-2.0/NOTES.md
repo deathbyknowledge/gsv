@@ -21,23 +21,28 @@ Only `<scope>/context.d/*.md` enters the rendered prompt. This file and
 ## How the seed was made
 
 The seed moves whole paragraphs and sentences out of 1.0's files without
-rewording them. Every wording change is still open. Starting size: 15.0 KB of
-standing context in 1.0, 12.6 KB in the seed.
+rewording them. Starting size: 15.0 KB of
+standing context in 1.0, 12.6 KB in the seed, 12.4 KB after the wording
+changes below.
 
-## Open wording items
+## Wording decided 2026-11-12
 
-1. `system/01-gsv` still says "the user's Ship" and is titled "Ship and its
-   runtime". In 2.0 the runtime has no Ship; the profile names the agent.
-2. `system/00-runtime` keeps the `Ship:` line. It is a profile fact, so it
-   likely moves to the Ship files or becomes a generic "Address:" line.
-3. `system/15-memory` now opens "...useful almost everywhere there". "There"
-   pointed at the owner's `10-personal.md`, whose sentence moved to
-   `ship/15-memory`.
-4. `ship/05-voice` states the em-dash rule twice (rules 2 and 4).
-5. Only the "Match the register" paragraph moved out of the Sending section;
-   the rest stayed. That is why the seed lands at 12.6 KB, not ~10.7 KB.
-6. Tool and command names (`proc compact`, `skills show`, `yield`)
-   follow 1.0. The 2.0 catalog renames them.
+1. Runtime files say nothing about Ship: `system/01-gsv` is "# Runtime",
+   "You are an agent running on GSV...".
+2. The Ship's address moved from `system/00-runtime` to the top of
+   `ship/01-ship`. The email line stays in the runtime (one mailbox per
+   person owner).
+3. `system/15-memory`: "keep only concise, explicit facts and preferences
+   useful almost everywhere."
+4. `ship/05-voice` states the em-dash rule once (rule 4).
+5. The Sending section stays standing context; only its closing sentence,
+   which repeated the section, went.
+
+## Open
+
+- Tool and command names (`proc compact`, `skills show`, `yield`) follow
+  1.0. They change with the 2.0 catalog write-up.
+- The keep/move list, row by row.
 
 ## What the preview is
 
