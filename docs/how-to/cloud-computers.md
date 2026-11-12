@@ -10,10 +10,20 @@ interfaces. Choose a connected computer when the work needs resources or access 
 choose a cloud computer when it suits the task. Its availability is controlled
 by the operator, independently of whether the user's own computers are online.
 
-The initial image includes Node.js, npm, Python, Git and build tools. Install
-additional software as needed and work in `/workspace`. Save useful files in
-the owner's home on `gsv`, using a GSV repository for reusable source when
-appropriate. Copy results back before stopping the computer: stop or expiry
+The initial image includes Node.js, npm, Python, Git and build tools, and
+common tools for documents and data:
+
+- PDFs: `pdftotext` and the other Poppler tools, `qpdf`, Ghostscript, and
+  Python's `pypdf` and `reportlab`.
+- Spreadsheets, documents and slides: Python's `pandas`, `openpyxl`,
+  `python-docx` and `python-pptx`.
+- Charts and images: `matplotlib` and ImageMagick.
+- Data: `jq`, `sqlite3`, `zip` and `unzip`.
+
+`pip install` and `apt-get install` add software for the life of the computer;
+LibreOffice, for example, is not preinstalled. Work in `/workspace`. Save useful
+files in the owner's home on `gsv`, using a GSV repository for reusable source
+when appropriate. Copy results back before stopping the computer: stop or expiry
 destroys its files and running commands. There is no automatic restore.
 
 ## Start and use one

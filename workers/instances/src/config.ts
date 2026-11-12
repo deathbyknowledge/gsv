@@ -27,7 +27,7 @@ export const COMPUTER_IMPLEMENTATIONS = [...IMPLEMENTATIONS, "shell.cancel", "ne
 export function computerTemplate(limits: ComputerLimits): InstanceTemplate {
   return {
     templateId: "computer", revision: "1", kind: "linux", label: "Cloud computer",
-    description: "An ephemeral Linux computer with Node.js, Python, Git, and build tools. Save source and outputs before stopping it.",
+    description: "An ephemeral Linux computer with Node.js, Python, Git, build tools, and PDF, spreadsheet, document and image tools. Save source and outputs before stopping it.",
     implements: [...COMPUTER_IMPLEMENTATIONS], defaultLifetimeSeconds: Math.min(1800, limits.maxInstanceSeconds),
     maxLifetimeSeconds: limits.maxInstanceSeconds, capacityUnits: 1,
   };
