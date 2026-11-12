@@ -9,20 +9,22 @@ import { requireCommandCapability, requireShellOptionValue } from "./common";
 const INSTANCE_HELP = `Usage:
   instance catalog
   instance start browser --request-id ID [--wait] [--timeout MS] [--new] [--profile ID] [--name NAME] [--seconds N]
-  instance start computer --request-id ID [--wait] [--timeout MS] [--name NAME] [--seconds N]
+  instance start computer --request-id ID [--wait] [--timeout MS] [--name NAME] [--seconds N] [--from ID]
   instance list [--all]
   instance get ID | instance get --request-id ID
   instance stop ID [--wait] [--timeout MS] [--force] | instance stop --request-id ID [--wait] [--force]
 
 Keep the request ID before starting. If the response is lost, get by that ID; do not start again with a new ID.
 Start reuses your current browser, including one still starting, without extending its lifetime. Use another tab for additional work.
-Computer starts allocate a separate Linux target with shell, files and network access. Its /workspace is temporary; copy source and build outputs to gsv before stopping. Browser profiles and --new do not apply to computers.
+Computer starts allocate a separate Linux target with shell, files and network access. Browser profiles and --new do not apply to computers.
+Stopping a computer discards its /workspace, so copy source and build outputs to gsv before stopping. A computer whose lifetime expires saves /workspace for 7 days instead: --from ID starts a new computer with that saved /workspace, and instance get ID shows whether it was saved.
 --wait returns when ready (default timeout 60000 ms, maximum 120000). Cancelling or timing out only stops waiting; get by the saved request ID to recover.
 The result says disposition: created or reused. IDs accept the displayed target ID or full instance ID.
 --new explicitly starts a separate, temporary browser. Ordinary starts remember logins for your account automatically.
 Stop saves before closing. A partial save still stops normally: inspect persistence.issues for sites whose changes were not saved; other sites are saved. Unsupported storage will not be fixed by retrying or --force.
 If the whole save fails, the browser stays running. Inspect instance get ID for the reason before retrying; --force discards unsaved changes and cannot test persistence. Stop --wait waits for shutdown and releases the saved login state for the next browser.
-Instances have a fixed lifetime. When browser work is finished, export any files you need and stop the cloud browser with instance stop ID --wait. Keep it open if the user asks or ongoing work still needs it. A stopped instance never restarts.
+Browsers have a fixed lifetime. When browser work is finished, export any files you need and stop the cloud browser with instance stop ID --wait. Keep it open if the user asks or ongoing work still needs it. A stopped instance never restarts.
+A computer stays up while in use: each command or running job keeps it up for 30 more minutes, up to its maximum lifetime. It costs money while it runs, so stop it with instance stop ID --wait as soon as its work is done and the files you need are copied to gsv.
 `;
 const BROWSER_HELP = `Usage:
   browser profile list [--offset N]
@@ -69,9 +71,9 @@ export function buildInstanceCommands(ctx: KernelContext, request?: NativeShellC
       let waitMs: number | undefined;
       const id = crypto.randomUUID();
       if (name === "instance") {
-        const { words, options } = parseOptions(argv, ["--request-id", "--profile", "--name", "--seconds", "--all", "--new", "--wait", "--timeout", "--force"]);
+        const { words, options } = parseOptions(argv, ["--request-id", "--profile", "--name", "--seconds", "--all", "--new", "--wait", "--timeout", "--force", "--from"]);
         const [verb, target] = words;
-        const allowed = verb === "start" ? ["--request-id", "--profile", "--name", "--seconds", "--new", "--wait", "--timeout"]
+        const allowed = verb === "start" ? ["--request-id", "--profile", "--name", "--seconds", "--new", "--wait", "--timeout", "--from"]
           : verb === "list" ? ["--all"] : verb === "stop" ? ["--request-id", "--wait", "--timeout", "--force"] : verb === "get" ? ["--request-id"] : [];
         for (const option of Object.keys(options)) if (!allowed.includes(option)) throw new Error(`Unexpected option for ${verb}: ${option}`);
         if (options["--timeout"] && !options["--wait"]) throw new Error("--timeout requires --wait");
@@ -92,6 +94,7 @@ export function buildInstanceCommands(ctx: KernelContext, request?: NativeShellC
             requestId: options["--request-id"], templateId: target, profileId: options["--profile"], label: options["--name"],
             lifetimeSeconds: options["--seconds"] ? Number(options["--seconds"]) : undefined,
             fresh: options["--new"] === "true" || undefined,
+            fromInstanceId: options["--from"],
           } };
         } else throw new Error(help);
       } else {

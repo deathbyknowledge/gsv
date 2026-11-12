@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bodyFromBytes, bodyToBytes, type BinaryBody } from "@humansandmachines/gsv/protocol";
 import type { InstanceTargetRequest, InstanceTargetResponse } from "@humansandmachines/gsv/services/instances";
-import { ComputerInstance, computerName, type ComputerControl, type ComputerIdentity } from "../src/computer";
+import { ComputerInstance, computerName, type ComputerControl, type ComputerIdentity, type ComputerStop } from "../src/computer";
 import type { ComputerConnection } from "../src/computer-connection";
 import { ComputerRequest } from "../src/computer-request";
 import { InstanceCoordinator } from "../src/coordinator";
@@ -61,9 +61,9 @@ async function coordinatorFixture(work: (object: InstanceCoordinator, id: string
 
 function fakeControl() {
   return {
-    provision: vi.fn(async () => {}), status: vi.fn(async () => ({ state: "ready" as const })),
+    provision: vi.fn(async () => {}), status: vi.fn(async () => ({ state: "ready" as const })), extend: vi.fn(async () => true),
     execute: vi.fn(async (): Promise<InstanceTargetResponse> => response), cancel: vi.fn(async () => {}),
-    stop: vi.fn(async () => {}), erase: vi.fn(async () => {}),
+    stop: vi.fn(async (): Promise<ComputerStop> => ({ state: "stopped" })), erase: vi.fn(async () => {}),
   } satisfies ComputerControl;
 }
 

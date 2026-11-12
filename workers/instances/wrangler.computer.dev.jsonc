@@ -23,7 +23,7 @@
     { "binding": "INSTANCE_EVENTS", "service": "gsv-gateway-dev", "entrypoint": "InstancesGatewayEntrypoint", "props": { "authority": "instance-notifications" } }
   ],
   "vars": {
-    "COMPUTER_LIMITS": { "enabled": true, "concurrentInstances": 1, "periodSeconds": 7200, "maxInstanceSeconds": 1800 },
+    "COMPUTER_LIMITS": { "enabled": true, "concurrentInstances": 1, "periodSeconds": 7200, "maxInstanceSeconds": 14400 },
     "BROWSER_LIMITS": { "enabled": true, "concurrentInstances": 2, "periodSeconds": 36000, "maxInstanceSeconds": 1800, "savedProfiles": 5, "profileStorageBytes": 16777216 }
   }
 }
