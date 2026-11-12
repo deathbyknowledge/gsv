@@ -157,7 +157,8 @@ navigation reference includes a reminder of where to find this setting.
 
 Under **Appearance**, choose **Match system** to follow this device's light or
 dark appearance. An explicit theme choice applies to both sign-in and the app.
-Before you choose, **Default** keeps sign-in dark and the app light.
+Before you choose, **Default** follows the system across signup, sign-in and the
+app, including changes while the page is open.
 
 The app starts at 75% text size on a device without a saved preference.
 Outside a text field, press **x** to cycle through 65%, 75%, 85%, 100%, 150% and 200%
