@@ -2,7 +2,7 @@ import { Fragment, type VNode } from "preact";
 import { AuthLayout } from "../app/features/session/AuthLayout";
 import { OwnerWelcomeScreen } from "../app/features/session/OwnerWelcomeScreen";
 import { SpaceAddressForm } from "../app/features/session/SpaceAddressForm";
-import { OwnerWelcome, signupAttributionFromFragment, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
+import { OwnerWelcome, SIGNUP_LINK_SLUGS, signupAttributionFromLink, type WelcomeSnapshot, type WelcomeStorage } from "../app/services/session/ownerWelcome";
 import { DesktopAppLink } from "./DesktopAppLink";
 import { SignupDialog } from "./SignupDialog";
 import { presumedSpaceDomain, signupDestination } from "./navigation";
@@ -22,8 +22,8 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
     const candidate = new OwnerWelcome(snapshot, storage, accountsOrigin);
     await captureContactInvitation(candidate, contactInvitation);
     const resume = new URLSearchParams(window.location.search).get("resume") === "1";
-    // The website's signup link names where it was clicked; it rides along until the Ship activates.
-    const attribution = signupAttributionFromFragment(new URLSearchParams(new URL(window.location.href).hash.slice(1)));
+    // The signup link names where it was clicked and which campaign brought it; that rides along until the Ship is reserved.
+    const attribution = signupAttributionFromLink(new URL(window.location.href));
     // A new signup takes this link's origin or none; only a resumed one keeps what was stored.
     if (!resume || contactInvitation) await candidate.save({ flow: "create", attribution });
     else if (attribution) await candidate.save({ attribution });
@@ -39,8 +39,10 @@ export async function loadSignupPage(storage: WelcomeStorage & { load(): Promise
   // Old signup links remain useful destinations, but their codes no longer authorize creation.
   const url = new URL(window.location.href);
   const fragment = new URLSearchParams(url.hash.slice(1));
-  if (fragment.has("invite") || fragment.has("from") || fragment.has("example")) {
-    for (const key of ["invite", "from", "example"]) fragment.delete(key);
+  const carried = SIGNUP_LINK_SLUGS.filter((slug) => (slug.part === "fragment" ? fragment : url.searchParams).has(slug.name));
+  if (fragment.has("invite") || carried.length) {
+    fragment.delete("invite");
+    for (const slug of carried) (slug.part === "fragment" ? fragment : url.searchParams).delete(slug.name);
     url.hash = fragment.toString();
     window.history.replaceState(null, "", url);
   }

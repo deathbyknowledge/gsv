@@ -13,9 +13,9 @@ const secret = z.string().regex(/^[a-f0-9]{64}$/);
 const challenge = z.strictObject({ challengeId: z.string().uuid(), browserSecret: secret, email: z.string().max(254), resend: z.boolean().optional() });
 const verification = z.strictObject({ challengeId: z.string().uuid(), browserSecret: secret, sessionSecret: secret, code: z.string().regex(/^\d{6}$/) });
 const handle = z.string().trim().toLowerCase().max(63);
-// Slugs the website put in the signup link: bounded in shape here, classified into the closed allowlist before storage.
-const attributionSlug = z.string().regex(/^[a-z0-9-]{1,32}$/);
-const signupAttributionSchema = z.strictObject({ placement: attributionSlug, example: attributionSlug.optional() });
+// Slugs the signup link carried: bounded in shape here, classified into the closed allowlist before they are reported.
+const attributionSlug = z.string().regex(/^[a-z0-9-]{1,32}$/).optional();
+const signupAttributionSchema = z.strictObject({ placement: attributionSlug, example: attributionSlug, utmSource: attributionSlug, utmCampaign: attributionSlug });
 // The inviting Ship's address as the signup link carried it; Accounts resolves it, and an unknown Ship is dropped.
 const inviterHostname = z.string().max(253).transform((value) => normalizeHostname(value)).pipe(z.string());
 const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS",
@@ -73,7 +73,7 @@ export class InstallationOwnerApi {
           operationId: z.string().min(1).max(128), handle, attribution: signupAttributionSchema.optional(), inviter: inviterHostname.optional(),
           productEmails: productEmailChoice.optional(),
         }).parse(await readJsonObject(request));
-        const attribution = input.attribution ? signupAttributionFromSlugs(input.attribution.placement, input.attribution.example) : undefined;
+        const attribution = input.attribution ? signupAttributionFromSlugs(input.attribution) : undefined;
         return json(await this.signup.prepare(input.operationId, session.principalId, input.handle, attribution, input.inviter, input.productEmails,
           request.headers.get("cf-connecting-ip") ?? undefined));
       }

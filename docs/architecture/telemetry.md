@@ -195,20 +195,27 @@ without granting those adapters ownership of another component's application eve
   `initial-onboarding` record, so an owner whose welcome predates the record is
   never reported.
 - Accounts: activation and attribution. `installation.attributed` is reported
-  once when a self-service signup completes onboarding (a Ship an operator
-  created or reset reports nothing), with `origin: "invite"` when the signup
-  carried another Ship's contact invitation that Accounts resolved, otherwise
-  `origin: "website"` with a closed placement class (`hero`, `final-call`,
-  `example` or `other`) and, for example cards, a closed example id, or
-  `origin: "direct"` when there were none. Which Ship invited the new one stays
-  in Accounts; the record never names it, so two installations' product series
-  cannot be joined through it. The
-  signup page reads the website's slugs from the signup link's fragment in the
-  browser and keeps them in its own signup state until the space request; the
-  owner API bounds their shape and classifies them into the allowlist before
-  they are stored with the reservation, so an unknown slug becomes `other` and
-  the raw string never enters storage or a record. Nothing in it is a visitor
-  identity. This is not a full signup funnel;
+  once, by the request that first reserves a self-service signup's Ship, under
+  the same pseudonym as `installation.activated` and the Ship's later Gateway
+  events, so signups, activations and first messages break down by the same
+  properties; a replayed or resumed request reports nothing again, and a Ship
+  an operator created or reset never passes through it. The properties are a
+  closed placement class (`hero`, `final-call`, `example` or `other`) and, for
+  example cards, a closed example id, plus the campaign's `utm_source` and
+  `utm_campaign` as `utmSource` and `utmCampaign`; `origin` is `invite` when the
+  signup carried another Ship's contact invitation that Accounts resolved,
+  `website` when the link carried a placement, `campaign` when it carried only
+  a campaign tag, otherwise `direct`. Which Ship invited the new one stays in
+  Accounts; the record never names it, so two installations' product series
+  cannot be joined through it. The signup page reads the placement slugs from the signup
+  link's fragment and the campaign tags from its query, keeps them in its own
+  signup state until the space request and takes them off the URL; the owner
+  API bounds every value to one slug shape and classifies the placement and
+  example into the allowlist, so an unknown slug becomes `other`, a campaign
+  tag outside the shape is dropped, and the raw string never enters a record.
+  Campaign tags are the operator's own names for an ad or a post, not a
+  visitor's; the click ids and other tags on the link stay out. Accounts keeps
+  no copy: the record is the only one. This is not a full signup funnel;
   anonymous invite/email steps intentionally do not invent an installation
   identity or export addresses.
 - Inference: logical terminal outcomes, cost/tokens, provider attempt failures,

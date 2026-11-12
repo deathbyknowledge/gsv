@@ -22,15 +22,11 @@ type AdminOperationState =
   | "complete"
   | "failed";
 
-/** How a Ship's owner arrived: another Ship's invitation, a website link, or neither. */
-export type AdminInstallationOrigin = "invite" | "website" | "direct";
-
 export type AdminInstallationSummary = {
   installationId: string;
   handle: string;
   state: InstallationState;
   operationState: AdminOperationState;
-  origin: AdminInstallationOrigin;
   createdAt: number;
 };
 
@@ -88,7 +84,7 @@ type AdminInstallationSummaryRow = Pick<
   | "state"
   | "operation_state"
   | "created_at"
-> & { origin: AdminInstallationOrigin };
+>;
 
 export class InstallationAdminStore {
   constructor(private readonly db: D1Database) {}
@@ -144,16 +140,6 @@ export class InstallationAdminStore {
              ORDER BY p.updated_at DESC
              LIMIT 1
            ) AS operation_state,
-           (
-             SELECT CASE
-               WHEN p.inviter_installation_id IS NOT NULL THEN 'invite'
-               WHEN p.attribution_json IS NOT NULL THEN 'website'
-               ELSE 'direct' END
-             FROM provisioning_operations p
-             WHERE p.installation_id = i.id AND p.kind = 'create'
-             ORDER BY p.updated_at DESC
-             LIMIT 1
-           ) AS origin,
            i.created_at
          FROM installations i
          WHERE ${where}
@@ -245,7 +231,6 @@ function adminInstallationSummaryFromRow(
     handle: row.handle,
     state: row.state,
     operationState: row.operation_state,
-    origin: row.origin,
     createdAt: row.created_at,
   };
 }

@@ -19,6 +19,6 @@ WHEN EXISTS (SELECT 1 FROM installation_account_deletions WHERE installation_id 
     AND NEW.operation_id IS OLD.operation_id AND NEW.installation_id IS OLD.installation_id
     AND NEW.principal_id IS OLD.principal_id AND NEW.kind IS OLD.kind AND NEW.state IS OLD.state
     AND NEW.attempt IS OLD.attempt AND NEW.last_error IS OLD.last_error
-    AND NEW.updated_at IS OLD.updated_at AND NEW.attribution_json IS OLD.attribution_json
+    AND NEW.updated_at IS OLD.updated_at
   )
 BEGIN SELECT RAISE(ABORT, 'installation is retired'); END;

@@ -164,13 +164,16 @@ describe("signup attribution body", () => {
     await f.signIn();
     const operationId = crypto.randomUUID();
     const handle = `attr-${crypto.randomUUID()}`;
-    const rejected = await f.request("/spaces", f.sessionSecret, { operationId, handle, attribution: { placement: "Hero Banner" } });
-    expect(rejected.status).toBe(400);
+    const malformed: Array<Record<string, string>> = [{ placement: "Hero Banner" }, { utmSource: "face_book" }, { utmSource: "facebook", utmContent: "photo" }];
+    for (const attribution of malformed) {
+      const rejected = await f.request("/spaces", f.sessionSecret, { operationId, handle, attribution });
+      expect(rejected.status).toBe(400);
+    }
     expect(await f.accounts.getReservationByOperation(operationId)).toBeNull();
-    const accepted = await f.request("/spaces", f.sessionSecret, { operationId, handle, attribution: { placement: "details-tickets", example: "tickets" } });
+    const accepted = await f.request("/spaces", f.sessionSecret, { operationId, handle,
+      attribution: { placement: "details-tickets", example: "tickets", utmSource: "facebook", utmCampaign: "launch" } });
     expect(accepted.status).toBe(200);
-    const stored = await env.INSTALLATIONS_DB.prepare("SELECT attribution_json FROM provisioning_operations WHERE operation_id = ?").bind(operationId).first<{ attribution_json: string }>();
-    expect(JSON.parse(stored!.attribution_json)).toEqual({ placement: "example", example: "tickets" });
+    expect(await f.accounts.getReservationByOperation(operationId)).not.toBeNull();
   });
 });
 

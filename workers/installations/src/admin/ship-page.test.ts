@@ -139,10 +139,6 @@ describe("Ship page", () => {
     const inviter = await page(http, `/admin/installations/${inviterId}`);
     expect(inviter).not.toContain("Invited by");
     expect(inviter).toContain("<dt>Invited</dt><dd>1 Ship (1 active)</dd>");
-    const list = await page(http, "/admin/installations?q=-page");
-    expect(list).toContain("<th>Source</th>");
-    expect(list).toMatch(/invited-page[\s\S]*?<td>invite<\/td>/);
-    expect(list).toMatch(/inviter-page[\s\S]*?<td>direct<\/td>/);
   });
 
   it("still renders the Ship when its health cannot be read", async () => {

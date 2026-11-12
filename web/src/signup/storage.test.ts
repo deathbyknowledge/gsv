@@ -10,9 +10,12 @@ const saved = {
 };
 
 describe("welcome snapshot storage", () => {
-  it("keeps the website attribution through a save and reload", () => {
-    const stored = { ...saved, value: { ...saved.value, attribution: { placement: "hero", example: "tickets" } } };
-    expect(welcomeSnapshotSchema.parse(stored).value?.attribution).toEqual({ placement: "hero", example: "tickets" });
+  it("keeps the signup attribution through a save and reload", () => {
+    const attribution = { placement: "hero", example: "tickets", utmSource: "facebook", utmCampaign: "launch" };
+    const stored = { ...saved, value: { ...saved.value, attribution } };
+    expect(welcomeSnapshotSchema.parse(stored).value?.attribution).toEqual(attribution);
+    const campaign = { ...saved, value: { ...saved.value, attribution: { utmSource: "facebook" } } };
+    expect(welcomeSnapshotSchema.parse(campaign).value?.attribution).toEqual({ utmSource: "facebook" });
     const cleared = { ...saved, value: { ...saved.value, attribution: null } };
     expect(welcomeSnapshotSchema.parse(cleared).value?.attribution).toBeNull();
   });

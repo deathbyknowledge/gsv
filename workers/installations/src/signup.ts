@@ -4,7 +4,9 @@ import { InstallationOnboardingStore } from "./onboarding";
 import { parseOpaqueId } from "./domain";
 import { OwnerAuthError } from "./owner-auth-store";
 import { queueProductEmail, type ProductEmailChoice } from "./product-email";
-import { emitTelemetry, exceptionDiagnostics, type SignupAttribution, type TelemetryEnvironment } from "@humansandmachines/gsv/telemetry";
+import {
+  emitTelemetry, exceptionDiagnostics, installationAttributedProperties, type SignupAttribution, type TelemetryEnvironment,
+} from "@humansandmachines/gsv/telemetry";
 
 export type PendingSetup = { operationId: string; handle: string; origin: string };
 export type SignupPolicy = {
@@ -47,10 +49,14 @@ export class InstallationSignup {
     const existing = await this.accounts.getReservationByOperation(operationId);
     if (!existing && !this.enabled) throw new Error("Registration is currently closed.");
     if (!existing && !this.allowsEmail(principal.email)) throw new OwnerAuthError("email_restricted");
-    // The origin is written with the reservation itself, so the request that reserves the operation
-    // sets it once and a retry or resumed signup can neither lose nor rewrite it.
     const inviterInstallationId = !existing && inviter ? await this.inviterInstallation(inviter) : undefined;
-    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true, attribution, inviterInstallationId });
+    const space = await this.accounts.reserveInstallation({ principalId, operationId, handle, ownerSetup: true, inviterInstallationId });
+    // Where the signup came from is reported once, by the request that created the reservation, under
+    // the Ship's own pseudonym; a retry or resumed signup replays the reservation and reports nothing.
+    // The inviter is kept with the reservation for the operator's counts; the slugs are not stored.
+    if (space.created) emitTelemetry(this.telemetry, { component: "accounts", installationId: space.installationId,
+      event: { stream: "product", name: "installation.attributed",
+        properties: installationAttributedProperties(attribution, await this.invited(operationId)) } });
     const owned = await this.db.prepare("SELECT 1 FROM installations WHERE id = ? AND owner_setup = 1 AND owner_principal_id = ?")
       .bind(space.installationId, principalId).first();
     if (!owned) throw new Error("Ship activation is unavailable.");
@@ -80,6 +86,12 @@ export class InstallationSignup {
    * The inviter is the signup's own claim: an unknown address is dropped silently here, and the
    * reservation keeps the Ship only if it is still active and owned by someone else when it is written.
    */
+  /** Whether the reservation kept an inviter: the insert drops one that is inactive or the owner's own Ship. */
+  private async invited(operationId: string): Promise<boolean> {
+    return !!await this.db.prepare("SELECT 1 FROM provisioning_operations WHERE operation_id = ? AND inviter_installation_id IS NOT NULL")
+      .bind(operationId).first();
+  }
+
   private async inviterInstallation(hostname: string): Promise<string | undefined> {
     const inviter = await this.accounts.resolveHostname(hostname);
     return inviter.found ? inviter.installationId : undefined;

@@ -4,7 +4,6 @@ import { InstallationAdminStore } from "./administration";
 import { AccountStore } from "./store";
 import { InstallationOnboardingStore } from "./onboarding";
 import { InstallationResetCoordinator } from "./reset-preparation";
-import type { SignupAttribution } from "@humansandmachines/gsv/telemetry";
 
 it("administers installations and preserves reset isolation without commercial tables", async () => {
   const accounts = new AccountStore(env.INSTALLATIONS_DB, "example.com");
@@ -47,10 +46,10 @@ it("shows who invited a Ship and how many Ships it invited, across resets on eit
   const db = env.INSTALLATIONS_DB;
   const accounts = new AccountStore(db, "example.com");
   const admin = new InstallationAdminStore(db);
-  const ship = async (handle: string, input: { active?: boolean; inviterInstallationId?: string; attribution?: SignupAttribution } = {}) => {
+  const ship = async (handle: string, input: { active?: boolean; inviterInstallationId?: string } = {}) => {
     const owner = await accounts.createPrincipal({ email: `${handle}@example.com`, displayName: handle, verified: true });
     const space = await accounts.reserveInstallation({ principalId: owner.id, operationId: `create_${handle}`, handle,
-      inviterInstallationId: input.inviterInstallationId, attribution: input.attribution });
+      inviterInstallationId: input.inviterInstallationId });
     if (input.active) {
       await db.batch([
         db.prepare("UPDATE installations SET state = 'active' WHERE id = ?").bind(space.installationId),
@@ -62,16 +61,10 @@ it("shows who invited a Ship and how many Ships it invited, across resets on eit
   const inviter = await ship("invites-host", { active: true });
   const joined = await ship("invites-joined", { active: true, inviterInstallationId: inviter.installationId });
   await ship("invites-pending", { inviterInstallationId: inviter.installationId });
-  await ship("invites-website", { attribution: { placement: "hero" } });
 
   await expect(admin.getInstallation(inviter.installationId)).resolves.toMatchObject({ invitedBy: null, invitations: { total: 2, active: 1 } });
   await expect(admin.getInstallation(joined.installationId)).resolves.toMatchObject({
     invitedBy: { installationId: inviter.installationId, handle: "invites-host" }, invitations: { total: 0, active: 0 },
-  });
-  const origins = async () => Object.fromEntries((await admin.listInstallations({ query: "invites-", state: null, page: 1 }))
-    .installations.map((entry) => [entry.handle, entry.origin]));
-  await expect(origins()).resolves.toEqual({
-    "invites-host": "direct", "invites-joined": "invite", "invites-pending": "invite", "invites-website": "website",
   });
 
   const inviterReset = await accounts.resetInstallation({ installationId: inviter.installationId, operationId: "reset_invites_host", confirmHandle: "invites-host" });
@@ -82,7 +75,6 @@ it("shows who invited a Ship and how many Ships it invited, across resets on eit
   await expect(admin.getInstallation(joinedReset.installationId)).resolves.toMatchObject({
     invitedBy: { installationId: inviterReset.installationId, handle: "invites-host" },
   });
-  await expect(origins()).resolves.toMatchObject({ "invites-host": "direct", "invites-joined": "invite" });
 
   // The old installations' rows and the reset edges go with cleanup; the facts now live on the replacements.
   await db.batch([
@@ -93,5 +85,4 @@ it("shows who invited a Ship and how many Ships it invited, across resets on eit
   await expect(admin.getInstallation(joinedReset.installationId)).resolves.toMatchObject({
     invitedBy: { installationId: inviterReset.installationId, handle: "invites-host" },
   });
-  await expect(origins()).resolves.toMatchObject({ "invites-host": "direct", "invites-joined": "invite" });
 });

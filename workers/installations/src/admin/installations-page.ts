@@ -255,7 +255,7 @@ function installationTable<Summary extends AdminInstallationSummary>(
   if (installations.length === 0) {
     return `<div class="empty">No Ships match this view.</div>`;
   }
-  return `<div class="table-wrap"><table><thead><tr><th>Ship</th><th>State</th><th>Source</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}<th>Created</th></tr></thead>
+  return `<div class="table-wrap"><table><thead><tr><th>Ship</th><th>State</th>${column ? `<th>${escapeHtml(column.label)}</th>` : ""}<th>Created</th></tr></thead>
     <tbody>${installations.map((installation) => installationRow(installation, column)).join("")}</tbody></table></div>`;
 }
 
@@ -267,7 +267,6 @@ function installationRow<Summary extends AdminInstallationSummary>(
   return `<tr>
     <td><strong><a href="${href}">${escapeHtml(installation.handle)}</a></strong><small>${escapeHtml(installation.installationId)}</small></td>
     <td>${stateBadge(installation.state)}<small>provisioning: ${escapeHtml(installation.operationState)}</small></td>
-    <td>${escapeHtml(installation.origin)}</td>
     ${column ? `<td>${column.render(installation)}</td>` : ""}
     <td>${formatDate(installation.createdAt)}</td>
   </tr>`;

@@ -1,5 +1,4 @@
 import { normalizeUsernamePolicy } from "./username-policy";
-import type { SignupAttribution } from "@humansandmachines/gsv/telemetry";
 import type {
   InstallationDirectoryResult,
   InstallationIdentity,
@@ -120,15 +119,13 @@ export class AccountStore {
     ownerSetup?: boolean;
     /** Trusted operator allocation only; public request bodies never supply this. */
     allowReservedHandle?: boolean;
-    /** Where the signup link was clicked, already classified; written with the reservation, never updated. */
-    attribution?: SignupAttribution;
     /**
      * The Ship the signup's contact invitation named, resolved by Accounts and never taken from a
      * request body as an id. The insert itself keeps it only while it is an active installation someone
      * else owns, so an inviter erased in between leaves the reservation intact without an inviter.
      */
     inviterInstallationId?: string;
-  }): Promise<InstallationReservation> {
+  }): Promise<InstallationReservation & { created: boolean }> {
     const principalId = parseOpaqueId(input.principalId, "principalId");
     const operationId = parseOpaqueId(input.operationId, "operationId");
     const handle = this.validateHandle(input.handle);
@@ -137,7 +134,7 @@ export class AccountStore {
       if (existing.ownerPrincipalId !== principalId || existing.handle !== handle) {
         throw new Error("operationId was already used for a different reservation");
       }
-      return existing;
+      return { ...existing, created: false };
     }
 
     const identity = installationIdentity(
@@ -190,11 +187,10 @@ export class AccountStore {
         this.db.prepare(
           `INSERT INTO provisioning_operations (
              operation_id, installation_id, principal_id, kind, state,
-             attempt, last_error, updated_at, attribution_json, inviter_installation_id
-           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?, ?,
+             attempt, last_error, updated_at, inviter_installation_id
+           ) VALUES (?, ?, ?, 'create', 'reserved', 0, NULL, ?,
              (SELECT id FROM installations WHERE id = ? AND state = 'active' AND owner_principal_id != ?))`,
-        ).bind(operationId, identity.installationId, principalId, now, input.attribution ? JSON.stringify(input.attribution) : null,
-          input.inviterInstallationId ?? null, principalId),
+        ).bind(operationId, identity.installationId, principalId, now, input.inviterInstallationId ?? null, principalId),
       ]);
     } catch (error) {
       const replay = await this.getReservationByOperation(operationId);
@@ -202,7 +198,7 @@ export class AccountStore {
         if (replay.ownerPrincipalId !== principalId || replay.handle !== handle) {
           throw new Error("operationId was already used for a different reservation");
         }
-        return replay;
+        return { ...replay, created: false };
       }
       const claimed = await this.db.prepare(
         "SELECT id FROM installations WHERE handle = ? OR canonical_origin = ? LIMIT 1",
@@ -224,7 +220,7 @@ export class AccountStore {
     if (!reservation) {
       throw new Error("installation reservation was not committed");
     }
-    return reservation;
+    return { ...reservation, created: true };
   }
 
   async resetInstallation(input: {
@@ -387,20 +383,17 @@ export class AccountStore {
          JOIN installations i ON i.id = r.previous_installation_id
          WHERE r.operation_id = ? AND r.replacement_installation_id = ?`,
       ).bind(now, operationId, replacement.installationId),
-      // The replacement continues the same person's Ship: it takes over the signup
-      // origin and inviter recorded for the old installation and the invitees that
-      // named it, so those facts outlive the old installation's cleanup. It reports
-      // no attribution of its own: it is not an owner signup.
+      // The replacement continues the same person's Ship: it takes over the inviter
+      // recorded for the old installation and the invitees that named it, so those
+      // facts outlive the old installation's cleanup. It reports no attribution of
+      // its own: it is not an owner signup.
       this.db.prepare(
         `INSERT INTO provisioning_operations (
            operation_id, installation_id, principal_id, kind, state,
-           attempt, last_error, updated_at, attribution_json, inviter_installation_id
+           attempt, last_error, updated_at, inviter_installation_id
          )
          SELECT r.operation_id, r.replacement_installation_id,
                 i.owner_principal_id, 'create', 'reserved', 0, NULL, ?,
-                (SELECT p.attribution_json FROM provisioning_operations p
-                 WHERE p.installation_id = r.previous_installation_id AND p.kind = 'create'
-                 ORDER BY p.updated_at DESC LIMIT 1),
                 (SELECT p.inviter_installation_id FROM provisioning_operations p
                  WHERE p.installation_id = r.previous_installation_id AND p.kind = 'create'
                  ORDER BY p.updated_at DESC LIMIT 1)
