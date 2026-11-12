@@ -27,9 +27,10 @@ export async function edge(request: Request, env: Env): Promise<Response> {
   for (const name of [...headers.keys()]) if (name.startsWith("x-gsv-")) headers.delete(name);
 
   if (url.pathname === "/_gsv/socket") return socket(new Request(request, { headers }), env, host);
+  // The deployment claims its operator host, so it serves the setup page before the directory knows it.
   const operatorHost = label === env.GSV_OPERATOR_SPACE;
   if (url.pathname === "/_gsv/setup" && operatorHost) return setup(request, env);
-  if (label && !(operatorHost && url.pathname === "/setup")) {
+  if (label && !operatorHost) {
     let entry: NameEntry | null;
     try { entry = await resolve(env, label); } catch { return json({ error: toGsvError(new GsvFailure("unavailable", "Try again in a moment."), undefined) }, 503); }
     if (!entry) return notFound();
@@ -80,7 +81,7 @@ async function resolve(env: Env, name: string): Promise<NameEntry | null> {
 async function ui(request: Request, env: Env): Promise<Response> {
   const response = await env.ASSETS.fetch(request);
   if (response.status !== 404 || request.method !== "GET" || /\.[a-z0-9]+$/i.test(new URL(request.url).pathname)) return response;
-  return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request));
+  return env.ASSETS.fetch(new Request(new URL("/", request.url), request));
 }
 
 function json(body: unknown, status: number): Response {

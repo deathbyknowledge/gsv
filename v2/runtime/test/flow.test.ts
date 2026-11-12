@@ -67,6 +67,14 @@ describe("first space", () => {
     socket.ws.close(1000);
   });
 
+  it("answers a client's close so the connection ends", async () => {
+    const socket = await openSocket("ops.gsv.test", token);
+    await request(socket, "op-close-1", "connect", CONNECT);
+    socket.ws.close(1000, "done");
+    const unanswered = new Promise(resolve => setTimeout(() => resolve("no close from the owner"), 2_000));
+    expect(await Promise.race([socket.closed, unanswered])).toEqual({ code: 1000, reason: "done" });
+  });
+
   it("answers bad_request with the failing fields, and for an unknown operation", async () => {
     const socket = await openSocket("ops.gsv.test", token);
     expect(await request(socket, "op-bad-args1", "connect", { protocol: 4 })).toMatchObject({
@@ -102,6 +110,14 @@ describe("edge routing", () => {
     }
     const after = await objectCounts();
     expect(after).toEqual(before);
+  });
+
+  it("serves the setup page and its files on the operator host before the first space exists", async () => {
+    for (const [url, text] of [["https://ops.gsv.test/setup", "test ui"], ["https://ops.gsv.test/app.js", "test script"]] as const) {
+      const response = await SELF.fetch(url);
+      expect(response.status, url).toBe(200);
+      expect(await response.text()).toContain(text);
+    }
   });
 
   it("serves the UI at the domain and at a claimed space, with app routes falling back to the page", async () => {

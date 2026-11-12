@@ -34,7 +34,7 @@ export class Directory extends DurableObject<Env> {
   async setup(code: string, name: string): Promise<{ host: string; token: string; expiresAt: number }> {
     const [expiresAt, expected] = (this.env.GSV_SETUP ?? "").split(".");
     const codeHash = await sha256Hex(code);
-    if (!expected || codeHash !== expected || Number(expiresAt) <= Date.now()) throw new GsvFailure("forbidden", "This setup link is not valid. Run gsv deploy to print a new one.");
+    if (!expected || codeHash !== expected || Number(expiresAt) <= Date.now()) throw new GsvFailure("forbidden", "This setup link isn't valid. Print a new one with gsv deploy --setup, or gsv dev --setup locally.");
     const sql = this.ctx.storage.sql;
     const handle = this.env.GSV_OPERATOR_SPACE;
     const operation = this.ctx.storage.transactionSync(() => {

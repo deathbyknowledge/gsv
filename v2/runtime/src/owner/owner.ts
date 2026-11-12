@@ -88,6 +88,13 @@ export class Owner extends DurableObject<Env> {
     ws.send(JSON.stringify(response));
   }
 
+  /** Answers a client's close; without the reply its connection stays half-closed. */
+  override webSocketClose(ws: WebSocket, code: number, reason: string): void {
+    // 1006 means the connection is already gone; 1005 is reported for a close without a code and can't be sent.
+    if (code === 1006) return;
+    ws.close(code === 1005 ? 1000 : code, reason);
+  }
+
   private async dispatch(ws: WebSocket, attachment: Attachment, def: OpDef, args: unknown): Promise<unknown> {
     switch (def.name) {
       case connect.name: return this.connectSocket(ws, attachment, args as Args<"connect">);
