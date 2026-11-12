@@ -132,8 +132,8 @@ Times are epoch milliseconds. `expiresAt` covers the whole allocation,
 including startup. The catalog defines lifetime defaults and bounds; the
 admitted record makes the accepted deadline explicit. A browser's expiry is
 fixed at admission. A computer's moves later while it is in use: each command,
-or a detached command that is still running, keeps it up for the idle window
-(30 minutes), within the maximum lifetime counted from admission and the period
+or a command still running after its call returned, detached or past its yield
+window, keeps it up for the idle window (30 minutes), within the maximum lifetime counted from admission and the period
 allowance. Each extension reserves its added time. The computer accepts a new
 expiry before the coordinator records it, so it never stops before the recorded
 expiry. There is no extension API; use is the only signal.

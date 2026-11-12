@@ -13,7 +13,7 @@ async function inComputer(work: (fixture: {
   computer: ComputerInstance; ctx: DurableObjectState; identity: ComputerIdentity;
   provider: { running: boolean; bootId: string; start: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> };
   peers: WebSocket[]; handshakeSignals: AbortSignal[];
-}) => Promise<void>, options: { responseDelayMs?: number; stallHandshake?: boolean; reply?: (frame: { args: { start?: boolean; sessionId?: string } }) => JsonValue | undefined } = {}) {
+}) => Promise<void>, options: { responseDelayMs?: number; stallHandshake?: boolean; reply?: (frame: { args: { start?: boolean; sessionId?: string; input?: string; background?: boolean } }) => JsonValue | undefined } = {}) {
   const identity = { installationId: crypto.randomUUID(), instanceId: crypto.randomUUID(), targetId: "1234abcd", ownerUid: 1000, expiresAt: Date.now() + 300_000 };
   const peers: WebSocket[] = [];
   const handshakeSignals: AbortSignal[] = [];
@@ -154,6 +154,24 @@ describe("cloud computer lifecycle", () => {
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_001);
     expect(await computer.status()).toEqual({ state: "ready" });
   }, { reply: frame => frame.args.start ? { status: "running", output: "", sessionId: frame.args.sessionId ?? "" } : undefined }));
+
+  it("counts any command still running as use, without a poll resetting its deadline, and one without a timeout until it ends", () => inComputer(async ({ computer, identity }) => {
+    await computer.provision(identity); await computer.status();
+    const exec = (id: string, args: { input: string; sessionId?: string; timeout?: number; background?: boolean }) =>
+      computer.execute({ type: "req", id, call: "shell.exec", args }, Date.now() + 5000);
+    const startedAt = Date.now();
+    // gsvd answers an ordinary command still running after its yield window.
+    await exec("yielded", { input: "python train.py", timeout: 60_000 });
+    expect(await computer.status()).toEqual({ state: "ready", busy: true });
+    vi.spyOn(Date, "now").mockReturnValue(startedAt + 30_000);
+    await exec("poll", { input: "", sessionId: "train" });
+    vi.spyOn(Date, "now").mockReturnValue(startedAt + 60_001);
+    expect(await computer.status()).toEqual({ state: "ready" });
+    await exec("unbounded", { input: "serve", background: true, timeout: 0 });
+    vi.spyOn(Date, "now").mockReturnValue(startedAt + 200_000);
+    expect(await computer.status()).toEqual({ state: "ready", busy: true });
+  }, { reply: frame => frame.args.input === "python train.py" || frame.args.sessionId === "train" ? { status: "running", output: "", sessionId: "train" }
+    : frame.args.background ? { status: "running", output: "", sessionId: "serve" } : undefined }));
 
   it("expires and erases the computer without retaining credentials or reopening its identity", () => inComputer(async ({ computer, identity, provider, ctx }) => {
     await computer.provision(identity); await computer.status();
