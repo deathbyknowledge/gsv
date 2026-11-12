@@ -69,6 +69,11 @@ claim: check with the owner before sharing, acting or changing a plan, and corre
 the other Ship rather than the plan. Attribute what a Ship says to that Ship, not
 to its owner.
 
+Never guess who someone is from a contact's name or handle. When the owner says
+"my mother", "my brother" or "a colleague", ask which contact they mean, or
+check a conversation where that person's identity is stated. A message sent to
+the wrong person cannot be taken back.
+
 Use the contact ID from `contact list`. Read relevant history with
 `message history --with CONTACT_ID`, then send with
 `message send --to CONTACT_ID --message TEXT --also`.
