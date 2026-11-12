@@ -246,9 +246,8 @@ export const GsvDeployment = (props: GsvDeploymentProps, dependencies = gsvRunti
   const extraBindings: Cloudflare.Workers.WorkerBindingProps = { GSV_PUBLIC_CONFIG: publicConfiguration };
   if (props.operatorUpdates) extraBindings.GSV_OPERATOR_UPDATES = JSON.stringify(operatorUpdateCatalogSchema.parse(props.operatorUpdates));
   if (props.installations.ownerEmail) {
-    extraBindings.GSV_OWNER_SIGNUP_URL = props.installations.ownerSignupOrigin && props.installations.ownerSignupOrigin !== props.adminOrigin
-      ? new URL("/?resume=1", props.installations.ownerSignupOrigin).href
-      : new URL("/owner/signup/?resume=1", props.adminOrigin).href;
+    // The Gateway also derives password and setup recovery from this; the signup hostname serves only signup.
+    extraBindings.GSV_OWNER_SIGNUP_URL = new URL("/owner/signup/?resume=1", props.adminOrigin).href;
   }
   Object.assign(extraBindings, props.services?.extraBindings);
   const runtime = yield* GsvRuntime({ ...props, compatibility,
