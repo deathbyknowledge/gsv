@@ -25,7 +25,6 @@ export type MailEnv = Omit<
   | "ACCOUNTS"
   | "GATEWAY"
   | "INFERENCE"
-  | "EMAIL"
 > & {
   MAIL_DOMAIN: string;
   MAIL_SENDING_DOMAINS?: string;
@@ -34,6 +33,10 @@ export type MailEnv = Omit<
   MAIL_FOOTER_TEXT?: string;
   /** Where the footer links, e.g. "https://ship.space". */
   MAIL_FOOTER_URL?: string;
+  /** The Cloudflare account whose Email Sending sends this deployment's mail. */
+  MAIL_SENDING_ACCOUNT_ID?: string;
+  /** A token for that account with the Email Sending: Edit permission. */
+  MAIL_SENDING_API_TOKEN?: string;
   GSV_BASE_DOMAIN: string;
   ENTITLEMENTS?: EntitlementsService;
   MAIL_MAX_MESSAGE_BYTES?: number | string;
@@ -48,7 +51,6 @@ export type MailEnv = Omit<
   ACCOUNTS: InstallationDirectoryService;
   GATEWAY: MailGatewayService;
   INFERENCE: ManagedMailSummaryService;
-  EMAIL: SendEmail;
 } & TelemetryEnvironment;
 
 export type MailLimits = {
@@ -145,6 +147,21 @@ export function mailFooter(env: Pick<MailEnv, "MAIL_FOOTER_TEXT" | "MAIL_FOOTER_
     throw new Error("MAIL_FOOTER_URL must be an HTTPS URL");
   }
   return { text, url };
+}
+
+export type MailSending = { accountId: string; apiToken: string };
+
+/** The account and token Email Sending takes this deployment's mail under. */
+export function mailSending(
+  env: Pick<MailEnv, "MAIL_SENDING_ACCOUNT_ID" | "MAIL_SENDING_API_TOKEN">,
+): MailSending {
+  const accountId = env.MAIL_SENDING_ACCOUNT_ID?.trim() ?? "";
+  if (!/^[0-9a-f]{32}$/.test(accountId)) {
+    throw new Error("MAIL_SENDING_ACCOUNT_ID must be a Cloudflare account ID");
+  }
+  const apiToken = env.MAIL_SENDING_API_TOKEN?.trim() ?? "";
+  if (!/^[\x21-\x7e]+$/.test(apiToken)) throw new Error("MAIL_SENDING_API_TOKEN is required");
+  return { accountId, apiToken };
 }
 
 function positiveInteger(value: number | string | undefined, name: string): number {

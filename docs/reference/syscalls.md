@@ -373,6 +373,7 @@ mail send --to person@example.com --subject "Hello" --message "Hello from GSV"
 mail send --to anna@example.com,mike@example.com --cc bob@example.com --subject "Friday" --body ./plan.md
 mail reply MESSAGE_ID --body ./reply.txt
 mail reply MESSAGE_ID --all --message "Count me in."
+mail send --invite ./dinner.ics --subject "Dinner on Friday" --message "Here is the invite."
 mail status DELIVERY_ID
 ```
 
@@ -387,7 +388,7 @@ ordinal.
 
 `mail.send` is the explicit managed-email send primitive. It accepts a
 non-empty text body of at most 1 MiB. `to` and `cc` each take one address or a
-list; together they reach at most 10 people, each listed once. It does not accept HTML, BCC, or attachments. Write the body as in chat:
+list; together they reach at most 10 people, each listed once. It does not accept HTML, BCC, or attachments other than a calendar `invite`. Write the body as in chat:
 recipients get an HTML part rendered from its Markdown and a plain-text part
 without the marks. Raw HTML stays visible text, only web and mail links
 survive, and images become links. The From line carries the owner's display
@@ -401,6 +402,72 @@ may add `cc`. `replyAll: true` also copies everyone else the original was sent
 to or copied, except this Ship under any of its addresses. The approval request
 names the resolved recipients and subject, so a reply's approval shows who
 gets it.
+
+`invite` sends a calendar invitation with the message: the iCalendar text of
+one event, at most 32 KiB, such as a file the `cal` command writes. Its
+`METHOD` is `REQUEST` to invite or update, or `CANCEL` to withdraw the event;
+the event needs a `UID`, `DTSTART` and `DTSTAMP`, gives any end as `DTEND`
+rather than `DURATION`, and its `ORGANIZER` must be the sender's managed
+address, so guests' answers come back as mail. The
+message goes to exactly the event's guests, its attendees other than the
+sender: without `to` they become the recipients, less any in `cc`; otherwise
+`to` and `cc`, or a reply's derived recipients, must name the same people.
+Every time names its zone: a `TZID` from the IANA database or UTC, never a
+floating local time, which each guest would read in their own zone. A time a
+clock change skips reads as RFC 5545 has it, with the offset before the change:
+02:30 on a night the clocks go from 02:00 to 03:00 is 03:30.
+
+A repeating event goes whole: one `RRULE` and the dates changed from it,
+each a `VEVENT` with the same `UID` and the `RECURRENCE-ID` of the date it
+changes, with the same organizer and guests and any end as `DTEND`. The rule
+must be one the approval can say in words: `FREQ` of `DAILY`, `WEEKLY` with
+plain `BYDAY` days, `MONTHLY` with `BYMONTHDAY` (`-1` the last day) or `BYDAY`
+such as `4FR` or `-1FR`, or `YEARLY` with `BYMONTH` and `BYMONTHDAY`;
+`INTERVAL`, and `COUNT` or `UNTIL`, which is a date beside an all-day start and
+UTC otherwise. The approval counts weeks from Monday, so `WKST` must not change
+the dates: on a rule for every other Saturday and Sunday, `WKST=SU` puts the two
+days in different weekends, and the Kernel refuses it.
+The start must be a date the rule includes, and each `EXDATE` and
+`RECURRENCE-ID` must name a date it has, written the way `DTSTART` is. The
+Kernel refuses `RDATE`, `EXRULE`, `RANGE`, and a `CANCEL` that holds changed
+dates; to cancel one date, send a `REQUEST` that skips it.
+
+The Kernel rewrites the event with CRLF lines and replaces its `VTIMEZONE`s
+with ones written from the runtime's zone data, at most eight, before it
+fingerprints and stores it; the result must still fit in 32 KiB and hold no
+control character besides tabs and its line breaks. The approval request
+replaces the iCalendar text with the event as the owner reads it:
+
+```ts
+type MailInviteApproval = {
+  method: "REQUEST" | "CANCEL";
+  title?: string;
+  allDay: boolean;
+  start: string; // "2026-11-27T21:15:00+01:00[Europe/Amsterdam]", or a date when allDay
+  end?: string;  // an all-day event's last day
+  timeZone?: string; // the zone every time is in, when it isn't the owner's
+  location?: string;
+  repeats?: MailInviteRepeat;
+  skipped?: string[]; // each date the rule skips, by the start it would have had
+  changed?: Array<{ from: string; start: string; end?: string }>; // a changed date, and when it happens now
+};
+
+// The rule with what it leaves to the start written out, such as a weekly rule's day; weeks start on Monday.
+type MailInviteRepeat = {
+  freq: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
+  interval: number;
+  byDay?: string[];       // "MO", or within a month "4FR" or "-1FR"
+  byMonthDay?: number[];  // -1 for the last day
+  byMonth?: number[];
+  count?: number;
+  until?: string;         // as start reads
+};
+```
+
+Times read in the owner's zone, except a repeating event's: its rule counts
+days in the zone of its `DTSTART` (or UTC), so all its times are shown there and
+`timeZone` names that zone when it isn't the owner's. A date changed with
+`STATUS:CANCELLED` is listed as skipped.
 
 The caller must have the `mail.send` capability and resolve to an active human
 mailbox owner. The Kernel derives `from` from that owner's managed mailbox; the
@@ -420,10 +487,12 @@ the Kernel. The Kernel retries publication until the Queue accepts the command.
 Replaying the same call returns its current state. `accepted` means Cloudflare
 Email Sending accepted the message and returned a provider id, not that the
 recipient's mailbox has delivered it. `failed` is a known terminal failure:
-nothing was sent, and `errorCode` names why, for example `recipient_suppressed`
-(an address bounced or complained before), `recipient_not_allowed`,
-`outbound_quota` (the owner's daily allowance), `provider_quota`,
-`sender_unavailable`, `provider_rejected` or `invalid_draft`.
+nobody got the message, and `errorCode` names why, for example
+`provider_rejected` (the mail service refused it, as it does when an address
+bounced or complained before), `recipient_rejected` (every recipient's mail
+server refused it), `recipient_suppressed`, `outbound_quota` (the owner's daily
+allowance), `sender_unavailable` (this deployment can't send now) or
+`invalid_draft`.
 `unknown` means the provider call may have succeeded, so GSV will not replay it
 and risk sending a duplicate. A rate-limited send stays `queued` and is retried.
 
@@ -442,6 +511,7 @@ type MailSyscalls = {
       subject?: string;
       replyToMessageId?: string;
       replyAll?: boolean;
+      invite?: string; // iCalendar text of one event the sender organizes
       deliveryId: string;
     };
     result:

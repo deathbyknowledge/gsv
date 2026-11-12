@@ -157,11 +157,14 @@ navigation reference includes a reminder of where to find this setting.
 
 Under **Appearance**, choose **Match system** to follow this device's light or
 dark appearance. An explicit theme choice applies to both sign-in and the app.
-Before you choose, **Default** keeps sign-in dark and the app light.
+Before you choose, **Default** follows the system across signup, sign-in and the
+app, including changes while the page is open.
 
-Outside a text field, press **x** to cycle through 75%, 85%, 100%, 150% and 200%
-sizes. The smallest size uses compact message text and tighter spacing to fit
-more conversation on screen. The choice is remembered on this device.
+The app starts at 75% text size on a device without a saved preference.
+Outside a text field, press **x** to cycle through 65%, 75%, 85%, 100%, 150% and 200%
+sizes. The 65% and 75% sizes use compact message text and tighter spacing to fit
+more conversation on screen. The choice is remembered on this device; existing
+saved sizes are preserved.
 
 The Desktop app also includes **Settings → Voice** for its microphone, shortcuts,
 and spoken replies. Enable **Handsfree mode** to talk to your Ship from any page
