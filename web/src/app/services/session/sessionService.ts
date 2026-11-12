@@ -28,7 +28,7 @@ const SETUP_PROBE_ARGS: ConnectArgs = {
   protocol: 4,
   peer: {
     id: "gsv-ui-setup-probe",
-    version: "0.7.6",
+    version: "0.7.7",
     platform: "browser",
   },
 };
