@@ -144,4 +144,18 @@ describe("ManagedTelegramOnboardingFlow", () => {
     );
     expect(success).toBeTruthy();
   });
+
+  it("reports a rejected code as the code field's own error", async () => {
+    mocks.inspect.mockRejectedValueOnce(new Error("That code has expired."));
+    await act(() => {
+      nodeWithLabel(nodes(), "TELEGRAM CODE").props.onChange?.("abcd-efgh-jklm");
+    });
+    await click("CONNECT");
+
+    expect(mocks.currentStep).toBe(0);
+    const field = nodeWithLabel(nodes(), "TELEGRAM CODE");
+    expect(field.props.status).toBe("error");
+    expect(field.props.message).toBe("That code has expired.");
+    expect(nodes().some((node) => node.props.variant === "error")).toBe(false);
+  });
 });

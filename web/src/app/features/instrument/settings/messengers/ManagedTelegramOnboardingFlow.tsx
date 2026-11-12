@@ -293,6 +293,7 @@ function ManagedMessengerOnboardingFlow({
                       clearable
                       disabled={!info.data?.configured}
                       status={formError ? "error" : "none"}
+                      message={formError}
                       onChange={(value) => {
                         setCode(value.toUpperCase());
                         if (value.trim()) setLaunched(true);
@@ -316,7 +317,6 @@ function ManagedMessengerOnboardingFlow({
                       onClick={() => void inspectCode()}
                     />
                   </div>
-                  {formError ? <Alert variant="error" text={formError} /> : null}
                   {/* activating a code moves the number's route, so the warning sits where the code is submitted */}
                   {isWhatsApp ? <p class="gsv-cf-note gsv-prose">{t("settings.pairing.whatsappRelink")}</p> : null}
                 </div>

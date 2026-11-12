@@ -175,8 +175,8 @@
   overflow-wrap: anywhere;
 }
 
-/* A field with its submit action beside it: the label spans the row and the
-   button stretches to the field box; errors go below the row. */
+/* A field with its submit action beside it: the label spans the row, the
+   button stretches to the field box and the field's own status goes below. */
 .gsv-cf-code {
   display: grid;
   grid-template-columns: minmax(0, 420px) auto;
@@ -194,6 +194,10 @@
   grid-column: 2;
   grid-row: 2;
 }
+.gsv-cf-code .gsv-fld-stat {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
 /* Phone widths: a full code needs the whole row, so the button drops below. */
 @media (max-width: 520px) {
   .gsv-cf-code {
@@ -202,7 +206,10 @@
   }
   .gsv-cf-code > .gsv-btn {
     grid-column: 1;
-    grid-row: 3;
+    grid-row: 4;
+  }
+  .gsv-cf-code .gsv-fld-stat {
+    margin-top: -4px;
   }
 }
 
