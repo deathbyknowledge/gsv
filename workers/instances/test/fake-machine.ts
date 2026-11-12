@@ -1,7 +1,7 @@
 import { BinaryBodyChannel } from "@humansandmachines/gsv/protocol/binary-body-channel";
 import type { BinaryFrameDescriptor, JsonValue } from "@humansandmachines/gsv/protocol";
 
-type MachineFrame = { type: string; id: string; call: string; args: { input?: string; path?: string }; body?: BinaryFrameDescriptor };
+type MachineFrame = { type: string; id: string; call: string; args: { input?: string; path?: string; sessionId?: string }; body?: BinaryFrameDescriptor };
 
 /**
  * The machine side of the workspace commands. Archiving copies `workspace`
@@ -16,6 +16,9 @@ export class FakeMachine {
   stallTransfer = false;
   /** Claims a larger archive than the bytes it sends. */
   claimedSize: number | undefined;
+  /** Answers each command as still running, as gsvd does after its yield window, and finishes it on the next poll. */
+  slowCommands = false;
+  private readonly sessions = new Map<string, string>();
 
   attach(peer: WebSocket): void {
     peer.binaryType = "arraybuffer";
@@ -31,8 +34,17 @@ export class FakeMachine {
     const answer = async (frame: MachineFrame) => {
       if (frame.type !== "req") return;
       if (frame.call === "shell.exec") {
-        const input = frame.args.input ?? "";
+        let input = frame.args.input ?? "";
         this.commands.push(input);
+        if (frame.args.sessionId && !input) {
+          input = this.sessions.get(frame.args.sessionId) ?? "";
+          this.sessions.delete(frame.args.sessionId);
+        } else if (this.slowCommands) {
+          const sessionId = crypto.randomUUID();
+          this.sessions.set(sessionId, input);
+          reply(frame.id, { status: "running", output: "", sessionId });
+          return;
+        }
         if (input.includes("-czf")) {
           if (!this.workspace) { reply(frame.id, { status: "completed", output: "", exitCode: 2 }); return; }
           this.archive = this.workspace;

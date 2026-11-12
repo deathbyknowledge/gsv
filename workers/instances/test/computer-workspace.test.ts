@@ -76,6 +76,19 @@ describe("workspace save and restore", () => {
     } finally { first.close(); second.close(); await env.PROFILES.delete(address.objectKey); }
   }, 30_000);
 
+  it("keeps polling a command the computer answers as still running", async () => {
+    const address = { objectKey: `test/owners/1000/workspaces/${crypto.randomUUID()}`, key: key() };
+    const first = machine(), second = machine();
+    try {
+      first.fake.slowCommands = true; second.fake.slowCommands = true;
+      await saveWorkspace(first.connection, env.PROFILES, address);
+      second.fake.workspace = undefined;
+      await restoreWorkspace(second.connection, env.PROFILES, address);
+      expect(second.fake.workspace).toEqual(first.fake.workspace);
+      expect(first.fake.commands.filter(command => !command)).toHaveLength(1);
+    } finally { first.close(); second.close(); await env.PROFILES.delete(address.objectKey); }
+  });
+
   it("stores nothing when /workspace is missing or the archive is over the limit", async () => {
     const address = { objectKey: `test/owners/1000/workspaces/${crypto.randomUUID()}`, key: key() };
     const computer = machine();

@@ -10,15 +10,22 @@ export type WorkspaceSave = { savedAt: number; bytes: number } | { error: string
 export const WORKSPACE_LIMIT_BYTES = 1 << 30;
 const ARCHIVE = "/tmp/.gsv-workspace.tar.gz";
 export const WORKSPACE_TIMEOUT_MS = 300_000;
-const shellResultSchema = z.object({ status: z.string(), output: z.string().optional(), exitCode: z.number().optional() });
+const shellResultSchema = z.object({ status: z.string(), output: z.string().optional(), exitCode: z.number().optional(), sessionId: z.string().optional() });
+// gsvd answers a command still running after its yield window; the longest window means fewer polls.
+const YIELD_MS = 30_000;
 const sentSchema = z.union([z.object({ ok: z.literal(true), size: z.number().int().nonnegative() }), z.object({ ok: z.literal(false), error: z.string() })]);
 const receivedSchema = z.union([z.object({ ok: z.literal(true) }), z.object({ ok: z.literal(false), error: z.string() })]);
 
 async function run(connection: ComputerConnection, input: string, deadlineAt: number): Promise<void> {
-  const response = await connection.execute({ type: "req", id: crypto.randomUUID(), call: "shell.exec", args: { input, timeout: Math.max(1, deadlineAt - Date.now()) } }, deadlineAt);
-  if (!response.ok) throw new Error(response.error.message);
-  const result = shellResultSchema.parse(response.data);
-  if (result.status !== "completed" || result.exitCode !== 0) throw new Error(`Workspace command failed: ${(result.output ?? "").slice(-2000)}`);
+  let args: { input: string; yieldMs: number; timeout?: number; sessionId?: string } = { input, yieldMs: YIELD_MS, timeout: Math.max(1, deadlineAt - Date.now()) };
+  for (;;) {
+    const response = await connection.execute({ type: "req", id: crypto.randomUUID(), call: "shell.exec", args }, deadlineAt);
+    if (!response.ok) throw new Error(response.error.message);
+    const result = shellResultSchema.parse(response.data);
+    if (result.status === "running" && result.sessionId) { args = { input: "", yieldMs: YIELD_MS, sessionId: result.sessionId }; continue; }
+    if (result.status !== "completed" || result.exitCode !== 0) throw new Error(`Workspace command failed: ${(result.output ?? "").slice(-2000)}`);
+    return;
+  }
 }
 
 /** Archives /workspace inside the computer and stores the archive sealed. GNU tar's "file changed" status still saves. */
